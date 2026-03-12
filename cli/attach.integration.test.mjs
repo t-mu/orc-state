@@ -59,7 +59,7 @@ async function withFixturePath(run) {
 }
 
 async function seedLiveAgentSession(agentId = 'worker-01') {
-  const { createPtyAdapter } = await import('../adapters/pty.mjs');
+  const { createPtyAdapter } = await import('../adapters/pty.ts');
   adapter = createPtyAdapter({ provider: 'claude' });
   const started = await withFixturePath(() => adapter.start(agentId, { system_prompt: 'PING' }));
   sessionHandle = started.session_handle;
@@ -86,11 +86,11 @@ async function seedLiveAgentSession(agentId = 'worker-01') {
   }, { message: 'fixture readiness marker not found in pty log' });
 }
 
-describe.runIf(PTY_SUPPORTED)('cli/attach.mjs integration', () => {
+describe.runIf(PTY_SUPPORTED)('cli/attach.ts integration', () => {
   it('prints live PTY log marker and log path', async () => {
     await seedLiveAgentSession('worker-01');
 
-    const result = spawnSync(process.execPath, ['cli/attach.mjs', 'worker-01'], {
+    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/attach.ts', 'worker-01'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
@@ -111,7 +111,7 @@ describe.runIf(PTY_SUPPORTED)('cli/attach.mjs integration', () => {
       message: 'session did not terminate after EXIT',
     });
 
-    const result = spawnSync(process.execPath, ['cli/attach.mjs', 'worker-02'], {
+    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/attach.ts', 'worker-02'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
@@ -122,13 +122,13 @@ describe.runIf(PTY_SUPPORTED)('cli/attach.mjs integration', () => {
   }, 15_000);
 });
 
-describe.runIf(!PTY_SUPPORTED)('cli/attach.mjs integration (unsupported)', () => {
+describe.runIf(!PTY_SUPPORTED)('cli/attach.ts integration (unsupported)', () => {
   it('skips because PTY is unavailable in this environment', () => {
     expect(true).toBe(true);
   });
 });
 
-describe('cli/attach.mjs integration env hygiene', () => {
+describe('cli/attach.ts integration env hygiene', () => {
   it('restores PATH after fixture-path helper', async () => {
     const before = process.env.PATH;
     let during;

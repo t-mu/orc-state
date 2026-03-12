@@ -18,9 +18,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/attach.mjs', () => {
+describe('cli/attach.ts', () => {
   it('fails when agent is missing', () => {
-    const result = spawnSync('node', ['cli/attach.mjs', 'missing'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/attach.ts', 'missing'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -35,7 +35,7 @@ describe('cli/attach.mjs', () => {
       agents: [{ agent_id: 'bob', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' }],
     }));
 
-    const result = spawnSync('node', ['cli/attach.mjs', 'bob'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/attach.ts', 'bob'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -53,17 +53,17 @@ describe('cli/attach.mjs', () => {
 
     const attach = vi.fn();
     const heartbeatProbe = vi.fn().mockResolvedValue(true);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ attach, heartbeatProbe }),
     }));
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/attach.mjs', 'bob'];
+    process.argv = ['node', 'cli/attach.ts', 'bob'];
     process.env.ORCH_STATE_DIR = dir;
 
     try {
-      await import('./attach.mjs');
+      await import('./attach.ts');
     } finally {
       process.argv = oldArgv;
       process.env.ORCH_STATE_DIR = oldStateDir;

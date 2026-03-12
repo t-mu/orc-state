@@ -7,15 +7,15 @@ import { join, resolve } from 'node:path';
 import { spawnSync }     from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
-const coordinatorScriptPath = resolve(import.meta.dirname, '..', 'coordinator.mjs');
+const coordinatorScriptPath = resolve(import.meta.dirname, '..', 'coordinator.ts');
 let dir;
 
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
-  vi.doUnmock('../lib/prompts.mjs');
-  vi.doUnmock('../lib/binaryCheck.mjs');
-  vi.doUnmock('../lib/templateRender.mjs');
+  vi.doUnmock('../lib/prompts.ts');
+  vi.doUnmock('../lib/binaryCheck.ts');
+  vi.doUnmock('../lib/templateRender.ts');
   vi.doUnmock('node:child_process');
   vi.doUnmock('node-pty');
   dir = mkdtempSync(join(tmpdir(), 'orch-start-session-test-'));
@@ -68,7 +68,7 @@ function setEnv(stateDir) {
 }
 
 function mockBinaryCheck(ok = true) {
-  vi.doMock('../lib/binaryCheck.mjs', () => ({
+  vi.doMock('../lib/binaryCheck.ts', () => ({
     checkAndInstallBinary: vi.fn().mockResolvedValue(ok),
     PROVIDER_BINARIES: { claude: 'claude', codex: 'codex', gemini: 'gemini' },
     PROVIDER_PROMPT_PATTERNS: { claude: />\s*$/, codex: />\s*$/, gemini: />\s*$/ },
@@ -78,8 +78,8 @@ function mockBinaryCheck(ok = true) {
 
 function makeSpawnMock({ writeCoordinatorPid = false, providerSpawnError = null, providerCloseCode = 0 } = {}) {
   return vi.fn().mockImplementation((execPath, args) => {
-    const target = Array.isArray(args) ? String(args[0] ?? '') : '';
-    if (target.endsWith('coordinator.mjs')) {
+    const target = Array.isArray(args) ? (args.find(a => String(a).endsWith('coordinator.ts')) ?? '') : '';
+    if (target.endsWith('coordinator.ts')) {
       if (writeCoordinatorPid) {
         writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: 99999, started_at: '2026-01-01T00:00:00.000Z' }));
       }
@@ -134,12 +134,12 @@ function seedCoordinatorRunning() {
 
 // ── spawnSync tests (no adapter needed) ────────────────────────────────────
 
-describe('cli/start-session.mjs', () => {
+describe('cli/start-session.ts', () => {
   describe('state auto-init', () => {
     it('creates all four state files when the state dir is absent', () => {
       const freshDir = join(dir, 'fresh-state');
       // freshDir does not exist yet
-      spawnSync('node', ['cli/start-session.mjs'], {
+      spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts'], {
         cwd:      repoRoot,
         env:      { ...process.env, ORCH_STATE_DIR: freshDir },
         encoding: 'utf8',
@@ -156,7 +156,7 @@ describe('cli/start-session.mjs', () => {
       const sentinel = { version: '1', epics: [{ ref: 'sentinel', title: 'Sentinel', tasks: [] }] };
       writeFileSync(join(dir, 'backlog.json'), JSON.stringify(sentinel));
 
-      spawnSync('node', ['cli/start-session.mjs'], {
+      spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts'], {
         cwd:      repoRoot,
         env:      { ...process.env, ORCH_STATE_DIR: dir },
         encoding: 'utf8',
@@ -170,7 +170,7 @@ describe('cli/start-session.mjs', () => {
   describe('non-interactive error handling', () => {
     it('exits 1 with an error when no master exists and no --provider flag', () => {
       seedState(); // no agents
-      const result = spawnSync('node', ['cli/start-session.mjs'], {
+      const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts'], {
         cwd:      repoRoot,
         env:      { ...process.env, ORCH_STATE_DIR: dir },
         encoding: 'utf8',
@@ -181,7 +181,7 @@ describe('cli/start-session.mjs', () => {
 
     it('rejects deprecated worker startup flags with migration guidance', () => {
       seedState([masterAgent()]);
-      const result = spawnSync('node', ['cli/start-session.mjs', '--worker-id=orc-9', '--worker-provider=codex'], {
+      const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts', '--worker-id=orc-9', '--worker-provider=codex'], {
         cwd: repoRoot,
         env: { ...process.env, ORCH_STATE_DIR: dir },
         encoding: 'utf8',
@@ -198,7 +198,7 @@ describe('cli/start-session.mjs', () => {
       mockSpawn(spawnMock);
       mockBinaryCheck(true);
       const promptCreateWorkerAction = vi.fn().mockResolvedValue('skip');
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptAgentId: vi.fn().mockResolvedValue('master'),
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(false),
@@ -212,8 +212,8 @@ describe('cli/start-session.mjs', () => {
       }));
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(spawnMock).toHaveBeenCalled();
       expect(readAgents()).toHaveLength(1);
@@ -232,8 +232,8 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
       setEnv(dir);
       seedCoordinatorRunning(); // skip coordinator step
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
       const agents = readAgents();
       expect(agents).toHaveLength(1);
@@ -247,7 +247,7 @@ describe('cli/start-session.mjs', () => {
       const spawnMock = makeSpawnMock();
       mockSpawn(spawnMock);
       mockBinaryCheck(true);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptAgentId: vi.fn().mockRejectedValue(new Error('master-id prompt should not be called')),
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
@@ -262,8 +262,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       const agents = readAgents();
       expect(agents).toHaveLength(1);
@@ -273,7 +273,7 @@ describe('cli/start-session.mjs', () => {
 
     it('does not register a second master when one already exists (conflict gate cancels)', async () => {
       seedState([masterAgent({ status: 'running' })]);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptAgentId:               vi.fn().mockResolvedValue('master'),
         promptProvider:              vi.fn().mockResolvedValue('claude'),
         isInteractive:               vi.fn().mockReturnValue(true), // interactive so cancel → exit 0
@@ -291,8 +291,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await expect(import('./start-session.mjs')).rejects.toThrow('process.exit:0');
+      process.argv = ['node', 'start-session.ts'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:0');
 
       // Agents unchanged — conflict gate fired and exited (no second registration)
       expect(readAgents()).toHaveLength(1);
@@ -302,7 +302,7 @@ describe('cli/start-session.mjs', () => {
   describe('conflict gate', () => {
     it('replace removes old master and continues to fresh registration', async () => {
       seedState([masterAgent()]);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptAgentId:               vi.fn().mockResolvedValue('master2'),
         promptProvider:              vi.fn().mockResolvedValue('codex'),
         isInteractive:               vi.fn().mockReturnValue(true),
@@ -319,8 +319,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs', '--provider=codex', '--agent-id=master2'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=codex', '--agent-id=master2'];
+      await import('./start-session.ts');
 
       const agents = readAgents();
       expect(agents).toHaveLength(1);
@@ -332,7 +332,7 @@ describe('cli/start-session.mjs', () => {
       seedState([masterAgent()]);
       const spawnMock = makeSpawnMock({ writeCoordinatorPid: true });
       mockSpawn(spawnMock);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptAgentId:               vi.fn().mockResolvedValue('master'),
         promptProvider:              vi.fn().mockResolvedValue('claude'),
         isInteractive:               vi.fn().mockReturnValue(true),
@@ -347,10 +347,10 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
       setEnv(dir);
       // No coordinator.pid → coordinator not running
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(true);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(true);
       expect(readAgents()).toHaveLength(1);       // no state change
     });
 
@@ -359,7 +359,7 @@ describe('cli/start-session.mjs', () => {
         masterAgent({ agent_id: 'master' }),
         masterAgent({ agent_id: 'worker-01', role: 'worker', provider: 'codex' }),
       ]);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptAgentId: vi.fn().mockResolvedValue('master'),
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
@@ -374,8 +374,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       const agents = readAgents();
       expect(agents).toHaveLength(2);
@@ -389,7 +389,7 @@ describe('cli/start-session.mjs', () => {
       const spawnMock = makeSpawnMock({ writeCoordinatorPid: true });
       const spawnSyncMock = vi.fn().mockReturnValue({ status: 0, stdout: `node ${coordinatorScriptPath}` });
       mockSpawn(spawnMock, spawnSyncMock);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptAgentId:               vi.fn().mockResolvedValue('master'),
         promptProvider:              vi.fn().mockResolvedValue('claude'),
         isInteractive:               vi.fn().mockReturnValue(true),
@@ -404,10 +404,10 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(true);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(true);
       const { pid } = JSON.parse(readFileSync(join(dir, 'coordinator.pid'), 'utf8'));
       expect(pid).toBe(99999);
     });
@@ -422,13 +422,13 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       // No coordinator.pid seeded
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
-      const coordinatorCall = spawnMock.mock.calls.find(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'));
+      const coordinatorCall = spawnMock.mock.calls.find(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')));
       expect(coordinatorCall).toBeTruthy();
       const [execPath, args] = coordinatorCall;
-      expect(args[0]).toMatch(/coordinator\.mjs$/);
+      expect(args[1]).toMatch(/coordinator\.ts$/);
       expect(execPath).toBe(process.execPath);
     });
 
@@ -441,11 +441,11 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning(); // PID is current process → alive
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
       // Coordinator path should not spawn when already running; master foreground spawn still happens.
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(false);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(false);
     });
 
     it('treats invalid pid-file pid as not running and spawns coordinator', async () => {
@@ -457,10 +457,10 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(true);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(true);
     });
 
     it('treats malformed coordinator.pid json as not running and spawns coordinator', async () => {
@@ -472,10 +472,10 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(true);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(true);
     });
 
     it('treats pid as not running when ps probe fails and spawns coordinator', async () => {
@@ -488,10 +488,10 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(true);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(true);
     });
   });
 
@@ -510,7 +510,7 @@ describe('cli/start-session.mjs', () => {
       const spawnMock = makeSpawnMock();
       const spawnSyncMock = vi.fn().mockReturnValue({ status: 0, stdout: `node ${coordinatorScriptPath}` });
       mockSpawn(spawnMock, spawnSyncMock);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
         promptCoordinatorAction: vi.fn().mockResolvedValue('terminate'),
@@ -524,11 +524,11 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(existsSync(join(dir, 'coordinator.pid'))).toBe(true);
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(false);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(false);
       expect(killSpy).toHaveBeenCalledWith(12345, 'SIGTERM');
     });
 
@@ -550,7 +550,7 @@ describe('cli/start-session.mjs', () => {
       const spawnMock = makeSpawnMock();
       const spawnSyncMock = vi.fn().mockReturnValue({ status: 0, stdout: `node ${coordinatorScriptPath}` });
       mockSpawn(spawnMock, spawnSyncMock);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
         promptCoordinatorAction: vi.fn().mockResolvedValue('terminate'),
@@ -564,12 +564,12 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(existsSync(join(dir, 'coordinator.pid'))).toBe(true);
       expect(killSpy).not.toHaveBeenCalledWith(12345, 'SIGTERM');
-      expect(spawnMock.mock.calls.some(([, args]) => String(args?.[0] ?? '').endsWith('coordinator.mjs'))).toBe(false);
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some(a => String(a).endsWith('coordinator.ts')))).toBe(false);
     });
 
     it('refuses terminate when coordinator.pid is missing started_at', async () => {
@@ -586,7 +586,7 @@ describe('cli/start-session.mjs', () => {
       const spawnMock = makeSpawnMock();
       const spawnSyncMock = vi.fn().mockReturnValue({ status: 0, stdout: `node ${coordinatorScriptPath}` });
       mockSpawn(spawnMock, spawnSyncMock);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
         promptCoordinatorAction: vi.fn().mockResolvedValue('terminate'),
@@ -600,8 +600,8 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(killSpy).not.toHaveBeenCalledWith(12345, 'SIGTERM');
       expect(existsSync(join(dir, 'coordinator.pid'))).toBe(true);
@@ -621,7 +621,7 @@ describe('cli/start-session.mjs', () => {
       const spawnMock = makeSpawnMock();
       const spawnSyncMock = vi.fn().mockReturnValue({ status: 0, stdout: 'node unrelated-worker.mjs' });
       mockSpawn(spawnMock, spawnSyncMock);
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
         promptCoordinatorAction: vi.fn().mockResolvedValue('terminate'),
@@ -635,8 +635,8 @@ describe('cli/start-session.mjs', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(killSpy).not.toHaveBeenCalledWith(12345, 'SIGTERM');
       expect(existsSync(join(dir, 'coordinator.pid'))).toBe(true);
@@ -654,8 +654,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
       const out = lines.join('\n');
       expect(out).toContain('This terminal is the MASTER session.');
@@ -672,7 +672,7 @@ describe('cli/start-session.mjs', () => {
     it('runs prompts in coordinator -> master order', async () => {
       seedState([masterAgent({ agent_id: 'master', provider: 'claude' })]);
       const order = [];
-      vi.doMock('../lib/prompts.mjs', () => ({
+      vi.doMock('../lib/prompts.ts', () => ({
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
         promptCoordinatorAction: vi.fn().mockImplementation(async () => {
@@ -692,8 +692,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(order).toEqual(['coordinator', 'master']);
     });
@@ -708,8 +708,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
       const providerCall = spawnMock.mock.calls.find(([cmd]) => cmd === 'claude');
       expect(providerCall).toBeTruthy();
@@ -734,8 +734,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
       const master = readAgents().find((a) => a.agent_id === 'master');
       expect(master.status).toBe('offline');
@@ -750,8 +750,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await expect(import('./start-session.mjs')).rejects.toThrow('process.exit:1');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
@@ -766,8 +766,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await expect(import('./start-session.mjs')).rejects.toThrow('process.exit:1');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to start master provider CLI'));
@@ -784,8 +784,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs', '--provider=claude', '--agent-id=master'];
-      await expect(import('./start-session.mjs')).rejects.toThrow('process.exit:1');
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('exited with code 2'));
@@ -795,7 +795,7 @@ describe('cli/start-session.mjs', () => {
       seedState([masterAgent()]);
       mockSpawn(makeSpawnMock());
       mockBinaryCheck(true);
-      vi.doMock('../lib/templateRender.mjs', () => ({
+      vi.doMock('../lib/templateRender.ts', () => ({
         renderTemplate: vi.fn(() => {
           throw new Error('template render failed');
         }),
@@ -804,8 +804,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await expect(import('./start-session.mjs')).rejects.toThrow('process.exit:1');
+      process.argv = ['node', 'start-session.ts'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
       const master = readAgents().find((a) => a.agent_id === 'master');
@@ -821,15 +821,15 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       const configPath = join(dir, 'mcp-config.json');
       expect(existsSync(configPath)).toBe(true);
       const config = JSON.parse(readFileSync(configPath, 'utf8'));
       expect(config.mcpServers?.orchestrator).toBeTruthy();
       expect(config.mcpServers.orchestrator.command).toBe(process.execPath);
-      expect(config.mcpServers.orchestrator.args[0].endsWith(join('mcp', 'server.mjs'))).toBe(true);
+      expect(config.mcpServers.orchestrator.args[1].endsWith(join('mcp', 'server.ts'))).toBe(true);
       expect(config.mcpServers.orchestrator.env.ORCH_STATE_DIR).toBe(dir);
     });
 
@@ -841,8 +841,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(existsSync(join(dir, 'mcp-config.json'))).toBe(false);
       const providerCall = spawnMock.mock.calls.find(([cmd]) => cmd === 'codex');
@@ -858,8 +858,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
 
       expect(existsSync(join(dir, 'mcp-config.json'))).toBe(true);
       const providerCall = spawnMock.mock.calls.find(([cmd]) => cmd === 'gemini');
@@ -871,7 +871,7 @@ describe('cli/start-session.mjs', () => {
     it('writes mcp-config before claude spawn', async () => {
       seedState([masterAgent({ provider: 'claude' })]);
       const spawnMock = vi.fn().mockImplementation((cmd, args) => {
-        if (String(args?.[0] ?? '').endsWith('coordinator.mjs')) {
+        if ((args ?? []).some(a => String(a).endsWith('coordinator.ts'))) {
           return { unref: vi.fn(), on: vi.fn() };
         }
         if (cmd === 'claude') {
@@ -897,8 +897,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
       expect(spawnMock).toHaveBeenCalled();
     });
 
@@ -911,8 +911,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
       expect(lines.join('\n')).toContain('MCP server: orchestrator tools available');
       expect(lines.join('\n')).toContain('Master bootstrap loaded via --system-prompt.');
       expect(lines.join('\n')).toContain('MASTER_BOOTSTRAP v2');
@@ -930,8 +930,8 @@ describe('cli/start-session.mjs', () => {
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.mjs'];
-      await import('./start-session.mjs');
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
       expect(codexLines.join('\n')).not.toContain('MCP server: orchestrator tools available');
     });
   });

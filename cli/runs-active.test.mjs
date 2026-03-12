@@ -15,7 +15,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/runs-active.mjs', () => {
+describe('cli/runs-active.ts', () => {
   it('prints active runs in json', () => {
     seedState({
       claims: [{
@@ -57,7 +57,7 @@ describe('cli/runs-active.mjs', () => {
 });
 
 function runCli(args) {
-  return spawnSync('node', ['cli/runs-active.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/runs-active.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

@@ -46,7 +46,7 @@ async function withFixturePath(run) {
 
 describe.runIf(PTY_SUPPORTED)('adapters/pty.mjs integration', () => {
   it('real PTY lifecycle: start -> send -> probe -> exit -> stop', async () => {
-    const { createPtyAdapter } = await import('./pty.mjs');
+    const { createPtyAdapter } = await import('./pty.ts');
     const adapter = createPtyAdapter({ provider: 'claude' });
 
     const started = await withFixturePath(() => adapter.start('worker-01', { system_prompt: 'PING' }));
@@ -83,13 +83,13 @@ describe.runIf(PTY_SUPPORTED)('adapters/pty.mjs integration', () => {
   });
 
   it('heartbeatProbe returns false for malformed handle', async () => {
-    const { createPtyAdapter } = await import('./pty.mjs');
+    const { createPtyAdapter } = await import('./pty.ts');
     const adapter = createPtyAdapter({ provider: 'claude' });
     await expect(adapter.heartbeatProbe('not-a-pty-handle')).resolves.toBe(false);
   });
 
   it('stop is no-op for unknown handle', async () => {
-    const { createPtyAdapter } = await import('./pty.mjs');
+    const { createPtyAdapter } = await import('./pty.ts');
     const adapter = createPtyAdapter({ provider: 'claude' });
     await expect(adapter.stop('pty:missing-worker')).resolves.toBeUndefined();
   });

@@ -18,9 +18,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/control-worker.mjs', () => {
+describe('cli/control-worker.ts', () => {
   it('fails when worker is missing', () => {
-    const result = spawnSync('node', ['cli/control-worker.mjs', 'missing'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/control-worker.ts', 'missing'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -36,7 +36,7 @@ describe('cli/control-worker.mjs', () => {
       agents: [{ agent_id: 'master', provider: 'claude', role: 'master', status: 'running', session_handle: 'pty:master', registered_at: '2026-01-01T00:00:00Z' }],
     }));
 
-    const result = spawnSync('node', ['cli/control-worker.mjs', 'master'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/control-worker.ts', 'master'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -53,17 +53,17 @@ describe('cli/control-worker.mjs', () => {
 
     const attach = vi.fn();
     const heartbeatProbe = vi.fn().mockResolvedValue(true);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ attach, heartbeatProbe }),
     }));
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/control-worker.mjs', 'bob'];
+    process.argv = ['node', 'cli/control-worker.ts', 'bob'];
     process.env.ORCH_STATE_DIR = dir;
 
     try {
-      await import('./control-worker.mjs');
+      await import('./control-worker.ts');
     } finally {
       process.argv = oldArgv;
       process.env.ORCH_STATE_DIR = oldStateDir;
@@ -85,7 +85,7 @@ describe('cli/control-worker.mjs', () => {
     const attach = vi.fn();
     const heartbeatProbe = vi.fn().mockResolvedValue(true);
     const select = vi.fn().mockResolvedValue('alice');
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ attach, heartbeatProbe }),
     }));
     vi.doMock('@inquirer/prompts', () => ({ select }));
@@ -96,11 +96,11 @@ describe('cli/control-worker.mjs', () => {
     const stdoutTTY = process.stdout.isTTY;
     Object.defineProperty(process.stdin, 'isTTY', { value: true, writable: true, configurable: true });
     Object.defineProperty(process.stdout, 'isTTY', { value: true, writable: true, configurable: true });
-    process.argv = ['node', 'cli/control-worker.mjs'];
+    process.argv = ['node', 'cli/control-worker.ts'];
     process.env.ORCH_STATE_DIR = dir;
 
     try {
-      await import('./control-worker.mjs');
+      await import('./control-worker.ts');
     } finally {
       process.argv = oldArgv;
       process.env.ORCH_STATE_DIR = oldStateDir;

@@ -16,7 +16,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/task-create.mjs', () => {
+describe('cli/task-create.ts', () => {
   it('creates task with todo + ready_for_dispatch', () => {
     const result = runCli([
       '--epic=docs',
@@ -108,7 +108,7 @@ describe('cli/task-create.mjs', () => {
 });
 
 function runCli(args) {
-  return spawnSync('node', ['cli/task-create.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/task-create.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

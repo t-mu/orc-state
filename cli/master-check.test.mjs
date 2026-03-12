@@ -15,7 +15,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/master-check.mjs', () => {
+describe('cli/master-check.ts', () => {
   it('prints failure reason and exit code when present', () => {
     seedQueue([
       {
@@ -59,7 +59,7 @@ describe('cli/master-check.mjs', () => {
 });
 
 function runCli(args) {
-  return spawnSync('node', ['cli/master-check.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/master-check.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

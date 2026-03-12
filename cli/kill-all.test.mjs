@@ -53,7 +53,7 @@ function setEnv(stateDir) {
 }
 
 function spawnKillAll(stateDir, extraArgs = []) {
-  return spawnSync('node', ['cli/kill-all.mjs', ...extraArgs], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/kill-all.ts', ...extraArgs], {
     cwd:      repoRoot,
     env:      { ...process.env, ORCH_STATE_DIR: stateDir },
     encoding: 'utf8',
@@ -62,7 +62,7 @@ function spawnKillAll(stateDir, extraArgs = []) {
 
 // ── spawnSync tests (no adapter needed) ────────────────────────────────────
 
-describe('cli/kill-all.mjs', () => {
+describe('cli/kill-all.ts', () => {
   describe('when state dir is absent', () => {
     it('exits 0 and prints "not running" and "Cleared 0"', () => {
       const missingDir = join(dir, 'does-not-exist');
@@ -143,11 +143,11 @@ describe('cli/kill-all.mjs', () => {
       ]);
 
       const stop = vi.fn().mockResolvedValue(undefined);
-      vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => ({ stop }) }));
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
 
       setEnv(dir);
       process.argv = ['node', 'kill-all.mjs'];
-      await import('./kill-all.mjs');
+      await import('./kill-all.ts');
 
       expect(stop).toHaveBeenCalledTimes(2);
     });
@@ -156,11 +156,11 @@ describe('cli/kill-all.mjs', () => {
       seedState([agentRecord({ agent_id: 'idle', session_handle: null })]);
 
       const stop = vi.fn();
-      vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => ({ stop }) }));
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
 
       setEnv(dir);
       process.argv = ['node', 'kill-all.mjs'];
-      await import('./kill-all.mjs');
+      await import('./kill-all.ts');
 
       expect(stop).not.toHaveBeenCalled();
     });
@@ -169,11 +169,11 @@ describe('cli/kill-all.mjs', () => {
       seedState([agentRecord({ agent_id: 'alice', session_handle: 'claude:s1' })]);
 
       const stop = vi.fn();
-      vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => ({ stop }) }));
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
 
       setEnv(dir);
       process.argv = ['node', 'kill-all.mjs', '--keep-sessions'];
-      await import('./kill-all.mjs');
+      await import('./kill-all.ts');
 
       expect(stop).not.toHaveBeenCalled();
     });
@@ -187,14 +187,14 @@ describe('cli/kill-all.mjs', () => {
       const stop = vi.fn()
         .mockRejectedValueOnce(new Error('network error'))
         .mockResolvedValueOnce(undefined);
-      vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => ({ stop }) }));
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
 
       const warnLines = [];
       vi.spyOn(console, 'error').mockImplementation((...args) => warnLines.push(args.join(' ')));
 
       setEnv(dir);
       process.argv = ['node', 'kill-all.mjs'];
-      await import('./kill-all.mjs');
+      await import('./kill-all.ts');
 
       // Both agents attempted
       expect(stop).toHaveBeenCalledTimes(2);
@@ -216,11 +216,11 @@ describe('cli/kill-all.mjs', () => {
         // On SIGTERM, don't actually kill ourselves — just record it
       });
 
-      vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => ({ stop: vi.fn() }) }));
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop: vi.fn() }) }));
 
       setEnv(dir);
       process.argv = ['node', 'kill-all.mjs'];
-      await import('./kill-all.mjs');
+      await import('./kill-all.ts');
 
       const sigtermCalls = killSpy.mock.calls.filter(([, sig]) => sig === 'SIGTERM');
       expect(sigtermCalls.length).toBeGreaterThan(0);

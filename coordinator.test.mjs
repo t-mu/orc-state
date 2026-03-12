@@ -4,13 +4,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendNotification, readPendingNotifications } from './lib/masterNotifyQueue.mjs';
+import { appendNotification, readPendingNotifications } from './lib/masterNotifyQueue.ts';
 
 let dir;
 
 beforeEach(() => {
   // Reset module cache BEFORE each test so vi.doMock + dynamic import picks up
-  // a fresh coordinator.mjs (and fresh paths.mjs / adapterInstances Map).
+  // a fresh coordinator.ts (and fresh paths.ts / adapterInstances Map).
   vi.resetModules();
   dir = mkdtempSync(join(tmpdir(), 'orc-coord-test-'));
   process.env.ORCH_STATE_DIR = dir;
@@ -63,7 +63,7 @@ const DISPATCHABLE_TASK = {
   updated_at: new Date().toISOString(),
 };
 
-const COORDINATOR_PATH = fileURLToPath(new URL('./coordinator.mjs', import.meta.url));
+const COORDINATOR_PATH = fileURLToPath(new URL('./coordinator.ts', import.meta.url));
 
 describe('ensureSessionReady: status invariant on session loss', () => {
   it('starts managed worker slots on dispatch inside the assigned worktree', async () => {
@@ -90,7 +90,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       branch: 'task/run-allocated',
       worktree_path: '/tmp/orc-worktrees/run-allocated',
     });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         start: mockStart,
@@ -99,7 +99,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         attach: vi.fn().mockResolvedValue(''),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: ensureRunWorktreeMock,
       cleanupRunWorktree: vi.fn().mockReturnValue(true),
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -109,10 +109,10 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       }),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = readJson(dir, 'agents.json');
     expect(agents.map((agent) => agent.agent_id)).toEqual(['master', 'orc-1', 'orc-2']);
     expect(agents.find((agent) => agent.agent_id === 'orc-1')?.provider).toBe('gemini');
@@ -145,7 +145,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         start: vi.fn().mockRejectedValue(new Error('spawn failed')),
@@ -154,7 +154,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         attach: vi.fn().mockResolvedValue(''),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-allocated',
         branch: 'task/run-allocated',
@@ -166,10 +166,10 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       getRunWorktree: vi.fn().mockReturnValue(null),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = readJson(dir, 'agents.json');
     const slot = agents.find((agent) => agent.agent_id === 'orc-1');
     expect(slot?.status).toBe('idle');
@@ -204,7 +204,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         start: mockStart,
@@ -214,12 +214,12 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       }),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(mockStart).not.toHaveBeenCalled();
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents, claims } = {
       agents: readJson(dir, 'agents.json').agents,
       claims: readJson(dir, 'claims.json').claims,
@@ -244,7 +244,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     // Mock adapter so heartbeatProbe reports the session is dead.
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(false),
         start: vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null }),
@@ -254,11 +254,11 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       }),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
     // Read agents.json back from disk.
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = readJson(dir, 'agents.json');
     const agent = agents.find((a) => a.agent_id === 'worker-01');
 
@@ -282,7 +282,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         start: mockStart,
@@ -291,7 +291,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         attach: vi.fn().mockResolvedValue(''),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-allocated',
         branch: 'task/run-allocated',
@@ -303,14 +303,14 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       getRunWorktree: vi.fn().mockReturnValue(null),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
     // Confirm start() was actually invoked (would be silent if task routing
     // filtered out the agent and dispatch was skipped).
     expect(mockStart).toHaveBeenCalledOnce();
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = readJson(dir, 'agents.json');
     const agent = agents.find((a) => a.agent_id === 'worker-01');
 
@@ -340,7 +340,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null });
     const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         start: mockStart,
@@ -349,7 +349,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         attach: vi.fn().mockResolvedValue(''),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-allocated',
         branch: 'task/run-allocated',
@@ -361,7 +361,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       getRunWorktree: vi.fn().mockReturnValue(null),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(mockStop).toHaveBeenCalledWith('pty:worker-01');
@@ -389,7 +389,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null });
     const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         ownsSession: vi.fn().mockReturnValue(false),
@@ -399,7 +399,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         attach: vi.fn().mockResolvedValue(''),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-allocated',
         branch: 'task/run-allocated',
@@ -411,13 +411,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       getRunWorktree: vi.fn().mockReturnValue(null),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(mockStop).toHaveBeenCalledWith('pty:worker-01');
     expect(mockStart).toHaveBeenCalledOnce();
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = readJson(dir, 'agents.json');
     const agent = agents.find((entry) => entry.agent_id === 'worker-01');
     expect(agent.session_handle).toBe('pty:worker-01-new');
@@ -452,7 +452,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         start: vi.fn(),
@@ -462,11 +462,11 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       }),
     }));
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(send).not.toHaveBeenCalled();
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-awaiting-input');
     expect(claim.state).toBe('in_progress');
     expect(claim.input_state).toBe('awaiting_input');
@@ -489,10 +489,10 @@ describe('agent ttl dead marking', () => {
       }],
     });
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = readJson(dir, 'agents.json');
     const worker = agents.find((a) => a.agent_id === 'worker-ttl');
     expect(worker.status).toBe('dead');
@@ -528,10 +528,10 @@ describe('agent ttl dead marking', () => {
       }],
     });
 
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = readJson(dir, 'agents.json');
     const worker = agents.find((a) => a.agent_id === 'worker-claimed');
     expect(worker.status).toBe('idle');
@@ -583,7 +583,7 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         stop,
         send,
@@ -592,7 +592,7 @@ describe('processTerminalRunEvents', () => {
         attach: vi.fn(),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree,
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -603,7 +603,7 @@ describe('processTerminalRunEvents', () => {
       }),
     }));
 
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'work_complete',
       run_id: 'run-finalize-success',
@@ -625,7 +625,7 @@ describe('processTerminalRunEvents', () => {
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_SUCCESS'));
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-success');
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-success');
     expect(claim.state).toBe('done');
     const task = readJson(dir, 'backlog.json').epics[0].tasks.find((entry) => entry.ref === 'orch/task-151');
@@ -675,7 +675,7 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         stop,
         send,
@@ -684,7 +684,7 @@ describe('processTerminalRunEvents', () => {
         attach: vi.fn(),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree,
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -695,7 +695,7 @@ describe('processTerminalRunEvents', () => {
       }),
     }));
 
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'work_complete',
       run_id: 'run-finalize-cleanup-pending',
@@ -705,7 +705,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'awaiting_finalize', retry_count: 0 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-cleanup-pending');
     expect(claim.state).toBe('done');
     const task = readJson(dir, 'backlog.json').epics[0].tasks.find((entry) => entry.ref === 'orch/task-151');
@@ -744,7 +744,7 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         send,
         stop: vi.fn().mockResolvedValue(undefined),
@@ -753,7 +753,7 @@ describe('processTerminalRunEvents', () => {
         attach: vi.fn(),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree: vi.fn().mockReturnValue(true),
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -764,7 +764,7 @@ describe('processTerminalRunEvents', () => {
       }),
     }));
 
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'work_complete',
       run_id: 'run-finalize-retry',
@@ -776,7 +776,7 @@ describe('processTerminalRunEvents', () => {
 
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_WAIT'));
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_REBASE'));
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-retry');
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(1);
@@ -815,7 +815,7 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         send: deliverySend,
         stop: vi.fn().mockResolvedValue(undefined),
@@ -824,7 +824,7 @@ describe('processTerminalRunEvents', () => {
         attach: vi.fn(),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree: vi.fn().mockReturnValue(true),
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -835,7 +835,7 @@ describe('processTerminalRunEvents', () => {
       }),
     }));
 
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'work_complete',
       run_id: 'run-finalize-undelivered',
@@ -845,7 +845,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'awaiting_finalize', retry_count: 0 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-undelivered');
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(0);
@@ -886,7 +886,7 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         send: deliverySend,
         stop: vi.fn().mockResolvedValue(undefined),
@@ -895,7 +895,7 @@ describe('processTerminalRunEvents', () => {
         attach: vi.fn(),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree: vi.fn().mockReturnValue(true),
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -906,7 +906,7 @@ describe('processTerminalRunEvents', () => {
       }),
     }));
 
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'ready_to_merge',
       run_id: 'run-finalize-undeliverable-blocked',
@@ -916,7 +916,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'ready_to_merge', retry_count: 0 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-undeliverable-blocked');
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_retry_count).toBe(0);
@@ -956,7 +956,7 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         send,
         stop,
@@ -965,7 +965,7 @@ describe('processTerminalRunEvents', () => {
         attach: vi.fn(),
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree,
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -976,7 +976,7 @@ describe('processTerminalRunEvents', () => {
       }),
     }));
 
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'ready_to_merge',
       run_id: 'run-finalize-blocked',
@@ -986,7 +986,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'ready_to_merge', retry_count: 2 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-blocked');
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_retry_count).toBe(2);
@@ -998,7 +998,7 @@ describe('processTerminalRunEvents', () => {
   });
 
   it('deposits INPUT_REQUEST notification for worker input requests', async () => {
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
       ts: '2026-03-11T05:10:00.000Z',
@@ -1021,7 +1021,7 @@ describe('processTerminalRunEvents', () => {
   });
 
   it('does not duplicate coordinator-originated INPUT_REQUEST notifications on event processing', async () => {
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     const nowIso = '2026-03-11T05:10:00.000Z';
     appendNotification(dir, {
       type: 'INPUT_REQUEST',
@@ -1060,7 +1060,7 @@ describe('processTerminalRunEvents', () => {
       }],
     });
     const stop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         stop,
         heartbeatProbe: vi.fn().mockResolvedValue(true),
@@ -1069,7 +1069,7 @@ describe('processTerminalRunEvents', () => {
         attach: vi.fn(),
       }),
     }));
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
       event: 'run_finished',
@@ -1087,7 +1087,7 @@ describe('processTerminalRunEvents', () => {
     expect(notifications[0]).not.toHaveProperty('failure_reason');
     expect(notifications[0]).not.toHaveProperty('exit_code');
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const agent = readJson(dir, 'agents.json').agents.find((entry) => entry.agent_id === 'orc-1');
     expect(stop).toHaveBeenCalledWith('pty:orc-1');
     expect(agent.status).toBe('idle');
@@ -1095,7 +1095,7 @@ describe('processTerminalRunEvents', () => {
   });
 
   it('deposits TASK_COMPLETE notification with success=false and failure_reason for run_failed', async () => {
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
       event: 'run_failed',
@@ -1135,7 +1135,7 @@ describe('processTerminalRunEvents', () => {
       }],
     });
     const stop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         stop,
         heartbeatProbe: vi.fn().mockResolvedValue(true),
@@ -1145,7 +1145,7 @@ describe('processTerminalRunEvents', () => {
       }),
     }));
 
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'run_finished',
       run_id: 'run-older',
@@ -1154,7 +1154,7 @@ describe('processTerminalRunEvents', () => {
       ts: '2026-03-08T08:00:00.000Z',
     }]);
 
-    const { readJson } = await import('./lib/stateReader.mjs');
+    const { readJson } = await import('./lib/stateReader.ts');
     const agent = readJson(dir, 'agents.json').agents.find((entry) => entry.agent_id === 'orc-1');
     expect(stop).not.toHaveBeenCalled();
     expect(agent.status).toBe('running');
@@ -1162,7 +1162,7 @@ describe('processTerminalRunEvents', () => {
   });
 
   it('deposits TASK_COMPLETE notification with exit_code for run_failed', async () => {
-    const { processTerminalRunEvents } = await import('./coordinator.mjs');
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
       event: 'run_failed',
@@ -1210,7 +1210,7 @@ describe('processTerminalRunEvents', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.mjs', () => ({
+    vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         start: vi.fn(),
@@ -1222,9 +1222,9 @@ describe('processTerminalRunEvents', () => {
 
     const originalArgv = process.argv;
     process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-nudge-interval-ms=1'];
-    const { tick } = await import('./coordinator.mjs');
+    const { tick } = await import('./coordinator.ts');
     await tick();
-    let { readJson } = await import('./lib/stateReader.mjs');
+    let { readJson } = await import('./lib/stateReader.ts');
     let claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-nudge');
     expect(send).toHaveBeenCalledWith('pty:worker-01', expect.stringContaining('FINALIZE_REBASE'));
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
@@ -1232,7 +1232,7 @@ describe('processTerminalRunEvents', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     await tick();
-    readJson = (await import('./lib/stateReader.mjs')).readJson;
+    readJson = (await import('./lib/stateReader.ts')).readJson;
     claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-nudge');
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_blocked_reason).toContain('finalization retry timed out waiting for worker progress');
@@ -1250,16 +1250,16 @@ describe('buildTaskEnvelope', () => {
       }],
     });
 
-    vi.doMock('./lib/taskSpecReader.mjs', () => ({
+    vi.doMock('./lib/taskSpecReader.ts', () => ({
       readTaskSpecSections: vi.fn().mockReturnValue({
         current_state: 'Current state text.',
         desired_state: 'Desired state text.',
-        start_here: '- coordinator.mjs',
+        start_here: '- coordinator.ts',
         verification: '```bash\nnpx vitest\n```',
         source_path: 'docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md',
       }),
     }));
-    vi.doMock('./lib/runWorktree.mjs', () => ({
+    vi.doMock('./lib/runWorktree.ts', () => ({
       cleanupRunWorktree: vi.fn().mockReturnValue(true),
       ensureRunWorktree: vi.fn(),
       deleteRunWorktree: vi.fn().mockReturnValue(true),
@@ -1269,7 +1269,7 @@ describe('buildTaskEnvelope', () => {
       }),
     }));
 
-    const { buildTaskEnvelope } = await import('./coordinator.mjs');
+    const { buildTaskEnvelope } = await import('./coordinator.ts');
     const rendered = buildTaskEnvelope('proj/fix-bug', 'run-envelope-1', 'orc-1');
 
     expect(rendered).toContain('current_state:');
@@ -1277,7 +1277,7 @@ describe('buildTaskEnvelope', () => {
     expect(rendered).toContain('desired_state:');
     expect(rendered).toContain('Desired state text.');
     expect(rendered).toContain('start_here:');
-    expect(rendered).toContain('- coordinator.mjs');
+    expect(rendered).toContain('- coordinator.ts');
     expect(rendered).toContain('targeted_verification:');
     expect(rendered).toContain('task_spec_path: docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-envelope-1');
@@ -1298,7 +1298,7 @@ describe('doShutdown', () => {
     const onSpy = vi.spyOn(process, 'on');
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined);
 
-    const coordinator = await import('./coordinator.mjs');
+    const coordinator = await import('./coordinator.ts');
     await coordinator.main();
     await coordinator.doShutdown();
 

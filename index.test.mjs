@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import * as orchestratorApi from './index.mjs';
+import * as orchestratorApi from './index.ts';
 
 describe('public API contract (index.mjs)', () => {
   it('exports the stable top-level API surface', () => {
