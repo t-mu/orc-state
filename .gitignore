@@ -1,7 +1,25 @@
 
 # orc-state runtime data
 .orc-state/
+.worktrees
 
 # provider tool directories — installed output, not source
 .claude/
 .codex/
+
+# dependencies and build output
+node_modules/
+dist/
+build/
+
+# logs
+*.log
+npm-debug.log*
+
+# environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
