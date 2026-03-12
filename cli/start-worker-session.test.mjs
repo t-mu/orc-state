@@ -27,10 +27,10 @@ function readAgents() {
   return JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
 }
 
-describe('cli/start-worker-session.mjs', () => {
+describe('cli/start-worker-session.ts', () => {
   it('fails when no agent id is provided and stdin is not a TTY', () => {
     // spawnSync has no TTY → promptAgentId returns null → exit 1 with usage message
-    const result = spawnSync('node', ['cli/start-worker-session.mjs'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-worker-session.ts'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -40,7 +40,7 @@ describe('cli/start-worker-session.mjs', () => {
   });
 
   it('fails when missing provider for unregistered worker', () => {
-    const result = spawnSync('node', ['cli/start-worker-session.mjs', 'worker-01'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-worker-session.ts', 'worker-01'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -51,10 +51,10 @@ describe('cli/start-worker-session.mjs', () => {
 
   it('rejects role=master and directs the operator to orc-start-session', async () => {
     const heartbeatProbe = vi.fn().mockResolvedValue(false);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ heartbeatProbe, stop: vi.fn() }),
     }));
-    vi.doMock('../lib/binaryCheck.mjs', () => ({
+    vi.doMock('../lib/binaryCheck.ts', () => ({
       checkAndInstallBinary: vi.fn().mockResolvedValue(true),
     }));
 
@@ -62,7 +62,7 @@ describe('cli/start-worker-session.mjs', () => {
     const oldStateDir = process.env.ORCH_STATE_DIR;
     process.argv = [
       'node',
-      'cli/start-worker-session.mjs',
+      'cli/start-worker-session.ts',
       'worker-01',
       '--provider=claude',
       '--role=master',
@@ -73,7 +73,7 @@ describe('cli/start-worker-session.mjs', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     setStateDirEnv(dir);
     try {
-      await expect(import('./start-worker-session.mjs')).rejects.toThrow('__exit__');
+      await expect(import('./start-worker-session.ts')).rejects.toThrow('__exit__');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -85,7 +85,7 @@ describe('cli/start-worker-session.mjs', () => {
   });
 
   it('rejects agent id master and directs the operator to orc-start-session', () => {
-    const result = spawnSync('node', ['cli/start-worker-session.mjs', 'master', '--provider=claude'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-worker-session.ts', 'master', '--provider=claude'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -111,19 +111,19 @@ describe('cli/start-worker-session.mjs', () => {
     const heartbeatProbe = vi.fn().mockResolvedValue(true);
     const stop = vi.fn().mockResolvedValue(undefined);
     const start = vi.fn().mockResolvedValue({ session_handle: 'new', provider_ref: {} });
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ heartbeatProbe, stop, start }),
     }));
-    vi.doMock('../lib/binaryCheck.mjs', () => ({
+    vi.doMock('../lib/binaryCheck.ts', () => ({
       checkAndInstallBinary: vi.fn().mockResolvedValue(true),
     }));
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/start-worker-session.mjs', 'bob'];
+    process.argv = ['node', 'cli/start-worker-session.ts', 'bob'];
     setStateDirEnv(dir);
     try {
-      await import('./start-worker-session.mjs');
+      await import('./start-worker-session.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -136,20 +136,20 @@ describe('cli/start-worker-session.mjs', () => {
   });
 
   it('prints debug-oriented guidance when provisioning a session', async () => {
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ heartbeatProbe: vi.fn().mockResolvedValue(false), stop: vi.fn() }),
     }));
-    vi.doMock('../lib/binaryCheck.mjs', () => ({
+    vi.doMock('../lib/binaryCheck.ts', () => ({
       checkAndInstallBinary: vi.fn().mockResolvedValue(true),
     }));
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/start-worker-session.mjs', 'worker-01', '--provider=claude'];
+    process.argv = ['node', 'cli/start-worker-session.ts', 'worker-01', '--provider=claude'];
     setStateDirEnv(dir);
     try {
-      await import('./start-worker-session.mjs');
+      await import('./start-worker-session.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -177,19 +177,19 @@ describe('cli/start-worker-session.mjs', () => {
     const heartbeatProbe = vi.fn().mockResolvedValue(true);
     const stop = vi.fn().mockResolvedValue(undefined);
     const start = vi.fn();
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ heartbeatProbe, stop, start }),
     }));
-    vi.doMock('../lib/binaryCheck.mjs', () => ({
+    vi.doMock('../lib/binaryCheck.ts', () => ({
       checkAndInstallBinary: vi.fn().mockResolvedValue(true),
     }));
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/start-worker-session.mjs', 'bob', '--force-rebind'];
+    process.argv = ['node', 'cli/start-worker-session.ts', 'bob', '--force-rebind'];
     setStateDirEnv(dir);
     try {
-      await import('./start-worker-session.mjs');
+      await import('./start-worker-session.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -203,20 +203,20 @@ describe('cli/start-worker-session.mjs', () => {
 
   describe('binary check', () => {
     it('exits 1 when binary unavailable', async () => {
-      vi.doMock('../adapters/index.mjs', () => ({
+      vi.doMock('../adapters/index.ts', () => ({
         createAdapter: () => ({ heartbeatProbe: vi.fn().mockResolvedValue(false), stop: vi.fn() }),
       }));
-      vi.doMock('../lib/binaryCheck.mjs', () => ({
+      vi.doMock('../lib/binaryCheck.ts', () => ({
         checkAndInstallBinary: vi.fn().mockResolvedValue(false),
       }));
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {});
 
       const oldArgv = process.argv;
       const oldStateDir = process.env.ORCH_STATE_DIR;
-      process.argv = ['node', 'cli/start-worker-session.mjs', 'alice', '--provider=claude'];
+      process.argv = ['node', 'cli/start-worker-session.ts', 'alice', '--provider=claude'];
       setStateDirEnv(dir);
       try {
-        await import('./start-worker-session.mjs');
+        await import('./start-worker-session.ts');
       } finally {
         process.argv = oldArgv;
         setStateDirEnv(oldStateDir);
@@ -227,19 +227,19 @@ describe('cli/start-worker-session.mjs', () => {
 
     it('checks binary before registering a missing worker', async () => {
       const checkAndInstallBinary = vi.fn().mockResolvedValue(true);
-      vi.doMock('../adapters/index.mjs', () => ({
+      vi.doMock('../adapters/index.ts', () => ({
         createAdapter: () => ({ heartbeatProbe: vi.fn().mockResolvedValue(false), stop: vi.fn() }),
       }));
-      vi.doMock('../lib/binaryCheck.mjs', () => ({
+      vi.doMock('../lib/binaryCheck.ts', () => ({
         checkAndInstallBinary,
       }));
 
       const oldArgv = process.argv;
       const oldStateDir = process.env.ORCH_STATE_DIR;
-      process.argv = ['node', 'cli/start-worker-session.mjs', 'alice', '--provider=claude'];
+      process.argv = ['node', 'cli/start-worker-session.ts', 'alice', '--provider=claude'];
       setStateDirEnv(dir);
       try {
-        await import('./start-worker-session.mjs');
+        await import('./start-worker-session.ts');
       } finally {
         process.argv = oldArgv;
         setStateDirEnv(oldStateDir);

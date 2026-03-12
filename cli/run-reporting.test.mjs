@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function runCli(script, args = []) {
-  return spawnSync('node', [`cli/${script}`, ...args], {
+  return spawnSync('node', ['--experimental-strip-types', `cli/${script}`, ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
@@ -126,7 +126,7 @@ describe('orc-run-start', () => {
   it('transitions claim from claimed to in_progress and emits run_started event', () => {
     seedClaimedRun({ runId: 'run-abc-001', agentId: 'worker-01' });
 
-    const result = runCli('run-start.mjs', ['--run-id=run-abc-001', '--agent-id=worker-01']);
+    const result = runCli('run-start.ts', ['--run-id=run-abc-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_started');
@@ -144,14 +144,14 @@ describe('orc-run-start', () => {
   });
 
   it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-start.mjs', []);
+    const result = runCli('run-start.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 
   it('exits with code 1 when run_id does not exist', () => {
     seedClaimedRun();
-    const result = runCli('run-start.mjs', ['--run-id=nonexistent', '--agent-id=worker-01']);
+    const result = runCli('run-start.ts', ['--run-id=nonexistent', '--agent-id=worker-01']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Error');
   });
@@ -161,7 +161,7 @@ describe('orc-run-heartbeat', () => {
   it('renews the lease and emits a heartbeat event', () => {
     seedInProgressRun({ runId: 'run-hb-001', agentId: 'worker-01' });
 
-    const result = runCli('run-heartbeat.mjs', ['--run-id=run-hb-001', '--agent-id=worker-01']);
+    const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('heartbeat');
@@ -178,7 +178,7 @@ describe('orc-run-heartbeat', () => {
   });
 
   it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-heartbeat.mjs', ['--run-id=run-hb-001']);
+    const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
@@ -188,7 +188,7 @@ describe('orc-run-work-complete', () => {
   it('emits a non-terminal work_complete event and keeps the claim in_progress', () => {
     seedInProgressRun({ runId: 'run-work-001', agentId: 'worker-01' });
 
-    const result = runCli('run-work-complete.mjs', ['--run-id=run-work-001', '--agent-id=worker-01']);
+    const result = runCli('run-work-complete.ts', ['--run-id=run-work-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete');
@@ -209,22 +209,22 @@ describe('orc-run-work-complete', () => {
   });
 
   it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-work-complete.mjs', []);
+    const result = runCli('run-work-complete.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 
   it('accepts finalize_rebase_started and ready_to_merge through progress reporting', () => {
     seedInProgressRun({ runId: 'run-work-002', agentId: 'worker-01' });
-    runCli('progress.mjs', ['--event=work_complete', '--run-id=run-work-002', '--agent-id=worker-01']);
+    runCli('progress.ts', ['--event=work_complete', '--run-id=run-work-002', '--agent-id=worker-01']);
     const claims = readClaims();
     claims.claims[0].finalization_state = 'finalize_rebase_requested';
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
 
-    const started = runCli('progress.mjs', ['--event=finalize_rebase_started', '--run-id=run-work-002', '--agent-id=worker-01']);
+    const started = runCli('progress.ts', ['--event=finalize_rebase_started', '--run-id=run-work-002', '--agent-id=worker-01']);
     expect(started.status).toBe(0);
 
-    const ready = runCli('progress.mjs', ['--event=ready_to_merge', '--run-id=run-work-002', '--agent-id=worker-01']);
+    const ready = runCli('progress.ts', ['--event=ready_to_merge', '--run-id=run-work-002', '--agent-id=worker-01']);
     expect(ready.status).toBe(0);
 
     const claim = readClaims().claims.find((entry) => entry.run_id === 'run-work-002');
@@ -243,7 +243,7 @@ describe('orc-run-work-complete', () => {
     claims.claims[0].finalization_retry_count = 2;
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
 
-    const result = runCli('run-work-complete.mjs', ['--run-id=run-work-003', '--agent-id=worker-01']);
+    const result = runCli('run-work-complete.ts', ['--run-id=run-work-003', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('ready_to_merge');
@@ -265,7 +265,7 @@ describe('orc-run-finish', () => {
   it('transitions claim to done and marks task done', () => {
     seedInProgressRun({ runId: 'run-fin-001', agentId: 'worker-01' });
 
-    const result = runCli('run-finish.mjs', ['--run-id=run-fin-001', '--agent-id=worker-01']);
+    const result = runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_finished');
@@ -283,7 +283,7 @@ describe('orc-run-finish', () => {
   });
 
   it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-finish.mjs', []);
+    const result = runCli('run-finish.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
@@ -293,7 +293,7 @@ describe('orc-run-fail', () => {
   it('transitions claim to failed and requeues the task', () => {
     seedInProgressRun({ runId: 'run-fail-001', agentId: 'worker-01' });
 
-    const result = runCli('run-fail.mjs', [
+    const result = runCli('run-fail.ts', [
       '--run-id=run-fail-001',
       '--agent-id=worker-01',
       '--reason=build error',
@@ -321,7 +321,7 @@ describe('orc-run-fail', () => {
   it('accepts --policy=block and blocks the task instead of requeueing', () => {
     seedInProgressRun({ runId: 'run-fail-002', agentId: 'worker-01' });
 
-    const result = runCli('run-fail.mjs', [
+    const result = runCli('run-fail.ts', [
       '--run-id=run-fail-002',
       '--agent-id=worker-01',
       '--reason=unrecoverable error',
@@ -336,13 +336,13 @@ describe('orc-run-fail', () => {
   });
 
   it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-fail.mjs', []);
+    const result = runCli('run-fail.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 
   it('exits with code 1 when --policy is invalid', () => {
-    const result = runCli('run-fail.mjs', [
+    const result = runCli('run-fail.ts', [
       '--run-id=run-fail-003',
       '--agent-id=worker-01',
       '--policy=blok',
@@ -355,7 +355,7 @@ describe('orc-run-fail', () => {
 
   it('accepts --policy=requeue without validation error', () => {
     seedInProgressRun({ runId: 'run-fail-004', agentId: 'worker-01' });
-    const result = runCli('run-fail.mjs', [
+    const result = runCli('run-fail.ts', [
       '--run-id=run-fail-004',
       '--agent-id=worker-01',
       '--policy=requeue',
@@ -369,7 +369,8 @@ describe('orc-run-input-request', () => {
     seedInputRequestState();
 
     const child = spawn('node', [
-      'cli/run-input-request.mjs',
+      '--experimental-strip-types',
+      'cli/run-input-request.ts',
       '--run-id=run-input-001',
       '--agent-id=worker-01',
       '--question=Continue?',
@@ -422,7 +423,7 @@ describe('orc-run-input-request', () => {
 
   it('exits 1 with a descriptive timeout message when no response arrives', () => {
     seedInputRequestState();
-    const result = runCli('run-input-request.mjs', [
+    const result = runCli('run-input-request.ts', [
       '--run-id=run-input-001',
       '--agent-id=worker-01',
       '--question=Continue?',
@@ -435,14 +436,14 @@ describe('orc-run-input-request', () => {
   });
 
   it('exits 1 with usage when required args are missing', () => {
-    const result = runCli('run-input-request.mjs', ['--run-id=run-input-003']);
+    const result = runCli('run-input-request.ts', ['--run-id=run-input-003']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc-run-input-request');
   });
 
   it('writes input_response through the dedicated response CLI', () => {
     seedInputRequestState({ runId: 'run-input-001' });
-    runCli('run-input-request.mjs', [
+    runCli('run-input-request.ts', [
       '--run-id=run-input-001',
       '--agent-id=worker-01',
       '--question=Continue?',
@@ -450,7 +451,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=5',
     ]);
 
-    const result = runCli('run-input-respond.mjs', [
+    const result = runCli('run-input-respond.ts', [
       '--run-id=run-input-001',
       '--agent-id=worker-01',
       '--response=yes',

@@ -16,14 +16,14 @@ afterEach(() => {
 });
 
 function run(args = []) {
-  return spawnSync('node', ['cli/init.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/init.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state') },
     encoding: 'utf8',
   });
 }
 
-describe('cli/init.mjs', () => {
+describe('cli/init.ts', () => {
   it('creates all four state files', () => {
     const result = run();
     expect(result.status).toBe(0);

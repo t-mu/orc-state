@@ -16,7 +16,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/progress.mjs', () => {
+describe('cli/progress.ts', () => {
   it('rejects unknown events', () => {
     const result = runProgress(['--event=unknown', '--run-id=run-1', '--agent-id=bob']);
     expect(result.status).toBe(1);
@@ -74,7 +74,7 @@ describe('cli/progress.mjs', () => {
 });
 
 function runProgress(args) {
-  return spawnSync('node', ['cli/progress.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/progress.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

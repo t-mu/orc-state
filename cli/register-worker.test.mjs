@@ -16,7 +16,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/register-worker.mjs', () => {
+describe('cli/register-worker.ts', () => {
   it('registers worker with explicit role and capabilities', () => {
     const result = runCli([
       'worker-01',
@@ -128,7 +128,7 @@ describe('cli/register-worker.mjs', () => {
 });
 
 function runCli(args) {
-  return spawnSync('node', ['cli/register-worker.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/register-worker.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
