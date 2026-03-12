@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/backlog.schema.json",
+  "title": "Backlog",
+  "description": "Task definitions, dependencies, and lifecycle status for all work items.",
+  "type": "object",
+  "required": ["version", "epics"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1"
+    },
+    "next_task_seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional global counter for the next docs/backlog task number."
+    },
+    "epics": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Epic" }
+    }
+  },
+  "definitions": {
+    "TaskStatus": {
+      "type": "string",
+      "enum": ["todo", "claimed", "in_progress", "blocked", "done", "released"],
+      "description": "Lifecycle state of a task. 'released' is final and immutable."
+    },
+    "TaskRef": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+/[a-z0-9-]+$",
+      "description": "Canonical task key in 'epic-slug/task-slug' format."
+    },
+    "Task": {
+      "type": "object",
+      "required": ["ref", "title", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "$ref": "#/definitions/TaskRef" },
+        "title": { "type": "string", "minLength": 1 },
+        "status": { "$ref": "#/definitions/TaskStatus" },
+        "description": { "type": "string" },
+        "task_type": {
+          "type": "string",
+          "enum": ["implementation", "refactor"],
+          "description": "Task category used for worker/reviewer routing."
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "critical"],
+          "description": "Optional dispatch priority. Defaults to normal when omitted."
+        },
+        "planning_state": {
+          "type": "string",
+          "enum": ["ready_for_dispatch", "archived"],
+          "description": "Optional dispatch lifecycle state."
+        },
+        "delegated_by": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Agent id (or human) that delegated this task."
+        },
+        "parent_task_ref": {
+          "$ref": "#/definitions/TaskRef",
+          "description": "Optional parent task for follow-up items (for example, review/refactor chains)."
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "description": "Capability tags required on worker agent for this task."
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TaskRef" },
+          "description": "task_refs that must reach 'done' or 'released' before this task can be claimed."
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Checklist items used in the task envelope sent to agents."
+        },
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of times this task has been dispatched and subsequently failed or expired. Auto-blocked after reaching MAX_ATTEMPTS."
+        },
+        "blocked_reason": {
+          "type": "string",
+          "description": "Human-readable reason when status is 'blocked'."
+        },
+        "owner": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Agent assigned to execute this task."
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Epic": {
+      "type": "object",
+      "required": ["ref", "title", "tasks"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Epic slug — first component of all child task_refs."
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "tasks": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Task" }
+        },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

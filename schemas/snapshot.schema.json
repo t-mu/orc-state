@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/snapshot.schema.json",
+  "title": "Snapshot",
+  "description": "Materialized current state rebuilt from events.jsonl. Used for fast startup reads. Never treated as authoritative — always rebuildable from the event log.",
+  "type": "object",
+  "required": ["version", "rebuilt_at", "last_event_seq", "agents", "claims", "task_statuses"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1"
+    },
+    "rebuilt_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "When this snapshot was last rebuilt. Null on seed/empty state."
+    },
+    "last_event_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The seq of the last event incorporated into this snapshot. 0 means no events processed."
+    },
+    "agents": {
+      "type": "object",
+      "description": "Keyed by agent_id. Materialised view of agents.json + events.",
+      "additionalProperties": {
+        "$ref": "#/definitions/AgentSummary"
+      }
+    },
+    "claims": {
+      "type": "object",
+      "description": "Keyed by run_id. Active claims only (terminal claims are removed on rebuild).",
+      "additionalProperties": {
+        "$ref": "#/definitions/ClaimSummary"
+      }
+    },
+    "task_statuses": {
+      "type": "object",
+      "description": "Keyed by task_ref. Current status of every known task.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["todo", "claimed", "in_progress", "blocked", "done", "released"]
+      }
+    }
+  },
+  "definitions": {
+    "AgentSummary": {
+      "type": "object",
+      "required": ["agent_id", "provider", "status"],
+      "additionalProperties": true,
+      "properties": {
+        "agent_id": { "type": "string" },
+        "provider": { "type": "string" },
+        "status": { "type": "string", "enum": ["idle", "running", "offline", "dead"] },
+        "last_heartbeat_at": { "type": ["string", "null"] }
+      }
+    },
+    "ClaimSummary": {
+      "type": "object",
+      "required": ["run_id", "task_ref", "agent_id", "state"],
+      "additionalProperties": true,
+      "properties": {
+        "run_id": { "type": "string" },
+        "task_ref": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "state": { "type": "string" },
+        "lease_expires_at": { "type": "string" }
+      }
+    }
+  }
+}

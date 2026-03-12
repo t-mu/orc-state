@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/agents.schema.json",
+  "title": "Agent Registry",
+  "description": "Registry of all known agents: logical agent_id, provider binding, runtime state, attach handles.",
+  "type": "object",
+  "required": ["version", "agents"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1"
+    },
+    "agents": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Agent" }
+    }
+  },
+  "definitions": {
+    "AgentId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Stable logical worker ID (kebab-case), e.g. 'agent-01' or 'bob'."
+    },
+    "AgentStatus": {
+      "type": "string",
+      "enum": ["idle", "running", "offline", "dead"],
+      "description": "Runtime status. 'offline' means not contactable; may still hold an active claim with a live lease."
+    },
+    "Provider": {
+      "type": "string",
+      "enum": ["codex", "claude", "gemini", "human"],
+      "description": "Provider driving this agent. 'human' is valid for manually-operated slots."
+    },
+    "Agent": {
+      "type": "object",
+      "required": ["agent_id", "provider", "status", "registered_at"],
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": { "$ref": "#/definitions/AgentId" },
+        "provider": { "$ref": "#/definitions/Provider" },
+        "model": {
+          "type": ["string", "null"],
+          "description": "Model identifier within the provider (e.g. 'claude-sonnet-4-6', 'o4-mini'). Optional for human slots."
+        },
+        "status": { "$ref": "#/definitions/AgentStatus" },
+        "dispatch_mode": {
+          "type": ["string", "null"],
+          "enum": ["autonomous", "supervised", "human-commanded", null],
+          "description": "How tasks are assigned to this agent. Overrides global dispatch_mode if set."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["worker", "reviewer", "master"],
+          "description": "Primary orchestration role. Workers and reviewers execute tasks; master creates and delegates tasks only."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "description": "Optional capability tags used for routing and delegation."
+        },
+        "session_handle": {
+          "type": ["string", "null"],
+          "description": "Local attach target (adapter-specific handle, e.g. pty:agent-id). Null when offline."
+        },
+        "provider_ref": {
+          "type": ["object", "null"],
+          "description": "Adapter-internal reference (e.g. Codex session UUID, Claude session ID). Opaque to core.",
+          "additionalProperties": true
+        },
+        "registered_at": { "type": "string", "format": "date-time" },
+        "last_heartbeat_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp of last heartbeat received. Null if agent has never sent one."
+        },
+        "last_status_change_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

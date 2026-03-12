@@ -1,0 +1,284 @@
+export const TOOLS = [
+  {
+    name: 'list_tasks',
+    description: 'List backlog tasks (summary view: ref, title, status, epic_ref, task_type, priority, owner, depends_on). By default excludes done/released tasks — pass status="done" or status="released" to retrieve them. Use get_task(ref) for full detail including description and acceptance_criteria.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released'],
+          description: 'Filter by task status',
+        },
+        epic: {
+          type: 'string',
+          description: 'Filter by epic ref (e.g. "project")',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_agents',
+    description: 'List registered agents. Optionally filter by role. Dead agents are omitted unless include_dead=true.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        role: {
+          type: 'string',
+          enum: ['worker', 'reviewer', 'master'],
+          description: 'Filter by agent role',
+        },
+        include_dead: {
+          type: 'boolean',
+          description: 'Include agents with status=dead (default: false)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_active_runs',
+    description: 'List currently active task claims (claimed and in_progress).',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_stalled_runs',
+    description: 'List active claims with no recent heartbeat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stale_after_ms: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Inactivity threshold in ms. Default: 600000 (10 min)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_task',
+    description: 'Get a single task by ref. Returns { error: "not_found" } if absent.',
+    inputSchema: {
+      type: 'object',
+      required: ['task_ref'],
+      properties: {
+        task_ref: {
+          type: 'string',
+          description: 'Full task ref, e.g. "project/feat-login"',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_recent_events',
+    description: 'Return the most recent events from events.jsonl.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 200,
+          description: 'Max events to return (default: 50, max: 200)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_status',
+    description: 'Return compact aggregate status (agents, task counts, active tasks, pending notifications, stalled runs, next_task_seq).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_done_count: {
+          type: 'boolean',
+          description: 'Include done/released counts in task_counts (default: false)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_agent_workview',
+    description: 'Return a compact actionable work summary for one agent.',
+    inputSchema: {
+      type: 'object',
+      required: ['agent_id'],
+      properties: {
+        agent_id: {
+          type: 'string',
+          description: 'Agent to inspect',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'create_task',
+    description: 'Create a new task in the backlog. Returns the created task object.',
+    inputSchema: {
+      type: 'object',
+      required: ['title'],
+      properties: {
+        epic: {
+          type: 'string',
+          description: 'Epic ref. Defaults to "general" if omitted; the "general" epic is created automatically.',
+        },
+        title: { type: 'string', description: 'Task title (plain text)' },
+        ref: { type: 'string', description: 'Explicit slug; auto-generated from title if omitted' },
+        task_type: {
+          type: 'string',
+          enum: ['implementation', 'refactor'],
+          description: 'Default: implementation',
+        },
+        priority: {
+          type: 'string',
+          enum: ['low', 'normal', 'high', 'critical'],
+          description: 'Default: normal',
+        },
+        description: { type: 'string', description: 'Detailed description; may be multi-line' },
+        acceptance_criteria: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Native JSON array of criterion strings — NOT a JSON-encoded string. Example: ["criterion one", "criterion two"]',
+        },
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Native JSON array of task ref strings this task depends on — NOT a JSON-encoded string.',
+        },
+        required_capabilities: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Native JSON array of capability strings — NOT a JSON-encoded string.',
+        },
+        owner: { type: 'string', description: 'Pre-assign to agent_id' },
+        actor_id: { type: 'string', description: 'Defaults to master agent_id' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'update_task',
+    description: 'Update mutable fields on an existing task. Only provided fields are changed. Does not modify status or owner.',
+    inputSchema: {
+      type: 'object',
+      required: ['task_ref'],
+      properties: {
+        task_ref: {
+          type: 'string',
+          description: 'Full task ref, e.g. "orch/task-101-foo"',
+        },
+        title: { type: 'string', description: 'Replacement title' },
+        description: { type: 'string', description: 'Replacement description' },
+        priority: {
+          type: 'string',
+          enum: ['low', 'normal', 'high', 'critical'],
+          description: 'Replacement priority',
+        },
+        acceptance_criteria: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Native JSON array of criterion strings - NOT a JSON-encoded string. Example: ["criterion one", "criterion two"]',
+        },
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Native JSON array of task ref strings - NOT a JSON-encoded string.',
+        },
+        actor_id: { type: 'string', description: 'Defaults to master agent_id' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'delegate_task',
+    description: 'Assign a task to a worker. Auto-selects if target_agent_id omitted.',
+    inputSchema: {
+      type: 'object',
+      required: ['task_ref'],
+      properties: {
+        task_ref: {
+          type: 'string',
+          description: 'Full task ref, e.g. "project/feat-login"',
+        },
+        target_agent_id: {
+          type: 'string',
+          description: 'Agent to assign to; auto-selects if omitted',
+        },
+        task_type: {
+          type: 'string',
+          enum: ['implementation', 'refactor'],
+          description: 'Default: implementation',
+        },
+        note: {
+          type: 'string',
+          description: 'Optional note for delegation context',
+        },
+        actor_id: {
+          type: 'string',
+          description: 'Defaults to master agent_id',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'cancel_task',
+    description: 'Cancel a task regardless of current non-terminal state. Blocks the task; active runs are cancelled and removed.',
+    inputSchema: {
+      type: 'object',
+      required: ['task_ref'],
+      properties: {
+        task_ref: {
+          type: 'string',
+          description: 'Full task ref, e.g. "project/feat-login"',
+        },
+        reason: {
+          type: 'string',
+          description: 'Optional cancellation reason',
+        },
+        actor_id: {
+          type: 'string',
+          description: 'Defaults to master agent_id',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'respond_input',
+    description: 'Respond to a worker input request for a specific run/agent pair.',
+    inputSchema: {
+      type: 'object',
+      required: ['run_id', 'agent_id', 'response'],
+      properties: {
+        run_id: {
+          type: 'string',
+          description: 'Run waiting for input',
+        },
+        agent_id: {
+          type: 'string',
+          description: 'Worker agent waiting for input',
+        },
+        response: {
+          type: 'string',
+          description: 'Response text to send back to the waiting worker',
+        },
+        actor_id: {
+          type: 'string',
+          description: 'Defaults to the current master agent id',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+];

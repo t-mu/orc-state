@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/claims.schema.json",
+  "title": "Claims",
+  "description": "Active task leases. Each claim ties one run_id to one task_ref + agent_id for a bounded time window.",
+  "type": "object",
+  "required": ["version", "claims"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1"
+    },
+    "claims": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/Claim" }
+    }
+  },
+  "definitions": {
+    "RunId": {
+      "type": "string",
+      "pattern": "^run-[a-z0-9-]+$",
+      "description": "Unique ID for one execution attempt of a claimed task. New run_id on every claim, including retries."
+    },
+    "ClaimState": {
+      "type": "string",
+      "enum": ["claimed", "in_progress", "done", "failed"],
+      "description": "State of this specific run. 'done'/'failed' are terminal — claim is removed on next compaction."
+    },
+    "FinalizationState": {
+      "type": "string",
+      "enum": ["awaiting_finalize", "finalize_rebase_requested", "finalize_rebase_in_progress", "ready_to_merge", "blocked_finalize"],
+      "description": "Coordinator-owned finalization phase after implementation work is complete."
+    },
+    "Claim": {
+      "type": "object",
+      "required": ["run_id", "task_ref", "agent_id", "state", "claimed_at", "lease_expires_at"],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": { "$ref": "#/definitions/RunId" },
+        "task_ref": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+/[a-z0-9-]+$",
+          "description": "Canonical task key matching backlog.json."
+        },
+        "agent_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "state": { "$ref": "#/definitions/ClaimState" },
+        "claimed_at": { "type": "string", "format": "date-time" },
+        "lease_expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Absolute expiry timestamp. Coordinator auto-requeues or marks blocked after this passes."
+        },
+        "last_heartbeat_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp of last heartbeat for this run. Null if no heartbeat received yet."
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Set when state transitions to 'in_progress'."
+        },
+        "finished_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Set when state reaches 'done' or 'failed'."
+        },
+        "failure_reason": {
+          "type": "string",
+          "description": "Human-readable failure summary when state is 'failed'."
+        },
+        "finalization_state": {
+          "type": ["string", "null"],
+          "enum": ["awaiting_finalize", "finalize_rebase_requested", "finalize_rebase_in_progress", "ready_to_merge", "blocked_finalize", null],
+          "description": "Non-terminal finalization phase once implementation work is complete."
+        },
+        "finalization_retry_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of finalize rebase attempts requested for this run."
+        },
+        "finalization_blocked_reason": {
+          "type": ["string", "null"],
+          "description": "Coordinator-provided reason when finalization is blocked after retries."
+        },
+        "input_state": {
+          "type": ["string", "null"],
+          "enum": ["awaiting_input", null],
+          "description": "Non-terminal worker wait state while the coordinator/master must provide additional input."
+        },
+        "input_requested_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp of the latest unresolved input request for this run."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1175 @@
+#!/usr/bin/env node
+/**
+ * coordinator.mjs
+ * Usage: node coordinator.mjs [--interval-ms=30000] [--mode=autonomous]
+ *
+ * Main coordinator loop. On each tick:
+ *   1. expireStaleLeases — requeue/block expired runs
+ *   2. (autonomous mode) for each idle agent, claim + send the next eligible task
+ *
+ * Control:
+ *   SIGINT / SIGTERM — graceful shutdown after current tick
+ */
+import { spawnSync } from 'node:child_process';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState } from './lib/claimManager.mjs';
+import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.mjs';
+import { createAdapter } from './adapters/index.mjs';
+import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.mjs';
+import { appendSequencedEvent, readEvents, nextSeq } from './lib/eventLog.mjs';
+import { latestRunActivityMap, runIdleMs } from './lib/runActivity.mjs';
+import { renderTemplate } from './lib/templateRender.mjs';
+import { selectDispatchableAgents, buildDispatchPlan } from './lib/dispatchPlanner.mjs';
+import { nextEligibleTask } from './lib/taskScheduler.mjs';
+import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR } from './lib/paths.mjs';
+import { flag, intFlag } from './lib/args.mjs';
+import { reconcileState } from './lib/reconcile.mjs';
+import { appendNotification } from './lib/masterNotifyQueue.mjs';
+import { loadWorkerPoolConfig } from './lib/providers.mjs';
+import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.mjs';
+import { resolveRepoRoot } from './lib/repoRoot.mjs';
+import { readTaskSpecSections } from './lib/taskSpecReader.mjs';
+import { syncBacklogFromSpecs } from './lib/backlogSync.mjs';
+import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.mjs';
+import { fileURLToPath } from 'node:url';
+import { findTask, readJson } from './lib/stateReader.mjs';
+import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import { join } from 'node:path';
+
+// ── Adapter singleton cache ────────────────────────────────────────────────
+// One adapter instance per provider — preserves in-memory session state across
+// multiple coordinator functions (ensureSessionReady, nudge, dispatch).
+
+const adapterInstances = new Map();
+function getAdapter(provider) {
+  if (!adapterInstances.has(provider)) {
+    adapterInstances.set(provider, createAdapter(provider));
+  }
+  return adapterInstances.get(provider);
+}
+
+// ── CLI args ───────────────────────────────────────────────────────────────
+
+const INTERVAL_MS = intFlag('interval-ms', 30000);
+const MODE        = flag('mode') ?? 'autonomous';
+const RUN_START_TIMEOUT_MS = intFlag('run-start-timeout-ms', 300000);
+const RUN_INACTIVE_TIMEOUT_MS = intFlag('run-inactive-timeout-ms', 1800000);
+const RUN_START_NUDGE_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.1);
+const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
+const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', 600000);           // 10 min default
+const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', 300000); // 5 min default
+const CONCURRENCY_LIMIT = 8;
+const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
+const AGENT_HEARTBEAT_REFRESH_MS = 60_000;
+const REPO_ROOT = resolveRepoRoot();
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+let running = true;
+let tickCount = 0;
+let ticking = false;
+let timerHandle = null;
+let shutdownStarted = false;
+let coordinatorLockReleased = false;
+let lastProcessedSeq = (() => {
+  try {
+    return nextSeq(EVENTS_FILE) - 1;
+  } catch {
+    return 0;
+  }
+})();
+let latestActivityByRun = new Map();
+const runStartNudgeAtMs = new Map();
+const runInactiveNudgeAtMs = new Map();
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function log(msg) { console.log(`[coordinator] ${new Date().toISOString()} ${msg}`); }
+
+function emit(event) {
+  appendSequencedEvent(STATE_DIR, { ts: new Date().toISOString(), ...event });
+}
+
+/** Coerce an agent-provided timestamp to a valid ISO string, or fall back to now. */
+function coerceTs(ts) {
+  if (ts && typeof ts === 'string' && Number.isFinite(new Date(ts).getTime())) return ts;
+  return new Date().toISOString();
+}
+
+/**
+ * Run async thunks in bounded concurrency batches.
+ * Returns settled results in original batch order.
+ */
+async function runBounded(thunks, limit = CONCURRENCY_LIMIT) {
+  const results = [];
+  for (let i = 0; i < thunks.length; i += limit) {
+    const batch = await Promise.allSettled(thunks.slice(i, i + limit).map((fn) => fn()));
+    results.push(...batch);
+  }
+  return results;
+}
+
+function markAgentOffline(agent, reason) {
+  markWorkerOffline(STATE_DIR, agent, { emit, reason });
+}
+
+function refreshAgentHeartbeat(agent, nowIso, { force = false } = {}) {
+  const nowMs = new Date(nowIso).getTime();
+  const lastMs = typeof agent.last_heartbeat_at === 'string'
+    ? new Date(agent.last_heartbeat_at).getTime()
+    : NaN;
+  const shouldRefresh = force || !Number.isFinite(lastMs) || (nowMs - lastMs) >= AGENT_HEARTBEAT_REFRESH_MS;
+  if (!shouldRefresh) return;
+
+  updateAgentRuntime(STATE_DIR, agent.agent_id, {
+    status: 'running',
+    last_heartbeat_at: nowIso,
+  });
+  agent.status = 'running';
+  agent.last_heartbeat_at = nowIso;
+}
+
+function readTaskContext(stateDir, taskRef) {
+  try {
+    const backlog = readJson(stateDir, 'backlog.json');
+    const task = findTask(backlog, taskRef);
+    if (task) {
+      const epic = (backlog.epics ?? []).find((e) => (e.tasks ?? []).some((t) => t.ref === taskRef)) ?? null;
+      return { epic, task };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function isManagedSlot(agentId, workerPoolConfig) {
+  const match = /^orc-(\d+)$/.exec(agentId ?? '');
+  if (!match) return false;
+  const slotNumber = Number(match[1]);
+  return Number.isInteger(slotNumber) && slotNumber >= 1 && slotNumber <= workerPoolConfig.max_workers;
+}
+
+async function ensureSessionReady(agent, launchConfig = null) {
+  const adapter = getAdapter(agent.provider);
+
+  if (agent.session_handle) {
+    const alive = await adapter.heartbeatProbe(agent.session_handle);
+    if (!alive) {
+      updateAgentRuntime(STATE_DIR, agent.agent_id, {
+        status: 'idle',   // session dead; coordinator will recreate on next tick
+        session_handle: null,
+        provider_ref: null,
+        last_status_change_at: new Date().toISOString(),
+      });
+      agent.status = 'idle';
+      agent.session_handle = null;
+      agent.provider_ref = null;
+      log(`worker ${agent.agent_id} session unreachable; cleared stale handle for recreation`);
+      return false;
+    }
+    if (!adapterOwnsSession(adapter, agent.session_handle)) {
+      try {
+        await adapter.stop(agent.session_handle);
+      } catch {
+        // Best-effort cross-process teardown. Runtime is still cleared below.
+      }
+      updateAgentRuntime(STATE_DIR, agent.agent_id, {
+        status: 'idle',
+        session_handle: null,
+        provider_ref: null,
+        last_status_change_at: new Date().toISOString(),
+      });
+      agent.status = 'idle';
+      agent.session_handle = null;
+      agent.provider_ref = null;
+      log(`worker ${agent.agent_id} session is alive but not owned by this coordinator; cleared handle for recreation`);
+      return false;
+    }
+    refreshAgentHeartbeat(agent, new Date().toISOString());
+    return true;
+  }
+
+  if (!launchConfig) {
+    return false;
+  }
+
+  const result = await launchWorkerSession(STATE_DIR, agent, {
+    adapter,
+    workingDirectory: launchConfig.working_directory,
+    repoRoot: REPO_ROOT,
+    runId: launchConfig.run_id ?? null,
+    taskRef: launchConfig.task_ref ?? null,
+    retryable: launchConfig.retryable === true,
+    emit,
+  });
+  if (!result.ok) {
+    console.error(`[coordinator] Failed to start session for '${agent.agent_id}': ${result.reason}`);
+  }
+  return result.ok;
+}
+
+function claimAwaitingInput(claim) {
+  return claim?.input_state === 'awaiting_input';
+}
+
+function detectBlockingPromptQuestion(adapter, sessionHandle) {
+  const prompt = adapterDetectInputBlock(adapter, sessionHandle);
+  if (typeof prompt !== 'string') return null;
+  const trimmed = prompt.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getClaim(runId) {
+  try {
+    const claims = readJson(STATE_DIR, 'claims.json').claims ?? [];
+    return claims.find((claim) => claim.run_id === runId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function branchContainsMain(branch) {
+  const result = spawnSync('git', ['merge-base', '--is-ancestor', 'main', branch], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error(`git merge-base failed for ${branch}: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
+}
+
+function mergeTaskBranch(branch, taskRef) {
+  const result = spawnSync('git', ['merge', branch, '--no-ff', '-m', `task(${taskRef}): merge worktree`], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new Error(`git merge failed for ${branch}: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
+  }
+}
+
+async function sendCoordinatorMessage(agentId, message) {
+  const agent = getAgent(STATE_DIR, agentId);
+  if (!agent?.session_handle || agent.status === 'offline') return false;
+  const adapter = getAdapter(agent.provider);
+  try {
+    await adapter.send(agent.session_handle, message);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function markFinalizeBlocked(claim, workerPoolConfig, reason) {
+  try {
+    setRunFinalizationState(STATE_DIR, claim.run_id, claim.agent_id, {
+      finalizationState: 'blocked_finalize',
+      blockedReason: reason,
+    });
+  } catch {
+    return false;
+  }
+  await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+  log(`run ${claim.run_id} blocked during finalization: ${reason}`);
+  return true;
+}
+
+async function requestFinalizeRebase(claim, workerPoolConfig, reason, { incrementRetry = true } = {}) {
+  const latestClaim = getClaim(claim.run_id) ?? claim;
+  const hadPendingFinalizeRequest = latestClaim.finalization_state === 'finalize_rebase_requested';
+  const retryCount = latestClaim.finalization_retry_count ?? 0;
+  if (retryCount >= 2 && incrementRetry) {
+    return markFinalizeBlocked(latestClaim, workerPoolConfig, reason);
+  }
+
+  let updatedClaim = latestClaim;
+  try {
+    updatedClaim = setRunFinalizationState(STATE_DIR, latestClaim.run_id, latestClaim.agent_id, {
+      finalizationState: 'finalize_rebase_requested',
+      retryCountDelta: 0,
+      blockedReason: null,
+    });
+  } catch (error) {
+    log(`warning: failed to record finalize_rebase_requested for ${latestClaim.run_id}: ${error.message}`);
+    return false;
+  }
+
+  const sent = await sendCoordinatorMessage(updatedClaim.agent_id, buildFinalizeRebaseRequest(updatedClaim, reason));
+  if (!sent) {
+    log(`warning: failed to deliver finalize rebase request to ${updatedClaim.agent_id} for ${updatedClaim.run_id}`);
+    if (hadPendingFinalizeRequest) {
+      return markFinalizeBlocked(updatedClaim, workerPoolConfig, `${reason}; finalize request could not be delivered twice`);
+    }
+    return sent;
+  }
+
+  if (incrementRetry) {
+    try {
+      updatedClaim = setRunFinalizationState(STATE_DIR, updatedClaim.run_id, updatedClaim.agent_id, {
+        finalizationState: 'finalize_rebase_requested',
+        retryCountDelta: 1,
+        blockedReason: null,
+      });
+    } catch (error) {
+      log(`warning: failed to increment finalize retry count for ${updatedClaim.run_id}: ${error.message}`);
+    }
+  }
+  return sent;
+}
+
+async function finalizeRun(claim, workerPoolConfig) {
+  const runWorktree = getRunWorktree(STATE_DIR, claim.run_id);
+  if (!runWorktree?.branch) {
+    return markFinalizeBlocked(claim, workerPoolConfig, 'missing run worktree metadata for finalization');
+  }
+
+  await sendCoordinatorMessage(claim.agent_id, buildFinalizeWaitNotice(claim));
+
+  let mainIncluded = false;
+  try {
+    mainIncluded = branchContainsMain(runWorktree.branch);
+  } catch (error) {
+    return markFinalizeBlocked(claim, workerPoolConfig, error.message);
+  }
+
+  if (!mainIncluded) {
+    return requestFinalizeRebase(claim, workerPoolConfig, 'branch is not rebased onto latest main');
+  }
+
+  try {
+    mergeTaskBranch(runWorktree.branch, claim.task_ref);
+  } catch (error) {
+    return requestFinalizeRebase(claim, workerPoolConfig, error.message);
+  }
+
+  finishRun(STATE_DIR, claim.run_id, claim.agent_id, { success: true });
+  await sendCoordinatorMessage(claim.agent_id, buildFinalizeSuccessNotice(claim, runWorktree.branch));
+  await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+  try {
+    const cleaned = cleanupRunWorktree(STATE_DIR, claim.run_id);
+    if (!cleaned) {
+      log(`merged ${claim.task_ref} from ${runWorktree.branch}; cleanup pending`);
+      return true;
+    }
+  } catch (error) {
+    log(`warning: cleanupRunWorktree failed for ${claim.run_id}: ${error.message}`);
+    log(`merged ${claim.task_ref} from ${runWorktree.branch}; cleanup pending`);
+    return true;
+  }
+  log(`finalized and merged ${claim.task_ref} from ${runWorktree.branch}`);
+  return true;
+}
+
+function recordCoordinatorInputRequest(claim, question, reason) {
+  const nowIso = new Date().toISOString();
+  try {
+    heartbeat(STATE_DIR, claim.run_id, claim.agent_id, { emitEvent: false });
+    setRunInputState(STATE_DIR, claim.run_id, claim.agent_id, {
+      inputState: 'awaiting_input',
+      requestedAt: nowIso,
+    });
+  } catch {
+    return false;
+  }
+  emit({
+    ts: nowIso,
+    event: 'input_requested',
+    actor_type: 'coordinator',
+    actor_id: 'coordinator',
+    run_id: claim.run_id,
+    task_ref: claim.task_ref,
+    agent_id: claim.agent_id,
+    payload: {
+      question,
+      reason,
+    },
+  });
+  appendNotification(STATE_DIR, {
+    type: 'INPUT_REQUEST',
+    task_ref: claim.task_ref,
+    run_id: claim.run_id,
+    agent_id: claim.agent_id,
+    question,
+    requested_at: nowIso,
+  });
+  log(`run ${claim.run_id} is awaiting input: ${reason}`);
+  return true;
+}
+
+function activeClaimAgents(claims) {
+  const busy = new Set();
+  for (const claim of claims ?? []) {
+    if (claim?.agent_id && ['claimed', 'in_progress'].includes(claim.state)) {
+      busy.add(claim.agent_id);
+    }
+  }
+  return busy;
+}
+
+async function stopAgentSession(agent) {
+  if (!agent?.session_handle) return;
+  const adapter = getAdapter(agent.provider);
+  try {
+    await adapter.stop(agent.session_handle);
+  } catch {
+    // Best-effort stop; runtime cleanup still happens below.
+  }
+}
+
+async function releaseAgentCapacity(agent) {
+  if (!agent) return;
+  await stopAgentSession(agent);
+  clearWorkerSessionRuntime(STATE_DIR, agent, { status: 'idle' });
+}
+
+async function cleanupRunCapacity(agentId, workerPoolConfig, { offlineReason = null } = {}) {
+  const agent = getAgent(STATE_DIR, agentId);
+  if (!agent) return;
+  await stopAgentSession(agent);
+  if (offlineReason && !isManagedSlot(agent.agent_id, workerPoolConfig)) {
+    markWorkerOffline(STATE_DIR, agent, { emit, reason: offlineReason });
+    return;
+  }
+  if (agent.status === 'offline' && !isManagedSlot(agent.agent_id, workerPoolConfig)) {
+    clearWorkerSessionRuntime(STATE_DIR, agent, { status: 'offline' });
+    return;
+  }
+  clearWorkerSessionRuntime(STATE_DIR, agent, { status: 'idle' });
+}
+
+function hasOtherActiveClaim(agentId, runId) {
+  try {
+    const claims = readJson(STATE_DIR, 'claims.json').claims ?? [];
+    return claims.some((claim) =>
+      claim.agent_id === agentId
+      && claim.run_id !== runId
+      && ['claimed', 'in_progress'].includes(claim.state),
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function ensureSessionPoolReady(agents, workerPoolConfig) {
+  const candidates = (agents ?? []).filter(
+    (agent) => agent?.role !== 'master'
+      && agent.status !== 'offline'
+      && agent.status !== 'dead'
+      && agent.session_handle,
+  );
+  const results = await runBounded(candidates.map((agent) => async () => {
+    try {
+      await ensureSessionReady(agent);
+    } catch (error) {
+      throw new Error(`ensuring session for ${agent.agent_id}: ${error.message}`);
+    }
+  }));
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      log(`warning: failed to ensure worker session: ${result.reason?.message ?? 'unknown error'}`);
+    }
+  }
+}
+
+function markStaleAgentsDead(agents, claims, nowMs = Date.now()) {
+  const busyAgents = activeClaimAgents(claims);
+  for (const agent of agents ?? []) {
+    if (!agent?.agent_id) continue;
+    if (agent.role === 'master') continue;
+    if (agent.status === 'dead') continue;
+    if (busyAgents.has(agent.agent_id)) continue;
+    if (typeof agent.last_heartbeat_at !== 'string') continue;
+
+    const lastHeartbeatMs = new Date(agent.last_heartbeat_at).getTime();
+    if (!Number.isFinite(lastHeartbeatMs)) continue;
+
+    const elapsedMs = nowMs - lastHeartbeatMs;
+    if (elapsedMs < AGENT_DEAD_TTL_MS) continue;
+
+    updateAgentRuntime(STATE_DIR, agent.agent_id, {
+      status: 'dead',
+      session_handle: null,
+      provider_ref: null,
+      last_status_change_at: new Date(nowMs).toISOString(),
+    });
+    emit({
+      event: 'agent_marked_dead',
+      actor_type: 'coordinator',
+      actor_id: 'coordinator',
+      agent_id: agent.agent_id,
+      payload: { elapsed_ms: elapsedMs },
+    });
+    agent.status = 'dead';
+    agent.session_handle = null;
+    agent.provider_ref = null;
+  }
+}
+
+async function enforceRunStartLifecycle(agents, claims) {
+  const nowMs = Date.now();
+  const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
+  const nudgeWork = [];
+  const workerPoolConfig = loadWorkerPoolConfig();
+
+  for (const claim of claims ?? []) {
+    if (claim.state !== 'claimed') {
+      runStartNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+    if (claimAwaitingInput(claim)) {
+      runStartNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+
+    const ageMs = nowMs - new Date(claim.claimed_at).getTime();
+    if (Number.isNaN(ageMs)) continue;
+
+    if (ageMs >= RUN_START_TIMEOUT_MS) {
+      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+        success: false,
+        failureReason: 'run_started timeout: worker did not acknowledge start in time',
+        failureCode: 'ERR_RUN_START_TIMEOUT',
+        policy: 'requeue',
+      });
+      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      runStartNudgeAtMs.delete(claim.run_id);
+      log(`run ${claim.run_id} timed out waiting for run_started; requeued ${claim.task_ref}`);
+      continue;
+    }
+
+    if (ageMs < RUN_START_NUDGE_MS) continue;
+    const lastNudgeAt = runStartNudgeAtMs.get(claim.run_id) ?? 0;
+    if (nowMs - lastNudgeAt < RUN_START_NUDGE_INTERVAL_MS) continue;
+
+    const agent = byAgent.get(claim.agent_id);
+    if (!agent?.session_handle || agent.status === 'offline') continue;
+    const adapter = getAdapter(agent.provider);
+    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
+    if (blockingQuestion) {
+      recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
+      runStartNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+
+    const claimSnapshot = { ...claim };
+    const agentSessionHandle = agent.session_handle;
+    nudgeWork.push(async () => {
+      const adapter = getAdapter(agent.provider);
+      await adapter.send(agentSessionHandle, buildRunStartNudge(claimSnapshot));
+      emit({
+        event: 'need_input',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claimSnapshot.run_id,
+        task_ref: claimSnapshot.task_ref,
+        agent_id: claimSnapshot.agent_id,
+        payload: { reason: 'run_start_ack_missing', action: 'nudge_sent' },
+      });
+      runStartNudgeAtMs.set(claimSnapshot.run_id, nowMs);
+      log(`nudged ${claimSnapshot.agent_id} for missing run_started on ${claimSnapshot.run_id}`);
+      return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
+    });
+  }
+
+  const results = await runBounded(nudgeWork);
+  const nudgedAgentIds = new Set();
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      log(`warning: failed to send run-start nudge: ${result.reason?.message ?? 'unknown error'}`);
+    } else if (result.value) {
+      nudgedAgentIds.add(result.value);
+    }
+  }
+  return nudgedAgentIds;
+}
+
+async function enforceInProgressLifecycle(agents, claims, activityByRun) {
+  const nowMs = Date.now();
+  const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
+  const nudgeWork = [];
+  const workerPoolConfig = loadWorkerPoolConfig();
+
+  for (const claim of claims ?? []) {
+    if (claim.state !== 'in_progress') {
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+
+    const idleMs = runIdleMs(claim, activityByRun.get(claim.run_id), nowMs);
+    if (idleMs == null) continue;
+    if (claimAwaitingInput(claim)) {
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+    if (claim.finalization_state === 'blocked_finalize') {
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+    if (claim.finalization_state === 'awaiting_finalize' || claim.finalization_state === 'ready_to_merge') {
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+    if (claim.finalization_state === 'finalize_rebase_requested' || claim.finalization_state === 'finalize_rebase_in_progress') {
+      if (idleMs < RUN_INACTIVE_NUDGE_MS) continue;
+      const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
+      if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) continue;
+
+      const agent = byAgent.get(claim.agent_id);
+      if (!agent?.session_handle || agent.status === 'offline') {
+        await markFinalizeBlocked(claim, workerPoolConfig, 'live agent session unavailable during finalization retry');
+        runInactiveNudgeAtMs.delete(claim.run_id);
+        continue;
+      }
+      const adapter = getAdapter(agent.provider);
+      const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
+      if (blockingQuestion) {
+        recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
+        runInactiveNudgeAtMs.delete(claim.run_id);
+        continue;
+      }
+
+      await requestFinalizeRebase(claim, workerPoolConfig, 'finalization retry timed out waiting for worker progress');
+      runInactiveNudgeAtMs.set(claim.run_id, nowMs);
+      continue;
+    }
+
+    if (idleMs >= RUN_INACTIVE_TIMEOUT_MS) {
+      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+        success: false,
+        failureReason: `run inactivity timeout: no progress for ${Math.round(idleMs / 1000)}s`,
+        failureCode: 'ERR_RUN_INACTIVITY_TIMEOUT',
+        policy: 'requeue',
+      });
+      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      log(`run ${claim.run_id} timed out for inactivity; requeued ${claim.task_ref}`);
+      continue;
+    }
+
+    if (idleMs < RUN_INACTIVE_NUDGE_MS) continue;
+    const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
+    if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) continue;
+
+    const agent = byAgent.get(claim.agent_id);
+    if (!agent?.session_handle || agent.status === 'offline') continue;
+    const adapter = getAdapter(agent.provider);
+    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
+    if (blockingQuestion) {
+      recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+
+    const claimSnapshot = { ...claim };
+    const agentProvider = agent.provider;
+    const agentSessionHandle = agent.session_handle;
+    nudgeWork.push(async () => {
+      const adapter = getAdapter(agentProvider);
+      await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot));
+      emit({
+        event: 'need_input',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claimSnapshot.run_id,
+        task_ref: claimSnapshot.task_ref,
+        agent_id: claimSnapshot.agent_id,
+        payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs },
+      });
+      runInactiveNudgeAtMs.set(claimSnapshot.run_id, nowMs);
+      log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id}`);
+      return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
+    });
+  }
+
+  const results = await runBounded(nudgeWork);
+  const nudgedAgentIds = new Set();
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      log(`warning: failed to send progress nudge: ${result.reason?.message ?? 'unknown error'}`);
+    } else if (result.value) {
+      nudgedAgentIds.add(result.value);
+    }
+  }
+  return nudgedAgentIds;
+}
+
+// ── Tick ───────────────────────────────────────────────────────────────────
+
+async function tick() {
+  tickCount++;
+  log(`tick ${tickCount}`);
+
+  // 1. Expire stale leases.
+  const expired = expireStaleLeasesDetailed(STATE_DIR);
+
+  // 2. Autonomous dispatch.
+  if (MODE !== 'autonomous') return;
+
+  let tickBacklog;
+  let tickAgents;
+  let tickClaims;
+  let workerPoolConfig;
+  try {
+    workerPoolConfig = loadWorkerPoolConfig();
+    if (expired.length > 0) {
+      for (const claim of expired) {
+        await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      }
+      log(`expired ${expired.length} stale lease(s): ${expired.map((claim) => claim.run_id).join(', ')}`);
+    }
+    reconcileManagedWorkerSlots(STATE_DIR, workerPoolConfig);
+    tickBacklog = readJson(STATE_DIR, 'backlog.json');
+    tickClaims = readJson(STATE_DIR, 'claims.json');
+    pruneMissingRunWorktrees(STATE_DIR, (tickClaims.claims ?? [])
+      .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
+      .map((claim) => claim.run_id));
+    tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+  } catch (err) {
+    log(`ERROR: failed to load state files: ${err.message}`);
+    return;
+  }
+
+  let agents = tickAgents.agents ?? [];
+  let claims = tickClaims.claims ?? [];
+  markStaleAgentsDead(agents, claims);
+
+  try {
+    const currentSeq = nextSeq(EVENTS_FILE) - 1;
+    if (currentSeq > lastProcessedSeq) {
+      // TODO(perf): latestRunActivityMap currently scans all events.
+      // A future task should window this to recent events only.
+      const allEvents = readEvents(EVENTS_FILE);
+      const newEvents = allEvents.filter((event) => event.seq > lastProcessedSeq);
+      latestActivityByRun = latestRunActivityMap(allEvents);
+      await processTerminalRunEvents(newEvents, workerPoolConfig);
+      lastProcessedSeq = currentSeq;
+      tickClaims = readJson(STATE_DIR, 'claims.json');
+      tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+      agents = tickAgents.agents ?? [];
+      claims = tickClaims.claims ?? [];
+    }
+  } catch {
+    latestActivityByRun = new Map();
+  }
+
+  const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
+  const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun);
+  tickClaims = readJson(STATE_DIR, 'claims.json');
+  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+  agents = tickAgents.agents ?? [];
+  claims = tickClaims.claims ?? [];
+  await ensureSessionPoolReady(agents, workerPoolConfig);
+  // Agents that received a nudge this tick are excluded from dispatch to avoid
+  // sending them a new task envelope in the same tick as an in-flight nudge.
+  const nudgedThisTick = new Set([...nudgedByRunStart, ...nudgedByInProgress]);
+
+  const busyAgents = activeClaimAgents(claims);
+  const availableAgents = selectDispatchableAgents(agents, { busyAgents });
+  const dispatchableAgents = availableAgents.filter((a) => !nudgedThisTick.has(a.agent_id));
+  const dispatchPlan = buildDispatchPlan(dispatchableAgents, (agent) =>
+    nextEligibleTask(STATE_DIR, agent.agent_id, { backlog: tickBacklog, agents: tickAgents }),
+  );
+  const dispatchResults = await runBounded(dispatchPlan.map((item) => async () => {
+    const agent = item.agent;
+    const taskRef = item.task_ref;
+    let runId = null;
+
+    try {
+      if (agent.status === 'dead') return;
+
+      const claimed = claimTask(STATE_DIR, taskRef, agent.agent_id);
+      runId = claimed.run_id;
+      log(`claimed ${taskRef} for ${agent.agent_id} (${runId})`);
+      const runWorktree = ensureRunWorktree(STATE_DIR, {
+        runId,
+        taskRef,
+        agentId: agent.agent_id,
+      });
+      if (agent.session_handle) {
+        await releaseAgentCapacity(agent);
+      }
+      const ready = await ensureSessionReady(agent, {
+        working_directory: runWorktree.worktree_path,
+        run_id: runId,
+        task_ref: taskRef,
+        retryable: isManagedSlot(agent.agent_id, workerPoolConfig),
+      });
+      if (!ready || !agent.session_handle || agent.status === 'offline') {
+        finishRun(STATE_DIR, runId, agent.agent_id, {
+          success: false,
+          failureReason: 'session_start_failed: worker session could not be launched in assigned worktree',
+          failureCode: 'ERR_SESSION_START_FAILED',
+          policy: 'requeue',
+        });
+        if (agent.status !== 'offline') {
+          await cleanupRunCapacity(agent.agent_id, workerPoolConfig);
+        }
+        return;
+      }
+
+      const adapter = getAdapter(agent.provider);
+      try {
+        await adapter.send(
+          agent.session_handle,
+          buildTaskEnvelope(taskRef, runId, agent.agent_id),
+        );
+      } catch (err) {
+        finishRun(STATE_DIR, runId, agent.agent_id, {
+          success: false,
+          failureReason: `dispatch_error: ${err.message}`,
+          failureCode: 'ERR_DISPATCH_FAILURE',
+          policy: 'requeue',
+        });
+        runId = null;
+        const alive = await adapter.heartbeatProbe(agent.session_handle);
+        await cleanupRunCapacity(agent.agent_id, workerPoolConfig, {
+          offlineReason: alive ? null : 'dispatch_failed_session_unreachable',
+        });
+        throw err;
+      }
+
+      log(`dispatched ${taskRef} to ${agent.agent_id}`);
+    } catch (err) {
+      if (runId) {
+        finishRun(STATE_DIR, runId, agent.agent_id, {
+          success: false,
+          failureReason: `dispatch_error: ${err.message}`,
+          failureCode: 'ERR_DISPATCH_FAILURE',
+          policy: 'requeue',
+        });
+      }
+      throw new Error(`dispatching ${taskRef} to ${agent.agent_id}: ${err.message}`);
+    }
+  }));
+
+  for (const result of dispatchResults) {
+    if (result.status === 'rejected') {
+      log(`ERROR ${result.reason?.message ?? 'unknown dispatch error'}`);
+    }
+  }
+}
+
+export function buildTaskEnvelope(taskRef, runId, agentId) {
+  const ctx = readTaskContext(STATE_DIR, taskRef);
+  const taskSpec = readTaskSpecSections(taskRef);
+  const criteria = ctx?.task?.acceptance_criteria ?? [];
+  const description = ctx?.task?.description ?? '';
+  const taskType = ctx?.task?.task_type ?? 'implementation';
+  const planningState = ctx?.task?.planning_state ?? 'ready_for_dispatch';
+  const acceptanceCriteriaLines = criteria.length > 0
+    ? criteria.map((c, i) => `  ${i + 1}. ${c}`).join('\n')
+    : '  (none listed)';
+  const fallback = '  (not provided)';
+  const runWorktree = getRunWorktree(STATE_DIR, runId);
+  const taskContract = {
+    contract_version: '1',
+    task_ref: taskRef,
+    run_id: runId,
+    assigned_agent_id: agentId,
+    task_type: taskType,
+    planning_state: planningState,
+    delegated_by: ctx?.task?.delegated_by ?? null,
+    title: ctx?.task?.title ?? '(untitled task)',
+    epic: ctx?.epic?.ref ?? '(unknown)',
+    description,
+    acceptance_criteria: criteria,
+  };
+  return renderTemplate('task-envelope-v2.txt', {
+    task_ref: taskRef,
+    run_id: runId,
+    title: ctx?.task?.title ?? '(untitled task)',
+    epic: ctx?.epic?.ref ?? '(unknown)',
+    description,
+    agent_id: agentId,
+    acceptance_criteria_lines: acceptanceCriteriaLines,
+    current_state: taskSpec.current_state || fallback,
+    desired_state: taskSpec.desired_state || fallback,
+    start_here: taskSpec.start_here || fallback,
+    verification: taskSpec.verification || fallback,
+    task_spec_path: taskSpec.source_path ?? '(task spec not found)',
+    assigned_worktree: runWorktree?.worktree_path ?? join(WORKTREES_DIR, runId),
+    task_contract_json: JSON.stringify(taskContract, null, 2),
+  });
+}
+
+function buildRunStartNudge(claim) {
+  return [
+    `RUN_NUDGE`,
+    `run_id: ${claim.run_id}`,
+    `task_ref: ${claim.task_ref}`,
+    `Missing required run_started acknowledgement.`,
+    `Call this command immediately via your Bash tool:`,
+    `orc-run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `RUN_NUDGE_END`,
+  ].join('\n');
+}
+
+function buildInProgressNudge(claim) {
+  return [
+    `RUN_NUDGE`,
+    `run_id: ${claim.run_id}`,
+    `task_ref: ${claim.task_ref}`,
+    `Run is in_progress but no recent heartbeat was received.`,
+    `Call this command via your Bash tool to keep the run active:`,
+    `orc-run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `RUN_NUDGE_END`,
+  ].join('\n');
+}
+
+function buildFinalizeWaitNotice(claim) {
+  return [
+    'FINALIZE_WAIT',
+    `run_id: ${claim.run_id}`,
+    `task_ref: ${claim.task_ref}`,
+    'Task work is complete. Stay idle in this session while the coordinator attempts the trusted final merge.',
+    'Do not merge or clean up the branch yourself.',
+    'Wait for either a FINALIZE_REBASE request or FINALIZE_SUCCESS notice.',
+    'FINALIZE_WAIT_END',
+  ].join('\n');
+}
+
+function buildFinalizeRebaseRequest(claim, reason) {
+  return [
+    'FINALIZE_REBASE',
+    `run_id: ${claim.run_id}`,
+    `task_ref: ${claim.task_ref}`,
+    `retry_count: ${claim.finalization_retry_count ?? 0}`,
+    `reason: ${reason}`,
+    'The coordinator could not finalize your branch on the latest main.',
+    'In this same worktree, run `git rebase main`, resolve conflicts if needed, rerun the required verification, then report completion again with:',
+    `orc-run-work-complete --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    'Do not merge or delete the worktree yourself.',
+    'FINALIZE_REBASE_END',
+  ].join('\n');
+}
+
+function buildFinalizeSuccessNotice(claim, branch) {
+  return [
+    'FINALIZE_SUCCESS',
+    `run_id: ${claim.run_id}`,
+    `task_ref: ${claim.task_ref}`,
+    `branch: ${branch}`,
+    'The coordinator merged your branch successfully.',
+    'You do not need to take any further action in this session.',
+    'FINALIZE_SUCCESS_END',
+  ].join('\n');
+}
+
+export async function processTerminalRunEvents(events, workerPoolConfig = loadWorkerPoolConfig()) {
+  for (const event of events) {
+    if (event?.event === 'input_requested') {
+      if (event.actor_type === 'coordinator') {
+        continue;
+      }
+      try {
+        setRunInputState(STATE_DIR, event.run_id, event.agent_id, {
+          inputState: 'awaiting_input',
+          requestedAt: coerceTs(event.ts),
+        });
+      } catch {
+        // Ignore races with terminal events or cleaned-up claims.
+      }
+      const deposited = appendNotification(STATE_DIR, {
+        type: 'INPUT_REQUEST',
+        task_ref: event.task_ref ?? '(unknown)',
+        run_id: event.run_id ?? '(unknown)',
+        agent_id: event.agent_id ?? '(unknown)',
+        question: event?.payload?.question ?? '(question missing)',
+        requested_at: coerceTs(event.ts),
+      });
+      if (!deposited) {
+        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${event.task_ref ?? '(unknown)'}`);
+      }
+      continue;
+    }
+
+    if (event?.event === 'input_response') {
+      try {
+        setRunInputState(STATE_DIR, event.run_id, event.agent_id, { inputState: null });
+      } catch {
+        // Ignore races with terminal events or cleaned-up claims.
+      }
+      continue;
+    }
+
+    if (event?.event === 'run_finished' || event?.event === 'run_failed') {
+      if (!hasOtherActiveClaim(event.agent_id, event.run_id)) {
+        await cleanupRunCapacity(event.agent_id, workerPoolConfig);
+      }
+      deleteRunWorktree(STATE_DIR, event.run_id);
+      const failed = event.event === 'run_failed';
+      const failureReason =
+        event?.failure_reason
+        ?? event?.payload?.failure_reason
+        ?? event?.payload?.reason;
+      const exitCode =
+        event?.exit_code
+        ?? event?.payload?.exit_code
+        ?? event?.payload?.code;
+      const notification = {
+        type: 'TASK_COMPLETE',
+        task_ref: event.task_ref ?? '(unknown)',
+        agent_id: event.agent_id ?? '(unknown)',
+        success: !failed,
+        finished_at: coerceTs(event.ts),
+      };
+      if (failed && typeof failureReason === 'string' && failureReason.trim()) {
+        notification.failure_reason = failureReason;
+      }
+      if (failed && (typeof exitCode === 'string' || typeof exitCode === 'number')) {
+        notification.exit_code = exitCode;
+      }
+      const deposited = appendNotification(STATE_DIR, {
+        ...notification,
+      });
+      if (!deposited) {
+        console.warn(`[coordinator] WARNING: failed to deposit notification for ${event.task_ref ?? '(unknown)'}`);
+      }
+    }
+
+    if (event?.event === 'work_complete' || event?.event === 'ready_to_merge') {
+      const claim = getClaim(event.run_id);
+      if (!claim || claim.state !== 'in_progress') continue;
+      await finalizeRun(claim, workerPoolConfig);
+    }
+  }
+}
+
+// ── Coordinator presence lock ──────────────────────────────────────────────
+// Prevents two coordinator processes from running against the same state dir.
+
+const COORDINATOR_PID_FILE = join(STATE_DIR, 'coordinator.pid');
+
+function isCoordinatorPidAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e.code !== 'ESRCH'; }
+}
+
+function acquireCoordinatorLock() {
+  const lockFlags = constants.O_EXCL | constants.O_CREAT | constants.O_WRONLY;
+  const payload = JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = openSync(COORDINATOR_PID_FILE, lockFlags);
+      try {
+        writeSync(fd, payload, null, 'utf8');
+      } finally {
+        closeSync(fd);
+      }
+      coordinatorLockReleased = false;
+      return;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+
+      let other;
+      try { other = JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')); } catch { /* stale/corrupt */ }
+      const otherPid = other?.pid;
+      if (Number.isInteger(otherPid) && otherPid > 0 && isCoordinatorPidAlive(otherPid)) {
+        console.error(`[coordinator] ERROR: another coordinator is already running (PID ${otherPid}). Aborting.`);
+        process.exit(1);
+      }
+      if (Number.isInteger(otherPid) && otherPid > 0) {
+        log(`stale coordinator.pid removed (PID ${otherPid} is dead)`);
+      } else {
+        log('stale coordinator.pid removed (missing or invalid pid metadata)');
+      }
+      try {
+        unlinkSync(COORDINATOR_PID_FILE);
+      } catch (unlinkError) {
+        if (unlinkError?.code !== 'ENOENT') throw unlinkError;
+      }
+    }
+  }
+
+  throw new Error(`[coordinator] ERROR: failed to acquire coordinator pid lock: ${COORDINATOR_PID_FILE}`);
+}
+
+function releaseCoordinatorLock() {
+  if (coordinatorLockReleased) return;
+  coordinatorLockReleased = true;
+  try { unlinkSync(COORDINATOR_PID_FILE); } catch { /* already gone */ }
+}
+
+// ── Main loop ──────────────────────────────────────────────────────────────
+
+export async function main() {
+  acquireCoordinatorLock();
+  process.on('exit', releaseCoordinatorLock);
+  function shutdown() {
+    doShutdown().catch((err) => { console.error(err); process.exit(1); });
+  }
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  log(`starting — mode=${MODE} interval=${INTERVAL_MS}ms run_start_timeout=${RUN_START_TIMEOUT_MS}ms run_inactive_timeout=${RUN_INACTIVE_TIMEOUT_MS}ms run_inactive_nudge=${RUN_INACTIVE_NUDGE_MS}ms run_inactive_nudge_interval=${RUN_INACTIVE_NUDGE_INTERVAL_MS}ms`);
+  for (const file of ['backlog.json', 'agents.json', 'claims.json', 'events.jsonl']) {
+    if (!existsSync(join(STATE_DIR, file))) {
+      console.error(`[coordinator] ERROR: required state file missing: ${file}`);
+      process.exit(1);
+    }
+  }
+  // Sweep stale .tmp files left by any interrupted atomicWriteJson call.
+  try {
+    const staleTemps = readdirSync(STATE_DIR).filter((f) => f.endsWith('.tmp'));
+    for (const f of staleTemps) {
+      try { unlinkSync(join(STATE_DIR, f)); log(`cleaned stale temp file: ${f}`); }
+      catch { /* already gone — fine */ }
+    }
+  } catch { /* STATE_DIR not readable — file-existence check above would have caught this */ }
+
+  try {
+    syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);
+  } catch (error) {
+    log(`backlog sync from specs skipped: ${error.message}`);
+  }
+
+  reconcileState(STATE_DIR);
+  emit({ event: 'coordinator_started', actor_type: 'coordinator', actor_id: 'coordinator', payload: { mode: MODE } });
+
+  // First tick immediately.
+  await tick();
+
+  timerHandle = setInterval(async () => {
+    if (!running || ticking) return;
+    ticking = true;
+    try { await tick(); } finally { ticking = false; }
+  }, INTERVAL_MS);
+}
+
+export async function doShutdown() {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+
+  log('shutting down — waiting for current tick to complete...');
+  running = false;
+  if (timerHandle) {
+    clearInterval(timerHandle);
+    timerHandle = null;
+  }
+
+  if (ticking) {
+    await new Promise((resolve) => {
+      const poll = setInterval(() => {
+        if (!ticking) {
+          clearInterval(poll);
+          resolve();
+        }
+      }, 100);
+      setTimeout(() => {
+        clearInterval(poll);
+        resolve();
+      }, 30_000);
+    });
+  }
+
+  emit({ event: 'coordinator_stopped', actor_type: 'coordinator', actor_id: 'coordinator', payload: {} });
+  releaseCoordinatorLock();
+  log('shutdown complete.');
+  process.exit(0);
+}
+
+export { tick };
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(err => { console.error(err); process.exit(1); });
+}

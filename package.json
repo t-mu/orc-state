@@ -1,0 +1,46 @@
+{
+  "name": "@t-mu/orc-state",
+  "version": "0.1.0",
+  "description": "Spawn, claim and fall in line. Agnostic cross-provider compatible agentic framework backed by nothing but files and empty promises.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "orc": "./cli/orc.mjs"
+  },
+  "exports": {
+    ".": "./index.mjs",
+    "./adapters": "./adapters/index.mjs",
+    "./coordinator": "./coordinator.mjs",
+    "./schemas/*": "./schemas/*.json"
+  },
+  "files": [
+    "adapters",
+    "cli",
+    "index.mjs",
+    "lib",
+    "mcp",
+    "schemas",
+    "skills",
+    "templates",
+    "coordinator.mjs",
+    "contracts.md",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.mjs",
+    "pack:dry": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "7.5.2",
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "ajv": "8.18.0",
+    "node-pty": "1.1.0"
+  },
+  "devDependencies": {
+    "vitest": "4.0.18"
+  }
+}

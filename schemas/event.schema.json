@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/event.schema.json",
+  "title": "Event",
+  "description": "Schema for one NDJSON line in events.jsonl. The log is append-only; entries are never modified.",
+  "type": "object",
+  "required": ["seq", "ts", "event", "actor_type", "actor_id"],
+  "additionalProperties": false,
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing sequence number. Gaps indicate dropped/corrupt lines."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Wall-clock UTC timestamp when the event was written."
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "claim_created",
+        "claim_renewed",
+        "claim_expired",
+        "claim_released",
+        "run_started",
+        "work_complete",
+        "finalize_rebase_started",
+        "ready_to_merge",
+        "phase_started",
+        "phase_finished",
+        "run_finished",
+        "run_failed",
+        "run_cancelled",
+        "blocked",
+        "unblocked",
+        "need_input",
+        "input_provided",
+        "input_requested",
+        "input_response",
+        "heartbeat",
+        "agent_registered",
+        "agent_online",
+        "agent_offline",
+        "agent_marked_dead",
+        "session_start_failed",
+        "task_added",
+        "task_updated",
+        "task_cancelled",
+        "task_released",
+        "task_delegated",
+        "coordinator_started",
+        "coordinator_stopped"
+      ],
+      "description": "Event type discriminator."
+    },
+    "actor_type": {
+      "type": "string",
+      "enum": ["agent", "coordinator", "human"],
+      "description": "Who emitted this event."
+    },
+    "actor_id": {
+      "type": "string",
+      "description": "agent_id, 'coordinator', or a human handle."
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run-[a-z0-9-]+$",
+      "description": "Present on run/claim/phase/heartbeat events."
+    },
+    "task_ref": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+/[a-z0-9-]+$",
+      "description": "Present on task and run events."
+    },
+    "agent_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Present on agent-scoped events. Provider-agnostic worker id."
+    },
+    "phase": {
+      "type": "string",
+      "description": "Phase name for phase_started / phase_finished events."
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Event-specific data. Schema varies by event type."
+    }
+  }
+}

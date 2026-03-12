@@ -1,0 +1,38 @@
+TASK_START v4
+task_ref: {{task_ref}}
+run_id: {{run_id}}
+title: {{title}}
+epic: {{epic}}
+description: {{description}}
+
+Report progress using your Bash tool — call these orc commands directly:
+
+  orc run-start --run-id={{run_id}} --agent-id={{agent_id}}     ← call immediately
+  orc run-heartbeat --run-id={{run_id}} --agent-id={{agent_id}} ← every ~5 min during long work
+  orc run-work-complete --run-id={{run_id}} --agent-id={{agent_id}} ← when implementation/review/rebase work is done and before any terminal success signal
+  orc run-finish --run-id={{run_id}} --agent-id={{agent_id}}    ← after the work-complete handoff, when the run can terminate cleanly
+  orc run-fail --run-id={{run_id}} --agent-id={{agent_id}} --reason="..." ← on unrecoverable failure
+
+acceptance_criteria:
+{{acceptance_criteria_lines}}
+
+current_state:
+{{current_state}}
+
+desired_state:
+{{desired_state}}
+
+start_here:
+{{start_here}}
+
+targeted_verification:
+{{verification}}
+
+task_spec_path: {{task_spec_path}}
+
+task_contract_v1_json:
+{{task_contract_json}}
+
+assigned_worktree: {{assigned_worktree}}
+start_immediately: call orc run-start, inspect the richer task-spec context above, and execute this task in the assigned worktree now. Before commit, edit docs/backlog/<N>-<slug>.md for this task and change status: todo to status: done. After commit/review/verification and git rebase main, call orc run-work-complete and remain alive for coordinator finalization follow-up when present. If an interactive prompt needs master input, use orc run-input-request instead of hanging or failing immediately. Be ready to handle a finalize-rebase request in this same worktree before terminal success, and do not merge or clean up the worktree yourself.
+TASK_END
