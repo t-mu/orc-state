@@ -28,13 +28,13 @@ function readAgents() {
   return JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
 }
 
-describe('cli/gc-workers.mjs', () => {
+describe('cli/gc-workers.ts', () => {
   it('marks unreachable workers offline when not deregistering', async () => {
     writeAgents([
       { agent_id: 'alive', provider: 'claude', status: 'running', session_handle: 'alive-handle', provider_ref: { id: 1 }, registered_at: '2026-01-01T00:00:00Z' },
       { agent_id: 'stale', provider: 'claude', status: 'running', session_handle: 'stale-handle', provider_ref: { id: 2 }, registered_at: '2026-01-01T00:00:00Z' },
     ]);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: async (handle) => handle === 'alive-handle',
       }),
@@ -42,10 +42,10 @@ describe('cli/gc-workers.mjs', () => {
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/gc-workers.mjs'];
+    process.argv = ['node', 'cli/gc-workers.ts'];
     setStateDirEnv(dir);
     try {
-      await import('./gc-workers.mjs');
+      await import('./gc-workers.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -63,7 +63,7 @@ describe('cli/gc-workers.mjs', () => {
     writeAgents([
       { agent_id: 'stale', provider: 'claude', status: 'running', session_handle: 'stale-handle', registered_at: '2026-01-01T00:00:00Z' },
     ]);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: async () => false,
       }),
@@ -71,10 +71,10 @@ describe('cli/gc-workers.mjs', () => {
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/gc-workers.mjs', '--deregister'];
+    process.argv = ['node', 'cli/gc-workers.ts', '--deregister'];
     setStateDirEnv(dir);
     try {
-      await import('./gc-workers.mjs');
+      await import('./gc-workers.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -87,7 +87,7 @@ describe('cli/gc-workers.mjs', () => {
     writeAgents([
       { agent_id: 'x', provider: 'claude', status: 'running', session_handle: 'x-handle', registered_at: '2026-01-01T00:00:00Z' },
     ]);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: async () => {
           throw new Error('probe failed');
@@ -98,10 +98,10 @@ describe('cli/gc-workers.mjs', () => {
     const before = readAgents();
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/gc-workers.mjs'];
+    process.argv = ['node', 'cli/gc-workers.ts'];
     setStateDirEnv(dir);
     try {
-      await import('./gc-workers.mjs');
+      await import('./gc-workers.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);

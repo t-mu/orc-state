@@ -19,8 +19,8 @@ import {
   handleDelegateTask,
   handleCancelTask,
   handleRespondInput,
-} from './handlers.mjs';
-import { readPendingNotifications } from '../lib/masterNotifyQueue.mjs';
+} from './handlers.ts';
+import { readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 
 let dir;
 

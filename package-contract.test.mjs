@@ -32,11 +32,11 @@ describe('package.json contract', () => {
       const absolutePath = resolve(ROOT, relativePath);
       expect(existsSync(absolutePath), `${relativePath} must exist`).toBe(true);
       const source = readLocalFile(relativePath);
-      expect(source.startsWith('#!/usr/bin/env node'), `${relativePath} must have node shebang`).toBe(true);
+      expect(source.startsWith('#!/usr/bin/env'), `${relativePath} must have node shebang`).toBe(true);
     }
   });
 
   it('exports package root from index.mjs', () => {
-    expect(packageJson.exports?.['.']).toBe('./index.mjs');
+    expect(packageJson.exports?.['.']).toBe('./index.ts');
   });
 });

@@ -4,8 +4,8 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
-import { TOOLS } from './tools-list.mjs';
-import { invokeTool, readResource, validateToolArguments } from './server.mjs';
+import { TOOLS } from './tools-list.ts';
+import { invokeTool, readResource, validateToolArguments } from './server.ts';
 
 let stateDir;
 
@@ -50,7 +50,7 @@ describe('orchestrator mcp server foundation', () => {
   });
 
   it('server module does not write debug output to stdout', () => {
-    const serverSource = readFileSync(resolve(import.meta.dirname, 'server.mjs'), 'utf8');
+    const serverSource = readFileSync(resolve(import.meta.dirname, 'server.ts'), 'utf8');
     expect(serverSource).not.toContain('console.log(');
     expect(serverSource).not.toContain('process.stdout.write(');
   });

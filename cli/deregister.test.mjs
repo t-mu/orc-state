@@ -29,13 +29,13 @@ function readAgents() {
 }
 
 function runCli(args) {
-  return spawnSync(process.execPath, ['cli/deregister.mjs', ...args], {
+  return spawnSync(process.execPath, ['--experimental-strip-types', 'cli/deregister.ts', ...args], {
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }
 
-describe('cli/deregister.mjs', () => {
+describe('cli/deregister.ts', () => {
   it('removes existing agent with no active claim and exits 0', () => {
     seedAgents([
       { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'idle', registered_at: '2026-01-01T00:00:00Z' },

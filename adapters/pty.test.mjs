@@ -34,7 +34,7 @@ async function makeAdapter({ provider = 'claude', spawnReturn, spawnThrow } = {}
     ? vi.fn().mockImplementation(() => { throw spawnThrow; })
     : vi.fn().mockReturnValue(ptyProcess);
   vi.doMock('node-pty', () => ({ default: { spawn: spawnSpy } }));
-  const { createPtyAdapter } = await import('./pty.mjs');
+  const { createPtyAdapter } = await import('./pty.ts');
   return {
     adapter: createPtyAdapter({ provider }),
     spawnSpy,
@@ -352,7 +352,7 @@ describe('pty adapter start() replacement', () => {
       .mockReturnValueOnce(second);
     vi.doMock('node-pty', () => ({ default: { spawn: spawnSpy } }));
 
-    const { createPtyAdapter } = await import('./pty.mjs');
+    const { createPtyAdapter } = await import('./pty.ts');
     const adapter = createPtyAdapter({ provider: 'claude' });
     await adapter.start('bob', {});
     await adapter.start('bob', {});
@@ -367,7 +367,7 @@ describe('pty adapter start() replacement', () => {
 describe('adapter factory and contract', () => {
   it('createAdapter returns valid adapters for known providers', async () => {
     vi.doMock('node-pty', () => ({ default: { spawn: vi.fn().mockReturnValue(makeMockPty().ptyProcess) } }));
-    const { createAdapter, assertAdapterContract } = await import('./index.mjs');
+    const { createAdapter, assertAdapterContract } = await import('./index.ts');
 
     expect(() => assertAdapterContract(createAdapter('claude'))).not.toThrow();
     expect(() => assertAdapterContract(createAdapter('codex'))).not.toThrow();
@@ -376,14 +376,14 @@ describe('adapter factory and contract', () => {
 
   it('createAdapter throws for unknown providers', async () => {
     vi.doMock('node-pty', () => ({ default: { spawn: vi.fn() } }));
-    const { createAdapter } = await import('./index.mjs');
+    const { createAdapter } = await import('./index.ts');
     expect(() => createAdapter('unknown')).toThrow(/Unknown provider/);
   });
 
   it('assertAdapterContract accepts a pty adapter instance', async () => {
     vi.doMock('node-pty', () => ({ default: { spawn: vi.fn().mockReturnValue(makeMockPty().ptyProcess) } }));
-    const { createPtyAdapter } = await import('./pty.mjs');
-    const { assertAdapterContract } = await import('./interface.mjs');
+    const { createPtyAdapter } = await import('./pty.ts');
+    const { assertAdapterContract } = await import('./interface.ts');
     const adapter = createPtyAdapter({ provider: 'claude' });
     expect(() => assertAdapterContract(adapter)).not.toThrow();
   });

@@ -15,7 +15,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/status.mjs', () => {
+describe('cli/status.ts', () => {
   it('prints json status with agent/task/claim counts', () => {
     seedValidState({
       agents: [
@@ -120,7 +120,7 @@ describe('cli/status.mjs', () => {
 });
 
 function runStatus(args) {
-  return spawnSync('node', ['cli/status.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/status.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
