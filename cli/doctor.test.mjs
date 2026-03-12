@@ -15,7 +15,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/doctor.mjs', () => {
+describe('cli/doctor.ts', () => {
   it('reports stale active claims with actionable hint', () => {
     seedState({
       agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
@@ -88,7 +88,7 @@ describe('cli/doctor.mjs', () => {
 });
 
 function runCli(args, env = process.env) {
-  return spawnSync(process.execPath, ['cli/doctor.mjs', ...args], {
+  return spawnSync(process.execPath, ['--experimental-strip-types', 'cli/doctor.ts', ...args], {
     cwd: repoRoot,
     env: { ...env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

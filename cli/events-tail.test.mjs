@@ -16,7 +16,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/events-tail.mjs', () => {
+describe('cli/events-tail.ts', () => {
   it('prints no events marker when log is empty', () => {
     const result = runCli([]);
     expect(result.status).toBe(0);
@@ -60,7 +60,7 @@ function ev(seq, event) {
 }
 
 function runCli(args) {
-  return spawnSync('node', ['cli/events-tail.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/events-tail.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

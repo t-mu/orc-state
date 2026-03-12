@@ -28,22 +28,22 @@ function readAgents() {
   return JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
 }
 
-describe('cli/clear-workers.mjs', () => {
+describe('cli/clear-workers.ts', () => {
   it('removes offline workers immediately', async () => {
     writeAgents([
       { agent_id: 'offline', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
       { agent_id: 'running', provider: 'claude', status: 'running', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
     ]);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ heartbeatProbe: async () => true }),
     }));
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/clear-workers.mjs'];
+    process.argv = ['node', 'cli/clear-workers.ts'];
     setStateDirEnv(dir);
     try {
-      await import('./clear-workers.mjs');
+      await import('./clear-workers.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -58,7 +58,7 @@ describe('cli/clear-workers.mjs', () => {
       { agent_id: 'stale', provider: 'claude', status: 'running', session_handle: 'stale-handle', registered_at: '2026-01-01T00:00:00Z' },
       { agent_id: 'alive', provider: 'claude', status: 'running', session_handle: 'alive-handle', registered_at: '2026-01-01T00:00:00Z' },
     ]);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: async (handle) => handle === 'alive-handle',
       }),
@@ -66,10 +66,10 @@ describe('cli/clear-workers.mjs', () => {
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/clear-workers.mjs'];
+    process.argv = ['node', 'cli/clear-workers.ts'];
     setStateDirEnv(dir);
     try {
-      await import('./clear-workers.mjs');
+      await import('./clear-workers.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);
@@ -83,7 +83,7 @@ describe('cli/clear-workers.mjs', () => {
     writeAgents([
       { agent_id: 'x', provider: 'claude', status: 'running', session_handle: 'x-handle', registered_at: '2026-01-01T00:00:00Z' },
     ]);
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: async () => {
           throw new Error('pty unavailable');
@@ -94,10 +94,10 @@ describe('cli/clear-workers.mjs', () => {
     const before = readAgents();
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORCH_STATE_DIR;
-    process.argv = ['node', 'cli/clear-workers.mjs'];
+    process.argv = ['node', 'cli/clear-workers.ts'];
     setStateDirEnv(dir);
     try {
-      await import('./clear-workers.mjs');
+      await import('./clear-workers.ts');
     } finally {
       process.argv = oldArgv;
       setStateDirEnv(oldStateDir);

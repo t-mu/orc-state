@@ -69,11 +69,11 @@ describe('worker control flow e2e', () => {
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
     delete process.env.ORCH_STATE_DIR;
-    vi.unmock('../lib/prompts.mjs');
-    vi.unmock('../lib/binaryCheck.mjs');
+    vi.unmock('../lib/prompts.ts');
+    vi.unmock('../lib/binaryCheck.ts');
     vi.unmock('node-pty');
     vi.unmock('node:child_process');
-    vi.unmock('../adapters/index.mjs');
+    vi.unmock('../adapters/index.ts');
   });
 
   it('keeps workers headless in start-session and controls them via control-worker', async () => {
@@ -123,7 +123,7 @@ describe('worker control flow e2e', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawn: spawnMock };
     });
-    vi.doMock('../lib/prompts.mjs', () => ({
+    vi.doMock('../lib/prompts.ts', () => ({
       promptProvider: vi.fn().mockResolvedValue('claude'),
       isInteractive: vi.fn().mockReturnValue(false),
       promptCoordinatorAction: vi.fn().mockResolvedValue('reuse'),
@@ -132,7 +132,7 @@ describe('worker control flow e2e', () => {
       promptRole: vi.fn().mockResolvedValue('worker'),
       promptCapabilities: vi.fn().mockResolvedValue(''),
     }));
-    vi.doMock('../lib/binaryCheck.mjs', () => ({
+    vi.doMock('../lib/binaryCheck.ts', () => ({
       checkAndInstallBinary: vi.fn().mockResolvedValue(true),
       PROVIDER_BINARIES: { claude: 'claude', codex: 'codex', gemini: 'gemini' },
       PROVIDER_PROMPT_PATTERNS: { claude: />\s*$/, codex: /›\s*$/, gemini: />\s*$/ },
@@ -141,7 +141,7 @@ describe('worker control flow e2e', () => {
 
     const oldArgv = process.argv;
     process.argv = ['node', 'cli/start-session.mjs'];
-    await import('../cli/start-session.mjs');
+    await import('../cli/start-session.ts');
     process.argv = oldArgv;
 
     const workerAfterStartSession = readAgents(dir).find((a) => a.agent_id === 'orc-1');
@@ -184,13 +184,13 @@ describe('worker control flow e2e', () => {
     vi.doMock('@inquirer/prompts', () => ({
       select: vi.fn(),
     }));
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ attach, heartbeatProbe }),
     }));
 
     const oldArgv2 = process.argv;
     process.argv = ['node', 'cli/control-worker.mjs', 'orc-1'];
-    await import('../cli/control-worker.mjs');
+    await import('../cli/control-worker.ts');
     process.argv = oldArgv2;
 
     expect(heartbeatProbe).toHaveBeenCalledWith('pty:orc-1');

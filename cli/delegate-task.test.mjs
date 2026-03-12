@@ -16,7 +16,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/delegate-task.mjs', () => {
+describe('cli/delegate-task.ts', () => {
   it('marks task ready_for_dispatch and emits task_delegated event', () => {
     const result = runCli([
       '--task-ref=docs/task-1',
@@ -166,7 +166,7 @@ describe('cli/delegate-task.mjs', () => {
 });
 
 function runCli(args) {
-  return spawnSync('node', ['cli/delegate-task.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/delegate-task.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

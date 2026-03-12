@@ -8,10 +8,10 @@ let dir;
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
-  vi.unmock('../adapters/index.mjs');
+  vi.unmock('../adapters/index.ts');
   dir = mkdtempSync(join(tmpdir(), 'orch-coordinator-policy-e2e-'));
   process.env.ORCH_STATE_DIR = dir;
-  vi.doMock('../lib/runWorktree.mjs', () => ({
+  vi.doMock('../lib/runWorktree.ts', () => ({
     ensureRunWorktree: vi.fn((_stateDir, { runId }) => ({
       run_id: runId,
       branch: `task/${runId}`,
@@ -29,8 +29,8 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
   delete process.env.ORCH_STATE_DIR;
-  vi.unmock('../adapters/index.mjs');
-  vi.unmock('../lib/runWorktree.mjs');
+  vi.unmock('../adapters/index.ts');
+  vi.unmock('../lib/runWorktree.ts');
 });
 
 describe('coordinator policy e2e', () => {
@@ -84,7 +84,7 @@ describe('coordinator policy e2e', () => {
       attach: vi.fn(),
       stop: vi.fn(),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
       '--run-inactive-nudge-ms=100',
@@ -152,7 +152,7 @@ describe('coordinator policy e2e', () => {
       attach: vi.fn(),
       stop: vi.fn(),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
       '--run-inactive-nudge-ms=100',
@@ -183,9 +183,9 @@ describe('coordinator policy e2e', () => {
       attach: vi.fn(),
       stop: vi.fn(),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     const claim = readClaims().claims[0];
@@ -224,7 +224,7 @@ describe('coordinator policy e2e', () => {
       attach: vi.fn(),
       stop: vi.fn(),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
       '--run-start-timeout-ms=1000',
@@ -261,7 +261,7 @@ describe('coordinator policy e2e', () => {
       attach: vi.fn(),
       stop: vi.fn(),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
       '--run-start-timeout-ms=5000',
@@ -306,7 +306,7 @@ describe('coordinator policy e2e', () => {
       attach: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
       '--run-inactive-nudge-ms=1',
@@ -377,9 +377,9 @@ describe('coordinator policy e2e', () => {
       stop: vi.fn().mockResolvedValue(undefined),
       detectInputBlock: vi.fn().mockReturnValue(null),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     const agent = readAgents().agents[0];
@@ -400,7 +400,7 @@ async function importCoordinatorWithArgs(args = []) {
   const oldArgv = process.argv;
   process.argv = ['node', 'coordinator.mjs', ...args];
   try {
-    return await import('../coordinator.mjs');
+    return await import('../coordinator.ts');
   } finally {
     process.argv = oldArgv;
   }

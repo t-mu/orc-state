@@ -15,7 +15,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/preflight.mjs', () => {
+describe('cli/preflight.ts', () => {
   it('passes for valid state with at least one registered worker', () => {
     seedValidState({
       agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
@@ -81,7 +81,7 @@ describe('cli/preflight.mjs', () => {
 });
 
 function runPreflight(args, env = process.env) {
-  return spawnSync(process.execPath, ['cli/preflight.mjs', ...args], {
+  return spawnSync(process.execPath, ['--experimental-strip-types', 'cli/preflight.ts', ...args], {
     cwd: repoRoot,
     env: { ...env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

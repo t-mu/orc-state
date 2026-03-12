@@ -59,7 +59,7 @@ async function withFixturePath(run) {
 }
 
 async function seedLiveWorkerSession(agentId = 'orc-1') {
-  const { createPtyAdapter } = await import('../adapters/pty.mjs');
+  const { createPtyAdapter } = await import('../adapters/pty.ts');
   adapter = createPtyAdapter({ provider: 'claude' });
   const started = await withFixturePath(() => adapter.start(agentId, { system_prompt: 'PING' }));
   sessionHandle = started.session_handle;
@@ -86,11 +86,11 @@ async function seedLiveWorkerSession(agentId = 'orc-1') {
   }, { message: 'fixture readiness marker not found in pty log' });
 }
 
-describe.runIf(PTY_SUPPORTED)('cli/control-worker.mjs integration', () => {
+describe.runIf(PTY_SUPPORTED)('cli/control-worker.ts integration', () => {
   it('attaches to live worker PTY and prints log marker', async () => {
     await seedLiveWorkerSession('orc-1');
 
-    const result = spawnSync(process.execPath, ['cli/control-worker.mjs', 'orc-1'], {
+    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/control-worker.ts', 'orc-1'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
@@ -111,7 +111,7 @@ describe.runIf(PTY_SUPPORTED)('cli/control-worker.mjs integration', () => {
       message: 'session did not terminate after EXIT',
     });
 
-    const result = spawnSync(process.execPath, ['cli/control-worker.mjs', 'orc-2'], {
+    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/control-worker.ts', 'orc-2'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
@@ -123,7 +123,7 @@ describe.runIf(PTY_SUPPORTED)('cli/control-worker.mjs integration', () => {
   }, 15_000);
 });
 
-describe.runIf(!PTY_SUPPORTED)('cli/control-worker.mjs integration (unsupported)', () => {
+describe.runIf(!PTY_SUPPORTED)('cli/control-worker.ts integration (unsupported)', () => {
   it('skips because PTY is unavailable in this environment', () => {
     expect(true).toBe(true);
   });

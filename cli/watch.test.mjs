@@ -15,7 +15,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('cli/watch.mjs', () => {
+describe('cli/watch.ts', () => {
   it('renders one snapshot in --once mode for valid state', () => {
     seedValidState({
       agents: [
@@ -79,7 +79,7 @@ function seedValidState({ agents = [], claims = [], runWorktrees = [] } = {}) {
 }
 
 function runCli(args) {
-  return spawnSync('node', ['cli/watch.mjs', ...args], {
+  return spawnSync('node', ['--experimental-strip-types', 'cli/watch.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { startRun, finishRun } from '../lib/claimManager.mjs';
+import { startRun, finishRun } from '../lib/claimManager.ts';
 import { detectPtySupport } from '../test-fixtures/ptySupport.mjs';
 
 function readClaims(stateDir) {
@@ -141,7 +141,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     seedState(dir);
     process.env.ORCH_STATE_DIR = dir;
     process.env.ORC_REPO_ROOT = dir;
-    vi.doMock('../lib/runWorktree.mjs', () => ({
+    vi.doMock('../lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn((_stateDir, { runId }) => ({
         run_id: runId,
         branch: `task/${runId}`,
@@ -163,15 +163,15 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     delete process.env.ORC_MAX_WORKERS;
     delete process.env.ORC_WORKER_PROVIDER;
     delete process.env.ORC_WORKER_MODEL;
-    vi.unmock('../adapters/index.mjs');
-    vi.unmock('../lib/runWorktree.mjs');
+    vi.unmock('../adapters/index.ts');
+    vi.unmock('../lib/runWorktree.ts');
   });
 
   it('dispatches task and records run_started/run_finished from agent CLI calls', async () => {
     const adapter = makeTmuxMockAdapter('worker-01');
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
     await coordinator.tick();
 
@@ -233,7 +233,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
         start: vi.fn(),
         send,
@@ -242,7 +242,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
         stop,
       }),
     }));
-    vi.doMock('../lib/runWorktree.mjs', () => ({
+    vi.doMock('../lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn((_stateDir, { runId }) => ({
         run_id: runId,
         branch: `task/${runId}`,
@@ -257,7 +257,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       })),
     }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.processTerminalRunEvents([{
       ts: '2026-03-11T08:01:00.000Z',
       event: 'work_complete',
@@ -278,9 +278,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
   it('transitions claim state to done and task status to done after agent calls run_finish', async () => {
     const adapter = makeTmuxMockAdapter('worker-01');
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     const claims = readClaims(dir);
@@ -296,7 +296,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   it('reuses adapter instance across ticks — createAdapter called once per provider', async () => {
     let createAdapterCalls = 0;
     const adapter = makeTmuxMockAdapter('worker-01');
-    vi.doMock('../adapters/index.mjs', () => ({
+    vi.doMock('../adapters/index.ts', () => ({
       createAdapter: (_provider) => {
         createAdapterCalls++;
         return adapter;
@@ -315,7 +315,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     });
     writeFileSync(backlogPath, JSON.stringify(backlog));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
     await coordinator.tick();
 
@@ -345,9 +345,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     const claims = readClaims(dir);
@@ -392,9 +392,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     expect(adapter.start).toHaveBeenCalledOnce();
@@ -437,9 +437,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     expect(adapter.start).not.toHaveBeenCalled();
@@ -488,9 +488,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     const startedAt = Date.now();
     await coordinator.tick();
     const elapsedMs = Date.now() - startedAt;
@@ -501,7 +501,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
   it('exports doShutdown and emits coordinator_stopped once', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined);
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.doShutdown();
     await coordinator.doShutdown();
 
@@ -539,9 +539,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await expect(coordinator.tick()).resolves.toBeUndefined();
 
     const agents = readAgents(dir).agents;
@@ -586,9 +586,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     const agent = readAgents(dir).agents.find((a) => a.agent_id === 'worker-01');
@@ -635,9 +635,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     expect(adapter.start).toHaveBeenCalledOnce();
@@ -690,9 +690,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
     };
-    vi.doMock('../adapters/index.mjs', () => ({ createAdapter: () => adapter }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await import('../coordinator.mjs');
+    const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
     let backlog = readBacklog(dir);
