@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/run-worktrees.schema.json",
+  "title": "Run Worktrees",
+  "type": "object",
+  "required": ["version", "runs"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1"
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["run_id", "task_ref", "agent_id", "branch", "worktree_path", "created_at", "updated_at"],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": { "type": "string", "minLength": 1 },
+          "task_ref": { "type": "string", "pattern": "^[a-z0-9-]+\\/[a-z0-9-]+$" },
+          "agent_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "branch": { "type": "string", "minLength": 1 },
+          "worktree_path": { "type": "string", "minLength": 1 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}
