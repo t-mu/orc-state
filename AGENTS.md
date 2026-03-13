@@ -17,7 +17,7 @@ lifecycle, and surfaces status to the foreground master agent.
 
 | Layer | Choice |
 |-------|--------|
-| Language | JavaScript ES modules (`.mjs`) — no TypeScript |
+| Language | TypeScript (`.ts`) — Node 24 `--experimental-strip-types`, no build step |
 | Tests | Vitest |
 | Runtime | Node.js 24 (pinned in `.nvmrc`) |
 
