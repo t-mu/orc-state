@@ -41,7 +41,7 @@ function seedEventsLines(lines: string[]) {
   writeFileSync(join(dir, 'events.jsonl'), body);
 }
 
-function readBacklog(): Record<string, unknown> & { epics: Array<Record<string, unknown>> } {
+function readBacklog(): { version: string; epics: Array<{ ref: string; title: string; tasks: Array<Record<string, unknown>> }>; next_task_seq?: number } {
   return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
 }
 
@@ -471,8 +471,8 @@ describe('mcp read handlers', () => {
     expect(created.priority).toBe('high');
 
     const task = readBacklog().epics
-      .find((epic) => epic.ref === 'project')
-      .tasks.find((entry) => entry.ref === created.ref);
+      .find((epic) => epic.ref === 'project')!
+      .tasks.find((entry) => entry.ref === created.ref)!;
     expect(task.priority).toBe('high');
   });
 
@@ -638,14 +638,14 @@ describe('mcp read handlers', () => {
     expect(result.title).toBe('Updated title');
     expect(result.acceptance_criteria).toEqual(['criterion A']);
     const backlog = readBacklog();
-    const task = backlog.epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one');
+    const task = backlog.epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one')!;
     expect(task.title).toBe('Updated title');
     expect(task).not.toHaveProperty('description');
   });
 
   it('handleUpdateTask updates priority without changing status or owner', () => {
     const backlog = readBacklog();
-    const taskBefore = backlog.epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one');
+    const taskBefore = backlog.epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one')!;
     taskBefore.status = 'in_progress';
     taskBefore.owner = 'orc-2';
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
@@ -657,7 +657,7 @@ describe('mcp read handlers', () => {
     });
     expect(result.priority).toBe('critical');
 
-    const taskAfter = readBacklog().epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one');
+    const taskAfter = readBacklog().epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one')!;
     expect(taskAfter.priority).toBe('critical');
     expect(taskAfter.status).toBe('in_progress');
     expect(taskAfter.owner).toBe('orc-2');
@@ -665,7 +665,7 @@ describe('mcp read handlers', () => {
 
   it('handleUpdateTask updates updated_at on successful update', () => {
     const before = readBacklog().epics.flatMap((epic) => epic.tasks)
-      .find((task) => task.ref === 'project/todo-one').updated_at;
+      .find((task) => task.ref === 'project/todo-one')!.updated_at;
     const now = '2026-01-01T00:10:00.000Z';
     vi.spyOn(Date, 'now').mockReturnValue(new Date(now).getTime());
 
@@ -676,7 +676,7 @@ describe('mcp read handlers', () => {
     });
 
     const after = readBacklog().epics.flatMap((epic) => epic.tasks)
-      .find((task) => task.ref === 'project/todo-one').updated_at;
+      .find((task) => task.ref === 'project/todo-one')!.updated_at;
     expect(after).not.toBe(before);
   });
 
@@ -688,7 +688,7 @@ describe('mcp read handlers', () => {
       actor_id: 'master',
     });
     const events = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-    const event = JSON.parse(events.trim().split('\n').at(-1));
+    const event = JSON.parse(events.trim().split('\n').at(-1)!);
     expect(event.event).toBe('task_updated');
     expect(event.task_ref).toBe('project/todo-one');
     expect(event.payload.fields).toEqual(expect.arrayContaining(['description', 'depends_on']));
@@ -795,7 +795,7 @@ describe('mcp read handlers', () => {
   it('handleDelegateTask clears stale owner when no eligible worker exists', () => {
     const backlog = readBacklog();
     const task = backlog.epics.find((epic) => epic.ref === 'project')?.tasks
-      .find((candidate) => candidate.ref === 'project/todo-one');
+      .find((candidate) => candidate.ref === 'project/todo-one')!;
     task.owner = 'orc-1';
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
 
@@ -824,7 +824,7 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask auto-selection uses round-robin across eligible workers (A then B then A)', () => {
     const backlog = readBacklog();
-    const projectEpic = backlog.epics.find((epic) => epic.ref === 'project');
+    const projectEpic = backlog.epics.find((epic) => epic.ref === 'project')!;
     projectEpic.tasks.push(
       {
         ref: 'project/todo-two',
@@ -881,7 +881,7 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask falls back to first-match when dispatch-state.json is missing', () => {
     const backlog = readBacklog();
-    const projectEpic = backlog.epics.find((epic) => epic.ref === 'project');
+    const projectEpic = backlog.epics.find((epic) => epic.ref === 'project')!;
     projectEpic.tasks.push({
       ref: 'project/todo-two',
       title: 'Todo two',
@@ -976,7 +976,7 @@ describe('mcp read handlers', () => {
   it('handleDelegateTask surfaces routing reasons for explicit target rejection', () => {
     seedClaims([]);
     const backlog = readBacklog();
-    const task = backlog.epics[0].tasks.find((entry) => entry.ref === 'project/todo-one');
+    const task = backlog.epics[0].tasks.find((entry) => entry.ref === 'project/todo-one')!;
     task.required_capabilities = ['sql'];
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
 
@@ -995,7 +995,7 @@ describe('mcp read handlers', () => {
   it('handleDelegateTask surfaces provider mismatch for explicit target rejection', () => {
     seedClaims([]);
     const backlog = readBacklog();
-    const task = backlog.epics[0].tasks.find((entry) => entry.ref === 'project/todo-one');
+    const task = backlog.epics[0].tasks.find((entry) => entry.ref === 'project/todo-one')!;
     task.required_provider = 'gemini';
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
 
@@ -1014,7 +1014,7 @@ describe('mcp read handlers', () => {
   it('handleDelegateTask returns owner and provider diagnostics when auto-selection fails', () => {
     seedClaims([]);
     const backlog = readBacklog();
-    const task = backlog.epics[0].tasks.find((entry) => entry.ref === 'project/todo-one');
+    const task = backlog.epics[0].tasks.find((entry) => entry.ref === 'project/todo-one')!;
     task.owner = 'orc-2';
     task.required_provider = 'gemini';
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
@@ -1060,10 +1060,10 @@ describe('mcp read handlers', () => {
       status: 'blocked',
     });
 
-    const task = readBacklog().epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one');
+    const task = readBacklog().epics.flatMap((epic) => epic.tasks).find((entry) => entry.ref === 'project/todo-one')!;
     expect(task.status).toBe('blocked');
 
-    const event = JSON.parse(readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').at(-1));
+    const event = JSON.parse(readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').at(-1)!);
     expect(event.event).toBe('task_cancelled');
     expect(event.task_ref).toBe('project/todo-one');
   });
@@ -1073,7 +1073,7 @@ describe('mcp read handlers', () => {
       task_ref: 'project/todo-one',
       reason: 'manual cancellation',
       actor_id: 'master',
-    });
+    }) as Record<string, unknown>;
     expect(result.cancelled).toBe(true);
     expect(result.cancelled_run_id).toBe('run-1');
 
@@ -1109,11 +1109,11 @@ describe('mcp read handlers', () => {
     const first = handleCancelTask(dir, {
       task_ref: 'infra/blocked-one',
       actor_id: 'master',
-    });
+    }) as Record<string, unknown>;
     const second = handleCancelTask(dir, {
       task_ref: 'infra/blocked-one',
       actor_id: 'master',
-    });
+    }) as Record<string, unknown>;
     expect(first.cancelled).toBe(true);
     expect(second.cancelled).toBe(true);
     expect(second.status).toBe('blocked');
