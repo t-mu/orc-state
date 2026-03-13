@@ -5,18 +5,18 @@ import { join, resolve } from 'node:path';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 import { detectPtySupport } from '../test-fixtures/ptySupport.ts';
 
-function readClaims(stateDir) {
+function readClaims(stateDir: string): { claims: Array<Record<string, unknown>> } {
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8'));
 }
 
-function readBacklog(stateDir) {
+function readBacklog(stateDir: string): { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
   return JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'));
 }
-function readAgents(stateDir) {
+function readAgents(stateDir: string): { agents: Array<Record<string, unknown>> } {
   return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8'));
 }
 
-let dir;
+let dir: string;
 const repoRoot = resolve(import.meta.dirname, '..', '..');
 const PTY_SUPPORTED = detectPtySupport();
 
@@ -46,7 +46,7 @@ function makeTmuxMockAdapter(agentId = 'worker-01') {
   };
 }
 
-function seedState(stateDir) {
+function seedState(stateDir: string) {
   writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
     version: '1',
     epics: [
@@ -89,7 +89,7 @@ function seedState(stateDir) {
   writeFileSync(join(stateDir, 'events.jsonl'), '');
 }
 
-function seedManagedPoolState(stateDir, tasks) {
+function seedManagedPoolState(stateDir: string, tasks: unknown[]) {
   writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
     version: '1',
     epics: [
@@ -124,7 +124,7 @@ function seedManagedPoolState(stateDir, tasks) {
   writeFileSync(join(stateDir, 'events.jsonl'), '');
 }
 
-function readEvents(stateDir) {
+function readEvents(stateDir: string): Array<Record<string, unknown>> {
   const raw = readFileSync(join(stateDir, 'events.jsonl'), 'utf8').trim();
   if (!raw) return [];
   return raw
@@ -180,7 +180,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     const events = readEvents(dir);
     expect(events.some((e) => e.event === 'run_started')).toBe(true);
     expect(events.some((e) => e.event === 'run_finished')).toBe(true);
-    const agent = readAgents(dir).agents.find((entry) => entry.agent_id === 'worker-01');
+    const agent = readAgents(dir).agents.find((entry) => entry.agent_id === 'worker-01')!;
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBe(null);
   });
@@ -284,12 +284,12 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     await coordinator.tick();
 
     const claims = readClaims(dir);
-    const claim = claims.claims.find((c) => c.task_ref === 'docs/task-1');
+    const claim = claims.claims.find((c) => c.task_ref === 'docs/task-1')!;
     expect(claim).toBeDefined();
     expect(claim.state).toBe('done');
 
     const backlog = readBacklog(dir);
-    const task = backlog.epics[0].tasks.find((t) => t.ref === 'docs/task-1');
+    const task = backlog.epics[0].tasks.find((t) => t.ref === 'docs/task-1')!;
     expect(task.status).toBe('done');
   });
 
@@ -297,7 +297,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     let createAdapterCalls = 0;
     const adapter = makeTmuxMockAdapter('worker-01');
     vi.doMock('../adapters/index.ts', () => ({
-      createAdapter: (_provider) => {
+      createAdapter: (_provider: string) => {
         createAdapterCalls++;
         return adapter;
       },
@@ -351,13 +351,13 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     await coordinator.tick();
 
     const claims = readClaims(dir);
-    const claim = claims.claims.find((c) => c.task_ref === 'docs/task-1');
+    const claim = claims.claims.find((c) => c.task_ref === 'docs/task-1')!;
     expect(claim).toBeDefined();
     expect(claim.state).toBe('failed');
 
     // Task should be back to 'todo' (requeued).
     const backlog = readBacklog(dir);
-    const task = backlog.epics[0].tasks.find((t) => t.ref === 'docs/task-1');
+    const task = backlog.epics[0].tasks.find((t) => t.ref === 'docs/task-1')!;
     expect(task.status).toBe('todo');
   });
 
@@ -381,7 +381,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       ],
     }));
 
-    const prompts = [];
+    const prompts: string[] = [];
     const adapter = {
       start: vi.fn().mockImplementation(async (_agentId, config) => {
         prompts.push(config.system_prompt);
@@ -444,7 +444,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     expect(adapter.start).not.toHaveBeenCalled();
 
-    const agent = readAgents(dir).agents.find((entry) => entry.agent_id === 'worker-01');
+    const agent = readAgents(dir).agents.find((entry) => entry.agent_id === 'worker-01')!;
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBe(null);
     expect(agent.last_heartbeat_at).toBe(null);
@@ -500,7 +500,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('exports doShutdown and emits coordinator_stopped once', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const coordinator = await import('../coordinator.ts');
     await coordinator.doShutdown();
     await coordinator.doShutdown();
@@ -549,10 +549,10 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(agents[0].session_handle).toBe(null);
 
     const events = readEvents(dir);
-    const launchFailure = events.find((event) => event.event === 'session_start_failed' && event.agent_id === 'worker-01');
+    const launchFailure = events.find((event) => event.event === 'session_start_failed' && event.agent_id === 'worker-01')!;
     expect(launchFailure).toBeTruthy();
     expect(launchFailure.task_ref).toBe('docs/task-1');
-    expect(launchFailure.payload.reason).toBe('binary not found');
+    expect((launchFailure.payload as Record<string, unknown>).reason).toBe('binary not found');
     expect(events.some((event) => event.event === 'agent_offline' && event.agent_id === 'worker-01')).toBe(true);
   });
 
@@ -591,16 +591,16 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
 
-    const agent = readAgents(dir).agents.find((a) => a.agent_id === 'worker-01');
+    const agent = readAgents(dir).agents.find((a) => a.agent_id === 'worker-01')!;
     expect(agent).toBeDefined();
     expect(agent.session_handle).toBe('pty:worker-01');
     expect(agent.status).toBe('running');
 
-    const claim = readClaims(dir).claims.find((c) => c.task_ref === 'docs/task-1');
+    const claim = readClaims(dir).claims.find((c) => c.task_ref === 'docs/task-1')!;
     expect(claim).toBeDefined();
     expect(claim.state).not.toBe('released');
 
-    const task = readBacklog(dir).epics[0].tasks.find((t) => t.ref === 'docs/task-1');
+    const task = readBacklog(dir).epics[0].tasks.find((t) => t.ref === 'docs/task-1')!;
     expect(task).toBeDefined();
     expect(task.status).not.toBe('todo');
 
@@ -617,7 +617,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const startedRuns = [];
+    const startedRuns: string[] = [];
     const adapter = {
       start: vi.fn().mockResolvedValue({
         session_handle: 'pty:orc-1',

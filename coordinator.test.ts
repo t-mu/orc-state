@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendNotification, readPendingNotifications } from './lib/masterNotifyQueue.ts';
 
-let dir;
+let dir: string;
 
 beforeEach(() => {
   // Reset module cache BEFORE each test so vi.doMock + dynamic import picks up
@@ -27,7 +27,7 @@ afterEach(() => {
   delete process.env.ORC_WORKER_MODEL;
 });
 
-function seedState(stateDir, { agents = [], tasks = [], claims = [] } = {}) {
+function seedState(stateDir: string, { agents = [] as unknown[], tasks = [] as unknown[], claims = [] as unknown[] }: { agents?: unknown[]; tasks?: unknown[]; claims?: unknown[] } = {}) {
   writeFileSync(
     join(stateDir, 'agents.json'),
     JSON.stringify({ version: '1', agents }),
@@ -43,7 +43,7 @@ function seedState(stateDir, { agents = [], tasks = [], claims = [] } = {}) {
   writeFileSync(join(stateDir, 'events.jsonl'), '');
 }
 
-function readEvents(stateDir) {
+function readEvents(stateDir: string): Array<Record<string, unknown>> {
   const raw = readFileSync(join(stateDir, 'events.jsonl'), 'utf8').trim();
   if (!raw) return [];
   return raw.split('\n').map((line) => JSON.parse(line));
@@ -113,7 +113,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     await tick();
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = readJson(dir, 'agents.json');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
     expect(agents.map((agent) => agent.agent_id)).toEqual(['master', 'orc-1', 'orc-2']);
     expect(agents.find((agent) => agent.agent_id === 'orc-1')?.provider).toBe('gemini');
     expect(agents.find((agent) => agent.agent_id === 'orc-2')?.provider).toBe('gemini');
@@ -170,23 +170,23 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     await tick();
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = readJson(dir, 'agents.json');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
     const slot = agents.find((agent) => agent.agent_id === 'orc-1');
     expect(slot?.status).toBe('idle');
     expect(slot?.session_handle).toBeNull();
 
-    const { claims } = readJson(dir, 'claims.json');
+    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
     expect(claims[0]?.state).toBe('failed');
 
-    const backlog = readJson(dir, 'backlog.json');
+    const backlog = (readJson(dir, 'backlog.json') as { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> });
     expect(backlog.epics[0].tasks[0].status).toBe('todo');
 
     const events = readEvents(dir);
-    const launchFailure = events.find((event) => event.event === 'session_start_failed' && event.agent_id === 'orc-1');
+    const launchFailure = events.find((event) => event.event === 'session_start_failed' && event.agent_id === 'orc-1')!;
     expect(launchFailure).toBeDefined();
     expect(launchFailure.run_id).toMatch(/^run-/);
     expect(launchFailure.task_ref).toBe('proj/fix-bug');
-    expect(launchFailure.payload.reason).toBe('spawn failed');
+    expect((launchFailure.payload as Record<string, unknown>).reason).toBe('spawn failed');
   });
 
   it('does not provision a registered idle worker when no task is ready yet', async () => {
@@ -221,8 +221,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const { readJson } = await import('./lib/stateReader.ts');
     const { agents, claims } = {
-      agents: readJson(dir, 'agents.json').agents,
-      claims: readJson(dir, 'claims.json').claims,
+      agents: (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents,
+      claims: (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims,
     };
     expect(agents[0].status).toBe('idle');
     expect(agents[0].session_handle).toBeNull();
@@ -259,8 +259,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     // Read agents.json back from disk.
     const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = readJson(dir, 'agents.json');
-    const agent = agents.find((a) => a.agent_id === 'worker-01');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const agent = agents.find((a) => a.agent_id === 'worker-01')!;
 
     expect(agent).toBeDefined();
     expect(agent.status).toBe('idle');
@@ -311,15 +311,15 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(mockStart).toHaveBeenCalledOnce();
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = readJson(dir, 'agents.json');
-    const agent = agents.find((a) => a.agent_id === 'worker-01');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const agent = agents.find((a) => a.agent_id === 'worker-01')!;
 
     expect(agent.status).toBe('running');
     expect(agent.session_handle).toBe('pty:worker-01');
     expect(agent.last_heartbeat_at).toBeTruthy();
 
     const events = readEvents(dir);
-    const onlineEvent = events.find((event) => event.event === 'agent_online' && event.agent_id === 'worker-01');
+    const onlineEvent = events.find((event) => event.event === 'agent_online' && event.agent_id === 'worker-01')!;
     expect(onlineEvent).toBeDefined();
     expect(onlineEvent.task_ref).toBe('proj/fix-bug');
   });
@@ -418,8 +418,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(mockStart).toHaveBeenCalledOnce();
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = readJson(dir, 'agents.json');
-    const agent = agents.find((entry) => entry.agent_id === 'worker-01');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const agent = agents.find((entry) => entry.agent_id === 'worker-01')!;
     expect(agent.session_handle).toBe('pty:worker-01-new');
   });
 
@@ -467,7 +467,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     expect(send).not.toHaveBeenCalled();
     const { readJson } = await import('./lib/stateReader.ts');
-    const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-awaiting-input');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-awaiting-input')!;
     expect(claim.state).toBe('in_progress');
     expect(claim.input_state).toBe('awaiting_input');
   });
@@ -493,15 +493,15 @@ describe('agent ttl dead marking', () => {
     await tick();
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = readJson(dir, 'agents.json');
-    const worker = agents.find((a) => a.agent_id === 'worker-ttl');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const worker = agents.find((a) => a.agent_id === 'worker-ttl')!;
     expect(worker.status).toBe('dead');
 
     const events = readEvents(dir);
-    const marked = events.find((event) => event.event === 'agent_marked_dead' && event.agent_id === 'worker-ttl');
+    const marked = events.find((event) => event.event === 'agent_marked_dead' && event.agent_id === 'worker-ttl')!;
     expect(marked).toBeDefined();
-    expect(Number.isInteger(marked.payload?.elapsed_ms)).toBe(true);
-    expect(marked.payload.elapsed_ms).toBeGreaterThan(2 * 60 * 60 * 1000);
+    expect(Number.isInteger((marked.payload as Record<string, unknown>)?.elapsed_ms)).toBe(true);
+    expect((marked.payload as Record<string, unknown>).elapsed_ms).toBeGreaterThan(2 * 60 * 60 * 1000);
   });
 
   it('does not mark stale agent dead when there is an active claim', async () => {
@@ -532,8 +532,8 @@ describe('agent ttl dead marking', () => {
     await tick();
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = readJson(dir, 'agents.json');
-    const worker = agents.find((a) => a.agent_id === 'worker-claimed');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const worker = agents.find((a) => a.agent_id === 'worker-claimed')!;
     expect(worker.status).toBe('idle');
     expect(worker.last_heartbeat_at).toBe(staleTs);
 
@@ -626,11 +626,11 @@ describe('processTerminalRunEvents', () => {
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-success');
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-success');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-success')!;
     expect(claim.state).toBe('done');
-    const task = readJson(dir, 'backlog.json').epics[0].tasks.find((entry) => entry.ref === 'orch/task-151');
+    const task = (readJson(dir, 'backlog.json') as { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).epics[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('done');
-    const agent = readJson(dir, 'agents.json').agents.find((entry) => entry.agent_id === 'orc-1');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
   });
@@ -706,9 +706,9 @@ describe('processTerminalRunEvents', () => {
     }]);
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-cleanup-pending');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-cleanup-pending')!;
     expect(claim.state).toBe('done');
-    const task = readJson(dir, 'backlog.json').epics[0].tasks.find((entry) => entry.ref === 'orch/task-151');
+    const task = (readJson(dir, 'backlog.json') as { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).epics[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('done');
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-cleanup-pending');
   });
@@ -777,7 +777,7 @@ describe('processTerminalRunEvents', () => {
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_WAIT'));
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_REBASE'));
     const { readJson } = await import('./lib/stateReader.ts');
-    const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-retry');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-retry')!;
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(1);
     expect(claim.finalization_blocked_reason).toBeNull();
@@ -846,7 +846,7 @@ describe('processTerminalRunEvents', () => {
     }]);
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-undelivered');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-undelivered')!;
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(0);
     expect(claim.finalization_blocked_reason).toBeNull();
@@ -917,7 +917,7 @@ describe('processTerminalRunEvents', () => {
     }]);
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-undeliverable-blocked');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-undeliverable-blocked')!;
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_retry_count).toBe(0);
     expect(claim.finalization_blocked_reason).toContain('finalize request could not be delivered twice');
@@ -987,11 +987,11 @@ describe('processTerminalRunEvents', () => {
     }]);
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-blocked');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-blocked')!;
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_retry_count).toBe(2);
     expect(claim.finalization_blocked_reason).toContain('branch is not rebased onto latest main');
-    const agent = readJson(dir, 'agents.json').agents.find((entry) => entry.agent_id === 'orc-1');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
     expect(cleanupRunWorktree).not.toHaveBeenCalled();
@@ -1088,7 +1088,7 @@ describe('processTerminalRunEvents', () => {
     expect(notifications[0]).not.toHaveProperty('exit_code');
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const agent = readJson(dir, 'agents.json').agents.find((entry) => entry.agent_id === 'orc-1');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).toHaveBeenCalledWith('pty:orc-1');
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
@@ -1155,7 +1155,7 @@ describe('processTerminalRunEvents', () => {
     }]);
 
     const { readJson } = await import('./lib/stateReader.ts');
-    const agent = readJson(dir, 'agents.json').agents.find((entry) => entry.agent_id === 'orc-1');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).not.toHaveBeenCalled();
     expect(agent.status).toBe('running');
     expect(agent.session_handle).toBe('pty:orc-1-new');
@@ -1225,7 +1225,7 @@ describe('processTerminalRunEvents', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
     let { readJson } = await import('./lib/stateReader.ts');
-    let claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-nudge');
+    let claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-nudge')!;
     expect(send).toHaveBeenCalledWith('pty:worker-01', expect.stringContaining('FINALIZE_REBASE'));
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(2);
@@ -1233,7 +1233,7 @@ describe('processTerminalRunEvents', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     await tick();
     readJson = (await import('./lib/stateReader.ts')).readJson;
-    claim = readJson(dir, 'claims.json').claims.find((entry) => entry.run_id === 'run-finalize-nudge');
+    claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-nudge')!;
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_blocked_reason).toContain('finalization retry timed out waiting for worker progress');
     process.argv = originalArgv;
@@ -1288,7 +1288,7 @@ describe('doShutdown', () => {
   it('releases coordinator lock only once across shutdown and exit hook', async () => {
     seedState(dir);
 
-    const actualFs = await vi.importActual('node:fs');
+    const actualFs = await vi.importActual('node:fs') as typeof import('node:fs');
     const unlinkSpy = vi.fn((path) => actualFs.unlinkSync(path));
     vi.doMock('node:fs', () => ({
       ...actualFs,
@@ -1296,7 +1296,7 @@ describe('doShutdown', () => {
     }));
 
     const onSpy = vi.spyOn(process, 'on');
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
     const coordinator = await import('./coordinator.ts');
     await coordinator.main();
@@ -1304,7 +1304,7 @@ describe('doShutdown', () => {
 
     const exitHandler = onSpy.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
     expect(typeof exitHandler).toBe('function');
-    exitHandler();
+    exitHandler!();
 
     const pidPath = join(dir, 'coordinator.pid');
     const pidUnlinkCalls = unlinkSpy.mock.calls.filter(([path]) => path === pidPath);

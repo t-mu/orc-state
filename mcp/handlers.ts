@@ -286,7 +286,7 @@ export function handleReadAgents(stateDir: string) {
   return readFileSync(join(stateDir, 'agents.json'), 'utf8');
 }
 
-export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
+export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}): Record<string, unknown> {
   const {
     epic,
     title,
