@@ -28,10 +28,10 @@
   ],
   "scripts": {
     "typecheck": "tsc --project tsconfig.check.json --noEmit",
-    "lint": "eslint . --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'",
-    "lint:fix": "eslint . --fix --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "prepare": "simple-git-hooks",
-    "pretest": "tsc --project tsconfig.check.json --noEmit && eslint . --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'",
+    "pretest": "tsc --project tsconfig.check.json --noEmit && eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
     "pack:dry": "npm pack --dry-run"
@@ -40,7 +40,7 @@
     "pre-commit": "lint-staged"
   },
   "lint-staged": {
-    "*.{ts,mts,cts}": "eslint --fix --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'"
+    "*.{ts,mts,cts}": "eslint --fix"
   },
   "engines": {
     "node": ">=24"

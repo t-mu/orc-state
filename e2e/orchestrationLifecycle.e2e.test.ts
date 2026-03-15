@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { startRun, finishRun } from '../lib/claimManager.ts';
-import { detectPtySupport } from '../test-fixtures/ptySupport.ts';
 
 function readClaims(stateDir: string): { claims: Array<Record<string, unknown>> } {
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8'));
@@ -17,8 +16,6 @@ function readAgents(stateDir: string): { agents: Array<Record<string, unknown>> 
 }
 
 let dir: string;
-const repoRoot = resolve(import.meta.dirname, '..', '..');
-const PTY_SUPPORTED = detectPtySupport();
 
 /**
  * Creates a mock adapter that simulates agent behaviour: on send(), it extracts
