@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readEvents } from './eventLog.ts';
 import { createOrchestratorAjv } from './ajvFactory.ts';
+import { type AjvError, formatAjvErrors } from './ajvUtils.ts';
 
 const SCHEMA_DIR = join(import.meta.dirname, '..', 'schemas');
 
@@ -16,53 +17,27 @@ const agentsValidator = ajv.compile(loadSchema('agents.schema.json'));
 const claimsValidator = ajv.compile(loadSchema('claims.schema.json'));
 const runWorktreesValidator = ajv.compile(loadSchema('run-worktrees.schema.json'));
 
-interface AjvError {
-  instancePath?: string;
-  dataPath?: string;
-  message?: string;
-}
-
-function formatAjvErrors(prefix: string, errors: AjvError[] | null | undefined): string[] {
-  return (errors ?? []).map((err) => {
-    const pathRaw = err.instancePath ?? err.dataPath ?? '';
-    const path = pathRaw && pathRaw.length > 0 ? pathRaw : '(root)';
-    return `${prefix}: ${path} ${err.message}`;
-  });
-}
-
 /** Validate backlog.json structure. Returns array of error strings (empty = valid). */
 export function validateBacklog(data: unknown): string[] {
   const ok = backlogValidator(data);
-  return ok ? [] : formatAjvErrors('backlog', backlogValidator.errors as AjvError[] | null);
+  return ok ? [] : formatAjvErrors(backlogValidator.errors as AjvError[] | null, 'backlog');
 }
 
 /** Validate agents.json structure. Returns array of error strings. */
 export function validateAgents(data: unknown): string[] {
   const ok = agentsValidator(data);
-  return ok ? [] : formatAjvErrors('agents', agentsValidator.errors as AjvError[] | null);
+  return ok ? [] : formatAjvErrors(agentsValidator.errors as AjvError[] | null, 'agents');
 }
 
 /** Validate claims.json structure. Returns array of error strings. */
 export function validateClaims(data: unknown): string[] {
   const ok = claimsValidator(data);
-  return ok ? [] : formatAjvErrors('claims', claimsValidator.errors as AjvError[] | null);
+  return ok ? [] : formatAjvErrors(claimsValidator.errors as AjvError[] | null, 'claims');
 }
 
 export function validateRunWorktrees(data: unknown): string[] {
   const ok = runWorktreesValidator(data);
-  return ok ? [] : formatAjvErrors('run-worktrees', runWorktreesValidator.errors as AjvError[] | null);
-}
-
-interface BacklogLike {
-  epics?: Array<{ tasks?: Array<{ ref?: string }> }>;
-}
-
-interface AgentsLike {
-  agents?: Array<{ agent_id?: string }>;
-}
-
-interface ClaimsLike {
-  claims?: Array<{ run_id?: string; state?: string; task_ref?: string; agent_id?: string }>;
+  return ok ? [] : formatAjvErrors(runWorktreesValidator.errors as AjvError[] | null, 'run-worktrees');
 }
 
 function validateStateInvariants(backlog: unknown, agents: unknown, claims: unknown): string[] {
@@ -71,9 +46,9 @@ function validateStateInvariants(backlog: unknown, agents: unknown, claims: unkn
   const agentIds = new Set<string>();
   const activeTaskClaims = new Map<string, string[]>();
 
-  const b = backlog as BacklogLike | null;
-  const ag = agents as AgentsLike | null;
-  const cl = claims as ClaimsLike | null;
+  const b = backlog as { epics?: Array<{ tasks?: Array<{ ref?: string }> }> } | null;
+  const ag = agents as { agents?: Array<{ agent_id?: string }> } | null;
+  const cl = claims as { claims?: Array<{ run_id?: string; state?: string; task_ref?: string; agent_id?: string }> } | null;
 
   for (const epic of b?.epics ?? []) {
     for (const task of epic?.tasks ?? []) {

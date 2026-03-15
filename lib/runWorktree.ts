@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
-import { withLock } from './lock.ts';
+import { withLock, lockPath } from './lock.ts';
 import { RUN_WORKTREES_FILE, WORKTREES_DIR } from './paths.ts';
 import { resolveRepoRoot } from './repoRoot.ts';
 import type { RunWorktreesState, RunWorktreeEntry } from '../types/run-worktrees.ts';
@@ -13,10 +13,6 @@ function readRunWorktrees(_stateDir: string): RunWorktreesState {
   } catch {
     return { version: '1', runs: [] };
   }
-}
-
-function lockPath(stateDir: string): string {
-  return join(stateDir, '.lock');
 }
 
 function ensureGitWorktree({ root, path, branch, createBranch }: {

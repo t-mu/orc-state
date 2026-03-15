@@ -1,6 +1,7 @@
 /**
  * Routing helpers for task-to-agent compatibility.
  */
+import { TASK_TYPES } from './constants.ts';
 
 interface AgentLike {
   agent_id?: string;
@@ -20,7 +21,7 @@ function toCapSet(agent: AgentLike | null | undefined): Set<string> {
   return new Set(agent?.capabilities ?? []);
 }
 
-const KNOWN_TASK_TYPES = new Set(['implementation', 'refactor']);
+const KNOWN_TASK_TYPES = new Set(TASK_TYPES);
 
 function addReason(reasons: string[], reason: string): void {
   if (!reasons.includes(reason)) reasons.push(reason);
