@@ -11,6 +11,7 @@ export function renderTemplate(templateName: string, vars: Record<string, unknow
     if (value == null) {
       console.warn(`[template] missing variable '{{${key}}}' in ${templateName} — rendered as empty string`);
     }
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     return value == null ? '' : String(value);
   });
 }

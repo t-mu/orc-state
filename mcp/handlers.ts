@@ -10,7 +10,7 @@ import { appendNotification } from '../lib/masterNotifyQueue.ts';
 import { readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readClaims, readJson } from '../lib/stateReader.ts';
-import { canAgentExecuteTask, evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
+import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
 
 const TASK_STATUSES = new Set(['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released']);
 const AGENT_ROLES = new Set(['worker', 'reviewer', 'master']);
@@ -54,7 +54,7 @@ function toTaskSummary(task: Record<string, unknown>) {
 
 export function handleListTasks(stateDir: string, { status, epic }: { status?: unknown; epic?: unknown } = {}) {
   if (status != null && !TASK_STATUSES.has(status as string)) {
-    throw new Error(`Invalid status: ${String(status)}`);
+    throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}`);
   }
   if (epic != null && typeof epic !== 'string') {
     throw new Error('epic must be a string');
@@ -80,7 +80,7 @@ export function handleListTasks(stateDir: string, { status, epic }: { status?: u
 
 export function handleListAgents(stateDir: string, { role, include_dead = false }: { role?: unknown; include_dead?: unknown } = {}) {
   if (role != null && !AGENT_ROLES.has(role as string)) {
-    throw new Error(`Invalid role: ${String(role)}`);
+    throw new Error(`Invalid role: ${typeof role === 'string' ? role : '(unknown)'}`);
   }
   if (typeof include_dead !== 'boolean') {
     throw new Error('include_dead must be a boolean');
@@ -231,9 +231,9 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
       if (activeRun?.task_ref === task.ref) continue;
 
       const blockers: string[] = [];
-      if (task.status !== 'todo') blockers.push(`status:${task.status}`);
+      if (task.status !== 'todo') blockers.push(`status:${String(task.status)}`);
       if (task.planning_state && task.planning_state !== 'ready_for_dispatch') {
-        blockers.push(`planning_state:${task.planning_state}`);
+        blockers.push(`planning_state:${typeof task.planning_state === 'string' ? task.planning_state : '(unknown)'}`);
       }
       const unmetDependencies = ((task.depends_on ?? []) as string[]).filter((dependency) => !doneSet.has(dependency));
       blockers.push(...unmetDependencies.map((dependency) => `dependency_not_done:${dependency}`));
@@ -254,7 +254,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
   else if (activeRun?.state === 'in_progress') recommendedAction = 'heartbeat';
   else if ((queuedTasks as Array<{ blockers: string[] }>).some((task) => task.blockers.length === 0)) recommendedAction = 'start_run';
 
-  const blockers = (queuedTasks as Array<{ ref: unknown; blockers: string[] }>).flatMap((task) => task.blockers.map((reason) => `${task.ref}:${reason}`));
+  const blockers = (queuedTasks as Array<{ ref: unknown; blockers: string[] }>).flatMap((task) => task.blockers.map((reason) => `${String(task.ref)}:${reason}`));
 
   return {
     agent_id,
@@ -301,12 +301,12 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     actor_id = defaultActorId(stateDir),
   } = args;
 
-  const resolvedEpic = typeof epic === 'string' && (epic as string).trim().length > 0 ? epic as string : 'general';
+  const resolvedEpic = typeof epic === 'string' && (epic).trim().length > 0 ? epic : 'general';
   if (!title) throw new Error('title is required');
-  if (!TASK_TYPES.has(task_type as string)) throw new Error(`Invalid task_type: ${task_type}`);
-  if (!TASK_PRIORITIES.has(priority as string)) throw new Error(`Invalid priority: ${priority}`);
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${actor_id}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (owner && !ACTOR_ID_RE.test(owner as string)) throw new Error(`Invalid owner: ${owner}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!TASK_TYPES.has(task_type as string)) throw new Error(`Invalid task_type: ${String(task_type)}`);
+  if (!TASK_PRIORITIES.has(priority as string)) throw new Error(`Invalid priority: ${String(priority)}`);
+  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (owner && !ACTOR_ID_RE.test(owner as string)) throw new Error(`Invalid owner: ${typeof owner === 'string' ? owner : '(unknown)'}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 
   assertStringArray(acceptance_criteria, 'acceptance_criteria');
   assertStringArray(depends_on, 'depends_on');
@@ -324,7 +324,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
       const allAgents = listAgents(stateDir);
       const actorExists = allAgents.some((agent) => (agent as unknown as Record<string, unknown>).agent_id === actor_id);
       if (!actorExists) {
-        throw new Error(`Actor agent not found: ${actor_id}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
+        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
       }
     }
 
@@ -371,7 +371,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     }
 
     epicObj.tasks = [...((epicObj.tasks ?? []) as unknown[]), newTask];
-    backlog.next_task_seq = (currentNextTaskSeq as number) + 1;
+    backlog.next_task_seq = (currentNextTaskSeq) + 1;
     atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(
@@ -403,11 +403,11 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   } = args;
 
   if (!task_ref) throw new Error('task_ref is required');
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor_id: ${actor_id}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor_id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   assertStringArray(acceptance_criteria, 'acceptance_criteria');
   assertStringArray(depends_on, 'depends_on');
   if (priority !== undefined && !TASK_PRIORITIES.has(priority as string)) {
-    throw new Error(`Invalid priority: ${priority}`);
+    throw new Error(`Invalid priority: ${typeof priority === 'string' ? priority : '(unknown)'}`);
   }
 
   const now = new Date().toISOString();
@@ -417,7 +417,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const backlogPath = join(stateDir, 'backlog.json');
     const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
     const task = findTask(backlog, task_ref as string) as Record<string, unknown> | null;
-    if (!task) throw new Error(`Task not found: ${task_ref}`);
+    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     if (title !== undefined) {
       task.title = title;
@@ -470,8 +470,8 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
   } = args;
 
   if (!task_ref) throw new Error('task_ref is required');
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${actor_id}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (!TASK_TYPES.has(task_type as string)) throw new Error(`Invalid task type: ${task_type}`);
+  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!TASK_TYPES.has(task_type as string)) throw new Error(`Invalid task type: ${String(task_type)}`);
 
   const now = new Date().toISOString();
 
@@ -482,7 +482,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
     const allAgents = listAgents(stateDir);
     const actorExists = allAgents.some((agent) => (agent as unknown as Record<string, unknown>).agent_id === actor_id);
     if (actor_id !== 'human' && !actorExists) {
-      throw new Error(`Actor agent not found: ${actor_id}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
+      throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
     }
 
     let task: Record<string, unknown> | null = null;
@@ -494,7 +494,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
         break;
       }
     }
-    if (!task) throw new Error(`Task not found: ${task_ref}`);
+    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
     const taskForDiagnostics = { ...task };
 
     let assignedTarget: string | null = (target_agent_id as string) ?? null;
@@ -505,7 +505,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
         claim.agent_id === assignedTarget && ['claimed', 'in_progress'].includes(claim.state as string),
       );
       if (activeClaim) {
-        throw new Error(`Target agent ${assignedTarget} already has active run ${activeClaim.run_id}`);
+        throw new Error(`Target agent ${assignedTarget} already has active run ${String(activeClaim.run_id)}`);
       }
       const evaluation = evaluateTaskEligibility({ ...task, task_type: task_type as string | undefined }, target as unknown as Record<string, unknown>) as { eligible: boolean; reasons: string[] };
       if (!evaluation.eligible) {
@@ -521,7 +521,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
         allAgents,
         claims: claims as unknown as import('../types/claims.ts').Claim[],
         stateDir,
-      }) as string | null;
+      });
     }
 
     task.task_type = task_type;
@@ -560,7 +560,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
       return {
         warning: 'no_eligible_worker',
         task_ref,
-        message: `No eligible worker for ${task_ref}; inspect candidate_diagnostics for routing blockers.`,
+        message: `No eligible worker for ${typeof task_ref === 'string' ? task_ref : '(unknown)'}; inspect candidate_diagnostics for routing blockers.`,
         candidate_diagnostics: describeAutoTargetFailure({
           task: taskForDiagnostics,
           taskType: task_type as string,
@@ -582,7 +582,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
 
   if (!task_ref) throw new Error('task_ref is required');
   if (reason != null && typeof reason !== 'string') throw new Error('reason must be a string');
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${actor_id}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 
   const now = new Date().toISOString();
   let cancelledRuns: Array<Record<string, unknown>> = [];
@@ -599,12 +599,12 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
       const allAgents = listAgents(stateDir);
       const actorExists = allAgents.some((agent) => (agent as unknown as Record<string, unknown>).agent_id === actor_id);
       if (!actorExists) {
-        throw new Error(`Actor agent not found: ${actor_id}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
+        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
       }
     }
 
     const task = findTask(backlog, task_ref as string) as Record<string, unknown> | null;
-    if (!task) throw new Error(`Task not found: ${task_ref}`);
+    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     if (task.status === 'done' || task.status === 'released') {
       return { error: 'already_terminal', task_ref, status: task.status };
@@ -682,7 +682,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
       finished_at: now,
     });
     if (!deposited) {
-      console.warn(`[mcp] WARNING: failed to deposit cancellation notification for ${task_ref} (${cancelledRun.run_id})`);
+      console.warn(`[mcp] WARNING: failed to deposit cancellation notification for ${typeof task_ref === 'string' ? task_ref : '(unknown)'} (${String(cancelledRun.run_id)})`);
     }
   }
 
@@ -692,7 +692,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
 export function handleRespondInput(stateDir: string, { run_id, agent_id, response, actor_id }: Record<string, unknown> = {}) {
   if (!run_id) throw new Error('run_id is required');
   if (!agent_id) throw new Error('agent_id is required');
-  if (typeof response !== 'string' || (response as string).length === 0) {
+  if (typeof response !== 'string' || (response).length === 0) {
     throw new Error('response is required');
   }
 
@@ -705,13 +705,13 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
   const latestRequest = rawEvents
     ? rawEvents.split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line))
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
       .reverse()
       .find((event: Record<string, unknown>) =>
         event.event === 'input_requested'
         && event.run_id === run_id
         && event.agent_id === agent_id
-        && typeof (event.payload as unknown as Record<string, unknown>)?.question === 'string')
+        && typeof (event.payload as Record<string, unknown>)?.question === 'string')
     : null;
 
   try {

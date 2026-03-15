@@ -384,8 +384,8 @@ describe('orc-run-input-request', () => {
 
     let stdout = '';
     let stderr = '';
-    child.stdout!.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr!.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
     let eventsAfterRequest: Array<Record<string, unknown>> = [];
     for (let attempt = 0; attempt < 20; attempt += 1) {

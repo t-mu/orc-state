@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Backlog, Task, Feature } from '../types/backlog.ts';
+import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState } from '../types/agents.ts';
 import type { ClaimsState } from '../types/claims.ts';
 
@@ -33,7 +33,7 @@ export function readClaims(stateDir: string): ClaimsState {
 export function findTask(backlog: unknown, taskRef: string): Task | null {
   const b = backlog as Backlog | null;
   for (const epic of (b?.epics ?? [])) {
-    const task = (epic as Feature).tasks?.find((t: Task) => t.ref === taskRef);
+    const task = (epic).tasks?.find((t: Task) => t.ref === taskRef);
     if (task) return task;
   }
   return null;
@@ -47,7 +47,7 @@ export function getNextTaskSeq(backlog: unknown): number {
 
   let max = 0;
   for (const epic of (b?.epics ?? [])) {
-    for (const task of (epic as Feature)?.tasks ?? []) {
+    for (const task of (epic)?.tasks ?? []) {
       const match = typeof task?.ref === 'string'
         ? task.ref.match(TASK_SEQ_RE)
         : null;

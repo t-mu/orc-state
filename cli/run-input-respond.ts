@@ -17,19 +17,19 @@ if (!runId || !agentId || !response) {
   process.exit(1);
 }
 
-function readLatestInputRequest(currentRunId: string, currentAgentId: string) {
+function readLatestInputRequest(currentRunId: string, currentAgentId: string): Record<string, unknown> | null {
   try {
     const raw = readFileSync(join(STATE_DIR, 'events.jsonl'), 'utf8').trim();
     if (!raw) return null;
     const events = raw.split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line))
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
       .reverse();
-    return events.find((event: Record<string, unknown>) =>
+    return events.find((event) =>
       event.event === 'input_requested'
       && event.run_id === currentRunId
       && event.agent_id === currentAgentId
-      && typeof (event.payload as Record<string, unknown>)?.question === 'string');
+      && typeof (event.payload as Record<string, unknown>)?.question === 'string') ?? null;
   } catch {
     return null;
   }

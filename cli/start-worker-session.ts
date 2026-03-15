@@ -43,7 +43,7 @@ if ((worker as Record<string, unknown> | null)?.role === 'master') {
 
 const workerRecord = worker as Record<string, unknown> | null;
 if (worker && provider && provider !== workerRecord?.provider) {
-  console.error(`Provider mismatch for ${workerId}: registered=${workerRecord?.provider}, requested=${provider}`);
+  console.error(`Provider mismatch for ${workerId}: registered=${String(workerRecord?.provider)}, requested=${provider}`);
   process.exit(1);
 }
 
@@ -109,12 +109,13 @@ if (workerFinal.session_handle) {
 }
 
 if (!workerFinal.session_handle) {
-  console.log(`Agent '${workerFinal.agent_id}' registered (${workerFinal.provider}). Coordinator will provision the headless session on its next tick, even while idle.`);
+  console.log(`Agent '${String(workerFinal.agent_id)}' registered (${String(workerFinal.provider)}). Coordinator will provision the headless session on its next tick, even while idle.`);
   console.log('This command is for debug/recovery workflows. Normal task execution launches workers per task automatically.');
   console.log(`Use: orc-watch     — monitor for the agent_online event / running status`);
-  console.log(`Use: orc-attach ${workerFinal.agent_id}  — attach to worker output once running`);
+  console.log(`Use: orc-attach ${String(workerFinal.agent_id)}  — attach to worker output once running`);
 } else {
-  console.log(`Headless session ready: ${workerFinal.session_handle}`);
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
+  console.log(`Headless session ready: ${String(workerFinal.session_handle)}`);
   console.log('This command is for debug/recovery workflows. Normal task execution launches workers per task automatically.');
-  console.log(`Use: orc-attach ${workerFinal.agent_id}  — attach to worker output`);
+  console.log(`Use: orc-attach ${String(workerFinal.agent_id)}  — attach to worker output`);
 }

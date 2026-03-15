@@ -14,16 +14,16 @@ const asJson = process.argv.includes('--json') || (flag('json') ?? '') === 'true
 const stateErrors = validateStateDir(STATE_DIR);
 const agentsRaw = readAgentsFromLib(STATE_DIR).agents ?? [];
 const claimsRaw = readClaimsFromLib(STATE_DIR).claims ?? [];
-const agents = agentsRaw as unknown as Array<Record<string, unknown>>;
-const claims = claimsRaw as unknown as Array<Record<string, unknown>>;
+const agents = agentsRaw;
+const claims = claimsRaw;
 
 const checks = {
   state_valid: stateErrors.length === 0,
   has_registered_workers: agents.length > 0,
   has_online_workers: agents.some((a) => a.status !== 'offline'),
-  orphaned_active_claims: getOrphanedClaims(agents, claims),
+  orphaned_active_claims: getOrphanedClaims(agents as unknown as Array<Record<string, unknown>>, claims as unknown as Array<Record<string, unknown>>),
 };
-const providerBinaries = getProviderBinaries(agents);
+const providerBinaries = getProviderBinaries(agents as unknown as Array<Record<string, unknown>>);
 const allBinariesPresent = Object.values(providerBinaries).every(Boolean);
 
 const ok = checks.state_valid
@@ -62,7 +62,7 @@ console.log(`has_online_workers:     ${checks.has_online_workers}`);
 console.log(`orphaned_active_claims: ${checks.orphaned_active_claims.length}`);
 console.log('provider_binaries:');
 for (const [provider, available] of Object.entries(providerBinaries)) {
-  const packageName = (PROVIDER_PACKAGES as Record<string, string>)[provider] ?? '';
+  const packageName = (PROVIDER_PACKAGES)[provider] ?? '';
   if (available) {
     console.log(`  ${provider}: available`);
   } else if (packageName) {
@@ -82,7 +82,7 @@ if (checks.orphaned_active_claims.length > 0) {
   console.log('');
   console.log('orphaned_active_claims:');
   for (const c of checks.orphaned_active_claims) {
-    console.log(`  - run=${c.run_id} task=${c.task_ref} agent=${c.agent_id} owner_status=${c.owner_status}`);
+    console.log(`  - run=${String(c.run_id)} task=${String(c.task_ref)} agent=${String(c.agent_id)} owner_status=${String(c.owner_status)}`);
   }
 }
 
@@ -124,7 +124,7 @@ function getProviderBinaries(agents: Array<Record<string, unknown>>) {
   const providers = [...new Set(agents.map((a) => a.provider).filter(Boolean))] as string[];
   return Object.fromEntries(
     providers.map((provider) => {
-      const binary = (PROVIDER_BINARIES as Record<string, string>)[provider] ?? provider;
+      const binary = (PROVIDER_BINARIES)[provider] ?? provider;
       return [provider, isBinaryAvailable(binary)];
     }),
   );

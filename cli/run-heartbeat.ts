@@ -15,7 +15,7 @@ if (!runId || !agentId) {
 try {
   const { lease_expires_at: leaseExpiresAt } = heartbeat(STATE_DIR, runId, agentId) as Record<string, unknown>;
   recordAgentActivity(STATE_DIR, agentId);
-  console.log(`heartbeat: ${runId} (lease until ${leaseExpiresAt})`);
+  console.log(`heartbeat: ${runId} (lease until ${String(leaseExpiresAt)})`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`Error: ${message}`);

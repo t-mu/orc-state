@@ -1288,7 +1288,7 @@ describe('doShutdown', () => {
   it('releases coordinator lock only once across shutdown and exit hook', async () => {
     seedState(dir);
 
-    const actualFs = await vi.importActual('node:fs') as typeof import('node:fs');
+    const actualFs = await vi.importActual('node:fs');
     const unlinkSpy = vi.fn((path) => actualFs.unlinkSync(path));
     vi.doMock('node:fs', () => ({
       ...actualFs,

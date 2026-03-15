@@ -13,13 +13,13 @@
  *     [--required-capabilities=<cap>] \  (repeatable)
  *     [--actor-id=<agent_id>]
  */
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { flag, flagAll } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { readBacklog } from '../lib/stateReader.ts';
 
 const epicRef = flag('epic');
 const title = flag('title');
@@ -97,14 +97,14 @@ for (const key of ['depends_on', 'acceptance_criteria', 'required_capabilities']
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
     const backlogPath = join(STATE_DIR, 'backlog.json');
-    const backlog = JSON.parse(readFileSync(backlogPath, 'utf8'));
+    const backlog = readBacklog(STATE_DIR) as unknown as Record<string, unknown>;
 
-    const epic = (backlog.epics ?? []).find((e: Record<string, unknown>) => e.ref === epicRef);
+    const epic = ((backlog.epics ?? []) as Array<Record<string, unknown>>).find((e) => e.ref === epicRef);
     if (!epic) {
       throw new Error(`Epic not found: ${epicRef}`);
     }
 
-    const existing = (epic.tasks ?? []).find((t: Record<string, unknown>) => t.ref === taskRef);
+    const existing = ((epic.tasks ?? []) as Array<Record<string, unknown>>).find((t) => t.ref === taskRef);
     if (existing) {
       throw new Error(`Task already exists: ${taskRef}`);
     }
@@ -112,7 +112,7 @@ try {
     // Validate all depends_on refs exist in the backlog.
     if (((newTask.depends_on as unknown[]) ?? []).length > 0) {
       const allRefs = new Set(
-        (backlog.epics ?? []).flatMap((e: Record<string, unknown>) => ((e.tasks ?? []) as Array<Record<string, unknown>>).map((t) => t.ref)),
+        ((backlog.epics ?? []) as Array<Record<string, unknown>>).flatMap((e) => ((e.tasks ?? []) as Array<Record<string, unknown>>).map((t) => t.ref)),
       );
       for (const dep of newTask.depends_on as string[]) {
         if (!allRefs.has(dep)) {
@@ -121,7 +121,7 @@ try {
       }
     }
 
-    epic.tasks = [...(epic.tasks ?? []), newTask];
+    epic.tasks = [...((epic.tasks ?? []) as unknown[]), newTask];
     atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(

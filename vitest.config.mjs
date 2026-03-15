@@ -5,5 +5,8 @@ export default defineConfig({
     environment: 'node',
     include: ['**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/e2e/**'],
+    typecheck: {
+      tsconfig: './tsconfig.test.json',
+    },
   },
 });

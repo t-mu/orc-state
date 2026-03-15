@@ -156,6 +156,7 @@ export function withLock<T>(lockPath: string, fn: () => T): T {
     }
     throw releaseError;
   }
+  // eslint-disable-next-line @typescript-eslint/only-throw-error
   if (fnError) throw fnError;
   return value!;
 }
@@ -180,6 +181,7 @@ export async function withLockAsync<T>(lockPath: string, fn: () => Promise<T>): 
     }
     throw releaseError;
   }
+  // eslint-disable-next-line @typescript-eslint/only-throw-error
   if (fnError) throw fnError;
   return value!;
 }

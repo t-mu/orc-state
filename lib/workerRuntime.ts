@@ -4,7 +4,8 @@ import type { Agent } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
 
 function reasonCode(reason: unknown): string {
-  return `ERR_${String(reason ?? 'unknown').toUpperCase()}`;
+  const s = typeof reason === 'string' ? reason : 'unknown';
+  return `ERR_${s.toUpperCase()}`;
 }
 
 function syncAgentRuntime(agent: Agent, updates: Record<string, unknown>): void {

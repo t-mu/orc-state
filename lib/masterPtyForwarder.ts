@@ -25,13 +25,17 @@ function formatResult(success: boolean): string {
   return success ? '✓ success' : '✗ failed';
 }
 
+function str(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
 function formatInputRequest(notification: QueueEntry): string {
   return [
     `[ORCHESTRATOR] INPUT_REQUEST`,
-    `task=${String(notification['task_ref'] ?? '(unknown)')}`,
-    `worker=${String(notification['agent_id'] ?? '(unknown)')}`,
-    `run=${String(notification['run_id'] ?? '(unknown)')}`,
-    `question=${String(notification['question'] ?? '(question missing)')}`,
+    `task=${str(notification['task_ref'], '(unknown)')}`,
+    `worker=${str(notification['agent_id'], '(unknown)')}`,
+    `run=${str(notification['run_id'], '(unknown)')}`,
+    `question=${str(notification['question'], '(question missing)')}`,
     'Ask the user for the missing answer, then respond with respond_input(run_id, agent_id, response).',
   ].join(' ');
 }
@@ -43,7 +47,7 @@ function formatNotifications(notifications: QueueEntry[]): string {
     if (notification['type'] === 'INPUT_REQUEST') {
       return formatInputRequest(notification);
     }
-    return `[ORCHESTRATOR] TASK_COMPLETE task=${String(notification['task_ref'] ?? '(unknown)')} worker=${String(notification['agent_id'] ?? '(unknown)')} result=${formatResult(notification['success'] === true)} time=${String(notification['finished_at'] ?? new Date().toISOString())}`;
+    return `[ORCHESTRATOR] TASK_COMPLETE task=${str(notification['task_ref'], '(unknown)')} worker=${str(notification['agent_id'], '(unknown)')} result=${formatResult(notification['success'] === true)} time=${str(notification['finished_at'], new Date().toISOString())}`;
   });
   return parts.join(' | ');
 }

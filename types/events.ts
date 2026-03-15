@@ -321,7 +321,7 @@ export function isAgentEvent(e: OrcEvent): e is Extract<OrcEvent, { agent_id: st
  * which uses keyof (A | B) = intersection of keys, dropping variant-specific
  * fields like `run_id`. DistributiveOmit<A | B, K> = Omit<A, K> | Omit<B, K>.
  */
-export type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 /** OrcEvent without the auto-assigned `seq` field — use as input to appendSequencedEvent. */
 export type OrcEventInput = DistributiveOmit<OrcEvent, 'seq'>;

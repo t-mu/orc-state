@@ -13,7 +13,7 @@ function readLocalFile(relativePath: string) {
 describe('package.json contract', () => {
   it('keeps exports mapped to existing files', () => {
     const exportsMap = packageJson.exports ?? {};
-    for (const relativePath of Object.values(exportsMap) as string[]) {
+    for (const relativePath of Object.values(exportsMap)) {
       if (relativePath.includes('*')) {
         const prefix = relativePath.split('*')[0];
         const absoluteDir = resolve(ROOT, prefix);
@@ -27,7 +27,7 @@ describe('package.json contract', () => {
 
   it('keeps CLI bins mapped to existing executable node entry files', () => {
     const bins = packageJson.bin ?? {};
-    for (const [command, relativePath] of Object.entries(bins) as [string, string][]) {
+    for (const [command, relativePath] of Object.entries(bins)) {
       expect(command === 'orc' || command.startsWith('orc-'), `${command} must be orc-prefixed`).toBe(true);
       const absolutePath = resolve(ROOT, relativePath);
       expect(existsSync(absolutePath), `${relativePath} must exist`).toBe(true);

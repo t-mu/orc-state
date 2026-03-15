@@ -29,7 +29,7 @@ if (workerId === 'master') {
   process.exit(1);
 }
 
-let provider = await promptProvider(flag('provider', args), {
+const provider = await promptProvider(flag('provider', args), {
   message: 'Select provider for DEBUG worker registration',
 });
 if (!provider) {
@@ -71,7 +71,7 @@ try {
     capabilities,
   });
   const entryRecord = entry as unknown as Record<string, unknown>;
-  console.log(`Registered ${entryRecord.agent_id} (${entryRecord.provider}) role=${entryRecord.role}`);
+  console.log(`Registered ${String(entryRecord.agent_id)} (${String(entryRecord.provider)}) role=${String(entryRecord.role)}`);
   console.log('This command is for debug/recovery workflows. Normal startup uses orc-start-session and coordinator-managed workers.');
 } catch (error) {
   console.error((error as Error).message);

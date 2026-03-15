@@ -176,7 +176,7 @@ export function validateStateDir(stateDir: string): string[] {
   const runWorktreesPath = join(stateDir, 'run-worktrees.json');
   if (existsSync(runWorktreesPath)) {
     try {
-      const data = JSON.parse(readFileSync(runWorktreesPath, 'utf8'));
+      const data: unknown = JSON.parse(readFileSync(runWorktreesPath, 'utf8'));
       allErrors.push(...validateRunWorktrees(data));
     } catch (error) {
       allErrors.push(`run-worktrees.json: JSON parse error — ${(error as Error).message}`);
