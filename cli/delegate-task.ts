@@ -13,7 +13,9 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { selectAutoTarget } from '../lib/dispatchPlanner.ts';
 import { canAgentExecuteTask } from '../lib/taskRouting.ts';
+
 import { readBacklog, readClaims } from '../lib/stateReader.ts';
+import { TASK_TYPES, AGENT_ID_RE } from '../lib/constants.ts';
 
 const taskRef = flag('task-ref');
 const targetAgentId = flag('target-agent-id');
@@ -27,7 +29,7 @@ if (!taskRef) {
   process.exit(1);
 }
 
-if (!/^[a-z0-9][a-z0-9-]*$/.test(actorId)) {
+if (!AGENT_ID_RE.test(actorId)) {
   console.error(`Invalid actor-id: ${actorId}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   process.exit(1);
 }
@@ -41,7 +43,7 @@ if (actorId !== 'human') {
   }
 }
 
-const VALID_TASK_TYPES = new Set(['implementation', 'refactor']);
+const VALID_TASK_TYPES = new Set(TASK_TYPES);
 if (!VALID_TASK_TYPES.has(taskType)) {
   console.error(`Invalid task type: ${taskType}`);
   process.exit(1);

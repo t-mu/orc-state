@@ -1,28 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createOrchestratorAjv } from './ajvFactory.ts';
+import { type AjvError, formatAjvErrors } from './ajvUtils.ts';
+import { AGENT_ID_RE, TASK_REF_RE } from './constants.ts';
 
 const SCHEMA_DIR = join(import.meta.dirname, '..', 'schemas');
 const EVENT_SCHEMA = JSON.parse(readFileSync(join(SCHEMA_DIR, 'event.schema.json'), 'utf8')) as object;
 
 const ajv = createOrchestratorAjv();
 const validateSchema = ajv.compile(EVENT_SCHEMA);
-
-const AGENT_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
-const TASK_REF_RE = /^[a-z0-9-]+\/[a-z0-9-]+$/;
 const FAILURE_POLICY_SET = new Set(['requeue', 'block']);
-
-interface AjvError {
-  instancePath?: string;
-  message?: string;
-}
-
-function formatAjvErrors(errors: AjvError[] | null | undefined): string[] {
-  return (errors ?? []).map((err) => {
-    const path = err.instancePath?.length ? err.instancePath : '(root)';
-    return `${path} ${err.message}`;
-  });
-}
 
 function requireTaskRef(event: unknown, errors: string[]): void {
   const e = event as { task_ref?: unknown } | null;

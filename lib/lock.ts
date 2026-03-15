@@ -1,9 +1,12 @@
 import { openSync, closeSync, unlinkSync, existsSync, statSync, readFileSync, writeSync, constants } from 'node:fs';
+import { join } from 'node:path';
+import { LOCK_STALE_MS } from './constants.ts';
 
-/** Lock files older than this are considered candidates for stale-breaking. */
-const STALE_MS = 30_000;
+/** Return the canonical lock file path for a state directory. */
+export function lockPath(dir: string): string { return join(dir, '.lock'); }
+
 /** Extremely stale malformed locks can be broken to avoid permanent deadlocks. */
-const MALFORMED_STALE_BREAK_MS = STALE_MS * 20;
+const MALFORMED_STALE_BREAK_MS = LOCK_STALE_MS * 20;
 const HELD_LOCK_TOKENS = new Map<string, string>();
 
 function createLockToken(): string {
@@ -25,7 +28,7 @@ function isProcessAlive(pid: number): boolean {
 
 /**
  * Acquire a file-based exclusive lock. Throws if the lock is currently held
- * by a live process. Breaks locks that are older than STALE_MS AND whose
+ * by a live process. Breaks locks that are older than LOCK_STALE_MS AND whose
  * holder process is confirmed dead.
  *
  * Uses O_EXCL (create-exclusive) which is atomic on local POSIX filesystems.
@@ -58,7 +61,7 @@ export function acquireLock(lockPath: string): void {
       if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
       throw e;
     }
-    if (age <= STALE_MS) {
+    if (age <= LOCK_STALE_MS) {
       throw new Error(`Lock already held: ${lockPath}`);
     }
 

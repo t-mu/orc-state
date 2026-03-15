@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { withLock } from './lock.ts';
+import { withLock, lockPath } from './lock.ts';
+import { DEFAULT_LEASE_MS } from './constants.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { readJson, findTask } from './stateReader.ts';
@@ -7,7 +8,6 @@ import type { Claim, ClaimsState, FinalizationState, InputState } from '../types
 import type { Backlog } from '../types/backlog.ts';
 import type { OrcEventInput } from '../types/events.ts';
 
-const DEFAULT_LEASE_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 const FINALIZATION_STATES = new Set<FinalizationState | null>([
   'awaiting_finalize',
@@ -19,8 +19,6 @@ const FINALIZATION_STATES = new Set<FinalizationState | null>([
 ]);
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function lp(stateDir: string): string { return join(stateDir, '.lock'); }
 
 function makeRunId(): string {
   const ts   = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
@@ -47,7 +45,7 @@ export function claimTask(
   agentId: string,
   { leaseDurationMs = DEFAULT_LEASE_MS }: { leaseDurationMs?: number } = {},
 ): { run_id: string; lease_expires_at: string } {
-  return withLock(lp(stateDir), () => {
+  return withLock(lockPath(stateDir), () => {
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
     const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
 
@@ -94,7 +92,7 @@ export function claimTask(
  * Transition a claimed run to in_progress.
  */
 export function startRun(stateDir: string, runId: string, agentId: string): void {
-  return withLock(lp(stateDir), () => {
+  return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
     if (!claim) throw new Error(`Claim not found: ${runId}`);
@@ -129,7 +127,7 @@ export function heartbeat(
   agentId: string,
   { leaseDurationMs = DEFAULT_LEASE_MS, emitEvent = true }: { leaseDurationMs?: number; emitEvent?: boolean } = {},
 ): { lease_expires_at: string } {
-  return withLock(lp(stateDir), () => {
+  return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
     if (!claim) throw new Error(`Claim not found: ${runId}`);
@@ -171,7 +169,7 @@ export function finishRun(
     policy?: string;
   } = {},
 ): void {
-  return withLock(lp(stateDir), () => {
+  return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
     if (!claim) throw new Error(`Claim not found: ${runId}`);
@@ -238,7 +236,7 @@ export function setRunFinalizationState(
     blockedReason?: string | null;
   } = {},
 ): Claim {
-  return withLock(lp(stateDir), () => {
+  return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim = claims.claims.find((candidate) => candidate.run_id === runId);
     if (!claim) throw new Error(`Claim not found: ${runId}`);
@@ -277,7 +275,7 @@ export function setRunInputState(
     requestedAt?: string | null;
   } = {},
 ): Claim {
-  return withLock(lp(stateDir), () => {
+  return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim = claims.claims.find((candidate) => candidate.run_id === runId);
     if (!claim) throw new Error(`Claim not found: ${runId}`);
@@ -302,121 +300,71 @@ export function setRunInputState(
   });
 }
 
+function _expireLeasesCore(
+  stateDir: string,
+  { policy = 'requeue', actorId = 'coordinator' }: { policy?: string; actorId?: string } = {},
+): Array<{ run_id: string; task_ref: string; agent_id: string }> {
+  const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
+  const backlog = readJson(stateDir, 'backlog.json') as Backlog;
+  const now     = new Date();
+  const expired: Array<{ run_id: string; task_ref: string; agent_id: string }> = [];
+
+  for (const claim of claims.claims) {
+    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
+    if (claim.input_state === 'awaiting_input') continue;
+    if (!claim.lease_expires_at || new Date(claim.lease_expires_at) > now) continue;
+
+    claim.state       = 'failed';
+    claim.finished_at = now.toISOString();
+    expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id });
+
+    const task = findTask(backlog, claim.task_ref);
+    if (task) {
+      if (policy === 'block') {
+        task.status = 'blocked';
+      } else {
+        // Requeue path: increment attempt counter, auto-block at MAX_ATTEMPTS.
+        const attempts = (task.attempt_count ?? 0) + 1;
+        task.attempt_count = attempts;
+        if (attempts >= MAX_ATTEMPTS) {
+          task.status = 'blocked';
+          task.blocked_reason = `max_attempts_exceeded: expired ${attempts} times`;
+        } else {
+          task.status = 'todo';
+        }
+      }
+    }
+  }
+
+  if (expired.length > 0) {
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    for (const { run_id, task_ref } of expired) {
+      emit(stateDir, {
+        ts: now.toISOString(), event: 'claim_expired',
+        actor_type: 'coordinator', actor_id: actorId,
+        run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code: 'ERR_LEASE_EXPIRED' },
+      });
+    }
+  }
+
+  return expired;
+}
+
 /**
  * Expire all stale leases (lease_expires_at < now).
  * Returns array of expired run_ids.
  */
 export function expireStaleLeases(
   stateDir: string,
-  { policy = 'requeue', actorId = 'coordinator' }: { policy?: string; actorId?: string } = {},
+  options: { policy?: string; actorId?: string } = {},
 ): string[] {
-  return withLock(lp(stateDir), () => {
-    const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
-    const backlog = readJson(stateDir, 'backlog.json') as Backlog;
-    const now     = new Date();
-    const expired: Array<{ run_id: string; task_ref: string }> = [];
-
-    for (const claim of claims.claims) {
-      if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-      if (claim.input_state === 'awaiting_input') continue;
-      if (!claim.lease_expires_at || new Date(claim.lease_expires_at) > now) continue;
-
-      claim.state       = 'failed';
-      claim.finished_at = now.toISOString();
-      expired.push({ run_id: claim.run_id, task_ref: claim.task_ref });
-
-      const task = findTask(backlog, claim.task_ref);
-      if (task) {
-        if (policy === 'block') {
-          task.status = 'blocked';
-        } else {
-          // Requeue path: increment attempt counter, auto-block at MAX_ATTEMPTS.
-          const attempts = (task.attempt_count ?? 0) + 1;
-          task.attempt_count = attempts;
-          if (attempts >= MAX_ATTEMPTS) {
-            task.status = 'blocked';
-            task.blocked_reason = `max_attempts_exceeded: expired ${attempts} times`;
-          } else {
-            task.status = 'todo';
-          }
-        }
-      }
-    }
-
-    if (expired.length > 0) {
-      atomicWriteJson(join(stateDir, 'claims.json'), claims);
-      atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-      for (const { run_id, task_ref } of expired) {
-        emit(stateDir, {
-          ts: now.toISOString(), event: 'claim_expired',
-          actor_type: 'coordinator', actor_id: actorId,
-          run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code: 'ERR_LEASE_EXPIRED' },
-        });
-      }
-    }
-
-    return expired.map((e) => e.run_id);
-  });
+  return withLock(lockPath(stateDir), () => _expireLeasesCore(stateDir, options).map((e) => e.run_id));
 }
 
 export function expireStaleLeasesDetailed(
   stateDir: string,
   options: { policy?: string; actorId?: string } = {},
 ): Array<{ run_id: string; task_ref: string; agent_id: string }> {
-  return withLock(lp(stateDir), () => {
-    const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
-    const backlog = readJson(stateDir, 'backlog.json') as Backlog;
-    const now     = new Date();
-    const expired: Array<{ run_id: string; task_ref: string; agent_id: string }> = [];
-    const policy = options.policy ?? 'requeue';
-    const actorId = options.actorId ?? 'coordinator';
-
-    for (const claim of claims.claims) {
-      if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-      if (claim.input_state === 'awaiting_input') continue;
-      if (!claim.lease_expires_at || new Date(claim.lease_expires_at) > now) continue;
-
-      claim.state = 'failed';
-      claim.finished_at = now.toISOString();
-      expired.push({
-        run_id: claim.run_id,
-        task_ref: claim.task_ref,
-        agent_id: claim.agent_id,
-      });
-
-      const task = findTask(backlog, claim.task_ref);
-      if (task) {
-        if (policy === 'block') {
-          task.status = 'blocked';
-        } else {
-          const attempts = (task.attempt_count ?? 0) + 1;
-          task.attempt_count = attempts;
-          if (attempts >= MAX_ATTEMPTS) {
-            task.status = 'blocked';
-            task.blocked_reason = `max_attempts_exceeded: expired ${attempts} times`;
-          } else {
-            task.status = 'todo';
-          }
-        }
-      }
-    }
-
-    if (expired.length > 0) {
-      atomicWriteJson(join(stateDir, 'claims.json'), claims);
-      atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-      for (const { run_id, task_ref } of expired) {
-        emit(stateDir, {
-          ts: now.toISOString(),
-          event: 'claim_expired',
-          actor_type: 'coordinator',
-          actor_id: actorId,
-          run_id,
-          task_ref,
-          payload: { policy: policy as import('../types/events.ts').FailurePolicy, code: 'ERR_LEASE_EXPIRED' },
-        });
-      }
-    }
-
-    return expired;
-  });
+  return withLock(lockPath(stateDir), () => _expireLeasesCore(stateDir, options));
 }
