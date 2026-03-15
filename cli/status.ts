@@ -28,7 +28,7 @@ if (errors.length > 0) {
 
 if (mine) {
   const agentStatus = buildAgentStatus(STATE_DIR, agentId as string);
-  if (!(agentStatus as Record<string, unknown>).agent) {
+  if (!(agentStatus).agent) {
     console.error(`Agent not found: ${agentId}`);
     process.exit(1);
   }

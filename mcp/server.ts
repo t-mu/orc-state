@@ -121,17 +121,19 @@ export function readResource(stateDir: string, uri: string) {
   throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
+// eslint-disable-next-line @typescript-eslint/require-await
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
-  const validation = validateToolArguments(name, args as Record<string, unknown>);
+  const validation = validateToolArguments(name, args);
   if (!validation.ok) {
     throw new McpError(ErrorCode.InvalidParams, validation.error!);
   }
 
   try {
-    return asToolResult(invokeTool(STATE_DIR, name, args as Record<string, unknown>));
+    return asToolResult(invokeTool(STATE_DIR, name, args));
   } catch (err) {
     if (err instanceof McpError) throw err;
     if (isExpectedToolError(err)) {
@@ -141,8 +143,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+// eslint-disable-next-line @typescript-eslint/require-await
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: RESOURCES }));
 
+// eslint-disable-next-line @typescript-eslint/require-await
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   return readResource(STATE_DIR, request.params.uri);
 });

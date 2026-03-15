@@ -82,8 +82,8 @@ let lastProcessedSeq = (() => {
   }
 })();
 let latestActivityByRun: Map<string, string> = new Map();
-const runStartNudgeAtMs = new Map();
-const runInactiveNudgeAtMs = new Map();
+const runStartNudgeAtMs = new Map<string, number>();
+const runInactiveNudgeAtMs = new Map<string, number>();
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -112,6 +112,7 @@ async function runBounded(thunks: Array<() => Promise<unknown>>, limit = CONCURR
   return results;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function markAgentOffline(agent: Agent, reason: string) {
   markWorkerOffline(STATE_DIR, agent, { emit, reason });
 }
@@ -227,7 +228,7 @@ function detectBlockingPromptQuestion(adapter: ReturnType<typeof createAdapter>,
 function getClaim(runId: string): Claim | null {
   try {
     const claims = (readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] }).claims ?? [];
-    return (claims as Claim[]).find((claim) => claim.run_id === runId) ?? null;
+    return (claims).find((claim) => claim.run_id === runId) ?? null;
   } catch {
     return null;
   }
@@ -455,6 +456,7 @@ function hasOtherActiveClaim(agentId: string, runId: string) {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function ensureSessionPoolReady(agents: Agent[], workerPoolConfig: WorkerPoolConfig) {
   const candidates = (agents ?? []).filter(
     (agent) => agent?.role !== 'master'
@@ -549,7 +551,7 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
     const agent = byAgent.get(claim.agent_id);
     if (!agent?.session_handle || agent.status === 'offline') continue;
     const adapter = getAdapter(agent.provider);
-    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle!);
+    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
     if (blockingQuestion) {
       recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
       runStartNudgeAtMs.delete(claim.run_id);
@@ -557,7 +559,7 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
     }
 
     const claimSnapshot = { ...claim };
-    const agentSessionHandle = agent.session_handle!
+    const agentSessionHandle = agent.session_handle
     nudgeWork.push(async () => {
       const adapter = getAdapter(agent.provider);
       await adapter.send(agentSessionHandle, buildRunStartNudge(claimSnapshot));
@@ -626,7 +628,7 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
         continue;
       }
       const adapter = getAdapter(agent.provider);
-      const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle!);
+      const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
       if (blockingQuestion) {
         recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
         runInactiveNudgeAtMs.delete(claim.run_id);
@@ -658,7 +660,7 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
     const agent = byAgent.get(claim.agent_id);
     if (!agent?.session_handle || agent.status === 'offline') continue;
     const adapter = getAdapter(agent.provider);
-    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle!);
+    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
     if (blockingQuestion) {
       recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
       runInactiveNudgeAtMs.delete(claim.run_id);
@@ -667,7 +669,7 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
 
     const claimSnapshot = { ...claim };
     const agentProvider = agent.provider;
-    const agentSessionHandle = agent.session_handle!;
+    const agentSessionHandle = agent.session_handle;
     nudgeWork.push(async () => {
       const adapter = getAdapter(agentProvider);
       await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot));
@@ -815,7 +817,7 @@ async function tick() {
       const adapter = getAdapter(agent.provider);
       try {
         await adapter.send(
-          agent.session_handle!,
+          agent.session_handle,
           buildTaskEnvelope(taskRef, runId, agent.agent_id),
         );
       } catch (err) {
@@ -826,7 +828,7 @@ async function tick() {
           policy: 'requeue',
         });
         runId = null;
-        const alive = await adapter.heartbeatProbe(agent.session_handle!);
+        const alive = await adapter.heartbeatProbe(agent.session_handle);
         await cleanupRunCapacity(agent.agent_id, workerPoolConfig, {
           offlineReason: alive ? null : 'dispatch_failed_session_unreachable',
         });
@@ -980,10 +982,10 @@ export async function processTerminalRunEvents(events: Record<string, unknown>[]
         run_id: (event.run_id ?? '(unknown)') as string,
         agent_id: (event.agent_id ?? '(unknown)') as string,
         question: ((event?.payload as Record<string, unknown>)?.question ?? '(question missing)') as string,
-        requested_at: coerceTs(event.ts) as string,
+        requested_at: coerceTs(event.ts),
       });
       if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${event.task_ref ?? '(unknown)'}`);
+        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${typeof event.task_ref === 'string' ? event.task_ref : '(unknown)'}`);
       }
       continue;
     }
@@ -1031,7 +1033,7 @@ export async function processTerminalRunEvents(events: Record<string, unknown>[]
         ...notification,
       });
       if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit notification for ${event.task_ref ?? '(unknown)'}`);
+        console.warn(`[coordinator] WARNING: failed to deposit notification for ${typeof event.task_ref === 'string' ? event.task_ref : '(unknown)'}`);
       }
     }
 
@@ -1070,15 +1072,15 @@ function acquireCoordinatorLock() {
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
 
-      let other;
-      try { other = JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')); } catch { /* stale/corrupt */ }
-      const otherPid = other?.pid;
-      if (Number.isInteger(otherPid) && otherPid > 0 && isCoordinatorPidAlive(otherPid)) {
-        console.error(`[coordinator] ERROR: another coordinator is already running (PID ${otherPid}). Aborting.`);
+      let other: unknown;
+      try { other = JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')) as unknown; } catch { /* stale/corrupt */ }
+      const otherPid = (other as Record<string, unknown> | undefined)?.pid;
+      if (Number.isInteger(otherPid) && (otherPid as number) > 0 && isCoordinatorPidAlive(otherPid as number)) {
+        console.error(`[coordinator] ERROR: another coordinator is already running (PID ${String(otherPid)}). Aborting.`);
         process.exit(1);
       }
-      if (Number.isInteger(otherPid) && otherPid > 0) {
-        log(`stale coordinator.pid removed (PID ${otherPid} is dead)`);
+      if (Number.isInteger(otherPid) && (otherPid as number) > 0) {
+        log(`stale coordinator.pid removed (PID ${String(otherPid)} is dead)`);
       } else {
         log('stale coordinator.pid removed (missing or invalid pid metadata)');
       }
@@ -1137,6 +1139,7 @@ export async function main() {
   // First tick immediately.
   await tick();
 
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   timerHandle = setInterval(async () => {
     if (!running || ticking) return;
     ticking = true;

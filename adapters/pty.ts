@@ -61,6 +61,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>) {
       '--sandbox', 'workspace-write',
       '--ask-for-approval', 'never',
     ];
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     if (config.system_prompt) args.push(String(config.system_prompt));
     return args;
   }
@@ -71,7 +72,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>) {
 function parseHandle(sessionHandle: unknown) {
   const s = String(sessionHandle);
   if (!s.startsWith('pty:') || s.length <= 4) {
-    throw new Error(`Invalid pty session handle: ${sessionHandle}`);
+    throw new Error(`Invalid pty session handle: ${String(sessionHandle)}`);
   }
   return s.slice(4); // agentId
 }
@@ -136,6 +137,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         const spawnArgs = buildStartArgs(provider, config);
 
         // Strip CLAUDECODE so nested claude sessions are not rejected.
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { CLAUDECODE: _cc, ...spawnEnv } = process.env;
         ptyProcess = pty.spawn(binary, spawnArgs, {
           name: 'xterm-256color',
@@ -165,14 +167,15 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       // then a separate CR after a short pause to submit the paste.
       if (provider !== 'codex' && config.system_prompt) {
         await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
-        ptyProcess!.write(String(config.system_prompt));
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        ptyProcess.write(String(config.system_prompt));
         await new Promise((r) => setTimeout(r, 500));
-        ptyProcess!.write('\r');
+        ptyProcess.write('\r');
       }
 
       return {
         session_handle: `pty:${agentId}`,
-        provider_ref: { pid: ptyProcess!.pid, provider, binary },
+        provider_ref: { pid: ptyProcess.pid, provider, binary },
       };
     },
 
@@ -248,6 +251,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
      *
      * Never throws — any error returns false.
      */
+    // eslint-disable-next-line @typescript-eslint/require-await
     async heartbeatProbe(sessionHandle: string) {
       try {
         const agentId    = parseHandle(sessionHandle);
@@ -279,6 +283,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
      * Kill the PTY process and clean up all state.
      * No-op if the session is not found.
      */
+    // eslint-disable-next-line @typescript-eslint/require-await
     async stop(sessionHandle: string) {
       try {
         const agentId = parseHandle(sessionHandle);

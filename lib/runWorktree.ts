@@ -7,6 +7,7 @@ import { RUN_WORKTREES_FILE, WORKTREES_DIR } from './paths.ts';
 import { resolveRepoRoot } from './repoRoot.ts';
 import type { RunWorktreesState, RunWorktreeEntry } from '../types/run-worktrees.ts';
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function readRunWorktrees(_stateDir: string): RunWorktreesState {
   try {
     return JSON.parse(readFileSync(RUN_WORKTREES_FILE, 'utf8')) as RunWorktreesState;

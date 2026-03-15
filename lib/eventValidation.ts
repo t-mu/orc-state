@@ -26,7 +26,7 @@ function formatAjvErrors(errors: AjvError[] | null | undefined): string[] {
 
 function requireTaskRef(event: unknown, errors: string[]): void {
   const e = event as { task_ref?: unknown } | null;
-  if (!e?.task_ref || !TASK_REF_RE.test(String(e.task_ref))) {
+  if (!e?.task_ref || typeof e.task_ref !== 'string' || !TASK_REF_RE.test(e.task_ref)) {
     errors.push('task_ref is required and must match epic/task format');
   }
 }
@@ -60,7 +60,7 @@ function requireRunId(event: unknown, errors: string[]): void {
 
 function requireAgentId(event: unknown, errors: string[]): void {
   const e = event as { agent_id?: unknown } | null;
-  if (!e?.agent_id || !AGENT_ID_RE.test(String(e.agent_id))) {
+  if (!e?.agent_id || typeof e.agent_id !== 'string' || !AGENT_ID_RE.test(e.agent_id)) {
     errors.push('agent_id is required and must be a valid agent_id');
   }
 }

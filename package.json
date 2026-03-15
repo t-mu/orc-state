@@ -27,11 +27,20 @@
     "README.md"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "pretest": "tsc --noEmit",
+    "typecheck": "tsc --project tsconfig.check.json --noEmit",
+    "lint": "eslint . --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'",
+    "lint:fix": "eslint . --fix --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'",
+    "prepare": "simple-git-hooks",
+    "pretest": "tsc --project tsconfig.check.json --noEmit && eslint . --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
     "pack:dry": "npm pack --dry-run"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "lint-staged"
+  },
+  "lint-staged": {
+    "*.{ts,mts,cts}": "eslint --fix --ignore-pattern '**/*.test.ts' --ignore-pattern '**/*.e2e.test.ts' --ignore-pattern 'eslint.config.mjs'"
   },
   "engines": {
     "node": ">=24"
@@ -44,7 +53,11 @@
   },
   "devDependencies": {
     "@types/node": "25.5.0",
+    "eslint": "10.0.3",
+    "lint-staged": "16.3.3",
+    "simple-git-hooks": "2.13.1",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.57.0",
     "vitest": "4.0.18"
   }
 }

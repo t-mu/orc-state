@@ -7,7 +7,6 @@ import { readJson } from './stateReader.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
-import type { WorkerPoolConfig } from './providers.ts';
 
 const STALLED_RUN_IDLE_SECONDS = 10 * 60;
 const STARTUP_FAILURE_LIMIT = 5;

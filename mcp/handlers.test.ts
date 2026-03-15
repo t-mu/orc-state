@@ -222,7 +222,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleListActiveRuns returns only claimed/in_progress claims', () => {
-    const active = handleListActiveRuns(dir) as Array<Record<string, unknown>>;
+    const active = handleListActiveRuns(dir);
     expect(active.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2', 'run-4']);
   });
 

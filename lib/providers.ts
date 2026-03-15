@@ -68,7 +68,7 @@ export function loadWorkerPoolConfig({
 } = {}): WorkerPoolConfig {
   const fileConfig = parseConfigFile(configFile);
   const maxWorkers = parseNonNegativeInteger(env.ORC_MAX_WORKERS, 'ORC_MAX_WORKERS');
-  const provider = (env.ORC_WORKER_PROVIDER ?? fileConfig.provider ?? DEFAULT_WORKER_POOL_CONFIG.provider) as string;
+  const provider = (env.ORC_WORKER_PROVIDER ?? fileConfig.provider ?? DEFAULT_WORKER_POOL_CONFIG.provider);
   const model = env.ORC_WORKER_MODEL ?? fileConfig.model ?? DEFAULT_WORKER_POOL_CONFIG.model;
 
   if (!isSupportedProvider(provider)) {

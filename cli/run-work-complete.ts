@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { heartbeat, setRunFinalizationState } from '../lib/claimManager.ts';
 import { recordAgentActivity } from '../lib/agentActivity.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { validateProgressInput } from '../lib/progressValidation.ts';
+import { readClaims } from '../lib/stateReader.ts';
+import type { Claim } from '../types/claims.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -16,16 +16,15 @@ if (!runId || !agentId) {
   process.exit(1);
 }
 
-function loadClaim(currentRunId: string) {
+function loadClaim(currentRunId: string): Claim | null {
   try {
-    const claims = JSON.parse(readFileSync(join(STATE_DIR, 'claims.json'), 'utf8'));
-    return (claims.claims ?? []).find((claim: Record<string, unknown>) => claim.run_id === currentRunId) ?? null;
+    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
   } catch {
     return null;
   }
 }
 
-function nextFinalizationTransition(claim: Record<string, unknown> | null) {
+function nextFinalizationTransition(claim: Claim | null) {
   const currentState = claim?.finalization_state ?? null;
   if (currentState === null) {
     return {
@@ -54,26 +53,24 @@ try {
     reason: null,
     policy: null,
   }, claim);
-  const validatedClaimRecord = validatedClaim as unknown as Record<string, unknown>;
-  const transition = nextFinalizationTransition(validatedClaimRecord);
+  const transition = nextFinalizationTransition(validatedClaim);
 
   heartbeat(STATE_DIR, runId, agentId, { emitEvent: false });
   const updatedClaim = setRunFinalizationState(STATE_DIR, runId, agentId, {
     finalizationState: transition.status as import('../types/claims.ts').FinalizationState,
     blockedReason: null,
   });
-  const updatedClaimRecord = updatedClaim as unknown as Record<string, unknown>;
   appendSequencedEvent(STATE_DIR, {
     ts: new Date().toISOString(),
     event: transition.event as 'work_complete' | 'ready_to_merge',
     actor_type: 'agent',
     actor_id: agentId,
     run_id: runId,
-    task_ref: validatedClaimRecord.task_ref as string,
+    task_ref: validatedClaim.task_ref,
     agent_id: agentId,
     payload: {
       status: transition.status as 'awaiting_finalize' | 'ready_to_merge',
-      retry_count: (updatedClaimRecord.finalization_retry_count ?? 0) as number,
+      retry_count: (updatedClaim as unknown as Record<string, unknown>).finalization_retry_count as number ?? 0,
     },
   } as import('../types/events.ts').OrcEventInput);
   recordAgentActivity(STATE_DIR, agentId);

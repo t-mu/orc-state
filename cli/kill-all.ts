@@ -26,7 +26,11 @@ const keepSessions = process.argv.includes('--keep-sessions');
 const pidFile = join(STATE_DIR, 'coordinator.pid');
 if (existsSync(pidFile)) {
   let pid: number | undefined;
-  try { pid = JSON.parse(readFileSync(pidFile, 'utf8'))?.pid; } catch { /* stale */ }
+  try {
+    const parsed = JSON.parse(readFileSync(pidFile, 'utf8')) as Record<string, unknown> | null | undefined;
+    const rawPid = parsed?.pid;
+    pid = typeof rawPid === 'number' ? rawPid : undefined;
+  } catch { /* stale */ }
   if (pid) {
     try {
       process.kill(pid, 0); // throws ESRCH if already dead
@@ -34,7 +38,7 @@ if (existsSync(pidFile)) {
       // Poll up to 2 s (10 × 200 ms) for the process to exit
       for (let i = 0; i < 10; i++) {
         await new Promise((r) => setTimeout(r, 200));
-        try { process.kill(pid as number, 0); } catch { break; } // ESRCH = dead, stop polling
+        try { process.kill(pid, 0); } catch { break; } // ESRCH = dead, stop polling
       }
       console.log(`✓ Coordinator stopped  (PID ${pid})`);
     } catch (e) {

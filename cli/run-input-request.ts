@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { setTimeout as delay } from 'node:timers/promises';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 import { flag, intFlag } from '../lib/args.ts';
 import { appendSequencedEvent, readEventsSince } from '../lib/eventLog.ts';
 import { EVENTS_FILE, STATE_DIR } from '../lib/paths.ts';
 import { heartbeat, setRunInputState } from '../lib/claimManager.ts';
 import { validateProgressInput } from '../lib/progressValidation.ts';
+import { readClaims } from '../lib/stateReader.ts';
+import type { Claim } from '../types/claims.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -21,10 +21,9 @@ if (!runId || !agentId || !question) {
   process.exit(1);
 }
 
-function loadClaim(currentRunId: string) {
+function loadClaim(currentRunId: string): Claim | null {
   try {
-    const claims = JSON.parse(readFileSync(join(STATE_DIR, 'claims.json'), 'utf8'));
-    return (claims.claims ?? []).find((claim: Record<string, unknown>) => claim.run_id === currentRunId) ?? null;
+    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
   } catch {
     return null;
   }
@@ -59,7 +58,7 @@ try {
     payload: {
       question,
     },
-  }) as number;
+  });
 } catch (error) {
   console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
@@ -83,7 +82,7 @@ while (Date.now() < deadline) {
     } catch {
       // Ignore races with terminal events or cleanup.
     }
-    process.stdout.write(`${(responseEvent.payload as Record<string, unknown>).response}\n`);
+    process.stdout.write(`${String((responseEvent.payload as Record<string, unknown>).response)}\n`);
     process.exit(0);
   }
 

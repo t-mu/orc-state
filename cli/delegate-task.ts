@@ -4,7 +4,6 @@
  * Usage:
  *   node cli/delegate-task.ts --task-ref=<epic/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]
  */
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
@@ -14,7 +13,7 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { selectAutoTarget } from '../lib/dispatchPlanner.ts';
 import { canAgentExecuteTask } from '../lib/taskRouting.ts';
-import { readClaims } from '../lib/stateReader.ts';
+import { readBacklog, readClaims } from '../lib/stateReader.ts';
 
 const taskRef = flag('task-ref');
 const targetAgentId = flag('target-agent-id');
@@ -53,14 +52,14 @@ const now = new Date().toISOString();
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
     const backlogPath = join(STATE_DIR, 'backlog.json');
-    const backlog = JSON.parse(readFileSync(backlogPath, 'utf8'));
+    const backlog = readBacklog(STATE_DIR);
     const claims = readClaims(STATE_DIR).claims ?? [];
     let task: Record<string, unknown> | null = null;
     let epicRef: string | null = null;
     for (const epic of backlog.epics ?? []) {
       for (const candidate of epic.tasks ?? []) {
         if (candidate.ref === taskRef) {
-          task = candidate;
+          task = candidate as unknown as Record<string, unknown>;
           epicRef = epic.ref;
           break;
         }

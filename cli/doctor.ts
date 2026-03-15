@@ -3,20 +3,23 @@
  * cli/doctor.ts
  * Usage: node cli/doctor.ts [--json]
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag, intFlag } from '../lib/args.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
+import { readAgents, readClaims } from '../lib/stateReader.ts';
+import type { Agent } from '../types/agents.ts';
+import type { Claim } from '../types/claims.ts';
 
 const asJson = process.argv.includes('--json') || (flag('json') ?? '') === 'true';
 const staleStartThresholdMs = intFlag('stale-start-ms', 5 * 60 * 1000);
 const staleProgressThresholdMs = intFlag('stale-progress-ms', 20 * 60 * 1000);
 const nowMs = Date.now();
 
-const agents = readAgents();
-const claims = readClaims();
-const providers = new Set(agents.map((a: Record<string, unknown>) => a.provider));
+const agentsState = readAgents(STATE_DIR);
+const claimsState = readClaims(STATE_DIR);
+const agents: Agent[] = agentsState.agents;
+const claims: Claim[] = claimsState.claims;
+const providers = new Set(agents.map((a) => a.provider));
 
 const checks: Record<string, unknown> = {
   providerBinaries: {} as Record<string, unknown>,
@@ -27,7 +30,7 @@ const checks: Record<string, unknown> = {
 
 for (const provider of providers) {
   if (!provider) continue;
-  (checks.providerBinaries as Record<string, unknown>)[provider as string] = checkProviderBinary(provider as string);
+  (checks.providerBinaries as Record<string, unknown>)[provider] = checkProviderBinary(provider);
 }
 
 for (const agent of agents) {
@@ -43,7 +46,7 @@ for (const agent of agents) {
 
 for (const claim of claims) {
   if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-  const owner = agents.find((a: Record<string, unknown>) => a.agent_id === claim.agent_id) ?? null;
+  const owner = agents.find((a) => a.agent_id === claim.agent_id) ?? null;
   if (!owner || owner.status === 'offline') {
     (checks.orphanedActiveClaims as unknown[]).push({
       run_id: claim.run_id,
@@ -85,7 +88,7 @@ const summary = {
     (checks.orphanedActiveClaims as unknown[]).length === 0 &&
     (checks.staleActiveClaims as unknown[]).length === 0,
   registered_workers: agents.length,
-  active_claims: claims.filter((c: Record<string, unknown>) => ['claimed', 'in_progress'].includes(c.state as string)).length,
+  active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
 };
 
@@ -106,28 +109,29 @@ if (Object.keys(checks.providerBinaries as Record<string, unknown>).length === 0
 } else {
   for (const [provider, result] of Object.entries(checks.providerBinaries as Record<string, unknown>)) {
     const r = result as Record<string, unknown>;
-    console.log(`  ${provider}: ok=${r.ok} binary=${r.binary}`);
-    if (!r.ok && r.detail) console.log(`    detail: ${r.detail}`);
+    console.log(`  ${provider}: ok=${String(r.ok)} binary=${String(r.binary)}`);
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+    if (!r.ok && r.detail) console.log(`    detail: ${String(r.detail)}`);
   }
 }
 
 console.log('');
 console.log(`stale linked workers: ${(checks.staleLinkedWorkers as unknown[]).length}`);
 for (const w of checks.staleLinkedWorkers as Array<Record<string, unknown>>) {
-  console.log(`  ${w.agent_id} ${w.status} ${w.session_handle}`);
+  console.log(`  ${String(w.agent_id)} ${String(w.status)} ${String(w.session_handle)}`);
 }
 
 console.log('');
 console.log(`orphaned active claims: ${(checks.orphanedActiveClaims as unknown[]).length}`);
 for (const c of checks.orphanedActiveClaims as Array<Record<string, unknown>>) {
-  console.log(`  ${c.run_id} task=${c.task_ref} agent=${c.agent_id} owner_status=${c.owner_status}`);
+  console.log(`  ${String(c.run_id)} task=${String(c.task_ref)} agent=${String(c.agent_id)} owner_status=${String(c.owner_status)}`);
 }
 
 console.log('');
 console.log(`stale active claims: ${(checks.staleActiveClaims as unknown[]).length}`);
 for (const c of checks.staleActiveClaims as Array<Record<string, unknown>>) {
-  console.log(`  ${c.run_id} task=${c.task_ref} state=${c.claim_state} idle=${c.idle_seconds}s threshold=${c.threshold_seconds}s`);
-  console.log(`    hint: ${c.hint}`);
+  console.log(`  ${String(c.run_id)} task=${String(c.task_ref)} state=${String(c.claim_state)} idle=${String(c.idle_seconds)}s threshold=${String(c.threshold_seconds)}s`);
+  console.log(`    hint: ${String(c.hint)}`);
 }
 
 if (!summary.ok) {
@@ -143,27 +147,9 @@ if (!summary.ok) {
 console.log('');
 console.log('All checks passed.');
 
-function readAgents() {
-  try {
-    const json = JSON.parse(readFileSync(join(STATE_DIR, 'agents.json'), 'utf8'));
-    return json.agents ?? [];
-  } catch {
-    return [];
-  }
-}
-
-function readClaims() {
-  try {
-    const json = JSON.parse(readFileSync(join(STATE_DIR, 'claims.json'), 'utf8'));
-    return json.claims ?? [];
-  } catch {
-    return [];
-  }
-}
-
 function checkProviderBinary(provider: string) {
-  const binary = (PROVIDER_BINARIES as Record<string, string>)[provider] ?? provider;
-  const packageName = (PROVIDER_PACKAGES as Record<string, string>)[provider];
+  const binary = (PROVIDER_BINARIES)[provider] ?? provider;
+  const packageName = (PROVIDER_PACKAGES)[provider];
   const ok = isBinaryAvailable(binary);
   const installHint = packageName ? `npm install -g ${packageName}` : null;
   return {

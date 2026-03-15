@@ -82,10 +82,10 @@ function isValidPid(pid: unknown): pid is number {
 function readCoordinatorPidRecord() {
   if (!existsSync(COORDINATOR_PID_FILE)) return null;
   try {
-    const data = JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8'));
+    const data = JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')) as Record<string, unknown>;
     if (!isValidPid(data?.pid)) return null;
     return {
-      pid: data.pid as number,
+      pid: Number(data.pid),
       started_at: typeof data.started_at === 'string' ? data.started_at : null,
     };
   } catch {
@@ -198,7 +198,7 @@ function writeMcpConfig() {
 
 // ── Find master ────────────────────────────────────────────────────────────
 
-let agents = listAgents(STATE_DIR);
+const agents = listAgents(STATE_DIR);
 let master = agents.find((a) => (a as unknown as Record<string, unknown>).role === 'master') ?? null;
 const deprecatedWorkerId = flag('worker-id');
 const deprecatedWorkerProvider = flag('worker-provider');
@@ -235,7 +235,7 @@ if (masterAction === 'cancel') {
 }
 if (masterAction === 'replace' && master) {
   removeAgent(STATE_DIR, (master as unknown as Record<string, unknown>).agent_id as string);
-  console.log(`✓ Removed existing master '${(master as unknown as Record<string, unknown>).agent_id}'`);
+  console.log(`✓ Removed existing master '${String((master as unknown as Record<string, unknown>).agent_id)}'`);
   master = null;
 }
 
@@ -264,7 +264,7 @@ if (!master) {
 const masterRecord = master as unknown as Record<string, unknown>;
 const binaryOk = await checkAndInstallBinary(masterRecord.provider as string);
 if (!binaryOk) {
-  const binary = (PROVIDER_BINARIES as Record<string, string>)[masterRecord.provider as string] ?? masterRecord.provider;
+  const binary = (PROVIDER_BINARIES)[masterRecord.provider as string] ?? masterRecord.provider;
   console.error(`Cannot start master session: '${binary}' binary not available.`);
   process.exit(1);
 }
@@ -284,10 +284,10 @@ if (running) {
 
 // ── Master foreground session ──────────────────────────────────────────────
 
-const binary = (PROVIDER_BINARIES as Record<string, string>)[masterRecord.provider as string] ?? masterRecord.provider;
+const binary = (PROVIDER_BINARIES)[masterRecord.provider as string] ?? masterRecord.provider;
 const masterPidDir = join(STATE_DIR, 'pty-pids');
 const masterPidPath = join(masterPidDir, 'master.pid');
-console.log(`\n✓ Starting ${masterRecord.provider} CLI as master session...`);
+console.log(`\n✓ Starting ${String(masterRecord.provider)} CLI as master session...`);
 console.log('  This terminal is the MASTER session.');
 console.log('  Workers are separate headless PTY sessions managed by the coordinator.');
 printManagedWorkerNotice();
@@ -336,7 +336,7 @@ try {
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else {
-    console.warn(`Unknown provider '${masterRecord.provider}' for bootstrap args; starting without bootstrap args.`);
+    console.warn(`Unknown provider '${String(masterRecord.provider)}' for bootstrap args; starting without bootstrap args.`);
   }
 } catch (error) {
   updateAgentRuntime(STATE_DIR, masterRecord.agent_id as string, {
@@ -371,7 +371,7 @@ let stopForwarder = () => {};
 
 const cliResult = await new Promise<{ type: string; error?: Error; code?: number; signal?: string }>((resolvePromise) => {
   try {
-    masterPty = pty.spawn(binary as string, spawnArgs, {
+    masterPty = pty.spawn(binary, spawnArgs, {
       name: 'xterm-256color',
       cols: process.stdout.columns ?? 220,
       rows: process.stdout.rows ?? 50,
@@ -432,7 +432,7 @@ function markMasterOffline() {
 
 if (cliResult.type === 'error') {
   console.error(
-    `Failed to start master provider CLI '${binary}' for ${masterRecord.provider}: ${cliResult.error?.message ?? 'unknown error'}`,
+    `Failed to start master provider CLI '${String(binary)}' for ${String(masterRecord.provider)}: ${cliResult.error?.message ?? 'unknown error'}`,
   );
   markMasterOffline();
   process.exit(1);

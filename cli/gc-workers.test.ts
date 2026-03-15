@@ -36,7 +36,10 @@ describe('cli/gc-workers.ts', () => {
     ]);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
-        heartbeatProbe: async (handle: string) => handle === 'alive-handle',
+        heartbeatProbe: async (handle: string) => {
+          await Promise.resolve();
+          return handle === 'alive-handle';
+        },
       }),
     }));
 
@@ -65,7 +68,10 @@ describe('cli/gc-workers.ts', () => {
     ]);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
-        heartbeatProbe: async () => false,
+        heartbeatProbe: async () => {
+          await Promise.resolve();
+          return false;
+        },
       }),
     }));
 
@@ -90,6 +96,7 @@ describe('cli/gc-workers.ts', () => {
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: async () => {
+          await Promise.resolve();
           throw new Error('probe failed');
         },
       }),

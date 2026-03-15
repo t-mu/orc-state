@@ -1,6 +1,6 @@
 import { readJson } from './stateReader.ts';
 import { canAgentExecuteTask } from './taskRouting.ts';
-import type { Backlog, Task } from '../types/backlog.ts';
+import type { Backlog } from '../types/backlog.ts';
 import type { Agent } from '../types/agents.ts';
 
 const TASK_PRIORITY_RANK: Record<string, number> = {
@@ -43,7 +43,7 @@ export function nextEligibleTaskFromBacklog(
       if (task.planning_state && task.planning_state !== 'ready_for_dispatch') continue;
       if (task.owner && agentId && task.owner !== agentId) continue;
       if (task.owner && !agentId) continue;
-      if (!canAgentExecuteTask(task as Task, agent)) continue;
+      if (!canAgentExecuteTask(task, agent)) continue;
       const deps = task.depends_on ?? [];
       if (!deps.every((d) => doneSet.has(d))) continue;
       eligible.push({

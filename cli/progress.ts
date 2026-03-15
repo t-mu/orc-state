@@ -4,14 +4,14 @@
  * Usage:
  *   node cli/progress.ts --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--policy=<requeue|block>]
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { recordAgentActivity } from '../lib/agentActivity.ts';
 import { startRun, heartbeat, finishRun, setRunFinalizationState } from '../lib/claimManager.ts';
 import { validateProgressInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { readClaims } from '../lib/stateReader.ts';
+import type { Claim } from '../types/claims.ts';
 
 const event = flag('event');
 const runId = flag('run-id');
@@ -25,10 +25,9 @@ if (!event || !runId || !agentId) {
   process.exit(1);
 }
 
-function loadClaim(currentRunId: string) {
+function loadClaim(currentRunId: string): Claim | null {
   try {
-    const claims = JSON.parse(readFileSync(join(STATE_DIR, 'claims.json'), 'utf8'));
-    return (claims.claims ?? []).find((c: Record<string, unknown>) => c.run_id === currentRunId) ?? null;
+    return readClaims(STATE_DIR).claims.find((c) => c.run_id === currentRunId) ?? null;
   } catch {
     return null;
   }

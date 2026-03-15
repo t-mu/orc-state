@@ -26,12 +26,13 @@ export function extractTaskSpecRefs(backlogDocsDir: string) {
 }
 
 export function extractRegisteredTaskRefs(stateBacklogPath: string) {
-  const backlog = JSON.parse(readFileSync(stateBacklogPath, 'utf8'));
+  const backlog = JSON.parse(readFileSync(stateBacklogPath, 'utf8')) as Record<string, unknown>;
+  const epicsOrFeatures = ((backlog.epics ?? backlog.features ?? []) as Array<Record<string, unknown>>);
   return new Set(
-    (backlog.epics ?? backlog.features ?? []).flatMap((container: Record<string, unknown>) =>
+    epicsOrFeatures.flatMap((container) =>
       ((container.tasks ?? []) as Array<Record<string, unknown>>)
         .map((task) => task.ref)
-        .filter((ref) => typeof ref === 'string' && (ref as string).length > 0),
+        .filter((ref): ref is string => typeof ref === 'string' && (ref).length > 0),
     ),
   );
 }

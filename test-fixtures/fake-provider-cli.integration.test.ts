@@ -55,13 +55,13 @@ describe('test-fixtures/fake-provider-cli.ts', () => {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    await expect(waitForLine(child.stdout!, (line) => line === 'FIXTURE_READY provider=claude')).resolves.toBe('FIXTURE_READY provider=claude');
+    await expect(waitForLine(child.stdout, (line) => line === 'FIXTURE_READY provider=claude')).resolves.toBe('FIXTURE_READY provider=claude');
 
-    child.stdin!.write('PING\n');
-    await expect(waitForLine(child.stdout!, (line) => line === 'FIXTURE_PONG')).resolves.toBe('FIXTURE_PONG');
+    child.stdin.write('PING\n');
+    await expect(waitForLine(child.stdout, (line) => line === 'FIXTURE_PONG')).resolves.toBe('FIXTURE_PONG');
 
-    child.stdin!.write('EXIT\n');
-    await expect(waitForLine(child.stdout!, (line) => line === 'FIXTURE_BYE')).resolves.toBe('FIXTURE_BYE');
+    child.stdin.write('EXIT\n');
+    await expect(waitForLine(child.stdout, (line) => line === 'FIXTURE_BYE')).resolves.toBe('FIXTURE_BYE');
     await expect(waitForExit(child)).resolves.toBe(0);
   });
 
@@ -72,7 +72,7 @@ describe('test-fixtures/fake-provider-cli.ts', () => {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    await expect(waitForLine(child.stderr!, (line) => line === 'FIXTURE_CRASH_ON_START')).resolves.toBe('FIXTURE_CRASH_ON_START');
+    await expect(waitForLine(child.stderr, (line) => line === 'FIXTURE_CRASH_ON_START')).resolves.toBe('FIXTURE_CRASH_ON_START');
     await expect(waitForExit(child)).resolves.toBe(42);
   });
 
@@ -84,9 +84,9 @@ describe('test-fixtures/fake-provider-cli.ts', () => {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      await expect(waitForLine(child.stdout!, (line) => line === `FIXTURE_READY provider=${provider}`)).resolves.toBe(`FIXTURE_READY provider=${provider}`);
-      child.stdin!.write('EXIT\n');
-      await expect(waitForLine(child.stdout!, (line) => line === 'FIXTURE_BYE')).resolves.toBe('FIXTURE_BYE');
+      await expect(waitForLine(child.stdout, (line) => line === `FIXTURE_READY provider=${provider}`)).resolves.toBe(`FIXTURE_READY provider=${provider}`);
+      child.stdin.write('EXIT\n');
+      await expect(waitForLine(child.stdout, (line) => line === 'FIXTURE_BYE')).resolves.toBe('FIXTURE_BYE');
       await expect(waitForExit(child)).resolves.toBe(0);
     }
   });
