@@ -1,7 +1,12 @@
 import { openSync, closeSync, unlinkSync, existsSync, statSync, readFileSync, writeSync, constants } from 'node:fs';
+import { join } from 'node:path';
+import { LOCK_STALE_MS } from './constants.ts';
+
+/** Return the canonical lock file path for a state directory. */
+export function lockPath(dir: string): string { return join(dir, '.lock'); }
 
 /** Lock files older than this are considered candidates for stale-breaking. */
-const STALE_MS = 30_000;
+const STALE_MS = LOCK_STALE_MS;
 /** Extremely stale malformed locks can be broken to avoid permanent deadlocks. */
 const MALFORMED_STALE_BREAK_MS = STALE_MS * 20;
 const HELD_LOCK_TOKENS = new Map<string, string>();

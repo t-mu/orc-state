@@ -7,8 +7,7 @@ import { readJson } from './stateReader.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
-
-const STALLED_RUN_IDLE_SECONDS = 10 * 60;
+import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 const STARTUP_FAILURE_LIMIT = 5;
 const LIFECYCLE_FAILURE_LIMIT = 5;
 

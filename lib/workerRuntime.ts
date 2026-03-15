@@ -3,11 +3,6 @@ import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import type { Agent } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
 
-function reasonCode(reason: unknown): string {
-  const s = typeof reason === 'string' ? reason : 'unknown';
-  return `ERR_${s.toUpperCase()}`;
-}
-
 function syncAgentRuntime(agent: Agent, updates: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(updates)) {
     (agent as unknown as Record<string, unknown>)[key] = value;
@@ -73,7 +68,7 @@ export function markWorkerOffline(
     actor_type: 'coordinator',
     actor_id: 'coordinator',
     agent_id: agent.agent_id,
-    payload: { reason, code: reasonCode(reason), ...payload },
+    payload: { reason, code: `ERR_${String(reason ?? 'unknown').toUpperCase()}`, ...payload },
   });
 }
 

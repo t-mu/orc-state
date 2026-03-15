@@ -26,6 +26,7 @@ export function reconcileState(stateDir: string): void {
     }
 
     const activeClaimsByTaskRef = new Map<string, Claim[]>();
+    const activeClaimByTaskRef = new Map<string, Claim>();
     for (const claim of claims.claims ?? []) {
       if (!ACTIVE_CLAIM_STATES.has(claim.state)) continue;
 
@@ -42,20 +43,18 @@ export function reconcileState(stateDir: string): void {
     }
 
     for (const [taskRef, activeClaims] of activeClaimsByTaskRef) {
-      if (activeClaims.length <= 1) continue;
-      activeClaims.sort((a, b) => (a.claimed_at > b.claimed_at ? -1 : 1));
-      const [keepClaim, ...staleClaims] = activeClaims;
-      for (const staleClaim of staleClaims) {
-        console.log(`[reconcile] duplicate active claim ${staleClaim.run_id} for task ${taskRef} -> failed (kept ${keepClaim.run_id})`);
-        staleClaim.state = 'failed';
-        claimsModified = true;
+      if (activeClaims.length > 1) {
+        activeClaims.sort((a, b) => (a.claimed_at > b.claimed_at ? -1 : 1));
+        const [keepClaim, ...staleClaims] = activeClaims;
+        for (const staleClaim of staleClaims) {
+          console.log(`[reconcile] duplicate active claim ${staleClaim.run_id} for task ${taskRef} -> failed (kept ${keepClaim.run_id})`);
+          staleClaim.state = 'failed';
+          claimsModified = true;
+        }
+        activeClaimByTaskRef.set(taskRef, activeClaims[0]);
+      } else {
+        activeClaimByTaskRef.set(taskRef, activeClaims[0]);
       }
-    }
-
-    const activeClaimByTaskRef = new Map<string, Claim>();
-    for (const claim of claims.claims ?? []) {
-      if (!ACTIVE_CLAIM_STATES.has(claim.state)) continue;
-      activeClaimByTaskRef.set(claim.task_ref, claim);
     }
 
     for (const epic of backlog.epics ?? []) {
