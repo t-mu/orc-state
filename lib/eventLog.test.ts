@@ -11,7 +11,7 @@ import {
   nextSeq,
   rotateEventsLogIfNeeded,
 } from './eventLog.ts';
-import type { OrcEvent, OrcEventInput } from '../types/index.ts';
+import type { OrcEvent } from '../types/index.ts';
 
 let dir: string;
 let logPath: string;

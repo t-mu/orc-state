@@ -41,7 +41,6 @@ function readEvents(dir: string)  {
 }
 
 function pastDate(msAgo = 60_000) { return new Date(Date.now() - msAgo).toISOString(); }
-function futureDate(msFromNow = 30 * 60 * 1000) { return new Date(Date.now() + msFromNow).toISOString(); }
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'orch-claim-test-')); });
