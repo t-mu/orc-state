@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { withLock } from './lock.ts';
+import { withLock, lockPath } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from './providers.ts';
 import type { Agent, AgentsState, AgentRole, Provider, DispatchMode } from '../types/agents.ts';
 import type { WorkerPoolConfig } from './providers.ts';
+import { AGENT_ROLES } from './constants.ts';
 
-const VALID_ROLES = new Set<AgentRole>(['worker', 'reviewer', 'master']);
+const VALID_ROLES = new Set<AgentRole>(AGENT_ROLES as AgentRole[]);
 
 function readAgentsFile(stateDir: string): AgentsState {
   try {
@@ -14,10 +15,6 @@ function readAgentsFile(stateDir: string): AgentsState {
   } catch {
     return { version: '1', agents: [] };
   }
-}
-
-function lockPath(stateDir: string): string {
-  return join(stateDir, '.lock');
 }
 
 function createManagedSlotEntry(agentId: string, workerPoolConfig: WorkerPoolConfig): Agent {

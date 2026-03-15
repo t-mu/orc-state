@@ -1,8 +1,9 @@
 import { readAndMarkConsumed } from './masterNotifyQueue.ts';
 import { PROVIDER_PROMPT_PATTERNS, PROVIDER_SUBMIT_SEQUENCES } from './binaryCheck.ts';
 import type { QueueEntry } from './masterNotifyQueue.ts';
+import { PTY_POLL_INTERVAL_MS } from './constants.ts';
 
-const POLL_INTERVAL_MS = 5_000;
+const POLL_INTERVAL_MS = PTY_POLL_INTERVAL_MS;
 const PROMPT_STALE_MS = 60_000;
 const DEFAULT_PROMPT_PATTERN = />\s*$/;
 const DEFAULT_SUBMIT_SEQUENCE = '\r';

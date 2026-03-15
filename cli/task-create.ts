@@ -20,6 +20,7 @@ import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
+import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
 
 const epicRef = flag('epic');
 const title = flag('title');
@@ -31,7 +32,7 @@ if (!epicRef || !title) {
   process.exit(1);
 }
 
-const VALID_TASK_TYPES = new Set(['implementation', 'refactor']);
+const VALID_TASK_TYPES = new Set(TASK_TYPES);
 if (!VALID_TASK_TYPES.has(taskType)) {
   console.error(`Invalid task-type: ${taskType}. Must be implementation or refactor.`);
   process.exit(1);
@@ -54,19 +55,18 @@ if (!taskSlug) {
   process.exit(1);
 }
 
-if (!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(taskRef)) {
+if (!TASK_REF_RE.test(taskRef)) {
   console.error(`Invalid task ref: ${taskRef}. Both epic and slug must match [a-z0-9-]+.`);
   process.exit(1);
 }
 
-const ACTOR_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
-if (!ACTOR_ID_RE.test(actorId)) {
+if (!AGENT_ID_RE.test(actorId)) {
   console.error(`Invalid actor-id: ${actorId}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   process.exit(1);
 }
 
 const owner = flag('owner');
-if (owner && !/^[a-z0-9][a-z0-9-]*$/.test(owner)) {
+if (owner && !AGENT_ID_RE.test(owner)) {
   console.error(`Invalid owner: ${owner}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   process.exit(1);
 }
