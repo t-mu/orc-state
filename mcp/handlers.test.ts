@@ -794,8 +794,10 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask clears stale owner when no eligible worker exists', () => {
     const backlog = readBacklog();
-    const task = backlog.epics.find((epic) => epic.ref === 'project')?.tasks
-      .find((candidate) => candidate.ref === 'project/todo-one')!;
+    const epic = backlog.epics.find((e) => e.ref === 'project');
+    if (!epic) throw new Error('test setup: epic not found');
+    const task = epic.tasks.find((candidate) => candidate.ref === 'project/todo-one');
+    if (!task) throw new Error('test setup: task not found');
     task.owner = 'orc-1';
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
 

@@ -142,22 +142,22 @@ describe('withLock', () => {
 
 describe('withLockAsync', () => {
   it('executes async fn and returns resolved value', async () => {
-    const result = await withLockAsync(lockPath, async () => 'hello');
+    const result = await withLockAsync(lockPath, () => Promise.resolve('hello'));
     expect(result).toBe('hello');
   });
 
   it('releases the lock even when async fn rejects', async () => {
     await expect(
-      withLockAsync(lockPath, async () => { throw new Error('async boom'); })
+      withLockAsync(lockPath, () => Promise.reject(new Error('async boom')))
     ).rejects.toThrow('async boom');
     expect(existsSync(lockPath)).toBe(false);
   });
 
   it('preserves async callback error as cause if release also fails', async () => {
     await expect(
-      withLockAsync(lockPath, async () => {
+      withLockAsync(lockPath, () => {
         writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: 'tampered' }));
-        throw new Error('async boom');
+        return Promise.reject(new Error('async boom'));
       })
     ).rejects.toThrow('Lock release failed after callback error');
   });

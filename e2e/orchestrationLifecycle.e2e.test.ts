@@ -29,7 +29,7 @@ function makeTmuxMockAdapter(agentId = 'worker-01') {
       session_handle: `pty:${agentId}`,
       provider_ref: { provider: 'claude' },
     }),
-    send: vi.fn().mockImplementation(async (_handle, text) => {
+    send: vi.fn().mockImplementation((_handle: string, text: string) => {
       const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
       if (runId) {
         startRun(dir, runId, agentId);
@@ -326,7 +326,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
         session_handle: 'pty:worker-01',
         provider_ref: { provider: 'claude' },
       }),
-      send: vi.fn().mockImplementation(async (_handle, text) => {
+      send: vi.fn().mockImplementation((_handle: string, text: string) => {
         const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
         if (runId) {
           startRun(dir, runId, 'worker-01');
@@ -380,9 +380,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     const prompts: string[] = [];
     const adapter = {
-      start: vi.fn().mockImplementation(async (_agentId, config) => {
+      start: vi.fn().mockImplementation((_agentId: string, config: { system_prompt: string }) => {
         prompts.push(config.system_prompt);
-        return { session_handle: 'pty:worker-01', provider_ref: {} };
+        return Promise.resolve({ session_handle: 'pty:worker-01', provider_ref: {} });
       }),
       send: vi.fn().mockResolvedValue(''),
       attach: vi.fn(),
@@ -473,7 +473,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     writeFileSync(join(dir, 'events.jsonl'), '');
 
     const adapter = {
-      start: vi.fn().mockImplementation(async (agentId) => ({
+      start: vi.fn().mockImplementation((agentId: string) => ({
         session_handle: `pty:${agentId}`,
         provider_ref: { provider: 'claude' },
       })),
@@ -620,7 +620,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
         session_handle: 'pty:orc-1',
         provider_ref: { provider: 'codex' },
       }),
-      send: vi.fn().mockImplementation(async (_handle, text) => {
+      send: vi.fn().mockImplementation((_handle: string, text: string) => {
         const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
         if (runId) {
           startedRuns.push(runId);
@@ -675,7 +675,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
           session_handle: 'pty:orc-1',
           provider_ref: { provider: 'codex' },
         }),
-      send: vi.fn().mockImplementation(async (_handle, text) => {
+      send: vi.fn().mockImplementation((_handle: string, text: string) => {
         const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
         if (runId) {
           startRun(dir, runId, 'orc-1');
