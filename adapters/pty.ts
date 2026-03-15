@@ -137,7 +137,6 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         const spawnArgs = buildStartArgs(provider, config);
 
         // Strip CLAUDECODE so nested claude sessions are not rejected.
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { CLAUDECODE: _cc, ...spawnEnv } = process.env;
         ptyProcess = pty.spawn(binary, spawnArgs, {
           name: 'xterm-256color',

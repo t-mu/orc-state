@@ -105,8 +105,9 @@ describe('adapters/pty.ts integration env hygiene', () => {
   it('restores PATH after fixture-path helper', async () => {
     const before = process.env.PATH;
     let during: string | undefined;
-    await withFixturePath(async () => {
+    await withFixturePath(() => {
       during = process.env.PATH;
+      return Promise.resolve();
     });
     expect(during!.startsWith(`${fixtureBin}:`)).toBe(true);
     expect(process.env.PATH).toBe(before);

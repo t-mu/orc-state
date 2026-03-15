@@ -35,7 +35,7 @@ describe('cli/clear-workers.ts', () => {
       { agent_id: 'running', provider: 'claude', status: 'running', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
     ]);
     vi.doMock('../adapters/index.ts', () => ({
-      createAdapter: () => ({ heartbeatProbe: async () => true }),
+      createAdapter: () => ({ heartbeatProbe: () => Promise.resolve(true) }),
     }));
 
     const oldArgv = process.argv;
@@ -60,7 +60,7 @@ describe('cli/clear-workers.ts', () => {
     ]);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
-        heartbeatProbe: async (handle: string) => handle === 'alive-handle',
+        heartbeatProbe: (handle: string) => Promise.resolve(handle === 'alive-handle'),
       }),
     }));
 
@@ -85,9 +85,7 @@ describe('cli/clear-workers.ts', () => {
     ]);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
-        heartbeatProbe: async () => {
-          throw new Error('pty unavailable');
-        },
+        heartbeatProbe: () => { throw new Error('pty unavailable'); },
       }),
     }));
 

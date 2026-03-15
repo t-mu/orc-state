@@ -6,11 +6,12 @@ import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlan
 import { appendSequencedEvent, readRecentEvents } from '../lib/eventLog.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
-import { appendNotification } from '../lib/masterNotifyQueue.ts';
-import { readPendingNotifications } from '../lib/masterNotifyQueue.ts';
+import { appendNotification, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
-import { findTask, getNextTaskSeq, readClaims, readJson } from '../lib/stateReader.ts';
+import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
+import type { Claim } from '../types/claims.ts';
+import type { Task } from '../types/backlog.ts';
 
 const TASK_STATUSES = new Set(['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released']);
 const AGENT_ROLES = new Set(['worker', 'reviewer', 'master']);
@@ -34,8 +35,7 @@ function assertStringArray(value: unknown, field: string) {
 }
 
 function defaultActorId(stateDir: string) {
-  const master = listAgents(stateDir).find((agent) => (agent as unknown as Record<string, unknown>).role === 'master');
-  return (master as Record<string, unknown> | undefined)?.agent_id ?? 'master';
+  return listAgents(stateDir).find((agent) => agent.role === 'master')?.agent_id ?? 'master';
 }
 
 // `next_task_seq` always means "the next available numeric sequence from this state snapshot".
@@ -43,13 +43,19 @@ function defaultActorId(stateDir: string) {
 // After create_task commits, it becomes the next number after the task just created.
 
 // Fields returned by list_tasks (summary view). Use get_task() for full detail.
-const LIST_TASK_FIELDS = new Set(['ref', 'title', 'status', 'epic_ref', 'task_type', 'priority', 'owner', 'depends_on']);
 const TERMINAL_STATUSES = new Set(['done', 'released']);
 
-function toTaskSummary(task: Record<string, unknown>) {
-  const summary = Object.fromEntries(Object.entries(task).filter(([k]) => LIST_TASK_FIELDS.has(k)));
-  summary.priority = task.priority ?? 'normal';
-  return summary;
+function toTaskSummary(task: Task & { epic_ref: string }) {
+  return {
+    ref: task.ref,
+    title: task.title,
+    status: task.status,
+    epic_ref: task.epic_ref,
+    task_type: task.task_type,
+    priority: task.priority ?? 'normal',
+    owner: task.owner,
+    depends_on: task.depends_on,
+  };
 }
 
 export function handleListTasks(stateDir: string, { status, epic }: { status?: unknown; epic?: unknown } = {}) {
@@ -59,9 +65,9 @@ export function handleListTasks(stateDir: string, { status, epic }: { status?: u
   if (epic != null && typeof epic !== 'string') {
     throw new Error('epic must be a string');
   }
-  const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
-  let tasks: Array<Record<string, unknown>> = ((backlog.epics ?? []) as unknown as Array<Record<string, unknown>>).flatMap((epicObj) =>
-    ((epicObj.tasks ?? []) as unknown as Array<Record<string, unknown>>).map((task): Record<string, unknown> => ({ ...task, epic_ref: epicObj.ref })),
+  const backlog = readBacklog(stateDir);
+  let tasks = backlog.epics.flatMap((epicObj) =>
+    epicObj.tasks.map((task): Task & { epic_ref: string } => ({ ...task, epic_ref: epicObj.ref })),
   );
 
   if (status) {
@@ -69,7 +75,7 @@ export function handleListTasks(stateDir: string, { status, epic }: { status?: u
   } else {
     // Exclude terminal statuses by default to keep payload small.
     // Use status="done" or status="released" to retrieve those explicitly.
-    tasks = tasks.filter((task) => !TERMINAL_STATUSES.has(task.status as string));
+    tasks = tasks.filter((task) => !TERMINAL_STATUSES.has(task.status));
   }
   if (epic) tasks = tasks.filter((task) => task.epic_ref === epic);
 
@@ -86,24 +92,25 @@ export function handleListAgents(stateDir: string, { role, include_dead = false 
     throw new Error('include_dead must be a boolean');
   }
   let agents = listAgents(stateDir);
-  if (!include_dead) agents = agents.filter((agent) => (agent as unknown as Record<string, unknown>).status !== 'dead');
-  if (role) agents = agents.filter((agent) => (agent as unknown as Record<string, unknown>).role === role);
+  if (!include_dead) agents = agents.filter((agent) => agent.status !== 'dead');
+  if (role) agents = agents.filter((agent) => agent.role === role);
+  const claims = readClaims(stateDir).claims;
   const activeClaimsByAgent = new Map<string, string | null>();
-  for (const claim of (readClaims(stateDir).claims ?? []) as unknown as Array<Record<string, unknown>>) {
-    if (!['claimed', 'in_progress'].includes(claim.state as string)) continue;
-    if (!activeClaimsByAgent.has(claim.agent_id as string)) {
-      activeClaimsByAgent.set(claim.agent_id as string, (claim.task_ref as string) ?? null);
+  for (const claim of claims) {
+    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
+    if (!activeClaimsByAgent.has(claim.agent_id)) {
+      activeClaimsByAgent.set(claim.agent_id, claim.task_ref ?? null);
     }
   }
   return agents.map((agent) => ({
-    ...(agent as unknown as Record<string, unknown>),
-    active_task_ref: activeClaimsByAgent.get((agent as unknown as Record<string, unknown>).agent_id as string) ?? null,
+    ...agent,
+    active_task_ref: activeClaimsByAgent.get(agent.agent_id) ?? null,
   }));
 }
 
 export function handleListActiveRuns(stateDir: string) {
-  return ((readClaims(stateDir).claims ?? []) as unknown as Array<Record<string, unknown>>).filter((claim) =>
-    ['claimed', 'in_progress'].includes(claim.state as string),
+  return readClaims(stateDir).claims.filter((claim) =>
+    ['claimed', 'in_progress'].includes(claim.state),
   );
 }
 
@@ -112,21 +119,21 @@ export function handleListStalledRuns(stateDir: string, { stale_after_ms = 600_0
     throw new Error('stale_after_ms must be a non-negative integer');
   }
   const now = (now_ms as number) ?? Date.now();
-  return ((readClaims(stateDir).claims ?? []) as unknown as Array<Record<string, unknown>>)
-    .filter((claim) => ['claimed', 'in_progress'].includes(claim.state as string))
+  return readClaims(stateDir).claims
+    .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
     .filter((claim) => {
       const timestamp = claim.last_heartbeat_at ?? claim.claimed_at;
-      return (now - new Date(timestamp as string).getTime()) > (stale_after_ms as number);
+      return (now - new Date(timestamp).getTime()) > (stale_after_ms as number);
     })
     .map((claim) => ({
       ...claim,
-      stale_for_ms: now - new Date((claim.last_heartbeat_at ?? claim.claimed_at) as string).getTime(),
+      stale_for_ms: now - new Date((claim.last_heartbeat_at ?? claim.claimed_at)).getTime(),
     }));
 }
 
 export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unknown } = {}) {
   if (!task_ref) throw new Error('task_ref is required');
-  const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
+  const backlog = readBacklog(stateDir);
   const task = findTask(backlog, task_ref as string);
   if (!task) return { error: 'not_found', task_ref };
   return task;
@@ -146,50 +153,38 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     throw new Error('include_done_count must be a boolean');
   }
 
-  const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
-  const claims = (readClaims(stateDir).claims ?? []) as unknown as Array<Record<string, unknown>>;
-  const agents = listAgents(stateDir).filter((agent) => (agent as unknown as Record<string, unknown>).status !== 'dead');
+  const backlog = readBacklog(stateDir);
+  const claims = readClaims(stateDir).claims;
+  const agents = listAgents(stateDir).filter((agent) => agent.status !== 'dead');
 
   const activeClaimsByAgent = new Map<string, string | null>();
   for (const claim of claims) {
-    if (!['claimed', 'in_progress'].includes(claim.state as string)) continue;
-    if (!activeClaimsByAgent.has(claim.agent_id as string)) {
-      activeClaimsByAgent.set(claim.agent_id as string, (claim.task_ref as string) ?? null);
+    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
+    if (!activeClaimsByAgent.has(claim.agent_id)) {
+      activeClaimsByAgent.set(claim.agent_id, claim.task_ref ?? null);
     }
   }
 
-  const status: Record<string, unknown> = {
-    agents: agents.map((agent) => ({
-      agent_id: (agent as unknown as Record<string, unknown>).agent_id ?? null,
-      role: (agent as unknown as Record<string, unknown>).role ?? null,
-      status: (agent as unknown as Record<string, unknown>).status ?? null,
-      provider: (agent as unknown as Record<string, unknown>).provider ?? null,
-      active_task_ref: activeClaimsByAgent.get((agent as unknown as Record<string, unknown>).agent_id as string) ?? null,
-    })),
-    task_counts: {
-      todo: 0,
-      claimed: 0,
-      in_progress: 0,
-      blocked: 0,
-    },
-    active_tasks: [],
-    pending_notifications: readPendingNotifications(stateDir).length,
-    stalled_runs: handleListStalledRuns(stateDir).length,
-    next_task_seq: getNextTaskSeq(backlog),
+  const taskCounts: Record<string, number> = {
+    todo: 0,
+    claimed: 0,
+    in_progress: 0,
+    blocked: 0,
   };
 
   if (include_done_count) {
-    (status.task_counts as Record<string, number>).done = 0;
-    (status.task_counts as Record<string, number>).released = 0;
+    taskCounts.done = 0;
+    taskCounts.released = 0;
   }
 
-  for (const epic of (backlog.epics ?? []) as unknown as Array<Record<string, unknown>>) {
-    for (const task of (epic.tasks ?? []) as unknown as Array<Record<string, unknown>>) {
-      if (Object.hasOwn(status.task_counts as object, task.status as string)) {
-        (status.task_counts as Record<string, number>)[task.status as string] += 1;
+  const activeTasks: Array<{ ref: string; title: string; status: string; epic_ref: string; owner: string | null }> = [];
+  for (const epic of backlog.epics) {
+    for (const task of epic.tasks) {
+      if (Object.hasOwn(taskCounts, task.status)) {
+        taskCounts[task.status] += 1;
       }
       if (task.status === 'done' || task.status === 'released') continue;
-      (status.active_tasks as unknown[]).push({
+      activeTasks.push({
         ref: task.ref,
         title: task.title,
         status: task.status,
@@ -199,45 +194,58 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     }
   }
 
-  return status;
+  return {
+    agents: agents.map((agent) => ({
+      agent_id: agent.agent_id,
+      role: agent.role ?? null,
+      status: agent.status,
+      provider: agent.provider,
+      active_task_ref: activeClaimsByAgent.get(agent.agent_id) ?? null,
+    })),
+    task_counts: taskCounts,
+    active_tasks: activeTasks,
+    pending_notifications: readPendingNotifications(stateDir).length,
+    stalled_runs: handleListStalledRuns(stateDir).length,
+    next_task_seq: getNextTaskSeq(backlog),
+  };
 }
 
 export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_id?: unknown } = {}) {
   if (!agent_id) throw new Error('agent_id is required');
 
-  const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
-  const claims = (readClaims(stateDir).claims ?? []) as unknown as Array<Record<string, unknown>>;
+  const backlog = readBacklog(stateDir);
+  const claims = readClaims(stateDir).claims;
   const agents = listAgents(stateDir);
-  const agent = agents.find((entry) => (entry as unknown as Record<string, unknown>).agent_id === agent_id);
+  const agent = agents.find((entry) => entry.agent_id === agent_id);
   if (!agent) return { error: 'not_found', agent_id };
 
   const activeRun = claims.find((claim) =>
-    claim.agent_id === agent_id && ['claimed', 'in_progress'].includes(claim.state as string),
+    claim.agent_id === agent_id && ['claimed', 'in_progress'].includes(claim.state),
   ) ?? null;
 
   const doneSet = new Set(
-    ((backlog.epics ?? []) as unknown as Array<Record<string, unknown>>).flatMap((epic) =>
-      ((epic.tasks ?? []) as unknown as Array<Record<string, unknown>>)
+    backlog.epics.flatMap((epic) =>
+      epic.tasks
         .filter((task) => task.status === 'done' || task.status === 'released')
         .map((task) => task.ref),
     ),
   );
 
-  const queuedTasks: unknown[] = [];
-  for (const epic of (backlog.epics ?? []) as unknown as Array<Record<string, unknown>>) {
-    for (const task of (epic.tasks ?? []) as unknown as Array<Record<string, unknown>>) {
+  const queuedTasks: Array<{ ref: string; title: string; status: string; task_type: string; blockers: string[] }> = [];
+  for (const epic of backlog.epics) {
+    for (const task of epic.tasks) {
       if (task.owner !== agent_id) continue;
       if (task.status === 'done' || task.status === 'released') continue;
       if (activeRun?.task_ref === task.ref) continue;
 
       const blockers: string[] = [];
-      if (task.status !== 'todo') blockers.push(`status:${String(task.status)}`);
+      if (task.status !== 'todo') blockers.push(`status:${task.status}`);
       if (task.planning_state && task.planning_state !== 'ready_for_dispatch') {
-        blockers.push(`planning_state:${typeof task.planning_state === 'string' ? task.planning_state : '(unknown)'}`);
+        blockers.push(`planning_state:${task.planning_state}`);
       }
-      const unmetDependencies = ((task.depends_on ?? []) as string[]).filter((dependency) => !doneSet.has(dependency));
-      blockers.push(...unmetDependencies.map((dependency) => `dependency_not_done:${dependency}`));
-      blockers.push(...(evaluateTaskEligibility(task, agent as unknown as Record<string, unknown>) as { reasons: string[] }).reasons);
+      const unmetDependencies = (task.depends_on ?? []).filter((dep) => !doneSet.has(dep));
+      blockers.push(...unmetDependencies.map((dep) => `dependency_not_done:${dep}`));
+      blockers.push(...evaluateTaskEligibility(task, agent).reasons);
 
       queuedTasks.push({
         ref: task.ref,
@@ -252,17 +260,17 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
   let recommendedAction = 'idle';
   if (activeRun?.state === 'claimed') recommendedAction = 'start_run';
   else if (activeRun?.state === 'in_progress') recommendedAction = 'heartbeat';
-  else if ((queuedTasks as Array<{ blockers: string[] }>).some((task) => task.blockers.length === 0)) recommendedAction = 'start_run';
+  else if (queuedTasks.some((task) => task.blockers.length === 0)) recommendedAction = 'start_run';
 
-  const blockers = (queuedTasks as Array<{ ref: unknown; blockers: string[] }>).flatMap((task) => task.blockers.map((reason) => `${String(task.ref)}:${reason}`));
+  const blockers = queuedTasks.flatMap((task) => task.blockers.map((reason) => `${task.ref}:${reason}`));
 
   return {
     agent_id,
     agent: {
-      agent_id: (agent as unknown as Record<string, unknown>).agent_id ?? null,
-      role: (agent as unknown as Record<string, unknown>).role ?? null,
-      status: (agent as unknown as Record<string, unknown>).status ?? null,
-      provider: (agent as unknown as Record<string, unknown>).provider ?? null,
+      agent_id: agent.agent_id,
+      role: agent.role ?? null,
+      status: agent.status,
+      provider: agent.provider,
     },
     active_run: activeRun
       ? {
@@ -286,7 +294,7 @@ export function handleReadAgents(stateDir: string) {
   return readFileSync(join(stateDir, 'agents.json'), 'utf8');
 }
 
-export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}): Record<string, unknown> {
+export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
   const {
     epic,
     title,
@@ -322,56 +330,56 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
   return withLock(join(stateDir, '.lock'), () => {
     if (actor_id !== 'human') {
       const allAgents = listAgents(stateDir);
-      const actorExists = allAgents.some((agent) => (agent as unknown as Record<string, unknown>).agent_id === actor_id);
+      const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
       if (!actorExists) {
-        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
+        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
       }
     }
 
     const backlogPath = join(stateDir, 'backlog.json');
-    const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
+    const backlog = readBacklog(stateDir);
     const currentNextTaskSeq = getNextTaskSeq(backlog);
 
-    if (resolvedEpic === 'general' && !((backlog.epics ?? []) as unknown as Array<Record<string, unknown>>).some((candidate) => candidate.ref === 'general')) {
-      backlog.epics = [...((backlog.epics ?? []) as unknown[]), { ref: 'general', title: 'General', tasks: [] }];
+    if (resolvedEpic === 'general' && !backlog.epics.some((candidate) => candidate.ref === 'general')) {
+      backlog.epics = [...backlog.epics, { ref: 'general', title: 'General', tasks: [] }];
     }
 
-    const epicObj = ((backlog.epics ?? []) as unknown as Array<Record<string, unknown>>).find((candidate) => candidate.ref === resolvedEpic);
+    const epicObj = backlog.epics.find((candidate) => candidate.ref === resolvedEpic);
     if (!epicObj) throw new Error(`Epic not found: ${resolvedEpic}`);
 
-    const existing = ((epicObj.tasks ?? []) as unknown as Array<Record<string, unknown>>).find((task) => task.ref === taskRef);
+    const existing = epicObj.tasks.find((task) => task.ref === taskRef);
     if (existing) throw new Error(`Task already exists: ${taskRef}`);
 
     if (((depends_on ?? []) as unknown[]).length > 0) {
-      const allRefs = new Set(((backlog.epics ?? []) as unknown as Array<Record<string, unknown>>).flatMap((candidate) => ((candidate.tasks ?? []) as unknown as Array<Record<string, unknown>>).map((task) => task.ref)));
+      const allRefs = new Set(backlog.epics.flatMap((candidate) => candidate.tasks.map((task) => task.ref)));
       for (const dep of depends_on as string[]) {
         if (!allRefs.has(dep)) throw new Error(`depends_on task_ref not found in backlog: ${dep}`);
       }
     }
 
-    const newTask: Record<string, unknown> = {
+    const newTask: Task = {
       ref: taskRef,
-      title,
+      title: title as string,
       status: 'todo',
-      task_type,
-      priority,
+      task_type: task_type as Task['task_type'],
+      priority: priority as Task['priority'],
       planning_state: 'ready_for_dispatch',
-      delegated_by: actor_id,
-      depends_on: (depends_on as unknown[]) ?? [],
-      acceptance_criteria: (acceptance_criteria as unknown[]) ?? [],
-      required_capabilities: (required_capabilities as unknown[]) ?? [],
+      delegated_by: actor_id as string,
+      depends_on: (depends_on as string[] | undefined) ?? [],
+      acceptance_criteria: (acceptance_criteria as string[] | undefined) ?? [],
+      required_capabilities: (required_capabilities as string[] | undefined) ?? [],
       created_at: now,
       updated_at: now,
     };
-    if (description) newTask.description = description;
-    if (owner) newTask.owner = owner;
+    if (description) newTask.description = description as string;
+    if (owner) newTask.owner = owner as string;
 
-    for (const key of ['depends_on', 'acceptance_criteria', 'required_capabilities']) {
-      if (((newTask[key] as unknown[])?.length ?? 0) === 0) delete newTask[key];
-    }
+    if ((newTask.depends_on?.length ?? 0) === 0) delete newTask.depends_on;
+    if ((newTask.acceptance_criteria?.length ?? 0) === 0) delete newTask.acceptance_criteria;
+    if ((newTask.required_capabilities?.length ?? 0) === 0) delete newTask.required_capabilities;
 
-    epicObj.tasks = [...((epicObj.tasks ?? []) as unknown[]), newTask];
-    backlog.next_task_seq = (currentNextTaskSeq) + 1;
+    epicObj.tasks = [...epicObj.tasks, newTask];
+    backlog.next_task_seq = currentNextTaskSeq + 1;
     atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(
@@ -415,28 +423,28 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
 
   return withLock(join(stateDir, '.lock'), () => {
     const backlogPath = join(stateDir, 'backlog.json');
-    const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
-    const task = findTask(backlog, task_ref as string) as Record<string, unknown> | null;
+    const backlog = readBacklog(stateDir);
+    const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     if (title !== undefined) {
-      task.title = title;
+      task.title = title as string;
       changedFields.push('title');
     }
     if (description !== undefined) {
-      task.description = description;
+      task.description = description as string;
       changedFields.push('description');
     }
     if (priority !== undefined) {
-      task.priority = priority;
+      task.priority = priority as Task['priority'];
       changedFields.push('priority');
     }
     if (acceptance_criteria !== undefined) {
-      task.acceptance_criteria = acceptance_criteria;
+      task.acceptance_criteria = acceptance_criteria as string[];
       changedFields.push('acceptance_criteria');
     }
     if (depends_on !== undefined) {
-      task.depends_on = depends_on;
+      task.depends_on = depends_on as string[];
       changedFields.push('depends_on');
     }
 
@@ -451,7 +459,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
         actor_type: actor_id === 'human' ? 'human' : 'agent',
         actor_id: actor_id as string,
         task_ref: task_ref as string,
-        payload: { status: task.status as string, fields: changedFields },
+        payload: { status: task.status, fields: changedFields },
       },
       { lockAlreadyHeld: true },
     );
@@ -477,19 +485,20 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
 
   return withLock(join(stateDir, '.lock'), () => {
     const backlogPath = join(stateDir, 'backlog.json');
-    const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
-    const claims = (readClaims(stateDir).claims ?? []) as unknown as Array<Record<string, unknown>>;
+    const backlog = readBacklog(stateDir);
+    const claims = readClaims(stateDir).claims;
     const allAgents = listAgents(stateDir);
-    const actorExists = allAgents.some((agent) => (agent as unknown as Record<string, unknown>).agent_id === actor_id);
+    const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
     if (actor_id !== 'human' && !actorExists) {
-      throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
+      throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
     }
 
-    let task: Record<string, unknown> | null = null;
-    let epicRef: unknown = null;
-    for (const epic of (backlog.epics ?? []) as unknown as Array<Record<string, unknown>>) {
-      task = ((epic.tasks ?? []) as unknown as Array<Record<string, unknown>>).find((candidate) => candidate.ref === task_ref) ?? null;
-      if (task) {
+    let task: Task | null = null;
+    let epicRef: string | null = null;
+    for (const epic of backlog.epics) {
+      const found = epic.tasks.find((candidate) => candidate.ref === task_ref);
+      if (found) {
+        task = found;
         epicRef = epic.ref;
         break;
       }
@@ -499,15 +508,15 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
 
     let assignedTarget: string | null = (target_agent_id as string) ?? null;
     if (assignedTarget) {
-      const target = allAgents.find((agent) => (agent as unknown as Record<string, unknown>).agent_id === assignedTarget);
+      const target = allAgents.find((agent) => agent.agent_id === assignedTarget);
       if (!target) throw new Error(`Target agent not found: ${assignedTarget}`);
       const activeClaim = claims.find((claim) =>
-        claim.agent_id === assignedTarget && ['claimed', 'in_progress'].includes(claim.state as string),
+        claim.agent_id === assignedTarget && ['claimed', 'in_progress'].includes(claim.state),
       );
       if (activeClaim) {
-        throw new Error(`Target agent ${assignedTarget} already has active run ${String(activeClaim.run_id)}`);
+        throw new Error(`Target agent ${assignedTarget} already has active run ${activeClaim.run_id}`);
       }
-      const evaluation = evaluateTaskEligibility({ ...task, task_type: task_type as string | undefined }, target as unknown as Record<string, unknown>) as { eligible: boolean; reasons: string[] };
+      const evaluation = evaluateTaskEligibility({ ...task, task_type: task_type as string | undefined }, target);
       if (!evaluation.eligible) {
         throw new Error(
           `Target agent ${assignedTarget} cannot execute task: ` +
@@ -519,14 +528,14 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
         task,
         taskType: task_type as string,
         allAgents,
-        claims: claims as unknown as import('../types/claims.ts').Claim[],
+        claims,
         stateDir,
       });
     }
 
-    task.task_type = task_type;
+    task.task_type = task_type as Task['task_type'];
     task.planning_state = 'ready_for_dispatch';
-    task.delegated_by = actor_id;
+    task.delegated_by = actor_id as string;
     if (assignedTarget) {
       task.owner = assignedTarget;
     } else if (task.owner) {
@@ -565,7 +574,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
           task: taskForDiagnostics,
           taskType: task_type as string,
           allAgents,
-          claims: claims as unknown as import('../types/claims.ts').Claim[],
+          claims,
         }),
       };
     }
@@ -585,25 +594,24 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
   if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 
   const now = new Date().toISOString();
-  let cancelledRuns: Array<Record<string, unknown>> = [];
-  let cancelledResult: unknown = null;
+  let cancelledRuns: Claim[] = [];
 
   const result = withLock(join(stateDir, '.lock'), () => {
     const backlogPath = join(stateDir, 'backlog.json');
     const claimsPath = join(stateDir, 'claims.json');
-    const backlog = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
-    const claimsData = readClaims(stateDir) as unknown as Record<string, unknown>;
-    const claims = (claimsData.claims ?? []) as Array<Record<string, unknown>>;
+    const backlog = readBacklog(stateDir);
+    const claimsData = readClaims(stateDir);
+    const claims = claimsData.claims;
 
     if (actor_id !== 'human') {
       const allAgents = listAgents(stateDir);
-      const actorExists = allAgents.some((agent) => (agent as unknown as Record<string, unknown>).agent_id === actor_id);
+      const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
       if (!actorExists) {
-        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => (agent as unknown as Record<string, unknown>).agent_id).join(', ') || '(none)'}`);
+        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
       }
     }
 
-    const task = findTask(backlog, task_ref as string) as Record<string, unknown> | null;
+    const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     if (task.status === 'done' || task.status === 'released') {
@@ -611,11 +619,11 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
     }
 
     const activeClaims = claims.filter((claim) =>
-      claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state as string),
+      claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state),
     );
     if (activeClaims.length > 0) {
       claimsData.claims = claims.filter((claim) =>
-        !(claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state as string)),
+        !(claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state)),
       );
       cancelledRuns = activeClaims;
       atomicWriteJson(claimsPath, claimsData);
@@ -627,9 +635,9 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
             event: 'run_cancelled',
             actor_type: actor_id === 'human' ? 'human' : 'agent',
             actor_id: actor_id as string,
-            run_id: removed.run_id as string,
+            run_id: removed.run_id,
             task_ref: task_ref as string,
-            agent_id: removed.agent_id as string,
+            agent_id: removed.agent_id,
             payload: { reason },
           },
           { lockAlreadyHeld: true },
@@ -639,7 +647,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
 
     task.status = 'blocked';
     task.updated_at = now;
-    task.blocked_reason = (reason as string) ?? 'cancelled';
+    task.blocked_reason = (reason as string | null) ?? 'cancelled';
     atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(
@@ -650,7 +658,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
         actor_type: actor_id === 'human' ? 'human' : 'agent',
         actor_id: actor_id as string,
         task_ref: task_ref as string,
-        ...(cancelledRuns[0] ? { run_id: cancelledRuns[0].run_id as string, agent_id: cancelledRuns[0].agent_id as string } : {}),
+        ...(cancelledRuns[0] ? { run_id: cancelledRuns[0].run_id, agent_id: cancelledRuns[0].agent_id } : {}),
         payload: {
           reason,
           had_active_run: cancelledRuns.length > 0,
@@ -659,7 +667,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
       { lockAlreadyHeld: true },
     );
 
-    cancelledResult = {
+    return {
       cancelled: true,
       task_ref,
       status: task.status,
@@ -670,7 +678,6 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
           }
         : {}),
     };
-    return cancelledResult;
   });
 
   for (const cancelledRun of cancelledRuns) {
@@ -682,7 +689,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
       finished_at: now,
     });
     if (!deposited) {
-      console.warn(`[mcp] WARNING: failed to deposit cancellation notification for ${typeof task_ref === 'string' ? task_ref : '(unknown)'} (${String(cancelledRun.run_id)})`);
+      console.warn(`[mcp] WARNING: failed to deposit cancellation notification for ${typeof task_ref === 'string' ? task_ref : '(unknown)'} (${cancelledRun.run_id})`);
     }
   }
 
@@ -726,11 +733,11 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
     actor_type: 'agent',
     actor_id: effectiveActorId,
     run_id: run_id as string,
-    task_ref: (latestRequest as Record<string, unknown> | null)?.task_ref as string | undefined,
+    task_ref: latestRequest?.task_ref as string | undefined,
     agent_id: agent_id as string,
     payload: {
       response,
-      question: ((latestRequest as Record<string, unknown> | null)?.payload as Record<string, unknown> | undefined)?.question ?? null,
+      question: (latestRequest?.payload as Record<string, unknown> | undefined)?.question ?? null,
     },
   } as import('../types/events.ts').OrcEventInput);
 

@@ -8,6 +8,8 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
+import type { Agent } from '../types/agents.ts';
+import type { Claim } from '../types/claims.ts';
 
 const asJson = process.argv.includes('--json') || (flag('json') ?? '') === 'true';
 
@@ -21,9 +23,9 @@ const checks = {
   state_valid: stateErrors.length === 0,
   has_registered_workers: agents.length > 0,
   has_online_workers: agents.some((a) => a.status !== 'offline'),
-  orphaned_active_claims: getOrphanedClaims(agents as unknown as Array<Record<string, unknown>>, claims as unknown as Array<Record<string, unknown>>),
+  orphaned_active_claims: getOrphanedClaims(agents, claims),
 };
-const providerBinaries = getProviderBinaries(agents as unknown as Array<Record<string, unknown>>);
+const providerBinaries = getProviderBinaries(agents);
 const allBinariesPresent = Object.values(providerBinaries).every(Boolean);
 
 const ok = checks.state_valid
@@ -103,10 +105,10 @@ if (!ok) {
 console.log('');
 console.log('Preflight passed.');
 
-function getOrphanedClaims(agents: Array<Record<string, unknown>>, claims: Array<Record<string, unknown>>) {
-  const out: Array<Record<string, unknown>> = [];
+function getOrphanedClaims(agents: Agent[], claims: Claim[]) {
+  const out: Array<{ run_id: string; task_ref: string; agent_id: string; owner_status: string }> = [];
   for (const claim of claims) {
-    if (!['claimed', 'in_progress'].includes(claim.state as string)) continue;
+    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
     const owner = agents.find((a) => a.agent_id === claim.agent_id);
     if (!owner || owner.status === 'offline') {
       out.push({
@@ -120,8 +122,8 @@ function getOrphanedClaims(agents: Array<Record<string, unknown>>, claims: Array
   return out;
 }
 
-function getProviderBinaries(agents: Array<Record<string, unknown>>) {
-  const providers = [...new Set(agents.map((a) => a.provider).filter(Boolean))] as string[];
+function getProviderBinaries(agents: Agent[]) {
+  const providers = [...new Set(agents.map((a) => a.provider).filter(Boolean))];
   return Object.fromEntries(
     providers.map((provider) => {
       const binary = (PROVIDER_BINARIES)[provider] ?? provider;

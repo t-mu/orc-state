@@ -70,7 +70,7 @@ try {
     agent_id: agentId,
     payload: {
       status: transition.status as 'awaiting_finalize' | 'ready_to_merge',
-      retry_count: (updatedClaim as unknown as Record<string, unknown>).finalization_retry_count as number ?? 0,
+      retry_count: updatedClaim.finalization_retry_count ?? 0,
     },
   } as import('../types/events.ts').OrcEventInput);
   recordAgentActivity(STATE_DIR, agentId);

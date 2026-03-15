@@ -112,11 +112,6 @@ async function runBounded(thunks: Array<() => Promise<unknown>>, limit = CONCURR
   return results;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function markAgentOffline(agent: Agent, reason: string) {
-  markWorkerOffline(STATE_DIR, agent, { emit, reason });
-}
-
 function refreshAgentHeartbeat(agent: Agent, nowIso: string, { force = false } = {}) {
   const nowMs = new Date(nowIso).getTime();
   const lastMs = typeof agent.last_heartbeat_at === 'string'
@@ -456,8 +451,7 @@ function hasOtherActiveClaim(agentId: string, runId: string) {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function ensureSessionPoolReady(agents: Agent[], workerPoolConfig: WorkerPoolConfig) {
+async function ensureSessionPoolReady(agents: Agent[], _workerPoolConfig: WorkerPoolConfig) {
   const candidates = (agents ?? []).filter(
     (agent) => agent?.role !== 'master'
       && agent.status !== 'offline'

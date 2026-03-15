@@ -28,10 +28,11 @@
   ],
   "scripts": {
     "typecheck": "tsc --project tsconfig.check.json --noEmit",
+    "typecheck:test": "tsc --project tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "prepare": "simple-git-hooks",
-    "pretest": "tsc --project tsconfig.check.json --noEmit && eslint .",
+    "pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
     "pack:dry": "npm pack --dry-run"

@@ -670,13 +670,13 @@ describe('cli/start-session.ts', () => {
       vi.doMock('../lib/prompts.ts', () => ({
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
-        promptCoordinatorAction: vi.fn().mockImplementation(async () => {
+        promptCoordinatorAction: vi.fn().mockImplementation(() => {
           order.push('coordinator');
-          return 'reuse';
+          return Promise.resolve('reuse');
         }),
-        promptMasterAction: vi.fn().mockImplementation(async () => {
+        promptMasterAction: vi.fn().mockImplementation(() => {
           order.push('master');
-          return 'reuse';
+          return Promise.resolve('reuse');
         }),
         printManagedWorkerNotice: vi.fn(),
         promptRole: vi.fn().mockResolvedValue('worker'),

@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
-const packageJson = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'));
+const packageJson = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as { exports?: Record<string, string>; bin?: Record<string, string> };
 
 function readLocalFile(relativePath: string) {
   return readFileSync(resolve(ROOT, relativePath), 'utf8');
