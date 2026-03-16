@@ -1,12 +1,10 @@
 import { updateAgentRuntime } from './agentRegistry.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
-import type { Agent } from '../types/agents.ts';
+import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
 
-function syncAgentRuntime(agent: Agent, updates: Record<string, unknown>): void {
-  for (const [key, value] of Object.entries(updates)) {
-    (agent as unknown as Record<string, unknown>)[key] = value;
-  }
+function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
+  Object.assign(agent, updates);
 }
 
 function emitSessionStartFailed(
@@ -39,10 +37,10 @@ function emitSessionStartFailed(
 export function clearWorkerSessionRuntime(
   stateDir: string,
   agent: Agent,
-  { status = 'idle' }: { status?: string } = {},
+  { status = 'idle' }: { status?: AgentStatus } = {},
 ): void {
   const nowIso = new Date().toISOString();
-  const updates: Record<string, unknown> = {
+  const updates: Partial<Agent> = {
     status,
     session_handle: null,
     provider_ref: null,
@@ -113,10 +111,10 @@ export async function launchWorkerSession(
         ...(repoRoot ? { ORC_REPO_ROOT: repoRoot } : {}),
       },
     });
-    const updates: Record<string, unknown> = {
+    const updates: Partial<Agent> = {
       status: 'running',
       session_handle,
-      provider_ref,
+      provider_ref: provider_ref as Agent['provider_ref'],
       last_heartbeat_at: nowIso,
       last_status_change_at: nowIso,
     };

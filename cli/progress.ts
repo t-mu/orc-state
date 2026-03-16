@@ -43,7 +43,7 @@ try {
     reason,
     policy,
   }, claim);
-  const taskRef = (validatedClaim as unknown as Record<string, unknown>).task_ref as string;
+  const taskRef = validatedClaim.task_ref;
 
   switch (event) {
     case 'run_started':
@@ -86,7 +86,7 @@ try {
         agent_id: agentId,
         payload: {
           status: 'finalize_rebase_in_progress',
-          retry_count: (updatedClaim as unknown as Record<string, unknown>).finalization_retry_count as number,
+          retry_count: updatedClaim.finalization_retry_count ?? 0,
         },
       });
       break;
@@ -107,7 +107,7 @@ try {
         agent_id: agentId,
         payload: {
           status: 'ready_to_merge',
-          retry_count: ((updatedClaim as unknown as Record<string, unknown>).finalization_retry_count ?? 0) as number,
+          retry_count: updatedClaim.finalization_retry_count ?? 0,
         },
       });
       break;
