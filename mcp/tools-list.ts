@@ -160,6 +160,11 @@ export const TOOLS = [
           items: { type: 'string' },
           description: 'Native JSON array of capability strings — NOT a JSON-encoded string.',
         },
+        required_provider: {
+          type: 'string',
+          enum: ['codex', 'claude', 'gemini'],
+          description: 'Restrict dispatch to agents of this provider. Omit for any provider.',
+        },
         owner: { type: 'string', description: 'Pre-assign to agent_id' },
         actor_id: { type: 'string', description: 'Defaults to master agent_id' },
       },
@@ -193,6 +198,11 @@ export const TOOLS = [
           type: 'array',
           items: { type: 'string' },
           description: 'Native JSON array of task ref strings - NOT a JSON-encoded string.',
+        },
+        required_provider: {
+          type: ['string', 'null'],
+          enum: ['codex', 'claude', 'gemini', null],
+          description: 'Set or clear the provider restriction. Pass null to remove.',
         },
         actor_id: { type: 'string', description: 'Defaults to master agent_id' },
       },

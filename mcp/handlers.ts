@@ -10,6 +10,7 @@ import { appendNotification, readPendingNotifications } from '../lib/masterNotif
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
+import { isSupportedProvider } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
@@ -307,6 +308,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     acceptance_criteria,
     depends_on,
     required_capabilities,
+    required_provider,
     owner,
     actor_id = defaultActorId(stateDir),
   } = args;
@@ -321,6 +323,9 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
   assertStringArray(acceptance_criteria, 'acceptance_criteria');
   assertStringArray(depends_on, 'depends_on');
   assertStringArray(required_capabilities, 'required_capabilities');
+  if (required_provider != null && !isSupportedProvider(required_provider)) {
+    throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
+  }
 
   const now = new Date().toISOString();
   const taskSlug = (ref as string) ?? slugify(title as string);
@@ -375,6 +380,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     };
     if (description) newTask.description = description as string;
     if (owner) newTask.owner = owner as string;
+    if (required_provider != null) newTask.required_provider = required_provider as Task['required_provider'];
 
     if ((newTask.depends_on?.length ?? 0) === 0) delete newTask.depends_on;
     if ((newTask.acceptance_criteria?.length ?? 0) === 0) delete newTask.acceptance_criteria;
@@ -409,6 +415,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     priority,
     acceptance_criteria,
     depends_on,
+    required_provider,
     actor_id = defaultActorId(stateDir),
   } = args;
 
@@ -418,6 +425,9 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   assertStringArray(depends_on, 'depends_on');
   if (priority !== undefined && !TASK_PRIORITIES.has(priority as string)) {
     throw new Error(`Invalid priority: ${typeof priority === 'string' ? priority : '(unknown)'}`);
+  }
+  if (required_provider !== undefined && required_provider !== null && !isSupportedProvider(required_provider)) {
+    throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
   }
 
   const now = new Date().toISOString();
@@ -448,6 +458,14 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     if (depends_on !== undefined) {
       task.depends_on = depends_on as string[];
       changedFields.push('depends_on');
+    }
+    if (required_provider !== undefined) {
+      if (required_provider === null) {
+        delete task.required_provider;
+      } else {
+        task.required_provider = required_provider as Task['required_provider'];
+      }
+      changedFields.push('required_provider');
     }
 
     task.updated_at = now;

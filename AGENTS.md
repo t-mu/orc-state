@@ -218,6 +218,29 @@ are complete, then remain alive for coordinator-owned finalization follow-up whe
 
 Heartbeat requirement: emit `heartbeat` (or any non-terminal event) at least every 60 s while a claim is active, or the coordinator will eventually expire and requeue the task.
 
+### Provider configuration
+
+`required_provider` on a task routes that task exclusively to agents whose `provider` field matches.
+The worker pool provider itself is resolved via the following fallback chain:
+
+```
+task.required_provider          — route this task to a specific provider
+  worker pool (all workers):
+    ORC_WORKER_PROVIDER env
+    → worker_pool.provider in orchestrator.config.json
+    → default_provider in orchestrator.config.json
+    → hardcoded default ('codex')
+```
+
+Set `default_provider` at the top level of `orchestrator.config.json` to configure the default
+provider for all workers without setting `worker_pool.provider`:
+
+```json
+{
+  "default_provider": "claude"
+}
+```
+
 ### Agent roles
 | Role | Can claim tasks | Excluded from auto-dispatch |
 |------|----------------|----------------------------|
