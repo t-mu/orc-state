@@ -1325,3 +1325,79 @@ describe('handleListWorktrees', () => {
     expect(result[0].task_title).toBe('Todo one');
   });
 });
+
+describe('handleCreateTask required_provider', () => {
+  it('stores required_provider when provided', () => {
+    const result = handleCreateTask(dir, {
+      epic: 'project',
+      title: 'Provider task',
+      required_provider: 'claude',
+      actor_id: 'master',
+    }) as Record<string, unknown>;
+    expect(result.required_provider).toBe('claude');
+    const saved = readBacklog();
+    const task = saved.epics.flatMap((e) => e.tasks).find((t) => t.ref === 'project/provider-task');
+    expect(task?.required_provider).toBe('claude');
+  });
+
+  it('omits required_provider when not provided', () => {
+    const result = handleCreateTask(dir, {
+      epic: 'project',
+      title: 'No provider task',
+      actor_id: 'master',
+    }) as Record<string, unknown>;
+    expect(result.required_provider).toBeUndefined();
+  });
+
+  it('throws on invalid required_provider', () => {
+    expect(() =>
+      handleCreateTask(dir, {
+        epic: 'project',
+        title: 'Bad provider task',
+        required_provider: 'bogus',
+        actor_id: 'master',
+      }),
+    ).toThrow(/invalid required_provider/i);
+  });
+});
+
+describe('handleUpdateTask required_provider', () => {
+  it('sets required_provider on existing task', () => {
+    handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      required_provider: 'gemini',
+      actor_id: 'master',
+    });
+    const saved = readBacklog();
+    const task = saved.epics.flatMap((e) => e.tasks).find((t) => t.ref === 'project/todo-one');
+    expect(task?.required_provider).toBe('gemini');
+  });
+
+  it('clears required_provider when passed null', () => {
+    // First set it
+    handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      required_provider: 'claude',
+      actor_id: 'master',
+    });
+    // Now clear it
+    handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      required_provider: null,
+      actor_id: 'master',
+    });
+    const saved = readBacklog();
+    const task = saved.epics.flatMap((e) => e.tasks).find((t) => t.ref === 'project/todo-one');
+    expect(task?.required_provider).toBeUndefined();
+  });
+
+  it('throws on invalid required_provider value', () => {
+    expect(() =>
+      handleUpdateTask(dir, {
+        task_ref: 'project/todo-one',
+        required_provider: 'bogus',
+        actor_id: 'master',
+      }),
+    ).toThrow(/invalid required_provider/i);
+  });
+});

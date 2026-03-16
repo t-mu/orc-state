@@ -1,3 +1,5 @@
+import type { ProviderName } from '../lib/providers.ts';
+
 export type TaskStatus = 'todo' | 'claimed' | 'in_progress' | 'blocked' | 'done' | 'released';
 export type TaskRef = string;
 
@@ -12,6 +14,7 @@ export interface Task {
   delegated_by?: string | undefined;
   parent_task_ref?: TaskRef | undefined;
   required_capabilities?: string[] | undefined;
+  required_provider?: ProviderName | undefined;
   depends_on?: TaskRef[] | undefined;
   acceptance_criteria?: string[] | undefined;
   attempt_count?: number | undefined;

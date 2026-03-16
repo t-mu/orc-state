@@ -33,6 +33,7 @@ interface ConfigFileResult {
   max_workers?: number | null;
   provider?: string | null;
   model?: string | null;
+  default_provider?: string | null;
 }
 
 function parseConfigFile(configFile: string = ORCHESTRATOR_CONFIG_FILE): ConfigFileResult {
@@ -45,8 +46,15 @@ function parseConfigFile(configFile: string = ORCHESTRATOR_CONFIG_FILE): ConfigF
     throw new Error(`Invalid orchestrator config at ${configFile}: ${(error as Error).message}`);
   }
 
-  const workerPool = (parsed as { worker_pool?: unknown })?.worker_pool;
-  if (workerPool == null) return {};
+  const topLevel = parsed as Record<string, unknown>;
+  const defaultProvider = typeof topLevel.default_provider === 'string' ? topLevel.default_provider : null;
+
+  if (defaultProvider != null && !isSupportedProvider(defaultProvider)) {
+    throw new Error(`Invalid default_provider in ${configFile}: ${defaultProvider}. Must be codex, claude, or gemini.`);
+  }
+
+  const workerPool = topLevel.worker_pool;
+  if (workerPool == null) return { default_provider: defaultProvider };
   if (typeof workerPool !== 'object' || Array.isArray(workerPool)) {
     throw new Error(`Invalid orchestrator config at ${configFile}: worker_pool must be an object`);
   }
@@ -56,6 +64,7 @@ function parseConfigFile(configFile: string = ORCHESTRATOR_CONFIG_FILE): ConfigF
     max_workers: parseNonNegativeInteger(wp.max_workers, 'worker_pool.max_workers'),
     provider: (wp.provider as string | null) ?? null,
     model: (wp.model as string | null) ?? null,
+    default_provider: defaultProvider,
   };
 }
 
@@ -68,7 +77,7 @@ export function loadWorkerPoolConfig({
 } = {}): WorkerPoolConfig {
   const fileConfig = parseConfigFile(configFile);
   const maxWorkers = parseNonNegativeInteger(env.ORC_MAX_WORKERS, 'ORC_MAX_WORKERS');
-  const provider = (env.ORC_WORKER_PROVIDER ?? fileConfig.provider ?? DEFAULT_WORKER_POOL_CONFIG.provider);
+  const provider = (env.ORC_WORKER_PROVIDER ?? fileConfig.provider ?? fileConfig.default_provider ?? DEFAULT_WORKER_POOL_CONFIG.provider);
   const model = env.ORC_WORKER_MODEL ?? fileConfig.model ?? DEFAULT_WORKER_POOL_CONFIG.model;
 
   if (!isSupportedProvider(provider)) {
