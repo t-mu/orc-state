@@ -32,11 +32,8 @@ if (!existsSync(eventsPath)) {
 
 const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
 
-// Apply last N constraint on raw lines before parsing if specified
-const linesToParse = last > 0 ? lines.slice(-last) : lines;
-
 const matched: unknown[] = [];
-for (const line of linesToParse) {
+for (const line of lines) {
   let ev: Record<string, unknown>;
   try {
     ev = JSON.parse(line) as Record<string, unknown>;
@@ -51,17 +48,20 @@ for (const line of linesToParse) {
   matched.push(ev);
 }
 
+// Apply --last=N after filtering so N refers to matched results, not raw lines
+const output = last > 0 ? matched.slice(-last) : matched;
+
 if (asJson) {
-  console.log(JSON.stringify(matched, null, 2));
+  console.log(JSON.stringify(output, null, 2));
   process.exit(0);
 }
 
-if (matched.length === 0) {
+if (output.length === 0) {
   console.log('(no matching events)');
   process.exit(0);
 }
 
-for (const ev of matched) {
+for (const ev of output) {
   const e = ev as Record<string, unknown>;
   const type = typeof e.event === 'string' ? e.event : '';
   const ts = typeof e.ts === 'string' ? e.ts : '';

@@ -19,6 +19,11 @@ import {
   handleDelegateTask,
   handleCancelTask,
   handleRespondInput,
+  handleGetRun,
+  handleListWaitingInput,
+  handleQueryEvents,
+  handleResetTask,
+  handleListWorktrees,
 } from './handlers.ts';
 import { readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 
@@ -1167,5 +1172,156 @@ describe('mcp read handlers', () => {
       event.event === 'input_response'
       && event.run_id === 'run-input-1'
       && event.payload?.response === 'yes')).toBe(true);
+  });
+});
+
+describe('handleGetRun', () => {
+  it('returns claim details merged with task_title and worktree_path', () => {
+    const result = handleGetRun(dir, { run_id: 'run-1' }) as Record<string, unknown>;
+    expect(result.run_id).toBe('run-1');
+    expect(result.task_ref).toBe('project/todo-one');
+    expect(result.agent_id).toBe('orc-1');
+    expect(result.task_title).toBe('Todo one');
+    expect(result.worktree_path).toBeNull();
+  });
+
+  it('returns not_found for unknown run_id', () => {
+    const result = handleGetRun(dir, { run_id: 'no-such-run' }) as Record<string, unknown>;
+    expect(result.error).toBe('not_found');
+  });
+
+  it('throws when run_id is missing', () => {
+    expect(() => handleGetRun(dir, {})).toThrow('run_id is required');
+  });
+});
+
+describe('handleListWaitingInput', () => {
+  it('returns empty when no claims await input', () => {
+    const result = handleListWaitingInput(dir);
+    expect(result).toEqual([]);
+  });
+
+  it('returns waiting claims with question text', () => {
+    seedClaims([
+      {
+        run_id: 'run-waiting',
+        task_ref: 'project/todo-one',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        input_state: 'awaiting_input',
+        input_requested_at: '2026-01-01T00:05:00.000Z',
+        claimed_at: '2026-01-01T00:00:00.000Z',
+        started_at: '2026-01-01T00:00:05.000Z',
+        last_heartbeat_at: '2026-01-01T00:00:06.000Z',
+        lease_expires_at: '2026-01-01T00:10:00.000Z',
+      },
+    ]);
+    seedEventsLines([
+      JSON.stringify({
+        seq: 1,
+        ts: '2026-01-01T00:05:00.000Z',
+        event: 'input_requested',
+        run_id: 'run-waiting',
+        agent_id: 'orc-1',
+        payload: { question: 'Should I proceed?' },
+      }),
+    ]);
+
+    const result = handleListWaitingInput(dir) as Array<Record<string, unknown>>;
+    expect(result).toHaveLength(1);
+    expect(result[0].run_id).toBe('run-waiting');
+    expect(result[0].question).toBe('Should I proceed?');
+    expect(result[0].input_requested_at).toBe('2026-01-01T00:05:00.000Z');
+  });
+});
+
+describe('handleQueryEvents', () => {
+  it('returns all events when no filters applied', () => {
+    const result = handleQueryEvents(dir);
+    expect(result).toHaveLength(3); // 3 valid lines (1 malformed excluded)
+  });
+
+  it('filters by event_type', () => {
+    const result = handleQueryEvents(dir, { event_type: 'run_started' });
+    expect(result).toHaveLength(1);
+    expect((result[0] as Record<string, unknown>).event).toBe('run_started');
+  });
+
+  it('filters by after_seq', () => {
+    const result = handleQueryEvents(dir, { after_seq: 2 });
+    expect(result).toHaveLength(1);
+    expect((result[0] as Record<string, unknown>).seq).toBe(3);
+  });
+
+  it('respects limit cap', () => {
+    const result = handleQueryEvents(dir, { limit: 1 });
+    expect(result).toHaveLength(1);
+  });
+
+  it('returns empty array when no events file exists', () => {
+    rmSync(join(dir, 'events.jsonl'));
+    expect(handleQueryEvents(dir)).toEqual([]);
+  });
+});
+
+describe('handleResetTask', () => {
+  it('resets task to todo and cancels active claims', () => {
+    const result = handleResetTask(dir, { task_ref: 'project/todo-one', actor_id: 'master' }) as Record<string, unknown>;
+    expect(result.reset).toBe(true);
+    expect(result.previous_status).toBe('todo');
+    expect(result.cancelled_claims).toBe(2); // run-1 and run-4 are in_progress
+
+    const backlog = readBacklog();
+    const task = backlog.epics[0].tasks.find((t) => t.ref === 'project/todo-one');
+    expect(task?.status).toBe('todo');
+  });
+
+  it('uses human as default actor_id', () => {
+    expect(() => handleResetTask(dir, { task_ref: 'project/todo-one' })).not.toThrow();
+  });
+
+  it('throws on missing task_ref', () => {
+    expect(() => handleResetTask(dir, {})).toThrow('task_ref is required');
+  });
+
+  it('throws on invalid actor_id', () => {
+    expect(() => handleResetTask(dir, { task_ref: 'project/todo-one', actor_id: 'INVALID!' })).toThrow('Invalid actor_id');
+  });
+
+  it('throws when task not found', () => {
+    expect(() => handleResetTask(dir, { task_ref: 'no/such-task', actor_id: 'master' })).toThrow('task not found');
+  });
+});
+
+describe('handleListWorktrees', () => {
+  it('returns empty list when no run-worktrees.json exists', () => {
+    const result = handleListWorktrees(dir);
+    expect(result).toEqual([]);
+  });
+
+  it('returns worktree entries merged with claim data', () => {
+    writeFileSync(
+      join(dir, 'run-worktrees.json'),
+      JSON.stringify({
+        version: '1',
+        runs: [
+          {
+            run_id: 'run-1',
+            agent_id: 'orc-1',
+            task_ref: 'project/todo-one',
+            worktree_path: '/repo/.worktrees/run-1',
+            branch: 'run/run-1',
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      }),
+    );
+
+    const result = handleListWorktrees(dir) as Array<Record<string, unknown>>;
+    expect(result).toHaveLength(1);
+    expect(result[0].run_id).toBe('run-1');
+    expect(result[0].task_ref).toBe('project/todo-one');
+    expect(result[0].path).toBe('/repo/.worktrees/run-1');
+    expect(result[0].task_title).toBe('Todo one');
   });
 });

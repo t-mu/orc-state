@@ -42,6 +42,10 @@ try {
       throw new Error(`task not found for run: ${claim.task_ref}`);
     }
 
+    if (task.status === 'done' || task.status === 'released') {
+      throw new Error(`task is already terminal (status: ${task.status}): ${claim.task_ref}`);
+    }
+
     claim.state = 'failed';
     claim.failure_reason = 'manual_expire';
     claim.finished_at = now;
