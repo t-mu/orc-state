@@ -698,9 +698,10 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
   return result;
 }
 
-function readRunWorktreesState(): RunWorktreesState {
+function readRunWorktreesState(stateDir?: string): RunWorktreesState {
+  const path = stateDir ? join(stateDir, 'run-worktrees.json') : RUN_WORKTREES_FILE;
   try {
-    return JSON.parse(readFileSync(RUN_WORKTREES_FILE, 'utf8')) as RunWorktreesState;
+    return JSON.parse(readFileSync(path, 'utf8')) as RunWorktreesState;
   } catch {
     return { version: '1', runs: [] };
   }
@@ -716,7 +717,7 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
   const task = findTask(backlog, claim.task_ref);
   const taskTitle = task?.title ?? null;
 
-  const worktrees = readRunWorktreesState();
+  const worktrees = readRunWorktreesState(stateDir);
   const wtEntry = worktrees.runs.find((e) => e.run_id === run_id);
   const worktreePath = wtEntry?.worktree_path ?? null;
 
@@ -795,6 +796,9 @@ export function handleQueryEvents(
 
 export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {
   if (!task_ref) throw new Error('task_ref is required');
+  if (typeof actor_id !== 'string' || !ACTOR_ID_RE.test(actor_id)) {
+    throw new Error(`Invalid actor_id: ${typeof actor_id === 'string' ? actor_id : '(unknown)'}`);
+  }
 
   return withLock(join(stateDir, '.lock'), () => {
     const backlogPath = join(stateDir, 'backlog.json');
@@ -803,7 +807,7 @@ export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human'
 
     const backlog = readBacklog(stateDir);
     const task = findTask(backlog, task_ref as string);
-    if (!task) return { error: `task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}` };
+    if (!task) throw new Error(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     const previousStatus = task.status;
     task.status = 'todo';
@@ -830,7 +834,7 @@ export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human'
         ts: now,
         event: 'task_updated',
         actor_type: actor_id === 'human' ? 'human' : 'agent',
-        actor_id: actor_id as string,
+        actor_id,
         task_ref: task_ref as string,
         payload: { reset: true, previous_status: previousStatus, status: 'todo' },
       },
@@ -847,7 +851,7 @@ export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human'
 }
 
 export function handleListWorktrees(stateDir: string) {
-  const worktrees = readRunWorktreesState();
+  const worktrees = readRunWorktreesState(stateDir);
   const claims = readClaims(stateDir).claims;
   const backlog = readBacklog(stateDir);
 
