@@ -16,6 +16,7 @@ import { canAgentExecuteTask } from '../lib/taskRouting.ts';
 
 import { readBacklog, readClaims } from '../lib/stateReader.ts';
 import { TASK_TYPES, AGENT_ID_RE } from '../lib/constants.ts';
+import type { Task } from '../types/backlog.ts';
 
 const taskRef = flag('task-ref');
 const targetAgentId = flag('target-agent-id');
@@ -56,12 +57,12 @@ try {
     const backlogPath = join(STATE_DIR, 'backlog.json');
     const backlog = readBacklog(STATE_DIR);
     const claims = readClaims(STATE_DIR).claims ?? [];
-    let task: Record<string, unknown> | null = null;
+    let task: Task | null = null;
     let epicRef: string | null = null;
     for (const epic of backlog.epics ?? []) {
       for (const candidate of epic.tasks ?? []) {
         if (candidate.ref === taskRef) {
-          task = candidate as unknown as Record<string, unknown>;
+          task = candidate;
           epicRef = epic.ref;
           break;
         }
@@ -92,7 +93,7 @@ try {
       });
     }
 
-    task.task_type = taskType;
+    task.task_type = taskType as Task['task_type'];
     task.planning_state = 'ready_for_dispatch';
     task.delegated_by = actorId;
     if (assignedTarget) {

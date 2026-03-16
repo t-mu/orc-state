@@ -1073,6 +1073,7 @@ describe('processTerminalRunEvents', () => {
 
     await processTerminalRunEvents([{
       event: 'run_finished',
+      run_id: 'run-test',
       task_ref: 'orch/test-task',
       agent_id: 'orc-1',
       ts: '2026-03-08T08:00:00.000Z',
@@ -1099,10 +1100,12 @@ describe('processTerminalRunEvents', () => {
 
     await processTerminalRunEvents([{
       event: 'run_failed',
+      run_id: 'run-fail-test',
       task_ref: 'orch/test-task-fail',
       agent_id: 'orc-2',
       ts: '2026-03-08T08:01:00.000Z',
       payload: {
+        policy: 'requeue',
         reason: 'build error',
       },
     }]);
@@ -1166,10 +1169,12 @@ describe('processTerminalRunEvents', () => {
 
     await processTerminalRunEvents([{
       event: 'run_failed',
+      run_id: 'run-fail-exit',
       task_ref: 'orch/test-task-exit',
       agent_id: 'orc-3',
       ts: '2026-03-08T08:02:00.000Z',
       payload: {
+        policy: 'requeue',
         code: 'ERR_COMPILE',
       },
     }]);

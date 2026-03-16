@@ -36,18 +36,17 @@ const roleFlag = flag('role');
 const forceRebind = process.argv.includes('--force-rebind');
 
 let worker = getAgent(STATE_DIR, workerId);
-if ((worker as Record<string, unknown> | null)?.role === 'master') {
+if (worker?.role === 'master') {
   console.error(`Agent '${workerId}' is the registered master. Use 'orc-start-session' to manage the master session.`);
   process.exit(1);
 }
 
-const workerRecord = worker as Record<string, unknown> | null;
-if (worker && provider && provider !== workerRecord?.provider) {
-  console.error(`Provider mismatch for ${workerId}: registered=${String(workerRecord?.provider)}, requested=${provider}`);
+if (worker && provider && provider !== worker.provider) {
+  console.error(`Provider mismatch for ${workerId}: registered=${worker.provider}, requested=${provider}`);
   process.exit(1);
 }
 
-const resolvedProvider = workerRecord?.provider as string | undefined ?? await promptProvider(provider, {
+const resolvedProvider = worker?.provider ?? await promptProvider(provider, {
   message: 'Select provider for DEBUG worker session provisioning',
 });
 if (!resolvedProvider) {
@@ -76,46 +75,49 @@ if (!worker) {
   console.log(`Registered ${workerId}`);
 }
 
-const workerFinal = worker as unknown as Record<string, unknown>;
-const adapter = createAdapter(workerFinal.provider as string);
+if (!worker) {
+  console.error(`Failed to load agent record for ${workerId} after registration.`);
+  process.exit(1);
+}
 
-if (workerFinal.session_handle) {
-  const alive = await adapter.heartbeatProbe(workerFinal.session_handle as string);
+const adapter = createAdapter(worker.provider);
+
+if (worker.session_handle) {
+  const alive = await adapter.heartbeatProbe(worker.session_handle);
   if (alive && forceRebind) {
-    await adapter.stop(workerFinal.session_handle as string);
-    updateAgentRuntime(STATE_DIR, workerFinal.agent_id as string, {
+    await adapter.stop(worker.session_handle);
+    updateAgentRuntime(STATE_DIR, worker.agent_id, {
       status: 'offline',
       session_handle: null,
       provider_ref: null,
       last_status_change_at: new Date().toISOString(),
     });
-    workerFinal.session_handle = null;
+    worker.session_handle = null;
   } else if (!alive) {
-    updateAgentRuntime(STATE_DIR, workerFinal.agent_id as string, {
+    updateAgentRuntime(STATE_DIR, worker.agent_id, {
       status: 'offline',
       session_handle: null,
       provider_ref: null,
       last_status_change_at: new Date().toISOString(),
     });
-    workerFinal.session_handle = null;
+    worker.session_handle = null;
   } else {
     // Session is alive and no rebind requested — normalize registry status in case
     // the entry was left as 'offline' by a prior coordinator crash or manual edit.
-    updateAgentRuntime(STATE_DIR, workerFinal.agent_id as string, {
+    updateAgentRuntime(STATE_DIR, worker.agent_id, {
       status: 'running',
       last_heartbeat_at: new Date().toISOString(),
     });
   }
 }
 
-if (!workerFinal.session_handle) {
-  console.log(`Agent '${String(workerFinal.agent_id)}' registered (${String(workerFinal.provider)}). Coordinator will provision the headless session on its next tick, even while idle.`);
+if (!worker.session_handle) {
+  console.log(`Agent '${worker.agent_id}' registered (${worker.provider}). Coordinator will provision the headless session on its next tick, even while idle.`);
   console.log('This command is for debug/recovery workflows. Normal task execution launches workers per task automatically.');
   console.log(`Use: orc-watch     — monitor for the agent_online event / running status`);
-  console.log(`Use: orc-attach ${String(workerFinal.agent_id)}  — attach to worker output once running`);
+  console.log(`Use: orc-attach ${worker.agent_id}  — attach to worker output once running`);
 } else {
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string
-  console.log(`Headless session ready: ${String(workerFinal.session_handle)}`);
+  console.log(`Headless session ready: ${worker.session_handle}`);
   console.log('This command is for debug/recovery workflows. Normal task execution launches workers per task automatically.');
-  console.log(`Use: orc-attach ${String(workerFinal.agent_id)}  — attach to worker output`);
+  console.log(`Use: orc-attach ${worker.agent_id}  — attach to worker output`);
 }

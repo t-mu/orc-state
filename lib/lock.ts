@@ -144,7 +144,7 @@ export function releaseLock(lockPath: string): void {
  */
 export function withLock<T>(lockPath: string, fn: () => T): T {
   acquireLock(lockPath);
-  let value: T;
+  let value: T | undefined;
   let fnError: unknown = null;
   try {
     value = fn();
@@ -159,9 +159,12 @@ export function withLock<T>(lockPath: string, fn: () => T): T {
     }
     throw releaseError;
   }
-  // eslint-disable-next-line @typescript-eslint/only-throw-error
-  if (fnError) throw fnError;
-  return value!;
+  if (fnError) {
+    if (fnError instanceof Error) throw fnError;
+    const msg = typeof fnError === 'string' ? fnError : JSON.stringify(fnError);
+    throw new Error(msg);
+  }
+  return value as T;
 }
 
 /**
@@ -169,7 +172,7 @@ export function withLock<T>(lockPath: string, fn: () => T): T {
  */
 export async function withLockAsync<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
   acquireLock(lockPath);
-  let value: T;
+  let value: T | undefined;
   let fnError: unknown = null;
   try {
     value = await fn();
@@ -184,7 +187,10 @@ export async function withLockAsync<T>(lockPath: string, fn: () => Promise<T>): 
     }
     throw releaseError;
   }
-  // eslint-disable-next-line @typescript-eslint/only-throw-error
-  if (fnError) throw fnError;
-  return value!;
+  if (fnError) {
+    if (fnError instanceof Error) throw fnError;
+    const msg = typeof fnError === 'string' ? fnError : JSON.stringify(fnError);
+    throw new Error(msg);
+  }
+  return value as T;
 }

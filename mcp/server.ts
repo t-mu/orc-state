@@ -121,11 +121,9 @@ export function readResource(stateDir: string, uri: string) {
   throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+server.setRequestHandler(ListToolsRequestSchema, () => Promise.resolve({ tools: TOOLS }));
 
-// eslint-disable-next-line @typescript-eslint/require-await
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, (request) => {
   const { name, arguments: args = {} } = request.params;
   const validation = validateToolArguments(name, args);
   if (!validation.ok) {
@@ -133,23 +131,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    return asToolResult(invokeTool(STATE_DIR, name, args));
+    return Promise.resolve(asToolResult(invokeTool(STATE_DIR, name, args)));
   } catch (err) {
     if (err instanceof McpError) throw err;
     if (isExpectedToolError(err)) {
-      return asToolError((err as Error).message);
+      return Promise.resolve(asToolError((err as Error).message));
     }
     throw new McpError(ErrorCode.InternalError, 'Internal MCP tool execution failure');
   }
 });
 
-// eslint-disable-next-line @typescript-eslint/require-await
-server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: RESOURCES }));
+server.setRequestHandler(ListResourcesRequestSchema, () => Promise.resolve({ resources: RESOURCES }));
 
-// eslint-disable-next-line @typescript-eslint/require-await
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  return readResource(STATE_DIR, request.params.uri);
-});
+server.setRequestHandler(ReadResourceRequestSchema, (request) => Promise.resolve(readResource(STATE_DIR, request.params.uri)));
 
 function isEntryPoint() {
   if (!process.argv[1]) return false;

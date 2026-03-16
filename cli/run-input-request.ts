@@ -53,7 +53,7 @@ try {
     actor_type: 'agent',
     actor_id: agentId,
     run_id: runId,
-    task_ref: (validatedClaim as unknown as Record<string, unknown>).task_ref as string | undefined,
+    task_ref: validatedClaim.task_ref,
     agent_id: agentId,
     payload: {
       question,

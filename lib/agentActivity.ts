@@ -1,4 +1,5 @@
 import { updateAgentRuntime } from './agentRegistry.ts';
+import type { AgentStatus } from '../types/agents.ts';
 
 /**
  * Record recent worker activity for operator-facing liveness views.
@@ -7,7 +8,7 @@ import { updateAgentRuntime } from './agentRegistry.ts';
 export function recordAgentActivity(
   stateDir: string,
   agentId: string,
-  { at = new Date().toISOString(), status = 'running' }: { at?: string; status?: string } = {},
+  { at = new Date().toISOString(), status = 'running' }: { at?: string; status?: AgentStatus } = {},
 ): boolean {
   try {
     updateAgentRuntime(stateDir, agentId, {

@@ -199,7 +199,7 @@ function writeMcpConfig() {
 // ── Find master ────────────────────────────────────────────────────────────
 
 const agents = listAgents(STATE_DIR);
-let master = agents.find((a) => (a as unknown as Record<string, unknown>).role === 'master') ?? null;
+let master = agents.find((a) => a.role === 'master') ?? null;
 const deprecatedWorkerId = flag('worker-id');
 const deprecatedWorkerProvider = flag('worker-provider');
 
@@ -234,8 +234,8 @@ if (masterAction === 'cancel') {
   process.exit(isInteractive() ? 0 : 1);
 }
 if (masterAction === 'replace' && master) {
-  removeAgent(STATE_DIR, (master as unknown as Record<string, unknown>).agent_id as string);
-  console.log(`✓ Removed existing master '${String((master as unknown as Record<string, unknown>).agent_id)}'`);
+  removeAgent(STATE_DIR, master.agent_id);
+  console.log(`✓ Removed existing master '${master.agent_id}'`);
   master = null;
 }
 
@@ -259,12 +259,16 @@ if (!master) {
   master = getAgent(STATE_DIR, agentId);
 }
 
+if (!master) {
+  console.error('Failed to load master agent record after registration.');
+  process.exit(1);
+}
+
 // ── Binary check ───────────────────────────────────────────────────────────
 
-const masterRecord = master as unknown as Record<string, unknown>;
-const binaryOk = await checkAndInstallBinary(masterRecord.provider as string);
+const binaryOk = await checkAndInstallBinary(master.provider);
 if (!binaryOk) {
-  const binary = (PROVIDER_BINARIES)[masterRecord.provider as string] ?? masterRecord.provider;
+  const binary = (PROVIDER_BINARIES)[master.provider] ?? master.provider;
   console.error(`Cannot start master session: '${binary}' binary not available.`);
   process.exit(1);
 }
@@ -284,10 +288,10 @@ if (running) {
 
 // ── Master foreground session ──────────────────────────────────────────────
 
-const binary = (PROVIDER_BINARIES)[masterRecord.provider as string] ?? masterRecord.provider;
+const binary = (PROVIDER_BINARIES)[master.provider] ?? master.provider;
 const masterPidDir = join(STATE_DIR, 'pty-pids');
 const masterPidPath = join(masterPidDir, 'master.pid');
-console.log(`\n✓ Starting ${String(masterRecord.provider)} CLI as master session...`);
+console.log(`\n✓ Starting ${master.provider} CLI as master session...`);
 console.log('  This terminal is the MASTER session.');
 console.log('  Workers are separate headless PTY sessions managed by the coordinator.');
 printManagedWorkerNotice();
@@ -301,11 +305,11 @@ console.log('  Debug worker tools: orc-worker-register / orc-worker-start-sessio
 
 let spawnArgs: string[] = [];
 try {
-  if (masterRecord.provider === 'claude') {
+  if (master.provider === 'claude') {
     const mcpConfigPath = writeMcpConfig();
     const bootstrap = renderTemplate('master-bootstrap-v1.txt', {
-      agent_id: masterRecord.agent_id as string,
-      provider: masterRecord.provider as string,
+      agent_id: master.agent_id,
+      provider: master.provider,
     });
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap];
     console.log('  MCP server: orchestrator tools available in this session.');
@@ -313,21 +317,21 @@ try {
     console.log('\n----- MASTER BOOTSTRAP -----');
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
-  } else if (masterRecord.provider === 'codex') {
+  } else if (master.provider === 'codex') {
     const bootstrap = renderTemplate('master-bootstrap-codex-v1.txt', {
-      agent_id: masterRecord.agent_id as string,
-      provider: masterRecord.provider as string,
+      agent_id: master.agent_id,
+      provider: master.provider,
     });
     spawnArgs = ['--instructions', bootstrap];
     console.log('  Master bootstrap loaded via --instructions.');
     console.log('\n----- MASTER BOOTSTRAP -----');
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
-  } else if (masterRecord.provider === 'gemini') {
+  } else if (master.provider === 'gemini') {
     const mcpConfigPath = writeMcpConfig();
     const bootstrap = renderTemplate('master-bootstrap-gemini-v1.txt', {
-      agent_id: masterRecord.agent_id as string,
-      provider: masterRecord.provider as string,
+      agent_id: master.agent_id,
+      provider: master.provider,
     });
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-instruction', bootstrap];
     console.log('  MCP server: orchestrator tools available in this session.');
@@ -336,10 +340,10 @@ try {
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else {
-    console.warn(`Unknown provider '${String(masterRecord.provider)}' for bootstrap args; starting without bootstrap args.`);
+    console.warn(`Unknown provider '${master.provider}' for bootstrap args; starting without bootstrap args.`);
   }
 } catch (error) {
-  updateAgentRuntime(STATE_DIR, masterRecord.agent_id as string, {
+  updateAgentRuntime(STATE_DIR, master.agent_id, {
     status: 'offline',
     session_handle: null,
     provider_ref: null,
@@ -350,7 +354,7 @@ try {
 }
 
 const now = new Date().toISOString();
-updateAgentRuntime(STATE_DIR, masterRecord.agent_id as string, {
+updateAgentRuntime(STATE_DIR, master.agent_id, {
   status: 'running',
   last_heartbeat_at: now,
   last_status_change_at: now,
@@ -388,7 +392,7 @@ const cliResult = await new Promise<{ type: string; error?: Error; code?: number
 
   masterPty.onData((data) => process.stdout.write(data));
   stopForwarder = startMasterPtyForwarder(STATE_DIR, masterPty, masterPty, {
-    provider: masterRecord.provider as string,
+    provider: master.provider,
   });
   masterPty.onExit(({ exitCode, signal }) => resolvePromise({ type: 'close', code: exitCode, signal: signal as string | undefined }));
 
@@ -418,8 +422,9 @@ try {
 masterPty = null;
 
 function markMasterOffline() {
+  if (!master) return;
   try {
-    updateAgentRuntime(STATE_DIR, masterRecord.agent_id as string, {
+    updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'offline',
       session_handle: null,
       provider_ref: null,
@@ -432,7 +437,7 @@ function markMasterOffline() {
 
 if (cliResult.type === 'error') {
   console.error(
-    `Failed to start master provider CLI '${String(binary)}' for ${String(masterRecord.provider)}: ${cliResult.error?.message ?? 'unknown error'}`,
+    `Failed to start master provider CLI '${String(binary)}' for ${master.provider}: ${cliResult.error?.message ?? 'unknown error'}`,
   );
   markMasterOffline();
   process.exit(1);
