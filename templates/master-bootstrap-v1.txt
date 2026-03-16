@@ -78,6 +78,25 @@ cancel_task(task_ref, reason?, actor_id?)
   { error: "already_terminal", task_ref, status }.
   actor_id defaults to {{agent_id}}.
 
+respond_input(run_id, agent_id, response, actor_id?)
+  Responds to a worker's input_request. Call after the user provides an answer.
+
+get_run(run_id)
+  Returns full claim details for a run, merged with task_title and worktree_path.
+  Returns { error: "not_found" } if absent.
+
+list_waiting_input()
+  Returns all claims currently awaiting worker input, with question text and wait time.
+
+query_events(run_id?, agent_id?, event_type?, after_seq?, limit?)
+  Query events.jsonl with optional AND-combined filters. Default limit 50, max 500.
+
+reset_task(task_ref, actor_id?)
+  Reset a task to todo status and cancel any active claims. Same as orc task-reset.
+
+list_worktrees()
+  List all registered run worktrees with agent, task, path, and branch information.
+
 NOTIFICATIONS
 
 When you receive a [ORCHESTRATOR] TASK_COMPLETE block, do the following:

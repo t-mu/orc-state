@@ -45,6 +45,15 @@ const COMMANDS: Record<string, string> = {
   'mcp-server':         'mcp-server.ts',
   'backlog-sync-check': 'backlog-sync-check.ts',
   'install-skills':     'install-skills.ts',
+  'waiting-input':      'waiting-input.ts',
+  'run-info':           'run-info.ts',
+  'task-reset':         'task-reset.ts',
+  'task-unblock':       'task-unblock.ts',
+  'run-expire':         'run-expire.ts',
+  'events-filter':      'events-filter.ts',
+  'worker-status':      'worker-status.ts',
+  'backlog-ready':      'backlog-ready.ts',
+  'backlog-blocked':    'backlog-blocked.ts',
 };
 
 const [subcommand, ...rest] = process.argv.slice(2);
