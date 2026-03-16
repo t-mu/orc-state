@@ -61,8 +61,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>) {
       '--sandbox', 'workspace-write',
       '--ask-for-approval', 'never',
     ];
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string
-    if (config.system_prompt) args.push(String(config.system_prompt));
+    if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
   }
   return [];
@@ -166,8 +165,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       // then a separate CR after a short pause to submit the paste.
       if (provider !== 'codex' && config.system_prompt) {
         await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
-        ptyProcess.write(String(config.system_prompt));
+        if (typeof config.system_prompt === 'string') ptyProcess.write(config.system_prompt);
         await new Promise((r) => setTimeout(r, 500));
         ptyProcess.write('\r');
       }
@@ -250,8 +248,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
      *
      * Never throws — any error returns false.
      */
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async heartbeatProbe(sessionHandle: string) {
+    heartbeatProbe(sessionHandle: string): Promise<boolean> {
       try {
         const agentId    = parseHandle(sessionHandle);
         const ptyProcess = sessions.get(agentId);
@@ -259,22 +256,22 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         if (ptyProcess) {
           try {
             process.kill(ptyProcess.pid, 0);
-            return true;
+            return Promise.resolve(true);
           } catch {
             sessions.delete(agentId);
-            return false;
+            return Promise.resolve(false);
           }
         }
 
         // Fallback: cross-process check via PID file.
         const pidFile = pidPath(agentId);
-        if (!existsSync(pidFile)) return false;
+        if (!existsSync(pidFile)) return Promise.resolve(false);
         const pid = parseInt(readFileSync(pidFile, 'utf8'), 10);
-        if (!Number.isFinite(pid)) return false;
+        if (!Number.isFinite(pid)) return Promise.resolve(false);
         process.kill(pid, 0);
-        return true;
+        return Promise.resolve(true);
       } catch {
-        return false;
+        return Promise.resolve(false);
       }
     },
 
@@ -282,8 +279,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
      * Kill the PTY process and clean up all state.
      * No-op if the session is not found.
      */
-    // eslint-disable-next-line @typescript-eslint/require-await
-    async stop(sessionHandle: string) {
+    stop(sessionHandle: string): Promise<void> {
       try {
         const agentId = parseHandle(sessionHandle);
 
@@ -309,6 +305,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       } catch {
         // No-op — malformed handle or session already cleaned up.
       }
+      return Promise.resolve();
     },
   };
 }

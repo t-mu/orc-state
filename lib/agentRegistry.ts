@@ -107,7 +107,7 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
  * provider_ref, last_heartbeat_at). Non-runtime fields (provider, model)
  * are not writable through this function.
  */
-export function updateAgentRuntime(stateDir: string, agentId: string, updates: Record<string, unknown>): void {
+export function updateAgentRuntime(stateDir: string, agentId: string, updates: Partial<Agent>): void {
   const ALLOWED = new Set([
     'status',
     'session_handle',
@@ -121,9 +121,10 @@ export function updateAgentRuntime(stateDir: string, agentId: string, updates: R
     const idx = file.agents.findIndex((a) => a.agent_id === agentId);
     if (idx === -1) throw new Error(`Agent not found: ${agentId}`);
 
-    for (const [key, val] of Object.entries(updates)) {
-      if (ALLOWED.has(key)) (file.agents[idx] as unknown as Record<string, unknown>)[key] = val;
-    }
+    const filtered = Object.fromEntries(
+      Object.entries(updates).filter(([key]) => ALLOWED.has(key)),
+    ) as Partial<Agent>;
+    Object.assign(file.agents[idx], filtered);
 
     atomicWriteJson(join(stateDir, 'agents.json'), file);
   });

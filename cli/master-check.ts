@@ -22,8 +22,10 @@ for (const notification of pending) {
     console.log(`        Reason:  ${typeof n.failure_reason === 'string' ? n.failure_reason : '(unknown)'}`);
   }
   if (n.exit_code !== undefined) {
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string
-    console.log(`        Exit:    ${String(n.exit_code)}`);
+    const exitCodeStr = typeof n.exit_code === 'string' || typeof n.exit_code === 'number'
+      ? String(n.exit_code)
+      : JSON.stringify(n.exit_code);
+    console.log(`        Exit:    ${exitCodeStr}`);
   }
   console.log(`        Time:    ${String(n.finished_at)}`);
   console.log('');

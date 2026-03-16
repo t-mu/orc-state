@@ -36,7 +36,7 @@ if (!provider) {
   console.error('Missing required flag: --provider=<codex|claude|gemini>');
   process.exit(1);
 }
-const providersArr = PROVIDERS as unknown as string[];
+const providersArr: string[] = [...PROVIDERS];
 if (!providersArr.includes(provider)) {
   console.error(`Unsupported provider: ${provider}. Use one of: ${providersArr.join(', ')}`);
   process.exit(1);
@@ -70,8 +70,7 @@ try {
     role: role as import('../types/agents.ts').AgentRole,
     capabilities,
   });
-  const entryRecord = entry as unknown as Record<string, unknown>;
-  console.log(`Registered ${String(entryRecord.agent_id)} (${String(entryRecord.provider)}) role=${String(entryRecord.role)}`);
+  console.log(`Registered ${entry.agent_id} (${entry.provider}) role=${entry.role}`);
   console.log('This command is for debug/recovery workflows. Normal startup uses orc-start-session and coordinator-managed workers.');
 } catch (error) {
   console.error((error as Error).message);
