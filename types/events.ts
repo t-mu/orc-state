@@ -122,7 +122,7 @@ export interface RunFailedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { policy: FailurePolicy; reason?: string | null; code?: string; [key: string]: unknown };
+  payload: { policy: FailurePolicy; reason?: string | null | undefined; code?: string | undefined; [key: string]: unknown };
 }
 
 export interface RunCancelledEvent extends BaseEvent {
@@ -192,7 +192,7 @@ export interface InputProvidedEvent extends BaseEvent {
 export interface InputRequestedEvent extends BaseEvent {
   event: 'input_requested';
   run_id: string;
-  task_ref?: string;
+  task_ref?: string | undefined;
   agent_id: string;
   payload: { question: string; [key: string]: unknown };
 }
@@ -200,7 +200,7 @@ export interface InputRequestedEvent extends BaseEvent {
 export interface InputResponseEvent extends BaseEvent {
   event: 'input_response';
   run_id: string;
-  task_ref?: string;
+  task_ref?: string | undefined;
   agent_id: string;
   payload: { response: string; [key: string]: unknown };
 }
@@ -248,7 +248,7 @@ export interface SessionStartFailedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { reason: string; code?: string; working_directory?: string; [key: string]: unknown };
+  payload: { reason: string; code?: string | undefined; working_directory?: string | undefined; [key: string]: unknown };
 }
 
 // ── Coordinator events ────────────────────────────────────────────────────────
