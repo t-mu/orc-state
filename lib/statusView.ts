@@ -42,14 +42,14 @@ function buildTaskCounts(backlogFile: Backlog): TaskCounts {
   };
 }
 
-interface DispatchReadyTask {
+export interface DispatchReadyTask {
   ref: string;
   title: string;
   epic_ref: string;
   priority: string;
 }
 
-function listDispatchReadyTasks(backlogFile: Backlog): DispatchReadyTask[] {
+export function listDispatchReadyTasks(backlogFile: Backlog): DispatchReadyTask[] {
   const doneSet = new Set<string>();
   const ready: DispatchReadyTask[] = [];
 

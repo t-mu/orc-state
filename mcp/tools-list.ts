@@ -281,4 +281,89 @@ export const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'get_run',
+    description: 'Get full details for a specific run by run_id. Returns claim object merged with task_title and worktree_path. Returns {error:"not_found"} if absent.',
+    inputSchema: {
+      type: 'object',
+      required: ['run_id'],
+      properties: {
+        run_id: {
+          type: 'string',
+          description: 'Run ID to look up',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_waiting_input',
+    description: 'List all claims currently awaiting worker input, with question text and wait time.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'query_events',
+    description: 'Query events.jsonl with optional filters. Returns last `limit` matching events.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        run_id: {
+          type: 'string',
+          description: 'Filter by run_id',
+        },
+        agent_id: {
+          type: 'string',
+          description: 'Filter by agent_id',
+        },
+        event_type: {
+          type: 'string',
+          description: 'Filter by event type',
+        },
+        after_seq: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Only return events with seq > after_seq',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 500,
+          description: 'Maximum events to return (default: 50, max: 500)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'reset_task',
+    description: 'Reset a task to todo status, cancelling any active claims. Same logic as orc task-reset.',
+    inputSchema: {
+      type: 'object',
+      required: ['task_ref'],
+      properties: {
+        task_ref: {
+          type: 'string',
+          description: 'Full task ref to reset',
+        },
+        actor_id: {
+          type: 'string',
+          description: 'Actor performing the reset (default: human)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_worktrees',
+    description: 'List all registered run worktrees with agent, task, and path information.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
 ];

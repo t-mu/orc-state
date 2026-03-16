@@ -102,6 +102,16 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleCancelTask(stateDir, args);
     case 'respond_input':
       return handlers.handleRespondInput(stateDir, args);
+    case 'get_run':
+      return handlers.handleGetRun(stateDir, args);
+    case 'list_waiting_input':
+      return handlers.handleListWaitingInput(stateDir);
+    case 'query_events':
+      return handlers.handleQueryEvents(stateDir, args);
+    case 'reset_task':
+      return handlers.handleResetTask(stateDir, args);
+    case 'list_worktrees':
+      return handlers.handleListWorktrees(stateDir);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
