@@ -17,4 +17,4 @@ export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
 
 export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
   ? resolve(process.env.ORC_BACKLOG_DIR)
-  : resolve(resolveRepoRoot(), 'docs', 'backlog');
+  : resolve(resolveRepoRoot(), 'backlog');
