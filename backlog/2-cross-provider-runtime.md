@@ -15,7 +15,7 @@ Independent.
 - Add `required_provider` field to `types/backlog.ts` Task type
 - Add `required_provider` to `schemas/backlog.schema.json`
 - Add `--required-provider` flag to `cli/task-create.ts`
-- Add `required_provider` parameter to `mcp/handlers.ts` `handleCreateTask` and the `create_task` tool definition in `mcp/tools-list.ts`
+- Add `required_provider` parameter to `mcp/handlers.ts` `handleCreateTask` and `handleUpdateTask`, and the `create_task` / `update_task` tool definitions in `mcp/tools-list.ts`
 - Add top-level `default_provider` key to `orchestrator.config.json` support; use it as fallback when `worker_pool.provider` is not explicitly set
 - Document the provider fallback chain in `AGENTS.md`
 
@@ -38,7 +38,7 @@ Separately, the only way to configure the worker provider today is via `ORC_WORK
 - `types/backlog.ts`: has `required_capabilities` but no `required_provider`
 - `schemas/backlog.schema.json`: has `required_capabilities` but no `required_provider`; `additionalProperties: false` causes `orc doctor` to reject manually-added fields
 - `cli/task-create.ts`: has `--required-capabilities` but no `--required-provider`
-- `mcp/handlers.ts` `handleCreateTask`: accepts `required_capabilities` but not `required_provider`
+- `mcp/handlers.ts` `handleCreateTask` / `handleUpdateTask`: accept `required_capabilities` but not `required_provider`
 - `orchestrator.config.json`: supports `worker_pool.{ provider, max_workers, model }` — no top-level `default_provider`
 
 ### Desired state
@@ -62,7 +62,7 @@ task.required_provider          — route this task to a specific provider
 - `types/backlog.ts` — Task type, add `required_provider`
 - `schemas/backlog.schema.json` — Task definition, add field
 - `lib/providers.ts` — `parseConfigFile()`, `loadWorkerPoolConfig()`
-- `mcp/handlers.ts` — `handleCreateTask`
+- `mcp/handlers.ts` — `handleCreateTask`, `handleUpdateTask`
 
 **Affected files:**
 - `types/backlog.ts`
@@ -71,6 +71,7 @@ task.required_provider          — route this task to a specific provider
 - `mcp/handlers.ts`
 - `mcp/tools-list.ts`
 - `lib/providers.ts`
+- `lib/providers.test.ts`
 - `AGENTS.md`
 
 ---
@@ -79,6 +80,7 @@ task.required_provider          — route this task to a specific provider
 
 1. Must: `orc task-create --epic=orch --title="X" --required-provider=claude` creates a task with `required_provider: "claude"` in `backlog.json`.
 2. Must: `create_task(epic, title, required_provider: "claude")` MCP call stores the field.
+2b. Must: `update_task(task_ref, required_provider: "claude")` MCP call updates the field on an existing task.
 3. Must: `orc doctor` exits 0 for a task that has `required_provider` set.
 4. Must: `canAgentExecuteTask()` continues to return `false` for a provider mismatch (no regression — logic already works, just needs the field to reach it).
 5. Must: `loadWorkerPoolConfig()` uses `default_provider` from config as fallback when `worker_pool.provider` is absent.
@@ -95,10 +97,10 @@ task.required_provider          — route this task to a specific provider
 
 ```ts
 // Add alongside required_capabilities:
-required_provider?: 'codex' | 'claude' | 'gemini' | undefined;
+required_provider?: ProviderName | undefined;
 ```
 
-Use the `Provider` union rather than a loose `string` to keep it consistent with `types/agents.ts`.
+Import `ProviderName` from `../lib/providers.ts`. Do **not** use `Provider` from `types/agents.ts` — that union includes `'human'`, which is intentionally excluded here since human-operated slots should not receive auto-dispatched tasks.
 
 ### Step 2 — Add `required_provider` to backlog schema
 
@@ -111,7 +113,7 @@ Use the `Provider` union rather than a loose `string` to keep it consistent with
 }
 ```
 
-Add a `Provider` definition to the backlog schema (mirroring `agents.schema.json`):
+Add a `Provider` definition to the backlog schema (a narrowed version of the one in `agents.schema.json` — intentionally excludes `"human"`):
 
 ```json
 "Provider": {
@@ -143,20 +145,46 @@ if (requiredProvider) newTask.required_provider = requiredProvider as Task['requ
 
 Update the usage comment at the top of the file.
 
-### Step 4 — Add `required_provider` to `handleCreateTask` and tool definition
+### Step 4 — Add `required_provider` to `handleCreateTask`, `handleUpdateTask`, and tool definitions
 
 **File:** `mcp/handlers.ts` — `handleCreateTask`:
 
-Destructure `required_provider` from args alongside `required_capabilities`. Validate it is one of the supported provider strings if present. Store on the task object (omit if null/undefined, same pattern as `required_capabilities`).
+Destructure `required_provider` from args alongside `required_capabilities`. Validate using `isSupportedProvider` imported from `../lib/providers.ts` — do not inline a separate Set. Store on the task object; omit if null/undefined, same pattern as `required_capabilities`.
 
-**File:** `mcp/tools-list.ts` — `create_task` tool:
+**File:** `mcp/handlers.ts` — `handleUpdateTask`:
 
-Add to the input schema:
+Follow the `title` / `priority` update pattern (not `required_capabilities` — that field is not handled in `handleUpdateTask`). Steps 3 and 4 require Step 1 to compile; do Step 1 first. Add `required_provider` to the destructured args. If provided and non-null, validate with `isSupportedProvider` and set `task.required_provider`; if explicitly `null`, delete the field (allows clearing a previously set value). Add `'required_provider'` to `changedFields`.
+
+```ts
+if (required_provider !== undefined) {
+  if (required_provider === null) {
+    delete task.required_provider;
+  } else {
+    // validate...
+    task.required_provider = required_provider as Task['required_provider'];
+  }
+  changedFields.push('required_provider');
+}
+```
+
+**File:** `mcp/tools-list.ts` — `create_task` tool input schema:
+
 ```json
 "required_provider": {
   "type": "string",
   "enum": ["codex", "claude", "gemini"],
   "description": "Restrict dispatch to agents of this provider. Omit for any provider."
+}
+```
+
+**File:** `mcp/tools-list.ts` — `update_task` tool input schema:
+
+Add the same `required_provider` property. Also allow `null` to support clearing the field:
+```json
+"required_provider": {
+  "type": ["string", "null"],
+  "enum": ["codex", "claude", "gemini", null],
+  "description": "Set or clear the provider restriction. Pass null to remove."
 }
 ```
 
@@ -174,11 +202,18 @@ interface ConfigFileResult {
 }
 ```
 
-In `parseConfigFile()`, read `default_provider` from the top level of the parsed config (not under `worker_pool`):
+In `parseConfigFile()`, read `default_provider` from the top level of the parsed config (not under `worker_pool`). **Important:** the current function has an early `return {}` at line 49 when `worker_pool` is null — this early return must be restructured so top-level keys are always read before any conditional return. Read `default_provider` before entering the `worker_pool` block:
+
 ```ts
 const topLevel = parsed as Record<string, unknown>;
 const defaultProvider = typeof topLevel.default_provider === 'string'
   ? topLevel.default_provider : null;
+
+// Only then handle worker_pool (existing logic)
+const workerPool = topLevel.worker_pool;
+if (workerPool == null) return { default_provider: defaultProvider };  // was: return {}
+// ... rest of worker_pool parsing unchanged ...
+return { ..., default_provider: defaultProvider };
 ```
 
 In `loadWorkerPoolConfig()`, update the provider resolution:
@@ -202,6 +237,9 @@ Add a short section under "Orchestrator Conventions" documenting the provider fa
 - [ ] `orc task-create --epic=orch --title="Test" --required-provider=claude` creates task with `required_provider: "claude"` in `backlog.json`.
 - [ ] `orc task-create --required-provider=invalid` exits non-zero with an error message.
 - [ ] `create_task` MCP call with `required_provider: "codex"` stores the field on the task.
+- [ ] `update_task` MCP call with `required_provider: "claude"` updates the field on an existing task.
+- [ ] `update_task` MCP call with `required_provider: null` clears the field.
+- [ ] `update_task` MCP call with `required_provider: "bogus"` throws an error.
 - [ ] `orc doctor` exits 0 for a backlog with a task that has `required_provider` set.
 - [ ] A task with `required_provider: "claude"` is not dispatched to a `codex` agent (routing regression test).
 - [ ] A task with `required_provider: "claude"` is dispatched to a `claude` agent when one is available.
@@ -230,6 +268,10 @@ it('loadWorkerPoolConfig prefers worker_pool.provider over default_provider', ()
 ```ts
 it('create_task stores required_provider when provided', () => { ... });
 it('create_task omits required_provider when not provided', () => { ... });
+it('create_task throws on invalid required_provider', () => { ... });
+it('update_task sets required_provider on existing task', () => { ... });
+it('update_task clears required_provider when passed null', () => { ... });
+it('update_task throws on invalid required_provider value', () => { ... });
 ```
 
 ---
@@ -260,4 +302,4 @@ nvm use 24 && npm test
 
 **Risk:** `default_provider` sits at the top level of `orchestrator.config.json`, not inside `worker_pool`. Verify `parseConfigFile()` reads both levels without collision.
 
-**Rollback:** `git restore types/backlog.ts schemas/backlog.schema.json cli/task-create.ts mcp/handlers.ts mcp/tools-list.ts lib/providers.ts AGENTS.md && npm test`
+**Rollback:** `git restore types/backlog.ts schemas/backlog.schema.json cli/task-create.ts mcp/handlers.ts mcp/tools-list.ts lib/providers.ts lib/providers.test.ts AGENTS.md && git clean -f mcp/handlers.test.ts cli/task-create.test.ts 2>/dev/null; npm test`
