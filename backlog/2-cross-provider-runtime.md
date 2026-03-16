@@ -5,200 +5,231 @@ priority: high
 status: todo
 ---
 
-# Task 2 — Enable Per-Slot Provider Assignment in Coordinator-Managed Worker Pool
+# Task 2 — Wire required_provider on Tasks and Add default_provider Config
 
 Independent.
 
 ## Scope
 
 **In scope:**
-- Add `slot_providers?: Record<string, ProviderName>` to `WorkerPoolConfig` in `lib/providers.ts`
-- Load `slot_providers` from `orchestrator.config.json` `worker_pool.slot_providers`
-- Use per-slot provider when creating new managed slots in `createManagedSlotEntry()`
-- Stop overwriting a managed slot's provider during reconciliation when it matches the slot's configured provider
-- Add tests covering mixed-provider slot creation and reconciliation
+- Add `required_provider` field to `types/backlog.ts` Task type
+- Add `required_provider` to `schemas/backlog.schema.json`
+- Add `--required-provider` flag to `cli/task-create.ts`
+- Add `required_provider` parameter to `mcp/handlers.ts` `handleCreateTask` and the `create_task` tool definition in `mcp/tools-list.ts`
+- Add top-level `default_provider` key to `orchestrator.config.json` support; use it as fallback when `worker_pool.provider` is not explicitly set
+- Document the provider fallback chain in `AGENTS.md`
 
 **Out of scope:**
-- Changing `types/agents.ts`, `schemas/agents.schema.json` — `provider` and `capabilities` fields already exist
-- Changing `lib/taskRouting.ts` — capability and provider routing already fully implemented
-- Changing `cli/register-worker.ts` — `--provider` and `--capabilities` flags already work
-- Changing `lib/agentRegistry.ts` `registerAgent()` — already stores both fields
-- Supporting dynamic capability discovery or a capability marketplace
+- Changing `lib/taskRouting.ts` — routing already evaluates `required_provider` correctly
+- Changing agent registration, schema, or capabilities — already implemented
+- Per-slot provider assignment in the worker pool
+- Changing the master provider selection flow in `cli/start-session.ts`
 
 ---
 
 ## Context
 
-The adapter layer and routing are already provider-agnostic: each `Agent` record carries its own `provider` field, `canAgentExecuteTask()` checks `required_capabilities` and `required_provider`, and `orc register-worker` already accepts `--provider` and `--capabilities`. The coordinator reads `agent.provider` when launching sessions (`getAdapter(agent.provider)`), so it will naturally use the right adapter per worker.
+The routing engine in `lib/taskRouting.ts` already checks `task.required_provider` against `agent.provider` and returns `eligible: false` on mismatch. However, `required_provider` is only defined in a local `TaskLike` interface inside `taskRouting.ts` — it does not exist on the `Task` type, is not in the backlog schema, and cannot be set through `create_task` (MCP) or `orc task-create` (CLI). Setting it requires directly editing `backlog.json`, which then fails `orc doctor` because the schema has `additionalProperties: false`.
 
-The only missing piece is the coordinator's managed slot lifecycle. `WorkerPoolConfig` has a single `provider: ProviderName` applied to all auto-managed slots. `reconcileManagedWorkerSlots()` not only creates new slots with this single provider but also actively resets an existing slot's `provider` back to the pool default on every reconcile tick — making it impossible for coordinator-managed slots (orc-1, orc-2, …) to hold different providers across ticks.
+Separately, the only way to configure the worker provider today is via `ORC_WORKER_PROVIDER` env var or `worker_pool.provider` in `orchestrator.config.json`. A simpler top-level `default_provider` key would let users express "use Claude for everything" without knowing about `worker_pool`.
 
 ### Current state
-- `WorkerPoolConfig` in `lib/providers.ts`: `{ max_workers, provider, model }` — single provider for all slots
-- `createManagedSlotEntry()` in `lib/agentRegistry.ts`: always uses `workerPoolConfig.provider`
-- `reconcileManagedWorkerSlots()` in `lib/agentRegistry.ts`: overwrites `existing.provider` to `workerPoolConfig.provider` when slot is idle
-- `orchestrator.config.json` `worker_pool` supports `max_workers`, `provider`, `model` — no per-slot overrides
-- A mixed pool (orc-1=claude, orc-2=codex) is impossible through the coordinator's auto-managed path
+- `lib/taskRouting.ts`: evaluates `required_provider` via local `TaskLike` — routing works but field is invisible to users
+- `types/backlog.ts`: has `required_capabilities` but no `required_provider`
+- `schemas/backlog.schema.json`: has `required_capabilities` but no `required_provider`; `additionalProperties: false` causes `orc doctor` to reject manually-added fields
+- `cli/task-create.ts`: has `--required-capabilities` but no `--required-provider`
+- `mcp/handlers.ts` `handleCreateTask`: accepts `required_capabilities` but not `required_provider`
+- `orchestrator.config.json`: supports `worker_pool.{ provider, max_workers, model }` — no top-level `default_provider`
 
 ### Desired state
-- `orchestrator.config.json` accepts `worker_pool.slot_providers: { "orc-1": "claude", "orc-2": "codex" }` to override provider per slot
-- New managed slots are created with the slot-specific provider when one is configured
-- Reconciliation does not overwrite a slot's provider when it matches its configured provider
-- Pool-level `provider` remains the default for any slot not listed in `slot_providers`
+- `Task` type and backlog schema include `required_provider` as an optional field
+- `orc task-create --required-provider=claude` and `create_task(required_provider: "claude")` work end-to-end
+- `orc doctor` passes for tasks that have `required_provider` set
+- `orchestrator.config.json` accepts a top-level `default_provider` that `worker_pool.provider` falls back to
+- Provider fallback chain is documented
+
+### Provider fallback chain
+```
+task.required_provider          — route this task to a specific provider
+  worker pool (all workers):
+    ORC_WORKER_PROVIDER env
+    → worker_pool.provider in orchestrator.config.json
+    → default_provider in orchestrator.config.json
+    → hardcoded default ('codex')
+```
 
 ### Start here
-- `lib/providers.ts` — `WorkerPoolConfig`, `loadWorkerPoolConfig()`, `parseConfigFile()`
-- `lib/agentRegistry.ts` — `createManagedSlotEntry()`, `reconcileManagedWorkerSlots()`
+- `types/backlog.ts` — Task type, add `required_provider`
+- `schemas/backlog.schema.json` — Task definition, add field
+- `lib/providers.ts` — `parseConfigFile()`, `loadWorkerPoolConfig()`
+- `mcp/handlers.ts` — `handleCreateTask`
 
 **Affected files:**
-- `lib/providers.ts` — add `slot_providers` to `WorkerPoolConfig` and load it from config
-- `lib/agentRegistry.ts` — thread `slot_providers` through slot creation and reconciliation
-- `lib/providers.test.ts` — tests for `slot_providers` loading
-- `lib/agentRegistry.test.ts` — tests for mixed-provider slot creation and reconciliation
+- `types/backlog.ts`
+- `schemas/backlog.schema.json`
+- `cli/task-create.ts`
+- `mcp/handlers.ts`
+- `mcp/tools-list.ts`
+- `lib/providers.ts`
+- `AGENTS.md`
 
 ---
 
 ## Goals
 
-1. Must: `loadWorkerPoolConfig()` parses `worker_pool.slot_providers` from `orchestrator.config.json` and populates `WorkerPoolConfig.slot_providers`.
-2. Must: A new managed slot for `orc-1` uses the provider from `slot_providers["orc-1"]` when present, falling back to `WorkerPoolConfig.provider`.
-3. Must: `reconcileManagedWorkerSlots()` does not overwrite an existing idle slot's `provider` when it matches the slot's configured provider (whether from `slot_providers` or pool default).
-4. Must: Pool-level `provider` default continues to apply for any slot not listed in `slot_providers`.
-5. Must: `orc doctor` exits 0 after the changes (no schema changes required, but verify).
-6. Must: All existing `lib/agentRegistry.test.ts` tests continue to pass.
+1. Must: `orc task-create --epic=orch --title="X" --required-provider=claude` creates a task with `required_provider: "claude"` in `backlog.json`.
+2. Must: `create_task(epic, title, required_provider: "claude")` MCP call stores the field.
+3. Must: `orc doctor` exits 0 for a task that has `required_provider` set.
+4. Must: `canAgentExecuteTask()` continues to return `false` for a provider mismatch (no regression — logic already works, just needs the field to reach it).
+5. Must: `loadWorkerPoolConfig()` uses `default_provider` from config as fallback when `worker_pool.provider` is absent.
+6. Must: `default_provider` accepts the same values as `worker_pool.provider` (`codex`, `claude`, `gemini`) and throws on invalid values.
+7. Must: `orc doctor` exits 0 after config and schema changes.
 
 ---
 
 ## Implementation
 
-### Step 1 — Add `slot_providers` to `WorkerPoolConfig`
+### Step 1 — Add `required_provider` to Task type
+
+**File:** `types/backlog.ts`
+
+```ts
+// Add alongside required_capabilities:
+required_provider?: 'codex' | 'claude' | 'gemini' | undefined;
+```
+
+Use the `Provider` union rather than a loose `string` to keep it consistent with `types/agents.ts`.
+
+### Step 2 — Add `required_provider` to backlog schema
+
+**File:** `schemas/backlog.schema.json` — inside the `Task` definition's `properties`:
+
+```json
+"required_provider": {
+  "$ref": "#/definitions/Provider",
+  "description": "When set, only agents with a matching provider field are eligible for this task."
+}
+```
+
+Add a `Provider` definition to the backlog schema (mirroring `agents.schema.json`):
+
+```json
+"Provider": {
+  "type": "string",
+  "enum": ["codex", "claude", "gemini"]
+}
+```
+
+Note: `"human"` is intentionally excluded — human-operated slots should not be auto-dispatched to.
+
+### Step 3 — Add `--required-provider` to `orc task-create`
+
+**File:** `cli/task-create.ts`
+
+```ts
+const requiredProvider = flag('required-provider');
+// validate if present:
+const VALID_PROVIDERS = new Set(['codex', 'claude', 'gemini']);
+if (requiredProvider && !VALID_PROVIDERS.has(requiredProvider)) {
+  console.error(`Invalid required-provider: ${requiredProvider}. Must be codex, claude, or gemini.`);
+  process.exit(1);
+}
+```
+
+Add to `newTask` construction (alongside `required_capabilities`):
+```ts
+if (requiredProvider) newTask.required_provider = requiredProvider as Task['required_provider'];
+```
+
+Update the usage comment at the top of the file.
+
+### Step 4 — Add `required_provider` to `handleCreateTask` and tool definition
+
+**File:** `mcp/handlers.ts` — `handleCreateTask`:
+
+Destructure `required_provider` from args alongside `required_capabilities`. Validate it is one of the supported provider strings if present. Store on the task object (omit if null/undefined, same pattern as `required_capabilities`).
+
+**File:** `mcp/tools-list.ts` — `create_task` tool:
+
+Add to the input schema:
+```json
+"required_provider": {
+  "type": "string",
+  "enum": ["codex", "claude", "gemini"],
+  "description": "Restrict dispatch to agents of this provider. Omit for any provider."
+}
+```
+
+### Step 5 — Add `default_provider` to orchestrator config
 
 **File:** `lib/providers.ts`
 
-```ts
-export interface WorkerPoolConfig {
-  max_workers: number;
-  provider: ProviderName;
-  model: string | null;
-  slot_providers: Record<string, ProviderName>;  // per-slot overrides; empty = use pool default
-}
-
-export const DEFAULT_WORKER_POOL_CONFIG: Readonly<WorkerPoolConfig> = Object.freeze({
-  max_workers: 0,
-  provider: 'codex' as ProviderName,
-  model: null,
-  slot_providers: {},
-});
-```
-
-### Step 2 — Parse `slot_providers` from config file
-
-**File:** `lib/providers.ts` — extend `ConfigFileResult` and `parseConfigFile()`
-
+Extend `ConfigFileResult`:
 ```ts
 interface ConfigFileResult {
   max_workers?: number | null;
   provider?: string | null;
   model?: string | null;
-  slot_providers?: Record<string, string> | null;
+  default_provider?: string | null;  // new
 }
 ```
 
-In `parseConfigFile()`, after reading `wp.model`:
+In `parseConfigFile()`, read `default_provider` from the top level of the parsed config (not under `worker_pool`):
 ```ts
-const rawSlotProviders = wp.slot_providers;
-let slot_providers: Record<string, string> | null = null;
-if (rawSlotProviders != null) {
-  if (typeof rawSlotProviders !== 'object' || Array.isArray(rawSlotProviders)) {
-    throw new Error(`Invalid orchestrator config: worker_pool.slot_providers must be an object`);
-  }
-  for (const [slotId, p] of Object.entries(rawSlotProviders as Record<string, unknown>)) {
-    if (!isSupportedProvider(p)) {
-      throw new Error(`Invalid provider '${String(p)}' for slot '${slotId}' in worker_pool.slot_providers`);
-    }
-  }
-  slot_providers = rawSlotProviders as Record<string, string>;
-}
-return { ..., slot_providers };
+const topLevel = parsed as Record<string, unknown>;
+const defaultProvider = typeof topLevel.default_provider === 'string'
+  ? topLevel.default_provider : null;
 ```
 
-In `loadWorkerPoolConfig()`, add:
+In `loadWorkerPoolConfig()`, update the provider resolution:
 ```ts
-const slot_providers = fileConfig.slot_providers ?? {};
-// validate each entry is a supported provider (already done in parseConfigFile)
-return { ..., slot_providers };
+const provider = env.ORC_WORKER_PROVIDER
+  ?? fileConfig.provider
+  ?? fileConfig.default_provider   // new fallback
+  ?? DEFAULT_WORKER_POOL_CONFIG.provider;
 ```
 
-### Step 3 — Thread `slot_providers` through slot creation
+Validate `default_provider` with `isSupportedProvider()` and throw if present but invalid.
 
-**File:** `lib/agentRegistry.ts` — update `createManagedSlotEntry()`
+### Step 6 — Document in AGENTS.md
 
-```ts
-function createManagedSlotEntry(agentId: string, workerPoolConfig: WorkerPoolConfig): Agent {
-  const provider = workerPoolConfig.slot_providers[agentId] ?? workerPoolConfig.provider;
-  return {
-    agent_id: agentId,
-    provider,
-    model: workerPoolConfig.model,
-    // ... rest unchanged
-  };
-}
-```
-
-### Step 4 — Fix reconciliation to respect per-slot provider
-
-**File:** `lib/agentRegistry.ts` — update `reconcileManagedWorkerSlots()`
-
-The current reconcile code overwrites `existing.provider` whenever it differs from `workerPoolConfig.provider`. Replace with a check against the slot's configured provider:
-
-```ts
-const configuredProvider = workerPoolConfig.slot_providers[agentId] ?? workerPoolConfig.provider;
-const configuredModel = workerPoolConfig.model;
-
-if (canRefreshProviderBinding && (
-  existing.provider !== configuredProvider
-  || existing.model !== configuredModel
-)) {
-  existing.provider = configuredProvider;
-  existing.model = configuredModel;
-  modified = true;
-}
-```
+Add a short section under "Orchestrator Conventions" documenting the provider fallback chain (the chain from the Desired state section above) and note that `required_provider` on a task overrides pool defaults for routing purposes.
 
 ---
 
 ## Acceptance criteria
 
-- [ ] `loadWorkerPoolConfig()` returns `slot_providers: { "orc-1": "claude" }` when `orchestrator.config.json` has `worker_pool.slot_providers: { "orc-1": "claude" }`.
-- [ ] `loadWorkerPoolConfig()` returns `slot_providers: {}` when `orchestrator.config.json` has no `slot_providers` key.
-- [ ] `loadWorkerPoolConfig()` throws when `slot_providers` contains an unsupported provider value.
-- [ ] A newly created managed slot for `orc-1` uses `claude` when `slot_providers["orc-1"] = "claude"`.
-- [ ] A newly created managed slot for `orc-2` uses the pool default when `orc-2` is not in `slot_providers`.
-- [ ] `reconcileManagedWorkerSlots()` does not modify an existing idle slot whose `provider` already matches its configured provider.
-- [ ] `reconcileManagedWorkerSlots()` does update an existing idle slot whose `provider` differs from its configured provider.
-- [ ] All existing `lib/agentRegistry.test.ts` tests pass unchanged.
-- [ ] `orc doctor` exits 0.
+- [ ] `orc task-create --epic=orch --title="Test" --required-provider=claude` creates task with `required_provider: "claude"` in `backlog.json`.
+- [ ] `orc task-create --required-provider=invalid` exits non-zero with an error message.
+- [ ] `create_task` MCP call with `required_provider: "codex"` stores the field on the task.
+- [ ] `orc doctor` exits 0 for a backlog with a task that has `required_provider` set.
+- [ ] A task with `required_provider: "claude"` is not dispatched to a `codex` agent (routing regression test).
+- [ ] A task with `required_provider: "claude"` is dispatched to a `claude` agent when one is available.
+- [ ] A task with no `required_provider` is dispatched to any eligible agent (no regression).
+- [ ] `loadWorkerPoolConfig()` uses `default_provider` from config when `worker_pool.provider` is absent.
+- [ ] `loadWorkerPoolConfig()` throws on an invalid `default_provider` value.
+- [ ] `orc doctor` exits 0 after all changes.
 - [ ] No changes to files outside the stated scope.
 
 ---
 
 ## Tests
 
+**File:** `lib/taskRouting.test.ts` — already covers `required_provider` routing; add import of `Provider` type if needed, no logic changes.
+
 **File:** `lib/providers.test.ts`
 
 ```ts
-it('loadWorkerPoolConfig parses slot_providers from config file', () => { ... });
-it('loadWorkerPoolConfig returns empty slot_providers when key is absent', () => { ... });
-it('loadWorkerPoolConfig throws on unsupported provider in slot_providers', () => { ... });
+it('loadWorkerPoolConfig falls back to default_provider when worker_pool.provider is absent', () => { ... });
+it('loadWorkerPoolConfig throws on invalid default_provider', () => { ... });
+it('loadWorkerPoolConfig prefers worker_pool.provider over default_provider', () => { ... });
 ```
 
-**File:** `lib/agentRegistry.test.ts`
+**File:** `cli/task-create.test.ts` or `mcp/handlers.test.ts`
 
 ```ts
-it('reconcileManagedWorkerSlots creates orc-1 with claude when slot_providers specifies claude', () => { ... });
-it('reconcileManagedWorkerSlots creates orc-2 with pool default when not in slot_providers', () => { ... });
-it('reconcileManagedWorkerSlots does not overwrite provider of idle slot matching configured provider', () => { ... });
-it('reconcileManagedWorkerSlots resets provider of idle slot that drifted from configured provider', () => { ... });
+it('create_task stores required_provider when provided', () => { ... });
+it('create_task omits required_provider when not provided', () => { ... });
 ```
 
 ---
@@ -208,9 +239,15 @@ it('reconcileManagedWorkerSlots resets provider of idle slot that drifted from c
 ```bash
 # Targeted
 npx vitest run lib/providers
-npx vitest run lib/agentRegistry
+npx vitest run lib/taskRouting
+npx vitest run mcp/handlers
 
 # Schema + state validation
+node --experimental-strip-types cli/doctor.ts
+
+# Smoke: create a task with required_provider and verify it persists
+node --experimental-strip-types cli/task-create.ts \
+  --epic=orch --title="Provider test" --required-provider=claude
 node --experimental-strip-types cli/doctor.ts
 
 # Full suite
@@ -219,8 +256,8 @@ nvm use 24 && npm test
 
 ## Risk / Rollback
 
-**Risk:** `WorkerPoolConfig` is used in several call sites across `coordinator.ts` and `lib/agentRegistry.ts`. Adding `slot_providers` as a required field means all call sites that construct a `WorkerPoolConfig` directly (e.g. in tests) need to include it. Use `slot_providers: {}` as the default in `DEFAULT_WORKER_POOL_CONFIG` and make it a required field with an empty-object default to avoid silent omissions.
+**Risk:** `schemas/backlog.schema.json` uses `additionalProperties: false` on the Task definition. Adding `required_provider` without updating both the schema and the `Provider` definition will cause `orc doctor` to reject existing backlogs mid-task. Add both atomically in one write.
 
-**Risk:** `reconcileManagedWorkerSlots()` change affects the live coordinator tick. If the logic is wrong, all managed slots could be pinned to the wrong provider on the next tick. Verify with `agentRegistry.test.ts` before merging.
+**Risk:** `default_provider` sits at the top level of `orchestrator.config.json`, not inside `worker_pool`. Verify `parseConfigFile()` reads both levels without collision.
 
-**Rollback:** `git restore lib/providers.ts lib/agentRegistry.ts && npm test`
+**Rollback:** `git restore types/backlog.ts schemas/backlog.schema.json cli/task-create.ts mcp/handlers.ts mcp/tools-list.ts lib/providers.ts AGENTS.md && npm test`
