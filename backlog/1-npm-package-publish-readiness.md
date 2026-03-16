@@ -2,7 +2,7 @@
 ref: general/1-npm-package-publish-readiness
 feature: general
 priority: critical
-status: todo
+status: done
 ---
 
 # Task 1 — Fix npm Package for Publish Readiness

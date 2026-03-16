@@ -11,21 +11,25 @@
     ".": "./index.ts",
     "./adapters": "./adapters/index.ts",
     "./coordinator": "./coordinator.ts",
+    "./lib/stateValidation": "./lib/stateValidation.ts",
+    "./lib/eventValidation": "./lib/eventValidation.ts",
     "./schemas/*": "./schemas/*.json"
   },
   "files": [
     "adapters",
     "cli",
-    "index.mjs",
+    "coordinator.ts",
+    "index.ts",
     "lib",
     "mcp",
     "schemas",
+    "types",
     "skills",
     "templates",
-    "coordinator.mjs",
     "contracts.md",
     "README.md"
   ],
+  "types": "./index.ts",
   "scripts": {
     "typecheck": "tsc --project tsconfig.check.json --noEmit",
     "typecheck:test": "tsc --project tsconfig.test.json --noEmit",
