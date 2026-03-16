@@ -15,6 +15,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR, BACKLOG_DOCS_DIR } from '../lib/paths.ts';
 
+const asJson = process.argv.includes('--json');
+
 const backlogPath = join(STATE_DIR, 'backlog.json');
 
 if (!existsSync(backlogPath)) {
@@ -40,6 +42,26 @@ for (const task of allTasks) {
 // Ensure backlog docs dir exists
 if (!existsSync(BACKLOG_DOCS_DIR)) {
   mkdirSync(BACKLOG_DOCS_DIR, { recursive: true });
+}
+
+if (asJson) {
+  const epicData = epics.map((epic) => {
+    const tasks = epic.tasks ?? [];
+    const todo = tasks.filter((t) => t.status === 'todo').length;
+    const done = tasks.filter((t) => t.status === 'done' || t.status === 'released').length;
+    const active = tasks.filter((t) => t.status === 'claimed' || t.status === 'in_progress').length;
+    return {
+      ref: epic.ref,
+      title: epic.title,
+      task_counts: { total: tasks.length, todo, active, done },
+    };
+  });
+  console.log(JSON.stringify({
+    next_task_seq: nextSeq,
+    backlog_docs_dir: BACKLOG_DOCS_DIR,
+    epics: epicData,
+  }, null, 2));
+  process.exit(0);
 }
 
 console.log(`next_task_seq: ${nextSeq}`);
