@@ -5,32 +5,32 @@ export interface Task {
   ref: TaskRef;
   title: string;
   status: TaskStatus;
-  description?: string;
-  task_type?: 'implementation' | 'refactor';
-  priority?: 'low' | 'normal' | 'high' | 'critical';
-  planning_state?: 'ready_for_dispatch' | 'archived';
-  delegated_by?: string;
-  parent_task_ref?: TaskRef;
-  required_capabilities?: string[];
-  depends_on?: TaskRef[];
-  acceptance_criteria?: string[];
-  attempt_count?: number;
-  blocked_reason?: string;
-  owner?: string;
-  created_at?: string;
-  updated_at?: string;
+  description?: string | undefined;
+  task_type?: 'implementation' | 'refactor' | undefined;
+  priority?: 'low' | 'normal' | 'high' | 'critical' | undefined;
+  planning_state?: 'ready_for_dispatch' | 'archived' | undefined;
+  delegated_by?: string | undefined;
+  parent_task_ref?: TaskRef | undefined;
+  required_capabilities?: string[] | undefined;
+  depends_on?: TaskRef[] | undefined;
+  acceptance_criteria?: string[] | undefined;
+  attempt_count?: number | undefined;
+  blocked_reason?: string | undefined;
+  owner?: string | undefined;
+  created_at?: string | undefined;
+  updated_at?: string | undefined;
 }
 
 export interface Feature {
   ref: string;
   title: string;
-  description?: string;
+  description?: string | undefined;
   tasks: Task[];
-  created_at?: string;
+  created_at?: string | undefined;
 }
 
 export interface Backlog {
   version: '1';
-  next_task_seq?: number;
+  next_task_seq?: number | undefined;
   epics: Feature[];
 }

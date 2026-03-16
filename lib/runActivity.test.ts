@@ -23,7 +23,7 @@ describe('latestRunActivityDetailMap', () => {
       { run_id: 'run-1', event: 'run_started', ts: '2026-01-01T00:00:00Z' },
       { run_id: 'run-1', event: 'heartbeat', ts: '2026-01-01T00:01:00Z', payload: { source: 'worker-runtime-owner' } },
     ];
-    const map = latestRunActivityDetailMap(events as OrcEvent[]);
+    const map = latestRunActivityDetailMap(events as unknown as OrcEvent[]);
     expect(map.get('run-1')).toEqual({
       ts: '2026-01-01T00:01:00Z',
       event: 'heartbeat',
