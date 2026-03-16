@@ -373,7 +373,7 @@ const stdoutResizeHandler = () => {
 };
 let stopForwarder = () => {};
 
-const cliResult = await new Promise<{ type: string; error?: Error; code?: number; signal?: string }>((resolvePromise) => {
+const cliResult = await new Promise<{ type: string; error?: Error | undefined; code?: number | undefined; signal?: string | undefined }>((resolvePromise) => {
   try {
     masterPty = pty.spawn(binary, spawnArgs, {
       name: 'xterm-256color',

@@ -4,17 +4,17 @@
 import { TASK_TYPES } from './constants.ts';
 
 interface AgentLike {
-  agent_id?: string;
-  role?: string;
-  provider?: string;
-  capabilities?: string[];
+  agent_id?: string | undefined;
+  role?: string | undefined;
+  provider?: string | undefined;
+  capabilities?: string[] | undefined;
 }
 
 interface TaskLike {
-  task_type?: string;
-  owner?: string;
-  required_provider?: string;
-  required_capabilities?: string[];
+  task_type?: string | undefined;
+  owner?: string | undefined;
+  required_provider?: string | undefined;
+  required_capabilities?: string[] | undefined;
 }
 
 function toCapSet(agent: AgentLike | null | undefined): Set<string> {
