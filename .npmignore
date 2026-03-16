@@ -2,3 +2,5 @@
 e2e/
 vitest.config.mjs
 vitest.e2e.config.mjs
+**/*.test.ts
+**/*.integration.test.ts

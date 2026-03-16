@@ -2,6 +2,13 @@
 
 Provider-agnostic, file-state orchestration runtime for autonomous coding agents.
 
+## Requirements
+
+- **Node.js ≥ 24** (uses `--experimental-strip-types`; no build step)
+- **Native build tools** — `node-pty` compiles a native addon on install.
+  On macOS: Xcode Command Line Tools (`xcode-select --install`).
+  On Linux: `build-essential` + `python3`.
+
 ## Runtime Model
 
 - State is file-backed under `ORCH_STATE_DIR`: `backlog.json`, `agents.json`, `claims.json`, `events.jsonl`.
