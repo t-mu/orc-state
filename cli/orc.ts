@@ -21,6 +21,8 @@ const COMMANDS: Record<string, string> = {
   'attach':             'attach.ts',
   'control-worker':     'control-worker.ts',
   'task-create':        'task-create.ts',
+  'epic-create':        'epic-create.ts',
+  'backlog-orient':     'backlog-orient.ts',
   'delegate':           'delegate-task.ts',
   'progress':           'progress.ts',
   'doctor':             'doctor.ts',
