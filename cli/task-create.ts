@@ -11,6 +11,7 @@
  *     [--depends-on=<task-ref>] \    (repeatable)
  *     [--owner=<agent_id>] \
  *     [--required-capabilities=<cap>] \  (repeatable)
+ *     [--required-provider=<codex|claude|gemini>] \
  *     [--actor-id=<agent_id>]
  */
 import { join } from 'node:path';
@@ -21,6 +22,7 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
 import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
+import { isSupportedProvider } from '../lib/providers.ts';
 import type { Task } from '../types/backlog.ts';
 
 const epicRef = flag('epic');
@@ -72,6 +74,12 @@ if (owner && !AGENT_ID_RE.test(owner)) {
   process.exit(1);
 }
 
+const requiredProvider = flag('required-provider');
+if (requiredProvider && !isSupportedProvider(requiredProvider)) {
+  console.error(`Invalid required-provider: ${requiredProvider}. Must be codex, claude, or gemini.`);
+  process.exit(1);
+}
+
 const newTask: Task = {
   ref: taskRef,
   title,
@@ -90,6 +98,7 @@ const description = flag('description');
 if (description) newTask.description = description;
 
 if (owner) newTask.owner = owner;
+if (requiredProvider) newTask.required_provider = requiredProvider as Task['required_provider'];
 
 for (const key of ['depends_on', 'acceptance_criteria', 'required_capabilities'] as const) {
   const arr = newTask[key];

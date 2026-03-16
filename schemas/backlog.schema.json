@@ -70,6 +70,10 @@
           "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
           "description": "Capability tags required on worker agent for this task."
         },
+        "required_provider": {
+          "$ref": "#/definitions/Provider",
+          "description": "When set, only agents with a matching provider field are eligible for this task."
+        },
         "depends_on": {
           "type": "array",
           "items": { "$ref": "#/definitions/TaskRef" },
@@ -97,6 +101,10 @@
         "created_at": { "type": "string", "format": "date-time" },
         "updated_at": { "type": "string", "format": "date-time" }
       }
+    },
+    "Provider": {
+      "type": "string",
+      "enum": ["codex", "claude", "gemini"]
     },
     "Epic": {
       "type": "object",

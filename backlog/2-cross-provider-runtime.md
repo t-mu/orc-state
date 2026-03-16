@@ -2,7 +2,7 @@
 ref: general/2-cross-provider-runtime
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 2 — Wire required_provider on Tasks and Add default_provider Config
