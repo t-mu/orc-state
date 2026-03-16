@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
@@ -10,8 +10,10 @@ import { appendNotification, readPendingNotifications } from '../lib/masterNotif
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
+import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
+import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
 const TASK_STATUSES = new Set(['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released']);
 const AGENT_ROLES = new Set(['worker', 'reviewer', 'master']);
@@ -694,6 +696,182 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
   }
 
   return result;
+}
+
+function readRunWorktreesState(stateDir?: string): RunWorktreesState {
+  const path = stateDir ? join(stateDir, 'run-worktrees.json') : RUN_WORKTREES_FILE;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as RunWorktreesState;
+  } catch {
+    return { version: '1', runs: [] };
+  }
+}
+
+export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } = {}) {
+  if (!run_id) throw new Error('run_id is required');
+  const claims = readClaims(stateDir).claims;
+  const claim = claims.find((c) => c.run_id === run_id);
+  if (!claim) return { error: 'not_found', run_id };
+
+  const backlog = readBacklog(stateDir);
+  const task = findTask(backlog, claim.task_ref);
+  const taskTitle = task?.title ?? null;
+
+  const worktrees = readRunWorktreesState(stateDir);
+  const wtEntry = worktrees.runs.find((e) => e.run_id === run_id);
+  const worktreePath = wtEntry?.worktree_path ?? null;
+
+  return { ...claim, task_title: taskTitle, worktree_path: worktreePath };
+}
+
+export function handleListWaitingInput(stateDir: string) {
+  const claims = readClaims(stateDir).claims;
+  const waiting = claims.filter((c) => c.input_state === 'awaiting_input');
+
+  const eventsPath = join(stateDir, 'events.jsonl');
+  const questionMap = new Map<string, { question: string | null; ts: string | null }>();
+
+  if (existsSync(eventsPath)) {
+    const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const ev = JSON.parse(line) as Record<string, unknown>;
+        if (ev.event === 'input_requested' && typeof ev.run_id === 'string') {
+          const payload = ev.payload as Record<string, unknown> | undefined;
+          questionMap.set(ev.run_id, {
+            question: typeof payload?.question === 'string' ? payload.question : null,
+            ts: typeof ev.ts === 'string' ? ev.ts : null,
+          });
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+  }
+
+  const now = Date.now();
+  return waiting.map((c) => {
+    const info = questionMap.get(c.run_id) ?? { question: null, ts: null };
+    const waitingSec = info.ts ? Math.round((now - new Date(info.ts).getTime()) / 1000) : null;
+    return {
+      run_id: c.run_id,
+      agent_id: c.agent_id,
+      task_ref: c.task_ref,
+      question: info.question,
+      waiting_seconds: waitingSec,
+      input_requested_at: info.ts,
+    };
+  });
+}
+
+export function handleQueryEvents(
+  stateDir: string,
+  { run_id, agent_id, event_type, after_seq, limit = 50 }: Record<string, unknown> = {},
+) {
+  const cap = Math.min(Number.isInteger(limit) ? (limit as number) : 50, 500);
+  const eventsPath = join(stateDir, 'events.jsonl');
+  if (!existsSync(eventsPath)) return [];
+
+  const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+  const matched: unknown[] = [];
+
+  for (const line of lines) {
+    let ev: Record<string, unknown>;
+    try {
+      ev = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+
+    if (run_id != null && ev.run_id !== run_id) continue;
+    if (agent_id != null && ev.agent_id !== agent_id) continue;
+    if (event_type != null && ev.event !== event_type) continue;
+    if (after_seq != null && typeof ev.seq === 'number' && ev.seq <= (after_seq as number)) continue;
+
+    matched.push(ev);
+  }
+
+  return matched.slice(-cap);
+}
+
+export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {
+  if (!task_ref) throw new Error('task_ref is required');
+  if (typeof actor_id !== 'string' || !ACTOR_ID_RE.test(actor_id)) {
+    throw new Error(`Invalid actor_id: ${typeof actor_id === 'string' ? actor_id : '(unknown)'}`);
+  }
+
+  return withLock(join(stateDir, '.lock'), () => {
+    const backlogPath = join(stateDir, 'backlog.json');
+    const claimsPath = join(stateDir, 'claims.json');
+    const now = new Date().toISOString();
+
+    const backlog = readBacklog(stateDir);
+    const task = findTask(backlog, task_ref as string);
+    if (!task) throw new Error(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
+
+    const previousStatus = task.status;
+    task.status = 'todo';
+    delete task.blocked_reason;
+    task.updated_at = now;
+
+    const claimsState = readClaims(stateDir);
+    const activeClaims = claimsState.claims.filter(
+      (c) => c.task_ref === task_ref && (c.state === 'claimed' || c.state === 'in_progress'),
+    );
+
+    for (const c of activeClaims) {
+      c.state = 'failed';
+      c.failure_reason = 'manual_reset';
+      c.finished_at = now;
+    }
+
+    atomicWriteJson(backlogPath, backlog);
+    atomicWriteJson(claimsPath, claimsState);
+
+    appendSequencedEvent(
+      stateDir,
+      {
+        ts: now,
+        event: 'task_updated',
+        actor_type: actor_id === 'human' ? 'human' : 'agent',
+        actor_id,
+        task_ref: task_ref as string,
+        payload: { reset: true, previous_status: previousStatus, status: 'todo' },
+      },
+      { lockAlreadyHeld: true },
+    );
+
+    return {
+      reset: true,
+      task_ref,
+      previous_status: previousStatus,
+      cancelled_claims: activeClaims.length,
+    };
+  });
+}
+
+export function handleListWorktrees(stateDir: string) {
+  const worktrees = readRunWorktreesState(stateDir);
+  const claims = readClaims(stateDir).claims;
+  const backlog = readBacklog(stateDir);
+
+  const claimByRunId = new Map(claims.map((c) => [c.run_id, c]));
+
+  return worktrees.runs.map((entry) => {
+    const claim = claimByRunId.get(entry.run_id) ?? null;
+    const agentId = claim?.agent_id ?? entry.agent_id;
+    const taskRef = claim?.task_ref ?? entry.task_ref;
+    const task = findTask(backlog, taskRef);
+    return {
+      run_id: entry.run_id,
+      task_ref: taskRef,
+      agent_id: agentId,
+      path: entry.worktree_path,
+      branch: entry.branch,
+      created_at: entry.created_at,
+      task_title: task?.title ?? null,
+    };
+  });
 }
 
 export function handleRespondInput(stateDir: string, { run_id, agent_id, response, actor_id }: Record<string, unknown> = {}) {

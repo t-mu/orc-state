@@ -326,7 +326,7 @@ describe('syncBacklogFromSpecs', () => {
 
     expect(syncBacklogFromSpecs).toHaveBeenCalledWith(
       join(dir, '.orc-state'),
-      join(dir, 'docs', 'backlog'),
+      join(dir, 'backlog'),
     );
 
     await expect(doShutdown()).rejects.toThrow('process.exit unexpectedly called with "0"');

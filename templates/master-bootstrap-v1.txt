@@ -50,6 +50,19 @@ get_agent_workview(agent_id)
   active_run, queued_tasks, blockers, recommended_action.
   Use this first when deciding what a specific worker should do next.
 
+get_run(run_id)
+  Returns full claim details for a run, merged with task_title and worktree_path.
+  Returns { error: "not_found" } if absent.
+
+list_waiting_input()
+  Returns all claims currently awaiting worker input, with question text and wait time.
+
+query_events(run_id?, agent_id?, event_type?, after_seq?, limit?)
+  Query events.jsonl with optional AND-combined filters. Default limit 50, max 500.
+
+list_worktrees()
+  List all registered run worktrees with agent, task, path, and branch information.
+
 WRITE STATE
 
 create_task(epic, title, task_type?, description?, acceptance_criteria?, depends_on?,
@@ -77,6 +90,12 @@ cancel_task(task_ref, reason?, actor_id?)
   Returns { cancelled: true, task_ref, status } or
   { error: "already_terminal", task_ref, status }.
   actor_id defaults to {{agent_id}}.
+
+respond_input(run_id, agent_id, response, actor_id?)
+  Responds to a worker's input_request. Call after the user provides an answer.
+
+reset_task(task_ref, actor_id?)
+  Reset a task to todo status and cancel any active claims. Same as orc task-reset.
 
 NOTIFICATIONS
 
