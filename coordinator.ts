@@ -14,7 +14,13 @@ import { spawnSync } from 'node:child_process';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
 import type { WorkerPoolConfig } from './lib/providers.ts';
-import type { OrcEventInput } from './types/events.ts';
+import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
+
+// Distributive Omit — preserves discriminated union across all members
+type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : never;
+// Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
+type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id'>
+  & { seq?: number; actor_type?: ActorType; actor_id?: string };
 import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
@@ -35,7 +41,7 @@ import { readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
 import { fileURLToPath } from 'node:url';
-import { findTask, readJson } from './lib/stateReader.ts';
+import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -130,11 +136,10 @@ function refreshAgentHeartbeat(agent: Agent, nowIso: string, { force = false } =
 
 function readTaskContext(stateDir: string, taskRef: string) {
   try {
-    const backlog = readJson(stateDir, 'backlog.json');
+    const backlog = readBacklog(stateDir);
     const task = findTask(backlog, taskRef);
     if (task) {
-      const backlogRecord = backlog as Record<string, unknown>;
-      const epic = ((backlogRecord.epics ?? []) as Array<Record<string, unknown>>).find((e) => ((e.tasks ?? []) as Array<Record<string, unknown>>).some((t) => t.ref === taskRef)) ?? null;
+      const epic = backlog.epics.find((e) => e.tasks.some((t) => t.ref === taskRef)) ?? null;
       return { epic, task };
     }
   } catch {
@@ -707,8 +712,8 @@ async function tick() {
   if (MODE !== 'autonomous') return;
 
   let tickBacklog: unknown;
-  let tickAgents: { version: string; agents: Agent[] };
-  let tickClaims: { claims?: Claim[] };
+  let tickAgents: { version: string; agents: Agent[] } = { version: '1', agents: [] };
+  let tickClaims: { claims?: Claim[] } = {};
   let workerPoolConfig: WorkerPoolConfig;
   try {
     workerPoolConfig = loadWorkerPoolConfig();
@@ -730,8 +735,8 @@ async function tick() {
     return;
   }
 
-  let agents = tickAgents!.agents ?? [];
-  let claims = tickClaims!.claims ?? [];
+  let agents = tickAgents.agents ?? [];
+  let claims = tickClaims.claims ?? [];
   markStaleAgentsDead(agents, claims);
 
   try {
@@ -742,7 +747,7 @@ async function tick() {
       const allEvents = readEvents(EVENTS_FILE);
       const newEvents = allEvents.filter((event) => event.seq > lastProcessedSeq);
       latestActivityByRun = latestRunActivityMap(allEvents);
-      await processTerminalRunEvents(newEvents as unknown as Record<string, unknown>[], workerPoolConfig);
+      await processTerminalRunEvents(newEvents, workerPoolConfig);
       lastProcessedSeq = currentSeq;
       tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
       tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
@@ -956,14 +961,14 @@ function buildFinalizeSuccessNotice(claim: Claim, branch: string) {
   ].join('\n');
 }
 
-export async function processTerminalRunEvents(events: Record<string, unknown>[], workerPoolConfig: WorkerPoolConfig = loadWorkerPoolConfig()) {
+export async function processTerminalRunEvents(events: ProcessableEvent[], workerPoolConfig: WorkerPoolConfig = loadWorkerPoolConfig()) {
   for (const event of events) {
-    if (event?.event === 'input_requested') {
+    if (event.event === 'input_requested') {
       if (event.actor_type === 'coordinator') {
         continue;
       }
       try {
-        setRunInputState(STATE_DIR, event.run_id as string, event.agent_id as string, {
+        setRunInputState(STATE_DIR, event.run_id, event.agent_id, {
           inputState: 'awaiting_input',
           requestedAt: coerceTs(event.ts),
         });
@@ -972,48 +977,45 @@ export async function processTerminalRunEvents(events: Record<string, unknown>[]
       }
       const deposited = appendNotification(STATE_DIR, {
         type: 'INPUT_REQUEST',
-        task_ref: (event.task_ref ?? '(unknown)') as string,
-        run_id: (event.run_id ?? '(unknown)') as string,
-        agent_id: (event.agent_id ?? '(unknown)') as string,
-        question: ((event?.payload as Record<string, unknown>)?.question ?? '(question missing)') as string,
+        task_ref: event.task_ref ?? '(unknown)',
+        run_id: event.run_id,
+        agent_id: event.agent_id,
+        question: event.payload.question,
         requested_at: coerceTs(event.ts),
       });
       if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${typeof event.task_ref === 'string' ? event.task_ref : '(unknown)'}`);
+        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${event.task_ref ?? '(unknown)'}`);
       }
       continue;
     }
 
-    if (event?.event === 'input_response') {
+    if (event.event === 'input_response') {
       try {
-        setRunInputState(STATE_DIR, event.run_id as string, event.agent_id as string, { inputState: null });
+        setRunInputState(STATE_DIR, event.run_id, event.agent_id, { inputState: null });
       } catch {
         // Ignore races with terminal events or cleaned-up claims.
       }
       continue;
     }
 
-    if (event?.event === 'run_finished' || event?.event === 'run_failed') {
-      const eventAgentId = event.agent_id as string;
-      const eventRunId = event.run_id as string;
+    if (event.event === 'run_finished' || event.event === 'run_failed') {
+      const eventAgentId = event.agent_id;
+      const eventRunId = event.run_id;
       if (!hasOtherActiveClaim(eventAgentId, eventRunId)) {
         await cleanupRunCapacity(eventAgentId, workerPoolConfig);
       }
       deleteRunWorktree(STATE_DIR, eventRunId);
       const failed = event.event === 'run_failed';
-      const payload = event?.payload as Record<string, unknown> | undefined;
-      const failureReason =
-        event?.failure_reason
-        ?? payload?.failure_reason
-        ?? payload?.reason;
-      const exitCode =
-        event?.exit_code
-        ?? payload?.exit_code
-        ?? payload?.code;
+      const failureReason = event.event === 'run_failed'
+        ? (event.payload.reason ?? null)
+        : null;
+      const exitCode = event.event === 'run_failed'
+        ? (event.payload.code ?? null)
+        : null;
       const notification: Record<string, unknown> = {
         type: 'TASK_COMPLETE',
-        task_ref: event.task_ref ?? '(unknown)',
-        agent_id: eventAgentId ?? '(unknown)',
+        task_ref: event.task_ref,
+        agent_id: eventAgentId,
         success: !failed,
         finished_at: coerceTs(event.ts),
       };
@@ -1027,12 +1029,12 @@ export async function processTerminalRunEvents(events: Record<string, unknown>[]
         ...notification,
       });
       if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit notification for ${typeof event.task_ref === 'string' ? event.task_ref : '(unknown)'}`);
+        console.warn(`[coordinator] WARNING: failed to deposit notification for ${event.task_ref}`);
       }
     }
 
-    if (event?.event === 'work_complete' || event?.event === 'ready_to_merge') {
-      const claim = getClaim(event.run_id as string);
+    if (event.event === 'work_complete' || event.event === 'ready_to_merge') {
+      const claim = getClaim(event.run_id);
       if (!claim || claim.state !== 'in_progress') continue;
       await finalizeRun(claim, workerPoolConfig);
     }

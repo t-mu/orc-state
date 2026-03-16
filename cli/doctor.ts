@@ -110,8 +110,7 @@ if (Object.keys(checks.providerBinaries as Record<string, unknown>).length === 0
   for (const [provider, result] of Object.entries(checks.providerBinaries as Record<string, unknown>)) {
     const r = result as Record<string, unknown>;
     console.log(`  ${provider}: ok=${String(r.ok)} binary=${String(r.binary)}`);
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string
-    if (!r.ok && r.detail) console.log(`    detail: ${String(r.detail)}`);
+    if (!r.ok && r.detail) console.log(`    detail: ${typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail)}`);
   }
 }
 

@@ -21,6 +21,7 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
 import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
+import type { Task } from '../types/backlog.ts';
 
 const epicRef = flag('epic');
 const title = flag('title');
@@ -71,11 +72,11 @@ if (owner && !AGENT_ID_RE.test(owner)) {
   process.exit(1);
 }
 
-const newTask: Record<string, unknown> = {
+const newTask: Task = {
   ref: taskRef,
   title,
   status: 'todo',
-  task_type: taskType,
+  task_type: taskType as Task['task_type'],
   planning_state: 'ready_for_dispatch',
   delegated_by: actorId,
   depends_on: flagAll('depends-on'),
@@ -90,38 +91,37 @@ if (description) newTask.description = description;
 
 if (owner) newTask.owner = owner;
 
-for (const key of ['depends_on', 'acceptance_criteria', 'required_capabilities']) {
-  if ((newTask[key] as unknown[]).length === 0) delete newTask[key];
+for (const key of ['depends_on', 'acceptance_criteria', 'required_capabilities'] as const) {
+  const arr = newTask[key];
+  if (Array.isArray(arr) && arr.length === 0) delete newTask[key];
 }
 
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
     const backlogPath = join(STATE_DIR, 'backlog.json');
-    const backlog = readBacklog(STATE_DIR) as unknown as Record<string, unknown>;
+    const backlog = readBacklog(STATE_DIR);
 
-    const epic = ((backlog.epics ?? []) as Array<Record<string, unknown>>).find((e) => e.ref === epicRef);
+    const epic = backlog.epics.find((e) => e.ref === epicRef);
     if (!epic) {
       throw new Error(`Epic not found: ${epicRef}`);
     }
 
-    const existing = ((epic.tasks ?? []) as Array<Record<string, unknown>>).find((t) => t.ref === taskRef);
+    const existing = epic.tasks.find((t) => t.ref === taskRef);
     if (existing) {
       throw new Error(`Task already exists: ${taskRef}`);
     }
 
     // Validate all depends_on refs exist in the backlog.
-    if (((newTask.depends_on as unknown[]) ?? []).length > 0) {
-      const allRefs = new Set(
-        ((backlog.epics ?? []) as Array<Record<string, unknown>>).flatMap((e) => ((e.tasks ?? []) as Array<Record<string, unknown>>).map((t) => t.ref)),
-      );
-      for (const dep of newTask.depends_on as string[]) {
+    if ((newTask.depends_on ?? []).length > 0) {
+      const allRefs = new Set(backlog.epics.flatMap((e) => e.tasks.map((t) => t.ref)));
+      for (const dep of newTask.depends_on ?? []) {
         if (!allRefs.has(dep)) {
           throw new Error(`--depends-on task_ref not found in backlog: ${dep}`);
         }
       }
     }
 
-    epic.tasks = [...((epic.tasks ?? []) as unknown[]), newTask];
+    epic.tasks = [...epic.tasks, newTask];
     atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(
