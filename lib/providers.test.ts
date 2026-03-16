@@ -55,4 +55,39 @@ describe('loadWorkerPoolConfig', () => {
       model: 'o4-mini',
     });
   });
+
+  it('falls back to default_provider when worker_pool.provider is absent', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_provider: 'claude',
+      worker_pool: {
+        max_workers: 2,
+      },
+    }));
+
+    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    expect(result.provider).toBe('claude');
+  });
+
+  it('throws on invalid default_provider', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_provider: 'notaprovider',
+    }));
+
+    expect(() => loadWorkerPoolConfig({ env: {}, configFile: configPath })).toThrow(/invalid default_provider/i);
+  });
+
+  it('prefers worker_pool.provider over default_provider', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_provider: 'gemini',
+      worker_pool: {
+        provider: 'claude',
+      },
+    }));
+
+    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    expect(result.provider).toBe('claude');
+  });
 });
