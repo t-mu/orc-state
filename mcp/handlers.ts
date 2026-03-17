@@ -416,8 +416,11 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     acceptance_criteria,
     depends_on,
     required_provider,
+    status,
     actor_id = defaultActorId(stateDir),
   } = args;
+
+  const AGENT_SETTABLE_STATUSES = new Set(['todo', 'in_progress', 'blocked', 'done', 'released']);
 
   if (!task_ref) throw new Error('task_ref is required');
   if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor_id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
@@ -428,6 +431,9 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   }
   if (required_provider !== undefined && required_provider !== null && !isSupportedProvider(required_provider)) {
     throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
+  }
+  if (status !== undefined && !AGENT_SETTABLE_STATUSES.has(status as string)) {
+    throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}. Must be one of: ${[...AGENT_SETTABLE_STATUSES].join(', ')}.`);
   }
 
   const now = new Date().toISOString();
@@ -466,6 +472,10 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
         task.required_provider = required_provider as Task['required_provider'];
       }
       changedFields.push('required_provider');
+    }
+    if (status !== undefined) {
+      task.status = status as Task['status'];
+      changedFields.push('status');
     }
 
     task.updated_at = now;
