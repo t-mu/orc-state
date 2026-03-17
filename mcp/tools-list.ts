@@ -173,7 +173,7 @@ export const TOOLS = [
   },
   {
     name: 'update_task',
-    description: 'Update mutable fields on an existing task. Only provided fields are changed. Does not modify status or owner.',
+    description: 'Update mutable fields on an existing task. Only provided fields are changed.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -203,6 +203,11 @@ export const TOOLS = [
           type: ['string', 'null'],
           enum: ['codex', 'claude', 'gemini', null],
           description: 'Set or clear the provider restriction. Pass null to remove.',
+        },
+        status: {
+          type: 'string',
+          enum: ['todo', 'in_progress', 'blocked', 'done', 'released'],
+          description: 'Set task status. Use done to mark a task complete.',
         },
         actor_id: { type: 'string', description: 'Defaults to master agent_id' },
       },

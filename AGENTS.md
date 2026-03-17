@@ -60,9 +60,12 @@ The main checkout stays clean.
 
 ### Finish — after all acceptance criteria are met
 ```bash
-# 0. Mark the task spec as done in the same commit
-#    Edit backlog/<N>-<slug>.md for this task.
-#    Change the frontmatter line: status: todo -> status: done
+# 0. Mark the task complete — two things required:
+#    a. Edit the task spec file:
+#       backlog/<N>-<slug>.md — change frontmatter: status: todo -> status: done
+#    b. Update orchestrator state (backlog.json):
+node --experimental-strip-types cli/task-mark-done.ts <task-ref>
+#       or via MCP: update_task(task_ref="<ref>", status="done")
 
 # 1. Commit inside the worktree
 git add -p
@@ -130,6 +133,9 @@ orc kill-all                                      # ⚠️ stop coordinator + cl
 
 # Task management
 orc task-create                                   # add a task to backlog (prefer MCP create_task from master)
+orc task-mark-done <task-ref>                     # mark a task done in orchestrator state (also: update_task status="done")
+orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
+orc task-unblock <task-ref>                       # transition a blocked task back to todo
 orc delegate                                      # assign/dispatch a task to an agent
 
 # Worker management
@@ -179,6 +185,9 @@ orc run-input-respond --run-id=<id> --agent-id=<id> \
 | `.orc-state/events.jsonl` | Append-only event log (NDJSON) |
 
 ### Write rules
+**For agents:** use `orc` CLI commands or MCP tools for all state changes. Never call `withLock`, `atomicWriteJson`, or other internal library functions directly — those are for code authors implementing new handlers, not for agents operating the system.
+
+**For code authors** (implementing new CLI commands or MCP handlers):
 - All state writes: `withLock` + `atomicWriteJson`. Never `writeFileSync` directly.
 - All event appends: `appendSequencedEvent`. Never append to `events.jsonl` directly.
 - Validate all inputs **before** any `atomicWriteJson` call — no partial writes on failure.
@@ -192,6 +201,15 @@ todo → claimed → in_progress → done → released
                   blocked
 ```
 A task is eligible to claim when `status == "todo"` and all `depends_on` refs are `done`/`released`.
+
+| Transition | Who sets it |
+|------------|-------------|
+| `todo → claimed` | Coordinator (on delegate) |
+| `claimed → in_progress` | Worker (`orc run-start`) |
+| `in_progress → done` | Worker (`orc task-mark-done <ref>` or `update_task status="done"`) |
+| `done → released` | Coordinator (after merge) |
+| `any → blocked` | Worker (`orc run-fail --policy=block`) |
+| `blocked/claimed/in_progress → todo` | Operator (`orc task-reset <ref>`) |
 
 ### Worker event contract (workers must follow this)
 ```
@@ -325,8 +343,8 @@ Only call `orc run-fail` if the prompt remains unrecoverable even after master i
 ## What to Avoid
 
 - Adding npm dependencies without asking first.
-- Writing to state files without `withLock` + `atomicWriteJson`.
-- Emitting events without `appendSequencedEvent`.
+- Calling internal library functions (`withLock`, `atomicWriteJson`, `appendSequencedEvent`) directly — use CLI commands or MCP tools instead.
+- Writing inline Node.js scripts to manipulate state files — use `orc` CLI or MCP tools.
 - Refactoring, renaming, or "improving" code beyond what the task requires.
 - Adding features, abstractions, or error handling for hypothetical future cases.
 - Leaving tests broken.

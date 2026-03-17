@@ -39,7 +39,8 @@
     "pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
-    "pack:dry": "npm pack --dry-run"
+    "pack:dry": "npm pack --dry-run",
+    "task:done": "node --experimental-strip-types cli/task-mark-done.ts"
   },
   "simple-git-hooks": {
     "pre-commit": "npx lint-staged"
