@@ -35,5 +35,5 @@ export interface Feature {
 export interface Backlog {
   version: '1';
   next_task_seq?: number | undefined;
-  epics: Feature[];
+  features: Feature[];
 }

@@ -27,7 +27,7 @@ const RESOURCES = [
   {
     uri: 'orchestrator://state/backlog',
     name: 'Backlog',
-    description: 'Full backlog.json with all epics and tasks',
+    description: 'Full backlog.json with all features and tasks',
     mimeType: 'application/json',
   },
   {

@@ -14,7 +14,7 @@ const FAILURE_POLICY_SET = new Set(['requeue', 'block']);
 function requireTaskRef(event: unknown, errors: string[]): void {
   const e = event as { task_ref?: unknown } | null;
   if (!e?.task_ref || typeof e.task_ref !== 'string' || !TASK_REF_RE.test(e.task_ref)) {
-    errors.push('task_ref is required and must match epic/task format');
+    errors.push('task_ref is required and must match feature/task format');
   }
 }
 

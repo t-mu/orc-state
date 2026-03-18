@@ -34,7 +34,7 @@ function seedState(stateDir: string, { agents = [] as unknown[], tasks = [] as u
   );
   writeFileSync(
     join(stateDir, 'backlog.json'),
-    JSON.stringify({ version: '1', epics: tasks.length ? [{ ref: 'proj', title: 'Project', tasks }] : [] }),
+    JSON.stringify({ version: '1', features: tasks.length ? [{ ref: 'proj', title: 'Project', tasks }] : [] }),
   );
   writeFileSync(
     join(stateDir, 'claims.json'),
@@ -178,8 +178,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
     expect(claims[0]?.state).toBe('failed');
 
-    const backlog = (readJson(dir, 'backlog.json') as { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> });
-    expect(backlog.epics[0].tasks[0].status).toBe('todo');
+    const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> });
+    expect(backlog.features[0].tasks[0].status).toBe('todo');
 
     const events = readEvents(dir);
     const launchFailure = events.find((event) => event.event === 'session_start_failed' && event.agent_id === 'orc-1')!;
@@ -628,7 +628,7 @@ describe('processTerminalRunEvents', () => {
     const { readJson } = await import('./lib/stateReader.ts');
     const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-success')!;
     expect(claim.state).toBe('done');
-    const task = (readJson(dir, 'backlog.json') as { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).epics[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('done');
     const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.status).toBe('idle');
@@ -708,7 +708,7 @@ describe('processTerminalRunEvents', () => {
     const { readJson } = await import('./lib/stateReader.ts');
     const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-cleanup-pending')!;
     expect(claim.state).toBe('done');
-    const task = (readJson(dir, 'backlog.json') as { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).epics[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('done');
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-cleanup-pending');
   });

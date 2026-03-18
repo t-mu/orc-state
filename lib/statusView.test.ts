@@ -33,7 +33,7 @@ function writeState({ agents = [] as Agent[], claims = [] as Claim[], tasks = []
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'orch', title: 'Orch', tasks }],
+    features: [{ ref: 'orch', title: 'Orch', tasks }],
   }));
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({
     version: '1',
@@ -381,7 +381,7 @@ describe('buildAgentStatus', () => {
         ref: 'orch/task-2',
         title: 'Task 2',
         status: 'todo',
-        epic_ref: 'orch',
+        feature_ref: 'orch',
         task_type: 'implementation',
         planning_state: 'ready_for_dispatch',
       },

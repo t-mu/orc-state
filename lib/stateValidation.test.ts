@@ -12,7 +12,7 @@ import {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-const VALID_BACKLOG = { version: '1', epics: [] };
+const VALID_BACKLOG = { version: '1', features: [] };
 const VALID_AGENTS = { version: '1', agents: [] };
 const VALID_CLAIMS = { version: '1', claims: [] };
 const VALID_RUN_WORKTREES = { version: '1', runs: [] };
@@ -37,32 +37,32 @@ describe('validateBacklog', () => {
     expect(validateBacklog(VALID_BACKLOG)).toEqual([]);
   });
 
-  it('accepts backlog with epics and tasks', () => {
-    const data = { version: '1', epics: [validEpic({ tasks: [validTask()] })] };
+  it('accepts backlog with features and tasks', () => {
+    const data = { version: '1', features: [validEpic({ tasks: [validTask()] })] };
     expect(validateBacklog(data)).toEqual([]);
   });
 
   it('rejects missing version', () => {
-    expect(validateBacklog({ epics: [] })).toEqual(expect.arrayContaining([expect.stringContaining('version')]));
+    expect(validateBacklog({ features: [] })).toEqual(expect.arrayContaining([expect.stringContaining('version')]));
   });
 
   it('rejects wrong version', () => {
-    expect(validateBacklog({ version: '2', epics: [] })).toEqual(expect.arrayContaining([expect.stringContaining('version')]));
+    expect(validateBacklog({ version: '2', features: [] })).toEqual(expect.arrayContaining([expect.stringContaining('version')]));
   });
 
-  it('rejects non-array epics', () => {
-    expect(validateBacklog({ version: '1', epics: null })).toEqual(expect.arrayContaining([expect.stringContaining('epics')]));
+  it('rejects non-array features', () => {
+    expect(validateBacklog({ version: '1', features: null })).toEqual(expect.arrayContaining([expect.stringContaining('features')]));
   });
 
   it('rejects task with invalid status', () => {
-    const data = { version: '1', epics: [validEpic({ tasks: [validTask({ status: 'wip' })] })] };
+    const data = { version: '1', features: [validEpic({ tasks: [validTask({ status: 'wip' })] })] };
     const errors = validateBacklog(data);
     expect(errors.length).toBeGreaterThan(0);
   });
 
   it('accepts all valid task statuses', () => {
     for (const status of ['todo', 'claimed', 'in_progress', 'blocked', 'done', 'released']) {
-      const data = { version: '1', epics: [validEpic({ tasks: [validTask({ status })] })] };
+      const data = { version: '1', features: [validEpic({ tasks: [validTask({ status })] })] };
       expect(validateBacklog(data)).toEqual([]);
     }
   });
@@ -222,7 +222,7 @@ describe('validateStateDir', () => {
   });
 
   it('reports validation errors from individual files', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '2', epics: [] }));
+    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '2', features: [] }));
     writeFileSync(join(dir, 'agents.json'), JSON.stringify(VALID_AGENTS));
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(VALID_CLAIMS));
     writeFileSync(join(dir, 'events.jsonl'), '');

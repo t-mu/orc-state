@@ -25,12 +25,12 @@ describe('validateEventObject', () => {
 
   it('requires task_ref for task events', () => {
     const errors = validateEventObject(base('task_added'));
-    expect(errors).toContain('task_ref is required and must match epic/task format');
+    expect(errors).toContain('task_ref is required and must match feature/task format');
   });
 
   it('requires run_id/task_ref/agent_id for run_started', () => {
     const errors = validateEventObject(base('run_started', { run_id: 'run-1', agent_id: 'INVALID' }));
-    expect(errors).toContain('task_ref is required and must match epic/task format');
+    expect(errors).toContain('task_ref is required and must match feature/task format');
     expect(errors).toContain('agent_id is required and must be a valid agent_id');
   });
 
@@ -152,7 +152,7 @@ describe('validateEventObject', () => {
       actor_type: 'coordinator',
       actor_id: 'coordinator',
     }));
-    expect(errors).toContain('task_ref is required and must match epic/task format');
+    expect(errors).toContain('task_ref is required and must match feature/task format');
   });
 
   it('enforces elapsed_ms payload for agent_marked_dead', () => {
@@ -181,7 +181,7 @@ describe('validateEventObject', () => {
       payload: {},
     }));
     expect(bad).toContain('run_id is required');
-    expect(bad).toContain('task_ref is required and must match epic/task format');
+    expect(bad).toContain('task_ref is required and must match feature/task format');
     expect(bad).toContain('payload.reason must be a non-empty string');
 
     const ok = validateEventObject(base('session_start_failed', {

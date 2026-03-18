@@ -56,8 +56,8 @@ clears all agents.
 
 | Command | Usage | Notes |
 |---------|-------|-------|
-| `task-create` | `orc task-create --epic=<ref> --title=<text> [options]` | Add a task to backlog. Prefer MCP `create_task` from master. |
-| `delegate` | `orc delegate --task-ref=<epic/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
+| `task-create` | `orc task-create --feature=<ref> --title=<text> [options]` | Add a task to backlog. Prefer MCP `create_task` from master. |
+| `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
 | `runs-active` | `orc runs-active` | List all in-progress/claimed runs. |
 | `events-tail` | `orc events-tail` | Tail the events.jsonl event log. |
 
@@ -102,8 +102,8 @@ const TARGET    = 'orch/task-NNN-slug';
 
 withLock(join(STATE_DIR, '.lock'), () => {
   const data = JSON.parse(readFileSync(BACKLOG, 'utf8'));
-  for (const epic of data.epics) {
-    const task = (epic.tasks ?? []).find(t => t.ref === TARGET);
+  for (const feature of data.features) {
+    const task = (feature.tasks ?? []).find(t => t.ref === TARGET);
     if (task) {
       task.status = 'todo';
       delete task.owner;
@@ -149,12 +149,12 @@ Coordinator also emits:
 
 ## Backlog JSON Structure
 
-Tasks are nested inside epics — **not** a flat top-level array:
+Tasks are nested inside features — **not** a flat top-level array:
 
 ```json
 {
   "version": "1",
-  "epics": [
+  "features": [
     {
       "ref": "orch",
       "title": "Orchestrator",

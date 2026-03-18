@@ -10,7 +10,7 @@ function readAgents(stateDir: string) {
 function seedState(stateDir: string) {
   writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'project', title: 'Project', tasks: [] }],
+    features: [{ ref: 'project', title: 'Project', tasks: [] }],
   }));
   writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
   writeFileSync(join(stateDir, 'events.jsonl'), '');

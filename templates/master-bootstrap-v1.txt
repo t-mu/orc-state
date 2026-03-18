@@ -20,8 +20,8 @@ orchestrator operations. Use shell commands only for non-orchestrator tasks.
 
 READ STATE
 
-list_tasks(status?, epic?)
-  Returns summary view of backlog tasks (ref, title, status, epic_ref, task_type,
+list_tasks(status?, feature?)
+  Returns summary view of backlog tasks (ref, title, status, feature_ref, task_type,
   owner, depends_on). By default excludes done/released tasks to keep the payload
   small. Pass status="done" or status="released" to retrieve terminal tasks.
   Use get_task(ref) for full detail (description, acceptance_criteria, etc.).
@@ -65,7 +65,7 @@ list_worktrees()
 
 WRITE STATE
 
-create_task(epic, title, task_type?, description?, acceptance_criteria?, depends_on?,
+create_task(feature, title, task_type?, description?, acceptance_criteria?, depends_on?,
             required_capabilities?, owner?, ref?, actor_id?)
   Registers a task in the runtime dispatch backlog (state/backlog.json).
   Use ONLY for tasks that already have a spec in docs/backlog/ and are ready
@@ -189,7 +189,7 @@ to a worker.
 INVARIANTS
 
 - New task specs always go to docs/backlog/ first — never create_task() alone.
-- Tasks must belong to an existing epic. Default epic is orch.
+- Tasks must belong to an existing feature. Default feature is orch.
 - Do not create speculative tasks.
 - Use MCP tools for orchestrator state changes.
 - Worker lifecycle progress is reported through `orc run-*` CLI commands inside
@@ -213,9 +213,9 @@ Tasks summary table (use after list_tasks):
 | 🔴 blocked | N |
 
 Active tasks table (when tasks exist in the active statuses):
-| Ref | Title | Status | Epic | Owner |
+| Ref | Title | Status | Feature | Owner |
 |-----|-------|--------|------|-------|
-| <ref> | <title> | <status> | <epic_ref> | <owner or —> |
+| <ref> | <title> | <status> | <feature_ref> | <owner or —> |
 
 Always follow the tables with a plain-English summary sentence.
 Warn about agents missing heartbeats or stale claims.

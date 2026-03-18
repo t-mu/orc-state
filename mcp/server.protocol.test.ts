@@ -14,7 +14,7 @@ let parseFailure: Error | null;
 function seedState(dir: string) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{
+    features: [{
       ref: 'project',
       title: 'Project',
       tasks: [{
@@ -189,7 +189,7 @@ describe('mcp stdio protocol', () => {
   });
 
   it('returns protocol InvalidParams for malformed tool arguments', async () => {
-    await expect(callTool('create_task', { epic: 'project' })).rejects.toMatchObject({
+    await expect(callTool('create_task', { feature: 'project' })).rejects.toMatchObject({
       code: -32602,
     });
   });
@@ -221,7 +221,7 @@ describe('mcp stdio protocol', () => {
     const contents = readResult.contents as Array<Record<string, unknown>>;
     expect(contents[0].mimeType).toBe('application/json');
     const backlog = JSON.parse(contents[0].text as string);
-    expect(backlog.epics[0].ref).toBe('project');
+    expect(backlog.features[0].ref).toBe('project');
   });
 
   it('returns InvalidParams for unknown resources/read uri', async () => {

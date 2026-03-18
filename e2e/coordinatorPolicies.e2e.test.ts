@@ -55,7 +55,7 @@ describe('coordinator policy e2e', () => {
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
-    expect(readBacklog().epics[0].tasks[0].status).toBe('todo');
+    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
     const agent = readAgents().agents[0];
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBe(null);
@@ -122,7 +122,7 @@ describe('coordinator policy e2e', () => {
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
-    expect(readBacklog().epics[0].tasks[0].status).toBe('todo');
+    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
     const agent = readAgents().agents[0];
     expect(agent.status).toBe('offline');
     expect(agent.session_handle).toBe(null);
@@ -190,7 +190,7 @@ describe('coordinator policy e2e', () => {
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
-    const task = readBacklog().epics[0].tasks[0];
+    const task = readBacklog().features[0].tasks[0];
     expect(task.status).toBe('todo');
 
     const agents = readAgents().agents;
@@ -323,7 +323,7 @@ describe('coordinator policy e2e', () => {
     claim = readClaims().claims[0];
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_blocked_reason).toContain('finalization retry timed out waiting for worker progress');
-    expect(readBacklog().epics[0].tasks[0].status).toBe('in_progress');
+    expect(readBacklog().features[0].tasks[0].status).toBe('in_progress');
   });
 
   it('expires a stale lease only once across multiple ticks in manual mode', async () => {
@@ -345,7 +345,7 @@ describe('coordinator policy e2e', () => {
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
-    expect(readBacklog().epics[0].tasks[0].status).toBe('todo');
+    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
 
     const expiredEvents = readEvents().filter((e) => e.event === 'claim_expired' && e.run_id === 'run-expired-once');
     expect(expiredEvents).toHaveLength(1);
@@ -389,7 +389,7 @@ describe('coordinator policy e2e', () => {
 
     const claims = readClaims().claims.filter((c) => ['claimed', 'in_progress', 'done'].includes(c.state as string));
     expect(claims).toHaveLength(1);
-    const task = readBacklog().epics[0].tasks.find((t) => t.ref === 'docs/task-1');
+    const task = readBacklog().features[0].tasks.find((t) => t.ref === 'docs/task-1');
     expect(task!.status).not.toBe('todo');
     const events = readEvents();
     expect(events.some((event) => event.event === 'claim_created' && event.agent_id === 'worker-01')).toBe(true);
@@ -416,7 +416,7 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
   };
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks: [task] }],
+    features: [{ ref: 'docs', title: 'Docs', tasks: [task] }],
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
@@ -439,7 +439,7 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
-function readBacklog(): { epics: Array<{ tasks: Array<Record<string, unknown>> }> } {
+function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
   return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
 }
 

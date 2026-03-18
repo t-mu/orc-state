@@ -41,7 +41,7 @@ function readEvents(): Array<Record<string, unknown>> {
 function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }] }],
+    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }] }],
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
@@ -70,7 +70,7 @@ function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' 
 function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'claimed' }] }],
+    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'claimed' }] }],
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
@@ -96,7 +96,7 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
 function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }] }],
+    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }] }],
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
@@ -311,7 +311,7 @@ describe('orc-run-fail', () => {
     expect(agents.agents[0].last_heartbeat_at).toBeTruthy();
 
     const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-    const task = backlog.epics[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task!.status).toBe('todo');
 
     const events = readEvents();
@@ -331,7 +331,7 @@ describe('orc-run-fail', () => {
     expect(result.status).toBe(0);
 
     const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-    const task = backlog.epics[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task!.status).toBe('blocked');
   });
 

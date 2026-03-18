@@ -10,9 +10,9 @@ export const TOOLS = [
           enum: ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released'],
           description: 'Filter by task status',
         },
-        epic: {
+        feature: {
           type: 'string',
-          description: 'Filter by epic ref (e.g. "project")',
+          description: 'Filter by feature ref (e.g. "project")',
         },
       },
       additionalProperties: false,
@@ -128,9 +128,9 @@ export const TOOLS = [
       type: 'object',
       required: ['title'],
       properties: {
-        epic: {
+        feature: {
           type: 'string',
-          description: 'Epic ref. Defaults to "general" if omitted; the "general" epic is created automatically.',
+          description: 'Feature ref. Defaults to "general" if omitted; the "general" feature is created automatically.',
         },
         title: { type: 'string', description: 'Task title (plain text)' },
         ref: { type: 'string', description: 'Explicit slug; auto-generated from title if omitted' },

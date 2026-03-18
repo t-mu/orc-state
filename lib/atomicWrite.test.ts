@@ -64,7 +64,7 @@ describe('atomicWriteJson', () => {
     const filePath = join(dir, 'complex.json');
     const data = {
       version: '1',
-      epics: [
+      features: [
         { ref: 'orch', title: 'Orchestration', tasks: [{ ref: 'orch/init', status: 'todo' }] },
       ],
     };

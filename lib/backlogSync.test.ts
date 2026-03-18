@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let dir: string;
 
-function writeSpec(baseDir: string, name: string, { ref, epic, status, title = 'Example Title' }: { ref?: string; epic?: string; status?: string; title?: string } = {}) {
+function writeSpec(baseDir: string, name: string, { ref, feature, status, title = 'Example Title' }: { ref?: string; feature?: string; status?: string; title?: string } = {}) {
   const frontmatter = [
     '---',
     ...(ref ? [`ref: ${ref}`] : []),
-    ...(epic ? [`epic: ${epic}`] : []),
+    ...(feature ? [`feature: ${feature}`] : []),
     ...(status ? [`status: ${status}`] : []),
     '---',
     '',
@@ -21,7 +21,7 @@ function writeBacklog(baseDir: string, backlog: unknown) {
   writeFileSync(join(baseDir, '.orc-state', 'backlog.json'), JSON.stringify(backlog, null, 2));
 }
 
-function readBacklog(baseDir: string): { epics: Array<{ ref: string; tasks: Array<Record<string, unknown>> }> } {
+function readBacklog(baseDir: string): { features: Array<{ ref: string; tasks: Array<Record<string, unknown>> }> } {
   return JSON.parse(readFileSync(join(baseDir, '.orc-state', 'backlog.json'), 'utf8'));
 }
 
@@ -42,11 +42,11 @@ describe('syncBacklogFromSpecs', () => {
   it('adds a missing task from a spec file with status todo', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
-      epic: 'orch',
+      feature: 'orch',
       status: 'todo',
       title: 'Rebuild Backlog',
     });
-    writeBacklog(dir, { version: '1', epics: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
 
     const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
     const result = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'docs', 'backlog'));
@@ -55,9 +55,9 @@ describe('syncBacklogFromSpecs', () => {
       updated: true,
       added_tasks: 1,
       updated_tasks: 0,
-      added_epics: 0,
+      added_features: 0,
     });
-    expect(readBacklog(dir).epics[0].tasks).toEqual([
+    expect(readBacklog(dir).features[0].tasks).toEqual([
       {
         ref: 'orch/task-155-example',
         title: 'Rebuild Backlog',
@@ -67,21 +67,21 @@ describe('syncBacklogFromSpecs', () => {
     ]);
   });
 
-  it('adds a missing epic when a spec references an unknown epic', async () => {
+  it('adds a missing feature when a spec references an unknown feature', async () => {
     writeSpec(dir, '200-other.md', {
       ref: 'other/task-200-example',
-      epic: 'other',
+      feature: 'other',
       status: 'done',
       title: 'Other Work',
     });
-    writeBacklog(dir, { version: '1', epics: [] });
+    writeBacklog(dir, { version: '1', features: [] });
 
     const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
     const result = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'docs', 'backlog'));
     const backlog = readBacklog(dir);
 
-    expect(result.added_epics).toBe(1);
-    expect(backlog.epics).toEqual([
+    expect(result.added_features).toBe(1);
+    expect(backlog.features).toEqual([
       {
         ref: 'other',
         title: 'Other',
@@ -100,13 +100,13 @@ describe('syncBacklogFromSpecs', () => {
   it('does not modify a task already in a claimed or in_progress status', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
-      epic: 'orch',
+      feature: 'orch',
       status: 'done',
       title: 'Spec Wants Done',
     });
     writeBacklog(dir, {
       version: '1',
-      epics: [{
+      features: [{
         ref: 'orch',
         title: 'Orch',
         tasks: [{
@@ -123,7 +123,7 @@ describe('syncBacklogFromSpecs', () => {
     const backlog = readBacklog(dir);
 
     expect(result.updated).toBe(false);
-    expect(backlog.epics[0].tasks[0]).toEqual({
+    expect(backlog.features[0].tasks[0]).toEqual({
       ref: 'orch/task-155-example',
       title: 'Original Title',
       status: 'in_progress',
@@ -134,13 +134,13 @@ describe('syncBacklogFromSpecs', () => {
   it('updates an existing todo task to match the spec status', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
-      epic: 'orch',
+      feature: 'orch',
       status: 'done',
       title: 'Spec Wants Done',
     });
     writeBacklog(dir, {
       version: '1',
-      epics: [{
+      features: [{
         ref: 'orch',
         title: 'Orch',
         tasks: [{
@@ -159,21 +159,21 @@ describe('syncBacklogFromSpecs', () => {
       updated: true,
       added_tasks: 0,
       updated_tasks: 1,
-      added_epics: 0,
+      added_features: 0,
     });
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('done');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
   });
 
   it('updates a blocked task to match the spec status', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
-      epic: 'orch',
+      feature: 'orch',
       status: 'done',
       title: 'Spec Wants Done',
     });
     writeBacklog(dir, {
       version: '1',
-      epics: [{
+      features: [{
         ref: 'orch',
         title: 'Orch',
         tasks: [{
@@ -192,19 +192,19 @@ describe('syncBacklogFromSpecs', () => {
       updated: true,
       added_tasks: 0,
       updated_tasks: 1,
-      added_epics: 0,
+      added_features: 0,
     });
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('done');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
   });
 
   it('is idempotent when called twice with the same specs', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
-      epic: 'orch',
+      feature: 'orch',
       status: 'todo',
       title: 'Same Result',
     });
-    writeBacklog(dir, { version: '1', epics: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
 
     const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
     const first = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'docs', 'backlog'));
@@ -216,17 +216,17 @@ describe('syncBacklogFromSpecs', () => {
       updated: false,
       added_tasks: 0,
       updated_tasks: 0,
-      added_epics: 0,
+      added_features: 0,
     });
     expect(readFileSync(join(dir, '.orc-state', 'backlog.json'), 'utf8')).toBe(snapshot);
   });
 
-  it('skips spec files without ref, epic, or status fields', async () => {
-    writeSpec(dir, '155-missing-ref.md', { epic: 'orch', status: 'todo' });
-    writeSpec(dir, '156-missing-epic.md', { ref: 'orch/task-156-example', status: 'todo' });
-    writeSpec(dir, '157-missing-status.md', { ref: 'orch/task-157-example', epic: 'orch' });
-    writeSpec(dir, '158-invalid-status.md', { ref: 'orch/task-158-example', epic: 'orch', status: 'unknown' });
-    writeBacklog(dir, { version: '1', epics: [] });
+  it('skips spec files without ref, feature, or status fields', async () => {
+    writeSpec(dir, '155-missing-ref.md', { feature: 'orch', status: 'todo' });
+    writeSpec(dir, '156-missing-feature.md', { ref: 'orch/task-156-example', status: 'todo' });
+    writeSpec(dir, '157-missing-status.md', { ref: 'orch/task-157-example', feature: 'orch' });
+    writeSpec(dir, '158-invalid-status.md', { ref: 'orch/task-158-example', feature: 'orch', status: 'unknown' });
+    writeBacklog(dir, { version: '1', features: [] });
 
     const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
     const result = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'docs', 'backlog'));
@@ -235,9 +235,9 @@ describe('syncBacklogFromSpecs', () => {
       updated: false,
       added_tasks: 0,
       updated_tasks: 0,
-      added_epics: 0,
+      added_features: 0,
     });
-    expect(readBacklog(dir)).toEqual({ version: '1', epics: [] });
+    expect(readBacklog(dir)).toEqual({ version: '1', features: [] });
   });
 
   it('does not import body lines that only look like frontmatter keys', async () => {
@@ -245,7 +245,7 @@ describe('syncBacklogFromSpecs', () => {
       join(dir, 'docs', 'backlog', '159-body-keys.md'),
       [
         '---',
-        'epic: orch',
+        'feature: orch',
         '---',
         '',
         '# Task 159 — Body Keys',
@@ -254,25 +254,25 @@ describe('syncBacklogFromSpecs', () => {
         'status: done',
       ].join('\n'),
     );
-    writeBacklog(dir, { version: '1', epics: [] });
+    writeBacklog(dir, { version: '1', features: [] });
 
     const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
     const result = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'docs', 'backlog'));
 
     expect(result.updated).toBe(false);
-    expect(readBacklog(dir)).toEqual({ version: '1', epics: [] });
+    expect(readBacklog(dir)).toEqual({ version: '1', features: [] });
   });
 
-  it('moves a non-active task under the epic declared by the spec', async () => {
+  it('moves a non-active task under the feature declared by the spec', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
-      epic: 'orch',
+      feature: 'orch',
       status: 'done',
       title: 'Spec Wants Orch',
     });
     writeBacklog(dir, {
       version: '1',
-      epics: [{
+      features: [{
         ref: 'wrong',
         title: 'Wrong',
         tasks: [{
@@ -289,8 +289,8 @@ describe('syncBacklogFromSpecs', () => {
     const backlog = readBacklog(dir);
 
     expect(result.updated).toBe(true);
-    expect(backlog.epics.find((epic) => epic.ref === 'wrong')?.tasks ?? []).toEqual([]);
-    expect(backlog.epics.find((epic) => epic.ref === 'orch')?.tasks).toEqual([
+    expect(backlog.features.find(feature => feature.ref === 'wrong')?.tasks ?? []).toEqual([]);
+    expect(backlog.features.find(feature => feature.ref === 'orch')?.tasks).toEqual([
       {
         ref: 'orch/task-155-example',
         title: 'Original Title',
@@ -304,7 +304,7 @@ describe('syncBacklogFromSpecs', () => {
     process.env.ORCH_STATE_DIR = join(dir, '.orc-state');
     process.env.ORC_REPO_ROOT = dir;
 
-    writeBacklog(dir, { version: '1', epics: [] });
+    writeBacklog(dir, { version: '1', features: [] });
     writeFileSync(join(dir, '.orc-state', 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
     writeFileSync(join(dir, '.orc-state', 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
     writeFileSync(join(dir, '.orc-state', 'events.jsonl'), '');
@@ -313,7 +313,7 @@ describe('syncBacklogFromSpecs', () => {
       updated: false,
       added_tasks: 0,
       updated_tasks: 0,
-      added_epics: 0,
+      added_features: 0,
     });
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => {
       throw new Error(`process.exit unexpectedly called with "${code}"`);

@@ -56,7 +56,7 @@ function ensureState() {
   if (!existsSync(join(STATE_DIR, 'backlog.json'))) {
     atomicWriteJson(join(STATE_DIR, 'backlog.json'), {
       version: '1',
-      epics: [{ ref: 'project', title: 'Project', tasks: [] }],
+      features: [{ ref: 'project', title: 'Project', tasks: [] }],
     });
   }
   if (!existsSync(join(STATE_DIR, 'agents.json'))) {

@@ -139,8 +139,8 @@ function readTaskContext(stateDir: string, taskRef: string) {
     const backlog = readBacklog(stateDir);
     const task = findTask(backlog, taskRef);
     if (task) {
-      const epic = backlog.epics.find((e) => e.tasks.some((t) => t.ref === taskRef)) ?? null;
-      return { epic, task };
+      const feature = backlog.features.find((e) => e.tasks.some((t) => t.ref === taskRef)) ?? null;
+      return { feature, task };
     }
   } catch {
     return null;
@@ -876,7 +876,7 @@ export function buildTaskEnvelope(taskRef: string, runId: string, agentId: strin
     planning_state: planningState,
     delegated_by: ctx?.task?.delegated_by ?? null,
     title: ctx?.task?.title ?? '(untitled task)',
-    epic: ctx?.epic?.ref ?? '(unknown)',
+    feature: ctx?.feature?.ref ?? '(unknown)',
     description,
     acceptance_criteria: criteria,
   };
@@ -884,7 +884,7 @@ export function buildTaskEnvelope(taskRef: string, runId: string, agentId: strin
     task_ref: taskRef,
     run_id: runId,
     title: ctx?.task?.title ?? '(untitled task)',
-    epic: ctx?.epic?.ref ?? '(unknown)',
+    feature: ctx?.feature?.ref ?? '(unknown)',
     description,
     agent_id: agentId,
     acceptance_criteria_lines: acceptanceCriteriaLines,

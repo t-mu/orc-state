@@ -16,7 +16,7 @@ function writeState(baseDir: string, refs: string[]) {
     join(baseDir, 'orc-state', 'backlog.json'),
     JSON.stringify({
       version: '1',
-      epics: [
+      features: [
         {
           ref: 'orch',
           title: 'Orchestrator',

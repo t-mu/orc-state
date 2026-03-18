@@ -45,50 +45,50 @@ Run these before writing anything:
 3. **Check `git status`** to see what is already in flight.
 
 4. **Populate frontmatter fields** before writing the file:
-   - `ref`: `<epic>/<slug>` where `<slug>` is the kebab-case filename without the numeric prefix
+   - `ref`: `<feature>/<slug>` where `<slug>` is the kebab-case filename without the numeric prefix
      and `.md` extension (e.g. for `102-task-md-frontmatter.md` -> `orch/task-102-task-md-frontmatter`
      - include the numeric prefix in the slug).
-   - `epic`: the resolved epic ref (e.g. `orch`).
+   - `feature`: the resolved feature ref (e.g. `orch`).
 
 If the objective is ambiguous, ask one focused clarifying question before drafting.
 
 ## Step 0.5 — Resolve Epic
 
-Before writing any file, determine the epic for this task:
+Before writing any file, determine the feature for this task:
 
-1. **Infer from context.** If the user's request unambiguously names an epic
-   (e.g. "create an orch task", "add this to the infra epic"), use that value directly.
+1. **Infer from context.** If the user's request unambiguously names a feature
+   (e.g. "create an orch task", "add this to the infra feature"), use that value directly.
    Skip steps 2-4.
 
-2. **Read existing epics.** Use `ReadMcpResourceTool` with URI
+2. **Read existing features.** Use `ReadMcpResourceTool` with URI
    `orchestrator://state/backlog` and extract the `ref` field from each entry
-   in the `epics` array.
+   in the `features` array.
 
 3. **Ask the user.** Use `AskUserQuestion` with a message such as:
 
    ```text
-   Which epic should this task belong to?
+   Which feature should this task belong to?
    1. orch
    2. general
    3. infra
-   x. Add new epic
+   x. Add new feature
    ```
 
-   Present only the refs, one per line, numbered from 1. Always append `x. Add new epic` as the last option.
+   Present only the refs, one per line, numbered from 1. Always append `x. Add new feature` as the last option.
 
 4. **Handle "Add new".** If the user selects `x`, use a second `AskUserQuestion`:
 
    ```text
-   Enter the new epic name (lowercase, hyphen-separated, e.g. "my-feature"):
+   Enter the new feature name (lowercase, hyphen-separated, e.g. "my-feature"):
    ```
 
-   Use the entered value as the epic ref. The `create_task` MCP call will create the
-   epic if it does not yet exist (Task 103 behavior - only works for "general" automatically;
-   for any other new epic name the agent must note it may not exist and the MCP call may fail).
+   Use the entered value as the feature ref. The `create_task` MCP call will create the
+   feature if it does not yet exist (Task 103 behavior - only works for "general" automatically;
+   for any other new feature name the agent must note it may not exist and the MCP call may fail).
 
-5. **Store the resolved epic** and use it for:
-   - The `epic:` frontmatter field in every .md file written during this skill invocation
-   - The `epic` argument to `mcp__orchestrator__create_task` (Task 105)
+5. **Store the resolved feature** and use it for:
+   - The `feature:` frontmatter field in every .md file written during this skill invocation
+   - The `feature` argument to `mcp__orchestrator__create_task` (Task 105)
 
 ## Required Inputs Before Drafting
 
@@ -172,8 +172,8 @@ After saving each .md file, perform MCP registration immediately:
 The saved file begins with:
 ```yaml
 ---
-ref: <epic>/<slug>
-epic: <epic-ref>
+ref: <feature>/<slug>
+feature: <epic-ref>
 ---
 ```
 Extract the `ref` value.
@@ -189,7 +189,7 @@ Call `mcp__orchestrator__get_task` with `task_ref: <ref>`.
 
 Call `mcp__orchestrator__create_task` with:
 - `title`: the task title from the `# Task N — Title` heading
-- `epic`: the `epic` frontmatter value
+- `feature`: the `epic` frontmatter value
 - `ref`: the slug portion only (everything after the first `/` in the frontmatter ref)
 - `description`: the first non-empty paragraph of the `## Context` section
 - `acceptance_criteria`: native JSON array extracted from the `## Acceptance criteria` checklist items (strip the `- [ ] ` prefix from each line)

@@ -4,7 +4,7 @@
   "title": "Backlog",
   "description": "Task definitions, dependencies, and lifecycle status for all work items.",
   "type": "object",
-  "required": ["version", "epics"],
+  "required": ["version", "features"],
   "additionalProperties": false,
   "properties": {
     "version": {
@@ -16,9 +16,9 @@
       "minimum": 1,
       "description": "Optional global counter for the next docs/backlog task number."
     },
-    "epics": {
+    "features": {
       "type": "array",
-      "items": { "$ref": "#/definitions/Epic" }
+      "items": { "$ref": "#/definitions/Feature" }
     }
   },
   "definitions": {
@@ -30,7 +30,7 @@
     "TaskRef": {
       "type": "string",
       "pattern": "^[a-z0-9-]+/[a-z0-9-]+$",
-      "description": "Canonical task key in 'epic-slug/task-slug' format."
+      "description": "Canonical task key in 'feature-slug/task-slug' format."
     },
     "Task": {
       "type": "object",
@@ -106,7 +106,7 @@
       "type": "string",
       "enum": ["codex", "claude", "gemini"]
     },
-    "Epic": {
+    "Feature": {
       "type": "object",
       "required": ["ref", "title", "tasks"],
       "additionalProperties": false,
@@ -114,7 +114,7 @@
         "ref": {
           "type": "string",
           "pattern": "^[a-z0-9-]+$",
-          "description": "Epic slug — first component of all child task_refs."
+          "description": "Feature slug — first component of all child task_refs."
         },
         "title": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
