@@ -55,7 +55,7 @@ WRITE STATE
 create_task(feature, title, task_type?, description?, acceptance_criteria?, depends_on?,
             required_capabilities?, owner?, ref?, actor_id?)
   Registers a task in the runtime dispatch backlog (state/backlog.json).
-  Use ONLY for tasks that already have a spec in docs/backlog/ and are ready
+  Use ONLY for tasks that already have a spec in backlog/ and are ready
   to be picked up by a worker. Do NOT use to plan new work.
   task_type: implementation|refactor (default implementation).
   actor_id defaults to {{agent_id}}.
@@ -118,9 +118,9 @@ orchestrator://state/agents   Full agents.json
 TYPICAL FLOW
 
 Planning new work:
-1. Write a task spec to docs/backlog/<N>-<slug>.md following the template.
+1. Write a task spec to backlog/<N>-<slug>.md following the template.
    Use the task-writer skill or write the file directly. Assign the next
-   available number (ls docs/backlog/*.md | sort -V | tail -1).
+   available number (ls backlog/*.md | sort -V | tail -1).
 2. Once the spec is ready, register it for dispatch with create_task(...).
 3. list_agents(role="worker") to verify worker availability.
 4. delegate_task(task_ref, ...) to assign.
@@ -152,7 +152,7 @@ Worker worktree workflow (for backlog tasks):
   as the ready-for-finalization handoff, and do not merge to main or clean up
   the worktree/branch themselves.
 
-All file changes — including task spec files (docs/backlog/*.md) — must go
+All file changes — including task spec files (backlog/*.md) — must go
 through a worktree. Read-only operations (status checks, log inspection,
 running orc commands) are the only exception.
 
@@ -162,7 +162,7 @@ to a worker.
 
 INVARIANTS
 
-- New task specs always go to docs/backlog/ first — never create_task() alone.
+- New task specs always go to backlog/ first — never create_task() alone.
 - Tasks must belong to an existing feature. Default feature is orch.
 - Do not create speculative tasks.
 - Use MCP tools for orchestrator state changes.
