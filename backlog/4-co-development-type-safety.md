@@ -5,16 +5,16 @@ priority: high
 status: todo
 ---
 
-# Task 4 — Enforce Full Type Safety Gate for Co-Development
+# Task 4 — Preserve Full Type Safety Gate for Co-Development
 
 Independent.
 
 ## Scope
 
 **In scope:**
-- Resolve all TypeScript errors in test files (estimated 310 errors per HANDOFF.md, concentrated in `coordinator.test.ts`, `mcp/handlers.test.ts`, and e2e fixtures)
-- Enforce `tsconfig.test.json` in the `pretest` npm script so test-file type errors block CI
-- Verify `tsconfig.test.json` is correctly wired to vitest via `test.typecheck.tsconfig`
+- Verify the existing test-file type-safety gate remains active and accurately documented
+- Remove stale assumptions in docs/specs about missing test type enforcement
+- Add or adjust focused regression coverage only if a gap is discovered while verifying the gate
 
 **Out of scope:**
 - Changing any production source files beyond what is required to satisfy test types
@@ -26,86 +26,75 @@ Independent.
 
 ## Context
 
-All production `.ts` source files are type-clean under `tsconfig.check.json`. However, `tsconfig.check.json` excludes test files, so test-file type errors are silently ignored by the current `pretest` script. HANDOFF.md documents ~310 errors across three test files. Until these are fixed and the gate is enforced, the type safety guarantee is incomplete — a co-developer can introduce type errors in tests without any CI feedback.
+The repository already enforces test-file typechecking separately from production-only typechecking. `tsconfig.check.json` excludes tests by design, while `tsconfig.test.json` covers `**/*.test.ts` and `test-fixtures/**/*.ts`, and `pretest` runs both configs before Vitest. This task exists to verify that arrangement stays intact and that no stale documentation or hidden gaps remain.
 
 ### Current state
-- `pretest`: runs `tsc --project tsconfig.check.json` (excludes `**/*.test.ts`) + `tsc --project tsconfig.test.json` (already added)
-- `tsconfig.test.json` exists with `{ "extends": "./tsconfig.json", "compilerOptions": { "types": ["vitest/globals", "node"] }, "include": ["**/*.test.ts", "test-fixtures/**/*.ts"] }`
-- 310 TypeScript errors in test files per HANDOFF.md (primarily `coordinator.test.ts`, `mcp/handlers.test.ts`)
-- `vitest.config.mjs` already has `typecheck.tsconfig` wired
+- `pretest` already runs both `tsc --project tsconfig.check.json --noEmit` and `tsc --project tsconfig.test.json --noEmit` before `eslint .`
+- `tsconfig.test.json` already exists and includes `**/*.test.ts` plus `test-fixtures/**/*.ts`
+- `vitest.config.mjs` already points `test.typecheck.tsconfig` at `./tsconfig.test.json`
+- The known stale reference is the task description itself: it still talks about `HANDOFF.md` and unresolved test-file errors that are no longer present
 
 ### Desired state
-- `npm test` (including pretest) passes with zero TypeScript errors across all files including tests
-- `tsconfig.test.json` is the enforced gate for test-file types
-- A co-developer writing a test file gets accurate type feedback in their editor and in CI
+- `npm test` continues to pass with zero TypeScript errors across production and test files
+- The backlog/spec documentation reflects that the gate is already implemented
+- A co-developer writing or editing a test file continues to get accurate type feedback in the editor and in CI
 
 ### Start here
-- `HANDOFF.md` — detailed list of remaining error locations and root causes
-- `coordinator.test.ts` — largest error concentration
-- `mcp/handlers.test.ts` — second error concentration
+- `package.json` — confirm `pretest` still runs both typecheck configs
 - `tsconfig.test.json` — current test type config
+- `vitest.config.mjs` — current Vitest typecheck wiring
+- Task/spec docs that still imply test-file typechecking is not enforced
 
 **Affected files:**
-- `coordinator.test.ts` — fix type annotations
-- `mcp/handlers.test.ts` — fix type annotations
-- `test-fixtures/` — any fixture files with type errors
-- `tsconfig.test.json` — confirm correct (likely no changes needed)
-- `package.json` `pretest` — confirm `tsconfig.test.json` is included (already done)
+- `package.json` — verify `pretest` remains correct
+- `tsconfig.test.json` — verify current include set remains correct
+- `vitest.config.mjs` — verify current typecheck wiring remains correct
+- Backlog/docs files that still describe this gate as missing
 
 ---
 
 ## Goals
 
 1. Must: `npx tsc --project tsconfig.test.json --noEmit` exits 0 with no output.
-2. Must: `npm test` exits 0 end-to-end (pretest + tests).
-3. Must: No test logic is altered — only type annotations, explicit casts, and missing variable declarations.
-4. Must: No production source files are modified unless strictly required to export a type used in tests.
-5. Must: Editor (VS Code) shows no red squiggles in test files when `tsconfig.test.json` is active.
+2. Must: `npx tsc --project tsconfig.check.json --noEmit` exits 0 with no output.
+3. Must: `npm test` exits 0 end-to-end (pretest + tests).
+4. Must: No changes alter runtime behavior; this task is verification/documentation unless a real gate regression is found.
+5. Must: Any updated docs/specs describe the current gate accurately and do not reference nonexistent handoff files.
 
 ---
 
 ## Implementation
 
-### Step 1 — Read HANDOFF.md and categorize errors
+### Step 1 — Verify the existing gate end-to-end
 
-**File:** `HANDOFF.md`
+**Files:** `package.json`, `tsconfig.test.json`, `vitest.config.mjs`
 
-Read the full error list. Group errors by root cause:
-- Missing `let` type annotations (TS7005/TS7034) — fix with explicit `: string`, `: number`, etc.
-- `any` implicit (TS7006) — annotate callback parameters
-- Property does not exist errors — add type assertions or narrow types
-- Type mismatch in mock objects — align mock shape to actual interface
+Confirm all three layers agree:
+- `pretest` runs both typecheck configs before tests
+- `tsconfig.test.json` includes test and fixture files
+- Vitest `test.typecheck.tsconfig` points at `./tsconfig.test.json`
 
-### Step 2 — Fix `coordinator.test.ts` errors
+### Step 2 — Run the targeted verification commands
 
-**File:** `coordinator.test.ts`
+**Commands:**
+- `npx tsc --project tsconfig.test.json --noEmit`
+- `npx tsc --project tsconfig.check.json --noEmit`
+- `nvm use 24 && npm test`
 
-Primary root causes per HANDOFF.md:
-- `let dir` in `beforeEach` needs `: string` annotation
-- Cascading TS7005/TS7034 from untyped `let` declarations
-- Work through each error block top-to-bottom; cascading errors often resolve from one fix
+If any command fails, then and only then identify the actual failing files and fix that concrete regression.
 
-### Step 3 — Fix `mcp/handlers.test.ts` errors
+### Step 3 — Remove stale task/spec guidance
 
-**File:** `mcp/handlers.test.ts`
+**Files:** this task file and any nearby docs/specs that still describe the gate as missing
 
-Apply same approach: explicit type annotations on `let` declarations, type-narrow mock objects to match `Task`, `Agent`, `Claim` interfaces from `types/`.
+Delete references to:
+- `HANDOFF.md`
+- unresolved "310 errors"
+- specific stale hotspot claims unless they are reproduced on current `main`
 
-### Step 4 — Fix remaining test-fixture errors
+### Step 4 — Add regression coverage only if needed
 
-**Files:** `test-fixtures/**/*.ts`
-
-Any remaining errors in fixtures — apply minimal type annotations.
-
-### Step 5 — Confirm `pretest` enforces test tsconfig
-
-**File:** `package.json`
-
-Confirm `pretest` includes:
-```json
-"pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint ."
-```
-(Already present — verify, do not change if correct.)
+If the verification work uncovers an actual enforcement gap, add the smallest possible test or config assertion to prevent that regression from silently returning.
 
 ---
 
@@ -114,15 +103,15 @@ Confirm `pretest` includes:
 - [ ] `npx tsc --project tsconfig.test.json --noEmit` exits 0 with no output.
 - [ ] `npx tsc --project tsconfig.check.json --noEmit` still exits 0 (no regression).
 - [ ] `npm test` exits 0 including the pretest phase.
-- [ ] All 717 existing tests still pass (no test logic changed).
-- [ ] No production source files modified (or if modified, only to export a type, not change logic).
+- [ ] Updated task/docs text no longer references `HANDOFF.md` or unresolved bulk test-type errors unless reproduced on current `main`.
+- [ ] No production runtime logic changes are made unless a real regression is discovered during verification.
 - [ ] No changes to files outside the stated scope.
 
 ---
 
 ## Tests
 
-No new tests. This task restores type correctness without changing test logic.
+No new tests are required if the current gate is already intact. Add regression coverage only if the verification work exposes a real gap.
 
 Verify by running:
 ```bash
