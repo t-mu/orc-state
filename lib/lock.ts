@@ -38,7 +38,11 @@ export function acquireLock(lockPath: string): void {
   const lockFlags = constants.O_EXCL | constants.O_WRONLY | constants.O_CREAT;
   const token = createLockToken();
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt > 0) {
+      // Brief spin-wait between retries so a momentary lock holder can release.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * attempt);
+    }
     try {
       const fd = openSync(lockPath, lockFlags);
       try {
