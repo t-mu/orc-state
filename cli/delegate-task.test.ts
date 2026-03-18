@@ -25,7 +25,7 @@ describe('cli/delegate-task.ts', () => {
       '--note=please execute',
     ]);
     expect(result.status).toBe(0);
-    const task = readBacklog().epics[0].tasks[0];
+    const task = readBacklog().features[0].tasks[0];
     expect(task.owner).toBe('worker-01');
     expect(task.planning_state).toBe('ready_for_dispatch');
     expect(task.delegated_by).toBe('human');
@@ -44,7 +44,7 @@ describe('cli/delegate-task.ts', () => {
       '--actor-id=worker-01',
     ]);
     expect(result.status).toBe(0);
-    const task = readBacklog().epics[0].tasks[0];
+    const task = readBacklog().features[0].tasks[0];
     expect(task.delegated_by).toBe('worker-01');
     const event = readEvents().find((e) => e.event === 'task_delegated');
     expect(event?.actor_type).toBe('agent');
@@ -57,7 +57,7 @@ describe('cli/delegate-task.ts', () => {
       '--task-type=refactor',
     ]);
     expect(result.status).toBe(0);
-    const task = readBacklog().epics[0].tasks[0];
+    const task = readBacklog().features[0].tasks[0];
     expect(task.owner).toBe('worker-01');
   });
 
@@ -89,7 +89,7 @@ describe('cli/delegate-task.ts', () => {
     ]);
     expect(result.status).toBe(0);
 
-    const delegated = readBacklog().epics[0].tasks[0];
+    const delegated = readBacklog().features[0].tasks[0];
     expect(delegated.owner).toBe('worker-01');
 
     // Mark worker busy, then delegate again without target.
@@ -105,7 +105,7 @@ describe('cli/delegate-task.ts', () => {
       }],
     }));
     const backlog = readBacklog();
-    backlog.epics[0].tasks.push({ ref: 'docs/task-2', title: 'Task 2', status: 'todo', planning_state: 'ready_for_dispatch' });
+    backlog.features[0].tasks.push({ ref: 'docs/task-2', title: 'Task 2', status: 'todo', planning_state: 'ready_for_dispatch' });
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog));
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
@@ -128,7 +128,7 @@ describe('cli/delegate-task.ts', () => {
 
   it('clears stale owner when no eligible auto-target is found', () => {
     const backlog = readBacklog();
-    backlog.epics[0].tasks.push({
+    backlog.features[0].tasks.push({
       ref: 'docs/task-stale-owner',
       title: 'Stale owner task',
       status: 'todo',
@@ -160,7 +160,7 @@ describe('cli/delegate-task.ts', () => {
     ]);
     expect(result.status).toBe(0);
 
-    const task = readBacklog().epics[0].tasks.find((entry: Record<string, unknown>) => entry.ref === 'docs/task-stale-owner');
+    const task = readBacklog().features[0].tasks.find((entry: Record<string, unknown>) => entry.ref === 'docs/task-stale-owner');
     expect(task.owner).toBeUndefined();
   });
 });
@@ -176,7 +176,7 @@ function runCli(args: string[]) {
 function seedState() {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{
+    features: [{
       ref: 'docs',
       title: 'Docs',
       tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo', planning_state: 'ready_for_dispatch' }],

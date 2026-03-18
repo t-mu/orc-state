@@ -13,7 +13,7 @@ beforeEach(() => {
   stateDir = mkdtempSync(resolve(tmpdir(), 'orc-mcp-server-test-'));
   writeFileSync(joinPath('backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'project', title: 'Project', tasks: [] }],
+    features: [{ ref: 'project', title: 'Project', tasks: [] }],
   }));
   writeFileSync(joinPath('agents.json'), JSON.stringify({
     version: '1',
@@ -70,19 +70,19 @@ describe('orchestrator mcp server foundation', () => {
   });
 
   it('validates tool arguments against declared input schemas', () => {
-    expect(validateToolArguments('create_task', { epic: 'project', title: 'Valid title' }).ok).toBe(true);
-    expect(validateToolArguments('create_task', { epic: 'project', title: 'Valid title', priority: 'high' }).ok).toBe(true);
+    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title' }).ok).toBe(true);
+    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', priority: 'high' }).ok).toBe(true);
     expect(validateToolArguments('create_task', { title: 'Valid title' }).ok).toBe(true);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', title: 'Updated title' }).ok).toBe(true);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', priority: 'critical' }).ok).toBe(true);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', owner: 'orc-1' }).ok).toBe(false);
-    expect(validateToolArguments('create_task', { epic: 'project', title: 'Bad', priority: 'urgent' }).ok).toBe(false);
+    expect(validateToolArguments('create_task', { feature: 'project', title: 'Bad', priority: 'urgent' }).ok).toBe(false);
     expect(validateToolArguments('list_agents', { include_dead: true }).ok).toBe(true);
     expect(validateToolArguments('get_status', { include_done_count: true }).ok).toBe(true);
     expect(validateToolArguments('get_agent_workview', { agent_id: 'master' }).ok).toBe(true);
     expect(validateToolArguments('cancel_task', { task_ref: 'project/task-1' }).ok).toBe(true);
     expect(validateToolArguments('respond_input', { run_id: 'run-1', agent_id: 'orc-1', response: 'yes' }).ok).toBe(true);
-    expect(validateToolArguments('create_task', { epic: 'project' }).ok).toBe(false);
+    expect(validateToolArguments('create_task', { feature: 'project' }).ok).toBe(false);
     expect(validateToolArguments('list_tasks', { extra: true }).ok).toBe(false);
   });
 });

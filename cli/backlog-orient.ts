@@ -5,7 +5,7 @@
  *
  * Prints everything an agent needs before creating backlog tasks:
  *   - next available task number
- *   - list of epics with task counts
+ *   - list of features with task counts
  *   - backlog docs directory path
  *
  * Output is plain text, machine-parseable line by line.
@@ -25,12 +25,12 @@ if (!existsSync(backlogPath)) {
 }
 
 const backlog = JSON.parse(readFileSync(backlogPath, 'utf8')) as {
-  epics?: Array<{ ref: string; title: string; tasks: Array<{ ref: string; status: string }> }>;
+  features?: Array<{ ref: string; title: string; tasks: Array<{ ref: string; status: string }> }>;
   next_task_seq?: number;
 };
 
-const epics = backlog.epics ?? [];
-const allTasks = epics.flatMap((e) => e.tasks ?? []);
+const features = backlog.features ?? [];
+const allTasks = features.flatMap((e) => e.tasks ?? []);
 
 // next_task_seq: use stored value, or derive from max seq number in refs, or default to 1
 let nextSeq: number = backlog.next_task_seq ?? 1;
@@ -45,33 +45,33 @@ if (!existsSync(BACKLOG_DOCS_DIR)) {
 }
 
 if (asJson) {
-  const epicData = epics.map((epic) => {
-    const tasks = epic.tasks ?? [];
+  const featureData = features.map((feature) => {
+    const tasks = feature.tasks ?? [];
     const todo = tasks.filter((t) => t.status === 'todo').length;
     const done = tasks.filter((t) => t.status === 'done' || t.status === 'released').length;
     const active = tasks.filter((t) => t.status === 'claimed' || t.status === 'in_progress').length;
     return {
-      ref: epic.ref,
-      title: epic.title,
+      ref: feature.ref,
+      title: feature.title,
       task_counts: { total: tasks.length, todo, active, done },
     };
   });
   console.log(JSON.stringify({
     next_task_seq: nextSeq,
     backlog_docs_dir: BACKLOG_DOCS_DIR,
-    epics: epicData,
+    features: featureData,
   }, null, 2));
   process.exit(0);
 }
 
 console.log(`next_task_seq: ${nextSeq}`);
 console.log(`backlog_docs_dir: ${BACKLOG_DOCS_DIR}`);
-console.log(`epics (${epics.length}):`);
+console.log(`features (${features.length}):`);
 
-for (const epic of epics) {
-  const tasks = epic.tasks ?? [];
+for (const feature of features) {
+  const tasks = feature.tasks ?? [];
   const todo = tasks.filter((t) => t.status === 'todo').length;
   const done = tasks.filter((t) => t.status === 'done' || t.status === 'released').length;
   const active = tasks.filter((t) => t.status === 'claimed' || t.status === 'in_progress').length;
-  console.log(`  ${epic.ref} — ${epic.title} (${tasks.length} tasks: ${todo} todo, ${active} active, ${done} done)`);
+  console.log(`  ${feature.ref} — ${feature.title} (${tasks.length} tasks: ${todo} todo, ${active} active, ${done} done)`);
 }

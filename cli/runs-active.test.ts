@@ -67,7 +67,7 @@ function runCli(args: string[]) {
 function seedState({ claims = [] as unknown[], eventsRaw = '' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }] }],
+    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }] }],
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',

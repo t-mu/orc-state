@@ -179,7 +179,7 @@ orc run-input-respond --run-id=<id> --agent-id=<id> \
 ### State files (never write directly)
 | File | Contents |
 |------|----------|
-| `.orc-state/backlog.json` | Backlog epics and tasks |
+| `.orc-state/backlog.json` | Backlog features and tasks |
 | `.orc-state/agents.json` | Registered agents |
 | `.orc-state/claims.json` | Active and recent claims |
 | `.orc-state/events.jsonl` | Append-only event log (NDJSON) |

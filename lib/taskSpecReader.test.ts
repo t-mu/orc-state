@@ -47,7 +47,7 @@ describe('readTaskSpecSections', () => {
     mkdirSync(docsDir, { recursive: true });
     writeFileSync(join(docsDir, '142-sample.md'), `---
 ref: orch/task-142-sample
-epic: orch
+feature: orch
 ---
 
 ### Current state
@@ -86,7 +86,7 @@ ref: orch/task-142-sample
 `);
     writeFileSync(join(docsDir, 'right.md'), `---
 ref: orch/task-142-sample
-epic: orch
+feature: orch
 ---
 
 ### Current state

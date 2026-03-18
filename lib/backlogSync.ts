@@ -18,7 +18,7 @@ function humanizeSlug(slug: string): string {
 
 interface SpecFrontmatter {
   ref: string | null;
-  epic: string | null;
+  feature: string | null;
   status: string | null;
 }
 
@@ -26,7 +26,7 @@ function parseSpecFrontmatter(text: string): SpecFrontmatter {
   const block = text.match(/^---\s*\n([\s\S]*?)\n---(?:\n|$)/)?.[1] ?? '';
   return {
     ref: block.match(/^ref:\s+(.+)$/m)?.[1]?.trim() ?? null,
-    epic: block.match(/^epic:\s+(.+)$/m)?.[1]?.trim() ?? null,
+    feature: (block.match(/^feature:\s+(.+)$/m)?.[1] ?? block.match(/^epic:\s+(.+)$/m)?.[1])?.trim() ?? null,
     status: block.match(/^status:\s+(.+)$/m)?.[1]?.trim() ?? null,
   };
 }
@@ -39,7 +39,7 @@ function parseSpecTitle(text: string, ref: string | null): string {
 
 interface SpecEntry {
   ref: string;
-  epic: string;
+  feature: string;
   status: string;
   title: string;
 }
@@ -50,53 +50,53 @@ function readSpecs(docsDir: string): SpecEntry[] {
     .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
     .flatMap((name) => {
       const text = readFileSync(join(docsDir, name), 'utf8');
-      const { ref, epic, status } = parseSpecFrontmatter(text);
-      if (!ref || !epic || !status || !VALID_SPEC_STATUSES.has(status)) return [];
+      const { ref, feature, status } = parseSpecFrontmatter(text);
+      if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return [];
       return [{
         ref,
-        epic,
+        feature,
         status,
         title: parseSpecTitle(text, ref),
       }];
     });
 }
 
-function findTaskEntry(backlog: Backlog, taskRef: string): { epic: Feature; task: Task } | null {
-  for (const epic of (backlog.epics ?? [])) {
-    const task = (epic.tasks ?? []).find((entry) => entry.ref === taskRef);
-    if (task) return { epic, task };
+function findTaskEntry(backlog: Backlog, taskRef: string): { feature: Feature; task: Task } | null {
+  for (const feature of (backlog.features ?? [])) {
+    const task = (feature.tasks ?? []).find((entry) => entry.ref === taskRef);
+    if (task) return { feature, task };
   }
   return null;
 }
 
-function removeTaskFromEpic(epic: Feature, taskRef: string): void {
-  epic.tasks = (epic.tasks ?? []).filter((entry) => entry.ref !== taskRef);
+function removeTaskFromFeature(feature: Feature, taskRef: string): void {
+  feature.tasks = (feature.tasks ?? []).filter((entry) => entry.ref !== taskRef);
 }
 
-function ensureEpic(backlog: Backlog, epicRef: string): { epic: Feature; created: boolean } {
-  let epic = (backlog.epics ?? []).find((entry) => entry.ref === epicRef) ?? null;
-  if (epic) return { epic, created: false };
+function ensureFeature(backlog: Backlog, featureRef: string): { feature: Feature; created: boolean } {
+  let feature = (backlog.features ?? []).find((entry) => entry.ref === featureRef) ?? null;
+  if (feature) return { feature, created: false };
 
-  epic = {
-    ref: epicRef,
-    title: humanizeSlug(epicRef),
+  feature = {
+    ref: featureRef,
+    title: humanizeSlug(featureRef),
     tasks: [],
   };
-  backlog.epics = [...(backlog.epics ?? []), epic];
-  return { epic, created: true };
+  backlog.features = [...(backlog.features ?? []), feature];
+  return { feature, created: true };
 }
 
 export interface SyncResult {
   updated: boolean;
   added_tasks: number;
   updated_tasks: number;
-  added_epics: number;
+  added_features: number;
 }
 
 export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncResult {
   const specs = readSpecs(docsDir);
   if (specs.length === 0) {
-    return { updated: false, added_tasks: 0, updated_tasks: 0, added_epics: 0 };
+    return { updated: false, added_tasks: 0, updated_tasks: 0, added_features: 0 };
   }
 
   const backlogPath = join(stateDir, 'backlog.json');
@@ -106,19 +106,19 @@ export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncRes
     let changed = false;
     let addedTasks = 0;
     let updatedTasks = 0;
-    let addedEpics = 0;
+    let addedFeatures = 0;
 
     for (const spec of specs) {
-      const ensured = ensureEpic(backlog, spec.epic);
+      const ensured = ensureFeature(backlog, spec.feature);
       if (ensured.created) {
         changed = true;
-        addedEpics += 1;
+        addedFeatures += 1;
       }
 
       const existingEntry = findTaskEntry(backlog, spec.ref);
       if (!existingEntry) {
-        ensured.epic.tasks = [
-          ...(ensured.epic.tasks ?? []),
+        ensured.feature.tasks = [
+          ...(ensured.feature.tasks ?? []),
           {
             ref: spec.ref,
             title: spec.title,
@@ -131,9 +131,9 @@ export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncRes
         continue;
       }
 
-      if (existingEntry.epic.ref !== spec.epic && !ACTIVE_STATUSES.has(existingEntry.task.status)) {
-        removeTaskFromEpic(existingEntry.epic, spec.ref);
-        ensured.epic.tasks = [...(ensured.epic.tasks ?? []), existingEntry.task];
+      if (existingEntry.feature.ref !== spec.feature && !ACTIVE_STATUSES.has(existingEntry.task.status)) {
+        removeTaskFromFeature(existingEntry.feature, spec.ref);
+        ensured.feature.tasks = [...(ensured.feature.tasks ?? []), existingEntry.task];
         changed = true;
       }
 
@@ -153,7 +153,7 @@ export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncRes
       updated: changed,
       added_tasks: addedTasks,
       updated_tasks: updatedTasks,
-      added_epics: addedEpics,
+      added_features: addedFeatures,
     };
   });
 }

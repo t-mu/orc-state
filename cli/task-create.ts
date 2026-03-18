@@ -3,7 +3,7 @@
  * cli/task-create.ts
  * Usage:
  *   node cli/task-create.ts \
- *     --epic=<ref> --title=<text> \
+ *     --feature=<ref> --title=<text> \
  *     [--ref=<slug>] \
  *     [--task-type=<implementation|refactor>] \
  *     [--description=<text>] \
@@ -25,13 +25,13 @@ import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
 import type { Task } from '../types/backlog.ts';
 
-const epicRef = flag('epic');
+const featureRef = flag('feature');
 const title = flag('title');
 const taskType = flag('task-type') ?? 'implementation';
 const actorId = flag('actor-id') ?? 'human';
 
-if (!epicRef || !title) {
-  console.error('Usage: orc-task-create --epic=<ref> --title=<text> [options]');
+if (!featureRef || !title) {
+  console.error('Usage: orc-task-create --feature=<ref> --title=<text> [options]');
   process.exit(1);
 }
 
@@ -51,7 +51,7 @@ function slugify(text: string) {
 
 const now = new Date().toISOString();
 const taskSlug = flag('ref') ?? slugify(title);
-const taskRef = `${epicRef}/${taskSlug}`;
+const taskRef = `${featureRef}/${taskSlug}`;
 
 if (!taskSlug) {
   console.error('Task slug is empty — title must contain at least one alphanumeric character (or provide --ref=<slug>).');
@@ -59,7 +59,7 @@ if (!taskSlug) {
 }
 
 if (!TASK_REF_RE.test(taskRef)) {
-  console.error(`Invalid task ref: ${taskRef}. Both epic and slug must match [a-z0-9-]+.`);
+  console.error(`Invalid task ref: ${taskRef}. Both feature and slug must match [a-z0-9-]+.`);
   process.exit(1);
 }
 
@@ -110,19 +110,19 @@ try {
     const backlogPath = join(STATE_DIR, 'backlog.json');
     const backlog = readBacklog(STATE_DIR);
 
-    const epic = backlog.epics.find((e) => e.ref === epicRef);
-    if (!epic) {
-      throw new Error(`Epic not found: ${epicRef}`);
+    const feature = backlog.features.find((e) => e.ref === featureRef);
+    if (!feature) {
+      throw new Error(`Feature not found: ${featureRef}`);
     }
 
-    const existing = epic.tasks.find((t) => t.ref === taskRef);
+    const existing = feature.tasks.find((t) => t.ref === taskRef);
     if (existing) {
       throw new Error(`Task already exists: ${taskRef}`);
     }
 
     // Validate all depends_on refs exist in the backlog.
     if ((newTask.depends_on ?? []).length > 0) {
-      const allRefs = new Set(backlog.epics.flatMap((e) => e.tasks.map((t) => t.ref)));
+      const allRefs = new Set(backlog.features.flatMap((e) => e.tasks.map((t) => t.ref)));
       for (const dep of newTask.depends_on ?? []) {
         if (!allRefs.has(dep)) {
           throw new Error(`--depends-on task_ref not found in backlog: ${dep}`);
@@ -130,7 +130,7 @@ try {
       }
     }
 
-    epic.tasks = [...epic.tasks, newTask];
+    feature.tasks = [...feature.tasks, newTask];
     atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(
@@ -141,7 +141,7 @@ try {
         actor_type: actorId === 'human' ? 'human' : 'agent',
         actor_id: actorId,
         task_ref: taskRef,
-        payload: { title, task_type: taskType, epic_ref: epicRef },
+        payload: { title, task_type: taskType, feature_ref: featureRef },
       },
       { lockAlreadyHeld: true },
     );

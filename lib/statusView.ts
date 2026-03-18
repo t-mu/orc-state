@@ -25,8 +25,8 @@ interface TaskCounts {
 
 function buildTaskCounts(backlogFile: Backlog): TaskCounts {
   const taskStatuses: Record<string, string> = {};
-  for (const epic of (backlogFile.epics ?? [])) {
-    for (const task of (epic.tasks ?? [])) {
+  for (const feature of (backlogFile.features ?? [])) {
+    for (const task of (feature.tasks ?? [])) {
       if (task?.ref) taskStatuses[task.ref] = task.status;
     }
   }
@@ -45,7 +45,7 @@ function buildTaskCounts(backlogFile: Backlog): TaskCounts {
 export interface DispatchReadyTask {
   ref: string;
   title: string;
-  epic_ref: string;
+  feature_ref: string;
   priority: string;
 }
 
@@ -53,16 +53,16 @@ export function listDispatchReadyTasks(backlogFile: Backlog): DispatchReadyTask[
   const doneSet = new Set<string>();
   const ready: DispatchReadyTask[] = [];
 
-  for (const epic of (backlogFile.epics ?? [])) {
-    for (const task of (epic.tasks ?? [])) {
+  for (const feature of (backlogFile.features ?? [])) {
+    for (const task of (feature.tasks ?? [])) {
       if (task.status === 'done' || task.status === 'released') {
         doneSet.add(task.ref);
       }
     }
   }
 
-  for (const epic of (backlogFile.epics ?? [])) {
-    for (const task of (epic.tasks ?? [])) {
+  for (const feature of (backlogFile.features ?? [])) {
+    for (const task of (feature.tasks ?? [])) {
       if (task.status !== 'todo') continue;
       if (task.planning_state && task.planning_state !== 'ready_for_dispatch') continue;
       const deps = task.depends_on ?? [];
@@ -70,7 +70,7 @@ export function listDispatchReadyTasks(backlogFile: Backlog): DispatchReadyTask[
       ready.push({
         ref: task.ref,
         title: task.title,
-        epic_ref: epic.ref,
+        feature_ref: feature.ref,
         priority: task.priority ?? 'normal',
       });
     }
@@ -305,8 +305,8 @@ export function buildAgentStatus(stateDir: string, agentId: string): Record<stri
   const claimedTaskRefs = new Set(activeClaims.map((claim) => claim.task_ref));
   const queuedTasks: unknown[] = [];
 
-  for (const epic of backlogFile.epics ?? []) {
-    for (const task of epic.tasks ?? []) {
+  for (const feature of backlogFile.features ?? []) {
+    for (const task of feature.tasks ?? []) {
       if (task.owner !== agentId) continue;
       if (task.status === 'done' || task.status === 'released') continue;
       if (claimedTaskRefs.has(task.ref)) continue;
@@ -314,7 +314,7 @@ export function buildAgentStatus(stateDir: string, agentId: string): Record<stri
         ref: task.ref,
         title: task.title,
         status: task.status,
-        epic_ref: epic.ref,
+        feature_ref: feature.ref,
         task_type: task.task_type ?? 'implementation',
         planning_state: task.planning_state ?? 'ready_for_dispatch',
       });

@@ -8,7 +8,7 @@ function readClaims(stateDir: string): { claims: Array<Record<string, unknown>> 
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8'));
 }
 
-function readBacklog(stateDir: string): { epics: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
+function readBacklog(stateDir: string): { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
   return JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'));
 }
 function readAgents(stateDir: string): { agents: Array<Record<string, unknown>> } {
@@ -46,7 +46,7 @@ function makeTmuxMockAdapter(agentId = 'worker-01') {
 function seedState(stateDir: string) {
   writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [
+    features: [
       {
         ref: 'docs',
         title: 'Docs',
@@ -89,7 +89,7 @@ function seedState(stateDir: string) {
 function seedManagedPoolState(stateDir: string, tasks: unknown[]) {
   writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [
+    features: [
       {
         ref: 'docs',
         title: 'Docs',
@@ -185,7 +185,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   it('finalizes a work-complete run through the coordinator merge path', async () => {
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
       version: '1',
-      epics: [
+      features: [
         {
           ref: 'docs',
           title: 'Docs',
@@ -270,7 +270,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(send).toHaveBeenCalledWith('pty:worker-01', expect.stringContaining('FINALIZE_SUCCESS'));
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-e2e');
     expect(readClaims(dir).claims.find((entry) => entry.run_id === 'run-finalize-e2e')?.state).toBe('done');
-    expect(readBacklog(dir).epics[0].tasks.find((entry) => entry.ref === 'docs/task-1')?.status).toBe('done');
+    expect(readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'docs/task-1')?.status).toBe('done');
   });
 
   it('transitions claim state to done and task status to done after agent calls run_finish', async () => {
@@ -286,7 +286,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(claim.state).toBe('done');
 
     const backlog = readBacklog(dir);
-    const task = backlog.epics[0].tasks.find((t) => t.ref === 'docs/task-1')!;
+    const task = backlog.features[0].tasks.find((t) => t.ref === 'docs/task-1')!;
     expect(task.status).toBe('done');
   });
 
@@ -303,7 +303,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     // Seed a second task so the second tick also has work to consider.
     const backlogPath = join(dir, 'backlog.json');
     const backlog = readBacklog(dir);
-    backlog.epics[0].tasks.push({
+    backlog.features[0].tasks.push({
       ref: 'docs/task-2',
       title: 'Task 2',
       status: 'todo',
@@ -354,7 +354,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     // Task should be back to 'todo' (requeued).
     const backlog = readBacklog(dir);
-    const task = backlog.epics[0].tasks.find((t) => t.ref === 'docs/task-1')!;
+    const task = backlog.features[0].tasks.find((t) => t.ref === 'docs/task-1')!;
     expect(task.status).toBe('todo');
   });
 
@@ -401,7 +401,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   it('does not bring a late-registered worker online before any task is assigned', async () => {
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
       version: '1',
-      epics: [{ ref: 'docs', title: 'Docs', tasks: [] }],
+      features: [{ ref: 'docs', title: 'Docs', tasks: [] }],
     }));
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
@@ -451,7 +451,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   it('dispatches multiple tasks concurrently with bounded batch runner', async () => {
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
       version: '1',
-      epics: [
+      features: [
         {
           ref: 'docs',
           title: 'Docs',
@@ -597,7 +597,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(claim).toBeDefined();
     expect(claim.state).not.toBe('released');
 
-    const task = readBacklog(dir).epics[0].tasks.find((t) => t.ref === 'docs/task-1')!;
+    const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'docs/task-1')!;
     expect(task).toBeDefined();
     expect(task.status).not.toBe('todo');
 
@@ -642,8 +642,8 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(startedRuns).toHaveLength(1);
 
     let backlog = readBacklog(dir);
-    expect(backlog.epics[0].tasks.find((task) => task.ref === 'docs/task-1')?.status).toBe('in_progress');
-    expect(backlog.epics[0].tasks.find((task) => task.ref === 'docs/task-2')?.status).toBe('todo');
+    expect(backlog.features[0].tasks.find((task) => task.ref === 'docs/task-1')?.status).toBe('in_progress');
+    expect(backlog.features[0].tasks.find((task) => task.ref === 'docs/task-2')?.status).toBe('todo');
 
     const agentsAfterFirstTick = readAgents(dir).agents;
     expect(agentsAfterFirstTick.map((agent) => agent.agent_id)).toEqual(['master', 'orc-1']);
@@ -655,8 +655,8 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(adapter.send).toHaveBeenCalledTimes(2);
 
     backlog = readBacklog(dir);
-    expect(backlog.epics[0].tasks.find((task) => task.ref === 'docs/task-1')?.status).toBe('done');
-    expect(backlog.epics[0].tasks.find((task) => task.ref === 'docs/task-2')?.status).toBe('in_progress');
+    expect(backlog.features[0].tasks.find((task) => task.ref === 'docs/task-1')?.status).toBe('done');
+    expect(backlog.features[0].tasks.find((task) => task.ref === 'docs/task-2')?.status).toBe('in_progress');
     expect(readClaims(dir).claims.filter((claim) => claim.state === 'in_progress')).toHaveLength(1);
     expect(readClaims(dir).claims.some((claim) => claim.task_ref === 'docs/task-2')).toBe(true);
   });
@@ -693,7 +693,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     await coordinator.tick();
 
     let backlog = readBacklog(dir);
-    expect(backlog.epics[0].tasks[0].status).toBe('todo');
+    expect(backlog.features[0].tasks[0].status).toBe('todo');
     let claims = readClaims(dir).claims;
     expect(claims[0]?.state).toBe('failed');
 
@@ -701,7 +701,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     backlog = readBacklog(dir);
     claims = readClaims(dir).claims;
-    expect(backlog.epics[0].tasks[0].status).toBe('done');
+    expect(backlog.features[0].tasks[0].status).toBe('done');
     expect(claims.some((claim) => claim.state === 'done')).toBe(true);
 
     const events = readEvents(dir);

@@ -38,16 +38,16 @@ describe('cli/init.ts', () => {
     const result = run();
     expect(result.status).toBe(0);
     const backlog = JSON.parse(readFileSync(join(dir, 'state', 'backlog.json'), 'utf8'));
-    expect(backlog.epics).toHaveLength(1);
-    expect(backlog.epics[0].ref).toBe('project');
+    expect(backlog.features).toHaveLength(1);
+    expect(backlog.features[0].ref).toBe('project');
   });
 
   it('creates custom epic ref and title', () => {
-    const result = run(['--epic=my-app', '--epic-title=My App']);
+    const result = run(['--feature=my-app', '--feature-title=My App']);
     expect(result.status).toBe(0);
     const backlog = JSON.parse(readFileSync(join(dir, 'state', 'backlog.json'), 'utf8'));
-    expect(backlog.epics[0].ref).toBe('my-app');
-    expect(backlog.epics[0].title).toBe('My App');
+    expect(backlog.features[0].ref).toBe('my-app');
+    expect(backlog.features[0].title).toBe('My App');
   });
 
   it('fails without --force when files already exist', () => {

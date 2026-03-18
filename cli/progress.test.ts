@@ -48,7 +48,7 @@ describe('cli/progress.ts', () => {
     expect(result.status).toBe(0);
     const claims = readClaims();
     expect(claims.claims[0].state).toBe('done');
-    expect(readBacklog().epics[0].tasks[0].status).toBe('done');
+    expect(readBacklog().features[0].tasks[0].status).toBe('done');
   });
 
   it('accepts work_complete as a non-terminal in_progress event', () => {
@@ -84,7 +84,7 @@ function runProgress(args: string[]) {
 function seedState(stateDir: string) {
   writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed', depends_on: [], acceptance_criteria: ['a', 'b', 'c'] }] }],
+    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed', depends_on: [], acceptance_criteria: ['a', 'b', 'c'] }] }],
   }));
   writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({
     version: '1',
