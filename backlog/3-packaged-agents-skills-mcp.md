@@ -2,7 +2,7 @@
 ref: general/3-packaged-agents-skills-mcp
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 3 — Ship Agents, Skills, and MCP as First-Class Package Artifacts
