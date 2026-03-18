@@ -2,7 +2,7 @@
 /**
  * cli/delegate-task.ts
  * Usage:
- *   node cli/delegate-task.ts --task-ref=<epic/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]
+ *   node cli/delegate-task.ts --task-ref=<feature/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]
  */
 import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
@@ -26,7 +26,7 @@ const actorId = flag('actor-id') ?? 'human';
 const actorType = actorId === 'human' ? 'human' : 'agent';
 
 if (!taskRef) {
-  console.error('Usage: orc-delegate --task-ref=<epic/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]');
+  console.error('Usage: orc-delegate --task-ref=<feature/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]');
   process.exit(1);
 }
 
@@ -58,12 +58,12 @@ try {
     const backlog = readBacklog(STATE_DIR);
     const claims = readClaims(STATE_DIR).claims ?? [];
     let task: Task | null = null;
-    let epicRef: string | null = null;
-    for (const epic of backlog.epics ?? []) {
-      for (const candidate of epic.tasks ?? []) {
+    let featureRef: string | null = null;
+    for (const feature of backlog.features ?? []) {
+      for (const candidate of feature.tasks ?? []) {
         if (candidate.ref === taskRef) {
           task = candidate;
-          epicRef = epic.ref;
+          featureRef = feature.ref;
           break;
         }
       }
@@ -118,7 +118,7 @@ try {
           target_agent_id: assignedTarget ?? null,
           task_type: taskType,
           note,
-          epic_ref: epicRef,
+          feature_ref: featureRef,
           auto_assigned: !targetAgentId,
         },
       },

@@ -8,7 +8,7 @@ let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orch-deregister-cli-test-'));
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', epics: [] }));
+  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
   writeFileSync(join(dir, 'events.jsonl'), '');
 });
 

@@ -2,7 +2,7 @@ TASK_START v4
 task_ref: {{task_ref}}
 run_id: {{run_id}}
 title: {{title}}
-epic: {{epic}}
+feature: {{feature}}
 description: {{description}}
 
 Report progress using your Bash tool — call these orc commands directly:

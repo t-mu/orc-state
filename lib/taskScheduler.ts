@@ -29,16 +29,16 @@ export function nextEligibleTaskFromBacklog(
     : (agentOrId ?? { agent_id: '', provider: 'codex', role: 'worker', capabilities: [], status: 'idle', registered_at: '' });
   const doneSet = new Set<string>();
 
-  for (const epic of (b?.epics ?? [])) {
-    for (const task of (epic.tasks ?? [])) {
+  for (const feature of (b?.features ?? [])) {
+    for (const task of (feature.tasks ?? [])) {
       if (task.status === 'done' || task.status === 'released') doneSet.add(task.ref);
     }
   }
 
   const eligible: Array<{ ref: string; rank: number; index: number }> = [];
   let index = 0;
-  for (const epic of (b?.epics ?? [])) {
-    for (const task of (epic.tasks ?? [])) {
+  for (const feature of (b?.features ?? [])) {
+    for (const task of (feature.tasks ?? [])) {
       if (task.status !== 'todo') continue;
       if (task.planning_state && task.planning_state !== 'ready_for_dispatch') continue;
       if (task.owner && agentId && task.owner !== agentId) continue;

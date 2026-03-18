@@ -11,7 +11,13 @@ export function readJson(stateDir: string, file: string): unknown {
 }
 
 export function readBacklog(stateDir: string): Backlog {
-  return readJson(stateDir, 'backlog.json') as Backlog;
+  const raw = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
+  // Backward compat: JSON written before the epics→features rename.
+  if (!raw.features && Array.isArray(raw.epics)) {
+    raw.features = raw.epics;
+    delete raw.epics;
+  }
+  return raw as unknown as Backlog;
 }
 
 export function readAgents(stateDir: string): AgentsState {
@@ -32,8 +38,8 @@ export function readClaims(stateDir: string): ClaimsState {
 
 export function findTask(backlog: unknown, taskRef: string): Task | null {
   const b = backlog as Backlog | null;
-  for (const epic of (b?.epics ?? [])) {
-    const task = (epic).tasks?.find((t: Task) => t.ref === taskRef);
+  for (const feature of (b?.features ?? [])) {
+    const task = feature.tasks?.find((t: Task) => t.ref === taskRef);
     if (task) return task;
   }
   return null;
@@ -46,8 +52,8 @@ export function getNextTaskSeq(backlog: unknown): number {
   }
 
   let max = 0;
-  for (const epic of (b?.epics ?? [])) {
-    for (const task of (epic)?.tasks ?? []) {
+  for (const feature of (b?.features ?? [])) {
+    for (const task of feature?.tasks ?? []) {
       const match = typeof task?.ref === 'string'
         ? task.ref.match(TASK_SEQ_RE)
         : null;

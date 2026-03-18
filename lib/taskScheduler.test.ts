@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function backlog(tasks: unknown[]) {
-  return { version: '1', epics: [{ ref: 'docs', title: 'Docs', tasks }] };
+  return { version: '1', features: [{ ref: 'docs', title: 'Docs', tasks }] };
 }
 
 describe('nextEligibleTaskFromBacklog', () => {

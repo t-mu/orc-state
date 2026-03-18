@@ -11,16 +11,16 @@ import { readBacklog } from '../lib/stateReader.ts';
 const asJson = process.argv.includes('--json');
 
 const backlog = readBacklog(STATE_DIR);
-const blocked: Array<{ ref: string; title: string; blocked_reason: string | null; epic_ref: string }> = [];
+const blocked: Array<{ ref: string; title: string; blocked_reason: string | null; feature_ref: string }> = [];
 
-for (const epic of backlog.epics ?? []) {
-  for (const task of epic.tasks ?? []) {
+for (const feature of backlog.features ?? []) {
+  for (const task of feature.tasks ?? []) {
     if (task.status === 'blocked') {
       blocked.push({
         ref: task.ref,
         title: task.title,
         blocked_reason: task.blocked_reason ?? null,
-        epic_ref: epic.ref,
+        feature_ref: feature.ref,
       });
     }
   }

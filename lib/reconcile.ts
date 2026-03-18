@@ -19,8 +19,8 @@ export function reconcileState(stateDir: string): void {
     let backlogModified = false;
 
     const knownTaskRefs = new Set<string>();
-    for (const epic of backlog.epics ?? []) {
-      for (const task of epic.tasks ?? []) {
+    for (const feature of backlog.features ?? []) {
+      for (const task of feature.tasks ?? []) {
         if (task.ref) knownTaskRefs.add(task.ref);
       }
     }
@@ -57,8 +57,8 @@ export function reconcileState(stateDir: string): void {
       }
     }
 
-    for (const epic of backlog.epics ?? []) {
-      for (const task of epic.tasks ?? []) {
+    for (const feature of backlog.features ?? []) {
+      for (const task of feature.tasks ?? []) {
         const taskRef = task.ref;
         if (!taskRef) continue;
 

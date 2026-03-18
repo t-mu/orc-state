@@ -1,6 +1,6 @@
 ---
-ref: <epic>/<slug>
-epic: <epic-ref>
+ref: <feature>/<slug>
+feature: <feature-ref>
 priority: normal
 status: todo
 ---

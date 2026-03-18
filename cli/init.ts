@@ -2,7 +2,7 @@
 /**
  * cli/init.ts
  * Usage:
- *   node cli/init.ts [--epic=<ref>] [--epic-title=<title>] [--force]
+ *   node cli/init.ts [--feature=<ref>] [--feature-title=<title>] [--force]
  */
 import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,8 +12,8 @@ import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
 
 const force = process.argv.includes('--force') || (flag('force') ?? '') === 'true';
-const epicRef = flag('epic') ?? 'project';
-const epicTitle = flag('epic-title') ?? 'Project';
+const featureRef = flag('feature') ?? 'project';
+const epicTitle = flag('feature-title') ?? 'Project';
 const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.jsonl'];
 
 mkdirSync(STATE_DIR, { recursive: true });
@@ -35,7 +35,7 @@ if (force) {
 
 const backlog = {
   version: '1',
-  epics: [{ ref: epicRef, title: epicTitle, tasks: [] }],
+  features: [{ ref: featureRef, title: epicTitle, tasks: [] }],
 };
 const agents = { version: '1', agents: [] };
 const claims = { version: '1', claims: [] };
@@ -55,13 +55,13 @@ if (errors.length > 0) {
 }
 
 console.log(`Initialized orchestrator state in: ${STATE_DIR}`);
-console.log(`  backlog.json  - 1 epic (${epicRef})`);
+console.log(`  backlog.json  - 1 feature ()`);
 console.log('  agents.json   - 0 agents');
 console.log('  claims.json   - 0 claims');
 console.log('  events.jsonl  - empty');
 console.log('');
 console.log('Next steps:');
 console.log('  orc start-session');
-console.log(`  orc task-create --epic=${epicRef} --title="First task" --ac="Done"`);
-console.log(`  orc delegate --task-ref=${epicRef}/<slug>`);
+console.log(`  orc task-create --feature=${featureRef} --title="First task" --ac="Done"`);
+console.log(`  orc delegate --task-ref=/<slug>`);
 console.log('  Debug only: orc-worker-register <id> --provider=<claude|codex|gemini>');
