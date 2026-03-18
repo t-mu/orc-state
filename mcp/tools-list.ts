@@ -1,7 +1,7 @@
 export const TOOLS = [
   {
     name: 'list_tasks',
-    description: 'List backlog tasks (summary view: ref, title, status, epic_ref, task_type, priority, owner, depends_on). By default excludes done/released tasks — pass status="done" or status="released" to retrieve them. Use get_task(ref) for full detail including description and acceptance_criteria.',
+    description: 'List backlog tasks (summary view: ref, title, status, feature_ref, task_type, priority, owner, depends_on). By default excludes done/released tasks — pass status="done" or status="released" to retrieve them. Use get_task(ref) for full detail including description and acceptance_criteria.',
     inputSchema: {
       type: 'object',
       properties: {
