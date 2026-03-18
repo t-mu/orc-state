@@ -41,8 +41,8 @@ import {
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
-import { renderTemplate } from '../lib/templateRender.ts';
 import { startMasterPtyForwarder } from '../lib/masterPtyForwarder.ts';
+import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
 
@@ -307,10 +307,7 @@ let spawnArgs: string[] = [];
 try {
   if (master.provider === 'claude') {
     const mcpConfigPath = writeMcpConfig();
-    const bootstrap = renderTemplate('master-bootstrap-v1.txt', {
-      agent_id: master.agent_id,
-      provider: master.provider,
-    });
+    const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap];
     console.log('  MCP server: orchestrator tools available in this session.');
     console.log('  Master bootstrap loaded via --system-prompt.');
@@ -318,10 +315,7 @@ try {
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'codex') {
-    const bootstrap = renderTemplate('master-bootstrap-codex-v1.txt', {
-      agent_id: master.agent_id,
-      provider: master.provider,
-    });
+    const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     spawnArgs = ['--instructions', bootstrap];
     console.log('  Master bootstrap loaded via --instructions.');
     console.log('\n----- MASTER BOOTSTRAP -----');
@@ -329,10 +323,7 @@ try {
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'gemini') {
     const mcpConfigPath = writeMcpConfig();
-    const bootstrap = renderTemplate('master-bootstrap-gemini-v1.txt', {
-      agent_id: master.agent_id,
-      provider: master.provider,
-    });
+    const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-instruction', bootstrap];
     console.log('  MCP server: orchestrator tools available in this session.');
     console.log('  Master bootstrap loaded via --system-instruction.');

@@ -1,4 +1,41 @@
 import { renderTemplate } from './templateRender.ts';
+import { isSupportedProvider, type ProviderName } from './providers.ts';
+
+const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
+
+const MASTER_BOOTSTRAP_TEMPLATES: Record<ProviderName, string> = {
+  claude: 'master-bootstrap-v1.txt',
+  codex: 'master-bootstrap-codex-v1.txt',
+  gemini: 'master-bootstrap-gemini-v1.txt',
+};
+
+function assertProvider(provider: string): ProviderName {
+  if (!isSupportedProvider(provider)) {
+    throw new Error(`Unsupported bootstrap provider: ${provider}`);
+  }
+  return provider;
+}
+
+function renderBootstrap(template: string, provider: string, agentId: string): string {
+  return renderTemplate(template, {
+    agent_id: agentId,
+    provider,
+  });
+}
+
+export function getWorkerBootstrap(provider: string): string;
+export function getWorkerBootstrap(provider: string, agentId: string): string;
+export function getWorkerBootstrap(provider: string, agentId: string = 'worker'): string {
+  const resolvedProvider = assertProvider(provider);
+  return renderBootstrap(WORKER_BOOTSTRAP_TEMPLATE, resolvedProvider, agentId);
+}
+
+export function getMasterBootstrap(provider: string): string;
+export function getMasterBootstrap(provider: string, agentId: string): string;
+export function getMasterBootstrap(provider: string, agentId: string = 'master'): string {
+  const resolvedProvider = assertProvider(provider);
+  return renderBootstrap(MASTER_BOOTSTRAP_TEMPLATES[resolvedProvider], resolvedProvider, agentId);
+}
 
 /**
  * Build the bootstrap prompt for a worker session.
@@ -6,9 +43,7 @@ import { renderTemplate } from './templateRender.ts';
  * the task-scoped worker bootstrap contract.
  */
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string {
-  const template = role === 'master' ? 'master-bootstrap-v1.txt' : 'worker-bootstrap-v2.txt';
-  return renderTemplate(template, {
-    agent_id: agentId,
-    provider,
-  });
+  return role === 'master'
+    ? getMasterBootstrap(provider, agentId)
+    : getWorkerBootstrap(provider, agentId);
 }

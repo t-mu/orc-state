@@ -1,5 +1,46 @@
 import { describe, it, expect } from 'vitest';
-import { buildSessionBootstrap } from './sessionBootstrap.ts';
+import {
+  buildSessionBootstrap,
+  getMasterBootstrap,
+  getWorkerBootstrap,
+} from './sessionBootstrap.ts';
+import { renderTemplate } from './templateRender.ts';
+
+describe('getWorkerBootstrap', () => {
+  it('returns non-empty string for claude', () => {
+    const rendered = getWorkerBootstrap('claude');
+    expect(rendered).toContain('provider: claude');
+    expect(rendered).toContain('agent_id: worker');
+  });
+
+  it('throws for unknown provider', () => {
+    expect(() => getWorkerBootstrap('unknown')).toThrow('Unsupported bootstrap provider');
+  });
+});
+
+describe('getMasterBootstrap', () => {
+  it('returns non-empty string for claude', () => {
+    const rendered = getMasterBootstrap('claude');
+    expect(rendered).toContain('provider: claude');
+    expect(rendered).toContain('agent_id: master');
+  });
+
+  it('returns codex master template content', () => {
+    const rendered = getMasterBootstrap('codex');
+    expect(rendered).toBe(renderTemplate('master-bootstrap-codex-v1.txt', {
+      agent_id: 'master',
+      provider: 'codex',
+    }));
+  });
+
+  it('returns gemini master template content', () => {
+    const rendered = getMasterBootstrap('gemini');
+    expect(rendered).toBe(renderTemplate('master-bootstrap-gemini-v1.txt', {
+      agent_id: 'master',
+      provider: 'gemini',
+    }));
+  });
+});
 
 describe('buildSessionBootstrap', () => {
   it('uses master-bootstrap-v1.txt for master role', () => {

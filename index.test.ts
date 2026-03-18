@@ -6,6 +6,8 @@ describe('public API contract (index.ts)', () => {
     expect(Object.keys(orchestratorApi).sort()).toEqual([
       'assertAdapterContract',
       'createAdapter',
+      'getMasterBootstrap',
+      'getWorkerBootstrap',
       'validateAgents',
       'validateBacklog',
       'validateClaims',
@@ -17,6 +19,8 @@ describe('public API contract (index.ts)', () => {
   it('exports callable API members', () => {
     expect(typeof orchestratorApi.createAdapter).toBe('function');
     expect(typeof orchestratorApi.assertAdapterContract).toBe('function');
+    expect(typeof orchestratorApi.getWorkerBootstrap).toBe('function');
+    expect(typeof orchestratorApi.getMasterBootstrap).toBe('function');
     expect(typeof orchestratorApi.validateBacklog).toBe('function');
     expect(typeof orchestratorApi.validateAgents).toBe('function');
     expect(typeof orchestratorApi.validateClaims).toBe('function');
