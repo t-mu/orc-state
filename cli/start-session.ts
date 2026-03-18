@@ -18,7 +18,7 @@
  *   3. Start the master provider CLI in this terminal
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { spawn, spawnSync }      from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pty from 'node-pty';
@@ -288,7 +288,11 @@ if (running) {
 
 // ── Master foreground session ──────────────────────────────────────────────
 
-const binary = (PROVIDER_BINARIES)[master.provider] ?? master.provider;
+const binaryName = (PROVIDER_BINARIES)[master.provider] ?? master.provider;
+// Resolve to absolute path so node-pty can find it regardless of its PATH.
+let resolvedBinary = binaryName;
+try { resolvedBinary = execFileSync('which', [binaryName], { encoding: 'utf8' }).trim(); } catch { /* keep binaryName */ }
+const binary = resolvedBinary;
 const masterPidDir = join(STATE_DIR, 'pty-pids');
 const masterPidPath = join(masterPidDir, 'master.pid');
 console.log(`\n✓ Starting ${master.provider} CLI as master session...`);
