@@ -706,7 +706,7 @@ describe('cli/start-session.ts', () => {
       process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
       await import('./start-session.ts');
 
-      const providerCall = spawnMock.mock.calls.find((c: unknown[]) => c[0] === 'claude') as [string, string[], unknown] | undefined;
+      const providerCall = spawnMock.mock.calls.find((c: unknown[]) => String(c[0]).endsWith('claude')) as [string, string[], unknown] | undefined;
       expect(providerCall).toBeTruthy();
       expect(providerCall![1]).toContain('--mcp-config');
       expect(providerCall![1]).toContain('--system-prompt');
@@ -840,7 +840,7 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
 
       expect(existsSync(join(dir, 'mcp-config.json'))).toBe(false);
-      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => args[0] === 'codex') as [string, string[]] | undefined;
+      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[]] | undefined;
       expect(providerCall).toBeTruthy();
       expect(providerCall![1]).not.toContain('--mcp-config');
     });
@@ -857,7 +857,7 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
 
       expect(existsSync(join(dir, 'mcp-config.json'))).toBe(true);
-      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => args[0] === 'gemini') as [string, string[]] | undefined;
+      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('gemini')) as [string, string[]] | undefined;
       expect(providerCall).toBeTruthy();
       expect(providerCall![1]).toContain('--mcp-config');
       expect(providerCall![1]).toContain('--system-instruction');
