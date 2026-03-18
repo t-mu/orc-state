@@ -19,7 +19,7 @@ import { nextEligibleTask, nextEligibleTaskFromBacklog } from './taskScheduler.t
 import type { Task, Backlog, Claim } from '../types/index.ts';
 
 function makeBacklog(tasks: Task[] = []): Backlog {
-  return { version: '1', epics: [{ ref: 'orch', title: 'Orch', tasks }] };
+  return { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks }] };
 }
 
 function makeTask(ref: string, status: Task['status'] = 'todo', deps: string[] = []): Task {
@@ -59,7 +59,7 @@ describe('claimTask', () => {
   it('sets task status to claimed in backlog.json', () => {
     seed(dir);
     claimTask(dir, 'orch/init', 'agent-01');
-    const task = readBacklog(dir).epics[0].tasks[0];
+    const task = readBacklog(dir).features[0].tasks[0];
     expect(task.status).toBe('claimed');
   });
 
@@ -142,7 +142,7 @@ describe('startRun', () => {
     seed(dir);
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
     startRun(dir, run_id, 'agent-01');
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('in_progress');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
   });
 
   it('emits run_started event', () => {
@@ -285,7 +285,7 @@ describe('finishRun', () => {
     const claim = readClaims(dir).claims.find(c => c.run_id === run_id);
     expect(claim!.state).toBe('done');
     expect(claim!.finished_at).toBeTruthy();
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('done');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
   });
 
   it('emits run_finished event on success', () => {
@@ -302,7 +302,7 @@ describe('finishRun', () => {
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
     startRun(dir, run_id, 'agent-01');
     finishRun(dir, run_id, 'agent-01', { success: false });
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
   });
 
   it('blocks task on failure with policy=block', () => {
@@ -310,7 +310,7 @@ describe('finishRun', () => {
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
     startRun(dir, run_id, 'agent-01');
     finishRun(dir, run_id, 'agent-01', { success: false, policy: 'block' });
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('blocked');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('blocked');
   });
 
   it('emits run_failed event on failure', () => {
@@ -396,14 +396,14 @@ describe('expireStaleLeases', () => {
     seed(dir);
     claimTask(dir, 'orch/init', 'agent-01', { leaseDurationMs: -1000 });
     expireStaleLeases(dir);
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
   });
 
   it('blocks task when policy=block', () => {
     seed(dir);
     claimTask(dir, 'orch/init', 'agent-01', { leaseDurationMs: -1000 });
     expireStaleLeases(dir, { policy: 'block' });
-    expect(readBacklog(dir).epics[0].tasks[0].status).toBe('blocked');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('blocked');
   });
 
   it('emits claim_expired event for each expired claim', () => {
@@ -420,7 +420,7 @@ describe('expireStaleLeases', () => {
     claimTask(dir, 'orch/b', 'agent-02');                               // fresh
     const expired = expireStaleLeases(dir);
     expect(expired).toHaveLength(1);
-    expect(readBacklog(dir).epics[0].tasks.find(t => t.ref === 'orch/b')!.status).toBe('claimed');
+    expect(readBacklog(dir).features[0].tasks.find(t => t.ref === 'orch/b')!.status).toBe('claimed');
   });
 
   it('allows expired task to be reclaimed after requeue', () => {

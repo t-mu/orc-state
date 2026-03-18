@@ -48,12 +48,12 @@ function defaultActorId(stateDir: string) {
 // Fields returned by list_tasks (summary view). Use get_task() for full detail.
 const TERMINAL_STATUSES = new Set(['done', 'released']);
 
-function toTaskSummary(task: Task & { epic_ref: string }) {
+function toTaskSummary(task: Task & { feature_ref: string }) {
   return {
     ref: task.ref,
     title: task.title,
     status: task.status,
-    epic_ref: task.epic_ref,
+    feature_ref: task.feature_ref,
     task_type: task.task_type,
     priority: task.priority ?? 'normal',
     owner: task.owner,
@@ -61,16 +61,16 @@ function toTaskSummary(task: Task & { epic_ref: string }) {
   };
 }
 
-export function handleListTasks(stateDir: string, { status, epic }: { status?: unknown; epic?: unknown } = {}) {
+export function handleListTasks(stateDir: string, { status, feature }: { status?: unknown; feature?: unknown } = {}) {
   if (status != null && !TASK_STATUSES.has(status as string)) {
     throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}`);
   }
-  if (epic != null && typeof epic !== 'string') {
-    throw new Error('epic must be a string');
+  if (feature != null && typeof feature !== 'string') {
+    throw new Error('feature must be a string');
   }
   const backlog = readBacklog(stateDir);
-  let tasks = backlog.epics.flatMap((epicObj) =>
-    epicObj.tasks.map((task): Task & { epic_ref: string } => ({ ...task, epic_ref: epicObj.ref })),
+  let tasks = backlog.features.flatMap((epicObj) =>
+    epicObj.tasks.map((task): Task & { feature_ref: string } => ({ ...task, feature_ref: epicObj.ref })),
   );
 
   if (status) {
@@ -80,7 +80,7 @@ export function handleListTasks(stateDir: string, { status, epic }: { status?: u
     // Use status="done" or status="released" to retrieve those explicitly.
     tasks = tasks.filter((task) => !TERMINAL_STATUSES.has(task.status));
   }
-  if (epic) tasks = tasks.filter((task) => task.epic_ref === epic);
+  if (feature) tasks = tasks.filter((task) => task.feature_ref === feature);
 
   // Return summary fields only. Full task detail (description, acceptance_criteria, etc.)
   // is available via get_task(task_ref).
@@ -180,9 +180,9 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     taskCounts.released = 0;
   }
 
-  const activeTasks: Array<{ ref: string; title: string; status: string; epic_ref: string; owner: string | null }> = [];
-  for (const epic of backlog.epics) {
-    for (const task of epic.tasks) {
+  const activeTasks: Array<{ ref: string; title: string; status: string; feature_ref: string; owner: string | null }> = [];
+  for (const feature of backlog.features) {
+    for (const task of feature.tasks) {
       if (Object.hasOwn(taskCounts, task.status)) {
         taskCounts[task.status] += 1;
       }
@@ -191,7 +191,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
         ref: task.ref,
         title: task.title,
         status: task.status,
-        epic_ref: epic.ref,
+        feature_ref: feature.ref,
         owner: task.owner ?? null,
       });
     }
@@ -227,16 +227,16 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
   ) ?? null;
 
   const doneSet = new Set(
-    backlog.epics.flatMap((epic) =>
-      epic.tasks
+    backlog.features.flatMap((feature) =>
+      feature.tasks
         .filter((task) => task.status === 'done' || task.status === 'released')
         .map((task) => task.ref),
     ),
   );
 
   const queuedTasks: Array<{ ref: string; title: string; status: string; task_type: string; blockers: string[] }> = [];
-  for (const epic of backlog.epics) {
-    for (const task of epic.tasks) {
+  for (const feature of backlog.features) {
+    for (const task of feature.tasks) {
       if (task.owner !== agent_id) continue;
       if (task.status === 'done' || task.status === 'released') continue;
       if (activeRun?.task_ref === task.ref) continue;
@@ -299,7 +299,7 @@ export function handleReadAgents(stateDir: string) {
 
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
   const {
-    epic,
+    feature,
     title,
     ref,
     task_type = 'implementation',
@@ -313,7 +313,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     actor_id = defaultActorId(stateDir),
   } = args;
 
-  const resolvedEpic = typeof epic === 'string' && (epic).trim().length > 0 ? epic : 'general';
+  const resolvedFeature = typeof feature === 'string' && (feature).trim().length > 0 ? feature : 'general';
   if (!title) throw new Error('title is required');
   if (!TASK_TYPES.has(task_type as string)) throw new Error(`Invalid task_type: ${String(task_type)}`);
   if (!TASK_PRIORITIES.has(priority as string)) throw new Error(`Invalid priority: ${String(priority)}`);
@@ -329,7 +329,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
 
   const now = new Date().toISOString();
   const taskSlug = (ref as string) ?? slugify(title as string);
-  const taskRef = `${resolvedEpic}/${taskSlug}`;
+  const taskRef = `${resolvedFeature}/${taskSlug}`;
   if (!taskSlug || !/^[a-z0-9-]+\/[a-z0-9-]+$/.test(taskRef)) {
     throw new Error(`Invalid task ref: ${taskRef}`);
   }
@@ -347,18 +347,18 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     const backlog = readBacklog(stateDir);
     const currentNextTaskSeq = getNextTaskSeq(backlog);
 
-    if (resolvedEpic === 'general' && !backlog.epics.some((candidate) => candidate.ref === 'general')) {
-      backlog.epics = [...backlog.epics, { ref: 'general', title: 'General', tasks: [] }];
+    if (resolvedFeature === 'general' && !backlog.features.some((candidate) => candidate.ref === 'general')) {
+      backlog.features = [...backlog.features, { ref: 'general', title: 'General', tasks: [] }];
     }
 
-    const epicObj = backlog.epics.find((candidate) => candidate.ref === resolvedEpic);
-    if (!epicObj) throw new Error(`Epic not found: ${resolvedEpic}`);
+    const epicObj = backlog.features.find((candidate) => candidate.ref === resolvedFeature);
+    if (!epicObj) throw new Error(`Feature not found: ${resolvedFeature}`);
 
     const existing = epicObj.tasks.find((task) => task.ref === taskRef);
     if (existing) throw new Error(`Task already exists: ${taskRef}`);
 
     if (((depends_on ?? []) as unknown[]).length > 0) {
-      const allRefs = new Set(backlog.epics.flatMap((candidate) => candidate.tasks.map((task) => task.ref)));
+      const allRefs = new Set(backlog.features.flatMap((candidate) => candidate.tasks.map((task) => task.ref)));
       for (const dep of depends_on as string[]) {
         if (!allRefs.has(dep)) throw new Error(`depends_on task_ref not found in backlog: ${dep}`);
       }
@@ -398,7 +398,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
         actor_type: actor_id === 'human' ? 'human' : 'agent',
         actor_id: actor_id as string,
         task_ref: taskRef,
-        payload: { title, task_type, epic_ref: resolvedEpic },
+        payload: { title, task_type, feature_ref: resolvedFeature },
       },
       { lockAlreadyHeld: true },
     );
@@ -524,12 +524,12 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
     }
 
     let task: Task | null = null;
-    let epicRef: string | null = null;
-    for (const epic of backlog.epics) {
-      const found = epic.tasks.find((candidate) => candidate.ref === task_ref);
+    let featureRef: string | null = null;
+    for (const feature of backlog.features) {
+      const found = feature.tasks.find((candidate) => candidate.ref === task_ref);
       if (found) {
         task = found;
-        epicRef = epic.ref;
+        featureRef = feature.ref;
         break;
       }
     }
@@ -588,7 +588,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
           target_agent_id: assignedTarget ?? null,
           task_type,
           note,
-          epic_ref: epicRef,
+          feature_ref: featureRef,
           auto_assigned: !target_agent_id,
         },
       },

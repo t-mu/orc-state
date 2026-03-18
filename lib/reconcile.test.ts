@@ -23,7 +23,7 @@ function readJson(path: string) {
 function writeState({ tasks, claims }: { tasks: unknown[]; claims: unknown[] }) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks }],
+    features: [{ ref: 'docs', title: 'Docs', tasks }],
   }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
 }
@@ -45,7 +45,7 @@ describe('reconcileState', () => {
     reconcileState(dir);
     const backlog = readJson(join(dir, 'backlog.json'));
     const claims = readJson(join(dir, 'claims.json'));
-    expect(backlog.epics[0].tasks[0].status).toBe('claimed');
+    expect(backlog.features[0].tasks[0].status).toBe('claimed');
     expect(claims.claims[0].state).toBe('claimed');
   });
 
@@ -64,7 +64,7 @@ describe('reconcileState', () => {
 
     reconcileState(dir);
     const backlog = readJson(join(dir, 'backlog.json'));
-    expect(backlog.epics[0].tasks[0].status).toBe('in_progress');
+    expect(backlog.features[0].tasks[0].status).toBe('in_progress');
   });
 
   it('resets task to todo when task is active but claim is terminal', () => {
@@ -82,7 +82,7 @@ describe('reconcileState', () => {
 
     reconcileState(dir);
     const backlog = readJson(join(dir, 'backlog.json'));
-    expect(backlog.epics[0].tasks[0].status).toBe('todo');
+    expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
   it('resets task to todo when no active claim exists', () => {
@@ -93,7 +93,7 @@ describe('reconcileState', () => {
 
     reconcileState(dir);
     const backlog = readJson(join(dir, 'backlog.json'));
-    expect(backlog.epics[0].tasks[0].status).toBe('todo');
+    expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
   it('marks older duplicate active claim as failed', () => {

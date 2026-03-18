@@ -135,7 +135,7 @@ function seedValidState({
 } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    epics: [{ ref: 'docs', title: 'Docs', tasks }],
+    features: [{ ref: 'docs', title: 'Docs', tasks }],
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));

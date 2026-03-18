@@ -46,12 +46,12 @@ function validateStateInvariants(backlog: unknown, agents: unknown, claims: unkn
   const agentIds = new Set<string>();
   const activeTaskClaims = new Map<string, string[]>();
 
-  const b = backlog as { epics?: Array<{ tasks?: Array<{ ref?: string }> }> } | null;
+  const b = backlog as { features?: Array<{ tasks?: Array<{ ref?: string }> }> } | null;
   const ag = agents as { agents?: Array<{ agent_id?: string }> } | null;
   const cl = claims as { claims?: Array<{ run_id?: string; state?: string; task_ref?: string; agent_id?: string }> } | null;
 
-  for (const epic of b?.epics ?? []) {
-    for (const task of epic?.tasks ?? []) {
+  for (const feature of b?.features ?? []) {
+    for (const task of feature?.tasks ?? []) {
       if (!task?.ref) continue;
       taskRefs.add(task.ref);
     }

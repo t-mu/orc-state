@@ -4,10 +4,13 @@
  * Usage:
  *   orc install-skills [--provider=claude,codex] [--global] [--dry-run]
  *
- * Copies skills from the package's skills/<provider>/ directory into the
- * consumer's tool directories:
+ * Copies skills from the package's skills/ directory into the consumer's
+ * tool directories for each selected provider:
  *   claude  →  <target>/.claude/skills/<name>/
- *   codex   →  <target>/.codex/rules/
+ *   codex   →  <target>/.codex/rules/<name>/
+ *
+ * Skills are provider-agnostic — the same files are installed for all
+ * selected providers. Use --provider= to restrict which providers are targeted.
  *
  * --global   installs to ~/  instead of cwd
  * --dry-run  prints what would be copied without writing anything
@@ -73,28 +76,22 @@ if (!existsSync(SKILLS_ROOT)) {
 
 if (isDryRun) console.log('Dry run — no files will be written.\n');
 
+const skillEntries = readdirSync(SKILLS_ROOT, { withFileTypes: true });
+const skills = skillEntries.filter((e) => e.isDirectory()).map((e) => e.name);
+
+if (skills.length === 0) {
+  console.log('No skills found in skills/ directory.');
+  process.exit(0);
+}
+
 let totalCopied = 0;
 
 for (const provider of providers) {
-  const providerSrc = join(SKILLS_ROOT, provider);
-  if (!existsSync(providerSrc)) {
-    console.log(`  ${provider}: no skills found (${providerSrc} missing), skipping`);
-    continue;
-  }
-
   const destBase = PROVIDER_TARGETS[provider](base);
-  const entries  = readdirSync(providerSrc, { withFileTypes: true });
-  const skills   = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-
-  if (skills.length === 0) {
-    console.log(`  ${provider}: directory exists but contains no skill subdirectories`);
-    continue;
-  }
-
   console.log(`${provider} → ${destBase}`);
 
   for (const skill of skills) {
-    const src    = join(providerSrc, skill);
+    const src    = join(SKILLS_ROOT, skill);
     const dest   = join(destBase, skill);
     const copied = copyDir(src, dest, isDryRun);
     for (const { dest: d } of copied) {

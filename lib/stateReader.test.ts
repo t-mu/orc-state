@@ -16,16 +16,16 @@ afterEach(() => {
 
 describe('readJson', () => {
   it('reads and parses a json file', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', epics: [] }));
-    expect(readJson(dir, 'backlog.json')).toEqual({ version: '1', epics: [] });
+    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
+    expect(readJson(dir, 'backlog.json')).toEqual({ version: '1', features: [] });
   });
 });
 
 describe('findTask', () => {
-  it('finds a task by ref across epics', () => {
+  it('finds a task by ref across features', () => {
     const backlog = {
       version: '1',
-      epics: [
+      features: [
         { ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }] },
         { ref: 'engine', title: 'Engine', tasks: [{ ref: 'engine/task-2', title: 'Task 2', status: 'todo' }] },
       ],
@@ -34,7 +34,7 @@ describe('findTask', () => {
   });
 
   it('returns null when missing', () => {
-    expect(findTask({ version: '1', epics: [] }, 'docs/task-x')).toBeNull();
+    expect(findTask({ version: '1', features: [] }, 'docs/task-x')).toBeNull();
   });
 });
 
@@ -62,13 +62,13 @@ describe('readClaims', () => {
 
 describe('getNextTaskSeq', () => {
   it('returns backlog.next_task_seq when present', () => {
-    expect(getNextTaskSeq({ version: '1', next_task_seq: 12, epics: [] })).toBe(12);
+    expect(getNextTaskSeq({ version: '1', next_task_seq: 12, features: [] })).toBe(12);
   });
 
   it('bootstraps from numbered task refs when field is absent', () => {
     const backlog = {
       version: '1',
-      epics: [
+      features: [
         {
           ref: 'orch',
           title: 'Orchestrator',
@@ -86,7 +86,7 @@ describe('getNextTaskSeq', () => {
   it('returns 1 when no numbered refs exist and field is absent', () => {
     const backlog = {
       version: '1',
-      epics: [
+      features: [
         {
           ref: 'orch',
           title: 'Orchestrator',

@@ -67,7 +67,7 @@ describe('renderTemplate', () => {
       task_ref: 'orch/task-142',
       run_id: 'run-1',
       title: 'Task 142',
-      epic: 'orch',
+      feature: 'orch',
       description: 'bootstrap redesign',
       agent_id: 'orc-1',
       acceptance_criteria_lines: '  1. first',

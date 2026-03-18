@@ -34,7 +34,7 @@ afterEach(() => {
 
 function seedState(agents: unknown[] = []) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1', epics: [{ ref: 'project', title: 'Project', tasks: [] }],
+    version: '1', features: [{ ref: 'project', title: 'Project', tasks: [] }],
   }));
   writeFileSync(join(dir, 'agents.json'),  JSON.stringify({ version: '1', agents }));
   writeFileSync(join(dir, 'claims.json'),  JSON.stringify({ version: '1', claims: [] }));
@@ -153,7 +153,7 @@ describe('cli/start-session.ts', () => {
     it('does not overwrite existing state files', () => {
       seedState();
       // Write a sentinel value into backlog to detect overwrites
-      const sentinel = { version: '1', epics: [{ ref: 'sentinel', title: 'Sentinel', tasks: [] }] };
+      const sentinel = { version: '1', features: [{ ref: 'sentinel', title: 'Sentinel', tasks: [] }] };
       writeFileSync(join(dir, 'backlog.json'), JSON.stringify(sentinel));
 
       spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts'], {
@@ -163,7 +163,7 @@ describe('cli/start-session.ts', () => {
       });
 
       const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-      expect(backlog.epics[0].ref).toBe('sentinel');
+      expect(backlog.features[0].ref).toBe('sentinel');
     });
   });
 
