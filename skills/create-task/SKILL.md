@@ -1,7 +1,7 @@
 ---
 name: create-task
 description: >
-  Creates backlog task spec files in docs/backlog/. Use when the user says anything like
+  Creates backlog task spec files in backlog/. Use when the user says anything like
   "create a task", "add to backlog", "write a task for", "plan this as a task", "draft a
   task spec", "create tasks to backlog", or asks to break work into numbered task files.
   Also handles batch planning (multiple dependent tasks from a single request).
@@ -19,9 +19,9 @@ The output target is task-spec markdown only.
 
 A task-creation turn is complete only when all three are true:
 
-1. The `docs/backlog/<N>-<slug>.md` file is saved.
+1. The `backlog/<N>-<slug>.md` file is saved.
 2. The matching task ref is created or updated in orchestrator state.
-3. `npm run backlog:sync:check` passes after the write/sync work.
+3. `orc backlog-sync-check` passes after the write/sync work.
 
 Never stop after writing markdown files. If backlog registration or sync validation fails,
 the turn is incomplete and the final response must list each failed ref explicitly.
@@ -36,11 +36,11 @@ Run these before writing anything:
 
    ```bash
    # shell fallback (filesystem-based) if MCP is unavailable:
-   ls docs/backlog/ | grep -oE '^[0-9]+' | sort -n | tail -1 | xargs -I{} expr {} + 1
+   ls backlog/ | grep -oE '^[0-9]+' | sort -n | tail -1 | xargs -I{} expr {} + 1
    ```
 
 2. **Read the files the task will touch.** If scope is unclear, read
-   `docs/backlog/TASK_TEMPLATE.md` and 1–2 recent task files as reference.
+   `backlog/TASK_TEMPLATE.md` and 1–2 recent task files as reference.
 
 3. **Check `git status`** to see what is already in flight.
 
@@ -52,7 +52,7 @@ Run these before writing anything:
 
 If the objective is ambiguous, ask one focused clarifying question before drafting.
 
-## Step 0.5 — Resolve Epic
+## Step 0.5 — Resolve Feature
 
 Before writing any file, determine the feature for this task:
 
@@ -119,7 +119,7 @@ Final response requirements for this skill:
 
 - List every task-spec file written.
 - List every task ref registered or updated in orchestrator state.
-- Report the result of `npm run backlog:sync:check`.
+- Report the result of `orc backlog-sync-check`.
 - If any registration or sync step fails, include a `Registration failures:` block with one line per ref and the error.
 
 Every task file must follow this section order exactly:
@@ -151,7 +151,7 @@ Use these optional sections only when they improve execution quality:
 - **Implementation**: ordered `### Step N — <title>` steps; each names `**File:** \`path\`` and shows code shape, diff, or before/after block; call out invariants to preserve.
 - **Acceptance criteria**: binary checklist; at least one failure/edge-case item; always end with `- [ ] No changes to files outside the stated scope.`
 - **Tests**: exact test descriptions and file paths; show `it(...)` call shape when helpful.
-- **Verification**: `nvm use 24 && npm test` always; add `nvm use 24 && npm run test:orc` for orchestrator-scoped changes; add `npm run orc:doctor && npm run orc:status` only when schemas, state files, or CLI commands are touched.
+- **Verification**: `nvm use 24 && npm test` always; add `orc doctor` and `orc status` only when schemas, state files, or CLI commands are touched.
 - **Risk / Rollback**: `**Risk:** <what can go wrong>` followed by `**Rollback:** git restore <path> && npm test`.
 
 ## Single-Task Workflow
@@ -173,7 +173,7 @@ The saved file begins with:
 ```yaml
 ---
 ref: <feature>/<slug>
-feature: <epic-ref>
+feature: <feature-ref>
 ---
 ```
 Extract the `ref` value.
@@ -189,7 +189,7 @@ Call `mcp__orchestrator__get_task` with `task_ref: <ref>`.
 
 Call `mcp__orchestrator__create_task` with:
 - `title`: the task title from the `# Task N — Title` heading
-- `feature`: the `epic` frontmatter value
+- `feature`: the `feature` frontmatter value
 - `ref`: the slug portion only (everything after the first `/` in the frontmatter ref)
 - `description`: the first non-empty paragraph of the `## Context` section
 - `acceptance_criteria`: native JSON array extracted from the `## Acceptance criteria` checklist items (strip the `- [ ] ` prefix from each line)
@@ -204,7 +204,7 @@ If the MCP call throws or returns an error, **do not abort**. Instead emit:
 
 ```text
 ⚠️  Registration warning
-Task spec saved:  docs/backlog/<filename>.md
+Task spec saved:  backlog/<filename>.md
 Backlog sync:     FAILED — <error message>
 Ref:              <ref>
 
@@ -218,7 +218,7 @@ Continue to the next task in a batch without interruption.
 Run:
 
 ```bash
-npm run backlog:sync:check
+orc backlog-sync-check
 ```
 
 If it fails, do not treat the task-creation job as complete. Report the failing refs or files in the final response.
@@ -234,7 +234,7 @@ When the user asks to break work into multiple tasks:
 5. Emit one complete task file per task using the same fixed section order,
    then immediately run the "Register in backlog.json" step for that task
    before moving to the next one.
-6. After all files in the batch are registered, run `npm run backlog:sync:check`.
+6. After all files in the batch are registered, run `orc backlog-sync-check`.
 7. Avoid hidden coupling — declare cross-task assumptions in `Context`.
 
 ## Quality Gate (score before saving)
@@ -254,7 +254,7 @@ When the user asks to break work into multiple tasks:
 
 A draft is ready to save only when all applicable sections pass.
 
-**Save path:** `docs/backlog/<N>-<kebab-slug>.md`
+**Save path:** `backlog/<N>-<kebab-slug>.md`
 
 ## Reference
 

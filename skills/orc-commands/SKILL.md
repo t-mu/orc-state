@@ -37,7 +37,7 @@ clears all agents.
 | `preflight` | `orc preflight` | Lightweight environment health check. |
 | `init` | `orc init [--force]` | Initialise state directory. `--force` overwrites existing files. |
 | `kill-all` | `orc kill-all` | ⚠️ Stops coordinator + clears ALL agents. Use only to fully reset. **Never run in a loop or batch script** — it has no `--help` guard and executes immediately. |
-| `install-skills` | `orc install-skills [--global] [--provider=claude,codex] [--dry-run]` | Install skills/rules into `.claude/` or `.codex/` directories. |
+| `install-skills` | `orc install-skills [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic skills into `.claude/skills/` or `.codex/rules/`. |
 
 ### Worker Management
 
@@ -90,43 +90,20 @@ For workers that need master input (e.g. blocked on a decision):
 ### Reset a blocked/failed task to todo
 
 ```bash
-node --input-type=module <<'EOF'
-import { withLock } from './lib/lock.mjs';
-import { atomicWriteJson } from './lib/atomicWrite.mjs';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const STATE_DIR = process.env.ORCH_STATE_DIR ?? '.orc-state';
-const BACKLOG   = join(STATE_DIR, 'backlog.json');
-const TARGET    = 'orch/task-NNN-slug';
-
-withLock(join(STATE_DIR, '.lock'), () => {
-  const data = JSON.parse(readFileSync(BACKLOG, 'utf8'));
-  for (const feature of data.features) {
-    const task = (feature.tasks ?? []).find(t => t.ref === TARGET);
-    if (task) {
-      task.status = 'todo';
-      delete task.owner;
-      delete task.blocked_reason;
-      atomicWriteJson(BACKLOG, data);
-      console.log('reset to todo');
-      return;
-    }
-  }
-});
-EOF
+orc task-reset orch/task-NNN-slug
 ```
 
-Note: `task.owner` must be **deleted** (not set to `null`) — `null` fails schema validation.
+Use the CLI or MCP tools for orchestrator state changes. Do not mutate state
+files through internal library helpers from an agent session.
 
 ### Restart coordinator cleanly
 
 ```bash
 # 1. Kill existing
-ps aux | grep "coordinator.mjs" | grep -v grep | awk '{print $2}' | xargs kill
+ps aux | grep "coordinator.ts" | grep -v grep | awk '{print $2}' | xargs kill
 
 # 2. Start with explicit state dir (avoids cwd ambiguity)
-ORCH_STATE_DIR=/path/to/repo/.orc-state node /path/to/repo/coordinator.mjs \
+ORCH_STATE_DIR=/path/to/repo/.orc-state node --experimental-strip-types /path/to/repo/coordinator.ts \
   >> /path/to/repo/.orc-state/coordinator.out.log 2>&1 &
 ```
 
@@ -144,25 +121,3 @@ claim_created  →  run_started  →  [phase_started / phase_finished / heartbea
 
 Coordinator also emits:
 - `claim_expired` — when run hits idle timeout (30 min default); task requeued
-
----
-
-## Backlog JSON Structure
-
-Tasks are nested inside features — **not** a flat top-level array:
-
-```json
-{
-  "version": "1",
-  "features": [
-    {
-      "ref": "orch",
-      "title": "Orchestrator",
-      "tasks": [ { "ref": "orch/task-NNN-slug", "status": "todo" } ]
-    }
-  ],
-  "next_task_seq": 161
-}
-```
-
-All state writes must use `withLock` + `atomicWriteJson`. Never write directly.

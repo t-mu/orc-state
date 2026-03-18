@@ -16,7 +16,7 @@ Tasks numbered 160+ are orchestrator-only work.
 
 ## Conventions for Implementors
 
-- All new source files are `.mjs` (ES modules); use `import` not `require`; do not use TypeScript.
+- All new source files in this repository are TypeScript `.ts` ES modules; use `import`, not `require`.
 - Run `nvm use 24 && npm test` after each task to verify nothing regressed.
 - Do not create new files unless a task explicitly asks for one.
 - Do not add comments to code you did not change.

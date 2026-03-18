@@ -188,6 +188,50 @@ enters the coordinator-owned finalization phase.
 Blocked finalization is preserved work waiting for intervention. It is not the
 same thing as rejecting or discarding the task result.
 
+## MCP Server
+
+The package ships an MCP server over stdio at `mcp/server.ts`.
+
+Start it by pointing `ORCH_STATE_DIR` at the orchestrator state directory:
+
+```bash
+ORCH_STATE_DIR=/path/to/project/.orc-state node --experimental-strip-types mcp/server.ts
+```
+
+Resources:
+
+- `orchestrator://state/backlog` — full `backlog.json`
+- `orchestrator://state/agents` — full `agents.json`
+
+Available tools:
+
+| Tool | Description |
+|------|-------------|
+| `list_tasks` | List tasks, optionally filtered by status or feature |
+| `list_agents` | List registered agents |
+| `list_active_runs` | List active task claims |
+| `list_stalled_runs` | List active claims missing heartbeats |
+| `get_task` | Get one task by ref |
+| `get_recent_events` | Return recent orchestrator events |
+| `get_status` | Return a compact orchestrator status snapshot |
+| `get_agent_workview` | Return one agent's actionable work summary |
+| `create_task` | Create a backlog task |
+| `update_task` | Update mutable task fields |
+| `delegate_task` | Assign a task to a worker |
+| `cancel_task` | Cancel a task and remove active runs |
+| `respond_input` | Respond to a worker input request |
+| `get_run` | Get one run with merged task/worktree details |
+| `list_waiting_input` | List runs waiting for master input |
+| `query_events` | Query the event log with filters |
+| `reset_task` | Reset a task to `todo` and cancel active claims |
+| `list_worktrees` | List registered run worktrees |
+
+Provider notes:
+
+- `claude`: `orc start-session` writes an MCP config file and launches the master with `--mcp-config`.
+- `codex`: `orc start-session` passes the master bootstrap via `--instructions`; Codex MCP wiring is not auto-managed by this package.
+- `gemini`: `orc start-session` writes an MCP config file and launches the master with `--mcp-config` plus `--system-instruction`.
+
 ## Delegation Safety
 
 - `delegate_task` rejects explicit assignment to agents that already have active claims (`claimed` or `in_progress`).
@@ -199,20 +243,12 @@ same thing as rejecting or discarding the task result.
 Canonical verification commands for this workspace:
 
 ```bash
-npm run test:orc:mcp
-npm run test:orc:unit
-npm run test:orc
+npm test
+npm run test:e2e
 ```
 
-`npm run test:orc:mcp` is the canonical repo-root command for MCP-focused
-changes. It runs the orchestrator MCP test files directly with
-`orchestrator/vitest.config.mjs`, so contributors do not need npm argument
-forwarding or the game test config.
-
-Use `npm run test:orc:unit` for the full orchestrator unit suite, and
-`npm run test:orc` when you want orchestrator unit plus e2e coverage from the
-workspace root. The repo-root `npm test` command does not run orchestrator MCP
-tests.
+Use `npm test` for the unit/integration suite and `npm run test:e2e` when you
+need the e2e coverage as well.
 
 ## Command Binaries
 

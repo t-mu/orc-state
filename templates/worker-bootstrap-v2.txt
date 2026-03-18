@@ -58,7 +58,7 @@ When a TASK_START block arrives:
   2. Confirm you are already in the assigned worktree path from the payload, then inspect the task-spec context.
   3. Do all work, builds, and tests inside that assigned worktree.
   4. Commit your changes:
-       Edit docs/backlog/<N>-<slug>.md for this task.
+       Edit backlog/<N>-<slug>.md for this task.
        Change the frontmatter line: status: todo -> status: done
        git add -p
        git commit -m "feat(<scope>): <outcome>"

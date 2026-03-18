@@ -1,6 +1,6 @@
 ---
 ref: <feature>/<slug>
-feature: <epic-ref>
+feature: <feature-ref>
 ---
 
 # Task <N> — <Imperative Title>
@@ -92,7 +92,7 @@ it('<description>', () => { ... });
 nvm use 24 && npm test
 
 # Orchestrator only (faster, when change is scoped to orchestrator/)
-nvm use 24 && npm run test:orc
+nvm use 24 && npm test
 ```
 
 ```bash
