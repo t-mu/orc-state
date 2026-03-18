@@ -1,0 +1,8 @@
+{
+  "default_provider": "claude",
+  "worker_pool": {
+    "provider": "claude",
+    "max_workers": 2,
+    "model": null
+  }
+}
