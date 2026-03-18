@@ -118,7 +118,7 @@ try {
           target_agent_id: assignedTarget ?? null,
           task_type: taskType,
           note,
-          epic_ref: featureRef,
+          feature_ref: featureRef,
           auto_assigned: !targetAgentId,
         },
       },

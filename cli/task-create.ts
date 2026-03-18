@@ -141,7 +141,7 @@ try {
         actor_type: actorId === 'human' ? 'human' : 'agent',
         actor_id: actorId,
         task_ref: taskRef,
-        payload: { title, task_type: taskType, epic_ref: featureRef },
+        payload: { title, task_type: taskType, feature_ref: featureRef },
       },
       { lockAlreadyHeld: true },
     );
