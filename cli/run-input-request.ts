@@ -69,7 +69,7 @@ let lastHeartbeatAt = Date.now();
 
 while (Date.now() < deadline) {
   const events = readEventsSince(EVENTS_FILE, requestSeq);
-  const responseEvent = (events as Array<Record<string, unknown>>).find((event) =>
+  const responseEvent = events.find((event) =>
     event.event === 'input_response'
       && event.run_id === runId
       && event.agent_id === agentId

@@ -12,6 +12,11 @@
       "minimum": 1,
       "description": "Monotonically increasing sequence number. Gaps indicate dropped/corrupt lines."
     },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Durable event identity used for replay-safe dedupe. Older events may omit it."
+    },
     "ts": {
       "type": "string",
       "format": "date-time",

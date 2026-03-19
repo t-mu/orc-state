@@ -2,7 +2,7 @@
 ref: general/15-durable-event-identity-and-deduped-consumption
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 15 — Replace Seq-Based Event Consumption with Durable Event Identity
