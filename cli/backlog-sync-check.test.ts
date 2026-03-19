@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { validateBacklogSync } from './backlog-sync-check.ts';
+import { extractTaskSpecRefs, validateBacklogSync } from './backlog-sync-check.ts';
 
 let dir: string;
 
@@ -74,20 +74,33 @@ describe('validateBacklogSync', () => {
     });
   });
 
-  it('discovers specs in subdirectories (legacy/ and feature folders)', () => {
+  it('discovers specs in feature subdirectories but ignores legacy/', () => {
     mkdirSync(join(dir, 'docs', 'backlog', 'legacy'), { recursive: true });
     mkdirSync(join(dir, 'docs', 'backlog', 'FEAT-001-worker-pool'), { recursive: true });
     writeFileSync(join(dir, 'docs', 'backlog', 'legacy', '130-example.md'),
       '---\nref: orch/task-130-example\nfeature: orch\nstatus: done\n---\n\n# Task 130 — Example\n');
     writeFileSync(join(dir, 'docs', 'backlog', 'FEAT-001-worker-pool', '160.md'),
       '---\nref: orch/160\nfeature: worker-pool\nstatus: todo\n---\n\n# Task 160 — New task\n');
-    writeState(dir, ['orch/task-130-example', 'orch/160']);
+    writeState(dir, ['orch/160']);
 
     expect(validateBacklogSync(join(dir, 'docs', 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: true,
-      spec_count: 2,
+      spec_count: 1,
       missing: [],
     });
+  });
+
+  it('extracts only active refs when legacy and feature subdirectories coexist', () => {
+    mkdirSync(join(dir, 'docs', 'backlog', 'legacy'), { recursive: true });
+    mkdirSync(join(dir, 'docs', 'backlog', 'feature-x'), { recursive: true });
+    writeFileSync(join(dir, 'docs', 'backlog', 'legacy', '130-example.md'),
+      '---\nref: orch/task-130-example\nfeature: orch\nstatus: done\n---\n\n# Task 130 — Example\n');
+    writeFileSync(join(dir, 'docs', 'backlog', 'feature-x', '160.md'),
+      '---\nref: orch/160\nfeature: worker-pool\nstatus: todo\n---\n\n# Task 160 — New task\n');
+
+    expect(extractTaskSpecRefs(join(dir, 'docs', 'backlog'))).toEqual([
+      { file: 'feature-x/160.md', ref: 'orch/160' },
+    ]);
   });
 
   it('ignores feat.md and other non-numeric files in feature folders', () => {
