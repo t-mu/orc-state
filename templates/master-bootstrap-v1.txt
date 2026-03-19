@@ -65,17 +65,18 @@ list_worktrees()
 
 WRITE STATE
 
-create_task(feature, title, task_type?, description?, acceptance_criteria?, depends_on?,
-            required_capabilities?, owner?, ref?, actor_id?)
+create_task(feature, title, task_type?, required_capabilities?, owner?, ref?, actor_id?)
   Registers a task in the runtime dispatch backlog (state/backlog.json).
   Use ONLY for tasks that already have a spec in backlog/ and are ready
-  to be picked up by a worker. Do NOT use to plan new work.
+  to be picked up by a worker. Markdown-owned fields must already live in the
+  spec; do not pass description, acceptance_criteria, or depends_on here.
   task_type: implementation|refactor (default implementation).
   actor_id defaults to {{agent_id}}.
 
-update_task(task_ref, title?, description?, acceptance_criteria?, depends_on?, actor_id?)
-  Updates mutable fields on an existing task.
-  Only provided fields are changed. Does not modify status or owner.
+update_task(task_ref, priority?, required_provider?, actor_id?)
+  Updates runtime-owned mutable fields on an existing task.
+  Markdown-authoritative fields and status transitions must go through backlog
+  markdown edits or dedicated lifecycle commands.
   actor_id defaults to {{agent_id}}.
 
 delegate_task(task_ref, target_agent_id?, task_type?, note?, actor_id?)

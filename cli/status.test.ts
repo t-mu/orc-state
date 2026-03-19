@@ -52,11 +52,44 @@ describe('cli/status.ts', () => {
     expect(result.stderr).toContain('events.jsonl schema error at line 1');
   });
 
+  it('fails hard on contradictory lifecycle state instead of printing status output', () => {
+    seedValidState({
+      agents: [
+        { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+        { agent_id: 'orc-2', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+      ],
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }],
+      claims: [
+        {
+          run_id: 'run-old',
+          task_ref: 'docs/task-1',
+          agent_id: 'orc-1',
+          state: 'claimed',
+          claimed_at: '2026-01-01T00:00:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        },
+        {
+          run_id: 'run-new',
+          task_ref: 'docs/task-1',
+          agent_id: 'orc-2',
+          state: 'claimed',
+          claimed_at: '2026-01-01T00:05:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        },
+      ],
+    });
+    const result = runStatus([]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('State validation failed');
+    expect(result.stderr).toContain('keep oldest run run-old');
+  });
+
   it('prints human-readable status output', () => {
     seedValidState({
       agents: [
         { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
       ],
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }],
       claims: [{
         run_id: 'run-1',
         task_ref: 'docs/task-1',

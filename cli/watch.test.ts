@@ -61,7 +61,7 @@ describe('cli/watch.ts', () => {
 function seedValidState({ agents = [] as unknown[], claims = [] as unknown[], runWorktrees = [] as unknown[] } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task', status: 'todo' }] }],
+    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task', status: 'in_progress' }] }],
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',

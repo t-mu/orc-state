@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -9,10 +9,13 @@ let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orch-doctor-cli-test-'));
+  process.env.ORC_REPO_ROOT = dir;
+  mkdirSync(join(dir, 'backlog'), { recursive: true });
 });
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+  delete process.env.ORC_REPO_ROOT;
 });
 
 describe('cli/doctor.ts', () => {
@@ -84,6 +87,54 @@ describe('cli/doctor.ts', () => {
     const json = JSON.parse(result.stdout);
     expect(json.checks.providerBinaries.codex.ok).toBe(false);
     expect(json.checks.providerBinaries.codex.detail).toContain('npm install -g @openai/codex');
+  });
+
+  it('reports lifecycle invariant issues in structured output', () => {
+    seedState({
+      agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+      claims: [
+        {
+          run_id: 'run-old',
+          task_ref: 'docs/task-1',
+          agent_id: 'bob',
+          state: 'claimed',
+          claimed_at: '2026-01-01T00:00:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        },
+        {
+          run_id: 'run-new',
+          task_ref: 'docs/task-1',
+          agent_id: 'bob',
+          state: 'in_progress',
+          claimed_at: '2026-01-01T00:05:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+          finalization_state: 'blocked_finalize',
+        },
+      ],
+    });
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(result.status).toBe(1);
+    expect(json.checks.lifecycleIssues.some((issue: Record<string, unknown>) => issue.code === 'duplicate_active_claims')).toBe(true);
+    expect(json.checks.lifecycleIssues.some((issue: Record<string, unknown>) => issue.code === 'missing_finalization_blocked_reason')).toBe(true);
+  });
+
+  it('reports authoritative backlog drift in structured output', () => {
+    seedState({ agents: [], claims: [] });
+    writeFileSync(join(dir, 'backlog', '999-task-1.md'), ['---', 'ref: docs/task-1', 'feature: docs', 'status: todo', '---', '', '# Task 999 - Different Title', ''].join('\n'));
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(result.status).toBe(1);
+    expect(json.checks.backlogSync.mismatches.some((issue: Record<string, unknown>) => issue.field === 'title')).toBe(true);
+  });
+
+  it('reports state validation errors such as malformed events logs', () => {
+    seedState({ agents: [], claims: [] });
+    writeFileSync(join(dir, 'events.jsonl'), 'not-json\n');
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(result.status).toBe(1);
+    expect(json.checks.stateErrors.some((error: string) => error.includes('events.jsonl'))).toBe(true);
   });
 });
 

@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { withLock } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { readJson } from './stateReader.ts';
+import { selectDuplicateClaimWinner } from './lifecycleDiagnostics.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
 
@@ -44,14 +45,14 @@ export function reconcileState(stateDir: string): void {
 
     for (const [taskRef, activeClaims] of activeClaimsByTaskRef) {
       if (activeClaims.length > 1) {
-        activeClaims.sort((a, b) => (a.claimed_at > b.claimed_at ? -1 : 1));
-        const [keepClaim, ...staleClaims] = activeClaims;
+        const keepClaim = selectDuplicateClaimWinner(activeClaims);
+        const staleClaims = activeClaims.filter((claim) => claim.run_id !== keepClaim.run_id);
         for (const staleClaim of staleClaims) {
           console.log(`[reconcile] duplicate active claim ${staleClaim.run_id} for task ${taskRef} -> failed (kept ${keepClaim.run_id})`);
           staleClaim.state = 'failed';
           claimsModified = true;
         }
-        activeClaimByTaskRef.set(taskRef, activeClaims[0]);
+        activeClaimByTaskRef.set(taskRef, keepClaim);
       } else {
         activeClaimByTaskRef.set(taskRef, activeClaims[0]);
       }

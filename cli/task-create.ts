@@ -23,6 +23,7 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
 import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
+import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
 import type { Task } from '../types/backlog.ts';
 
 const featureRef = flag('feature');
@@ -106,6 +107,11 @@ for (const key of ['depends_on', 'acceptance_criteria', 'required_capabilities']
 }
 
 try {
+  assertTaskRegistrationFieldsAllowed({
+    description: flag('description'),
+    acceptance_criteria: flagAll('ac').length > 0 ? flagAll('ac') : undefined,
+    depends_on: flagAll('depends-on').length > 0 ? flagAll('depends-on') : undefined,
+  });
   withLock(join(STATE_DIR, '.lock'), () => {
     const backlogPath = join(STATE_DIR, 'backlog.json');
     const backlog = readBacklog(STATE_DIR);
@@ -119,6 +125,8 @@ try {
     if (existing) {
       throw new Error(`Task already exists: ${taskRef}`);
     }
+
+    assertTaskSpecMatchesRegistration({ taskRef, featureRef, title });
 
     // Validate all depends_on refs exist in the backlog.
     if ((newTask.depends_on ?? []).length > 0) {

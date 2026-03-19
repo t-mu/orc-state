@@ -12,6 +12,7 @@ import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateR
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
+import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
@@ -333,6 +334,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
   if (!taskSlug || !/^[a-z0-9-]+\/[a-z0-9-]+$/.test(taskRef)) {
     throw new Error(`Invalid task ref: ${taskRef}`);
   }
+  assertTaskRegistrationFieldsAllowed({ description, acceptance_criteria, depends_on });
 
   return withLock(join(stateDir, '.lock'), () => {
     if (actor_id !== 'human') {
@@ -356,6 +358,12 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
 
     const existing = epicObj.tasks.find((task) => task.ref === taskRef);
     if (existing) throw new Error(`Task already exists: ${taskRef}`);
+
+    assertTaskSpecMatchesRegistration({
+      taskRef,
+      featureRef: resolvedFeature,
+      title: title as string,
+    });
 
     if (((depends_on ?? []) as unknown[]).length > 0) {
       const allRefs = new Set(backlog.features.flatMap((candidate) => candidate.tasks.map((task) => task.ref)));
@@ -420,8 +428,6 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     actor_id = defaultActorId(stateDir),
   } = args;
 
-  const AGENT_SETTABLE_STATUSES = new Set(['todo', 'in_progress', 'blocked', 'done', 'released']);
-
   if (!task_ref) throw new Error('task_ref is required');
   if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor_id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   assertStringArray(acceptance_criteria, 'acceptance_criteria');
@@ -432,8 +438,8 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   if (required_provider !== undefined && required_provider !== null && !isSupportedProvider(required_provider)) {
     throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
   }
-  if (status !== undefined && !AGENT_SETTABLE_STATUSES.has(status as string)) {
-    throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}. Must be one of: ${[...AGENT_SETTABLE_STATUSES].join(', ')}.`);
+  if (status !== undefined && !['todo', 'in_progress', 'blocked', 'done', 'released'].includes(status as string)) {
+    throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}. Must be one of: todo, in_progress, blocked, done, released.`);
   }
 
   const now = new Date().toISOString();
@@ -444,6 +450,13 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const backlog = readBacklog(stateDir);
     const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
+    const authoritativeUpdates: Partial<Pick<Task, 'title' | 'description' | 'acceptance_criteria' | 'depends_on' | 'status'>> = {};
+    if (title !== undefined) authoritativeUpdates.title = title as Task['title'];
+    if (description !== undefined) authoritativeUpdates.description = description as Task['description'];
+    if (acceptance_criteria !== undefined) authoritativeUpdates.acceptance_criteria = acceptance_criteria as Task['acceptance_criteria'];
+    if (depends_on !== undefined) authoritativeUpdates.depends_on = depends_on as Task['depends_on'];
+    if (status !== undefined) authoritativeUpdates.status = status as Task['status'];
+    assertTaskUpdateAllowed(task, authoritativeUpdates);
 
     if (title !== undefined) {
       task.title = title as string;
