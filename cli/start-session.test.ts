@@ -657,9 +657,9 @@ describe('cli/start-session.ts', () => {
       expect(out).toContain('MASTER:  foreground planner/delegator in this terminal');
       expect(out).toContain('MANAGED WORKERS');
       expect(out).toContain('WORKERS: coordinator-managed background capacity launched per task');
-      expect(out).toContain('orc-delegate');
-      expect(out).toContain('Debug worker tools');
-      expect(out).toContain('orc-status');
+      expect(out).toContain('orc delegate');
+      expect(out).toContain('Recovery/debug');
+      expect(out).toContain('orc status');
     });
   });
 

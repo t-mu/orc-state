@@ -18,9 +18,11 @@ const COMMANDS: Record<string, string> = {
   'start-worker-session': 'start-worker-session.ts',
   'status':             'status.ts',
   'watch':              'watch.ts',
+  'master-check':       'master-check.ts',
   'attach':             'attach.ts',
   'control-worker':     'control-worker.ts',
   'task-create':        'task-create.ts',
+  'task-mark-done':     'task-mark-done.ts',
   'feature-create': 'feature-create.ts',
   'backlog-orient':     'backlog-orient.ts',
   'delegate':           'delegate-task.ts',
@@ -57,12 +59,69 @@ const COMMANDS: Record<string, string> = {
   'backlog-blocked':    'backlog-blocked.ts',
 };
 
+const BLESSED = [
+  'start-session',
+  'status',
+  'doctor',
+  'preflight',
+  'task-create',
+  'task-mark-done',
+  'backlog-sync',
+  'backlog-sync-check',
+  'delegate',
+  'run-start',
+  'run-heartbeat',
+  'run-work-complete',
+  'run-finish',
+  'run-fail',
+];
+
+const RECOVERY_DEBUG = [
+  'register-worker',
+  'start-worker-session',
+  'attach',
+  'control-worker',
+  'deregister',
+  'worker-remove',
+  'worker-gc',
+  'worker-clearall',
+  'kill-all',
+  'task-reset',
+  'task-unblock',
+  'run-expire',
+];
+
+const INSPECTION = [
+  'watch',
+  'runs-active',
+  'events-tail',
+  'master-check',
+  'waiting-input',
+  'run-info',
+  'worker-status',
+  'events-filter',
+  'backlog-ready',
+  'backlog-blocked',
+];
+
 const [subcommand, ...rest] = process.argv.slice(2);
 
 if (!subcommand || subcommand === '--help' || subcommand === '-h') {
   console.log('Usage: orc <subcommand> [args...]');
-  console.log('\nAvailable subcommands:');
-  for (const name of Object.keys(COMMANDS)) {
+  console.log('\nBlessed workflow commands:');
+  for (const name of BLESSED) {
+    console.log(`  ${name}`);
+  }
+  console.log('\nRecovery / debug commands:');
+  for (const name of RECOVERY_DEBUG) {
+    console.log(`  ${name}`);
+  }
+  console.log('\nSupported inspection commands:');
+  for (const name of INSPECTION) {
+    console.log(`  ${name}`);
+  }
+  console.log('\nAdvanced / specialized commands:');
+  for (const name of Object.keys(COMMANDS).filter((name) => !BLESSED.includes(name) && !RECOVERY_DEBUG.includes(name) && !INSPECTION.includes(name))) {
     console.log(`  ${name}`);
   }
   process.exit(0);
