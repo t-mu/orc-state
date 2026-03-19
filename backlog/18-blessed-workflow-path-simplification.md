@@ -2,7 +2,7 @@
 ref: general/18-blessed-workflow-path-simplification
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 18 — Simplify the Orchestrator Around Blessed Workflow Paths

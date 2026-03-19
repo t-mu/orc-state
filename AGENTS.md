@@ -116,29 +116,48 @@ orc run-fail --run-id=<run_id> --agent-id=<agent_id> --reason="<explanation>"
 
 ## Commands
 
+## Blessed Paths
+
+Use these as the default workflow. Treat everything else as recovery/debug unless the task explicitly requires it.
+
+1. Session startup: `orc start-session`
+2. Task authoring: edit `backlog/<N>-<slug>.md`
+3. Task registration/sync: create/update runtime state to match markdown, then run `orc backlog-sync-check`
+4. Task completion: `orc task-mark-done <task-ref>`
+5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
+6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
+
+Outside the blessed workflow:
+- supported inspection commands are for observability only
+- advanced/specialized commands are for setup or niche cases
+- recovery/debug commands are second-class and should not be chosen when the blessed path applies
+
 ### Orchestrator
 
 ```bash
-# Status / health
+# Blessed status / health
 orc status                                        # print agent/task/claim table
-orc watch                                         # live-refresh status
 orc doctor                                        # validate state files, check provider keys/binaries
 orc preflight                                     # lightweight environment health check
+
+# Supported inspection
+orc watch                                         # live-refresh status
 orc events-tail                                   # tail the events.jsonl log
 orc runs-active                                   # list in-progress/claimed runs
+orc master-check                                  # check pending master notifications
 
 # Session management
 orc start-session                                 # start coordinator + master session (requires TTY)
 orc kill-all                                      # ⚠️ stop coordinator + clear ALL agents; use only to fully reset
 
 # Task management
-orc task-create                                   # add a task to backlog (prefer MCP create_task from master)
+orc task-create                                   # register a task that already has a matching markdown spec
 orc task-mark-done <task-ref>                     # mark a task done in orchestrator state
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
 orc delegate                                      # assign/dispatch a task to an agent
 
-# Worker management
+# Worker management — recovery/debug only
 orc register-worker <id> --provider=claude        # register a new worker agent
 orc start-worker-session <id> --provider=claude   # launch headless PTY session + bootstrap
 orc attach <id>                                   # print tail of worker PTY output log (read-only)
@@ -149,7 +168,7 @@ orc worker-gc                                     # mark stale workers offline
 orc worker-clearall                               # remove all offline/stale workers
 ```
 
-### Run Lifecycle (Worker Commands)
+### Run Lifecycle (Worker Commands — blessed path)
 
 Workers emit these from inside their PTY session via Bash tool:
 
@@ -161,7 +180,7 @@ orc run-finish --run-id=<id> --agent-id=<id>                       # terminal su
 orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
   [--policy=requeue|block]                                          # terminal failure; default policy=requeue
 
-# Generic lifecycle event (phase tracking, optional)
+# Generic lifecycle event (phase tracking, optional / secondary path)
 orc progress --event=<type> --run-id=<id> --agent-id=<id> \
   [--phase=<name>] [--reason=<text>] [--policy=<requeue|block>]    # emit phase_started, phase_finished, etc.
 
@@ -186,6 +205,13 @@ orc run-input-respond --run-id=<id> --agent-id=<id> \
 
 ### Write rules
 **For agents:** use `orc` CLI commands or MCP tools for all state changes. Never call `withLock`, `atomicWriteJson`, or other internal library functions directly — those are for code authors implementing new handlers, not for agents operating the system.
+
+Normal task-authoring path:
+- edit the markdown spec first
+- register or sync the runtime task record second
+- run `orc backlog-sync-check`
+
+Do not treat generic runtime mutation as a substitute for backlog markdown edits.
 
 **For code authors** (implementing new CLI commands or MCP handlers):
 - All state writes: `withLock` + `atomicWriteJson`. Never `writeFileSync` directly.
@@ -291,6 +317,8 @@ Use `--worker-id=<id>` to override auto naming when needed.
 4. Self-review against acceptance criteria.
 5. Run verification commands from the task spec.
 6. Emit `orc run-work-complete` when implementation work is done, then use it as the required handoff before any terminal success signal.
+
+Recovery/debug commands remain available, but they are not part of the normal agent path and should only be used when the session is explicitly in recovery mode.
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 

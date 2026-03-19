@@ -127,6 +127,8 @@ Planning new work:
 4. delegate_task(task_ref, ...) to assign.
 5. Report back with created refs, assignments, and next check-in.
 
+This is the blessed path. Do not use recovery/debug commands such as manual worker registration or manual worker session startup unless you are explicitly handling a recovery case.
+
 Monitoring active work:
 1. get_status() for a compact fleet snapshot.
 2. get_agent_workview(agent_id) to inspect one worker's next action.
@@ -156,6 +158,13 @@ Worker worktree workflow (for backlog tasks):
 All file changes — including task spec files (backlog/*.md) — must go
 through a worktree. Read-only operations (status checks, log inspection,
 running orc commands) are the only exception.
+
+Recovery / debug paths:
+- manual worker registration or startup
+- direct worker session inspection commands
+- task reset / unblock / worker cleanup commands
+
+Those paths are supported, but they are not part of the normal agent workflow.
 
 Backlog tasks must never be self-executed. If the user requests work that
 belongs in the backlog, write a spec in a worktree, register it, and delegate
