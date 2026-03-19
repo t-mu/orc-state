@@ -26,12 +26,29 @@ clears all agents.
 
 ## All Subcommands
 
+## Blessed Path First
+
+Normal workflow:
+
+1. `orc start-session`
+2. write/edit the backlog markdown spec
+3. register or sync runtime state
+4. `orc backlog-sync-check`
+5. `orc delegate`
+6. worker lifecycle via `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
+7. inspect with `orc status` / `orc doctor`
+
+Outside the blessed workflow, use only:
+
+- supported inspection commands for observability
+- advanced / specialized commands for setup or niche workflows
+- recovery/debug commands for exceptional cases
+
 ### Session / Coordinator Management
 
 | Command | Usage | Notes |
 |---------|-------|-------|
 | `start-session` | `orc start-session [--provider=<claude\|codex\|gemini>]` | Starts coordinator + master session interactively. Requires TTY. |
-| `watch` | `orc watch` | Live-refresh status display. |
 | `status` | `orc status [--mine] [--agent-id=<id>]` | Print agent/task/claim table. |
 | `doctor` | `orc doctor` | Validate state files, check provider keys/binaries, find orphaned claims. |
 | `preflight` | `orc preflight` | Lightweight environment health check. |
@@ -40,6 +57,8 @@ clears all agents.
 | `install-skills` | `orc install-skills [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic skills into `.claude/skills/` or `.codex/rules/`. |
 
 ### Worker Management
+
+These commands are recovery/debug only. Do not choose them when the blessed workflow applies.
 
 | Command | Usage | Notes |
 |---------|-------|-------|
@@ -52,14 +71,26 @@ clears all agents.
 | `worker-gc` | `orc worker-gc` | Mark stale workers offline. |
 | `worker-clearall` | `orc worker-clearall` | Remove all offline/stale workers. |
 
+### Supported Inspection
+
+These commands are for observability. They are supported, but they are not alternate workflow entry points.
+
+| Command | Usage | Notes |
+|---------|-------|-------|
+| `watch` | `orc watch` | Live-refresh status display. |
+| `runs-active` | `orc runs-active` | List all in-progress/claimed runs. |
+| `events-tail` | `orc events-tail` | Tail the events.jsonl event log. |
+| `master-check` | `orc master-check` | Print pending master notifications not yet forwarded to the foreground master. |
+
 ### Task Management
 
 | Command | Usage | Notes |
 |---------|-------|-------|
 | `task-create` | `orc task-create --feature=<ref> --title=<text> [options]` | Add a task to backlog. Prefer MCP `create_task` from master. |
+| `task-mark-done` | `orc task-mark-done <feature/task>` | Mark a task done in runtime state after the markdown spec has already been updated. |
+| `backlog-sync` | `orc backlog-sync` | Repair runtime backlog metadata from authoritative markdown specs. |
+| `backlog-sync-check` | `orc backlog-sync-check` | Validate that runtime backlog metadata matches active markdown specs. |
 | `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
-| `runs-active` | `orc runs-active` | List all in-progress/claimed runs. |
-| `events-tail` | `orc events-tail` | Tail the events.jsonl event log. |
 
 ### Run Lifecycle (Worker Commands)
 
@@ -97,6 +128,8 @@ Use the CLI or MCP tools for orchestrator state changes. Do not mutate state
 files through internal library helpers from an agent session.
 
 ### Restart coordinator cleanly
+
+Recovery/debug only:
 
 ```bash
 # 1. Kill existing

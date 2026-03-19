@@ -187,16 +187,18 @@ Call `mcp__orchestrator__get_task` with `task_ref: <ref>`.
 
 ### 3a. Create path
 
-Call `mcp__orchestrator__create_task` with:
+Call `mcp__orchestrator__create_task` with runtime-owned fields only:
 - `title`: the task title from the `# Task N — Title` heading
 - `feature`: the `feature` frontmatter value
 - `ref`: the slug portion only (everything after the first `/` in the frontmatter ref)
-- `description`: the first non-empty paragraph of the `## Context` section
-- `acceptance_criteria`: native JSON array extracted from the `## Acceptance criteria` checklist items (strip the `- [ ] ` prefix from each line)
+
+Do not send markdown-owned fields such as `description`, `acceptance_criteria`, or `depends_on` through generic create/update registration.
 
 ### 3b. Update path
 
-Call `mcp__orchestrator__update_task` with `task_ref: <ref>` and any fields that have changed: `title`, `description`, `acceptance_criteria`.
+Call `mcp__orchestrator__update_task` only for runtime-owned mutable fields.
+
+Do not use generic `update_task` to mutate markdown-owned fields.
 
 ### 4. Handle failure (soft-fail)
 

@@ -303,9 +303,9 @@ console.log('\nSession recap:');
 console.log('  MASTER:  foreground planner/delegator in this terminal');
 console.log('  WORKERS: coordinator-managed background capacity launched per task');
 console.log('\nNext steps:');
-console.log('  Delegate work:      orc-delegate [agent-id]');
-console.log('  Check status:       orc-status');
-console.log('  Debug worker tools: orc-worker-register / orc-worker-start-session / orc-control-worker');
+console.log('  Delegate work:      orc delegate [--target-agent-id=<id>] --task-ref=<feature/task>');
+console.log('  Check status:       orc status');
+console.log('  Recovery/debug:     orc register-worker / orc start-worker-session / orc control-worker');
 
 let spawnArgs: string[] = [];
 try {
