@@ -4,6 +4,7 @@ export type EventFinalizationStatus = 'awaiting_finalize' | 'finalize_rebase_in_
 
 interface BaseEvent {
   seq: number;
+  event_id?: string;
   ts: string;
   actor_type: ActorType;
   actor_id: string;

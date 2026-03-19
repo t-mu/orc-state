@@ -16,6 +16,7 @@ const backlogValidator = ajv.compile(loadSchema('backlog.schema.json'));
 const agentsValidator = ajv.compile(loadSchema('agents.schema.json'));
 const claimsValidator = ajv.compile(loadSchema('claims.schema.json'));
 const runWorktreesValidator = ajv.compile(loadSchema('run-worktrees.schema.json'));
+const eventCheckpointValidator = ajv.compile(loadSchema('event-checkpoint.schema.json'));
 
 /** Validate backlog.json structure. Returns array of error strings (empty = valid). */
 export function validateBacklog(data: unknown): string[] {
@@ -38,6 +39,11 @@ export function validateClaims(data: unknown): string[] {
 export function validateRunWorktrees(data: unknown): string[] {
   const ok = runWorktreesValidator(data);
   return ok ? [] : formatAjvErrors(runWorktreesValidator.errors as AjvError[] | null, 'run-worktrees');
+}
+
+export function validateEventCheckpoint(data: unknown): string[] {
+  const ok = eventCheckpointValidator(data);
+  return ok ? [] : formatAjvErrors(eventCheckpointValidator.errors as AjvError[] | null, 'event-checkpoint');
 }
 
 function validateStateInvariants(backlog: unknown, agents: unknown, claims: unknown): string[] {
@@ -155,6 +161,16 @@ export function validateStateDir(stateDir: string): string[] {
       allErrors.push(...validateRunWorktrees(data));
     } catch (error) {
       allErrors.push(`run-worktrees.json: JSON parse error — ${(error as Error).message}`);
+    }
+  }
+
+  const eventCheckpointPath = join(stateDir, 'event-checkpoint.json');
+  if (existsSync(eventCheckpointPath)) {
+    try {
+      const data: unknown = JSON.parse(readFileSync(eventCheckpointPath, 'utf8'));
+      allErrors.push(...validateEventCheckpoint(data));
+    } catch (error) {
+      allErrors.push(`event-checkpoint.json: JSON parse error — ${(error as Error).message}`);
     }
   }
 

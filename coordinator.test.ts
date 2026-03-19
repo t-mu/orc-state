@@ -1020,6 +1020,147 @@ describe('processTerminalRunEvents', () => {
     });
   });
 
+  it('dedupes already processed events by durable identity', async () => {
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    const event = {
+      seq: 11,
+      event_id: 'evt-input-request-001',
+      ts: '2026-03-11T05:10:00.000Z',
+      event: 'input_requested' as const,
+      run_id: 'run-input-001',
+      task_ref: 'orch/task-150',
+      agent_id: 'orc-1',
+      payload: { question: 'Should I answer yes?' },
+    };
+
+    await processTerminalRunEvents([event]);
+    await processTerminalRunEvents([event]);
+
+    const notifications = readPendingNotifications(dir);
+    expect(notifications).toHaveLength(1);
+
+    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
+      last_processed_seq: number;
+      processed_event_ids: string[];
+    };
+    expect(checkpoint.last_processed_seq).toBe(11);
+    expect(checkpoint.processed_event_ids).toContain('evt-input-request-001');
+  });
+
+  it('resumes safely after restart with persisted processing state', async () => {
+    let coordinator = await import('./coordinator.ts');
+    const event = {
+      seq: 12,
+      event_id: 'evt-input-request-002',
+      ts: '2026-03-11T05:11:00.000Z',
+      event: 'input_requested' as const,
+      run_id: 'run-input-002',
+      task_ref: 'orch/task-151',
+      agent_id: 'orc-1',
+      payload: { question: 'Should I retry?' },
+    };
+
+    await coordinator.processTerminalRunEvents([event]);
+
+    vi.resetModules();
+    coordinator = await import('./coordinator.ts');
+    await coordinator.processTerminalRunEvents([event]);
+
+    const notifications = readPendingNotifications(dir);
+    expect(notifications).toHaveLength(1);
+
+    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
+      last_processed_seq: number;
+      processed_event_ids: string[];
+    };
+    expect(checkpoint.last_processed_seq).toBe(12);
+    expect(checkpoint.processed_event_ids).toContain('evt-input-request-002');
+  });
+
+  it('dedupes legacy events without event_id across restart', async () => {
+    let coordinator = await import('./coordinator.ts');
+    const legacyEvent = {
+      seq: 13,
+      ts: '2026-03-11T05:11:30.000Z',
+      event: 'input_requested' as const,
+      run_id: 'run-input-legacy',
+      task_ref: 'orch/task-legacy',
+      agent_id: 'orc-1',
+      payload: { question: 'Legacy event?' },
+    };
+
+    await coordinator.processTerminalRunEvents([legacyEvent]);
+
+    vi.resetModules();
+    coordinator = await import('./coordinator.ts');
+    await coordinator.processTerminalRunEvents([legacyEvent]);
+
+    const notifications = readPendingNotifications(dir);
+    expect(notifications).toHaveLength(1);
+
+    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
+      processed_event_ids: string[];
+    };
+    expect(checkpoint.processed_event_ids[0]).toContain('legacy:');
+  });
+
+  it('does not skip a new event when another processed event shares the dedupe window', async () => {
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+
+    await processTerminalRunEvents([{
+      seq: 20,
+      event_id: 'evt-input-request-020',
+      ts: '2026-03-11T05:12:00.000Z',
+      event: 'input_requested',
+      run_id: 'run-input-020',
+      task_ref: 'orch/task-152',
+      agent_id: 'orc-1',
+      payload: { question: 'First question?' },
+    }]);
+
+    await processTerminalRunEvents([{
+      seq: 21,
+      event_id: 'evt-input-request-021',
+      ts: '2026-03-11T05:12:30.000Z',
+      event: 'input_requested',
+      run_id: 'run-input-021',
+      task_ref: 'orch/task-153',
+      agent_id: 'orc-1',
+      payload: { question: 'Second question?' },
+    }]);
+
+    const notifications = readPendingNotifications(dir);
+    expect(notifications).toHaveLength(2);
+    expect(notifications.map((entry) => entry.run_id)).toEqual(['run-input-020', 'run-input-021']);
+  });
+
+  it('bootstraps the checkpoint from the retained log instead of replaying old events on first load', async () => {
+    seedState(dir);
+    writeFileSync(join(dir, 'events.jsonl'), `${JSON.stringify({
+      seq: 30,
+      ts: '2026-03-11T05:13:00.000Z',
+      event: 'input_requested',
+      actor_type: 'agent',
+      actor_id: 'orc-1',
+      run_id: 'run-input-existing',
+      task_ref: 'orch/task-existing',
+      agent_id: 'orc-1',
+      payload: { question: 'Existing question?' },
+    })}\n`, 'utf8');
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(readPendingNotifications(dir)).toHaveLength(0);
+
+    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
+      last_processed_seq: number;
+      processed_event_ids: string[];
+    };
+    expect(checkpoint.last_processed_seq).toBe(30);
+    expect(checkpoint.processed_event_ids).toHaveLength(1);
+  });
+
   it('does not duplicate coordinator-originated INPUT_REQUEST notifications on event processing', async () => {
     const { processTerminalRunEvents } = await import('./coordinator.ts');
     const nowIso = '2026-03-11T05:10:00.000Z';

@@ -10,6 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { withLock } from './lock.ts';
 import { validateEventObject } from './eventValidation.ts';
@@ -17,6 +18,46 @@ import type { OrcEvent, OrcEventInput } from '../types/events.ts';
 
 const MAX_EVENTS_LOG_LINES = 10_000;
 const MAX_EVENTS_LOG_BYTES = 5 * 1024 * 1024;
+
+export function ensureEventIdentity<T extends { event_id?: string }>(
+  event: T,
+  { createIfMissing = true }: { createIfMissing?: boolean } = {},
+): T {
+  if (typeof event.event_id === 'string' && event.event_id.length > 0) {
+    return event;
+  }
+  if (!createIfMissing) {
+    return event;
+  }
+  return {
+    ...event,
+    event_id: randomUUID(),
+  };
+}
+
+export function eventIdentity(event: {
+  event_id?: unknown;
+  seq?: unknown;
+  ts?: unknown;
+  event?: unknown;
+  run_id?: unknown;
+  task_ref?: unknown;
+  agent_id?: unknown;
+}): string {
+  if (typeof event.event_id === 'string' && event.event_id.length > 0) {
+    return event.event_id;
+  }
+
+  const parts = [
+    typeof event.seq === 'number' ? `seq:${event.seq}` : 'seq:missing',
+    typeof event.ts === 'string' ? `ts:${event.ts}` : 'ts:missing',
+    typeof event.event === 'string' ? `event:${event.event}` : 'event:missing',
+    typeof event.run_id === 'string' ? `run:${event.run_id}` : 'run:missing',
+    typeof event.task_ref === 'string' ? `task:${event.task_ref}` : 'task:missing',
+    typeof event.agent_id === 'string' ? `agent:${event.agent_id}` : 'agent:missing',
+  ];
+  return `legacy:${parts.join('|')}`;
+}
 
 function archivePaths(logPath: string): [string, string] {
   return [`${logPath}.1`, `${logPath}.2`];
@@ -96,12 +137,13 @@ export function rotateEventsLogIfNeeded(
  *   'never'            — skip fsync (faster; acceptable for low-stakes dev runs).
  */
 export function appendEvent(logPath: string, event: OrcEvent, { fsyncPolicy = 'always' } = {}): void {
-  const errors = validateEventObject(event);
+  const normalizedEvent = ensureEventIdentity(event);
+  const errors = validateEventObject(normalizedEvent);
   if (errors.length > 0) {
     throw new Error(`event validation failed: ${errors.join('; ')}`);
   }
 
-  const line = JSON.stringify(event) + '\n';
+  const line = JSON.stringify(normalizedEvent) + '\n';
   const fd = openSync(logPath, 'a');
   try {
     writeSync(fd, line, null, 'utf8');
@@ -127,7 +169,7 @@ export function appendSequencedEvent(
   const append = (): number => {
     rotateEventsLogIfNeeded(logPath);
     const seq = nextSeq(logPath);
-    appendEvent(logPath, { ...event, seq } as OrcEvent, { fsyncPolicy });
+    appendEvent(logPath, ensureEventIdentity({ ...event, seq } as OrcEvent), { fsyncPolicy });
     return seq;
   };
 
@@ -153,7 +195,7 @@ export function readEvents(logPath: string): OrcEvent[] {
       continue;
     }
     try {
-      const event = JSON.parse(line) as OrcEvent;
+      const event = ensureEventIdentity(JSON.parse(line) as OrcEvent, { createIfMissing: false });
       const validationErrors = validateEventObject(event);
       if (validationErrors.length > 0) {
         throw new Error(`events.jsonl schema error at line ${i + 1}: ${validationErrors.join('; ')}`);
@@ -174,18 +216,18 @@ export function readEvents(logPath: string): OrcEvent[] {
  * Returns an empty array if the file does not exist.
  * Silently skips malformed lines.
  */
-export function readEventsSince(logPath: string, afterSeq: number): unknown[] {
+export function readEventsSince(logPath: string, afterSeq: number): OrcEvent[] {
   if (!existsSync(logPath)) return [];
   const content = readFileSync(logPath, 'utf8');
   const lines = content.split('\n');
-  const events: unknown[] = [];
+  const events: OrcEvent[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     if (!line || line.trim().length === 0) {
       continue;
     }
     try {
-      const event = JSON.parse(line) as { seq?: unknown };
+      const event = ensureEventIdentity(JSON.parse(line) as OrcEvent, { createIfMissing: false });
       if (typeof event?.seq === 'number' && event.seq > afterSeq) {
         events.push(event);
       }
@@ -200,23 +242,23 @@ export function readEventsSince(logPath: string, afterSeq: number): unknown[] {
  * Return recent events from current log plus up to two archives.
  * Order is oldest->newest before tailing.
  */
-export function readRecentEvents(logPath: string, limit = 50): unknown[] {
+export function readRecentEvents(logPath: string, limit = 50): OrcEvent[] {
   if (!Number.isInteger(limit) || limit < 0) {
     throw new Error('limit must be a non-negative integer');
   }
   if (limit === 0) return [];
 
   const files = [`${logPath}.2`, `${logPath}.1`, logPath];
-  const events: unknown[] = [];
+  const events: OrcEvent[] = [];
   for (const file of files) {
     if (!existsSync(file)) continue;
     const content = readFileSync(file, 'utf8');
     for (const line of parseNonEmptyLines(content)) {
       const parsed = parseJsonLineOrNull(line);
-      if (parsed) events.push(parsed);
+      if (parsed) events.push(parsed as OrcEvent);
     }
   }
-  return events.slice(-Math.min(limit, 200));
+  return events.slice(-Math.min(limit, 200)).map((event) => ensureEventIdentity(event, { createIfMissing: false }));
 }
 
 /**
