@@ -434,6 +434,10 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
+      }],
       claims: [{
         run_id: 'run-awaiting-input',
         task_ref: 'proj/fix-bug',
@@ -516,6 +520,10 @@ describe('agent ttl dead marking', () => {
         provider_ref: null,
         last_heartbeat_at: staleTs,
         registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
       }],
       claims: [{
         run_id: 'run-ttl-1',
@@ -1337,6 +1345,10 @@ describe('processTerminalRunEvents', () => {
         session_handle: 'pty:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
       }],
       claims: [{
         run_id: 'run-finalize-nudge',

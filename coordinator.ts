@@ -747,6 +747,12 @@ async function tick() {
 
   let agents = tickAgents.agents ?? [];
   let claims = tickClaims.claims ?? [];
+  reconcileState(STATE_DIR);
+  tickBacklog = readJson(STATE_DIR, 'backlog.json');
+  tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
+  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+  agents = tickAgents.agents ?? [];
+  claims = tickClaims.claims ?? [];
   markStaleAgentsDead(agents, claims);
 
   try {

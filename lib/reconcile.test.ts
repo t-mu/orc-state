@@ -96,7 +96,7 @@ describe('reconcileState', () => {
     expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
-  it('marks older duplicate active claim as failed', () => {
+  it('marks newer duplicate active claim as failed and keeps the oldest claim', () => {
     writeState({
       tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }],
       claims: [
@@ -121,8 +121,8 @@ describe('reconcileState', () => {
 
     reconcileState(dir);
     const claims = readJson(join(dir, 'claims.json')).claims;
-    expect(claims.find((c: Record<string, unknown>) => c.run_id === 'run-old')?.state).toBe('failed');
-    expect(claims.find((c: Record<string, unknown>) => c.run_id === 'run-new')?.state).toBe('claimed');
+    expect(claims.find((c: Record<string, unknown>) => c.run_id === 'run-old')?.state).toBe('claimed');
+    expect(claims.find((c: Record<string, unknown>) => c.run_id === 'run-new')?.state).toBe('failed');
   });
 
   it('marks orphan active claim as failed', () => {

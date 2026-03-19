@@ -7,6 +7,9 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { flag, intFlag } from '../lib/args.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
+import { validateStateDir } from '../lib/stateValidation.ts';
+import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
+import { validateBacklogSync } from './backlog-sync-check.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -15,10 +18,13 @@ const staleStartThresholdMs = intFlag('stale-start-ms', 5 * 60 * 1000);
 const staleProgressThresholdMs = intFlag('stale-progress-ms', 20 * 60 * 1000);
 const nowMs = Date.now();
 
-const agentsState = readAgents(STATE_DIR);
-const claimsState = readClaims(STATE_DIR);
-const agents: Agent[] = agentsState.agents;
-const claims: Claim[] = claimsState.claims;
+const stateErrors = validateStateDir(STATE_DIR);
+const backlogSync = safeRead(
+  () => validateBacklogSync(process.env.ORC_BACKLOG_DIR ?? `${process.env.ORC_REPO_ROOT ?? process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
+  { ok: false, spec_count: 0, missing: [], mismatches: [] },
+);
+const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
+const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
 const providers = new Set(agents.map((a) => a.provider));
 
 const checks: Record<string, unknown> = {
@@ -26,6 +32,9 @@ const checks: Record<string, unknown> = {
   staleLinkedWorkers: [] as unknown[],
   orphanedActiveClaims: [] as unknown[],
   staleActiveClaims: [] as unknown[],
+  lifecycleIssues: [] as unknown[],
+  stateErrors,
+  backlogSync,
 };
 
 for (const provider of providers) {
@@ -81,12 +90,17 @@ for (const claim of claims) {
   });
 }
 
+(checks.lifecycleIssues as unknown[]) = detectLifecycleIssues(STATE_DIR);
+
 const summary = {
   ok:
+    stateErrors.length === 0 &&
+    backlogSync.ok &&
     Object.values(checks.providerBinaries as Record<string, unknown>).every((c: unknown) => (c as Record<string, unknown>).ok) &&
     (checks.staleLinkedWorkers as unknown[]).length === 0 &&
     (checks.orphanedActiveClaims as unknown[]).length === 0 &&
-    (checks.staleActiveClaims as unknown[]).length === 0,
+    (checks.staleActiveClaims as unknown[]).length === 0 &&
+    (checks.lifecycleIssues as unknown[]).length === 0,
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
@@ -133,6 +147,29 @@ for (const c of checks.staleActiveClaims as Array<Record<string, unknown>>) {
   console.log(`    hint: ${String(c.hint)}`);
 }
 
+console.log('');
+console.log(`state errors: ${stateErrors.length}`);
+for (const error of stateErrors) {
+  console.log(`  ${error}`);
+}
+
+console.log('');
+console.log(`backlog sync mismatches: ${backlogSync.missing.length + backlogSync.mismatches.length}`);
+for (const missing of backlogSync.missing) {
+  console.log(`  missing ${missing.ref} (${missing.file})`);
+}
+for (const mismatch of backlogSync.mismatches) {
+  console.log(`  mismatch ${mismatch.ref} ${mismatch.field}: expected "${mismatch.expected}" got "${mismatch.actual}"`);
+}
+
+console.log('');
+const lifecycleIssues = checks.lifecycleIssues as LifecycleIssue[];
+console.log(`lifecycle issues: ${lifecycleIssues.length}`);
+for (const issue of lifecycleIssues) {
+  console.log(`  ${issue.code} ${issue.message}`);
+  if (issue.hint) console.log(`    hint: ${issue.hint}`);
+}
+
 if (!summary.ok) {
   console.log('');
   console.log('Suggested fixes:');
@@ -140,6 +177,7 @@ if (!summary.ok) {
   console.log('  2. orc-worker-clearall');
   console.log('  3. orc-runs-active --json');
   console.log('  4. orc-status --json');
+  console.log('  5. Fix lifecycle invariant violations before dispatch continues');
   process.exit(1);
 }
 
@@ -157,4 +195,12 @@ function checkProviderBinary(provider: string) {
     package: packageName ?? null,
     detail: ok ? '' : (installHint ? `Run: ${installHint}` : `Binary '${binary}' not found on PATH`),
   };
+}
+
+function safeRead<T>(read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch {
+    return fallback;
+  }
 }

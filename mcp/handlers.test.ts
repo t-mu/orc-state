@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,8 +50,27 @@ function readBacklog(): { version: string; features: Array<{ ref: string; title:
   return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
 }
 
+function writeSpec(taskRef: string, feature: string, title: string, status = 'todo') {
+  const slug = taskRef.split('/')[1];
+  writeFileSync(
+    join(dir, 'backlog', `999-${slug}.md`),
+    [
+      '---',
+      `ref: ${taskRef}`,
+      `feature: ${feature}`,
+      `status: ${status}`,
+      '---',
+      '',
+      `# Task 999 — ${title}`,
+      '',
+    ].join('\n'),
+  );
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orc-mcp-handlers-test-'));
+  process.env.ORC_REPO_ROOT = dir;
+  mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedBacklog([
     {
       ref: 'project',
@@ -176,11 +195,15 @@ beforeEach(() => {
     JSON.stringify({ seq: 2, event: 'task_delegated', task_ref: 'project/todo-one' }),
     JSON.stringify({ seq: 3, event: 'run_started', task_ref: 'project/todo-one' }),
   ]);
+  writeSpec('project/todo-one', 'project', 'Todo one');
+  writeSpec('project/done-one', 'project', 'Done one', 'done');
+  writeSpec('infra/blocked-one', 'infra', 'Blocked one', 'blocked');
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
+  delete process.env.ORC_REPO_ROOT;
 });
 
 describe('mcp read handlers', () => {
@@ -443,13 +466,11 @@ describe('mcp read handlers', () => {
   });
 
   it('handleCreateTask creates task, writes backlog, and appends task_added event', () => {
+    writeSpec('project/add-orchestration-docs', 'project', 'Add orchestration docs');
     const created = handleCreateTask(dir, {
       feature: 'project',
       title: 'Add orchestration docs',
       task_type: 'implementation',
-      description: 'Document MCP orchestration flow.',
-      acceptance_criteria: ['Docs explain read/write tools'],
-      depends_on: ['project/todo-one'],
       actor_id: 'master',
     });
 
@@ -467,6 +488,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleCreateTask stores explicit priority when provided', () => {
+    writeSpec('project/high-priority-task', 'project', 'High priority task');
     const created = handleCreateTask(dir, {
       feature: 'project',
       title: 'High priority task',
@@ -499,6 +521,7 @@ describe('mcp read handlers', () => {
     const statusBefore = handleGetStatus(dir);
     expect(statusBefore.next_task_seq).toBe(125);
 
+    writeSpec('project/bootstrapped-seq-task', 'project', 'Bootstrapped seq task');
     const created = handleCreateTask(dir, {
       feature: 'project',
       title: 'Bootstrapped seq task',
@@ -519,6 +542,7 @@ describe('mcp read handlers', () => {
     const statusBefore = handleGetStatus(dir);
     expect(statusBefore.next_task_seq).toBe(1);
 
+    writeSpec('project/first-seq-task', 'project', 'First seq task');
     const created = handleCreateTask(dir, {
       feature: 'project',
       title: 'First seq task',
@@ -528,13 +552,14 @@ describe('mcp read handlers', () => {
     expect(readBacklog().next_task_seq).toBe(2);
   });
 
-  it('handleCreateTask validates depends_on references', () => {
+  it('handleCreateTask rejects markdown-authoritative registration fields', () => {
+    writeSpec('project/bad-dependency-task', 'project', 'Bad dependency task');
     expect(() => handleCreateTask(dir, {
       feature: 'project',
       title: 'Bad dependency task',
       depends_on: ['project/missing-task'],
       actor_id: 'master',
-    })).toThrow(/depends_on task_ref not found/);
+    })).toThrow(/markdown-authoritative/);
   });
 
   it('handleCreateTask fails for duplicate refs and missing feature', () => {
@@ -553,10 +578,12 @@ describe('mcp read handlers', () => {
 
   it('handleCreateTask validates required fields and actor format', () => {
     expect(() => handleCreateTask(dir, { feature: 'project', actor_id: 'master' })).toThrow(/title is required/);
+    writeSpec('project/x', 'project', 'x');
     expect(() => handleCreateTask(dir, { feature: 'project', title: 'x', actor_id: 'INVALID' })).toThrow(/Invalid actor-id/);
   });
 
   it('handleCreateTask rejects invalid priority', () => {
+    writeSpec('project/bad-priority', 'project', 'Bad priority');
     expect(() => handleCreateTask(dir, {
       feature: 'project',
       title: 'Bad priority',
@@ -566,12 +593,14 @@ describe('mcp read handlers', () => {
   });
 
   it('handleCreateTask requires registered non-human actor ids', () => {
+    writeSpec('project/actor-check', 'project', 'Actor check');
     expect(() => handleCreateTask(dir, {
       feature: 'project',
       title: 'Actor check',
       actor_id: 'ghost-agent',
     })).toThrow(/Actor agent not found/);
 
+    writeSpec('project/human-actor-allowed', 'project', 'Human actor allowed');
     expect(() => handleCreateTask(dir, {
       feature: 'project',
       title: 'Human actor allowed',
@@ -579,8 +608,9 @@ describe('mcp read handlers', () => {
     })).not.toThrow();
   });
 
-  it('handleCreateTask persists multiline description and omits empty list fields', () => {
-    const created = handleCreateTask(dir, {
+  it('handleCreateTask rejects markdown-owned description fields during registration', () => {
+    writeSpec('project/multiline-task', 'project', 'Multiline task');
+    expect(() => handleCreateTask(dir, {
       feature: 'project',
       title: 'Multiline task',
       description: 'Line one\\nLine two',
@@ -588,17 +618,11 @@ describe('mcp read handlers', () => {
       depends_on: [],
       required_capabilities: [],
       actor_id: 'master',
-    });
-    const backlog = readBacklog();
-    const task = backlog.features.find(feature => feature.ref === 'project')?.tasks
-      .find((candidate) => candidate.ref === created.ref);
-    expect(task?.description).toBe('Line one\\nLine two');
-    expect(task).not.toHaveProperty('acceptance_criteria');
-    expect(task).not.toHaveProperty('depends_on');
-    expect(task).not.toHaveProperty('required_capabilities');
+    })).toThrow(/markdown-authoritative/);
   });
 
   it('handleCreateTask defaults to general feature when feature is omitted', () => {
+    writeSpec('general/no-feature-task', 'general', 'No feature task');
     const created = handleCreateTask(dir, {
       title: 'No feature task',
       actor_id: 'master',
@@ -614,6 +638,7 @@ describe('mcp read handlers', () => {
     const before = readBacklog();
     expect(before.features.find(feature => feature.ref === 'general')).toBeUndefined();
 
+    writeSpec('general/auto-feature-task', 'general', 'Auto feature task');
     handleCreateTask(dir, {
       title: 'Auto feature task',
       actor_id: 'master',
@@ -624,6 +649,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleCreateTask uses explicit feature when provided', () => {
+    writeSpec('project/explicit-feature-task', 'project', 'Explicit feature task');
     const created = handleCreateTask(dir, {
       feature: 'project',
       title: 'Explicit feature task',
@@ -632,20 +658,21 @@ describe('mcp read handlers', () => {
     expect(created.ref).toMatch(/^project\//);
   });
 
-  it('handleUpdateTask updates provided fields and leaves others unchanged', () => {
+  it('handleUpdateTask updates runtime-owned fields and leaves others unchanged', () => {
     const result = handleUpdateTask(dir, {
       task_ref: 'project/todo-one',
-      title: 'Updated title',
-      acceptance_criteria: ['criterion A'],
+      priority: 'critical',
+      required_provider: 'gemini',
       actor_id: 'master',
     });
 
-    expect(result.title).toBe('Updated title');
-    expect(result.acceptance_criteria).toEqual(['criterion A']);
+    expect(result.priority).toBe('critical');
+    expect(result.required_provider).toBe('gemini');
     const backlog = readBacklog();
     const task = backlog.features.flatMap(feature => feature.tasks).find((entry) => entry.ref === 'project/todo-one')!;
-    expect(task.title).toBe('Updated title');
-    expect(task).not.toHaveProperty('description');
+    expect(task.priority).toBe('critical');
+    expect(task.required_provider).toBe('gemini');
+    expect(task.title).toBe('Todo one');
   });
 
   it('handleUpdateTask updates priority without changing status or owner', () => {
@@ -676,7 +703,7 @@ describe('mcp read handlers', () => {
 
     handleUpdateTask(dir, {
       task_ref: 'project/todo-one',
-      title: 'Updated title',
+      priority: 'critical',
       actor_id: 'master',
     });
 
@@ -688,15 +715,15 @@ describe('mcp read handlers', () => {
   it('handleUpdateTask appends task_updated event with changed fields list', () => {
     handleUpdateTask(dir, {
       task_ref: 'project/todo-one',
-      description: 'new desc',
-      depends_on: ['project/done-one'],
+      priority: 'high',
+      required_provider: 'gemini',
       actor_id: 'master',
     });
     const events = readFileSync(join(dir, 'events.jsonl'), 'utf8');
     const event = JSON.parse(events.trim().split('\n').at(-1)!);
     expect(event.event).toBe('task_updated');
     expect(event.task_ref).toBe('project/todo-one');
-    expect(event.payload.fields).toEqual(expect.arrayContaining(['description', 'depends_on']));
+    expect(event.payload.fields).toEqual(expect.arrayContaining(['priority', 'required_provider']));
     expect(event.payload.fields).not.toContain('title');
   });
 
@@ -732,6 +759,19 @@ describe('mcp read handlers', () => {
       depends_on: 'not an array',
       actor_id: 'master',
     })).toThrow(/depends_on must be an array/);
+  });
+
+  it('handleUpdateTask rejects markdown-authoritative field mutations', () => {
+    expect(() => handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      title: 'Updated title',
+      actor_id: 'master',
+    })).toThrow(/markdown-authoritative/);
+    expect(() => handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      status: 'done',
+      actor_id: 'master',
+    })).toThrow(/cannot change status directly/);
   });
 
   it('handleUpdateTask throws when priority is invalid', () => {
@@ -1328,6 +1368,7 @@ describe('handleListWorktrees', () => {
 
 describe('handleCreateTask required_provider', () => {
   it('stores required_provider when provided', () => {
+    writeSpec('project/provider-task', 'project', 'Provider task');
     const result = handleCreateTask(dir, {
       feature: 'project',
       title: 'Provider task',
@@ -1341,6 +1382,7 @@ describe('handleCreateTask required_provider', () => {
   });
 
   it('omits required_provider when not provided', () => {
+    writeSpec('project/no-provider-task', 'project', 'No provider task');
     const result = handleCreateTask(dir, {
       feature: 'project',
       title: 'No provider task',
@@ -1350,6 +1392,7 @@ describe('handleCreateTask required_provider', () => {
   });
 
   it('throws on invalid required_provider', () => {
+    writeSpec('project/bad-provider-task', 'project', 'Bad provider task');
     expect(() =>
       handleCreateTask(dir, {
         feature: 'project',

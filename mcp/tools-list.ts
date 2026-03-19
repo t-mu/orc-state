@@ -123,7 +123,7 @@ export const TOOLS = [
   },
   {
     name: 'create_task',
-    description: 'Create a new task in the backlog. Returns the created task object.',
+    description: 'Register a task from an existing markdown backlog spec. Markdown-owned fields must already live in the spec.',
     inputSchema: {
       type: 'object',
       required: ['title'],
@@ -132,8 +132,8 @@ export const TOOLS = [
           type: 'string',
           description: 'Feature ref. Defaults to "general" if omitted; the "general" feature is created automatically.',
         },
-        title: { type: 'string', description: 'Task title (plain text)' },
-        ref: { type: 'string', description: 'Explicit slug; auto-generated from title if omitted' },
+        title: { type: 'string', description: 'Task title; must match the markdown spec' },
+        ref: { type: 'string', description: 'Explicit slug; must match the markdown spec if provided' },
         task_type: {
           type: 'string',
           enum: ['implementation', 'refactor'],
@@ -143,17 +143,6 @@ export const TOOLS = [
           type: 'string',
           enum: ['low', 'normal', 'high', 'critical'],
           description: 'Default: normal',
-        },
-        description: { type: 'string', description: 'Detailed description; may be multi-line' },
-        acceptance_criteria: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Native JSON array of criterion strings — NOT a JSON-encoded string. Example: ["criterion one", "criterion two"]',
-        },
-        depends_on: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Native JSON array of task ref strings this task depends on — NOT a JSON-encoded string.',
         },
         required_capabilities: {
           type: 'array',
@@ -173,7 +162,7 @@ export const TOOLS = [
   },
   {
     name: 'update_task',
-    description: 'Update mutable fields on an existing task. Only provided fields are changed.',
+    description: 'Update runtime-owned mutable fields on an existing task. Markdown-authoritative fields are rejected.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -182,32 +171,15 @@ export const TOOLS = [
           type: 'string',
           description: 'Full task ref, e.g. "orch/task-101-foo"',
         },
-        title: { type: 'string', description: 'Replacement title' },
-        description: { type: 'string', description: 'Replacement description' },
         priority: {
           type: 'string',
           enum: ['low', 'normal', 'high', 'critical'],
           description: 'Replacement priority',
         },
-        acceptance_criteria: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Native JSON array of criterion strings - NOT a JSON-encoded string. Example: ["criterion one", "criterion two"]',
-        },
-        depends_on: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Native JSON array of task ref strings - NOT a JSON-encoded string.',
-        },
         required_provider: {
           type: ['string', 'null'],
           enum: ['codex', 'claude', 'gemini', null],
           description: 'Set or clear the provider restriction. Pass null to remove.',
-        },
-        status: {
-          type: 'string',
-          enum: ['todo', 'in_progress', 'blocked', 'done', 'released'],
-          description: 'Set task status. Use done to mark a task complete.',
         },
         actor_id: { type: 'string', description: 'Defaults to master agent_id' },
       },
