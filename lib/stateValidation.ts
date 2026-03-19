@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { readEvents } from './eventLog.ts';
 import { createOrchestratorAjv } from './ajvFactory.ts';
 import { type AjvError, formatAjvErrors } from './ajvUtils.ts';
+import { detectLifecycleIssues, summarizeLifecycleIssues } from './lifecycleDiagnostics.ts';
 
 const SCHEMA_DIR = join(import.meta.dirname, '..', 'schemas');
 
@@ -46,7 +47,7 @@ export function validateEventCheckpoint(data: unknown): string[] {
   return ok ? [] : formatAjvErrors(eventCheckpointValidator.errors as AjvError[] | null, 'event-checkpoint');
 }
 
-function validateStateInvariants(backlog: unknown, agents: unknown, claims: unknown): string[] {
+function validateLegacyStateInvariants(backlog: unknown, agents: unknown, claims: unknown): string[] {
   const errors: string[] = [];
   const taskRefs = new Set<string>();
   const agentIds = new Set<string>();
@@ -135,7 +136,7 @@ export function validateStateDir(stateDir: string): string[] {
     && parsed['claims.json']
   ) {
     allErrors.push(
-      ...validateStateInvariants(
+      ...validateLegacyStateInvariants(
         parsed['backlog.json'],
         parsed['agents.json'],
         parsed['claims.json'],
@@ -173,6 +174,8 @@ export function validateStateDir(stateDir: string): string[] {
       allErrors.push(`event-checkpoint.json: JSON parse error — ${(error as Error).message}`);
     }
   }
+
+  allErrors.push(...summarizeLifecycleIssues(detectLifecycleIssues(stateDir)));
 
   return allErrors;
 }

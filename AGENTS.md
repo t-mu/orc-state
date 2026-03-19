@@ -65,7 +65,7 @@ The main checkout stays clean.
 #       backlog/<N>-<slug>.md — change frontmatter: status: todo -> status: done
 #    b. Update orchestrator state (backlog.json):
 node --experimental-strip-types cli/task-mark-done.ts <task-ref>
-#       or via MCP: update_task(task_ref="<ref>", status="done")
+#       do not use generic update_task() for status changes
 
 # 1. Commit inside the worktree
 git add -p
@@ -133,7 +133,7 @@ orc kill-all                                      # ⚠️ stop coordinator + cl
 
 # Task management
 orc task-create                                   # add a task to backlog (prefer MCP create_task from master)
-orc task-mark-done <task-ref>                     # mark a task done in orchestrator state (also: update_task status="done")
+orc task-mark-done <task-ref>                     # mark a task done in orchestrator state
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
 orc delegate                                      # assign/dispatch a task to an agent
@@ -206,7 +206,7 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 |------------|-------------|
 | `todo → claimed` | Coordinator (on delegate) |
 | `claimed → in_progress` | Worker (`orc run-start`) |
-| `in_progress → done` | Worker (`orc task-mark-done <ref>` or `update_task status="done"`) |
+| `in_progress → done` | Worker (`orc task-mark-done <ref>`) |
 | `done → released` | Coordinator (after merge) |
 | `any → blocked` | Worker (`orc run-fail --policy=block`) |
 | `blocked/claimed/in_progress → todo` | Operator (`orc task-reset <ref>`) |
