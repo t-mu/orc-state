@@ -250,7 +250,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleGetRecentEvents caps limit and skips malformed lines', () => {
-    const events = handleGetRecentEvents(dir, { limit: 2 }) as Array<Record<string, unknown>>;
+    const events = handleGetRecentEvents(dir, { limit: 2 });
     expect(events).toHaveLength(2);
     expect(events[0].seq).toBe(2);
     expect(events[1].seq).toBe(3);
@@ -270,7 +270,7 @@ describe('mcp read handlers', () => {
     writeFileSync(join(dir, 'events.jsonl.1'), `${archive1.join('\n')}\n`, 'utf8');
     writeFileSync(join(dir, 'events.jsonl'), `${current.join('\n')}\n`, 'utf8');
 
-    const events = handleGetRecentEvents(dir, { limit: 50 }) as Array<Record<string, unknown>>;
+    const events = handleGetRecentEvents(dir, { limit: 50 });
     expect(events).toHaveLength(50);
     expect(events[0].seq).toBe(11);
     expect(events[49].seq).toBe(60);
