@@ -91,7 +91,12 @@ export function claimTask(
 /**
  * Transition a claimed run to in_progress.
  */
-export function startRun(stateDir: string, runId: string, agentId: string): void {
+export function startRun(
+  stateDir: string,
+  runId: string,
+  agentId: string,
+  { emitEvent = true }: { emitEvent?: boolean } = {},
+): void {
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
@@ -110,11 +115,13 @@ export function startRun(stateDir: string, runId: string, agentId: string): void
     const task    = findTask(backlog, claim.task_ref);
     if (task) { task.status = 'in_progress'; atomicWriteJson(join(stateDir, 'backlog.json'), backlog); }
 
-    emit(stateDir, {
-      ts: now, event: 'run_started',
-      actor_type: 'agent', actor_id: agentId,
-      run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
-    });
+    if (emitEvent) {
+      emit(stateDir, {
+        ts: now, event: 'run_started',
+        actor_type: 'agent', actor_id: agentId,
+        run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
+      });
+    }
   });
 }
 
@@ -162,11 +169,12 @@ export function finishRun(
   stateDir: string,
   runId: string,
   agentId: string,
-  { success = true, failureReason = null, failureCode = null, policy = 'requeue' }: {
+  { success = true, failureReason = null, failureCode = null, policy = 'requeue', emitEvent = true }: {
     success?: boolean;
     failureReason?: string | null;
     failureCode?: string | null;
     policy?: string;
+    emitEvent?: boolean;
   } = {},
 ): void {
   return withLock(lockPath(stateDir), () => {
@@ -204,20 +212,22 @@ export function finishRun(
       atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
     }
 
-    if (success) {
-      emit(stateDir, {
-        ts: now, event: 'run_finished',
-        actor_type: 'agent', actor_id: agentId,
-        run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
-        payload: {},
-      });
-    } else {
-      emit(stateDir, {
-        ts: now, event: 'run_failed',
-        actor_type: 'agent', actor_id: agentId,
-        run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
-        payload: { reason: failureReason ?? undefined, code: failureCode ?? undefined, policy: policy as import('../types/events.ts').FailurePolicy },
-      });
+    if (emitEvent) {
+      if (success) {
+        emit(stateDir, {
+          ts: now, event: 'run_finished',
+          actor_type: 'agent', actor_id: agentId,
+          run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
+          payload: {},
+        });
+      } else {
+        emit(stateDir, {
+          ts: now, event: 'run_failed',
+          actor_type: 'agent', actor_id: agentId,
+          run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
+          payload: { reason: failureReason ?? undefined, code: failureCode ?? undefined, policy: policy as import('../types/events.ts').FailurePolicy },
+        });
+      }
     }
   });
 }
