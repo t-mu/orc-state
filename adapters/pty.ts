@@ -141,7 +141,12 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           name: 'xterm-256color',
           cols: 220,
           rows: 50,
-          cwd:  (config.working_directory as string) ?? process.cwd(),
+          // Spawn at the repo root so the sandbox covers both the worktree and
+          // .orc-state/. Workers navigate to their assigned worktree themselves
+          // via the cd instruction in the TASK_START envelope.
+          cwd:  (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT
+            ?? (config.working_directory as string)
+            ?? process.cwd(),
           env:  { ...spawnEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>,
         });
 

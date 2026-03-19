@@ -152,7 +152,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   const backlogFile = readJson(stateDir, 'backlog.json') as Backlog;
   const workerPoolConfig = loadWorkerPoolConfig({
     env: process.env,
-    configFile: join(stateDir, 'orchestrator.config.json'),
+    configFile: join(stateDir, '..', 'orchestrator.config.json'),
   });
   const agents = listCoordinatorAgents(stateDir, workerPoolConfig);
   const master = agents.find((agent) => agent.role === 'master') ?? null;
