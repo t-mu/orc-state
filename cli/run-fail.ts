@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-import { finishRun } from '../lib/claimManager.ts';
-import { recordAgentActivity } from '../lib/agentActivity.ts';
+import { appendSequencedEvent } from '../lib/eventLog.ts';
+import { validateProgressInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
+import { readClaims } from '../lib/stateReader.ts';
+import type { Claim } from '../types/claims.ts';
+import type { FailurePolicy } from '../types/events.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -21,14 +24,39 @@ if (!runId || !agentId) {
   process.exit(1);
 }
 
+function loadClaim(currentRunId: string): Claim | null {
+  try {
+    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 try {
-  finishRun(STATE_DIR, runId, agentId, {
-    success: false,
-    failureReason,
-    failureCode,
+  const claim = loadClaim(runId);
+  const { claim: validatedClaim } = validateProgressInput({
+    event: 'run_failed',
+    runId,
+    agentId,
+    phase: null,
+    reason: failureReason,
     policy,
+  }, claim);
+
+  appendSequencedEvent(STATE_DIR, {
+    ts: new Date().toISOString(),
+    event: 'run_failed',
+    actor_type: 'agent',
+    actor_id: agentId,
+    run_id: runId,
+    task_ref: validatedClaim.task_ref,
+    agent_id: agentId,
+    payload: {
+      reason: failureReason,
+      code: failureCode,
+      policy: policy as FailurePolicy,
+    },
   });
-  recordAgentActivity(STATE_DIR, agentId);
   console.log(`run_failed: ${runId} (${agentId}) reason=${failureReason}`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
