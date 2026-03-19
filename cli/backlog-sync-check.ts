@@ -12,16 +12,19 @@ import { fileURLToPath } from 'node:url';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 
 const SPEC_FILE_RE = /^\d+(-[^.]+)?\.md$/;
+const LEGACY_DIR_RE = /^legacy\//;
 
 export function extractTaskSpecRefs(backlogDocsDir: string) {
   return readdirSync(backlogDocsDir, { recursive: true })
-    .filter((rel) => SPEC_FILE_RE.test(basename(rel as string)))
-    .sort((a, b) => basename(a as string).localeCompare(basename(b as string), 'en', { numeric: true }))
+    .map((rel) => rel as string)
+    .filter((rel) => !LEGACY_DIR_RE.test(rel))
+    .filter((rel) => SPEC_FILE_RE.test(basename(rel)))
+    .sort((a, b) => basename(a).localeCompare(basename(b), 'en', { numeric: true }))
     .flatMap((rel) => {
-      const text = readFileSync(join(backlogDocsDir, rel as string), 'utf8');
+      const text = readFileSync(join(backlogDocsDir, rel), 'utf8');
       const refMatch = text.match(/^ref:\s+(.+)$/m);
       if (!refMatch) return [];
-      return [{ file: rel as string, ref: refMatch[1].trim() }];
+      return [{ file: rel, ref: refMatch[1].trim() }];
     });
 }
 
