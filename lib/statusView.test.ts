@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
@@ -24,9 +24,16 @@ type StatusResult = {
   queued_tasks: Array<Record<string, unknown>>;
 };
 
+// root = test-controlled repo root; dir = root/.orc-state (the stateDir).
+// This mirrors real layout so config at root/orchestrator.config.json is found.
+let root: string;
 let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'orch-status-test-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'orch-status-test-'));
+  dir = join(root, '.orc-state');
+  mkdirSync(dir);
+});
+afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
 function writeState({ agents = [] as Agent[], claims = [] as Claim[], tasks = [] as Task[], runWorktrees = [] as unknown[] } = {}) {
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
@@ -42,7 +49,7 @@ function writeState({ agents = [] as Agent[], claims = [] as Claim[], tasks = []
 }
 
 function writeConfig(config: unknown) {
-  writeFileSync(join(dir, 'orchestrator.config.json'), JSON.stringify(config));
+  writeFileSync(join(root, 'orchestrator.config.json'), JSON.stringify(config));
 }
 
 function writeEvents(events: Record<string, unknown>[]) {

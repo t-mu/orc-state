@@ -1,18 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
+let root: string;
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-status-cli-test-'));
+  root = mkdtempSync(join(tmpdir(), 'orch-status-cli-test-'));
+  dir = join(root, '.orc-state');
+  mkdirSync(dir);
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 });
 
 describe('cli/status.ts', () => {
@@ -141,7 +144,7 @@ function seedValidState({
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({ version: '1', runs: runWorktrees }));
   writeFileSync(join(dir, 'events.jsonl'), '');
-  writeFileSync(join(dir, 'orchestrator.config.json'), JSON.stringify({
+  writeFileSync(join(root, 'orchestrator.config.json'), JSON.stringify({
     worker_pool: { max_workers: 2, provider: 'codex' },
   }));
 }

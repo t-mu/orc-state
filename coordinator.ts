@@ -905,7 +905,7 @@ function buildRunStartNudge(claim: Claim) {
     `task_ref: ${claim.task_ref}`,
     `Missing required run_started acknowledgement.`,
     `Call this command immediately via your Bash tool:`,
-    `orc-run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `orc run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     `RUN_NUDGE_END`,
   ].join('\n');
 }
@@ -917,7 +917,7 @@ function buildInProgressNudge(claim: Claim) {
     `task_ref: ${claim.task_ref}`,
     `Run is in_progress but no recent heartbeat was received.`,
     `Call this command via your Bash tool to keep the run active:`,
-    `orc-run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `orc run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     `RUN_NUDGE_END`,
   ].join('\n');
 }

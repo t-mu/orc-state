@@ -1,7 +1,7 @@
 {
   "default_provider": "claude",
   "worker_pool": {
-    "provider": "claude",
+    "provider": "codex",
     "max_workers": 2,
     "model": null
   }
