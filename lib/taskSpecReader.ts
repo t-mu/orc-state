@@ -1,6 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { BACKLOG_DOCS_DIR } from './paths.ts';
+import { discoverActiveTaskSpecs } from './backlogSync.ts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 function normalizeHeading(text: string): string {
   return text.trim().toLowerCase();
@@ -30,19 +31,11 @@ interface MarkdownTaskSpec {
 }
 
 function readMarkdownTaskSpec(taskRef: string, docsDir: string = BACKLOG_DOCS_DIR): MarkdownTaskSpec | null {
-  if (!existsSync(docsDir)) return null;
-  for (const file of readdirSync(docsDir)) {
-    if (!file.endsWith('.md')) continue;
-    const path = join(docsDir, file);
+  for (const spec of discoverActiveTaskSpecs(docsDir)) {
+    if (spec.ref !== taskRef) continue;
+    const path = join(docsDir, spec.file);
     const content = readFileSync(path, 'utf8');
-    const frontmatterRef = /^---\s*\n([\s\S]*?)\n---/.exec(content)?.[1]
-      ?.split('\n')
-      .find((line) => line.trim().startsWith('ref:'))
-      ?.replace(/^ref:\s*/, '')
-      .trim();
-    if (frontmatterRef === taskRef) {
-      return { path, content };
-    }
+    return { path, content };
   }
   return null;
 }

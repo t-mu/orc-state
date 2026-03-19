@@ -42,12 +42,13 @@ npm test
 });
 
 describe('readTaskSpecSections', () => {
-  it('loads markdown by frontmatter ref from docs/backlog', () => {
-    const docsDir = join(dir, 'docs', 'backlog');
+  it('loads markdown by frontmatter ref from backlog', () => {
+    const docsDir = join(dir, 'backlog');
     mkdirSync(docsDir, { recursive: true });
     writeFileSync(join(docsDir, '142-sample.md'), `---
 ref: orch/task-142-sample
 feature: orch
+status: todo
 ---
 
 ### Current state
@@ -74,7 +75,7 @@ npx vitest
   });
 
   it('ignores embedded example frontmatter blocks later in the file', () => {
-    const docsDir = join(dir, 'docs', 'backlog');
+    const docsDir = join(dir, 'backlog');
     mkdirSync(docsDir, { recursive: true });
     writeFileSync(join(docsDir, 'wrong.md'), `# Example
 
@@ -84,9 +85,10 @@ ref: orch/task-142-sample
 ---
 \`\`\`
 `);
-    writeFileSync(join(docsDir, 'right.md'), `---
+    writeFileSync(join(docsDir, '142-right.md'), `---
 ref: orch/task-142-sample
 feature: orch
+status: todo
 ---
 
 ### Current state
@@ -94,7 +96,35 @@ Actual task.
 `);
 
     const result = readTaskSpecSections('orch/task-142-sample', docsDir);
-    expect(result.source_path).toBe(join(docsDir, 'right.md'));
+    expect(result.source_path).toBe(join(docsDir, '142-right.md'));
     expect(result.current_state).toBe('Actual task.');
+  });
+
+  it('uses the shared recursive active-spec discovery and skips backlog/legacy', () => {
+    const docsDir = join(dir, 'backlog');
+    mkdirSync(join(docsDir, 'feature-x'), { recursive: true });
+    mkdirSync(join(docsDir, 'legacy'), { recursive: true });
+    writeFileSync(join(docsDir, 'legacy', '142-sample.md'), `---
+ref: orch/task-142-sample
+feature: orch
+status: done
+---
+
+### Current state
+Legacy task.
+`);
+    writeFileSync(join(docsDir, 'feature-x', '142-sample.md'), `---
+ref: orch/task-142-sample
+feature: orch
+status: todo
+---
+
+### Current state
+Active task.
+`);
+
+    const result = readTaskSpecSections('orch/task-142-sample', docsDir);
+    expect(result.source_path).toBe(join(docsDir, 'feature-x', '142-sample.md'));
+    expect(result.current_state).toBe('Active task.');
   });
 });
