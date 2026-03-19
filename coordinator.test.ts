@@ -551,6 +551,100 @@ describe('agent ttl dead marking', () => {
 });
 
 describe('processTerminalRunEvents', () => {
+  it('transitions claimed runs to in_progress when processing run_started', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-151',
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-started-001',
+        task_ref: 'orch/task-151',
+        agent_id: 'orc-1',
+        state: 'claimed',
+        claimed_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      event: 'run_started',
+      run_id: 'run-started-001',
+      task_ref: 'orch/task-151',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T07:59:00.000Z',
+      payload: {},
+    }]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-started-001')!;
+    expect(claim.state).toBe('in_progress');
+    expect(claim.started_at).toBeTruthy();
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
+    expect(task.status).toBe('in_progress');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    expect(agent.last_heartbeat_at).toBe('2026-03-11T07:59:00.000Z');
+  });
+
+  it('renews the claim lease when processing heartbeat', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-151',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-heartbeat-001',
+        task_ref: 'orch/task-151',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: '2026-03-11T07:55:00.000Z',
+        last_heartbeat_at: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      event: 'heartbeat',
+      run_id: 'run-heartbeat-001',
+      task_ref: 'orch/task-151',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:00:00.000Z',
+      payload: {},
+    }]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-001')!;
+    expect(claim.last_heartbeat_at).toBeTruthy();
+    expect(claim.lease_expires_at).not.toBe('2026-03-11T07:55:00.000Z');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    expect(agent.last_heartbeat_at).toBe('2026-03-11T08:00:00.000Z');
+  });
+
   it('attempts trusted merge on work_complete, then cleans up the run on success', async () => {
     seedState(dir, {
       agents: [{
@@ -1207,6 +1301,20 @@ describe('processTerminalRunEvents', () => {
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/test-task',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-test',
+        task_ref: 'orch/test-task',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
     });
     const stop = vi.fn().mockResolvedValue(undefined);
     vi.doMock('./adapters/index.ts', () => ({
@@ -1238,6 +1346,10 @@ describe('processTerminalRunEvents', () => {
     expect(notifications[0]).not.toHaveProperty('exit_code');
 
     const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-test')!;
+    expect(claim.state).toBe('done');
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/test-task')!;
+    expect(task.status).toBe('done');
     const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).toHaveBeenCalledWith('pty:orc-1');
     expect(agent.status).toBe('idle');
@@ -1245,6 +1357,22 @@ describe('processTerminalRunEvents', () => {
   });
 
   it('deposits TASK_COMPLETE notification with success=false and failure_reason for run_failed', async () => {
+    seedState(dir, {
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/test-task-fail',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-fail-test',
+        task_ref: 'orch/test-task-fail',
+        agent_id: 'orc-2',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
     const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
@@ -1264,6 +1392,13 @@ describe('processTerminalRunEvents', () => {
     expect(notifications[0].task_ref).toBe('orch/test-task-fail');
     expect(notifications[0].success).toBe(false);
     expect(notifications[0].failure_reason).toBe('build error');
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-fail-test')!;
+    expect(claim.state).toBe('failed');
+    expect(claim.failure_reason).toBe('build error');
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/test-task-fail')!;
+    expect(task.status).toBe('todo');
   });
 
   it('does not tear down a newer active run when processing an older terminal event', async () => {

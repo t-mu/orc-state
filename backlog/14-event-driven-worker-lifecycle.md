@@ -2,7 +2,7 @@
 ref: general/14-event-driven-worker-lifecycle
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 14 — Make Worker Lifecycle Commands Append-Only to events.jsonl

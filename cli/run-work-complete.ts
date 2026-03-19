@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { heartbeat, setRunFinalizationState } from '../lib/claimManager.ts';
-import { recordAgentActivity } from '../lib/agentActivity.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { validateProgressInput } from '../lib/progressValidation.ts';
@@ -54,12 +52,8 @@ try {
     policy: null,
   }, claim);
   const transition = nextFinalizationTransition(validatedClaim);
+  const retryCount = validatedClaim.finalization_retry_count ?? 0;
 
-  heartbeat(STATE_DIR, runId, agentId, { emitEvent: false });
-  const updatedClaim = setRunFinalizationState(STATE_DIR, runId, agentId, {
-    finalizationState: transition.status as import('../types/claims.ts').FinalizationState,
-    blockedReason: null,
-  });
   appendSequencedEvent(STATE_DIR, {
     ts: new Date().toISOString(),
     event: transition.event as 'work_complete' | 'ready_to_merge',
@@ -70,10 +64,9 @@ try {
     agent_id: agentId,
     payload: {
       status: transition.status as 'awaiting_finalize' | 'ready_to_merge',
-      retry_count: updatedClaim.finalization_retry_count ?? 0,
+      retry_count: retryCount,
     },
   } as import('../types/events.ts').OrcEventInput);
-  recordAgentActivity(STATE_DIR, agentId);
   console.log(`${transition.event}: ${runId} (${agentId}) ${transition.message}`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
