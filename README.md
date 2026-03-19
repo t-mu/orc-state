@@ -72,6 +72,23 @@ remains a separate role and does not count against `max_workers`.
 
 ## Quick Start
 
+## Blessed Paths
+
+The normal operator/agent workflow is:
+
+1. Start the system with `orc start-session`.
+2. Create or edit the markdown spec in `backlog/`.
+3. Register or sync that spec into runtime state.
+4. Delegate the task.
+5. Worker reports `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`.
+6. Use `orc status` / `orc doctor` / `orc backlog-sync-check` as the normal inspection path.
+
+Outside the blessed workflow, there are three secondary categories:
+
+- Supported inspection commands for observability.
+- Advanced / specialized commands for setup or niche workflows.
+- Recovery/debug commands for exceptional cases.
+
 `orc start-session` runs in three phases:
 
 1. Coordinator: reuse the running coordinator or start a new one.
@@ -124,12 +141,13 @@ orc start-worker-session orc-1
 orc control-worker orc-1
 ```
 
-These commands are no longer part of the normal startup model. They remain available when you need to inspect a worker, recover a stuck registration, or force a manual session rebind.
+These commands are not part of the blessed workflow. They remain available when you need to inspect a worker, recover a stuck registration, or force a manual session rebind.
 
 ## Monitoring Commands
 
 ```bash
 orc status                   # master + worker capacity + active runs
+orc watch                    # live-refresh status display
 orc runs-active              # currently active runs
 orc events-tail              # tail events.jsonl
 orc master-check             # check pending master notifications
@@ -161,6 +179,10 @@ task-scoped worker session.
 `backlog/` is the authoritative source for backlog task metadata.
 The runtime `.orc-state/backlog.json` is the dispatch mirror used by the coordinator.
 
+- Blessed path:
+  1. write or edit the markdown spec in `backlog/`
+  2. register/sync it into runtime state
+  3. run `orc backlog-sync-check`
 - `orc backlog-sync-check` validates that active markdown specs and runtime state agree.
 - `orc backlog-sync` repairs runtime backlog metadata from markdown specs.
 - `backlog/legacy/` is excluded from active backlog validation and repair.
@@ -182,6 +204,15 @@ The coordinator reacts to those shared-state updates on subsequent ticks.
 `orc status` focuses on slot capacity and active runs, while worker liveness is
 still preserved internally for coordinator recovery/debugging.
 
+Blessed worker path:
+
+1. `orc run-start`
+2. `orc run-heartbeat` while active
+3. `orc run-work-complete` after implementation/review/rebase
+4. `orc run-finish` only after the work-complete handoff
+
+Recovery/debug paths such as manual worker session control are not part of the normal agent workflow.
+
 ## Finalization Ownership
 
 After a worker emits `orc run-work-complete`, the run stays `in_progress` and
@@ -197,6 +228,14 @@ enters the coordinator-owned finalization phase.
 
 Blocked finalization is preserved work waiting for intervention. It is not the
 same thing as rejecting or discarding the task result.
+
+Blessed finalization path:
+
+- worker stops at `run-work-complete`
+- coordinator owns merge/finalization
+- worker only continues if the coordinator asks for follow-up in the same session
+
+Do not treat manual merge or manual worktree cleanup as a normal path.
 
 ## MCP Server
 
@@ -247,6 +286,17 @@ Provider notes:
 - `delegate_task` rejects explicit assignment to agents that already have active claims (`claimed` or `in_progress`).
 - Error output includes agent id and active run id.
 - Auto-target selection keeps existing behavior.
+
+## Recovery And Debug Paths
+
+These commands remain supported, but they are not part of the normal agent workflow:
+
+- manual worker registration / session start: `orc register-worker`, `orc start-worker-session`
+- worker inspection / forced session control: `orc attach`, `orc control-worker`
+- task/operator recovery: `orc task-reset`, `orc task-unblock`, `orc worker-gc`, `orc worker-clearall`
+- full reset: `orc kill-all`
+
+Use them only for explicit recovery, debugging, or operator intervention.
 
 ## Test Entrypoints
 
