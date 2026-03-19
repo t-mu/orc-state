@@ -21,7 +21,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState } from './lib/claimManager.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState, startRun } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
@@ -41,6 +41,7 @@ import { readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
+import { recordAgentActivity } from './lib/agentActivity.ts';
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
@@ -1024,6 +1025,36 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       continue;
     }
 
+    if (event.event === 'run_started') {
+      const claim = getClaim(event.run_id);
+      if (claim && claim.state === 'claimed') {
+        startRun(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false });
+        recordAgentActivity(STATE_DIR, event.agent_id, { at: coerceTs(event.ts) });
+      }
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+      }
+      continue;
+    }
+
+    if (event.event === 'heartbeat') {
+      if (!event.run_id || !event.agent_id) {
+        if (seq > 0) {
+          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+        }
+        continue;
+      }
+      const claim = getClaim(event.run_id);
+      if (claim && ['claimed', 'in_progress'].includes(claim.state)) {
+        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false });
+        recordAgentActivity(STATE_DIR, event.agent_id, { at: coerceTs(event.ts) });
+      }
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+      }
+      continue;
+    }
+
     if (event.event === 'input_response') {
       try {
         setRunInputState(STATE_DIR, event.run_id, event.agent_id, { inputState: null });
@@ -1037,6 +1068,22 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     }
 
     if (event.event === 'run_finished' || event.event === 'run_failed') {
+      const claim = getClaim(event.run_id);
+      if (claim && ['claimed', 'in_progress'].includes(claim.state)) {
+        finishRun(STATE_DIR, event.run_id, event.agent_id, {
+          success: event.event === 'run_finished',
+          failureReason: event.event === 'run_failed'
+            ? (event.payload.reason ?? null)
+            : null,
+          failureCode: event.event === 'run_failed'
+            ? (event.payload.code ?? null)
+            : null,
+          policy: event.event === 'run_failed'
+            ? (event.payload.policy ?? 'requeue')
+            : 'requeue',
+          emitEvent: false,
+        });
+      }
       const eventAgentId = event.agent_id;
       const eventRunId = event.run_id;
       if (!hasOtherActiveClaim(eventAgentId, eventRunId)) {
@@ -1074,7 +1121,19 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     if (event.event === 'work_complete' || event.event === 'ready_to_merge') {
       const claim = getClaim(event.run_id);
       if (claim && claim.state === 'in_progress') {
-        await finalizeRun(claim, workerPoolConfig);
+        let claimForFinalize = claim;
+        if (event.event === 'work_complete' && claim.finalization_state == null) {
+          claimForFinalize = setRunFinalizationState(STATE_DIR, event.run_id, event.agent_id, {
+            finalizationState: 'awaiting_finalize',
+            blockedReason: null,
+          });
+        } else if (event.event === 'ready_to_merge' && claim.finalization_state === 'finalize_rebase_in_progress') {
+          claimForFinalize = setRunFinalizationState(STATE_DIR, event.run_id, event.agent_id, {
+            finalizationState: 'ready_to_merge',
+            blockedReason: null,
+          });
+        }
+        await finalizeRun(claimForFinalize, workerPoolConfig);
       }
     }
 

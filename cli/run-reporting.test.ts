@@ -123,7 +123,7 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
 }
 
 describe('orc-run-start', () => {
-  it('transitions claim from claimed to in_progress and emits run_started event', () => {
+  it('appends run_started without mutating claims or agents', () => {
     seedClaimedRun({ runId: 'run-abc-001', agentId: 'worker-01' });
 
     const result = runCli('run-start.ts', ['--run-id=run-abc-001', '--agent-id=worker-01']);
@@ -133,11 +133,11 @@ describe('orc-run-start', () => {
 
     const claims = readClaims();
     const claim = claims.claims.find((c) => c.run_id === 'run-abc-001');
-    expect(claim!.state).toBe('in_progress');
-    expect(claim!.started_at).toBeTruthy();
+    expect(claim!.state).toBe('claimed');
+    expect(claim!.started_at).toBeNull();
 
     const agents = readAgents();
-    expect(agents.agents[0].last_heartbeat_at).toBeTruthy();
+    expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
 
     const events = readEvents();
     expect(events.some((e) => e.event === 'run_started' && e.run_id === 'run-abc-001')).toBe(true);
@@ -158,7 +158,7 @@ describe('orc-run-start', () => {
 });
 
 describe('orc-run-heartbeat', () => {
-  it('renews the lease and emits a heartbeat event', () => {
+  it('appends a heartbeat event without mutating claims or agents', () => {
     seedInProgressRun({ runId: 'run-hb-001', agentId: 'worker-01' });
 
     const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001', '--agent-id=worker-01']);
@@ -168,10 +168,11 @@ describe('orc-run-heartbeat', () => {
 
     const claims = readClaims();
     const claim = claims.claims.find((c) => c.run_id === 'run-hb-001');
-    expect(claim!.last_heartbeat_at).toBeTruthy();
+    expect(claim!.last_heartbeat_at).toBeNull();
+    expect(claim!.lease_expires_at).toBe('2099-01-01T00:00:00.000Z');
 
     const agents = readAgents();
-    expect(agents.agents[0].last_heartbeat_at).toBeTruthy();
+    expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
 
     const events = readEvents();
     expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-hb-001')).toBe(true);
@@ -185,7 +186,7 @@ describe('orc-run-heartbeat', () => {
 });
 
 describe('orc-run-work-complete', () => {
-  it('emits a non-terminal work_complete event and keeps the claim in_progress', () => {
+  it('emits a non-terminal work_complete event without mutating finalization state', () => {
     seedInProgressRun({ runId: 'run-work-001', agentId: 'worker-01' });
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-work-001', '--agent-id=worker-01']);
@@ -196,10 +197,10 @@ describe('orc-run-work-complete', () => {
     const claims = readClaims();
     const claim = claims.claims.find((c) => c.run_id === 'run-work-001');
     expect(claim!.state).toBe('in_progress');
-    expect(claim!.finalization_state).toBe('awaiting_finalize');
+    expect(claim!.finalization_state).toBeNull();
     expect(claim!.finalization_retry_count).toBe(0);
     expect(claim!.finished_at).toBeNull();
-    expect(claim!.last_heartbeat_at).toBeTruthy();
+    expect(claim!.last_heartbeat_at).toBeNull();
 
     const events = readEvents();
     expect(events.some((e) =>
@@ -249,7 +250,7 @@ describe('orc-run-work-complete', () => {
     expect(result.stdout).toContain('ready_to_merge');
 
     const claim = readClaims().claims.find((entry) => entry.run_id === 'run-work-003');
-    expect(claim!.finalization_state).toBe('ready_to_merge');
+    expect(claim!.finalization_state).toBe('finalize_rebase_in_progress');
     expect(claim!.finalization_retry_count).toBe(2);
 
     const events = readEvents();
@@ -262,7 +263,7 @@ describe('orc-run-work-complete', () => {
 });
 
 describe('orc-run-finish', () => {
-  it('transitions claim to done and marks task done', () => {
+  it('appends run_finished without mutating claims or agents', () => {
     seedInProgressRun({ runId: 'run-fin-001', agentId: 'worker-01' });
 
     const result = runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
@@ -272,11 +273,11 @@ describe('orc-run-finish', () => {
 
     const claims = readClaims();
     const claim = claims.claims.find((c) => c.run_id === 'run-fin-001');
-    expect(claim!.state).toBe('done');
-    expect(claim!.finished_at).toBeTruthy();
+    expect(claim!.state).toBe('in_progress');
+    expect(claim!.finished_at).toBeNull();
 
     const agents = readAgents();
-    expect(agents.agents[0].last_heartbeat_at).toBeTruthy();
+    expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
 
     const events = readEvents();
     expect(events.some((e) => e.event === 'run_finished' && e.run_id === 'run-fin-001')).toBe(true);
@@ -290,7 +291,7 @@ describe('orc-run-finish', () => {
 });
 
 describe('orc-run-fail', () => {
-  it('transitions claim to failed and requeues the task', () => {
+  it('appends run_failed with reason and policy without mutating claims or tasks', () => {
     seedInProgressRun({ runId: 'run-fail-001', agentId: 'worker-01' });
 
     const result = runCli('run-fail.ts', [
@@ -304,21 +305,24 @@ describe('orc-run-fail', () => {
 
     const claims = readClaims();
     const claim = claims.claims.find((c) => c.run_id === 'run-fail-001');
-    expect(claim!.state).toBe('failed');
-    expect(claim!.failure_reason).toBe('build error');
+    expect(claim!.state).toBe('in_progress');
+    expect(claim!.failure_reason).toBeUndefined();
 
     const agents = readAgents();
-    expect(agents.agents[0].last_heartbeat_at).toBeTruthy();
+    expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
 
     const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
     const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
-    expect(task!.status).toBe('todo');
+    expect(task!.status).toBe('in_progress');
 
     const events = readEvents();
     expect(events.some((e) => e.event === 'run_failed' && e.run_id === 'run-fail-001')).toBe(true);
+    const failedEvent = events.find((e) => e.event === 'run_failed' && e.run_id === 'run-fail-001');
+    expect((failedEvent!.payload as Record<string, unknown>).reason).toBe('build error');
+    expect((failedEvent!.payload as Record<string, unknown>).policy).toBe('requeue');
   });
 
-  it('accepts --policy=block and blocks the task instead of requeueing', () => {
+  it('accepts --policy=block and records it only in the event payload', () => {
     seedInProgressRun({ runId: 'run-fail-002', agentId: 'worker-01' });
 
     const result = runCli('run-fail.ts', [
@@ -332,7 +336,10 @@ describe('orc-run-fail', () => {
 
     const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
     const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
-    expect(task!.status).toBe('blocked');
+    expect(task!.status).toBe('in_progress');
+    const events = readEvents();
+    const failedEvent = events.find((e) => e.event === 'run_failed' && e.run_id === 'run-fail-002');
+    expect((failedEvent!.payload as Record<string, unknown>).policy).toBe('block');
   });
 
   it('exits with code 1 and prints usage when args are missing', () => {
