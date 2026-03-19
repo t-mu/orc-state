@@ -2,6 +2,9 @@
 
 This directory is the **authoritative task backlog** for orchestrator work.
 Tasks are numbered sequentially and written as markdown spec files.
+The runtime `.orc-state/backlog.json` mirrors these specs for dispatch, but the
+markdown files here own task metadata such as feature placement, title, and the
+status of inactive tasks.
 
 ## Creating new tasks
 
@@ -10,8 +13,11 @@ Tasks are numbered sequentially and written as markdown spec files.
    MCP `create_task` tool so the coordinator can assign it to a worker.
 3. After writing the spec and registering the task, run `orc backlog-sync-check`
    to confirm the spec and state are in sync.
+4. If the check reports metadata drift, run `orc backlog-sync` to repair
+   `.orc-state/backlog.json` from the authoritative markdown specs.
 
 Tasks in `legacy/` are historical specs from the original monorepo.
+They are excluded from active backlog validation and repair.
 Tasks numbered 160+ are orchestrator-only work.
 
 ## Conventions for Implementors

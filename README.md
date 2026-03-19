@@ -156,6 +156,16 @@ task-scoped worker session.
 
 `orc master-check` prints any unconsumed TASK_COMPLETE notifications that the master PTY forwarder has not yet delivered.
 
+## Backlog Spec Authority
+
+`backlog/` is the authoritative source for backlog task metadata.
+The runtime `.orc-state/backlog.json` is the dispatch mirror used by the coordinator.
+
+- `orc backlog-sync-check` validates that active markdown specs and runtime state agree.
+- `orc backlog-sync` repairs runtime backlog metadata from markdown specs.
+- `backlog/legacy/` is excluded from active backlog validation and repair.
+- Runtime-owned live execution fields still win while a task is `claimed` or `in_progress`.
+
 ## Worker Lifecycle
 
 Workers are PTY-driven provider CLI sessions, not an API response parser. The
