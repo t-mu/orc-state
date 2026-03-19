@@ -19,13 +19,13 @@ import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 // Distributive Omit — preserves discriminated union across all members
 type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : never;
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
-type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id'>
-  & { seq?: number; actor_type?: ActorType; actor_id?: string };
+type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
+  & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
 import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
-import { appendSequencedEvent, readEvents, nextSeq } from './lib/eventLog.ts';
+import { appendSequencedEvent, eventIdentity, readEvents } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
 import { selectDispatchableAgents, buildDispatchPlan } from './lib/dispatchPlanner.ts';
@@ -40,6 +40,7 @@ import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
+import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
@@ -80,13 +81,6 @@ let ticking = false;
 let timerHandle: ReturnType<typeof setInterval> | null = null;
 let shutdownStarted = false;
 let coordinatorLockReleased = false;
-let lastProcessedSeq = (() => {
-  try {
-    return nextSeq(EVENTS_FILE) - 1;
-  } catch {
-    return 0;
-  }
-})();
 let latestActivityByRun: Map<string, string> = new Map();
 const runStartNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
@@ -94,6 +88,22 @@ const runInactiveNudgeAtMs = new Map<string, number>();
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function log(msg: string) { console.log(`[coordinator] ${new Date().toISOString()} ${msg}`); }
+
+function initializeEventCheckpoint() {
+  const checkpointPath = join(STATE_DIR, 'event-checkpoint.json');
+  if (existsSync(checkpointPath)) {
+    return readEventCheckpoint(STATE_DIR);
+  }
+
+  const allEvents = readEvents(EVENTS_FILE);
+  const seededCheckpoint = seedEventCheckpointFromEvents(
+    allEvents.map((event) => eventIdentity(event)),
+    allEvents.at(-1)?.seq ?? 0,
+  );
+  return writeEventCheckpoint(STATE_DIR, seededCheckpoint);
+}
+
+let eventCheckpoint = initializeEventCheckpoint();
 
 function emit(event: Omit<OrcEventInput, 'ts'> | Record<string, unknown>) {
   appendSequencedEvent(STATE_DIR, { ts: new Date().toISOString(), ...event } as OrcEventInput);
@@ -740,20 +750,24 @@ async function tick() {
   markStaleAgentsDead(agents, claims);
 
   try {
-    const currentSeq = nextSeq(EVENTS_FILE) - 1;
-    if (currentSeq > lastProcessedSeq) {
-      // TODO(perf): latestRunActivityMap currently scans all events.
-      // A future task should window this to recent events only.
-      const allEvents = readEvents(EVENTS_FILE);
-      const newEvents = allEvents.filter((event) => event.seq > lastProcessedSeq);
-      latestActivityByRun = latestRunActivityMap(allEvents);
-      await processTerminalRunEvents(newEvents, workerPoolConfig);
-      lastProcessedSeq = currentSeq;
-      tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-      tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
-      agents = tickAgents.agents ?? [];
-      claims = tickClaims.claims ?? [];
+    // TODO(perf): latestRunActivityMap currently scans all events.
+    // A future task should window this to recent events only.
+    const allEvents = readEvents(EVENTS_FILE);
+    const allEventIds = allEvents.map((event) => eventIdentity(event));
+    const prunedCheckpoint = pruneEventCheckpoint(eventCheckpoint, allEventIds);
+    if (prunedCheckpoint.processed_event_ids.length !== eventCheckpoint.processed_event_ids.length) {
+      eventCheckpoint = writeEventCheckpoint(STATE_DIR, prunedCheckpoint);
     }
+    const processedEventIds = new Set(eventCheckpoint.processed_event_ids);
+    const newEvents = allEvents.filter((event) => !processedEventIds.has(eventIdentity(event)));
+    latestActivityByRun = latestRunActivityMap(allEvents);
+    if (newEvents.length > 0) {
+      await processTerminalRunEvents(newEvents, workerPoolConfig);
+    }
+    tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
+    tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+    agents = tickAgents.agents ?? [];
+    claims = tickClaims.claims ?? [];
   } catch {
     latestActivityByRun = new Map();
   }
@@ -963,8 +977,20 @@ function buildFinalizeSuccessNotice(claim: Claim, branch: string) {
 
 export async function processTerminalRunEvents(events: ProcessableEvent[], workerPoolConfig: WorkerPoolConfig = loadWorkerPoolConfig()) {
   for (const event of events) {
+    const normalizedEventId = eventIdentity(event);
+    const seq = typeof event.seq === 'number' ? event.seq : 0;
+    if (eventCheckpoint.processed_event_ids.includes(normalizedEventId)) {
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+      }
+      continue;
+    }
+
     if (event.event === 'input_requested') {
       if (event.actor_type === 'coordinator') {
+        if (seq > 0) {
+          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+        }
         continue;
       }
       try {
@@ -986,6 +1012,9 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       if (!deposited) {
         console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${event.task_ref ?? '(unknown)'}`);
       }
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+      }
       continue;
     }
 
@@ -994,6 +1023,9 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         setRunInputState(STATE_DIR, event.run_id, event.agent_id, { inputState: null });
       } catch {
         // Ignore races with terminal events or cleaned-up claims.
+      }
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
       }
       continue;
     }
@@ -1035,8 +1067,13 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
 
     if (event.event === 'work_complete' || event.event === 'ready_to_merge') {
       const claim = getClaim(event.run_id);
-      if (!claim || claim.state !== 'in_progress') continue;
-      await finalizeRun(claim, workerPoolConfig);
+      if (claim && claim.state === 'in_progress') {
+        await finalizeRun(claim, workerPoolConfig);
+      }
+    }
+
+    if (seq > 0) {
+      eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
     }
   }
 }

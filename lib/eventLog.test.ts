@@ -28,6 +28,7 @@ afterEach(() => {
 function validEvent(seq: number | undefined, event = 'heartbeat', extra: Record<string, unknown> = {}): OrcEvent {
   return {
     seq: seq as number,
+    event_id: `evt-${seq ?? 'new'}-${event}`,
     ts: '2026-01-01T00:00:00Z',
     event,
     actor_type: 'coordinator',
@@ -41,6 +42,7 @@ describe('appendEvent', () => {
   it('creates the log file and writes a parseable line', () => {
     const event = {
       seq: 1,
+      event_id: 'evt-1-claim-created',
       ts: '2024-01-01T00:00:00Z',
       event: 'claim_created',
       actor_type: 'coordinator',
@@ -68,6 +70,7 @@ describe('appendEvent', () => {
   it('preserves all event fields', () => {
     const event = {
       seq: 5,
+      event_id: 'evt-5-heartbeat',
       ts: '2024-06-01T12:00:00Z',
       event: 'heartbeat',
       actor_type: 'agent',
@@ -79,6 +82,21 @@ describe('appendEvent', () => {
     appendEvent(logPath, event, { fsyncPolicy: 'never' });
     const [parsed] = readEvents(logPath);
     expect(parsed).toEqual(event);
+  });
+
+  it('assigns a durable event_id when one is not provided', () => {
+    appendEvent(logPath, {
+      seq: 1,
+      ts: '2026-01-01T00:00:00Z',
+      event: 'heartbeat',
+      actor_type: 'coordinator',
+      actor_id: 'coordinator',
+      agent_id: 'agent-01',
+    } as OrcEvent, { fsyncPolicy: 'never' });
+
+    const [parsed] = readEvents(logPath);
+    expect(typeof parsed.event_id).toBe('string');
+    expect(parsed.event_id).toBeTruthy();
   });
 });
 
@@ -101,7 +119,7 @@ describe('readEventsSince', () => {
     appendEvent(logPath, validEvent(2), { fsyncPolicy: 'never' });
     appendEvent(logPath, validEvent(3), { fsyncPolicy: 'never' });
 
-    const events = readEventsSince(logPath, 1) as OrcEvent[];
+    const events = readEventsSince(logPath, 1);
     expect(events.map((event) => event.seq)).toEqual([2, 3]);
   });
 
@@ -116,7 +134,7 @@ describe('readEventsSince', () => {
     appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
     appendEvent(logPath, validEvent(2), { fsyncPolicy: 'never' });
 
-    const events = readEventsSince(logPath, 0) as OrcEvent[];
+    const events = readEventsSince(logPath, 0);
     expect(events.map((event) => event.seq)).toEqual([1, 2]);
   });
 
@@ -131,7 +149,7 @@ describe('readEventsSince', () => {
       'utf8',
     );
 
-    const events = readEventsSince(logPath, 0) as OrcEvent[];
+    const events = readEventsSince(logPath, 0);
     expect(events.map((event) => event.seq)).toEqual([1, 3]);
   });
 });
@@ -278,7 +296,7 @@ describe('rotation', () => {
     writeFileSync(`${logPath}.1`, `${archiveEvents.join('\n')}\n`, 'utf8');
     writeFileSync(logPath, `${currentEvents.join('\n')}\n`, 'utf8');
 
-    const recent = readRecentEvents(logPath, 50) as OrcEvent[];
+    const recent = readRecentEvents(logPath, 50);
     expect(recent).toHaveLength(50);
     expect(recent[0].seq).toBe(11);
     expect(recent.at(-1)!.seq).toBe(60);
