@@ -1,12 +1,13 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { withLock } from './lock.ts';
 import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
 
-const SPEC_FILE_RE = /^\d+-.+\.md$/;
+const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
 const VALID_SPEC_STATUSES = new Set<string>(['todo', 'blocked', 'done', 'released']);
+const LEGACY_DIR_RE = /^legacy\//;
 
 function humanizeSlug(slug: string): string {
   return slug
@@ -37,22 +38,27 @@ function parseSpecTitle(text: string, ref: string | null): string {
   return ref?.split('/')[1] ? humanizeSlug(ref.split('/')[1]) : (ref ?? '');
 }
 
-interface SpecEntry {
+export interface SpecEntry {
+  file: string;
   ref: string;
   feature: string;
   status: string;
   title: string;
 }
 
-function readSpecs(docsDir: string): SpecEntry[] {
-  return readdirSync(docsDir)
-    .filter((name) => SPEC_FILE_RE.test(name))
-    .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
-    .flatMap((name) => {
-      const text = readFileSync(join(docsDir, name), 'utf8');
+export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
+  if (!existsSync(docsDir)) return [];
+  return readdirSync(docsDir, { recursive: true })
+    .map((rel) => rel as string)
+    .filter((rel) => !LEGACY_DIR_RE.test(rel))
+    .filter((rel) => SPEC_FILE_RE.test(basename(rel)))
+    .sort((a, b) => basename(a).localeCompare(basename(b), 'en', { numeric: true }))
+    .flatMap((rel) => {
+      const text = readFileSync(join(docsDir, rel), 'utf8');
       const { ref, feature, status } = parseSpecFrontmatter(text);
       if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return [];
       return [{
+        file: rel,
         ref,
         feature,
         status,
@@ -94,7 +100,7 @@ export interface SyncResult {
 }
 
 export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncResult {
-  const specs = readSpecs(docsDir);
+  const specs = discoverActiveTaskSpecs(docsDir);
   if (specs.length === 0) {
     return { updated: false, added_tasks: 0, updated_tasks: 0, added_features: 0 };
   }
@@ -131,18 +137,29 @@ export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncRes
         continue;
       }
 
-      if (existingEntry.feature.ref !== spec.feature && !ACTIVE_STATUSES.has(existingEntry.task.status)) {
+      if (existingEntry.feature.ref !== spec.feature) {
         removeTaskFromFeature(existingEntry.feature, spec.ref);
         ensured.feature.tasks = [...(ensured.feature.tasks ?? []), existingEntry.task];
         changed = true;
       }
 
-      if (ACTIVE_STATUSES.has(existingEntry.task.status)) continue;
-      if (existingEntry.task.status === spec.status) continue;
+      let taskUpdated = false;
 
-      existingEntry.task.status = spec.status as TaskStatus;
-      changed = true;
-      updatedTasks += 1;
+      if (existingEntry.task.title !== spec.title) {
+        existingEntry.task.title = spec.title;
+        changed = true;
+        taskUpdated = true;
+      }
+
+      if (!ACTIVE_STATUSES.has(existingEntry.task.status) && existingEntry.task.status !== spec.status) {
+        existingEntry.task.status = spec.status as TaskStatus;
+        changed = true;
+        taskUpdated = true;
+      }
+
+      if (taskUpdated) {
+        updatedTasks += 1;
+      }
     }
 
     if (changed) {

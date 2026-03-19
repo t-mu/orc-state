@@ -43,6 +43,7 @@ const COMMANDS: Record<string, string> = {
   'worker-clearall':    'clear-workers.ts',
   'kill-all':           'kill-all.ts',
   'mcp-server':         'mcp-server.ts',
+  'backlog-sync':       'backlog-sync.ts',
   'backlog-sync-check': 'backlog-sync-check.ts',
   'install-skills':     'install-skills.ts',
   'waiting-input':      'waiting-input.ts',
