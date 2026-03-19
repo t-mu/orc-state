@@ -2,7 +2,7 @@
 ref: general/16-markdown-spec-authority-and-sync
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 16 — Make Markdown Specs the Authority for Backlog Metadata
