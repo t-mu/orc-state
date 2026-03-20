@@ -213,6 +213,8 @@ Blessed worker path:
 
 Recovery/debug paths such as manual worker session control are not part of the normal agent workflow.
 
+For recovery-only operator procedures, see [docs/recovery.md](docs/recovery.md).
+
 ## Finalization Ownership
 
 After a worker emits `orc run-work-complete`, the run stays `in_progress` and

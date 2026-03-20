@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
-import { setRunInputState } from '../lib/claimManager.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -37,16 +36,10 @@ function readLatestInputRequest(currentRunId: string, currentAgentId: string): R
 
 const latestRequest = readLatestInputRequest(runId, agentId);
 
-try {
-  setRunInputState(STATE_DIR, runId, agentId, { inputState: null });
-} catch {
-  // Allow master replies to be recorded even if the claim just completed.
-}
-
 appendSequencedEvent(STATE_DIR, {
   ts: new Date().toISOString(),
   event: 'input_response',
-  actor_type: 'agent',
+  actor_type: 'human',
   actor_id: actorId,
   run_id: runId,
   task_ref: latestRequest?.task_ref as string | undefined,

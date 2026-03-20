@@ -1,0 +1,1 @@
+export const DEFAULT_INPUT_REQUEST_TIMEOUT_MS = 60 * 60 * 1000;

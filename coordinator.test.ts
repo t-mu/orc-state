@@ -155,10 +155,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
+    const mockStart = vi.fn().mockRejectedValue(new Error('spawn failed'));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     vi.doMock('./adapters/index.ts', () => ({
       createAdapter: () => ({
         heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn().mockRejectedValue(new Error('spawn failed')),
+        start: mockStart,
         send: vi.fn().mockResolvedValue(''),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
@@ -176,8 +179,16 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       getRunWorktree: vi.fn().mockReturnValue(null),
     }));
 
-    const { tick } = await import('./coordinator.ts');
-    await tick();
+    try {
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'));
+      await tick();
+      vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
+      await tick();
+    } finally {
+      vi.useRealTimers();
+    }
 
     const { readJson } = await import('./lib/stateReader.ts');
     const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
@@ -196,7 +207,168 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(launchFailure).toBeDefined();
     expect(launchFailure.run_id).toMatch(/^run-/);
     expect(launchFailure.task_ref).toBe('proj/fix-bug');
-    expect((launchFailure.payload as Record<string, unknown>).reason).toBe('spawn failed');
+    expect((launchFailure.payload as Record<string, unknown>).code).toBe('ERR_SESSION_START_FAILED');
+    expect(mockStart).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the claim active when a retryable managed-slot start succeeds after transient failures', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'master',
+        provider: 'claude',
+        role: 'master',
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [DISPATCHABLE_TASK],
+    });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
+
+    const mockStart = vi.fn()
+      .mockRejectedValueOnce(new Error('spawn failed once'))
+      .mockRejectedValueOnce(new Error('spawn failed twice'))
+      .mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null });
+    const mockSend = vi.fn().mockResolvedValue('');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: mockStart,
+        send: mockSend,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-allocated',
+        branch: 'task/run-allocated',
+        worktree_path: '/tmp/orc-worktrees/run-allocated',
+      }),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue(null),
+    }));
+
+    try {
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'));
+      await tick();
+      vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
+      await tick();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const slot = agents.find((agent) => agent.agent_id === 'orc-1');
+    expect(slot?.status).toBe('running');
+    expect(slot?.session_handle).toBe('pty:orc-1');
+
+    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    expect(claims[0]?.state).toBe('claimed');
+    expect(claims[0]?.session_start_retry_count).toBe(0);
+    expect(claims[0]?.session_start_retry_next_at).toBeNull();
+    expect(claims[0]?.session_start_last_error).toBeNull();
+
+    const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
+    expect(backlog.features[0].tasks[0].status).toBe('claimed');
+
+    expect(readEvents(dir).some((event) => event.event === 'session_start_failed')).toBe(false);
+    expect(mockStart).toHaveBeenCalledTimes(3);
+    expect(mockSend).toHaveBeenCalled();
+    expect(mockSend.mock.calls.some(([, payload]) => String(payload).includes('TASK_START'))).toBe(true);
+  });
+
+  it('resumes managed-slot start retries after coordinator restart', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'master',
+        provider: 'claude',
+        role: 'master',
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [DISPATCHABLE_TASK],
+    });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
+
+    const mockStart = vi.fn()
+      .mockRejectedValueOnce(new Error('spawn failed once'))
+      .mockRejectedValueOnce(new Error('spawn failed twice'))
+      .mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null });
+    const mockSend = vi.fn().mockResolvedValue('');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: mockStart,
+        send: mockSend,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-allocated',
+        branch: 'task/run-allocated',
+        worktree_path: '/tmp/orc-worktrees/run-allocated',
+      }),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-allocated',
+        branch: 'task/run-allocated',
+        worktree_path: '/tmp/orc-worktrees/run-allocated',
+      }),
+    }));
+
+    try {
+      const firstCoordinator = await import('./coordinator.ts');
+      await firstCoordinator.tick();
+
+      let { readJson } = await import('./lib/stateReader.ts');
+      let { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+      expect(claims[0]?.session_start_retry_count).toBe(1);
+      expect(claims[0]?.session_start_last_error).toBe('spawn failed once');
+
+      vi.resetModules();
+      vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'));
+      const secondCoordinator = await import('./coordinator.ts');
+      await secondCoordinator.tick();
+
+      ({ readJson } = await import('./lib/stateReader.ts'));
+      ({ claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }));
+      expect(claims[0]?.session_start_retry_count).toBe(2);
+      expect(claims[0]?.session_start_last_error).toBe('spawn failed twice');
+
+      vi.resetModules();
+      vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
+      const thirdCoordinator = await import('./coordinator.ts');
+      await thirdCoordinator.tick();
+
+      ({ readJson } = await import('./lib/stateReader.ts'));
+      ({ claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }));
+      expect(claims[0]?.state).toBe('claimed');
+      expect(claims[0]?.session_start_retry_count).toBe(0);
+      expect(claims[0]?.session_start_last_error).toBeNull();
+      expect(mockStart).toHaveBeenCalledTimes(3);
+      expect(mockSend).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not provision a registered idle worker when no task is ready yet', async () => {
@@ -1342,6 +1514,35 @@ describe('processTerminalRunEvents', () => {
       agent_id: 'orc-1',
       question: 'Should I answer yes?',
     });
+  });
+
+  it('clears awaiting_input when processing input_response', async () => {
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    seedState(dir, {
+      claims: [{
+        run_id: 'run-input-001',
+        task_ref: 'orch/task-150',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: '2026-03-11T05:00:00.000Z',
+        started_at: '2026-03-11T05:01:00.000Z',
+        lease_expires_at: '2099-01-01T00:00:00.000Z',
+        input_state: 'awaiting_input',
+        input_requested_at: '2026-03-11T05:10:00.000Z',
+      }],
+    });
+
+    await processTerminalRunEvents([{
+      ts: '2026-03-11T05:11:00.000Z',
+      event: 'input_response',
+      run_id: 'run-input-001',
+      agent_id: 'orc-1',
+      payload: { response: 'yes' },
+    }]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    expect(claims[0]?.input_state).toBeNull();
   });
 
   it('dedupes already processed events by durable identity', async () => {

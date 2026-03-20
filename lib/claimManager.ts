@@ -74,6 +74,7 @@ export function claimTask(
       last_heartbeat_at: null, started_at: null, finished_at: null,
       finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
       input_state: null, input_requested_at: null,
+      session_start_retry_count: 0, session_start_retry_next_at: null, session_start_last_error: null,
     });
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 
@@ -111,6 +112,9 @@ export function startRun(
     claim.started_at = at;
     claim.input_state = null;
     claim.input_requested_at = null;
+    claim.session_start_retry_count = 0;
+    claim.session_start_retry_next_at = null;
+    claim.session_start_last_error = null;
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
@@ -201,6 +205,9 @@ export function finishRun(
     if (!success && failureReason) claim.failure_reason = failureReason;
     claim.input_state = null;
     claim.input_requested_at = null;
+    claim.session_start_retry_count = 0;
+    claim.session_start_retry_next_at = null;
+    claim.session_start_last_error = null;
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
@@ -322,6 +329,47 @@ export function setRunInputState(
   });
 }
 
+export function setRunSessionStartRetryState(
+  stateDir: string,
+  runId: string,
+  agentId: string,
+  {
+    retryCount = 0,
+    nextRetryAt = null,
+    lastError = null,
+  }: {
+    retryCount?: number;
+    nextRetryAt?: string | null;
+    lastError?: string | null;
+  } = {},
+): Claim {
+  return withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
+    if (!claim) throw new Error(`Claim not found: ${runId}`);
+    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
+    if (claim.state !== 'claimed') {
+      throw new Error(`Session start retry updates require claimed claim state (got: ${claim.state})`);
+    }
+    if (!Number.isInteger(retryCount) || retryCount < 0) {
+      throw new Error(`retryCount must be a non-negative integer (got: ${String(retryCount)})`);
+    }
+    if (nextRetryAt !== null && !Number.isFinite(new Date(nextRetryAt).getTime())) {
+      throw new Error(`nextRetryAt must be an ISO date-time string or null (got: ${String(nextRetryAt)})`);
+    }
+    if (lastError !== null && typeof lastError !== 'string') {
+      throw new Error('lastError must be a string or null');
+    }
+
+    claim.session_start_retry_count = retryCount;
+    claim.session_start_retry_next_at = retryCount > 0 ? nextRetryAt : null;
+    claim.session_start_last_error = retryCount > 0 ? lastError : null;
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+
+    return claim;
+  });
+}
+
 function _expireLeasesCore(
   stateDir: string,
   { policy = 'requeue', actorId = 'coordinator' }: { policy?: string; actorId?: string } = {},
@@ -338,6 +386,11 @@ function _expireLeasesCore(
 
     claim.state       = 'failed';
     claim.finished_at = now.toISOString();
+    claim.input_state = null;
+    claim.input_requested_at = null;
+    claim.session_start_retry_count = 0;
+    claim.session_start_retry_next_at = null;
+    claim.session_start_last_error = null;
     expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id });
 
     const task = findTask(backlog, claim.task_ref);

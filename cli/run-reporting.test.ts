@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -65,6 +66,17 @@ function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' 
     }],
   }));
   writeFileSync(join(dir, 'events.jsonl'), '');
+}
+
+function writeInputRequestClaim(overrides: Record<string, unknown>) {
+  const existing = readClaims().claims[0];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+    version: '1',
+    claims: [{
+      ...existing,
+      ...overrides,
+    }],
+  }));
 }
 
 function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
@@ -430,7 +442,7 @@ describe('orc-run-input-request', () => {
         && event.agent_id === 'worker-01'
         && event.task_ref === 'docs/task-1'
         && (event.payload as Record<string, unknown>)?.question === 'Continue?')).toBe(true);
-    expect(readClaims().claims[0].input_state).toBe('awaiting_input');
+    expect(readClaims().claims[0].input_state).toBeUndefined();
 
     writeFileSync(join(dir, 'events.jsonl'), `${readFileSync(join(dir, 'events.jsonl'), 'utf8')}${JSON.stringify({
       seq: eventsAfterRequest.length + 1,
@@ -448,7 +460,7 @@ describe('orc-run-input-request', () => {
     expect(code).toBe(0);
     expect(stdout.trim()).toBe('yes');
     expect(stderr).toBe('');
-    expect(readClaims().claims[0].input_state).toBeNull();
+    expect(readClaims().claims[0].input_state).toBeUndefined();
   });
 
   it('exits 1 with a descriptive timeout message when no response arrives', () => {
@@ -462,7 +474,114 @@ describe('orc-run-input-request', () => {
     ]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Timed out waiting for input_response');
-    expect(readClaims().claims[0].input_state).toBeNull();
+    expect(readClaims().claims[0].input_state).toBeUndefined();
+
+    const timeoutFailure = readEvents().find((event) =>
+      event.event === 'run_failed'
+      && event.run_id === 'run-input-001'
+      && event.agent_id === 'worker-01',
+    );
+    expect(timeoutFailure).toBeDefined();
+    expect((timeoutFailure!.payload as Record<string, unknown>).reason).toBe('input_request_timeout');
+    expect((timeoutFailure!.payload as Record<string, unknown>).code).toBe('ERR_INPUT_REQUEST_TIMEOUT');
+    expect((timeoutFailure!.payload as Record<string, unknown>).policy).toBe('requeue');
+  });
+
+  it('defaults to the 1-hour timeout when omitted', () => {
+    expect(DEFAULT_INPUT_REQUEST_TIMEOUT_MS).toBe(60 * 60 * 1000);
+  });
+
+  it('does not append a stale timeout failure when the run has already terminated elsewhere', async () => {
+    seedInputRequestState();
+
+    const child = spawn('node', [
+      '--experimental-strip-types',
+      'cli/run-input-request.ts',
+      '--run-id=run-input-001',
+      '--agent-id=worker-01',
+      '--question=Continue?',
+      '--timeout-ms=120',
+      '--poll-ms=10',
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, ORCH_STATE_DIR: dir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (readEvents().some((event) => event.event === 'input_requested')) break;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+
+    writeInputRequestClaim({
+      state: 'failed',
+      finished_at: '2026-01-01T00:02:00.000Z',
+      input_state: null,
+    });
+
+    const [code] = await once(child, 'close');
+    expect(code).toBe(1);
+    expect(stderr).toContain('Timed out waiting for input_response');
+
+    const timedOutFailures = readEvents().filter((event) =>
+      event.event === 'run_failed'
+      && (event.payload as Record<string, unknown>)?.reason === 'input_request_timeout',
+    );
+    expect(timedOutFailures).toHaveLength(0);
+  });
+
+  it('returns a response that lands at the timeout boundary before emitting timeout failure', async () => {
+    seedInputRequestState();
+
+    const child = spawn('node', [
+      '--experimental-strip-types',
+      'cli/run-input-request.ts',
+      '--run-id=run-input-001',
+      '--agent-id=worker-01',
+      '--question=Continue?',
+      '--timeout-ms=80',
+      '--poll-ms=40',
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, ORCH_STATE_DIR: dir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (readEvents().some((event) => event.event === 'input_requested')) break;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+    }
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
+    const currentEvents = readEvents();
+    writeFileSync(join(dir, 'events.jsonl'), `${readFileSync(join(dir, 'events.jsonl'), 'utf8')}${JSON.stringify({
+      seq: currentEvents.length + 1,
+      ts: new Date().toISOString(),
+      event: 'input_response',
+      actor_type: 'human',
+      actor_id: 'master',
+      run_id: 'run-input-001',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+      payload: { response: 'yes' },
+    })}\n`);
+
+    const [code] = await once(child, 'close');
+    expect(code).toBe(0);
+    expect(stdout.trim()).toBe('yes');
+    expect(stderr).toBe('');
+    expect(readEvents().filter((event) =>
+      event.event === 'run_failed'
+      && (event.payload as Record<string, unknown>)?.reason === 'input_request_timeout',
+    )).toHaveLength(0);
   });
 
   it('exits 1 with usage when required args are missing', () => {
@@ -489,7 +608,7 @@ describe('orc-run-input-request', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('input_response');
-    expect(readClaims().claims[0].input_state).toBeNull();
+    expect(readClaims().claims[0].input_state).toBeUndefined();
 
     const events = readEvents();
     expect(events.some((event) =>

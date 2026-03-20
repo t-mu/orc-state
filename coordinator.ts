@@ -21,7 +21,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState, startRun } from './lib/claimManager.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
@@ -72,6 +72,8 @@ const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms',
 const CONCURRENCY_LIMIT = 8;
 const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
 const AGENT_HEARTBEAT_REFRESH_MS = 60_000;
+const MANAGED_SESSION_START_MAX_ATTEMPTS = 3;
+const MANAGED_SESSION_START_RETRY_DELAY_MS = 30_000;
 const REPO_ROOT = resolveRepoRoot();
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -85,7 +87,6 @@ let coordinatorLockReleased = false;
 let latestActivityByRun: Map<string, string> = new Map();
 const runStartNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
-
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function log(msg: string) { console.log(`[coordinator] ${new Date().toISOString()} ${msg}`); }
@@ -198,7 +199,7 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
       agent.session_handle = null;
       agent.provider_ref = null;
       log(`worker ${agent.agent_id} session unreachable; cleared stale handle for recreation`);
-      return false;
+      return { ok: false, reason: 'session unreachable' };
     }
     if (!adapterOwnsSession(adapter, agent.session_handle)) {
       try {
@@ -216,14 +217,14 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
       agent.session_handle = null;
       agent.provider_ref = null;
       log(`worker ${agent.agent_id} session is alive but not owned by this coordinator; cleared handle for recreation`);
-      return false;
+      return { ok: false, reason: 'session not owned by this coordinator' };
     }
     refreshAgentHeartbeat(agent, new Date().toISOString());
-    return true;
+    return { ok: true };
   }
 
   if (!launchConfig) {
-    return false;
+    return { ok: false, reason: 'no launch config provided' };
   }
 
   const result = await launchWorkerSession(STATE_DIR, agent, {
@@ -238,7 +239,103 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
   if (!result.ok) {
     console.error(`[coordinator] Failed to start session for '${agent.agent_id}': ${result.reason}`);
   }
-  return result.ok;
+  return { ok: result.ok, reason: result.reason };
+}
+
+async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, workerPoolConfig: WorkerPoolConfig) {
+  const adapter = getAdapter(agent.provider);
+  try {
+    await adapter.send(
+      agent.session_handle!,
+      buildTaskEnvelope(taskRef, runId, agent.agent_id),
+    );
+    log(`dispatched ${taskRef} to ${agent.agent_id}`);
+    return true;
+  } catch (err) {
+    finishRun(STATE_DIR, runId, agent.agent_id, {
+      success: false,
+      failureReason: `dispatch_error: ${(err as Error).message}`,
+      failureCode: 'ERR_DISPATCH_FAILURE',
+      policy: 'requeue',
+    });
+    const alive = await adapter.heartbeatProbe(agent.session_handle!);
+    await cleanupRunCapacity(agent.agent_id, workerPoolConfig, {
+      offlineReason: alive ? null : 'dispatch_failed_session_unreachable',
+    });
+    throw err;
+  }
+}
+
+async function processManagedSessionStartRetries(
+  agents: Agent[],
+  claims: Claim[],
+  workerPoolConfig: WorkerPoolConfig,
+) {
+  const nowMs = Date.now();
+  const agentsById = new Map(agents.map((agent) => [agent.agent_id, agent]));
+  for (const claim of claims) {
+    const retryCount = claim.session_start_retry_count ?? 0;
+    const nextRetryAt = claim.session_start_retry_next_at ?? null;
+    if (claim.state !== 'claimed' || retryCount <= 0 || nextRetryAt == null) continue;
+
+    const agent = agentsById.get(claim.agent_id);
+    if (!agent || !isManagedSlot(claim.agent_id, workerPoolConfig)) {
+      continue;
+    }
+    if (nowMs < new Date(nextRetryAt).getTime()) continue;
+
+    const ready = await ensureSessionReady(agent, {
+      working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? null,
+      run_id: claim.run_id,
+      task_ref: claim.task_ref,
+      retryable: true,
+    });
+    if (ready.ok && agent.session_handle && agent.status !== 'offline') {
+      setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
+        retryCount: 0,
+      });
+      try {
+        await sendTaskEnvelope(agent, claim.task_ref, claim.run_id, workerPoolConfig);
+      } catch (err) {
+        log(`ERROR dispatching ${claim.task_ref} to ${agent.agent_id}: ${(err as Error).message}`);
+      }
+      continue;
+    }
+
+    const nextFailedAttempts = retryCount + 1;
+    if (nextFailedAttempts >= MANAGED_SESSION_START_MAX_ATTEMPTS) {
+      emit({
+        event: 'session_start_failed',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claim.run_id,
+        task_ref: claim.task_ref,
+        agent_id: claim.agent_id,
+        payload: {
+          reason: 'worker session could not be launched in assigned worktree after bounded retries',
+          code: 'ERR_SESSION_START_FAILED',
+          working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? undefined,
+        },
+      });
+      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+        success: false,
+        failureReason: 'session_start_failed: worker session could not be launched in assigned worktree',
+        failureCode: 'ERR_SESSION_START_FAILED',
+        policy: 'requeue',
+      });
+      if (agent.status !== 'offline') {
+        await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      }
+      console.error(`[coordinator] Failed to start session for '${claim.agent_id}': bounded retries exhausted`);
+      continue;
+    }
+
+    setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
+      retryCount: nextFailedAttempts,
+      nextRetryAt: new Date(nowMs + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
+      lastError: ready.reason ?? claim.session_start_last_error ?? 'worker session could not be launched in assigned worktree',
+    });
+  }
 }
 
 function claimAwaitingInput(claim: Claim) {
@@ -798,6 +895,12 @@ async function tick() {
     claims = tickClaims.claims ?? [];
   }
 
+  await processManagedSessionStartRetries(agents, claims, workerPoolConfig);
+  tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
+  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+  agents = tickAgents.agents ?? [];
+  claims = tickClaims.claims ?? [];
+
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
   const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun);
   tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
@@ -840,7 +943,15 @@ async function tick() {
         task_ref: taskRef,
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig),
       });
-      if (!ready || !agent.session_handle || agent.status === 'offline') {
+      if (!ready.ok || !agent.session_handle || agent.status === 'offline') {
+        if (isManagedSlot(agent.agent_id, workerPoolConfig) && agent.status !== 'offline') {
+          setRunSessionStartRetryState(STATE_DIR, runId, agent.agent_id, {
+            retryCount: 1,
+            nextRetryAt: new Date(Date.now() + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
+            lastError: ready.reason ?? 'worker session could not be launched in assigned worktree',
+          });
+          return;
+        }
         finishRun(STATE_DIR, runId, agent.agent_id, {
           success: false,
           failureReason: 'session_start_failed: worker session could not be launched in assigned worktree',
@@ -853,28 +964,12 @@ async function tick() {
         return;
       }
 
-      const adapter = getAdapter(agent.provider);
       try {
-        await adapter.send(
-          agent.session_handle,
-          buildTaskEnvelope(taskRef, runId, agent.agent_id),
-        );
+        await sendTaskEnvelope(agent, taskRef, runId, workerPoolConfig);
       } catch (err) {
-        finishRun(STATE_DIR, runId, agent.agent_id, {
-          success: false,
-          failureReason: `dispatch_error: ${(err as Error).message}`,
-          failureCode: 'ERR_DISPATCH_FAILURE',
-          policy: 'requeue',
-        });
         runId = null;
-        const alive = await adapter.heartbeatProbe(agent.session_handle);
-        await cleanupRunCapacity(agent.agent_id, workerPoolConfig, {
-          offlineReason: alive ? null : 'dispatch_failed_session_unreachable',
-        });
         throw err;
       }
-
-      log(`dispatched ${taskRef} to ${agent.agent_id}`);
     } catch (err) {
       if (runId) {
         finishRun(STATE_DIR, runId, agent.agent_id, {
