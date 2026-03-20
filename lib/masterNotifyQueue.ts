@@ -39,12 +39,20 @@ function computeNextSeq(lines: string[]): number {
   return 1;
 }
 
+function hasDedupeKey(lines: string[], dedupeKey: unknown): boolean {
+  if (typeof dedupeKey !== 'string' || dedupeKey.length === 0) return false;
+  return lines.some((line) => parseJsonLine(line)?.dedupe_key === dedupeKey);
+}
+
 export function appendNotification(stateDir: string, notification: Record<string, unknown>): boolean {
   const lockPath = join(stateDir, '.lock');
   try {
     withLock(lockPath, () => {
       const path = queuePath(stateDir);
       const lines = readQueueLines(path);
+      if (hasDedupeKey(lines, notification.dedupe_key)) {
+        return;
+      }
       const nextSeq = computeNextSeq(lines);
       const entry: QueueEntry = { seq: nextSeq, consumed: false, ...notification };
       appendFileSync(path, `${JSON.stringify(entry)}\n`, 'utf8');

@@ -94,6 +94,58 @@ describe('appendNotification', () => {
     const seqs = pending.map((entry) => entry.seq);
     expect(new Set(seqs).size).toBe(seqs.length);
   });
+
+  it('drops duplicate notifications with the same dedupe_key', () => {
+    appendNotification(dir, {
+      type: 'TASK_COMPLETE',
+      dedupe_key: 'task-complete:run-1:finished',
+      task_ref: 'orch/task-a',
+      agent_id: 'orc-1',
+      success: true,
+      finished_at: '2026-03-08T07:00:00.000Z',
+    });
+    appendNotification(dir, {
+      type: 'TASK_COMPLETE',
+      dedupe_key: 'task-complete:run-1:finished',
+      task_ref: 'orch/task-a',
+      agent_id: 'orc-1',
+      success: true,
+      finished_at: '2026-03-08T07:00:00.000Z',
+    });
+
+    const pending = readPendingNotifications(dir);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].dedupe_key).toBe('task-complete:run-1:finished');
+  });
+
+  it('still appends distinct notifications when dedupe_key differs or is absent', () => {
+    appendNotification(dir, {
+      type: 'TASK_COMPLETE',
+      dedupe_key: 'task-complete:run-1:finished',
+      task_ref: 'orch/task-a',
+      agent_id: 'orc-1',
+      success: true,
+      finished_at: '2026-03-08T07:00:00.000Z',
+    });
+    appendNotification(dir, {
+      type: 'TASK_COMPLETE',
+      dedupe_key: 'task-complete:run-1:failed',
+      task_ref: 'orch/task-a',
+      agent_id: 'orc-1',
+      success: false,
+      finished_at: '2026-03-08T07:00:01.000Z',
+    });
+    appendNotification(dir, {
+      type: 'TASK_COMPLETE',
+      task_ref: 'orch/task-b',
+      agent_id: 'orc-2',
+      success: true,
+      finished_at: '2026-03-08T07:00:02.000Z',
+    });
+
+    const pending = readPendingNotifications(dir);
+    expect(pending).toHaveLength(3);
+  });
 });
 
 describe('readPendingNotifications and markConsumed', () => {

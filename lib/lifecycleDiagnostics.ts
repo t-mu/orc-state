@@ -16,8 +16,7 @@ export interface LifecycleIssue {
     | 'invalid_finalization_state'
     | 'missing_finalization_blocked_reason'
     | 'suspicious_finalization_retry_count'
-    | 'duplicate_event_identity'
-    | 'non_monotonic_event_seq';
+    | 'duplicate_event_identity';
   message: string;
   hint?: string;
 }
@@ -188,7 +187,6 @@ export function detectLifecycleIssues(stateDir: string): LifecycleIssue[] {
   try {
     const events = readEvents(join(stateDir, 'events.jsonl'));
     const eventIds = new Set<string>();
-    let previousSeq = 0;
     for (const event of events) {
       const identity = eventIdentity(event);
       if (eventIds.has(identity)) {
@@ -200,14 +198,6 @@ export function detectLifecycleIssues(stateDir: string): LifecycleIssue[] {
       } else {
         eventIds.add(identity);
       }
-      if (event.seq <= previousSeq) {
-        issues.push({
-          code: 'non_monotonic_event_seq',
-          message: `events.jsonl seq is not strictly increasing at seq=${event.seq} after seq=${previousSeq}`,
-          hint: 'Sequenced events in the retained log should remain monotonic.',
-        });
-      }
-      previousSeq = event.seq;
     }
   } catch {
     // Event-log parse/schema errors are reported by the existing validation surface.

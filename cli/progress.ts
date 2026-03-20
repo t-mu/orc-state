@@ -6,12 +6,10 @@
  */
 import { flag } from '../lib/args.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { recordAgentActivity } from '../lib/agentActivity.ts';
-import { startRun, heartbeat, finishRun, setRunFinalizationState } from '../lib/claimManager.ts';
-import { validateProgressInput } from '../lib/progressValidation.ts';
+import { validateProgressCommandInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims } from '../lib/stateReader.ts';
-import type { Claim } from '../types/claims.ts';
+import type { EventFinalizationStatus, FailurePolicy, OrcEvent } from '../types/events.ts';
 
 const event = flag('event');
 const runId = flag('run-id');
@@ -25,129 +23,67 @@ if (!event || !runId || !agentId) {
   process.exit(1);
 }
 
-function loadClaim(currentRunId: string): Claim | null {
+function loadClaim(currentRunId: string) {
   try {
-    return readClaims(STATE_DIR).claims.find((c) => c.run_id === currentRunId) ?? null;
+    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
   } catch {
     return null;
   }
 }
 
+function finalizationPayload(eventName: string): { status: EventFinalizationStatus } | null {
+  if (eventName === 'work_complete') {
+    return {
+      status: 'awaiting_finalize',
+    };
+  }
+  if (eventName === 'finalize_rebase_started') {
+    return {
+      status: 'finalize_rebase_in_progress',
+    };
+  }
+  if (eventName === 'ready_to_merge') {
+    return {
+      status: 'ready_to_merge',
+    };
+  }
+  return null;
+}
+
 try {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressInput({
-    event,
+  const { claim: validatedClaim } = validateProgressCommandInput({
+    event: event as OrcEvent['event'],
     runId,
     agentId,
     phase,
     reason,
     policy,
   }, claim);
-  const taskRef = validatedClaim.task_ref;
 
-  switch (event) {
-    case 'run_started':
-      startRun(STATE_DIR, runId, agentId);
-      break;
-    case 'heartbeat':
-      heartbeat(STATE_DIR, runId, agentId);
-      break;
-    case 'work_complete':
-      heartbeat(STATE_DIR, runId, agentId, { emitEvent: false });
-      setRunFinalizationState(STATE_DIR, runId, agentId, {
-        finalizationState: 'awaiting_finalize',
-        blockedReason: null,
-      });
-      appendSequencedEvent(STATE_DIR, {
-        ts: new Date().toISOString(),
-        event,
-        actor_type: 'agent',
-        actor_id: agentId,
-        run_id: runId,
-        task_ref: taskRef,
-        agent_id: agentId,
-        payload: { status: 'awaiting_finalize', retry_count: 0 },
-      });
-      break;
-    case 'finalize_rebase_started': {
-      const updatedClaim = setRunFinalizationState(STATE_DIR, runId, agentId, {
-        finalizationState: 'finalize_rebase_in_progress',
-        retryCountDelta: 1,
-        blockedReason: null,
-      });
-      heartbeat(STATE_DIR, runId, agentId, { emitEvent: false });
-      appendSequencedEvent(STATE_DIR, {
-        ts: new Date().toISOString(),
-        event,
-        actor_type: 'agent',
-        actor_id: agentId,
-        run_id: runId,
-        task_ref: taskRef,
-        agent_id: agentId,
-        payload: {
-          status: 'finalize_rebase_in_progress',
-          retry_count: updatedClaim.finalization_retry_count ?? 0,
-        },
-      });
-      break;
-    }
-    case 'ready_to_merge': {
-      const updatedClaim = setRunFinalizationState(STATE_DIR, runId, agentId, {
-        finalizationState: 'ready_to_merge',
-        blockedReason: null,
-      });
-      heartbeat(STATE_DIR, runId, agentId, { emitEvent: false });
-      appendSequencedEvent(STATE_DIR, {
-        ts: new Date().toISOString(),
-        event,
-        actor_type: 'agent',
-        actor_id: agentId,
-        run_id: runId,
-        task_ref: taskRef,
-        agent_id: agentId,
-        payload: {
-          status: 'ready_to_merge',
-          retry_count: updatedClaim.finalization_retry_count ?? 0,
-        },
-      });
-      break;
-    }
-    case 'run_finished':
-      finishRun(STATE_DIR, runId, agentId, { success: true });
-      break;
-    case 'run_failed':
-      finishRun(STATE_DIR, runId, agentId, {
-        success: false,
-        failureReason: reason ?? 'worker reported failure',
-        failureCode: 'ERR_WORKER_REPORTED_FAILURE',
-        policy,
-      });
-      break;
-    case 'phase_started':
-    case 'phase_finished':
-    case 'blocked':
-    case 'need_input':
-    case 'input_provided':
-    case 'unblocked':
-      // Any accepted run activity should keep the claim lease alive.
-      heartbeat(STATE_DIR, runId, agentId, { emitEvent: false });
-      appendSequencedEvent(STATE_DIR, {
-        ts: new Date().toISOString(),
-        event,
-        actor_type: 'agent',
-        actor_id: agentId,
-        run_id: runId,
-        task_ref: taskRef,
-        agent_id: agentId,
-        ...(phase ? { phase } : {}),
-        ...(reason ? { payload: { reason } } : {}),
-      });
-      break;
-    default:
-      throw new Error(`Unsupported event: ${event}`);
-  }
+  const payload = finalizationPayload(event)
+    ?? (event === 'run_failed'
+      ? {
+        reason: reason ?? 'worker reported failure',
+        code: 'ERR_WORKER_REPORTED_FAILURE',
+        policy: policy as FailurePolicy,
+      }
+      : reason
+        ? { reason }
+        : undefined);
 
-  recordAgentActivity(STATE_DIR, agentId);
+  appendSequencedEvent(STATE_DIR, {
+    ts: new Date().toISOString(),
+    event: event as OrcEvent['event'],
+    actor_type: 'agent',
+    actor_id: agentId,
+    run_id: runId,
+    task_ref: validatedClaim.task_ref,
+    agent_id: agentId,
+    ...(phase ? { phase } : {}),
+    ...(payload ? { payload } : {}),
+  } as OrcEvent, { lockStrategy: 'none' });
+
   console.log(`progress event accepted: ${event} run=${runId} agent=${agentId}`);
 } catch (error) {
   console.error((error as Error).message);

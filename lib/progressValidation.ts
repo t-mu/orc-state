@@ -43,6 +43,47 @@ export interface ProgressInput {
 }
 
 /**
+ * Validate worker command arguments without enforcing shared-state transitions.
+ * Use this on the worker side so the coordinator remains the source of truth
+ * for lifecycle state transitions.
+ */
+export function validateProgressCommandInput(input: ProgressInput, claim: Claim | null | undefined): { claim: Claim } {
+  const { event, runId, agentId, phase, reason, policy } = input;
+  if (!event || !runId || !agentId) {
+    throw new Error('event, run-id, and agent-id are required');
+  }
+  if (!SUPPORTED_EVENTS.has(event)) {
+    throw new Error(`Unsupported event: ${event}`);
+  }
+  if (!/^run-[a-z0-9-]+$/.test(runId)) {
+    throw new Error(`Invalid run-id: ${runId}`);
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(agentId)) {
+    throw new Error(`Invalid agent-id: ${agentId}`);
+  }
+  if (!claim) {
+    throw new Error(`Run not found in claims: ${runId}`);
+  }
+  if (claim.run_id !== runId) {
+    throw new Error(`Claim run_id mismatch: expected ${runId}`);
+  }
+  if (claim.agent_id !== agentId) {
+    throw new Error(`Run ${runId} belongs to ${claim.agent_id}, not ${agentId}`);
+  }
+  if (EVENTS_REQUIRING_PHASE.has(event) && !phase) {
+    throw new Error(`Event ${event} requires --phase=<name>`);
+  }
+  if (EVENTS_REQUIRING_REASON.has(event) && !reason) {
+    throw new Error(`Event ${event} requires --reason=<text>`);
+  }
+  if (event === 'run_failed' && !['requeue', 'block'].includes(policy ?? 'requeue')) {
+    throw new Error(`Invalid failure policy: ${String(policy)}. Use requeue or block.`);
+  }
+
+  return { claim };
+}
+
+/**
  * Validate incoming worker progress event arguments against active run state.
  * Throws with actionable errors for malformed or inconsistent inputs.
  */

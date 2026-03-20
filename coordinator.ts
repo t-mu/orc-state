@@ -117,6 +117,22 @@ function coerceTs(ts: unknown) {
 }
 
 /**
+ * Coordinator-owned state must not trust future worker timestamps and must not
+ * move backwards relative to already-recorded lifecycle timestamps.
+ */
+function authoritativeStateTs(eventTs: string, floorTs?: string | null) {
+  const nowIso = new Date().toISOString();
+  const eventMs = new Date(eventTs).getTime();
+  const nowMs = new Date(nowIso).getTime();
+  const floorMs = typeof floorTs === 'string' ? new Date(floorTs).getTime() : NaN;
+  const boundedMs = Math.min(eventMs, nowMs);
+  const effectiveMs = Number.isFinite(floorMs)
+    ? Math.max(boundedMs, floorMs)
+    : boundedMs;
+  return new Date(effectiveMs).toISOString();
+}
+
+/**
  * Run async thunks in bounded concurrency batches.
  * Returns settled results in original batch order.
  */
@@ -716,9 +732,6 @@ async function tick() {
   tickCount++;
   log(`tick ${tickCount}`);
 
-  // 1. Expire stale leases.
-  const expired = expireStaleLeasesDetailed(STATE_DIR);
-
   // 2. Autonomous dispatch.
   if (MODE !== 'autonomous') return;
 
@@ -728,12 +741,6 @@ async function tick() {
   let workerPoolConfig: WorkerPoolConfig;
   try {
     workerPoolConfig = loadWorkerPoolConfig();
-    if (expired.length > 0) {
-      for (const claim of expired) {
-        await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
-      }
-      log(`expired ${expired.length} stale lease(s): ${expired.map((claim) => claim.run_id).join(', ')}`);
-    }
     reconcileManagedWorkerSlots(STATE_DIR, workerPoolConfig);
     tickBacklog = readJson(STATE_DIR, 'backlog.json');
     tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
@@ -777,6 +784,18 @@ async function tick() {
     claims = tickClaims.claims ?? [];
   } catch {
     latestActivityByRun = new Map();
+  }
+
+  const expired = expireStaleLeasesDetailed(STATE_DIR);
+  if (expired.length > 0) {
+    for (const claim of expired) {
+      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+    }
+    log(`expired ${expired.length} stale lease(s): ${expired.map((claim) => claim.run_id).join(', ')}`);
+    tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
+    tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+    agents = tickAgents.agents ?? [];
+    claims = tickClaims.claims ?? [];
   }
 
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
@@ -963,8 +982,10 @@ function buildFinalizeRebaseRequest(claim: Claim, reason: string) {
     `retry_count: ${claim.finalization_retry_count ?? 0}`,
     `reason: ${reason}`,
     'The coordinator could not finalize your branch on the latest main.',
-    'In this same worktree, run `git rebase main`, resolve conflicts if needed, rerun the required verification, then report completion again with:',
-    `orc-run-work-complete --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    'In this same worktree, first report the rebase handoff with:',
+    `orc progress --event=finalize_rebase_started --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    'Then run `git rebase main`, resolve conflicts if needed, rerun the required verification, and report completion again with:',
+    `orc run-work-complete --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     'Do not merge or delete the worktree yourself.',
     'FINALIZE_REBASE_END',
   ].join('\n');
@@ -986,9 +1007,10 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
   for (const event of events) {
     const normalizedEventId = eventIdentity(event);
     const seq = typeof event.seq === 'number' ? event.seq : 0;
+    const eventTs = coerceTs(event.ts);
     if (eventCheckpoint.processed_event_ids.includes(normalizedEventId)) {
       if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
       }
       continue;
     }
@@ -996,31 +1018,32 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     if (event.event === 'input_requested') {
       if (event.actor_type === 'coordinator') {
         if (seq > 0) {
-          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
         }
         continue;
       }
       try {
         setRunInputState(STATE_DIR, event.run_id, event.agent_id, {
           inputState: 'awaiting_input',
-          requestedAt: coerceTs(event.ts),
+          requestedAt: eventTs,
         });
       } catch {
         // Ignore races with terminal events or cleaned-up claims.
       }
       const deposited = appendNotification(STATE_DIR, {
         type: 'INPUT_REQUEST',
+        dedupe_key: `input-request:${normalizedEventId}`,
         task_ref: event.task_ref ?? '(unknown)',
         run_id: event.run_id,
         agent_id: event.agent_id,
         question: event.payload.question,
-        requested_at: coerceTs(event.ts),
+        requested_at: eventTs,
       });
       if (!deposited) {
         console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${event.task_ref ?? '(unknown)'}`);
       }
       if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
       }
       continue;
     }
@@ -1028,11 +1051,12 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     if (event.event === 'run_started') {
       const claim = getClaim(event.run_id);
       if (claim && claim.state === 'claimed') {
-        startRun(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false });
-        recordAgentActivity(STATE_DIR, event.agent_id, { at: coerceTs(event.ts) });
+        const stateTs = authoritativeStateTs(eventTs, claim.claimed_at);
+        startRun(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
+        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
       }
       if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
       }
       continue;
     }
@@ -1040,17 +1064,57 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     if (event.event === 'heartbeat') {
       if (!event.run_id || !event.agent_id) {
         if (seq > 0) {
-          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
         }
         continue;
       }
       const claim = getClaim(event.run_id);
       if (claim && ['claimed', 'in_progress'].includes(claim.state)) {
-        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false });
-        recordAgentActivity(STATE_DIR, event.agent_id, { at: coerceTs(event.ts) });
+        const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
+        const stateTs = authoritativeStateTs(eventTs, floorTs);
+        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
+        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
       }
       if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
+      }
+      continue;
+    }
+
+    if (event.event === 'phase_started'
+      || event.event === 'phase_finished'
+      || event.event === 'blocked'
+      || event.event === 'need_input'
+      || event.event === 'input_provided'
+      || event.event === 'unblocked') {
+      const claim = getClaim(event.run_id);
+      if (claim && claim.state === 'in_progress') {
+        const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
+        const stateTs = authoritativeStateTs(eventTs, floorTs);
+        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
+        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
+      }
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
+      }
+      continue;
+    }
+
+    if (event.event === 'finalize_rebase_started') {
+      const claim = getClaim(event.run_id);
+      if (claim && claim.state === 'in_progress' && claim.finalization_state === 'finalize_rebase_requested') {
+        setRunFinalizationState(STATE_DIR, event.run_id, event.agent_id, {
+          finalizationState: 'finalize_rebase_in_progress',
+          retryCountDelta: 1,
+          blockedReason: null,
+        });
+        const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
+        const stateTs = authoritativeStateTs(eventTs, floorTs);
+        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
+        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
+      }
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
       }
       continue;
     }
@@ -1062,13 +1126,16 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         // Ignore races with terminal events or cleaned-up claims.
       }
       if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
       }
       continue;
     }
 
     if (event.event === 'run_finished' || event.event === 'run_failed') {
       const claim = getClaim(event.run_id);
+      const stateTs = claim
+        ? authoritativeStateTs(eventTs, claim.finished_at ?? claim.started_at ?? claim.claimed_at)
+        : authoritativeStateTs(eventTs);
       if (claim && ['claimed', 'in_progress'].includes(claim.state)) {
         finishRun(STATE_DIR, event.run_id, event.agent_id, {
           success: event.event === 'run_finished',
@@ -1082,6 +1149,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
             ? (event.payload.policy ?? 'requeue')
             : 'requeue',
           emitEvent: false,
+          at: stateTs,
         });
       }
       const eventAgentId = event.agent_id;
@@ -1099,10 +1167,11 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         : null;
       const notification: Record<string, unknown> = {
         type: 'TASK_COMPLETE',
+        dedupe_key: `task-complete:${eventRunId}`,
         task_ref: event.task_ref,
         agent_id: eventAgentId,
         success: !failed,
-        finished_at: coerceTs(event.ts),
+        finished_at: stateTs,
       };
       if (failed && typeof failureReason === 'string' && failureReason.trim()) {
         notification.failure_reason = failureReason;
@@ -1138,7 +1207,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     }
 
     if (seq > 0) {
-      eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, coerceTs(event.ts)));
+      eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
     }
   }
 }
