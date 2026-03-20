@@ -248,6 +248,37 @@ describe('appendSequencedEvent', () => {
     writeFileSync(logPath, `${JSON.stringify(validEvent(1))}\n${JSON.stringify({ seq: 2, ts: '2026-01-01T00:00:00Z', event: 'handoff_completed', actor_type: 'agent', actor_id: 'worker-01', task_ref: 'docs/task-1' })}\n`, 'utf8');
     expect(() => readEvents(logPath)).toThrow('events.jsonl schema error at line 2');
   });
+
+  it('supports lock-free appends without using the shared state lock', () => {
+    writeFileSync(join(dir, '.lock'), '', 'utf8');
+    const seq1 = appendSequencedEvent(dir, validEvent(undefined, 'run_started', { run_id: 'run-1', task_ref: 'orch/task-1' }), {
+      fsyncPolicy: 'never',
+      lockStrategy: 'none',
+    });
+    const seq2 = appendSequencedEvent(dir, validEvent(undefined, 'heartbeat', { run_id: 'run-1', task_ref: 'orch/task-1' }), {
+      fsyncPolicy: 'never',
+      lockStrategy: 'none',
+    });
+
+    const events = readEvents(logPath);
+    expect([seq1, seq2]).toEqual([1, 2]);
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => typeof event.event_id === 'string' && event.event_id.length > 0)).toBe(true);
+  });
+
+  it('does not rotate archives during lock-free appends', () => {
+    const lines = Array.from({ length: 10_000 }, (_, idx) => JSON.stringify(validEvent(idx + 1)));
+    writeFileSync(logPath, `${lines.join('\n')}\n`, 'utf8');
+
+    const seq = appendSequencedEvent(dir, validEvent(undefined, 'heartbeat', { run_id: 'run-1', task_ref: 'orch/task-1' }), {
+      fsyncPolicy: 'never',
+      lockStrategy: 'none',
+    });
+
+    expect(seq).toBe(10_001);
+    expect(readEvents(`${logPath}.1`)).toEqual([]);
+    expect(readEvents(logPath)).toHaveLength(10_001);
+  });
 });
 
 describe('rotation', () => {

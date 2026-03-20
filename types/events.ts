@@ -99,7 +99,7 @@ export interface FinalizeRebaseStartedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { status: 'finalize_rebase_in_progress'; retry_count: number; [key: string]: unknown };
+  payload: { status: 'finalize_rebase_in_progress'; retry_count?: number; [key: string]: unknown };
 }
 
 export interface ReadyToMergeEvent extends BaseEvent {
@@ -107,7 +107,7 @@ export interface ReadyToMergeEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { status: 'ready_to_merge'; retry_count: number; [key: string]: unknown };
+  payload: { status: 'ready_to_merge'; retry_count?: number; [key: string]: unknown };
 }
 
 export interface RunFinishedEvent extends BaseEvent {

@@ -210,17 +210,13 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
       `must be one of: ${Array.from(FINALIZATION_STATUS_BY_EVENT[eventName]).join(', ')}`,
       errors,
     );
-    // retry_count is required for new finalization events; work_complete accepts absent
-    // for backward compatibility with events emitted before the finalization contract landed.
+    // retry_count is optional for worker-emitted finalization signals because
+    // the coordinator owns retry bookkeeping. If present, it must still be valid.
     const payload = (e as { payload?: Record<string, unknown> } | null)?.payload;
     const retryCountValue = payload?.retry_count;
     const retryCountAbsent = retryCountValue === undefined;
     const retryCountValid = Number.isInteger(retryCountValue) && (retryCountValue as number) >= 0;
-    if (eventName === 'work_complete') {
-      if (!retryCountAbsent && !retryCountValid) {
-        errors.push('payload.retry_count must be a non-negative integer');
-      }
-    } else if (!retryCountValid) {
+    if (!retryCountAbsent && !retryCountValid) {
       errors.push('payload.retry_count must be a non-negative integer');
     }
   }

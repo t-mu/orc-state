@@ -61,6 +61,23 @@ describe('validateEventObject', () => {
     expect(ready).toEqual([]);
   });
 
+  it('also accepts finalize_rebase_started and ready_to_merge without retry_count', () => {
+    const started = validateEventObject(base('finalize_rebase_started', {
+      run_id: 'run-1',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+      payload: { status: 'finalize_rebase_in_progress' },
+    }));
+    const ready = validateEventObject(base('ready_to_merge', {
+      run_id: 'run-1',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+      payload: { status: 'ready_to_merge' },
+    }));
+    expect(started).toEqual([]);
+    expect(ready).toEqual([]);
+  });
+
   it('rejects malformed finalization payload retry counts and statuses', () => {
     const badRetry = validateEventObject(base('ready_to_merge', {
       run_id: 'run-1',
