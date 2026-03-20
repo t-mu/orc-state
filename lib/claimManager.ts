@@ -95,7 +95,7 @@ export function startRun(
   stateDir: string,
   runId: string,
   agentId: string,
-  { emitEvent = true }: { emitEvent?: boolean } = {},
+  { emitEvent = true, at = new Date().toISOString() }: { emitEvent?: boolean; at?: string } = {},
 ): void {
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
@@ -104,9 +104,11 @@ export function startRun(
     if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
     if (claim.state !== 'claimed') throw new Error(`Claim ${runId} is not in 'claimed' state (got: ${claim.state})`);
 
-    const now = new Date().toISOString();
+    if (!Number.isFinite(new Date(at).getTime())) {
+      throw new Error(`Invalid startRun timestamp: ${at}`);
+    }
     claim.state = 'in_progress';
-    claim.started_at = now;
+    claim.started_at = at;
     claim.input_state = null;
     claim.input_requested_at = null;
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
@@ -117,7 +119,7 @@ export function startRun(
 
     if (emitEvent) {
       emit(stateDir, {
-        ts: now, event: 'run_started',
+        ts: at, event: 'run_started',
         actor_type: 'agent', actor_id: agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
       });
@@ -132,7 +134,11 @@ export function heartbeat(
   stateDir: string,
   runId: string,
   agentId: string,
-  { leaseDurationMs = DEFAULT_LEASE_MS, emitEvent = true }: { leaseDurationMs?: number; emitEvent?: boolean } = {},
+  {
+    leaseDurationMs = DEFAULT_LEASE_MS,
+    emitEvent = true,
+    at = new Date().toISOString(),
+  }: { leaseDurationMs?: number; emitEvent?: boolean; at?: string } = {},
 ): { lease_expires_at: string } {
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
@@ -143,15 +149,18 @@ export function heartbeat(
       throw new Error(`Cannot heartbeat claim in state: ${claim.state}`);
     }
 
-    const now  = new Date();
+    const now = new Date(at);
+    if (!Number.isFinite(now.getTime())) {
+      throw new Error(`Invalid heartbeat timestamp: ${at}`);
+    }
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
-    claim.last_heartbeat_at = now.toISOString();
+    claim.last_heartbeat_at = at;
     claim.lease_expires_at  = lease_expires_at;
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 
     if (emitEvent) {
       emit(stateDir, {
-        ts: now.toISOString(), event: 'heartbeat',
+        ts: at, event: 'heartbeat',
         actor_type: 'agent', actor_id: agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
         payload: { lease_expires_at },
@@ -169,12 +178,13 @@ export function finishRun(
   stateDir: string,
   runId: string,
   agentId: string,
-  { success = true, failureReason = null, failureCode = null, policy = 'requeue', emitEvent = true }: {
+  { success = true, failureReason = null, failureCode = null, policy = 'requeue', emitEvent = true, at = new Date().toISOString() }: {
     success?: boolean;
     failureReason?: string | null;
     failureCode?: string | null;
     policy?: string;
     emitEvent?: boolean;
+    at?: string;
   } = {},
 ): void {
   return withLock(lockPath(stateDir), () => {
@@ -183,9 +193,11 @@ export function finishRun(
     if (!claim) throw new Error(`Claim not found: ${runId}`);
     if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
 
-    const now = new Date().toISOString();
+    if (!Number.isFinite(new Date(at).getTime())) {
+      throw new Error(`Invalid finishRun timestamp: ${at}`);
+    }
     claim.state       = success ? 'done' : 'failed';
-    claim.finished_at = now;
+    claim.finished_at = at;
     if (!success && failureReason) claim.failure_reason = failureReason;
     claim.input_state = null;
     claim.input_requested_at = null;
@@ -215,14 +227,14 @@ export function finishRun(
     if (emitEvent) {
       if (success) {
         emit(stateDir, {
-          ts: now, event: 'run_finished',
+          ts: at, event: 'run_finished',
           actor_type: 'agent', actor_id: agentId,
           run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
           payload: {},
         });
       } else {
         emit(stateDir, {
-          ts: now, event: 'run_failed',
+          ts: at, event: 'run_failed',
           actor_type: 'agent', actor_id: agentId,
           run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
           payload: { reason: failureReason ?? undefined, code: failureCode ?? undefined, policy: policy as import('../types/events.ts').FailurePolicy },

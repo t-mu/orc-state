@@ -10,7 +10,7 @@
     "seq": {
       "type": "integer",
       "minimum": 1,
-      "description": "Monotonically increasing sequence number. Gaps indicate dropped/corrupt lines."
+      "description": "Positive sequence number allocated at append time. Coordinator-managed writes keep it monotonic; worker-safe lock-free appends treat it as a best-effort ordering hint."
     },
     "event_id": {
       "type": "string",

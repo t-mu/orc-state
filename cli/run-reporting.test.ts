@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -122,19 +122,25 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
+function claimSnapshot(runId: string): Record<string, unknown> | undefined {
+  return readClaims().claims.find((claim) => claim.run_id === runId);
+}
+
+function assertClaimUnchanged(runId: string, before: Record<string, unknown> | undefined) {
+  expect(claimSnapshot(runId)).toEqual(before);
+}
+
 describe('orc-run-start', () => {
   it('appends run_started without mutating claims or agents', () => {
     seedClaimedRun({ runId: 'run-abc-001', agentId: 'worker-01' });
+    const before = claimSnapshot('run-abc-001');
 
     const result = runCli('run-start.ts', ['--run-id=run-abc-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_started');
 
-    const claims = readClaims();
-    const claim = claims.claims.find((c) => c.run_id === 'run-abc-001');
-    expect(claim!.state).toBe('claimed');
-    expect(claim!.started_at).toBeNull();
+    assertClaimUnchanged('run-abc-001', before);
 
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
@@ -160,16 +166,14 @@ describe('orc-run-start', () => {
 describe('orc-run-heartbeat', () => {
   it('appends a heartbeat event without mutating claims or agents', () => {
     seedInProgressRun({ runId: 'run-hb-001', agentId: 'worker-01' });
+    const before = claimSnapshot('run-hb-001');
 
     const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('heartbeat');
 
-    const claims = readClaims();
-    const claim = claims.claims.find((c) => c.run_id === 'run-hb-001');
-    expect(claim!.last_heartbeat_at).toBeNull();
-    expect(claim!.lease_expires_at).toBe('2099-01-01T00:00:00.000Z');
+    assertClaimUnchanged('run-hb-001', before);
 
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
@@ -188,25 +192,21 @@ describe('orc-run-heartbeat', () => {
 describe('orc-run-work-complete', () => {
   it('emits a non-terminal work_complete event without mutating finalization state', () => {
     seedInProgressRun({ runId: 'run-work-001', agentId: 'worker-01' });
+    const before = claimSnapshot('run-work-001');
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-work-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete');
 
-    const claims = readClaims();
-    const claim = claims.claims.find((c) => c.run_id === 'run-work-001');
-    expect(claim!.state).toBe('in_progress');
-    expect(claim!.finalization_state).toBeNull();
-    expect(claim!.finalization_retry_count).toBe(0);
-    expect(claim!.finished_at).toBeNull();
-    expect(claim!.last_heartbeat_at).toBeNull();
+    assertClaimUnchanged('run-work-001', before);
 
     const events = readEvents();
     expect(events.some((e) =>
       e.event === 'work_complete'
         && e.run_id === 'run-work-001'
-        && (e.payload as Record<string, unknown>)?.status === 'awaiting_finalize')).toBe(true);
+        && (e.payload as Record<string, unknown>)?.status === 'awaiting_finalize'
+        && (e.payload as Record<string, unknown>)?.retry_count === undefined)).toBe(true);
   });
 
   it('exits with code 1 and prints usage when args are missing', () => {
@@ -215,12 +215,13 @@ describe('orc-run-work-complete', () => {
     expect(result.stderr).toContain('Usage');
   });
 
-  it('accepts finalize_rebase_started and ready_to_merge through progress reporting', () => {
+  it('accepts finalize_rebase_started and ready_to_merge through progress reporting without mutating claims', () => {
     seedInProgressRun({ runId: 'run-work-002', agentId: 'worker-01' });
     runCli('progress.ts', ['--event=work_complete', '--run-id=run-work-002', '--agent-id=worker-01']);
     const claims = readClaims();
     claims.claims[0].finalization_state = 'finalize_rebase_requested';
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
+    const before = claimSnapshot('run-work-002');
 
     const started = runCli('progress.ts', ['--event=finalize_rebase_started', '--run-id=run-work-002', '--agent-id=worker-01']);
     expect(started.status).toBe(0);
@@ -228,9 +229,7 @@ describe('orc-run-work-complete', () => {
     const ready = runCli('progress.ts', ['--event=ready_to_merge', '--run-id=run-work-002', '--agent-id=worker-01']);
     expect(ready.status).toBe(0);
 
-    const claim = readClaims().claims.find((entry) => entry.run_id === 'run-work-002');
-    expect(claim!.finalization_state).toBe('ready_to_merge');
-    expect(claim!.finalization_retry_count).toBe(1);
+    assertClaimUnchanged('run-work-002', before);
 
     const events = readEvents();
     expect(events.some((e) => e.event === 'finalize_rebase_started' && (e.payload as Record<string, unknown>)?.status === 'finalize_rebase_in_progress')).toBe(true);
@@ -243,38 +242,46 @@ describe('orc-run-work-complete', () => {
     claims.claims[0].finalization_state = 'finalize_rebase_in_progress';
     claims.claims[0].finalization_retry_count = 2;
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
+    const before = claimSnapshot('run-work-003');
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-work-003', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('ready_to_merge');
 
-    const claim = readClaims().claims.find((entry) => entry.run_id === 'run-work-003');
-    expect(claim!.finalization_state).toBe('finalize_rebase_in_progress');
-    expect(claim!.finalization_retry_count).toBe(2);
+    assertClaimUnchanged('run-work-003', before);
 
     const events = readEvents();
     expect(events.some((e) =>
       e.event === 'ready_to_merge'
         && e.run_id === 'run-work-003'
         && (e.payload as Record<string, unknown>)?.status === 'ready_to_merge'
-        && (e.payload as Record<string, unknown>)?.retry_count === 2)).toBe(true);
+        && (e.payload as Record<string, unknown>)?.retry_count === undefined)).toBe(true);
+  });
+  it('still appends work_complete when the claim is still claimed', () => {
+    seedClaimedRun({ runId: 'run-work-claimed', agentId: 'worker-01' });
+
+    const result = runCli('run-work-complete.ts', ['--run-id=run-work-claimed', '--agent-id=worker-01']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('work_complete');
+
+    const events = readEvents();
+    expect(events.some((e) => e.event === 'work_complete' && e.run_id === 'run-work-claimed')).toBe(true);
   });
 });
 
 describe('orc-run-finish', () => {
   it('appends run_finished without mutating claims or agents', () => {
     seedInProgressRun({ runId: 'run-fin-001', agentId: 'worker-01' });
+    const before = claimSnapshot('run-fin-001');
 
     const result = runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_finished');
 
-    const claims = readClaims();
-    const claim = claims.claims.find((c) => c.run_id === 'run-fin-001');
-    expect(claim!.state).toBe('in_progress');
-    expect(claim!.finished_at).toBeNull();
+    assertClaimUnchanged('run-fin-001', before);
 
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
@@ -293,6 +300,7 @@ describe('orc-run-finish', () => {
 describe('orc-run-fail', () => {
   it('appends run_failed with reason and policy without mutating claims or tasks', () => {
     seedInProgressRun({ runId: 'run-fail-001', agentId: 'worker-01' });
+    const before = claimSnapshot('run-fail-001');
 
     const result = runCli('run-fail.ts', [
       '--run-id=run-fail-001',
@@ -303,10 +311,7 @@ describe('orc-run-fail', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_failed');
 
-    const claims = readClaims();
-    const claim = claims.claims.find((c) => c.run_id === 'run-fail-001');
-    expect(claim!.state).toBe('in_progress');
-    expect(claim!.failure_reason).toBeUndefined();
+    assertClaimUnchanged('run-fail-001', before);
 
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
@@ -368,6 +373,25 @@ describe('orc-run-fail', () => {
       '--policy=requeue',
     ]);
     expect(result.status).toBe(0);
+  });
+
+  it('worker lifecycle CLIs do not touch .lock even when it is unusable', () => {
+    const cases = [
+      { script: 'run-start.ts', args: ['--run-id=run-lock-start', '--agent-id=worker-01'], seed: () => seedClaimedRun({ runId: 'run-lock-start', agentId: 'worker-01' }) },
+      { script: 'run-heartbeat.ts', args: ['--run-id=run-lock-heartbeat', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-heartbeat', agentId: 'worker-01' }) },
+      { script: 'run-finish.ts', args: ['--run-id=run-lock-finish', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-finish', agentId: 'worker-01' }) },
+      { script: 'run-fail.ts', args: ['--run-id=run-lock-fail', '--agent-id=worker-01', '--reason=boom'], seed: () => seedInProgressRun({ runId: 'run-lock-fail', agentId: 'worker-01' }) },
+      { script: 'run-work-complete.ts', args: ['--run-id=run-lock-complete', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-complete', agentId: 'worker-01' }) },
+    ];
+
+    for (const testCase of cases) {
+      rmSync(dir, { recursive: true, force: true });
+      dir = mkdtempSync(join(tmpdir(), 'orch-run-reporting-test-'));
+      testCase.seed();
+      mkdirSync(join(dir, '.lock'));
+      const result = runCli(testCase.script, testCase.args);
+      expect(result.status, `${testCase.script} stderr=${result.stderr}`).toBe(0);
+    }
   });
 });
 

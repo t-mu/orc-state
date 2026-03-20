@@ -235,6 +235,11 @@ Blessed finalization path:
 - coordinator owns merge/finalization
 - worker only continues if the coordinator asks for follow-up in the same session
 
+If the coordinator requests `FINALIZE_REBASE`, the worker should first emit
+`orc progress --event=finalize_rebase_started --run-id=<id> --agent-id=<id>`,
+perform the rebase work in the same worktree, then emit
+`orc run-work-complete` again.
+
 Do not treat manual merge or manual worktree cleanup as a normal path.
 
 ## MCP Server

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendNotification, readPendingNotifications } from './lib/masterNotifyQueue.ts';
+import { DEFAULT_LEASE_MS } from './lib/constants.ts';
 
 let dir: string;
 
@@ -47,6 +48,15 @@ function readEvents(stateDir: string): Array<Record<string, unknown>> {
   const raw = readFileSync(join(stateDir, 'events.jsonl'), 'utf8').trim();
   if (!raw) return [];
   return raw.split('\n').map((line) => JSON.parse(line));
+}
+
+function resetCheckpoint(stateDir: string) {
+  writeFileSync(join(stateDir, 'event-checkpoint.json'), JSON.stringify({
+    version: '1',
+    last_processed_seq: 0,
+    processed_event_ids: [],
+    updated_at: new Date().toISOString(),
+  }));
 }
 
 // A minimal dispatchable task — required to reach ensureSessionReady, which
@@ -551,6 +561,67 @@ describe('agent ttl dead marking', () => {
 });
 
 describe('processTerminalRunEvents', () => {
+  it('processes queued heartbeats before lease expiry on tick', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-expiry-order',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-expiry-order',
+        task_ref: 'orch/task-expiry-order',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: '2026-03-11T07:00:00.000Z',
+        last_heartbeat_at: null,
+      }],
+    });
+    writeFileSync(join(dir, 'events.jsonl'), `${JSON.stringify({
+      seq: 1,
+      event_id: 'evt-heartbeat-order',
+      ts: new Date().toISOString(),
+      event: 'heartbeat',
+      actor_type: 'agent',
+      actor_id: 'orc-1',
+      run_id: 'run-expiry-order',
+      task_ref: 'orch/task-expiry-order',
+      agent_id: 'orc-1',
+      payload: {},
+    })}\n`);
+    resetCheckpoint(dir);
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send: vi.fn(),
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn(),
+      }),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-expiry-order')!;
+    expect(claim.state).toBe('in_progress');
+    expect(claim.last_heartbeat_at).toBeTruthy();
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-expiry-order')!;
+    expect(task.status).toBe('in_progress');
+  });
+
   it('transitions claimed runs to in_progress when processing run_started', async () => {
     seedState(dir, {
       agents: [{
@@ -595,7 +666,7 @@ describe('processTerminalRunEvents', () => {
     const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('in_progress');
     const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
-    expect(agent.last_heartbeat_at).toBe('2026-03-11T07:59:00.000Z');
+    expect(agent.last_heartbeat_at).toBe(claim.started_at);
   });
 
   it('renews the claim lease when processing heartbeat', async () => {
@@ -642,7 +713,158 @@ describe('processTerminalRunEvents', () => {
     expect(claim.last_heartbeat_at).toBeTruthy();
     expect(claim.lease_expires_at).not.toBe('2026-03-11T07:55:00.000Z');
     const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
-    expect(agent.last_heartbeat_at).toBe('2026-03-11T08:00:00.000Z');
+    expect(agent.last_heartbeat_at).toBe(claim.last_heartbeat_at);
+  });
+
+  it('replaying the same heartbeat event uses the original event timestamp', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-heartbeat-replay',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-heartbeat-replay',
+        task_ref: 'orch/task-heartbeat-replay',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: '2026-03-11T07:55:00.000Z',
+        last_heartbeat_at: null,
+      }],
+    });
+
+    const heartbeatEvent = {
+      seq: 5,
+      event_id: 'evt-heartbeat-replay',
+      event: 'heartbeat',
+      run_id: 'run-heartbeat-replay',
+      task_ref: 'orch/task-heartbeat-replay',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:00:00.000Z',
+      payload: {},
+    } as const;
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([heartbeatEvent]);
+    const { readJson } = await import('./lib/stateReader.ts');
+    const firstClaim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-replay')!;
+    const firstLease = firstClaim.lease_expires_at;
+
+    resetCheckpoint(dir);
+    await processTerminalRunEvents([heartbeatEvent]);
+
+    const secondClaim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-replay')!;
+    expect(secondClaim.last_heartbeat_at).toBe(firstClaim.last_heartbeat_at);
+    expect(secondClaim.lease_expires_at).toBe(firstLease);
+  });
+
+  it('clamps future worker heartbeat timestamps to coordinator time', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-heartbeat-future',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-heartbeat-future',
+        task_ref: 'orch/task-heartbeat-future',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: '2026-03-11T07:00:00.000Z',
+        started_at: '2026-03-11T07:00:00.000Z',
+        lease_expires_at: '2026-03-11T07:55:00.000Z',
+        last_heartbeat_at: '2026-03-11T07:00:00.000Z',
+      }],
+    });
+
+    const futureTs = new Date(Date.now() + 60_000).toISOString();
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      seq: 1,
+      event_id: 'evt-heartbeat-future',
+      event: 'heartbeat',
+      run_id: 'run-heartbeat-future',
+      task_ref: 'orch/task-heartbeat-future',
+      agent_id: 'orc-1',
+      ts: futureTs,
+      payload: {},
+    } as const]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-future')!;
+    expect(new Date(String(claim.last_heartbeat_at)).getTime()).toBeLessThanOrEqual(Date.now());
+    expect(new Date(String(claim.lease_expires_at)).getTime()).toBeLessThanOrEqual(Date.now() + DEFAULT_LEASE_MS + 5_000);
+  });
+
+  it('transitions finalize_rebase_requested to finalize_rebase_in_progress when processing finalize_rebase_started', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-151',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-finalize-started',
+        task_ref: 'orch/task-151',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        finalization_state: 'finalize_rebase_requested',
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      event: 'finalize_rebase_started',
+      run_id: 'run-finalize-started',
+      task_ref: 'orch/task-151',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:10:00.000Z',
+      payload: { status: 'finalize_rebase_in_progress', retry_count: 1 },
+    }]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-started')!;
+    expect(claim.finalization_state).toBe('finalize_rebase_in_progress');
+    expect(claim.finalization_retry_count).toBe(1);
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    expect(agent.last_heartbeat_at).toBe(claim.last_heartbeat_at);
   });
 
   it('attempts trusted merge on work_complete, then cleans up the run on success', async () => {
@@ -1354,6 +1576,172 @@ describe('processTerminalRunEvents', () => {
     expect(stop).toHaveBeenCalledWith('pty:orc-1');
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
+  });
+
+  it('does not duplicate TASK_COMPLETE notifications when replaying the same terminal event', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-terminal-replay',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-terminal-replay',
+        task_ref: 'orch/task-terminal-replay',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+    const stop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        stop,
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send: vi.fn(),
+        attach: vi.fn(),
+      }),
+    }));
+    const event = {
+      seq: 7,
+      event_id: 'evt-run-finished-replay',
+      event: 'run_finished',
+      run_id: 'run-terminal-replay',
+      task_ref: 'orch/task-terminal-replay',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:12:00.000Z',
+      payload: {},
+    } as const;
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([event]);
+    resetCheckpoint(dir);
+    await processTerminalRunEvents([event]);
+
+    const notifications = readPendingNotifications(dir);
+    expect(notifications.filter((entry) => entry.task_ref === 'orch/task-terminal-replay')).toHaveLength(1);
+  });
+
+  it('does not duplicate TASK_COMPLETE notifications for duplicate terminal reports on the same run', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-terminal-duplicate',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-terminal-duplicate',
+        task_ref: 'orch/task-terminal-duplicate',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: '2026-03-11T08:00:00.000Z',
+        started_at: '2026-03-11T08:01:00.000Z',
+        lease_expires_at: '2099-01-01T00:00:00.000Z',
+        last_heartbeat_at: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      seq: 1,
+      event_id: 'evt-run-finished-duplicate-1',
+      event: 'run_finished',
+      run_id: 'run-terminal-duplicate',
+      task_ref: 'orch/task-terminal-duplicate',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:12:00.000Z',
+      payload: {},
+    } as const]);
+    await processTerminalRunEvents([{
+      seq: 2,
+      event_id: 'evt-run-finished-duplicate-2',
+      event: 'run_finished',
+      run_id: 'run-terminal-duplicate',
+      task_ref: 'orch/task-terminal-duplicate',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:12:01.000Z',
+      payload: {},
+    } as const]);
+
+    const notifications = readPendingNotifications(dir);
+    expect(notifications.filter((entry) => entry.task_ref === 'orch/task-terminal-duplicate')).toHaveLength(1);
+  });
+
+  it('does not emit a second TASK_COMPLETE notification for a contradictory terminal outcome on the same run', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/task-terminal-contradictory',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-terminal-contradictory',
+        task_ref: 'orch/task-terminal-contradictory',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: '2026-03-11T08:00:00.000Z',
+        started_at: '2026-03-11T08:01:00.000Z',
+        lease_expires_at: '2099-01-01T00:00:00.000Z',
+        last_heartbeat_at: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      seq: 1,
+      event_id: 'evt-run-finished-contradictory-1',
+      event: 'run_finished',
+      run_id: 'run-terminal-contradictory',
+      task_ref: 'orch/task-terminal-contradictory',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:12:00.000Z',
+      payload: {},
+    } as const]);
+    await processTerminalRunEvents([{
+      seq: 2,
+      event_id: 'evt-run-failed-contradictory-2',
+      event: 'run_failed',
+      run_id: 'run-terminal-contradictory',
+      task_ref: 'orch/task-terminal-contradictory',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:12:01.000Z',
+      payload: { reason: 'late contradictory failure', policy: 'requeue' },
+    } as const]);
+
+    const notifications = readPendingNotifications(dir);
+    expect(notifications.filter((entry) => entry.task_ref === 'orch/task-terminal-contradictory')).toHaveLength(1);
   });
 
   it('deposits TASK_COMPLETE notification with success=false and failure_reason for run_failed', async () => {

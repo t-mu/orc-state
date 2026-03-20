@@ -100,7 +100,8 @@ orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>
 
 # 5. Remain alive in the same worktree for coordinator follow-up when it exists
 #    - If coordinator requests a finalize rebase, do it here, then emit
-#      orc run-work-complete again.
+#      `orc progress --event=finalize_rebase_started ...`, complete the rebase,
+#      then emit `orc run-work-complete` again.
 #    - If coordinator confirms finalization success, emit orc run-finish.
 #    - If no follow-up arrives, only emit orc run-finish after the
 #      run-work-complete handoff has already been recorded.
