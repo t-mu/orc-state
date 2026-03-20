@@ -2,7 +2,7 @@
 ref: general/5-workflow-automation-completeness
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 5 — Complete Workflow Automation: Timeouts, Retry, and Recovery

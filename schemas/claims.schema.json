@@ -96,6 +96,20 @@
           "type": ["string", "null"],
           "format": "date-time",
           "description": "Timestamp of the latest unresolved input request for this run."
+        },
+        "session_start_retry_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of managed-slot session start attempts recorded for this claimed run."
+        },
+        "session_start_retry_next_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Coordinator-owned next retry timestamp for a managed-slot session start."
+        },
+        "session_start_last_error": {
+          "type": ["string", "null"],
+          "description": "Most recent managed-slot session start failure reason for this claimed run."
         }
       }
     }
