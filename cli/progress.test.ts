@@ -29,34 +29,40 @@ describe('cli/progress.ts', () => {
     expect(result.stderr).toContain('belongs to bob');
   });
 
-  it('rejects phase_started before run_started', () => {
+  it('accepts phase_started before coordinator has processed run_started and leaves claims untouched', () => {
+    const before = readClaims();
     const result = runProgress(['--event=phase_started', '--run-id=run-1', '--agent-id=bob', '--phase=impl']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('requires run_started first');
+    expect(result.status).toBe(0);
+    expect(readClaims()).toEqual(before);
+    expect(readEvents().some((event) => event.event === 'phase_started' && event.phase === 'impl')).toBe(true);
   });
 
-  it('rejects duplicate run_started after in_progress', () => {
-    runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
+  it('accepts duplicate run_started reports and leaves shared state untouched', () => {
+    const before = readClaims();
+    const first = runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
     const result = runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('requires claim state');
+    expect(first.status).toBe(0);
+    expect(result.status).toBe(0);
+    expect(readClaims()).toEqual(before);
+    expect(readEvents().filter((event) => event.event === 'run_started')).toHaveLength(2);
   });
 
-  it('accepts run_finished without completion gate confirmation', () => {
-    runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
+  it('accepts run_finished as an append-only lifecycle report', () => {
+    const beforeClaims = readClaims();
+    const beforeBacklog = readBacklog();
     const result = runProgress(['--event=run_finished', '--run-id=run-1', '--agent-id=bob']);
     expect(result.status).toBe(0);
-    const claims = readClaims();
-    expect(claims.claims[0].state).toBe('done');
-    expect(readBacklog().features[0].tasks[0].status).toBe('done');
+    expect(readClaims()).toEqual(beforeClaims);
+    expect(readBacklog()).toEqual(beforeBacklog);
+    expect(readEvents().some((event) => event.event === 'run_finished' && event.run_id === 'run-1')).toBe(true);
   });
 
-  it('accepts work_complete as a non-terminal in_progress event', () => {
-    runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
+  it('accepts work_complete as an append-only event and leaves claims untouched', () => {
+    const before = readClaims();
     const result = runProgress(['--event=work_complete', '--run-id=run-1', '--agent-id=bob']);
     expect(result.status).toBe(0);
-    const claims = readClaims();
-    expect(claims.claims[0].state).toBe('in_progress');
+    expect(readClaims()).toEqual(before);
+    expect(readEvents().some((event) => event.event === 'work_complete' && event.run_id === 'run-1')).toBe(true);
   });
 
   it('requires reason for run_failed', () => {
@@ -113,4 +119,10 @@ function readClaims() {
 
 function readBacklog() {
   return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+}
+
+function readEvents() {
+  const raw = readFileSync(join(dir, 'events.jsonl'), 'utf8').trim();
+  if (!raw) return [];
+  return raw.split('\n').map((line) => JSON.parse(line));
 }

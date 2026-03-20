@@ -161,18 +161,34 @@ export function appendEvent(logPath: string, event: OrcEvent, { fsyncPolicy = 'a
 export function appendSequencedEvent(
   stateDir: string,
   event: OrcEventInput,
-  { fsyncPolicy = 'always', lockAlreadyHeld = false } = {},
+  {
+    fsyncPolicy = 'always',
+    lockAlreadyHeld = false,
+    lockStrategy = 'state',
+  }: {
+    fsyncPolicy?: 'always' | 'never';
+    lockAlreadyHeld?: boolean;
+    lockStrategy?: 'state' | 'none';
+  } = {},
 ): number {
   const logPath = join(stateDir, 'events.jsonl');
   const lockPath = join(stateDir, '.lock');
 
   const append = (): number => {
-    rotateEventsLogIfNeeded(logPath);
+    if (lockStrategy !== 'none') {
+      rotateEventsLogIfNeeded(logPath);
+    }
     const seq = nextSeq(logPath);
     appendEvent(logPath, ensureEventIdentity({ ...event, seq } as OrcEvent), { fsyncPolicy });
     return seq;
   };
 
+  if (lockStrategy === 'none') {
+    // Worker-side lifecycle reporting must remain append-only even when the
+    // shared state lock is unavailable. In that mode, seq is only a best-effort
+    // ordering hint; durable event_id-based dedupe is the source of truth.
+    return append();
+  }
   if (lockAlreadyHeld) {
     return append();
   }

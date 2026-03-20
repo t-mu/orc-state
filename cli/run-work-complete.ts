@@ -2,7 +2,7 @@
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
-import { validateProgressInput } from '../lib/progressValidation.ts';
+import { validateProgressCommandInput } from '../lib/progressValidation.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -43,7 +43,7 @@ function nextFinalizationTransition(claim: Claim | null) {
 
 try {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressInput({
+  const { claim: validatedClaim } = validateProgressCommandInput({
     event: 'work_complete',
     runId,
     agentId,
@@ -52,8 +52,6 @@ try {
     policy: null,
   }, claim);
   const transition = nextFinalizationTransition(validatedClaim);
-  const retryCount = validatedClaim.finalization_retry_count ?? 0;
-
   appendSequencedEvent(STATE_DIR, {
     ts: new Date().toISOString(),
     event: transition.event as 'work_complete' | 'ready_to_merge',
@@ -64,9 +62,8 @@ try {
     agent_id: agentId,
     payload: {
       status: transition.status as 'awaiting_finalize' | 'ready_to_merge',
-      retry_count: retryCount,
     },
-  } as import('../types/events.ts').OrcEventInput);
+  } as import('../types/events.ts').OrcEventInput, { lockStrategy: 'none' });
   console.log(`${transition.event}: ${runId} (${agentId}) ${transition.message}`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);

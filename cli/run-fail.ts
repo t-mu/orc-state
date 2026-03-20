@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { validateProgressInput } from '../lib/progressValidation.ts';
+import { validateProgressCommandInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { readClaims } from '../lib/stateReader.ts';
@@ -34,7 +34,7 @@ function loadClaim(currentRunId: string): Claim | null {
 
 try {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressInput({
+  const { claim: validatedClaim } = validateProgressCommandInput({
     event: 'run_failed',
     runId,
     agentId,
@@ -56,7 +56,7 @@ try {
       code: failureCode,
       policy: policy as FailurePolicy,
     },
-  });
+  }, { lockStrategy: 'none' });
   console.log(`run_failed: ${runId} (${agentId}) reason=${failureReason}`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
