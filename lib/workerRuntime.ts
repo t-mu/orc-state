@@ -137,12 +137,12 @@ export async function launchWorkerSession(
     return { ok: true, session_handle, provider_ref };
   } catch (error) {
     const reason = (error as Error)?.message ?? String(error);
-    emitSessionStartFailed(emit, agent, { runId, taskRef, reason, workingDirectory });
     if (retryable) {
       clearWorkerSessionRuntime(stateDir, agent, { status: 'idle' });
       return { ok: false, reason };
     }
 
+    emitSessionStartFailed(emit, agent, { runId, taskRef, reason, workingDirectory });
     markWorkerOffline(stateDir, agent, {
       emit,
       reason: 'session_start_failed',

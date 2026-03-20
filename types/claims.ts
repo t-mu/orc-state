@@ -25,6 +25,9 @@ export interface Claim {
   finalization_blocked_reason?: string | null;
   input_state?: InputState;
   input_requested_at?: string | null;
+  session_start_retry_count?: number;
+  session_start_retry_next_at?: string | null;
+  session_start_last_error?: string | null;
 }
 
 export interface ClaimsState {
