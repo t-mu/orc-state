@@ -1,0 +1,53 @@
+{
+  "skill_name": "plan-to-tasks",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "ok create the tasks",
+      "conversation_context": "**Step 1 — Create authentication middleware**\nWrite a JWT verification middleware in `src/auth/middleware.ts` that validates tokens on every request. Export a single `authenticate` function that reads the `Authorization` header.\n\n**Step 2 — Register the middleware in the Express app**\nImport `authenticate` from the middleware file created in Step 1 and apply it as global middleware in `src/app.ts` using `app.use(authenticate)`.\n\n**Step 3 — Update API routes to use the middleware**\nApply the `authenticate` middleware from Step 1 to all protected routes in `src/api/routes.ts`.",
+      "expected_output": "Skill reads the numbered plan printed just above in the conversation, infers dependencies (Step 2 depends on Step 1; Step 3 depends on Step 1), shows a preview table with assigned task numbers and dep lines, asks for confirmation, then creates all backlog task spec files and registers them in orchestrator state. Sync check runs at the end.",
+      "files": [],
+      "expectations": [
+        "A preview table is shown before any task files are written, listing each task with its number, slug, title, and inferred dependencies",
+        "The user is asked to confirm before task files are created",
+        "Exactly 3 task specs are produced, one per plan step",
+        "Each task spec contains all required create-task sections: Scope, Context, Goals, Implementation, Acceptance criteria, and Verification",
+        "Each task spec has a frontmatter block with ref, feature, priority, and status fields",
+        "Step 2 (middleware registration) depends on Step 1 (the middleware file) — it imports `authenticate` directly from Step 1's output file",
+        "Goals section contains 3 or more independently verifiable Must statements"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "create tasks from that plan",
+      "conversation_context": "**Step 1 — Convert auth.ts to TypeScript**\nMigrate `src/auth.js` to TypeScript. Export a `User` type and an `AuthResult` interface used by downstream modules.\n\n**Step 2 — Convert userService.ts to TypeScript**\nMigrate `src/userService.js` to TypeScript. Import the `User` type from `auth.ts`.\n\n**Step 3 — Update API routes to TypeScript**\nMigrate `src/api/routes.js` to TypeScript. Imports from both `auth.ts` and `userService.ts`.\n\n**Step 4 — Update tsconfig.json**\nUpdate `tsconfig.json` to include `src/auth.ts`, `src/userService.ts`, and `src/api/routes.ts`. Set `strict: true`.",
+      "expected_output": "Same as eval 1 — skill identifies the most recent numbered plan in the conversation and converts each step into a registered backlog task spec following create-task quality standards.",
+      "files": [],
+      "expectations": [
+        "A preview table is shown before any task files are written",
+        "Exactly 4 task specs are produced, one per plan step",
+        "Each task spec contains all required create-task sections: Scope, Context, Goals, Implementation, Acceptance criteria, and Verification",
+        "Step 2 depends on Step 1 (userService.ts imports User type from auth.ts — this is a real code dependency)",
+        "Step 3 depends on Steps 1 and 2 (API routes import from both modules)",
+        "Step 4 depends on Steps 1, 2, and 3 (tsconfig must include all converted files)",
+        "Dependency lines appear in both the markdown body text and the frontmatter depends_on field"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "turn those steps into backlog tasks — steps 2 and 3 can run in parallel",
+      "conversation_context": "**Step 1 — Write CI yaml**\nCreate `.github/workflows/ci.yml` that runs the test suite on every push and pull request.\n\n**Step 2 — Write staging deploy yaml**\nCreate `.github/workflows/deploy-staging.yml` for automatic staging deployments on merge to `main`.\n\n**Step 3 — Write production deploy yaml**\nCreate `.github/workflows/deploy-prod.yml` for manual production deployments triggered by a release tag.\n\n**Step 4 — Add integration test job to CI**\nExpand the CI yaml from Step 1 to include an integration test job that runs after the unit tests.\n\n**Step 5 — Configure deployment secrets**\nAdd all required secrets to GitHub repository settings so the deploy yamls from Steps 2 and 3 and the CI job from Step 4 can authenticate.",
+      "expected_output": "Skill extracts 5 plan steps, honours the user's explicit constraint that steps 2 and 3 are Independent, shows a preview table reflecting this, and creates tasks with the correct dependency lines.",
+      "files": [],
+      "expectations": [
+        "Exactly 5 task specs are produced, one per plan step",
+        "Steps 2 and 3 are both marked Independent (not depending on each other) — honouring the user's explicit constraint",
+        "Step 1 is marked Independent",
+        "Step 4 depends on Step 1 (build job needs the CI yaml from Step 1)",
+        "Step 5 depends on Steps 2, 3, and 4 (deploy requires all jobs to pass)",
+        "The preview table correctly shows the user-specified parallel relationship before confirmation is requested",
+        "Each task spec contains all required create-task sections: Scope, Context, Goals, Implementation, Acceptance criteria, and Verification"
+      ]
+    }
+  ]
+}
