@@ -100,8 +100,15 @@ function findMetadataMismatches(specs: SpecEntry[], registered: Map<string, Regi
   return mismatches;
 }
 
-export function validateBacklogSync(backlogDocsDir: string, stateBacklogPath: string) {
-  const specs = discoverActiveTaskSpecs(backlogDocsDir);
+export function validateBacklogSync(
+  backlogDocsDir: string,
+  stateBacklogPath: string,
+  filterRefs?: Set<string>,
+) {
+  let specs = discoverActiveTaskSpecs(backlogDocsDir);
+  if (filterRefs !== undefined && filterRefs.size > 0) {
+    specs = specs.filter((spec) => filterRefs.has(spec.ref));
+  }
   const registeredRefs = extractRegisteredTaskRefs(stateBacklogPath);
   const registeredEntries = readRegisteredTaskEntries(stateBacklogPath);
   const missing = specs
@@ -111,6 +118,7 @@ export function validateBacklogSync(backlogDocsDir: string, stateBacklogPath: st
   return {
     ok: missing.length === 0 && mismatches.length === 0,
     spec_count: specs.length,
+    filtered: filterRefs !== undefined && filterRefs.size > 0,
     missing,
     mismatches,
   };
@@ -119,11 +127,15 @@ export function validateBacklogSync(backlogDocsDir: string, stateBacklogPath: st
 export function formatBacklogSyncResult(result: {
   ok: boolean;
   spec_count: number;
+  filtered?: boolean;
   missing: Array<{ file: string; ref: string }>;
   mismatches: BacklogSyncMismatch[];
 }) {
+  const scope = result.filtered
+    ? `${result.spec_count} ref(s)`
+    : `${result.spec_count} specs`;
   if (result.ok) {
-    return `backlog sync OK: ${result.spec_count} specs matched orchestrator state`;
+    return `backlog sync OK: ${scope} matched orchestrator state`;
   }
   return [
     `backlog sync FAILED: ${result.missing.length} missing ref(s), ${result.mismatches.length} metadata mismatch(es)`,
@@ -137,7 +149,11 @@ const stateBacklogPath = join(STATE_DIR, 'backlog.json');
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   try {
-    const result = validateBacklogSync(BACKLOG_DOCS_DIR, stateBacklogPath);
+    const refsArg = process.argv.find((a) => a.startsWith('--refs='));
+    const filterRefs = refsArg
+      ? new Set(refsArg.slice('--refs='.length).split(',').map((r) => r.trim()).filter(Boolean))
+      : undefined;
+    const result = validateBacklogSync(BACKLOG_DOCS_DIR, stateBacklogPath, filterRefs);
     const output = formatBacklogSyncResult(result);
     if (!result.ok) {
       console.error(output);

@@ -162,7 +162,7 @@ All other create-task steps — including the "Register in backlog.json" step �
 
 ## Step 5 — Sync Check and Final Report
 
-After all tasks are written and registered, run `orc backlog-sync-check`.
+After all tasks are written and registered, run `orc backlog-sync-check --refs=<ref1>,<ref2>,...` scoped to the refs created in this batch.
 
 Report:
 - Number of tasks created

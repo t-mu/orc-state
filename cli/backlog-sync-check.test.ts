@@ -47,6 +47,7 @@ describe('validateBacklogSync', () => {
     expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: true,
       spec_count: 2,
+      filtered: false,
       missing: [],
       mismatches: [],
     });
@@ -60,6 +61,7 @@ describe('validateBacklogSync', () => {
     expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: false,
       spec_count: 2,
+      filtered: false,
       missing: [{ file: '131-example.md', ref: 'orch/task-131-example' }],
       mismatches: [],
     });
@@ -73,6 +75,7 @@ describe('validateBacklogSync', () => {
     expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: true,
       spec_count: 1,
+      filtered: false,
       missing: [],
       mismatches: [],
     });
@@ -102,6 +105,7 @@ describe('validateBacklogSync', () => {
     expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: true,
       spec_count: 1,
+      filtered: false,
       missing: [],
       mismatches: [],
     });
@@ -130,9 +134,54 @@ describe('validateBacklogSync', () => {
     expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: true,
       spec_count: 1,
+      filtered: false,
       missing: [],
       mismatches: [],
     });
+  });
+
+  it('scopes validation to specified refs when filterRefs is provided', () => {
+    writeSpec(dir, '130-example.md', 'orch/task-130-example');
+    writeSpec(dir, '131-example.md', 'orch/task-131-example');
+    // only register 130; 131 is missing from state
+    writeState(dir, ['orch/task-130-example']);
+
+    // without filter: fails because 131 is missing
+    expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toMatchObject({
+      ok: false,
+      spec_count: 2,
+    });
+
+    // with filter on 130 only: passes because 130 is registered
+    expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'), new Set(['orch/task-130-example']))).toEqual({
+      ok: true,
+      spec_count: 1,
+      filtered: true,
+      missing: [],
+      mismatches: [],
+    });
+  });
+
+  it('reports missing ref when filterRefs targets an unregistered ref', () => {
+    writeSpec(dir, '130-example.md', 'orch/task-130-example');
+    writeSpec(dir, '131-example.md', 'orch/task-131-example');
+    writeState(dir, ['orch/task-130-example']);
+
+    expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'), new Set(['orch/task-131-example']))).toEqual({
+      ok: false,
+      spec_count: 1,
+      filtered: true,
+      missing: [{ file: '131-example.md', ref: 'orch/task-131-example' }],
+      mismatches: [],
+    });
+  });
+
+  it('sets filtered: false when no filterRefs provided', () => {
+    writeSpec(dir, '130-example.md', 'orch/task-130-example');
+    writeState(dir, ['orch/task-130-example']);
+
+    const result = validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'));
+    expect(result.filtered).toBe(false);
   });
 
   it('reports metadata drift for feature, title, and inactive status', () => {
@@ -157,6 +206,7 @@ describe('validateBacklogSync', () => {
     expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: false,
       spec_count: 1,
+      filtered: false,
       missing: [],
       mismatches: [
         {
@@ -206,6 +256,7 @@ describe('validateBacklogSync', () => {
     expect(validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'))).toEqual({
       ok: false,
       spec_count: 1,
+      filtered: false,
       missing: [],
       mismatches: [
         {

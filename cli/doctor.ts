@@ -21,7 +21,7 @@ const nowMs = Date.now();
 const stateErrors = validateStateDir(STATE_DIR);
 const backlogSync = safeRead(
   () => validateBacklogSync(process.env.ORC_BACKLOG_DIR ?? `${process.env.ORC_REPO_ROOT ?? process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
-  { ok: false, spec_count: 0, missing: [], mismatches: [] },
+  { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [] },
 );
 const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
 const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
