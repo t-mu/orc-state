@@ -273,6 +273,15 @@ if (!binaryOk) {
   process.exit(1);
 }
 
+// ── Mark master running before coordinator starts (avoids lock race on first tick) ──
+
+const now = new Date().toISOString();
+updateAgentRuntime(STATE_DIR, master.agent_id, {
+  status: 'running',
+  last_heartbeat_at: now,
+  last_status_change_at: now,
+});
+
 // ── Coordinator ────────────────────────────────────────────────────────────
 
 const { running, pid: existingPid } = coordinatorStatus();
@@ -347,13 +356,6 @@ try {
   console.error(`Failed preparing master session: ${(error as Error)?.message ?? 'unknown error'}`);
   process.exit(1);
 }
-
-const now = new Date().toISOString();
-updateAgentRuntime(STATE_DIR, master.agent_id, {
-  status: 'running',
-  last_heartbeat_at: now,
-  last_status_change_at: now,
-});
 
 let stdinRawEnabled = false;
 const stdinDataHandler = (data: Buffer | string) => {
