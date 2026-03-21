@@ -2,7 +2,7 @@
 ref: general/29-structured-session-start-errors
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 29 — Surface Actual Error in Session-Start Failures

@@ -2,7 +2,7 @@
 ref: general/28-notify-master-on-finalize-blocked
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 28 — Notify Master on blocked_finalize
