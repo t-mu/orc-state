@@ -21,7 +21,7 @@ A task-creation turn is complete only when all three are true:
 
 1. The `backlog/<N>-<slug>.md` file is saved.
 2. The matching task ref is created or updated in orchestrator state.
-3. `orc backlog-sync-check` passes after the write/sync work.
+3. `orc backlog-sync-check --refs=<ref>` passes for the newly created ref(s).
 
 Never stop after writing markdown files. If backlog registration or sync validation fails,
 the turn is incomplete and the final response must list each failed ref explicitly.
@@ -119,7 +119,7 @@ Final response requirements for this skill:
 
 - List every task-spec file written.
 - List every task ref registered or updated in orchestrator state.
-- Report the result of `orc backlog-sync-check`.
+- Report the result of `orc backlog-sync-check --refs=<ref1>,<ref2>` (scoped to refs created in this invocation).
 - If any registration or sync step fails, include a `Registration failures:` block with one line per ref and the error.
 
 Every task file must follow this section order exactly:
@@ -217,11 +217,13 @@ Continue to the next task in a batch without interruption.
 
 ### 5. Validate sync before finishing
 
-Run:
+Run a targeted check scoped to the refs created in this invocation:
 
 ```bash
-orc backlog-sync-check
+orc backlog-sync-check --refs=<ref1>,<ref2>
 ```
+
+This only validates what was just written, so pre-existing backlog issues do not pollute the signal. If multiple tasks were created, include all their refs as a comma-separated list.
 
 If it fails, do not treat the task-creation job as complete. Report the failing refs or files in the final response.
 
@@ -236,7 +238,7 @@ When the user asks to break work into multiple tasks:
 5. Emit one complete task file per task using the same fixed section order,
    then immediately run the "Register in backlog.json" step for that task
    before moving to the next one.
-6. After all files in the batch are registered, run `orc backlog-sync-check`.
+6. After all files in the batch are registered, run `orc backlog-sync-check --refs=<ref1>,<ref2>` scoped to the batch refs.
 7. Avoid hidden coupling — declare cross-task assumptions in `Context`.
 
 ## Quality Gate (score before saving)
