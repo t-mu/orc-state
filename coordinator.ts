@@ -428,6 +428,23 @@ async function markFinalizeBlocked(claim: Claim, workerPoolConfig: WorkerPoolCon
   return true;
 }
 
+function checkMasterHealth(agents: Agent[]): void {
+  const master = agents.find((a) => a.role === 'master');
+  if (!master) return;
+  if (master.status !== 'offline' && master.status !== 'dead') return;
+
+  appendNotification(STATE_DIR, {
+    type: 'MASTER_OFFLINE',
+    agent_id: master.agent_id,
+    status: master.status,
+    offline_since: master.last_status_change_at ?? new Date().toISOString(),
+    dedupe_key: 'master_offline',
+  });
+  // Warn on every tick while master is offline — appendNotification's return value
+  // cannot distinguish "newly written" from "dedup suppressed", so always warn.
+  console.warn(`[coordinator] MASTER OFFLINE: agent '${master.agent_id}' is ${master.status}. Run 'orc start-session' to restore the master session.`);
+}
+
 async function requestFinalizeRebase(claim: Claim, workerPoolConfig: WorkerPoolConfig, reason: string, { incrementRetry = true } = {}) {
   const latestClaim = getClaim(claim.run_id) ?? claim;
   const hadPendingFinalizeRequest = latestClaim.finalization_state === 'finalize_rebase_requested';
@@ -919,6 +936,7 @@ async function tick() {
     claims = tickClaims.claims ?? [];
   }
 
+  checkMasterHealth(agents);
   await processManagedSessionStartRetries(agents, claims, workerPoolConfig);
   tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
   tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
