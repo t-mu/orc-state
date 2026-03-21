@@ -406,6 +406,15 @@ async function markFinalizeBlocked(claim: Claim, workerPoolConfig: WorkerPoolCon
   }
   await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
   log(`run ${claim.run_id} blocked during finalization: ${reason}`);
+  appendNotification(STATE_DIR, {
+    type: 'FINALIZE_BLOCKED',
+    task_ref: claim.task_ref,
+    run_id: claim.run_id,
+    agent_id: claim.agent_id,
+    reason,
+    blocked_at: new Date().toISOString(),
+    dedupe_key: `finalize_blocked:${claim.run_id}`,
+  });
   return true;
 }
 
