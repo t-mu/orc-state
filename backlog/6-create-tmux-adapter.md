@@ -2,7 +2,7 @@
 ref: general/6-create-tmux-adapter
 feature: general
 priority: high
-status: todo
+status: blocked
 ---
 
 # Task 6 — Create tmux Adapter for Worker Sessions

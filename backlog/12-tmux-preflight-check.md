@@ -2,7 +2,7 @@
 ref: general/12-tmux-preflight-check
 feature: general
 priority: normal
-status: todo
+status: blocked
 ---
 
 # Task 12 — Add tmux to Preflight and Doctor Checks
