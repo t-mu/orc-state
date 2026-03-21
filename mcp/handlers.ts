@@ -70,8 +70,8 @@ export function handleListTasks(stateDir: string, { status, feature }: { status?
     throw new Error('feature must be a string');
   }
   const backlog = readBacklog(stateDir);
-  let tasks = backlog.features.flatMap((epicObj) =>
-    epicObj.tasks.map((task): Task & { feature_ref: string } => ({ ...task, feature_ref: epicObj.ref })),
+  let tasks = backlog.features.flatMap((featureObj) =>
+    featureObj.tasks.map((task): Task & { feature_ref: string } => ({ ...task, feature_ref: featureObj.ref })),
   );
 
   if (status) {
@@ -353,10 +353,10 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
       backlog.features = [...backlog.features, { ref: 'general', title: 'General', tasks: [] }];
     }
 
-    const epicObj = backlog.features.find((candidate) => candidate.ref === resolvedFeature);
-    if (!epicObj) throw new Error(`Feature not found: ${resolvedFeature}`);
+    const featureObj = backlog.features.find((candidate) => candidate.ref === resolvedFeature);
+    if (!featureObj) throw new Error(`Feature not found: ${resolvedFeature}`);
 
-    const existing = epicObj.tasks.find((task) => task.ref === taskRef);
+    const existing = featureObj.tasks.find((task) => task.ref === taskRef);
     if (existing) throw new Error(`Task already exists: ${taskRef}`);
 
     assertTaskSpecMatchesRegistration({
@@ -394,7 +394,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     if ((newTask.acceptance_criteria?.length ?? 0) === 0) delete newTask.acceptance_criteria;
     if ((newTask.required_capabilities?.length ?? 0) === 0) delete newTask.required_capabilities;
 
-    epicObj.tasks = [...epicObj.tasks, newTask];
+    featureObj.tasks = [...featureObj.tasks, newTask];
     backlog.next_task_seq = currentNextTaskSeq + 1;
     atomicWriteJson(backlogPath, backlog);
 

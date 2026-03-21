@@ -20,7 +20,7 @@ const VALID_RUN_WORKTREES = { version: '1', runs: [] };
 function validTask(overrides = {}) {
   return { ref: 'orch/init', title: 'Init', status: 'todo', ...overrides };
 }
-function validEpic(overrides = {}) {
+function validFeature(overrides = {}) {
   return { ref: 'orch', title: 'Orchestration', tasks: [], ...overrides };
 }
 function validAgent(overrides = {}) {
@@ -38,7 +38,7 @@ describe('validateBacklog', () => {
   });
 
   it('accepts backlog with features and tasks', () => {
-    const data = { version: '1', features: [validEpic({ tasks: [validTask()] })] };
+    const data = { version: '1', features: [validFeature({ tasks: [validTask()] })] };
     expect(validateBacklog(data)).toEqual([]);
   });
 
@@ -55,14 +55,14 @@ describe('validateBacklog', () => {
   });
 
   it('rejects task with invalid status', () => {
-    const data = { version: '1', features: [validEpic({ tasks: [validTask({ status: 'wip' })] })] };
+    const data = { version: '1', features: [validFeature({ tasks: [validTask({ status: 'wip' })] })] };
     const errors = validateBacklog(data);
     expect(errors.length).toBeGreaterThan(0);
   });
 
   it('accepts all valid task statuses', () => {
     for (const status of ['todo', 'claimed', 'in_progress', 'blocked', 'done', 'released']) {
-      const data = { version: '1', features: [validEpic({ tasks: [validTask({ status })] })] };
+      const data = { version: '1', features: [validFeature({ tasks: [validTask({ status })] })] };
       expect(validateBacklog(data)).toEqual([]);
     }
   });

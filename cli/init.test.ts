@@ -34,7 +34,7 @@ describe('cli/init.ts', () => {
     expect(existsSync(join(stateDir, 'events.jsonl'))).toBe(true);
   });
 
-  it('creates default epic when not provided', () => {
+  it('creates default feature when not provided', () => {
     const result = run();
     expect(result.status).toBe(0);
     const backlog = JSON.parse(readFileSync(join(dir, 'state', 'backlog.json'), 'utf8'));
@@ -42,7 +42,7 @@ describe('cli/init.ts', () => {
     expect(backlog.features[0].ref).toBe('project');
   });
 
-  it('creates custom epic ref and title', () => {
+  it('creates custom feature ref and title', () => {
     const result = run(['--feature=my-app', '--feature-title=My App']);
     expect(result.status).toBe(0);
     const backlog = JSON.parse(readFileSync(join(dir, 'state', 'backlog.json'), 'utf8'));

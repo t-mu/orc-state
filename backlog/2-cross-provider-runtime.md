@@ -78,8 +78,8 @@ task.required_provider          — route this task to a specific provider
 
 ## Goals
 
-1. Must: `orc task-create --epic=orch --title="X" --required-provider=claude` creates a task with `required_provider: "claude"` in `backlog.json`.
-2. Must: `create_task(epic, title, required_provider: "claude")` MCP call stores the field.
+1. Must: `orc task-create --feature=orch --title="X" --required-provider=claude` creates a task with `required_provider: "claude"` in `backlog.json`.
+2. Must: `create_task(feature, title, required_provider: "claude")` MCP call stores the field.
 2b. Must: `update_task(task_ref, required_provider: "claude")` MCP call updates the field on an existing task.
 3. Must: `orc doctor` exits 0 for a task that has `required_provider` set.
 4. Must: `canAgentExecuteTask()` continues to return `false` for a provider mismatch (no regression — logic already works, just needs the field to reach it).
@@ -234,7 +234,7 @@ Add a short section under "Orchestrator Conventions" documenting the provider fa
 
 ## Acceptance criteria
 
-- [ ] `orc task-create --epic=orch --title="Test" --required-provider=claude` creates task with `required_provider: "claude"` in `backlog.json`.
+- [ ] `orc task-create --feature=orch --title="Test" --required-provider=claude` creates task with `required_provider: "claude"` in `backlog.json`.
 - [ ] `orc task-create --required-provider=invalid` exits non-zero with an error message.
 - [ ] `create_task` MCP call with `required_provider: "codex"` stores the field on the task.
 - [ ] `update_task` MCP call with `required_provider: "claude"` updates the field on an existing task.
@@ -289,7 +289,7 @@ node --experimental-strip-types cli/doctor.ts
 
 # Smoke: create a task with required_provider and verify it persists
 node --experimental-strip-types cli/task-create.ts \
-  --epic=orch --title="Provider test" --required-provider=claude
+  --feature=orch --title="Provider test" --required-provider=claude
 node --experimental-strip-types cli/doctor.ts
 
 # Full suite
