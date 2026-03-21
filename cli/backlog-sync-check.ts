@@ -35,9 +35,9 @@ export function extractTaskSpecRefs(backlogDocsDir: string) {
 
 export function extractRegisteredTaskRefs(stateBacklogPath: string) {
   const backlog = JSON.parse(readFileSync(stateBacklogPath, 'utf8')) as Record<string, unknown>;
-  const epicsOrFeatures = ((backlog.epics ?? backlog.features ?? []) as Array<Record<string, unknown>>);
+  const featuresCompat = ((backlog.epics ?? backlog.features ?? []) as Array<Record<string, unknown>>);
   return new Set(
-    epicsOrFeatures.flatMap((container) =>
+    featuresCompat.flatMap((container) =>
       ((container.tasks ?? []) as Array<Record<string, unknown>>)
         .map((task) => task.ref)
         .filter((ref): ref is string => typeof ref === 'string' && (ref).length > 0),
@@ -47,9 +47,9 @@ export function extractRegisteredTaskRefs(stateBacklogPath: string) {
 
 function readRegisteredTaskEntries(stateBacklogPath: string): Map<string, RegisteredTaskEntry> {
   const backlog = JSON.parse(readFileSync(stateBacklogPath, 'utf8')) as Record<string, unknown>;
-  const epicsOrFeatures = ((backlog.epics ?? backlog.features ?? []) as Array<Record<string, unknown>>);
+  const featuresCompat = ((backlog.epics ?? backlog.features ?? []) as Array<Record<string, unknown>>);
   const entries = new Map<string, RegisteredTaskEntry>();
-  for (const container of epicsOrFeatures) {
+  for (const container of featuresCompat) {
     const featureRef = typeof container.ref === 'string' ? container.ref : '';
     for (const task of ((container.tasks ?? []) as Array<Record<string, unknown>>)) {
       if (typeof task.ref !== 'string' || task.ref.length === 0) continue;

@@ -13,7 +13,7 @@ import { ensureGitignore } from '../lib/gitignore.ts';
 
 const force = process.argv.includes('--force') || (flag('force') ?? '') === 'true';
 const featureRef = flag('feature') ?? 'project';
-const epicTitle = flag('feature-title') ?? 'Project';
+const featureTitle = flag('feature-title') ?? 'Project';
 const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.jsonl'];
 
 mkdirSync(STATE_DIR, { recursive: true });
@@ -35,7 +35,7 @@ if (force) {
 
 const backlog = {
   version: '1',
-  features: [{ ref: featureRef, title: epicTitle, tasks: [] }],
+  features: [{ ref: featureRef, title: featureTitle, tasks: [] }],
 };
 const agents = { version: '1', agents: [] };
 const claims = { version: '1', claims: [] };

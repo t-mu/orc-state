@@ -793,8 +793,8 @@ describe('mcp read handlers', () => {
     expect(result).toEqual({ task_ref: 'project/todo-one', assigned_to: 'orc-1' });
 
     const backlog = readBacklog();
-    const projectEpic = backlog.features.find(feature => feature.ref === 'project');
-    const updated = projectEpic?.tasks.find((task) => task.ref === 'project/todo-one');
+    const projectFeature = backlog.features.find(feature => feature.ref === 'project');
+    const updated = projectFeature?.tasks.find((task) => task.ref === 'project/todo-one');
     expect(updated?.owner).toBe('orc-1');
     expect(updated?.delegated_by).toBe('master');
 
@@ -871,8 +871,8 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask auto-selection uses round-robin across eligible workers (A then B then A)', () => {
     const backlog = readBacklog();
-    const projectEpic = backlog.features.find(feature => feature.ref === 'project')!;
-    projectEpic.tasks.push(
+    const projectFeature = backlog.features.find(feature => feature.ref === 'project')!;
+    projectFeature.tasks.push(
       {
         ref: 'project/todo-two',
         title: 'Todo two',
@@ -928,8 +928,8 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask falls back to first-match when dispatch-state.json is missing', () => {
     const backlog = readBacklog();
-    const projectEpic = backlog.features.find(feature => feature.ref === 'project')!;
-    projectEpic.tasks.push({
+    const projectFeature = backlog.features.find(feature => feature.ref === 'project')!;
+    projectFeature.tasks.push({
       ref: 'project/todo-two',
       title: 'Todo two',
       status: 'todo',
