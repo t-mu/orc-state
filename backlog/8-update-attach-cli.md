@@ -2,7 +2,7 @@
 ref: general/8-update-attach-cli
 feature: general
 priority: normal
-status: todo
+status: blocked
 ---
 
 # Task 8 — Update cli/attach.ts for Interactive tmux Attach

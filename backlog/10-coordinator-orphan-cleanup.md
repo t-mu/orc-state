@@ -2,7 +2,7 @@
 ref: general/10-coordinator-orphan-cleanup
 feature: general
 priority: normal
-status: todo
+status: blocked
 ---
 
 # Task 10 — Add Coordinator Startup Orphan Session Cleanup

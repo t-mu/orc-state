@@ -2,7 +2,7 @@
 ref: general/7-wire-tmux-adapter
 feature: general
 priority: high
-status: todo
+status: blocked
 ---
 
 # Task 7 — Wire tmux Adapter in adapters/index.ts

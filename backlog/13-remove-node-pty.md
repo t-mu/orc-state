@@ -2,7 +2,7 @@
 ref: general/13-remove-node-pty
 feature: general
 priority: normal
-status: todo
+status: blocked
 ---
 
 # Task 13 — Remove node-pty Dependency and pty Adapter Files

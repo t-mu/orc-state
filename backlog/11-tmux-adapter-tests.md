@@ -2,7 +2,7 @@
 ref: general/11-tmux-adapter-tests
 feature: general
 priority: high
-status: todo
+status: blocked
 ---
 
 # Task 11 — Write tmux Adapter Unit Tests

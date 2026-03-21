@@ -2,7 +2,7 @@
 ref: general/9-update-control-worker-cli
 feature: general
 priority: normal
-status: todo
+status: blocked
 ---
 
 # Task 9 — Update cli/control-worker.ts for Interactive tmux Attach
