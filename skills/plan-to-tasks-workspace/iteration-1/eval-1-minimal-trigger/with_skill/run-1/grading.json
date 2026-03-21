@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "A preview table is shown before any task files are written, listing each task with its number, slug, title, and inferred dependencies",
+      "passed": true,
+      "evidence": "output.md lines 8-13 show a preview table with #, slug, title, deps columns and a 'Proceed?' prompt before task creation begins"
+    },
+    {
+      "text": "The user is asked to confirm before task files are created",
+      "passed": true,
+      "evidence": "output.md line 15: 'Proceed? (confirm or adjust)' appears before the task creation section"
+    },
+    {
+      "text": "Exactly 3 task specs are produced, one per plan step",
+      "passed": true,
+      "evidence": "task-1.md (Task 26), task-2.md (Task 27), task-3.md (Task 28) — confirmed in run summary"
+    },
+    {
+      "text": "Each task spec contains all required create-task sections: Scope, Context, Goals, Implementation, Acceptance criteria, and Verification",
+      "passed": true,
+      "evidence": "task-1.md contains all sections including Current state, Desired state, Start here sub-sections, code in Implementation, binary checklist in Acceptance criteria, and bash blocks in Verification"
+    },
+    {
+      "text": "Each task spec has a frontmatter block with ref, feature, priority, and status fields",
+      "passed": true,
+      "evidence": "task-1.md frontmatter: ref: general/26-add-api-rate-limiting, feature: general, priority: normal, status: todo"
+    },
+    {
+      "text": "Step 2 (tests) is marked as depending on Step 1 (the feature) — not Independent — because tests require the feature to exist",
+      "passed": true,
+      "evidence": "Run summary confirms: 'Task 27 (Write tests): Depends on Task 26'. Preview table shows 'Depends on 26' for task 27."
+    },
+    {
+      "text": "Goals section contains 3 or more independently verifiable Must statements",
+      "passed": true,
+      "evidence": "task-1.md Goals section has 5 Must statements, each independently verifiable (sliding window algorithm, Redis storage, 429 + Retry-After, apply to all routes, no breakage)"
+    }
+  ],
+  "summary": {
+    "passed": 7,
+    "failed": 0,
+    "total": 7,
+    "pass_rate": 1.0
+  }
+}

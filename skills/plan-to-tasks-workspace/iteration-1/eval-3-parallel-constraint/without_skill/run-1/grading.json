@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "Exactly 5 task specs are produced, one per plan step",
+      "passed": true,
+      "evidence": "Run summary: task-1.md through task-5.md created"
+    },
+    {
+      "text": "Steps 2 and 3 are both marked Independent (not depending on each other) — honouring the user's explicit constraint",
+      "passed": true,
+      "evidence": "Run summary: 'Tasks 2 and 3 both declare Depends on Task 1 with no dependency on each other' — user constraint from the prompt was followed"
+    },
+    {
+      "text": "Step 1 is marked Independent",
+      "passed": true,
+      "evidence": "Run summary: task-1 has no dependencies"
+    },
+    {
+      "text": "Step 4 depends on Step 1 (build job needs the CI yaml from Step 1)",
+      "passed": true,
+      "evidence": "Run summary confirms Task 4 depends on Task 1"
+    },
+    {
+      "text": "Step 5 depends on Steps 2, 3, and 4 (deploy requires all jobs to pass)",
+      "passed": true,
+      "evidence": "Run summary: 'Task 5 waits for all three' (2, 3, 4)"
+    },
+    {
+      "text": "The preview table correctly shows the user-specified parallel relationship before confirmation is requested",
+      "passed": false,
+      "evidence": "Run summary describes tasks created and output.md written — no mention of a preview table or confirmation step before creation"
+    },
+    {
+      "text": "Each task spec contains all required create-task sections: Scope, Context, Goals, Implementation, Acceptance criteria, and Verification",
+      "passed": false,
+      "evidence": "Run summary does not confirm section completeness. Without-skill runs in eval 1 and 2 showed adequate sections, but this run used 'ci/' as feature prefix which suggests it may have invented non-standard structure. Marking uncertain/failed pending file inspection."
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 2,
+    "total": 7,
+    "pass_rate": 0.71
+  }
+}

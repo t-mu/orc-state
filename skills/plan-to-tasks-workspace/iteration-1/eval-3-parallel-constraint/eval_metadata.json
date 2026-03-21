@@ -1,0 +1,14 @@
+{
+  "eval_id": 3,
+  "eval_name": "parallel-constraint",
+  "prompt": "turn those steps into backlog tasks — steps 2 and 3 can run in parallel",
+  "assertions": [
+    "Exactly 5 task specs are produced, one per plan step",
+    "Steps 2 and 3 are both marked Independent — honouring the user's explicit constraint",
+    "Step 1 is marked Independent",
+    "Step 4 depends on Step 1",
+    "Step 5 depends on Steps 2, 3, and 4",
+    "Preview table shown before confirmation",
+    "Each task spec contains all required create-task sections"
+  ]
+}

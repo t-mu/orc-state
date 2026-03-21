@@ -1,0 +1,39 @@
+{
+  "tasks_created": 4,
+  "template_read": true,
+  "template_path": "/Users/teemu/code/orc-state/backlog/TASK_TEMPLATE.md",
+  "feature_ref": "ts-migration",
+  "task_refs": [
+    "ts-migration/migrate-auth-module",
+    "ts-migration/migrate-user-service",
+    "ts-migration/migrate-api-routes",
+    "ts-migration/update-tsconfig-and-scripts"
+  ],
+  "dependency_chain": [
+    "task-1 -> task-2",
+    "task-2 -> task-3",
+    "task-3 -> task-4"
+  ],
+  "sections_populated_per_task": [
+    "frontmatter",
+    "scope",
+    "context",
+    "goals",
+    "implementation",
+    "acceptance_criteria",
+    "tests",
+    "verification",
+    "risk_rollback"
+  ],
+  "files_written": [
+    "task-1.md",
+    "task-2.md",
+    "task-3.md",
+    "task-4.md",
+    "output.md",
+    "metrics.json"
+  ],
+  "backlog_files_written": false,
+  "orchestrator_state_modified": false,
+  "notes": "Simulation only — no files written to /backlog/ and no orc commands executed. Task numbers are logical (1-4) since this is a new feature not yet registered in the real backlog."
+}

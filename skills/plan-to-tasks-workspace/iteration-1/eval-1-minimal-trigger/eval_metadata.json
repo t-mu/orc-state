@@ -1,0 +1,14 @@
+{
+  "eval_id": 1,
+  "eval_name": "minimal-trigger",
+  "prompt": "ok create the tasks",
+  "assertions": [
+    "A preview table is shown before any task files are written",
+    "The user is asked to confirm before task files are created",
+    "Exactly 3 task specs are produced, one per plan step",
+    "Each task spec contains all required create-task sections",
+    "Each task spec has a frontmatter block with ref, feature, priority, and status fields",
+    "Step 2 (tests) is marked as depending on Step 1",
+    "Goals section contains 3 or more independently verifiable Must statements"
+  ]
+}

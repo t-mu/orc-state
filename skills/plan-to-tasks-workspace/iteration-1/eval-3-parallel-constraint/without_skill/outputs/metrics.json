@@ -1,0 +1,55 @@
+{
+  "eval": "eval-3-parallel-constraint",
+  "variant": "without_skill",
+  "tasks_created": 5,
+  "parallel_constraint_respected": true,
+  "dependency_graph": {
+    "ci/1-setup-ci-pipeline": {
+      "depends_on": [],
+      "blocks": ["ci/2-lint-job", "ci/3-test-job", "ci/4-build-job"]
+    },
+    "ci/2-lint-job": {
+      "depends_on": ["ci/1-setup-ci-pipeline"],
+      "blocks": ["ci/5-deploy-job"],
+      "parallel_with": ["ci/3-test-job", "ci/4-build-job"]
+    },
+    "ci/3-test-job": {
+      "depends_on": ["ci/1-setup-ci-pipeline"],
+      "blocks": ["ci/5-deploy-job"],
+      "parallel_with": ["ci/2-lint-job", "ci/4-build-job"]
+    },
+    "ci/4-build-job": {
+      "depends_on": ["ci/1-setup-ci-pipeline"],
+      "blocks": ["ci/5-deploy-job"],
+      "parallel_with": ["ci/2-lint-job", "ci/3-test-job"]
+    },
+    "ci/5-deploy-job": {
+      "depends_on": ["ci/2-lint-job", "ci/3-test-job", "ci/4-build-job"],
+      "blocks": []
+    }
+  },
+  "steps_mapped": {
+    "step_1": "ci/1-setup-ci-pipeline",
+    "step_2": "ci/2-lint-job",
+    "step_3": "ci/3-test-job",
+    "step_4": "ci/4-build-job",
+    "step_5": "ci/5-deploy-job"
+  },
+  "template_sections_used": [
+    "frontmatter",
+    "title_with_dependency_line",
+    "scope",
+    "context",
+    "goals",
+    "implementation",
+    "acceptance_criteria",
+    "tests",
+    "verification",
+    "risk_rollback"
+  ],
+  "notes": [
+    "Task 4 (build) also depends only on Task 1 and is parallel with Tasks 2 and 3, which is consistent with CI semantics.",
+    "Task 5 deploy job is gated to push-to-main only (not pull_request) to avoid staging deployments on PRs.",
+    "Coverage threshold (80%) is enforced via inline Vitest flags; a note is included to defer to vitest.config if thresholds are already set there."
+  ]
+}

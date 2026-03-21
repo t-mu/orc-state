@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "A preview table is shown before any task files are written, listing each task with its number, slug, title, and inferred dependencies",
+      "passed": false,
+      "evidence": "output.md shows a dependency graph summary after task creation, not a preview table before it. No 'Proceed?' prompt present."
+    },
+    {
+      "text": "The user is asked to confirm before task files are created",
+      "passed": false,
+      "evidence": "output.md goes directly from plan description to listing completed task files. No confirmation step."
+    },
+    {
+      "text": "Exactly 3 task specs are produced, one per plan step",
+      "passed": true,
+      "evidence": "task-1.md, task-2.md, task-3.md created — confirmed in run summary"
+    },
+    {
+      "text": "Each task spec contains all required create-task sections: Scope, Context, Goals, Implementation, Acceptance criteria, and Verification",
+      "passed": true,
+      "evidence": "task-1.md contains all required sections including Current state / Desired state / Start here sub-sections, Goals with Must statements, Implementation with code shape, Acceptance criteria checklist, and Verification bash blocks"
+    },
+    {
+      "text": "Each task spec has a frontmatter block with ref, feature, priority, and status fields",
+      "passed": true,
+      "evidence": "task-1.md has all four fields. However, feature: api-rate-limiting is a non-existent feature ref — the correct value is 'general'. Fields are present but value is incorrect."
+    },
+    {
+      "text": "Step 2 (tests) is marked as depending on Step 1 (the feature) — not Independent — because tests require the feature to exist",
+      "passed": true,
+      "evidence": "output.md and run summary confirm Task 27 depends on Task 26"
+    },
+    {
+      "text": "Goals section contains 3 or more independently verifiable Must statements",
+      "passed": true,
+      "evidence": "task-1.md Goals section has 6 Must statements"
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 2,
+    "total": 7,
+    "pass_rate": 0.71
+  }
+}
