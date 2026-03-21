@@ -118,6 +118,21 @@ describe('appendNotification', () => {
     expect(pending[0].dedupe_key).toBe('task-complete:run-1:finished');
   });
 
+  it('appendNotification with type FINALIZE_BLOCKED is idempotent via dedupe_key', () => {
+    appendNotification(dir, {
+      type: 'FINALIZE_BLOCKED',
+      run_id: 'run-abc',
+      dedupe_key: 'finalize_blocked:run-abc',
+    });
+    appendNotification(dir, {
+      type: 'FINALIZE_BLOCKED',
+      run_id: 'run-abc',
+      dedupe_key: 'finalize_blocked:run-abc',
+    });
+    const pending = readPendingNotifications(dir);
+    expect(pending.filter(e => e.type === 'FINALIZE_BLOCKED')).toHaveLength(1);
+  });
+
   it('still appends distinct notifications when dedupe_key differs or is absent', () => {
     appendNotification(dir, {
       type: 'TASK_COMPLETE',
