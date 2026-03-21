@@ -305,6 +305,7 @@ async function processManagedSessionStartRetries(
 
     const nextFailedAttempts = retryCount + 1;
     if (nextFailedAttempts >= MANAGED_SESSION_START_MAX_ATTEMPTS) {
+      const failReason = ready.reason ?? 'worker session could not be launched in assigned worktree';
       emit({
         event: 'session_start_failed',
         actor_type: 'coordinator',
@@ -313,21 +314,30 @@ async function processManagedSessionStartRetries(
         task_ref: claim.task_ref,
         agent_id: claim.agent_id,
         payload: {
-          reason: 'worker session could not be launched in assigned worktree after bounded retries',
+          reason: failReason,
           code: 'ERR_SESSION_START_FAILED',
           working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? undefined,
         },
       });
       finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
         success: false,
-        failureReason: 'session_start_failed: worker session could not be launched in assigned worktree',
+        failureReason: `session_start_failed: ${failReason}`,
         failureCode: 'ERR_SESSION_START_FAILED',
         policy: 'requeue',
       });
       if (agent.status !== 'offline') {
         await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
       }
-      console.error(`[coordinator] Failed to start session for '${claim.agent_id}': bounded retries exhausted`);
+      appendNotification(STATE_DIR, {
+        type: 'SESSION_START_FAILED',
+        task_ref: claim.task_ref,
+        run_id: claim.run_id,
+        agent_id: claim.agent_id,
+        reason: failReason,
+        failed_at: new Date().toISOString(),
+        dedupe_key: `session_start_failed:${claim.run_id}`,
+      });
+      console.error(`[coordinator] Failed to start session for '${claim.agent_id}': bounded retries exhausted — ${failReason}`);
       continue;
     }
 
@@ -966,15 +976,25 @@ async function tick() {
           });
           return;
         }
+        const failReason = ready.reason ?? 'worker session could not be launched in assigned worktree';
         finishRun(STATE_DIR, runId, agent.agent_id, {
           success: false,
-          failureReason: 'session_start_failed: worker session could not be launched in assigned worktree',
+          failureReason: `session_start_failed: ${failReason}`,
           failureCode: 'ERR_SESSION_START_FAILED',
           policy: 'requeue',
         });
         if (agent.status !== 'offline') {
           await cleanupRunCapacity(agent.agent_id, workerPoolConfig);
         }
+        appendNotification(STATE_DIR, {
+          type: 'SESSION_START_FAILED',
+          task_ref: taskRef,
+          run_id: runId,
+          agent_id: agent.agent_id,
+          reason: failReason,
+          failed_at: new Date().toISOString(),
+          dedupe_key: `session_start_failed:${runId}`,
+        });
         return;
       }
 
