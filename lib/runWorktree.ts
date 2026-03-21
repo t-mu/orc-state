@@ -29,6 +29,7 @@ function ensureGitWorktree({ root, path, branch, createBranch }: {
     cwd: root,
     encoding: 'utf8',
   });
+  if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`Failed to allocate worktree ${path}: ${(result.stderr || result.stdout || '').trim()}`);
   }
@@ -75,9 +76,10 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
           cwd: root,
           encoding: 'utf8',
         });
-        if (result.status !== 0) {
+        if (result.status !== 0 || result.error) {
           cleanupSucceeded = false;
-          console.warn(`[runWorktree] worktree remove failed for ${entry.worktree_path}: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
+          const detail = result.error?.message ?? (result.stderr || result.stdout || 'unknown error').trim();
+          console.warn(`[runWorktree] worktree remove failed for ${entry.worktree_path}: ${detail}`);
         }
       } else {
         console.warn(`[runWorktree] cleanupRunWorktree: worktree path not found, skipping remove: ${entry.worktree_path}`);
@@ -89,9 +91,10 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
         cwd: root,
         encoding: 'utf8',
       });
-      if (result.status !== 0) {
+      if (result.status !== 0 || result.error) {
         cleanupSucceeded = false;
-        console.warn(`[runWorktree] branch delete failed for ${entry.branch}: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
+        const detail = result.error?.message ?? (result.stderr || result.stdout || 'unknown error').trim();
+        console.warn(`[runWorktree] branch delete failed for ${entry.branch}: ${detail}`);
       }
     }
 

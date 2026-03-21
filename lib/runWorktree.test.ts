@@ -203,6 +203,21 @@ describe('ensureRunWorktree', () => {
     expect(result.worktree_path).toBe(join(customWorktreesDir, 'run-custom'));
   });
 
+  it('throws the underlying OS error when git spawn fails', async () => {
+    vi.resetModules();
+    const spawnError = new Error('spawnSync git ENOENT');
+    const spawnSync = vi.fn()
+      .mockReturnValueOnce({ status: 0, stdout: join(dir, 'repo', '.git'), stderr: '' })
+      .mockReturnValueOnce({ status: null, error: spawnError, stdout: '', stderr: '', pid: 0, output: [], signal: null });
+
+    vi.doMock('node:child_process', () => ({ spawnSync }));
+    const { ensureRunWorktree } = await import('./runWorktree.ts');
+
+    expect(() =>
+      ensureRunWorktree(dir, { runId: 'run-fail', taskRef: 'general/26', agentId: 'orc-1' }),
+    ).toThrow('spawnSync git ENOENT');
+  });
+
   it('cleanupRunWorktree warns and returns when the run entry is missing', async () => {
     writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({ version: '1', runs: [] }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
