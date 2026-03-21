@@ -40,23 +40,9 @@ Never use version range matchers (`~`, `^`) in `package.json` — always exact p
 Every task must be executed in a dedicated git worktree. Never make changes
 directly on the main checkout while a run is active.
 
-Worktree lifecycle commands are pre-authorized operational steps for agents in
-this repository. Do not stop to ask the user for permission before running the
-standard non-destructive worktree management commands needed by this workflow:
-`git worktree add`, `git worktree remove`, and `git branch -d`.
-The standard workflow integration steps `git commit`, `git rebase main`, and
-the final `git -C ../.. merge ... --no-ff` are also pre-authorized here when
-the task workflow calls for them.
+Worktree lifecycle commands are pre-authorized — do not stop to ask for permission before running: `git worktree add`, `git worktree remove`, `git branch -d`, `git commit`, `git rebase main`, and `git -C ../.. merge ... --no-ff`.
 
-### Setup — coordinator-assigned worktree
-The coordinator starts every worker session from the repo root, regardless of provider.
-Your assigned worktree path is in the TASK_START payload (`assigned_worktree`).
-After calling `orc run-start`, `cd` into that path before doing any work.
-Do not create a second worktree unless the task payload explicitly tells you to recover a missing one.
-
-### All work happens inside the assigned worktree
-Run builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
-The main checkout stays clean.
+Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). After calling `orc run-start`, `cd` into that path. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
 
 ### Finish — after all acceptance criteria are met
 ```bash
@@ -87,12 +73,8 @@ orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
 
 # 3. Rebase onto latest main — resolve any conflicts before proceeding
 git rebase main
-# If conflicts arise:
-#   - inspect: git diff, git status
-#   - resolve each conflicted file manually
-#   - stage resolved files: git add <file>
-#   - continue: git rebase --continue
-#   - repeat until rebase completes cleanly
+# If conflicts arise: resolve each conflicted file, then:
+#   git add <resolved-file> && git rebase --continue
 # Only call orc run-fail if a conflict is genuinely unresolvable.
 
 # 4. Report implementation complete before any terminal success signal
@@ -106,11 +88,6 @@ orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>
 #    - If no follow-up arrives, only emit orc run-finish after the
 #      run-work-complete handoff has already been recorded.
 #    - Do not merge to main or clean up the worktree/branch yourself.
-```
-
-### On unresolvable failure
-```bash
-orc run-fail --run-id=<run_id> --agent-id=<agent_id> --reason="<explanation>"
 ```
 
 ---
@@ -128,10 +105,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
 6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
 
-Outside the blessed workflow:
-- supported inspection commands are for observability only
-- advanced/specialized commands are for setup or niche cases
-- recovery/debug commands are second-class and should not be chosen when the blessed path applies
+Outside the blessed workflow, commands are for observability, setup, or recovery only — not the default path.
 
 ### Orchestrator
 
@@ -185,9 +159,11 @@ orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
 orc progress --event=<type> --run-id=<id> --agent-id=<id> \
   [--phase=<name>] [--reason=<text>] [--policy=<requeue|block>]    # emit phase_started, phase_finished, etc.
 
-# Input request/response (worker ↔ master)
+# Input request (worker → master)
 orc run-input-request --run-id=<id> --agent-id=<id> \
   --question=<text> [--timeout-ms=<ms>]                            # worker asks master a question; blocks until answered
+
+# Input response (master → worker — master use only)
 orc run-input-respond --run-id=<id> --agent-id=<id> \
   --response=<text> [--actor-id=<id>]                              # master answers a worker's input request
 ```
@@ -214,13 +190,6 @@ Normal task-authoring path:
 
 Do not treat generic runtime mutation as a substitute for backlog markdown edits.
 
-**For code authors** (implementing new CLI commands or MCP handlers):
-- All state writes: `withLock` + `atomicWriteJson`. Never `writeFileSync` directly.
-- All event appends: `appendSequencedEvent`. Never append to `events.jsonl` directly.
-- Validate all inputs **before** any `atomicWriteJson` call — no partial writes on failure.
-- Schemas use AJV draft-07 with `additionalProperties: false` on all object definitions.
-- Run `orc doctor` after any schema or state file change.
-
 ### Task lifecycle
 ```
 todo → claimed → in_progress → done → released
@@ -238,75 +207,9 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 | `any → blocked` | Worker (`orc run-fail --policy=block`) |
 | `blocked/claimed/in_progress → todo` | Operator (`orc task-reset <ref>`) |
 
-### Worker event contract (workers must follow this)
-```
-claim_created    (coordinator)
-run_started      (worker — emit immediately on TASK_START)
-phase_started    (worker — optional, per work phase)
-phase_finished   (worker — optional, per work phase)
-run_finished     (worker — on success)
-run_failed       (worker — on failure, include reason)
-```
+### Heartbeat requirement
 
-Emit progress via:
-```bash
-orc progress --event=run_started --run-id=<id> --agent-id=<id>
-```
-
-Non-terminal handoff signal:
-```bash
-orc run-work-complete --run-id=<id> --agent-id=<id>
-```
-
-Use `orc run-work-complete` after commit/review/verification and `git rebase main`
-are complete, then remain alive for coordinator-owned finalization follow-up when present.
-
-Heartbeat requirement: emit `heartbeat` (or any non-terminal event) at least every 60 s while a claim is active, or the coordinator will eventually expire and requeue the task.
-
-### Provider configuration
-
-`required_provider` on a task routes that task exclusively to agents whose `provider` field matches.
-The worker pool provider itself is resolved via the following fallback chain:
-
-```
-task.required_provider          — route this task to a specific provider
-  worker pool (all workers):
-    ORC_WORKER_PROVIDER env
-    → worker_pool.provider in orchestrator.config.json
-    → default_provider in orchestrator.config.json
-    → hardcoded default ('codex')
-```
-
-Set `default_provider` at the top level of `orchestrator.config.json` to configure the default
-provider for all workers without setting `worker_pool.provider`:
-
-```json
-{
-  "default_provider": "claude"
-}
-```
-
-### Agent roles
-| Role | Can claim tasks | Excluded from auto-dispatch |
-|------|----------------|----------------------------|
-| `worker` | Yes | No |
-| `reviewer` | Yes | No |
-| `master` | No | Yes |
-
-The master agent creates and delegates tasks; it does not execute them directly.
-
-### Session startup flow
-1. `orc start-session` checks coordinator state (reuse/restart/start).
-2. `orc start-session` checks the `MASTER` registration (reuse/replace/create).
-3. `orc start-session` opens the selected master provider CLI in the foreground.
-
-The master and workers are separate setup paths:
-- `MASTER`: one foreground planner/delegator session in the operator terminal
-- `WORKERS`: one or more headless PTY task executors managed by coordinator ticks
-
-Worker sessions are headless PTY processes managed by coordinator ticks.
-Default worker IDs are auto-assigned as `orc-<N>` (for example `orc-1`, `orc-2`).
-Use `--worker-id=<id>` to override auto naming when needed.
+Emit `heartbeat` (or any non-terminal event) at least every 60 s while a claim is active, or the coordinator will expire and requeue the task.
 
 ---
 
@@ -318,8 +221,6 @@ Use `--worker-id=<id>` to override auto naming when needed.
 4. Self-review against acceptance criteria.
 5. Run verification commands from the task spec.
 6. Emit `orc run-work-complete` when implementation work is done, then use it as the required handoff before any terminal success signal.
-
-Recovery/debug commands remain available, but they are not part of the normal agent path and should only be used when the session is explicitly in recovery mode.
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 
