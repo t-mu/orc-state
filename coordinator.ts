@@ -74,6 +74,7 @@ const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
 const AGENT_HEARTBEAT_REFRESH_MS = 60_000;
 const MANAGED_SESSION_START_MAX_ATTEMPTS = 3;
 const MANAGED_SESSION_START_RETRY_DELAY_MS = 30_000;
+const GIT_OP_TIMEOUT_MS = 30_000; // abort coordinator git ops after 30s to prevent tick blockage
 const REPO_ROOT = resolveRepoRoot();
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -362,6 +363,7 @@ function branchContainsMain(branch: string) {
   const result = spawnSync('git', ['merge-base', '--is-ancestor', 'main', branch], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
+    timeout: GIT_OP_TIMEOUT_MS,
   });
   if (result.error) throw result.error;
   if (result.status === 0) return true;
@@ -373,6 +375,7 @@ function mergeTaskBranch(branch: string, taskRef: string) {
   const result = spawnSync('git', ['merge', branch, '--no-ff', '-m', `task(${taskRef}): merge worktree`], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
+    timeout: GIT_OP_TIMEOUT_MS,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
