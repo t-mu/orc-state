@@ -18,6 +18,9 @@ import { listAgents }               from '../lib/agentRegistry.ts';
 import { createAdapter }            from '../adapters/index.ts';
 import { STATE_DIR }                from '../lib/paths.ts';
 import { atomicWriteJson }          from '../lib/atomicWrite.ts';
+import { withLock }                 from '../lib/lock.ts';
+import { readBacklog, readClaims }  from '../lib/stateReader.ts';
+import { appendSequencedEvent }     from '../lib/eventLog.ts';
 
 const keepSessions = process.argv.includes('--keep-sessions');
 
@@ -79,3 +82,54 @@ if (existsSync(join(STATE_DIR, 'agents.json'))) {
   atomicWriteJson(join(STATE_DIR, 'agents.json'), { version: '1', agents: [] });
 }
 console.log(`✓ Cleared ${agents.length} agent(s)`);
+
+// ── Step 4: Cancel all active claims and requeue tasks ─────────────────────
+
+if (existsSync(join(STATE_DIR, 'backlog.json')) && existsSync(join(STATE_DIR, 'claims.json'))) {
+  withLock(join(STATE_DIR, '.lock'), () => {
+    const now = new Date().toISOString();
+    const backlog = readBacklog(STATE_DIR);
+    const claimsState = readClaims(STATE_DIR);
+
+    let resetCount = 0;
+    for (const feature of backlog.features ?? []) {
+      for (const task of feature.tasks ?? []) {
+        if (task.status === 'claimed' || task.status === 'in_progress') {
+          task.status = 'todo';
+          delete task.blocked_reason;
+          task.updated_at = now;
+          resetCount++;
+        }
+      }
+    }
+
+    let cancelledClaims = 0;
+    for (const claim of claimsState.claims ?? []) {
+      if (claim.state === 'claimed' || claim.state === 'in_progress') {
+        claim.state = 'failed';
+        claim.failure_reason = 'kill_all';
+        claim.finished_at = now;
+        cancelledClaims++;
+      }
+    }
+
+    atomicWriteJson(join(STATE_DIR, 'backlog.json'), backlog);
+    atomicWriteJson(join(STATE_DIR, 'claims.json'), claimsState);
+
+    if (resetCount > 0) {
+      appendSequencedEvent(
+        STATE_DIR,
+        {
+          ts: now,
+          event: 'coordinator_stopped',
+          actor_type: 'human',
+          actor_id: 'human',
+          payload: { tasks_reset: resetCount, claims_cancelled: cancelledClaims },
+        },
+        { lockAlreadyHeld: true },
+      );
+    }
+
+    console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)`);
+  });
+}
