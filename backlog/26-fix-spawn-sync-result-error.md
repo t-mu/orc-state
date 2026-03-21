@@ -2,7 +2,7 @@
 ref: general/26-fix-spawn-sync-result-error
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 26 — Fix spawnSync result.error in git calls

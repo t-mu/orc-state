@@ -363,6 +363,7 @@ function branchContainsMain(branch: string) {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });
+  if (result.error) throw result.error;
   if (result.status === 0) return true;
   if (result.status === 1) return false;
   throw new Error(`git merge-base failed for ${branch}: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
@@ -373,6 +374,7 @@ function mergeTaskBranch(branch: string, taskRef: string) {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });
+  if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`git merge failed for ${branch}: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
   }
