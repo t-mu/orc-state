@@ -2,7 +2,7 @@
 ref: general/30-master-health-check-notification
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 30 — Queue Master-Offline Notification When Master Session Ends

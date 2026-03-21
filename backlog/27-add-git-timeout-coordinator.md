@@ -2,7 +2,7 @@
 ref: general/27-add-git-timeout-coordinator
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 27 — Add Timeout to Coordinator Git Calls
