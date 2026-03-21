@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "orchestrator": {
+      "command": "node",
+      "args": ["--experimental-strip-types", "/Users/teemu/code/orc-state/mcp/server.ts"]
+    }
+  }
+}
