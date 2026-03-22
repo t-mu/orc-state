@@ -54,7 +54,7 @@ describe('pty adapter start()', () => {
       session_handle: 'pty:bob',
       provider_ref: { pid: ptyProcess.pid, provider: 'claude', binary: 'claude' },
     });
-    expect(spawnSpy).toHaveBeenCalledWith('claude', [], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], expect.objectContaining({
       name: 'xterm-256color',
       cols: 220,
       rows: 50,
@@ -65,7 +65,7 @@ describe('pty adapter start()', () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', { working_directory: '/tmp/orc-worktree' });
 
-    expect(spawnSpy).toHaveBeenCalledWith('claude', [], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], expect.objectContaining({
       cwd: '/tmp/orc-worktree',
     }));
   });
@@ -79,7 +79,7 @@ describe('pty adapter start()', () => {
       },
     });
 
-    expect(spawnSpy).toHaveBeenCalledWith('claude', [], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], expect.objectContaining({
       env: expect.objectContaining({
         ORCH_STATE_DIR: '/tmp/shared-state',
         ORC_REPO_ROOT: '/tmp/repo-root',
