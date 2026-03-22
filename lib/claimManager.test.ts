@@ -335,6 +335,57 @@ describe('finishRun', () => {
     finishRun(dir, run_id, 'agent-01', { success: false }); // requeue
     expect(() => claimTask(dir, 'orch/init', 'agent-02')).not.toThrow();
   });
+
+  it('increments attempt_count on genuine execution failure', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: false, failureCode: 'ERR_RUN_INACTIVITY_TIMEOUT' });
+    expect(readBacklog(dir).features[0].tasks[0].attempt_count).toBe(1);
+  });
+
+  it('does NOT increment attempt_count on ERR_DISPATCH_FAILURE', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: false, failureCode: 'ERR_DISPATCH_FAILURE' });
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.attempt_count ?? 0).toBe(0);
+    expect(task.status).toBe('todo');
+  });
+
+  it('does NOT increment attempt_count on ERR_RUN_START_TIMEOUT', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: false, failureCode: 'ERR_RUN_START_TIMEOUT' });
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.attempt_count ?? 0).toBe(0);
+    expect(task.status).toBe('todo');
+  });
+
+  it('does NOT increment attempt_count on ERR_SESSION_START_FAILED', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: false, failureCode: 'ERR_SESSION_START_FAILED' });
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.attempt_count ?? 0).toBe(0);
+    expect(task.status).toBe('todo');
+  });
+
+  it('does NOT block task on repeated infra failures (attempt_count stays 0)', () => {
+    seed(dir);
+    // Simulate 10 infra failures — should never hit MAX_ATTEMPTS
+    for (let i = 0; i < 10; i++) {
+      const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+      startRun(dir, run_id, 'agent-01');
+      finishRun(dir, run_id, 'agent-01', { success: false, failureCode: 'ERR_DISPATCH_FAILURE' });
+    }
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.attempt_count ?? 0).toBe(0);
+    expect(task.status).toBe('todo');
+  });
 });
 
 describe('setRunFinalizationState', () => {
