@@ -64,6 +64,11 @@ function buildStartArgs(provider: string, config: Record<string, unknown>) {
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
   }
+  if (provider === 'claude') {
+    // Skip interactive permission prompts so workers can run bash commands
+    // without blocking on "Do you want to proceed?" confirmations.
+    return ['--dangerously-skip-permissions'];
+  }
   return [];
 }
 
