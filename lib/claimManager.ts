@@ -219,11 +219,20 @@ export function finishRun(
         task.status = 'blocked';
       } else {
         // Requeue path: increment attempt counter, auto-block at MAX_ATTEMPTS.
-        const attempts = (task.attempt_count ?? 0) + 1;
-        task.attempt_count = attempts;
-        if (attempts >= MAX_ATTEMPTS) {
-          task.status = 'blocked';
-          task.blocked_reason = `max_attempts_exceeded: failed ${attempts} times`;
+        // Infrastructure failures (dispatch, session-start) do not count against
+        // the task's attempt budget — only genuine execution failures do.
+        const isInfraFailure = failureCode === 'ERR_DISPATCH_FAILURE'
+          || failureCode === 'ERR_RUN_START_TIMEOUT'
+          || failureCode === 'ERR_SESSION_START_FAILED';
+        if (!isInfraFailure) {
+          const attempts = (task.attempt_count ?? 0) + 1;
+          task.attempt_count = attempts;
+          if (attempts >= MAX_ATTEMPTS) {
+            task.status = 'blocked';
+            task.blocked_reason = `max_attempts_exceeded: failed ${attempts} times`;
+          } else {
+            task.status = 'todo';
+          }
         } else {
           task.status = 'todo';
         }

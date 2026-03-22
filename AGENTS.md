@@ -149,7 +149,7 @@ Workers emit these from inside their PTY session via Bash tool:
 
 ```bash
 orc run-start --run-id=<id> --agent-id=<id>                        # required first — acknowledge task start
-orc run-heartbeat --run-id=<id> --agent-id=<id>                    # extend idle timeout (emit every ~5 min)
+orc run-heartbeat --run-id=<id> --agent-id=<id>                    # REQUIRED — extend lease every 5 min across ALL phases
 orc run-work-complete --run-id=<id> --agent-id=<id>                # signal impl+review+rebase done; wait for coordinator
 orc run-finish --run-id=<id> --agent-id=<id>                       # terminal success (after work-complete)
 orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
@@ -209,7 +209,15 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 
 ### Heartbeat requirement
 
-Emit `heartbeat` (or any non-terminal event) at least every 60 s while a claim is active, or the coordinator will expire and requeue the task.
+**Call `orc run-heartbeat` every 5 minutes throughout ALL work phases** — implementation,
+sub-agent review, rebase, and while waiting for coordinator finalization. The claim lease
+is 30 minutes; failure to heartbeat will cause the coordinator to expire and requeue the task.
+
+Mandatory heartbeat call sites:
+- Before spawning sub-agent reviewers
+- Immediately before `git rebase main`
+- Immediately before `orc run-work-complete`
+- Every 5 minutes while waiting for coordinator follow-up after `run-work-complete`
 
 ---
 
