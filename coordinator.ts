@@ -46,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { FINALIZE_LEASE_MS } from './lib/constants.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -463,6 +464,17 @@ async function requestFinalizeRebase(claim: Claim, workerPoolConfig: WorkerPoolC
   } catch (error) {
     log(`warning: failed to record finalize_rebase_requested for ${latestClaim.run_id}: ${(error as Error).message}`);
     return false;
+  }
+
+  // Extend the lease before attempting to send so the claim stays alive even
+  // if the send fails and the coordinator must retry on the next tick.
+  try {
+    heartbeat(STATE_DIR, updatedClaim.run_id, updatedClaim.agent_id, {
+      emitEvent: false,
+      leaseDurationMs: FINALIZE_LEASE_MS,
+    });
+  } catch (error) {
+    log(`warning: failed to extend lease during finalize rebase request for ${updatedClaim.run_id}: ${(error as Error).message}`);
   }
 
   const sent = await sendCoordinatorMessage(updatedClaim.agent_id, buildFinalizeRebaseRequest(updatedClaim, reason));
@@ -1257,7 +1269,9 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         });
         const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
         const stateTs = authoritativeStateTs(eventTs, floorTs);
-        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
+        // Use FINALIZE_LEASE_MS anchored to now (not stateTs) so the worker always
+        // gets a full 60-min rebase window regardless of event processing lag.
+        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, leaseDurationMs: FINALIZE_LEASE_MS });
         recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
       }
       if (seq > 0) {
@@ -1343,11 +1357,30 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
             finalizationState: 'awaiting_finalize',
             blockedReason: null,
           });
+          // Explicitly extend the lease when entering the finalize phase so that
+          // the rebase + merge window is not bounded by the previous 30-min default.
+          try {
+            heartbeat(STATE_DIR, event.run_id, event.agent_id, {
+              emitEvent: false,
+              leaseDurationMs: FINALIZE_LEASE_MS,
+            });
+          } catch (err) {
+            log(`warning: failed to extend lease on work_complete for ${event.run_id}: ${(err as Error).message}`);
+          }
         } else if (event.event === 'ready_to_merge' && claim.finalization_state === 'finalize_rebase_in_progress') {
           claimForFinalize = setRunFinalizationState(STATE_DIR, event.run_id, event.agent_id, {
             finalizationState: 'ready_to_merge',
             blockedReason: null,
           });
+          // Extend lease again for the coordinator-driven merge step.
+          try {
+            heartbeat(STATE_DIR, event.run_id, event.agent_id, {
+              emitEvent: false,
+              leaseDurationMs: FINALIZE_LEASE_MS,
+            });
+          } catch (err) {
+            log(`warning: failed to extend lease on ready_to_merge for ${event.run_id}: ${(err as Error).message}`);
+          }
         }
         await finalizeRun(claimForFinalize, workerPoolConfig);
       }
