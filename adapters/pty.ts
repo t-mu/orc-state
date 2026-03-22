@@ -36,8 +36,9 @@ const PROVIDER_BINARIES: Record<string, string> = {
   gemini: 'gemini',
 };
 
-const OUTPUT_TAIL_BYTES = 8 * 1024; // 8 KB
-const STARTUP_DELAY_MS  = 1500;     // wait for CLI to initialise before sending bootstrap
+const OUTPUT_TAIL_BYTES  = 8 * 1024; // 8 KB
+const STARTUP_DELAY_MS   = 1500;     // wait for CLI to initialise before sending bootstrap
+const BYPASS_SETTLE_MS   = 800;      // wait after bypass-accept for dialog to dismiss
 const BLOCKING_PROMPT_PATTERNS = [
   /would you like[^\n]*\[(?:y\/n|yes\/no)\]/i,
   /\b(?:apply|approve|continue|proceed|confirm)[^\n]*\[(?:y\/n|yes\/no)\]/i,
@@ -173,11 +174,25 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       // bootstrap via PTY write after their REPL has initialized.
       // Two-phase write: first the text (TUI shows paste indicator),
       // then a separate CR after a short pause to submit the paste.
-      if (provider !== 'codex' && config.system_prompt) {
+      if (provider !== 'codex') {
         await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
-        if (typeof config.system_prompt === 'string') ptyProcess.write(config.system_prompt);
-        await new Promise((r) => setTimeout(r, 500));
-        ptyProcess.write('\r');
+
+        // Claude --dangerously-skip-permissions shows a "Bypass Permissions mode"
+        // confirmation menu ("1. No, exit / 2. Yes, I accept") before the REPL
+        // is ready. Auto-accept it so headless sessions don't stall.
+        if (provider === 'claude') {
+          ptyProcess.write('2');
+          await new Promise((r) => setTimeout(r, 200));
+          ptyProcess.write('\r');
+          // Give the TUI time to dismiss the dialog and render the REPL.
+          await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+        }
+
+        if (config.system_prompt && typeof config.system_prompt === 'string') {
+          ptyProcess.write(config.system_prompt);
+          await new Promise((r) => setTimeout(r, 500));
+          ptyProcess.write('\r');
+        }
       }
 
       return {

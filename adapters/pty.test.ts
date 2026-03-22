@@ -100,16 +100,22 @@ describe('pty adapter start()', () => {
     const { adapter, ptyProcess } = await makeAdapter();
     await adapter.start('bob', { system_prompt: 'BOOTSTRAP TEXT' });
 
-    // Two separate writes: text first, then CR to submit paste.
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, 'BOOTSTRAP TEXT');
+    // Claude: auto-accepts the Bypass Permissions confirmation dialog first
+    // (writes '2' + CR), then delivers the bootstrap text + CR.
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '2');
     expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '\r');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, 'BOOTSTRAP TEXT');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, '\r');
   });
 
-  it('does not call write() when system_prompt is absent', async () => {
+  it('auto-accepts bypass permissions dialog even when system_prompt is absent', async () => {
     const { adapter, ptyProcess } = await makeAdapter();
     await adapter.start('bob', {});
 
-    expect(ptyProcess.write).not.toHaveBeenCalled();
+    // Claude always writes '2' + CR to dismiss the confirmation dialog.
+    expect(ptyProcess.write).toHaveBeenCalledTimes(2);
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '2');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '\r');
   });
 
   it('streams PTY output to STATE_DIR/pty-logs/{agentId}.log', async () => {
@@ -160,7 +166,7 @@ describe('pty adapter start()', () => {
 describe('pty adapter send()', () => {
   // All providers use the same two-phase write: text first, then CR to submit.
   // CR (0x0D) is the universal submit key in PTY raw mode (claude, codex, gemini).
-  for (const provider of ['claude', 'codex', 'gemini']) {
+  for (const provider of ['codex', 'gemini']) {
     it(`writes text then CR as separate writes for provider=${provider}`, async () => {
       const { adapter, ptyProcess } = await makeAdapter({ provider });
       await adapter.start('bob', {});
@@ -172,6 +178,19 @@ describe('pty adapter send()', () => {
       expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '\r');
     });
   }
+
+  it('writes text then CR as separate writes for provider=claude (after bypass confirmation)', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
+    // start() pre-wrote '2' + '\r' to dismiss the Bypass Permissions dialog,
+    // so send() writes land at positions 3 and 4.
+    const result = await adapter.send('pty:bob', 'CHECK_WORK');
+
+    expect(result).toBe('');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, 'CHECK_WORK');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, '\r');
+  });
 
   it('throws when agent is not in sessions Map', async () => {
     const { adapter } = await makeAdapter();
@@ -344,7 +363,7 @@ describe('pty adapter stop()', () => {
 });
 
 describe('pty adapter start() replacement', () => {
-  it('kills existing in-memory session when starting same agent again', async () => {
+  it('kills existing in-memory session when starting same agent again', { timeout: 12000 }, async () => {
     const first = makeMockPty(11111).ptyProcess;
     const second = makeMockPty(22222).ptyProcess;
     const spawnSpy = vi.fn()
