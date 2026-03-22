@@ -78,7 +78,7 @@ export const TOOLS = [
   },
   {
     name: 'get_recent_events',
-    description: 'Return the most recent events from events.jsonl.',
+    description: 'Return the most recent events from events.jsonl. Use agent_id or run_id to narrow results and reduce token usage.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -86,7 +86,15 @@ export const TOOLS = [
           type: 'integer',
           minimum: 0,
           maximum: 200,
-          description: 'Max events to return (default: 50, max: 200)',
+          description: 'Max events to return (default: 20, max: 200)',
+        },
+        agent_id: {
+          type: 'string',
+          description: 'Filter to events where agent_id or actor_id matches this value',
+        },
+        run_id: {
+          type: 'string',
+          description: 'Filter to events where run_id matches this value',
         },
       },
       additionalProperties: false,

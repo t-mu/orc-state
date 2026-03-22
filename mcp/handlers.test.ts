@@ -304,6 +304,33 @@ describe('mcp read handlers', () => {
     expect(handleGetRecentEvents(dir)).toEqual([]);
   });
 
+  it('handleGetRecentEvents filters by agent_id', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
+      JSON.stringify({ seq: 2, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-2', agent_id: 'orc-2', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 3, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
+    ]);
+    const events = handleGetRecentEvents(dir, { limit: 20, agent_id: 'orc-1' });
+    expect(events).toHaveLength(2);
+    expect(events.every((e) => (e as unknown as Record<string, unknown>).agent_id === 'orc-1')).toBe(true);
+  });
+
+  it('handleGetRecentEvents filters by run_id', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event: 'run_started', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-aaa', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
+      JSON.stringify({ seq: 2, event: 'run_started', actor_type: 'agent', actor_id: 'orc-2', run_id: 'run-bbb', agent_id: 'orc-2', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 3, event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-aaa', agent_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
+    ]);
+    const events = handleGetRecentEvents(dir, { limit: 20, run_id: 'run-aaa' });
+    expect(events).toHaveLength(2);
+    expect(events.every((e) => (e as unknown as Record<string, unknown>).run_id === 'run-aaa')).toBe(true);
+  });
+
+  it('handleGetRecentEvents throws on invalid agent_id or run_id type', () => {
+    expect(() => handleGetRecentEvents(dir, { agent_id: 123 as unknown as string })).toThrow(/agent_id/);
+    expect(() => handleGetRecentEvents(dir, { run_id: 123 as unknown as string })).toThrow(/run_id/);
+  });
+
   it('handleGetStatus returns aggregate keys and expected value shapes', () => {
     writeFileSync(
       join(dir, 'master-notify-queue.jsonl'),
