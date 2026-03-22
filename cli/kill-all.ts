@@ -19,6 +19,8 @@ import { createAdapter }            from '../adapters/index.ts';
 import { STATE_DIR }                from '../lib/paths.ts';
 import { atomicWriteJson }          from '../lib/atomicWrite.ts';
 import { withLock }                 from '../lib/lock.ts';
+import { cleanupRunWorktree }       from '../lib/runWorktree.ts';
+import { RUN_WORKTREES_FILE }       from '../lib/paths.ts';
 import { readBacklog, readClaims }  from '../lib/stateReader.ts';
 import { appendSequencedEvent }     from '../lib/eventLog.ts';
 
@@ -132,4 +134,28 @@ if (existsSync(join(STATE_DIR, 'backlog.json')) && existsSync(join(STATE_DIR, 'c
 
     console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)`);
   });
+}
+
+// ── Step 5: Remove all run worktrees ────────────────────────────────────────
+
+if (existsSync(RUN_WORKTREES_FILE)) {
+  let runs: Array<{ run_id: string }> = [];
+  try {
+    const parsed = JSON.parse(readFileSync(RUN_WORKTREES_FILE, 'utf8')) as { runs?: Array<{ run_id: string }> };
+    runs = parsed.runs ?? [];
+  } catch { /* stale or unreadable — skip */ }
+
+  let removedWorktrees = 0;
+  for (const entry of runs) {
+    try {
+      cleanupRunWorktree(STATE_DIR, entry.run_id);
+      removedWorktrees++;
+    } catch (e) {
+      console.error(`  Warning: could not remove worktree for run ${entry.run_id}: ${(e as Error).message}`);
+    }
+  }
+
+  // Clear the registry regardless of individual cleanup results.
+  atomicWriteJson(RUN_WORKTREES_FILE, { version: '1', runs: [] });
+  console.log(`✓ Removed ${removedWorktrees} run worktree(s)`);
 }
