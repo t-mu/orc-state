@@ -143,13 +143,29 @@ export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unkno
   return task;
 }
 
-export function handleGetRecentEvents(stateDir: string, { limit = 50 }: { limit?: unknown } = {}) {
+export function handleGetRecentEvents(
+  stateDir: string,
+  { limit = 20, agent_id, run_id }: { limit?: unknown; agent_id?: unknown; run_id?: unknown } = {},
+) {
   if (!Number.isInteger(limit) || (limit as number) < 0) {
     throw new Error('limit must be a non-negative integer');
   }
+  if (agent_id !== undefined && typeof agent_id !== 'string') {
+    throw new Error('agent_id must be a string');
+  }
+  if (run_id !== undefined && typeof run_id !== 'string') {
+    throw new Error('run_id must be a string');
+  }
   const cap = Math.min(limit as number, 200);
   if (cap === 0) return [];
-  return readRecentEvents(join(stateDir, 'events.jsonl'), cap);
+  let events = readRecentEvents(join(stateDir, 'events.jsonl'), cap);
+  if (agent_id) {
+    events = events.filter((e) => (e as unknown as Record<string, unknown>).agent_id === agent_id || e.actor_id === agent_id);
+  }
+  if (run_id) {
+    events = events.filter((e) => (e as unknown as Record<string, unknown>).run_id === run_id);
+  }
+  return events;
 }
 
 export function handleGetStatus(stateDir: string, { include_done_count = false }: { include_done_count?: unknown } = {}) {
