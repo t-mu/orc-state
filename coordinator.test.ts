@@ -1035,8 +1035,45 @@ describe('processTerminalRunEvents', () => {
     const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-started')!;
     expect(claim.finalization_state).toBe('finalize_rebase_in_progress');
     expect(claim.finalization_retry_count).toBe(1);
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
-    expect(agent.last_heartbeat_at).toBe(claim.last_heartbeat_at);
+    // Lease should be extended to FINALIZE_LEASE_MS (60 min) from now, not DEFAULT_LEASE_MS (30 min).
+    const leaseExpiresAt = new Date(claim.lease_expires_at as string).getTime();
+    const expectedMinLease = Date.now() + 55 * 60 * 1000; // at least 55 min from now
+    expect(leaseExpiresAt).toBeGreaterThan(expectedMinLease);
+  });
+
+  it('extends lease to FINALIZE_LEASE_MS on work_complete', async () => {
+    seedState(dir, {
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      tasks: [{ ref: 'orch/task-wc', title: 'work complete lease test', status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-wc-lease',
+        task_ref: 'orch/task-wc',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(), // only 1 min left
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      event: 'work_complete',
+      run_id: 'run-wc-lease',
+      task_ref: 'orch/task-wc',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: { status: 'awaiting_finalize' },
+    }]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-wc-lease')!;
+    // Lease must be extended to at least 55 min from now (FINALIZE_LEASE_MS = 60 min).
+    const leaseExpiresAt = new Date(claim.lease_expires_at as string).getTime();
+    expect(leaseExpiresAt).toBeGreaterThan(Date.now() + 55 * 60 * 1000);
   });
 
   it('attempts trusted merge on work_complete, then cleans up the run on success', async () => {
