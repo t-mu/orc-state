@@ -259,6 +259,12 @@ Before reporting any task complete:
 - [ ] New pure logic has tests
 - [ ] `orc doctor` exits 0 after schema or state file changes
 - [ ] No files modified outside the stated task scope
+- [ ] Review every inline script and multi-step command chain you executed.
+      Could any have been a single orc command? If yes, create a backlog task.
+- [ ] Did AGENTS.md lack information that would have prevented a wrong assumption,
+      an unnecessary question to the user, or repeated file reads to discover
+      something? If yes, update AGENTS.md directly (small clarification) or
+      create a backlog task (larger change).
 
 ---
 
