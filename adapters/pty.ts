@@ -48,6 +48,34 @@ const BLOCKING_PROMPT_PATTERNS = [
 function pidPath(agentId: string) { return join(STATE_DIR, 'pty-pids', `${agentId}.pid`); }
 function logPath(agentId: string) { return join(STATE_DIR, 'pty-logs', `${agentId}.log`); }
 
+/**
+ * Sanitize a raw PTY chunk for LLM-readable log files.
+ *
+ * Two passes:
+ * 1. Strip all terminal escape sequences (CSI, OSC, and bare ESC codes).
+ * 2. Collapse carriage-return overwrites — TUI spinners write `\r<new frame>`
+ *    to overwrite the current line. After stripping escapes we honour those
+ *    by keeping only the last segment before each newline.
+ */
+function sanitizePtyChunk(raw: string): string {
+  // Strip CSI sequences: ESC [ ... <final byte>
+  // Strip OSC sequences: ESC ] ... (BEL or ST)
+  // Strip bare ESC + single char (e.g. ESC M — reverse index)
+  const stripped = raw
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')   // CSI
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC
+    .replace(/\x1b[^[\]]/g, '');               // bare ESC + char
+
+  // Collapse \r overwrites: split on \n, keep text after last \r in each line.
+  return stripped
+    .split('\n')
+    .map((line) => {
+      const idx = line.lastIndexOf('\r');
+      return idx === -1 ? line : line.slice(idx + 1);
+    })
+    .join('\n');
+}
+
 function ensureDirs() {
   mkdirSync(join(STATE_DIR, 'pty-pids'), { recursive: true });
   mkdirSync(join(STATE_DIR, 'pty-logs'), { recursive: true });
@@ -156,7 +184,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           env:  { ...spawnEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>,
         });
 
-        ptyProcess.onData((data) => stream!.write(data));
+        ptyProcess.onData((data) => stream!.write(sanitizePtyChunk(data)));
 
         // Write PID file for cross-process heartbeat.
         writeFileSync(pidPath(agentId), String(ptyProcess.pid));
