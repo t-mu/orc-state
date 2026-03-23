@@ -2250,3 +2250,379 @@ describe('main startup validation', () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 });
+
+describe('stale lease expiry and recovery via tick', () => {
+  it('expires an in_progress claim with a past lease and requeues the task', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'proj/expiry-task',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-expiry-001',
+        task_ref: 'proj/expiry-task',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        started_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        lease_expires_at: new Date(Date.now() - 1000).toISOString(), // already expired
+        last_heartbeat_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send: vi.fn().mockResolvedValue(''),
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn(),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue(null),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    const claim = claims.find((c) => c.run_id === 'run-expiry-001')!;
+    expect(claim.state).toBe('failed');
+
+    const { features } = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
+    const task = features[0].tasks.find((t) => t.ref === 'proj/expiry-task')!;
+    expect(task.status).toBe('todo');
+
+    const events = readEvents(dir);
+    expect(events.some((e) => e.event === 'claim_expired' && e.run_id === 'run-expiry-001')).toBe(true);
+  });
+});
+
+describe('failure-injection: delayed, duplicate, and stale lifecycle events', () => {
+  it('ignores stale terminal events for an older run after a newer claim exists', async () => {
+    // A newer claim is active for the same task. An older run_finished arrives
+    // for a run_id that no longer has an active claim. The task must remain in
+    // its current state and the active agent session must not be torn down.
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'proj/stale-task',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-newer-active',
+        task_ref: 'proj/stale-task',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    const stop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        stop,
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send: vi.fn(),
+        attach: vi.fn(),
+      }),
+    }));
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    // Stale run_finished for an old run_id that no longer exists in claims.
+    await processTerminalRunEvents([{
+      seq: 1,
+      event_id: 'evt-stale-finish-001',
+      event: 'run_finished',
+      run_id: 'run-old-evicted',
+      task_ref: 'proj/stale-task',
+      agent_id: 'orc-1',
+      ts: '2026-01-01T00:00:00.000Z',
+      payload: {},
+    } as const]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'proj/stale-task')!;
+    expect(task.status).toBe('in_progress'); // not corrupted by stale event
+
+    const activeClaim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-newer-active')!;
+    expect(activeClaim.state).toBe('in_progress'); // active claim unaffected
+
+    expect(stop).not.toHaveBeenCalled(); // active session not torn down
+  });
+
+  it('handles duplicate lifecycle events without double-applying state transitions', async () => {
+    // run_started processed twice via checkpoint reset. The claim must reach
+    // in_progress exactly once — a second application must be a no-op.
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'proj/dup-start-task',
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-dup-start',
+        task_ref: 'proj/dup-start-task',
+        agent_id: 'orc-1',
+        state: 'claimed',
+        claimed_at: '2026-03-11T08:00:00.000Z',
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finished_at: null,
+      }],
+    });
+
+    const startEvent = {
+      seq: 1,
+      event_id: 'evt-run-started-dup',
+      event: 'run_started' as const,
+      run_id: 'run-dup-start',
+      task_ref: 'proj/dup-start-task',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:00:01.000Z',
+      payload: {},
+    };
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([startEvent]);
+
+    const { readJson: readJson1 } = await import('./lib/stateReader.ts');
+    const claimAfterFirst = (readJson1(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-dup-start')!;
+    expect(claimAfterFirst.state).toBe('in_progress');
+    const startedAt = claimAfterFirst.started_at;
+
+    // Reset checkpoint so the same event would be processed again if dedup were not in place.
+    resetCheckpoint(dir);
+    await processTerminalRunEvents([startEvent]);
+
+    const { readJson: readJson2 } = await import('./lib/stateReader.ts');
+    const claimAfterSecond = (readJson2(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-dup-start')!;
+    // State and timestamps must be identical — no double-application.
+    expect(claimAfterSecond.state).toBe('in_progress');
+    expect(claimAfterSecond.started_at).toBe(startedAt);
+  });
+
+  it('replays pending events safely after coordinator restart with in-flight finalization', async () => {
+    // Coordinator restarts while a finalize_rebase_started event is in the log.
+    // The event must be deduplicated on the second run so retry_count is not
+    // incremented again.
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'proj/restart-finalize-task',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-restart-finalize',
+        task_ref: 'proj/restart-finalize-task',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: '2026-03-11T08:00:00.000Z',
+        started_at: '2026-03-11T08:01:00.000Z',
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        finalization_state: 'finalize_rebase_requested',
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    const finalizeStartedEvent = {
+      seq: 5,
+      event_id: 'evt-finalize-started-restart',
+      event: 'finalize_rebase_started' as const,
+      run_id: 'run-restart-finalize',
+      task_ref: 'proj/restart-finalize-task',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T08:10:00.000Z',
+      payload: { status: 'finalize_rebase_in_progress', retry_count: 1 } as Record<string, unknown>,
+    };
+
+    let coordinator = await import('./coordinator.ts');
+    await coordinator.processTerminalRunEvents([finalizeStartedEvent]);
+
+    const { readJson: readJson1 } = await import('./lib/stateReader.ts');
+    const claimAfterFirst = (readJson1(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-restart-finalize')!;
+    expect(claimAfterFirst.finalization_state).toBe('finalize_rebase_in_progress');
+    expect(claimAfterFirst.finalization_retry_count).toBe(1);
+
+    // Simulate coordinator restart — checkpoint is persisted, preventing replay.
+    vi.resetModules();
+    coordinator = await import('./coordinator.ts');
+    await coordinator.processTerminalRunEvents([finalizeStartedEvent]);
+
+    const { readJson: readJson2 } = await import('./lib/stateReader.ts');
+    const claimAfterRestart = (readJson2(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-restart-finalize')!;
+    // retry_count must not be incremented a second time.
+    expect(claimAfterRestart.finalization_state).toBe('finalize_rebase_in_progress');
+    expect(claimAfterRestart.finalization_retry_count).toBe(1);
+  });
+
+  it('delayed heartbeat for an already-expired claim is silently ignored', async () => {
+    // A heartbeat event arrives for a run that was expired (claim.state = failed).
+    // The coordinator must not re-activate the claim or corrupt state.
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'idle',
+        session_handle: null,
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'proj/delayed-hb-task',
+        status: 'todo',
+      }],
+      claims: [{
+        run_id: 'run-expired-hb',
+        task_ref: 'proj/delayed-hb-task',
+        agent_id: 'orc-1',
+        state: 'failed',
+        claimed_at: '2026-03-11T07:00:00.000Z',
+        started_at: '2026-03-11T07:01:00.000Z',
+        finished_at: '2026-03-11T07:31:00.000Z',
+        lease_expires_at: '2026-03-11T07:31:00.000Z',
+        last_heartbeat_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      seq: 1,
+      event_id: 'evt-delayed-hb',
+      event: 'heartbeat',
+      run_id: 'run-expired-hb',
+      task_ref: 'proj/delayed-hb-task',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T07:35:00.000Z', // arrived after expiry
+      payload: {},
+    } as const]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-expired-hb')!;
+    // State must remain failed — heartbeat must not re-activate the run.
+    expect(claim.state).toBe('failed');
+    expect(claim.last_heartbeat_at).toBeNull();
+
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'proj/delayed-hb-task')!;
+    expect(task.status).toBe('todo'); // task remains in requeued state
+  });
+
+  it('delayed run_failed for an already-expired run does not re-requeue the task', async () => {
+    // The lease expired (task is already todo again). A delayed run_failed event
+    // arrives from the slow worker. The task must stay in todo — not be requeued
+    // a second time. The claim is already failed so finishRun is a no-op.
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'idle',
+        session_handle: null,
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'proj/late-fail-task',
+        status: 'todo', // already requeued by lease expiry
+      }],
+      claims: [{
+        run_id: 'run-late-fail',
+        task_ref: 'proj/late-fail-task',
+        agent_id: 'orc-1',
+        state: 'failed', // already expired
+        claimed_at: '2026-03-11T07:00:00.000Z',
+        started_at: '2026-03-11T07:01:00.000Z',
+        finished_at: '2026-03-11T07:31:00.000Z',
+        lease_expires_at: '2026-03-11T07:31:00.000Z',
+        last_heartbeat_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      seq: 1,
+      event_id: 'evt-late-fail',
+      event: 'run_failed',
+      run_id: 'run-late-fail',
+      task_ref: 'proj/late-fail-task',
+      agent_id: 'orc-1',
+      ts: '2026-03-11T07:35:00.000Z',
+      payload: { policy: 'requeue', reason: 'build error (delivered late)' },
+    } as const]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'proj/late-fail-task')!;
+    // Task must remain in todo (not block or corrupt the already-requeued state).
+    expect(task.status).toBe('todo');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-late-fail')!;
+    expect(claim.state).toBe('failed');
+  });
+});

@@ -2,7 +2,7 @@
 ref: general/19-failure-injection-and-recovery-hardening
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 19 — Add Failure-Injection and Recovery Hardening Coverage

@@ -134,6 +134,35 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
+function seedFailedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
+  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+    version: '1',
+    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'todo' }] }],
+  }));
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+    version: '1',
+    agents: [{ agent_id: agentId, provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+  }));
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+    version: '1',
+    claims: [{
+      run_id: runId,
+      task_ref: taskRef,
+      agent_id: agentId,
+      state: 'failed',
+      claimed_at: '2026-01-01T00:00:00.000Z',
+      started_at: '2026-01-01T00:01:00.000Z',
+      finished_at: '2026-01-01T00:10:00.000Z',
+      lease_expires_at: '2026-01-01T00:10:00.000Z',
+      last_heartbeat_at: null,
+      finalization_state: null,
+      finalization_retry_count: 0,
+      finalization_blocked_reason: null,
+    }],
+  }));
+  writeFileSync(join(dir, 'events.jsonl'), '');
+}
+
 function claimSnapshot(runId: string): Record<string, unknown> | undefined {
   return readClaims().claims.find((claim) => claim.run_id === runId);
 }
@@ -173,6 +202,20 @@ describe('orc-run-start', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Error');
   });
+
+  it('appends run_started for an already in_progress claim (duplicate start is lenient at CLI level)', () => {
+    // Worker-facing CLIs use a lenient validator (no state-machine checks).
+    // The coordinator is the sole enforcer of state; the CLI just appends events.
+    seedInProgressRun({ runId: 'run-dup-start', agentId: 'worker-01' });
+
+    const result = runCli('run-start.ts', ['--run-id=run-dup-start', '--agent-id=worker-01']);
+
+    expect(result.status).toBe(0);
+    // Claim must not be mutated by the CLI — coordinator owns state transitions.
+    expect(claimSnapshot('run-dup-start')?.state).toBe('in_progress');
+    const events = readEvents();
+    expect(events.some((e) => e.event === 'run_started' && e.run_id === 'run-dup-start')).toBe(true);
+  });
 });
 
 describe('orc-run-heartbeat', () => {
@@ -198,6 +241,21 @@ describe('orc-run-heartbeat', () => {
     const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
+  });
+
+  it('appends a stale heartbeat for a terminated run without error (CLI is lenient)', () => {
+    // Worker-facing CLIs do not enforce state-machine rules — they append events
+    // and let the coordinator decide what to do. A heartbeat from a worker that
+    // does not yet know its run failed is accepted; the coordinator ignores it.
+    seedFailedRun({ runId: 'run-stale-hb', agentId: 'worker-01' });
+
+    const result = runCli('run-heartbeat.ts', ['--run-id=run-stale-hb', '--agent-id=worker-01']);
+
+    expect(result.status).toBe(0);
+    // Claim must remain failed — the CLI does not mutate state.
+    expect(claimSnapshot('run-stale-hb')?.state).toBe('failed');
+    const events = readEvents();
+    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-stale-hb')).toBe(true);
   });
 });
 
