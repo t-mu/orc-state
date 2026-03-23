@@ -2415,6 +2415,9 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
         last_heartbeat_at: null,
         started_at: null,
         finished_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
       }],
     });
 
@@ -2491,7 +2494,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
       task_ref: 'proj/restart-finalize-task',
       agent_id: 'orc-1',
       ts: '2026-03-11T08:10:00.000Z',
-      payload: { status: 'finalize_rebase_in_progress', retry_count: 1 } as Record<string, unknown>,
+      payload: { status: 'finalize_rebase_in_progress' as const, retry_count: 1 },
     };
 
     let coordinator = await import('./coordinator.ts');
