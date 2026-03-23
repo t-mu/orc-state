@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
 import {
   buildSessionBootstrap,
   getMasterBootstrap,
@@ -63,6 +64,14 @@ describe('buildSessionBootstrap', () => {
     const rendered = buildSessionBootstrap('carol', 'codex', 'reviewer');
     expect(rendered).toContain('provider: codex');
     expect(rendered).toContain('orc run-work-complete');
+  });
+
+  it('worker bootstrap template contains REVIEWER CONSTRAINTS block', () => {
+    const content = readFileSync('templates/worker-bootstrap-v2.txt', 'utf8');
+    expect(content).toContain('REVIEWER CONSTRAINTS');
+    expect(content).toContain('orc run-finish');
+    expect(content).toContain('orc task-mark-done');
+    expect(content).toContain('MAX_DEPTH=1');
   });
 
   it('uses worker-bootstrap-v2.txt when role is undefined', () => {
