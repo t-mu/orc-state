@@ -2,7 +2,7 @@
 ref: general/21-delegation-depth-and-blocked-tools
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 21 — Enforce Delegation Depth Limit and Blocked-Tool Constraints in Worker Bootstrap
