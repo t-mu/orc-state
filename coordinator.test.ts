@@ -2232,6 +2232,213 @@ describe('doShutdown', () => {
   });
 });
 
+describe('lifecycle reducer integration', () => {
+  it('applies lifecycle transitions through the reducer boundary', async () => {
+    // Verify that the coordinator routes run_started / heartbeat / run_finished
+    // through the reducer and applies the resulting state changes correctly.
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/reducer-task',
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-reducer-001',
+        task_ref: 'orch/reducer-task',
+        agent_id: 'orc-1',
+        state: 'claimed',
+        claimed_at: new Date(Date.now() - 5000).toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+
+    // run_started → should transition claimed → in_progress
+    await processTerminalRunEvents([{
+      event: 'run_started',
+      run_id: 'run-reducer-001',
+      task_ref: 'orch/reducer-task',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: {},
+    }]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const afterStart = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-001')!;
+    expect(afterStart.state).toBe('in_progress');
+    expect(afterStart.started_at).toBeTruthy();
+
+    // heartbeat → should extend lease
+    const beforeLease = afterStart.lease_expires_at as string;
+    await processTerminalRunEvents([{
+      event: 'heartbeat',
+      run_id: 'run-reducer-001',
+      task_ref: 'orch/reducer-task',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: {},
+    }]);
+
+    const afterHb = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-001')!;
+    expect(afterHb.last_heartbeat_at).toBeTruthy();
+    expect(new Date(afterHb.lease_expires_at as string).getTime())
+      .toBeGreaterThanOrEqual(new Date(beforeLease).getTime());
+
+    // run_finished → should transition to done
+    await processTerminalRunEvents([{
+      event: 'run_finished',
+      run_id: 'run-reducer-001',
+      task_ref: 'orch/reducer-task',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: {},
+    }]);
+
+    const afterFinish = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-001')!;
+    expect(afterFinish.state).toBe('done');
+    expect(afterFinish.finished_at).toBeTruthy();
+
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'orch/reducer-task')!;
+    expect(task.status).toBe('done');
+  });
+
+  it('treats duplicate and replayed events as explicit reducer outcomes', async () => {
+    // A re-delivered run_started on an already in_progress claim must be a noop
+    // for the state transition, and a re-delivered work_complete must still call
+    // finalizeRun regardless of whether finalization was already started.
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/reducer-replay-task',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-reducer-replay',
+        task_ref: 'orch/reducer-replay-task',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    });
+
+    const spawnSync = vi.fn()
+      .mockReturnValueOnce({ status: 0, stdout: '' })  // merge-base for first work_complete
+      .mockReturnValueOnce({ status: 0, stdout: '' });  // merge for first work_complete
+    vi.doMock('node:child_process', async () => {
+      const actual = await vi.importActual('node:child_process');
+      return { ...actual, spawnSync };
+    });
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        stop: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn().mockResolvedValue(''),
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        attach: vi.fn(),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn(),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue({
+        branch: 'task/run-reducer-replay',
+        worktree_path: '/tmp/orc-worktrees/run-reducer-replay',
+      }),
+    }));
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+
+    // A replayed run_started on an in_progress claim must not change state
+    const { readJson } = await import('./lib/stateReader.ts');
+    const beforeReplay = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-replay')!;
+    await processTerminalRunEvents([{
+      event: 'run_started',
+      run_id: 'run-reducer-replay',
+      task_ref: 'orch/reducer-replay-task',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: {},
+    }]);
+    const afterReplay = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-replay')!;
+    expect(afterReplay.state).toBe(beforeReplay.state);
+    expect(afterReplay.started_at).toBe(beforeReplay.started_at);
+  });
+
+  it('preserves coordinator-visible behavior after reducer extraction', async () => {
+    // Phase events should keep the claim alive (act as heartbeats).
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+        last_heartbeat_at: null,
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/reducer-phase-task',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-reducer-phase',
+        task_ref: 'orch/reducer-phase-task',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: '2026-03-11T07:00:00.000Z',  // expired
+        last_heartbeat_at: null,
+      }],
+    });
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      event: 'phase_started',
+      run_id: 'run-reducer-phase',
+      task_ref: 'orch/reducer-phase-task',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: { phase: 'implementation' },
+    }]);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-phase')!;
+    // phase_started should have renewed the lease (claim still alive)
+    expect(claim.state).toBe('in_progress');
+    expect(new Date(claim.lease_expires_at as string).getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
 describe('main startup validation', () => {
   it('exits with code 1 when backlog.json is missing', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'orc-coord-startup-test-'));

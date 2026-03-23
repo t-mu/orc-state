@@ -47,6 +47,7 @@ import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { FINALIZE_LEASE_MS } from './lib/constants.ts';
+import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -1167,6 +1168,8 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     const normalizedEventId = eventIdentity(event);
     const seq = typeof event.seq === 'number' ? event.seq : 0;
     const eventTs = coerceTs(event.ts);
+
+    // ── Duplicate / already-processed events ──────────────────────────────
     if (eventCheckpoint.processed_event_ids.includes(normalizedEventId)) {
       if (seq > 0) {
         eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
@@ -1174,163 +1177,128 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       continue;
     }
 
-    if (event.event === 'input_requested') {
-      if (event.actor_type === 'coordinator') {
-        if (seq > 0) {
-          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-        }
-        continue;
-      }
+    // ── Route state transitions through the lifecycle reducer ─────────────
+    // The reducer decides the correct state transition; the coordinator applies
+    // it and handles side effects that are independent of claim state.
+    const nowIso = new Date().toISOString();
+    const runId = (event as { run_id?: string }).run_id;
+    const agentId = (event as { agent_id?: string }).agent_id ?? '';
+    const claim = runId ? getClaim(runId) : null;
+    const action = reduceLifecycleEvent(
+      event as Parameters<typeof reduceLifecycleEvent>[0],
+      claim,
+      nowIso,
+    );
+
+    // ── Apply reducer action ───────────────────────────────────────────────
+
+    if (action.type === 'set_input_state') {
       try {
-        setRunInputState(STATE_DIR, event.run_id, event.agent_id, {
+        setRunInputState(STATE_DIR, runId!, agentId, {
           inputState: 'awaiting_input',
-          requestedAt: eventTs,
+          requestedAt: action.requestedAt,
         });
       } catch {
         // Ignore races with terminal events or cleaned-up claims.
       }
+    }
+
+    if (action.type === 'start_run') {
+      startRun(STATE_DIR, runId!, agentId, { emitEvent: false, at: action.at });
+      recordAgentActivity(STATE_DIR, agentId, { at: action.at });
+    }
+
+    if (action.type === 'heartbeat') {
+      heartbeat(STATE_DIR, runId!, agentId, { emitEvent: false, at: action.at, leaseDurationMs: action.leaseDurationMs });
+      recordAgentActivity(STATE_DIR, agentId, { at: action.at });
+    }
+
+    if (action.type === 'advance_finalization') {
+      setRunFinalizationState(STATE_DIR, runId!, agentId, {
+        finalizationState: action.state,
+        retryCountDelta: action.retryCountDelta,
+        blockedReason: action.blockedReason,
+      });
+      if (action.extendLeaseMs !== null) {
+        // Use wall-clock now (not the event timestamp) so the worker always
+        // gets the full lease window regardless of event processing lag.
+        try {
+          heartbeat(STATE_DIR, runId!, agentId, {
+            emitEvent: false,
+            leaseDurationMs: action.extendLeaseMs,
+          });
+        } catch (err) {
+          log(`warning: failed to extend lease on ${event.event} for ${runId}: ${(err as Error).message}`);
+        }
+      }
+      if (event.event === 'finalize_rebase_started') {
+        // Record activity using the authoritative event timestamp.
+        const floorTs = claim?.last_heartbeat_at ?? claim?.started_at ?? claim?.claimed_at;
+        const stateTs = authoritativeStateTs(eventTs, floorTs);
+        recordAgentActivity(STATE_DIR, agentId, { at: stateTs });
+      }
+    }
+
+    if (action.type === 'clear_input_state') {
+      try {
+        setRunInputState(STATE_DIR, runId!, agentId, { inputState: null });
+      } catch {
+        // Ignore races with terminal events or cleaned-up claims.
+      }
+    }
+
+    if (action.type === 'finish_run') {
+      finishRun(STATE_DIR, runId!, agentId, {
+        success: action.success,
+        failureReason: action.failureReason,
+        failureCode: action.failureCode,
+        policy: action.policy,
+        emitEvent: false,
+        at: action.at,
+      });
+    }
+
+    // ── Unconditional side effects for input_requested ────────────────────
+    // Notification is deposited regardless of whether the claim was updated.
+    if (event.event === 'input_requested' && event.actor_type !== 'coordinator') {
+      const requestedAt = action.type === 'set_input_state' ? action.requestedAt : eventTs;
       const deposited = appendNotification(STATE_DIR, {
         type: 'INPUT_REQUEST',
         dedupe_key: `input-request:${normalizedEventId}`,
-        task_ref: event.task_ref ?? '(unknown)',
-        run_id: event.run_id,
-        agent_id: event.agent_id,
-        question: event.payload.question,
-        requested_at: eventTs,
+        task_ref: (event as { task_ref?: string }).task_ref ?? '(unknown)',
+        run_id: runId!,
+        agent_id: agentId,
+        question: (event as { payload: { question: string } }).payload.question,
+        requested_at: requestedAt,
       });
       if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${event.task_ref ?? '(unknown)'}`);
+        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${(event as { task_ref?: string }).task_ref ?? '(unknown)'}`);
       }
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-      }
-      continue;
     }
 
-    if (event.event === 'run_started') {
-      const claim = getClaim(event.run_id);
-      if (claim && claim.state === 'claimed') {
-        const stateTs = authoritativeStateTs(eventTs, claim.claimed_at);
-        startRun(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
-        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
-      }
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-      }
-      continue;
-    }
-
-    if (event.event === 'heartbeat') {
-      if (!event.run_id || !event.agent_id) {
-        if (seq > 0) {
-          eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-        }
-        continue;
-      }
-      const claim = getClaim(event.run_id);
-      if (claim && ['claimed', 'in_progress'].includes(claim.state)) {
-        const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
-        const stateTs = authoritativeStateTs(eventTs, floorTs);
-        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
-        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
-      }
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-      }
-      continue;
-    }
-
-    if (event.event === 'phase_started'
-      || event.event === 'phase_finished'
-      || event.event === 'blocked'
-      || event.event === 'need_input'
-      || event.event === 'input_provided'
-      || event.event === 'unblocked') {
-      const claim = getClaim(event.run_id);
-      if (claim && claim.state === 'in_progress') {
-        const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
-        const stateTs = authoritativeStateTs(eventTs, floorTs);
-        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, at: stateTs });
-        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
-      }
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-      }
-      continue;
-    }
-
-    if (event.event === 'finalize_rebase_started') {
-      const claim = getClaim(event.run_id);
-      if (claim && claim.state === 'in_progress' && claim.finalization_state === 'finalize_rebase_requested') {
-        setRunFinalizationState(STATE_DIR, event.run_id, event.agent_id, {
-          finalizationState: 'finalize_rebase_in_progress',
-          retryCountDelta: 1,
-          blockedReason: null,
-        });
-        const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
-        const stateTs = authoritativeStateTs(eventTs, floorTs);
-        // Use FINALIZE_LEASE_MS anchored to now (not stateTs) so the worker always
-        // gets a full 60-min rebase window regardless of event processing lag.
-        heartbeat(STATE_DIR, event.run_id, event.agent_id, { emitEvent: false, leaseDurationMs: FINALIZE_LEASE_MS });
-        recordAgentActivity(STATE_DIR, event.agent_id, { at: stateTs });
-      }
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-      }
-      continue;
-    }
-
-    if (event.event === 'input_response') {
-      try {
-        setRunInputState(STATE_DIR, event.run_id, event.agent_id, { inputState: null });
-      } catch {
-        // Ignore races with terminal events or cleaned-up claims.
-      }
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
-      }
-      continue;
-    }
-
+    // ── Unconditional side effects for terminal run events ────────────────
+    // Cleanup and notification happen regardless of current claim state, so
+    // that a re-delivered terminal event still deposits its notification.
     if (event.event === 'run_finished' || event.event === 'run_failed') {
-      const claim = getClaim(event.run_id);
-      const stateTs = claim
-        ? authoritativeStateTs(eventTs, claim.finished_at ?? claim.started_at ?? claim.claimed_at)
+      const stateTs = action.type === 'finish_run'
+        ? action.at
         : authoritativeStateTs(eventTs);
-      if (claim && ['claimed', 'in_progress'].includes(claim.state)) {
-        finishRun(STATE_DIR, event.run_id, event.agent_id, {
-          success: event.event === 'run_finished',
-          failureReason: event.event === 'run_failed'
-            ? (event.payload.reason ?? null)
-            : null,
-          failureCode: event.event === 'run_failed'
-            ? (event.payload.code ?? null)
-            : null,
-          policy: event.event === 'run_failed'
-            ? (event.payload.policy ?? 'requeue')
-            : 'requeue',
-          emitEvent: false,
-          at: stateTs,
-        });
-      }
-      const eventAgentId = event.agent_id;
-      const eventRunId = event.run_id;
-      if (!hasOtherActiveClaim(eventAgentId, eventRunId)) {
-        await cleanupRunCapacity(eventAgentId, workerPoolConfig);
-      }
-      deleteRunWorktree(STATE_DIR, eventRunId);
       const failed = event.event === 'run_failed';
-      const failureReason = event.event === 'run_failed'
-        ? (event.payload.reason ?? null)
+      const failureReason = failed
+        ? ((event as { payload?: { reason?: string } }).payload?.reason ?? null)
         : null;
-      const exitCode = event.event === 'run_failed'
-        ? (event.payload.code ?? null)
+      const exitCode = failed
+        ? ((event as { payload?: { code?: string } }).payload?.code ?? null)
         : null;
+      if (!hasOtherActiveClaim(agentId, runId!)) {
+        await cleanupRunCapacity(agentId, workerPoolConfig);
+      }
+      deleteRunWorktree(STATE_DIR, runId!);
       const notification: Record<string, unknown> = {
         type: 'TASK_COMPLETE',
-        dedupe_key: `task-complete:${eventRunId}`,
-        task_ref: event.task_ref,
-        agent_id: eventAgentId,
+        dedupe_key: `task-complete:${runId}`,
+        task_ref: (event as { task_ref: string }).task_ref,
+        agent_id: agentId,
         success: !failed,
         finished_at: stateTs,
       };
@@ -1340,49 +1308,19 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       if (failed && (typeof exitCode === 'string' || typeof exitCode === 'number')) {
         notification.exit_code = exitCode;
       }
-      const deposited = appendNotification(STATE_DIR, {
-        ...notification,
-      });
+      const deposited = appendNotification(STATE_DIR, { ...notification });
       if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit notification for ${event.task_ref}`);
+        console.warn(`[coordinator] WARNING: failed to deposit notification for ${(event as { task_ref: string }).task_ref}`);
       }
     }
 
+    // ── Unconditional finalization trigger for work/merge events ──────────
+    // finalizeRun is called whenever the claim is in_progress, whether or not
+    // the finalization state was advanced above (handles idempotent re-delivery).
     if (event.event === 'work_complete' || event.event === 'ready_to_merge') {
-      const claim = getClaim(event.run_id);
-      if (claim && claim.state === 'in_progress') {
-        let claimForFinalize = claim;
-        if (event.event === 'work_complete' && claim.finalization_state == null) {
-          claimForFinalize = setRunFinalizationState(STATE_DIR, event.run_id, event.agent_id, {
-            finalizationState: 'awaiting_finalize',
-            blockedReason: null,
-          });
-          // Explicitly extend the lease when entering the finalize phase so that
-          // the rebase + merge window is not bounded by the previous 30-min default.
-          try {
-            heartbeat(STATE_DIR, event.run_id, event.agent_id, {
-              emitEvent: false,
-              leaseDurationMs: FINALIZE_LEASE_MS,
-            });
-          } catch (err) {
-            log(`warning: failed to extend lease on work_complete for ${event.run_id}: ${(err as Error).message}`);
-          }
-        } else if (event.event === 'ready_to_merge' && claim.finalization_state === 'finalize_rebase_in_progress') {
-          claimForFinalize = setRunFinalizationState(STATE_DIR, event.run_id, event.agent_id, {
-            finalizationState: 'ready_to_merge',
-            blockedReason: null,
-          });
-          // Extend lease again for the coordinator-driven merge step.
-          try {
-            heartbeat(STATE_DIR, event.run_id, event.agent_id, {
-              emitEvent: false,
-              leaseDurationMs: FINALIZE_LEASE_MS,
-            });
-          } catch (err) {
-            log(`warning: failed to extend lease on ready_to_merge for ${event.run_id}: ${(err as Error).message}`);
-          }
-        }
-        await finalizeRun(claimForFinalize, workerPoolConfig);
+      const latestClaim = runId ? getClaim(runId) : null;
+      if (latestClaim && latestClaim.state === 'in_progress') {
+        await finalizeRun(latestClaim, workerPoolConfig);
       }
     }
 

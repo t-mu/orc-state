@@ -2,7 +2,7 @@
 ref: general/20-lifecycle-reducer-extraction
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 20 — Extract Coordinator Lifecycle Handling Behind a Reducer
