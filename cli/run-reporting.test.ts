@@ -206,18 +206,20 @@ describe('orc-run-start', () => {
     expect(result.stderr).toContain('Error');
   });
 
-  it('appends run_started for an already in_progress claim (duplicate start is idempotent)', () => {
-    // If the coordinator already transitioned the claim via event processing, the
-    // synchronous startRun() call in the CLI silently ignores the wrong-state error.
+  it('exits 0 without emitting a duplicate event when claim is already in_progress', () => {
+    // If the coordinator already auto-acked the run (claim is in_progress),
+    // orc run-start must exit 0 silently without appending a duplicate event.
     seedInProgressRun({ runId: 'run-dup-start', agentId: 'worker-01' });
+    const eventsBefore = readEvents();
 
     const result = runCli('run-start.ts', ['--run-id=run-dup-start', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
-    // Claim stays in_progress — startRun() no-ops when already transitioned.
+    expect(result.stdout).toContain('run_started');
+    // Claim stays in_progress — no state change.
     expect(claimSnapshot('run-dup-start')?.state).toBe('in_progress');
-    const events = readEvents();
-    expect(events.some((e) => e.event === 'run_started' && e.run_id === 'run-dup-start')).toBe(true);
+    // No duplicate event appended.
+    expect(readEvents()).toHaveLength(eventsBefore.length);
   });
 });
 

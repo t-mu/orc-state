@@ -166,11 +166,29 @@ describe('startRun', () => {
     expect(() => startRun(dir, run_id, 'agent-02')).toThrow('agent-01');
   });
 
-  it('throws when claim is already in_progress', () => {
+  it('is idempotent — second call on an already in_progress claim is a no-op', () => {
     seed(dir);
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
     startRun(dir, run_id, 'agent-01');
-    expect(() => startRun(dir, run_id, 'agent-01')).toThrow('in_progress');
+    const claimBefore = readClaims(dir).claims.find(c => c.run_id === run_id)!;
+    const eventsBefore = readEvents(dir);
+    // Second call must not throw and must not change state or emit a duplicate event
+    expect(() => startRun(dir, run_id, 'agent-01')).not.toThrow();
+    const claimAfter = readClaims(dir).claims.find(c => c.run_id === run_id)!;
+    expect(claimAfter.state).toBe('in_progress');
+    expect(claimAfter.started_at).toBe(claimBefore.started_at);
+    expect(readEvents(dir)).toHaveLength(eventsBefore.length);
+  });
+
+  it('emits run_started with coordinator actor_type when actorType=coordinator', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01', { actorType: 'coordinator', actorId: 'coordinator' });
+    const ev = readEvents(dir).find(e => e.event === 'run_started');
+    expect(ev).toBeTruthy();
+    expect(ev!.actor_type).toBe('coordinator');
+    expect(ev!.actor_id).toBe('coordinator');
+    expect(ev!.agent_id).toBe('agent-01');
   });
 });
 

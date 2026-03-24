@@ -25,6 +25,13 @@ function loadClaim(currentRunId: string): Claim | null {
 
 try {
   const claim = loadClaim(runId);
+
+  // Idempotent: if coordinator already auto-acked this run, treat as no-op success
+  if (claim?.state === 'in_progress' && claim?.agent_id === agentId) {
+    console.log(`run_started: ${runId} (${agentId})`);
+    process.exit(0);
+  }
+
   const { claim: validatedClaim } = validateProgressCommandInput({
     event: 'run_started',
     runId,

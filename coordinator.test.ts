@@ -273,13 +273,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(slot?.session_handle).toBe('pty:orc-1');
 
     const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
-    expect(claims[0]?.state).toBe('claimed');
+    expect(claims[0]?.state).toBe('in_progress');
     expect(claims[0]?.session_start_retry_count).toBe(0);
     expect(claims[0]?.session_start_retry_next_at).toBeNull();
     expect(claims[0]?.session_start_last_error).toBeNull();
 
     const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
-    expect(backlog.features[0].tasks[0].status).toBe('claimed');
+    expect(backlog.features[0].tasks[0].status).toBe('in_progress');
 
     expect(readEvents(dir).some((event) => event.event === 'session_start_failed')).toBe(false);
     expect(mockStart).toHaveBeenCalledTimes(3);
@@ -361,7 +361,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
       ({ readJson } = await import('./lib/stateReader.ts'));
       ({ claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }));
-      expect(claims[0]?.state).toBe('claimed');
+      expect(claims[0]?.state).toBe('in_progress');
       expect(claims[0]?.session_start_retry_count).toBe(0);
       expect(claims[0]?.session_start_last_error).toBeNull();
       expect(mockStart).toHaveBeenCalledTimes(3);
@@ -603,6 +603,60 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
     const agent = agents.find((entry) => entry.agent_id === 'worker-01')!;
     expect(agent.session_handle).toBe('pty:worker-01-new');
+  });
+
+  it('auto-acks run_started after successful TASK_START injection', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'idle',
+        session_handle: null,
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [DISPATCHABLE_TASK],
+    });
+
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null }),
+        send: vi.fn().mockResolvedValue(''),
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-allocated',
+        branch: 'task/run-allocated',
+        worktree_path: '/tmp/orc-worktrees/run-allocated',
+      }),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue(null),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    expect(claims[0]?.state).toBe('in_progress');
+    expect(claims[0]?.started_at).toBeTruthy();
+
+    const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
+    expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+
+    const events = readEvents(dir);
+    const runStarted = events.find((e) => e.event === 'run_started');
+    expect(runStarted).toBeTruthy();
+    expect(runStarted!.actor_type).toBe('coordinator');
+    expect(runStarted!.actor_id).toBe('coordinator');
+    expect(runStarted!.agent_id).toBe('worker-01');
   });
 
   it('does not nudge or timeout an in-progress run while awaiting master input', async () => {
