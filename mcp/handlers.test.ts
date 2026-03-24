@@ -1318,18 +1318,30 @@ describe('handleQueryEvents', () => {
   it('filters by event_type', () => {
     const result = handleQueryEvents(dir, { event_type: 'run_started' });
     expect(result).toHaveLength(1);
-    expect((result[0] as unknown as Record<string, unknown>).event).toBe('run_started');
+    expect(((result as unknown[])[0] as Record<string, unknown>).event).toBe('run_started');
   });
 
   it('filters by after_seq', () => {
     const result = handleQueryEvents(dir, { after_seq: 2 });
     expect(result).toHaveLength(1);
-    expect((result[0] as unknown as Record<string, unknown>).seq).toBe(3);
+    expect(((result as unknown[])[0] as Record<string, unknown>).seq).toBe(3);
   });
 
   it('respects limit cap', () => {
     const result = handleQueryEvents(dir, { limit: 1 });
     expect(result).toHaveLength(1);
+  });
+
+  it('filters by fts_query', () => {
+    const result = handleQueryEvents(dir, { fts_query: 'run_started' });
+    expect(result).toHaveLength(1);
+    expect(((result as unknown[])[0] as Record<string, unknown>).event).toBe('run_started');
+  });
+
+  it('returns error object for malformed fts_query', () => {
+    const result = handleQueryEvents(dir, { fts_query: '"unclosed' }) as { error: string };
+    expect(result).toHaveProperty('error');
+    expect(result.error).toMatch(/query_events failed/);
   });
 
   it('returns empty array when no events file exists', () => {

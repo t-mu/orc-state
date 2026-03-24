@@ -78,7 +78,7 @@ export const TOOLS = [
   },
   {
     name: 'get_recent_events',
-    description: 'Return the most recent events from events.jsonl. Use agent_id or run_id to narrow results and reduce token usage.',
+    description: 'Return the most recent events from the SQLite events database. Use agent_id or run_id to narrow results and reduce token usage.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -302,7 +302,7 @@ export const TOOLS = [
   },
   {
     name: 'query_events',
-    description: 'Query events.jsonl with optional filters. Returns last `limit` matching events.',
+    description: 'Query the SQLite events database with optional filters. Returns last `limit` matching events.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -328,6 +328,10 @@ export const TOOLS = [
           minimum: 1,
           maximum: 500,
           description: 'Maximum events to return (default: 50, max: 500)',
+        },
+        fts_query: {
+          type: 'string',
+          description: 'Full-text search query (FTS5 syntax) to match against event payloads',
         },
       },
       additionalProperties: false,
