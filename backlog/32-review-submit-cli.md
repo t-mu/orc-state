@@ -2,7 +2,7 @@
 ref: general/32-review-submit-cli
 feature: general
 priority: normal
-status: todo
+status: done
 depends_on:
   - general/31-review-submitted-event-type
 ---

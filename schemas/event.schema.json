@@ -30,6 +30,7 @@
         "claim_expired",
         "claim_released",
         "run_started",
+        "review_submitted",
         "work_complete",
         "finalize_rebase_started",
         "ready_to_merge",
