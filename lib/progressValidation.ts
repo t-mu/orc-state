@@ -3,7 +3,6 @@ import type { Claim, FinalizationState } from '../types/claims.ts';
 const SUPPORTED_EVENTS = new Set([
   'run_started',
   'heartbeat',
-  'review_submitted',
   'work_complete',
   'finalize_rebase_started',
   'ready_to_merge',

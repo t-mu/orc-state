@@ -85,8 +85,8 @@ export const TOOLS = [
         limit: {
           type: 'integer',
           minimum: 0,
-          maximum: 50,
-          description: 'Max events to return (default: 20, max: 50)',
+          maximum: 200,
+          description: 'Max events to return (default: 20, max: 200)',
         },
         agent_id: {
           type: 'string',

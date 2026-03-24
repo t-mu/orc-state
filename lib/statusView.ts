@@ -222,22 +222,6 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       last_heartbeat_at: slot.last_heartbeat_at ?? null,
     };
   });
-  // Active tasks: all non-done/released tasks with titles for the UI
-  const claimByTaskRef = new Map(activeClaims.map((c) => [c.task_ref, c]));
-  const activeTaskList: Array<{ ref: string; title: string; status: string; owner: string | null }> = [];
-  for (const feature of (backlogFile.features ?? [])) {
-    for (const task of (feature.tasks ?? [])) {
-      if (task.status === 'done' || task.status === 'released') continue;
-      const claim = task.ref ? claimByTaskRef.get(task.ref) : undefined;
-      activeTaskList.push({
-        ref: task.ref,
-        title: task.title,
-        status: task.status,
-        owner: claim?.agent_id ?? (task.owner as string | null | undefined) ?? null,
-      });
-    }
-  }
-
   const dispatchReadyTasks = listDispatchReadyTasks(backlogFile);
   const availableSlots = slotDetails.filter((slot) => slot.slot_state === 'available').length;
   const startupFailures = collectRecentFailures(allEvents);
@@ -306,7 +290,6 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       active: finalizationRuns,
       blocked_preserved: blockedFinalizationRuns,
     },
-    active_tasks: activeTaskList,
     failures: startupFailures,
     recentEvents,
     eventReadError,
@@ -345,82 +328,23 @@ export function buildAgentStatus(stateDir: string, agentId: string): Record<stri
   };
 }
 
-// ── Table rendering helpers ──────────────────────────────────────────────────
-
-/** Visual column width — emoji count as 2, box-drawing chars as 1. */
-function visWidth(s: string): number {
-  let w = 0;
-  for (const ch of s) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if (cp >= 0x2500 && cp <= 0x27FF) { w += 1; } // box-drawing / misc symbols: 1 wide
-    else if (cp > 0x2000) { w += 2; }              // emoji / supplementary: 2 wide
-    else { w += 1; }
-  }
-  return w;
-}
-
-function padEnd(s: string, width: number): string {
-  return s + ' '.repeat(Math.max(0, width - visWidth(s)));
-}
-
-type Row = string[];
-
-function renderTable(headers: Row, rows: Row[]): string {
-  const cols = headers.length;
-  const widths = headers.map(visWidth);
-  for (const row of rows) {
-    for (let i = 0; i < cols; i++) widths[i] = Math.max(widths[i], visWidth(row[i] ?? ''));
-  }
-  const border = (l: string, m: string, r: string, x: string) =>
-    l + widths.map((w) => m.repeat(w + 2)).join(x) + r;
-  const dataRow = (cells: Row) =>
-    '│' + cells.map((c, i) => ` ${padEnd(c, widths[i])} `).join('│') + '│';
-  const out: string[] = [border('┌', '─', '┐', '┬'), dataRow(headers), border('├', '─', '┤', '┼')];
-  for (let i = 0; i < rows.length; i++) {
-    out.push(dataRow(rows[i]));
-    if (i < rows.length - 1) out.push(border('├', '─', '┤', '┼'));
-  }
-  out.push(border('└', '─', '┘', '┴'));
-  return out.join('\n');
-}
-
-// ── Icon helpers ─────────────────────────────────────────────────────────────
-
-function agentStatusIcon(agentStatus: string, slotState?: string): string {
-  if (slotState === 'busy') return '🔵 busy';
-  if (slotState === 'warming') return '🟡 warming';
-  if (agentStatus === 'running') return '🟢 running';
-  if (agentStatus === 'offline') return '⚫ offline';
-  return '🔴 idle';
-}
-
-function taskStatusIcon(s: string): string {
-  switch (s) {
-    case 'todo': return '🟡 todo';
-    case 'claimed': return '🔵 claimed';
-    case 'in_progress': return '🔵 in_progress';
-    case 'blocked': return '🔴 blocked';
-    case 'done': return '✅ done';
-    case 'released': return '✅ released';
-    default: return s;
-  }
-}
-
-// ── formatStatus ─────────────────────────────────────────────────────────────
-
 /**
  * Format a status object as a human-readable string for terminal output.
  */
 export function formatStatus(status: Record<string, unknown>): string {
-  const agentsBlock = status['agents'] as { list: Array<{ agent_id: string; role?: string; status: string; provider: string }> };
+  const lines: string[] = [];
+  const master = status['master'] as { agent_id: string; provider: string; status: string; session_handle: string | null } | null;
   const workerCapacity = status['worker_capacity'] as {
     configured_slots: number;
     used_slots: number;
     available_slots: number;
+    warming_slots: number;
+    unavailable_slots: number;
+    provider: string;
     dispatch_ready_count: number;
     waiting_for_capacity: number;
-    dispatch_ready_tasks: Array<{ ref: string; title: string }>;
-    slots: Array<{ agent_id: string; slot_state: string; status: string; active_task_ref: string | null }>;
+    dispatch_ready_tasks: Array<{ ref: string }>;
+    slots: Array<{ session_handle: string | null; agent_id: string; slot_state: string; status: string; active_run_id: string | null; active_task_ref: string | null }>;
   };
   const claims = status['claims'] as {
     total: number;
@@ -442,6 +366,10 @@ export function formatStatus(status: Record<string, unknown>): string {
   };
   const finalization = status['finalization'] as {
     total: number;
+    awaiting_finalize: number;
+    finalize_rebase_requested: number;
+    finalize_rebase_in_progress: number;
+    ready_to_merge: number;
     blocked_finalize: number;
     active: Array<{
       run_id: string;
@@ -454,100 +382,110 @@ export function formatStatus(status: Record<string, unknown>): string {
   };
   const failures = status['failures'] as { startup: FailureEntry[]; lifecycle: FailureEntry[] };
   const tasksStatus = status['tasks'] as { total: number; counts: Record<string, number> };
-  const activeTasks = (status['active_tasks'] ?? []) as Array<{ ref: string; title: string; status: string; owner: string | null }>;
   const eventReadError = status['eventReadError'] as string;
-
-  const slotByAgentId = new Map(workerCapacity.slots.map((s) => [s.agent_id, s]));
-  const activeTaskByRef = new Map(activeTasks.map((t) => [t.ref, t]));
-  const lines: string[] = [];
 
   lines.push('Orchestrator Status');
   lines.push('─'.repeat(40));
-
-  // ── Agents table ────────────────────────────────────────────────────────────
   lines.push('');
-  lines.push('Agents');
-  if (agentsBlock.list.length === 0) {
-    lines.push('  (none registered)');
+  lines.push('Master:');
+  if (!master) {
+    lines.push('  (not registered)');
   } else {
-    const agentRows: Row[] = agentsBlock.list.map((a) => {
-      const slot = slotByAgentId.get(a.agent_id);
-      const taskRef = slot?.active_task_ref ?? null;
-      const taskEntry = taskRef ? activeTaskByRef.get(taskRef) : null;
-      const taskLabel = taskEntry
-        ? `${taskEntry.ref} — ${truncate(taskEntry.title, 40)}`
-        : (taskRef ?? '—');
-      return [a.agent_id, a.role ?? 'worker', agentStatusIcon(a.status, slot?.slot_state), a.provider, taskLabel];
-    });
-    lines.push(renderTable(['Agent', 'Role', 'Status', 'Provider', 'Active Task'], agentRows));
-  }
-
-  // ── Task Counts table ───────────────────────────────────────────────────────
-  lines.push('');
-  lines.push('Task Counts');
-  const STATUS_ORDER = ['todo', 'claimed', 'in_progress', 'blocked', 'done', 'released'];
-  const countEntries = Object.entries(tasksStatus.counts).sort(
-    ([a], [b]) => (STATUS_ORDER.indexOf(a) + 1 || 99) - (STATUS_ORDER.indexOf(b) + 1 || 99),
-  );
-  if (countEntries.length === 0) {
-    lines.push('  (no tasks)');
-  } else {
-    lines.push(renderTable(['Status', 'Count'], countEntries.map(([s, n]) => [taskStatusIcon(s), String(n)])));
-  }
-
-  // ── Active Tasks table ──────────────────────────────────────────────────────
-  lines.push('');
-  lines.push('Active Tasks');
-  const displayTasks = activeTasks.filter((t) => t.status !== 'done' && t.status !== 'released');
-  if (displayTasks.length === 0) {
-    lines.push('  (none)');
-  } else {
-    lines.push(renderTable(
-      ['Ref', 'Title', 'Status', 'Owner'],
-      displayTasks.map((t) => [t.ref, truncate(t.title, 42), taskStatusIcon(t.status), t.owner ?? '—']),
-    ));
-  }
-
-  // ── Active Runs detail ──────────────────────────────────────────────────────
-  lines.push('');
-  lines.push(`Active Runs (${claims.total}):  awaiting_run_started=${claims.awaiting_run_started ?? 0}  in_progress=${claims.in_progress ?? 0}  stalled=${claims.stalled ?? 0}`);
-  for (const c of claims.active) {
-    const exp = c.lease_expires_at ? ` expires=${msUntil(c.lease_expires_at)}` : '';
-    const stalledLabel = c.stalled ? ' ⚠ stalled' : '';
-    const finalizationLabel = c.finalization_state
-      ? ` finalize=${c.finalization_state} retry=${c.finalization_retry_count ?? 0}`
-      : '';
     lines.push(
-      `  ${c.run_id.padEnd(24)} ${(c.task_ref ?? '').padEnd(24)} ${(c.agent_id ?? '').padEnd(12)} ${c.state.padEnd(12)} age=${c.age_seconds ?? '?'}s idle=${c.idle_seconds ?? '?'}s${exp}${finalizationLabel}${stalledLabel}`,
+      `  ${master.agent_id} ${master.provider} ${master.status} ${master.session_handle ? 'attached' : 'detached'}`,
     );
   }
 
-  // ── Finalization ─────────────────────────────────────────────────────────────
   lines.push('');
-  lines.push(`Finalization (${finalization.total}):  blocked_preserved=${finalization.blocked_finalize}`);
-  for (const claim of finalization.active) {
-    const blockedLabel = claim.finalization_state === 'blocked_finalize' ? ' preserved_work' : '';
-    const blockedReason = claim.finalization_blocked_reason
-      ? ` reason=${truncate(claim.finalization_blocked_reason, 56)}`
-      : '';
-    const branch = claim.run_branch ? ` branch=${claim.run_branch}` : '';
-    const worktree = claim.run_worktree_path ? ` worktree=${claim.run_worktree_path}` : '';
-    lines.push(`  ${claim.run_id.padEnd(24)} ${claim.finalization_state.padEnd(28)} retry=${claim.finalization_retry_count}${blockedLabel}${branch}${worktree}${blockedReason}`);
+  lines.push('Worker Capacity:');
+  lines.push(`  configured_slots:    ${workerCapacity.configured_slots}`);
+  lines.push(`  used_slots:          ${workerCapacity.used_slots}`);
+  lines.push(`  available_slots:     ${workerCapacity.available_slots}`);
+  lines.push(`  warming_slots:       ${workerCapacity.warming_slots}`);
+  lines.push(`  unavailable_slots:   ${workerCapacity.unavailable_slots}`);
+  lines.push(`  slot_provider:       ${workerCapacity.provider}`);
+  lines.push(`  dispatch_ready:      ${workerCapacity.dispatch_ready_count}`);
+  lines.push(`  waiting_for_capacity:${` ${workerCapacity.waiting_for_capacity}`}`);
+  if (workerCapacity.dispatch_ready_tasks.length === 0) {
+    lines.push('  queue:               (none)');
+  } else {
+    for (const task of workerCapacity.dispatch_ready_tasks.slice(0, 3)) {
+      lines.push(`  queue:               ${task.ref}`);
+    }
+    if (workerCapacity.dispatch_ready_tasks.length > 3) {
+      lines.push(`  queue:               +${workerCapacity.dispatch_ready_tasks.length - 3} more`);
+    }
+  }
+  const spawnedSlots = workerCapacity.slots.filter((slot) => slot.session_handle !== null);
+  if (spawnedSlots.length === 0) {
+    lines.push('  slots: (none spawned)');
+  } else {
+    for (const slot of spawnedSlots) {
+      const suffix = slot.active_run_id
+        ? ` run=${slot.active_run_id} task=${slot.active_task_ref ?? 'n/a'}`
+        : '';
+      lines.push(`  ${slot.agent_id.padEnd(12)} ${slot.slot_state.padEnd(12)} ${slot.status.padEnd(10)}${suffix}`);
+    }
   }
 
-  // ── Recent Failures ──────────────────────────────────────────────────────────
-  const failureCount = failures.startup.length + failures.lifecycle.length;
   lines.push('');
-  lines.push(`Recent Failures (${failureCount}):`);
-  if (failureCount === 0) {
+  lines.push(`Active Runs (${claims.total}):`);
+  lines.push(`  awaiting_run_started: ${claims.awaiting_run_started ?? 0}`);
+  lines.push(`  in_progress:          ${claims.in_progress ?? 0}`);
+  lines.push(`  stalled:              ${claims.stalled ?? 0}`);
+  if (claims.active.length === 0) {
     lines.push('  (none)');
   } else {
-    for (const f of failures.startup) {
-      lines.push(`  startup ${f.agent_id ?? 'n/a'} ${f.run_id ?? 'n/a'} ${truncate(f.reason)}`);
+    for (const c of claims.active) {
+      const exp = c.lease_expires_at ? `expires ${msUntil(c.lease_expires_at)}` : '';
+      const stalledLabel = c.stalled ? ' stalled' : '';
+      const finalizationLabel = c.finalization_state
+        ? ` finalize=${c.finalization_state} retry=${c.finalization_retry_count ?? 0}`
+        : '';
+      lines.push(
+        `  ${c.run_id.padEnd(24)} ${(c.task_ref ?? '').padEnd(24)} ${(c.agent_id ?? '').padEnd(12)} ${c.state.padEnd(12)} ${exp} age=${c.age_seconds ?? '?'}s idle=${c.idle_seconds ?? '?'}s${finalizationLabel}${stalledLabel}`,
+      );
     }
-    for (const f of failures.lifecycle) {
-      lines.push(`  ${f.event ?? 'unknown'} ${f.agent_id ?? 'n/a'} ${f.run_id ?? 'n/a'} ${truncate(f.reason)}`);
+  }
+
+  lines.push('');
+  lines.push(`Finalization (${finalization.total}):`);
+  lines.push(`  awaiting_finalize:        ${finalization.awaiting_finalize}`);
+  lines.push(`  finalize_rebase_requested:${` ${finalization.finalize_rebase_requested}`}`);
+  lines.push(`  finalize_rebase_in_progress:${` ${finalization.finalize_rebase_in_progress}`}`);
+  lines.push(`  ready_to_merge:           ${finalization.ready_to_merge}`);
+  lines.push(`  blocked_preserved:        ${finalization.blocked_finalize}`);
+  if (finalization.active.length === 0) {
+    lines.push('  (none)');
+  } else {
+    for (const claim of finalization.active) {
+      const blockedLabel = claim.finalization_state === 'blocked_finalize' ? ' preserved_work' : '';
+      const blockedReason = claim.finalization_blocked_reason
+        ? ` reason=${truncate(claim.finalization_blocked_reason, 56)}`
+        : '';
+      const worktree = claim.run_worktree_path ? ` worktree=${claim.run_worktree_path}` : '';
+      const branch = claim.run_branch ? ` branch=${claim.run_branch}` : '';
+      lines.push(`  ${claim.run_id.padEnd(24)} ${claim.finalization_state.padEnd(28)} retry=${claim.finalization_retry_count}${blockedLabel}${branch}${worktree}${blockedReason}`);
     }
+  }
+
+  lines.push('');
+  lines.push(`Recent Failures (${failures.startup.length + failures.lifecycle.length}):`);
+  if (failures.startup.length === 0 && failures.lifecycle.length === 0) {
+    lines.push('  (none)');
+  } else {
+    for (const failure of failures.startup) {
+      lines.push(`  startup ${failure.agent_id ?? 'n/a'} ${failure.run_id ?? 'n/a'} ${truncate(failure.reason)}`);
+    }
+    for (const failure of failures.lifecycle) {
+      lines.push(`  ${failure.event ?? 'unknown'} ${failure.agent_id ?? 'n/a'} ${failure.run_id ?? 'n/a'} ${truncate(failure.reason)}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`Tasks (${tasksStatus.total} total):`);
+  for (const [s, count] of Object.entries(tasksStatus.counts).sort()) {
+    lines.push(`  ${s.padEnd(14)} ${count}`);
   }
 
   if (eventReadError) {

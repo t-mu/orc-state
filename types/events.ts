@@ -92,16 +92,6 @@ export interface RunStartedEvent extends BaseEvent {
   payload?: Record<string, unknown>;
 }
 
-export interface ReviewSubmittedEvent extends BaseEvent {
-  event: 'review_submitted';
-  run_id: string;
-  agent_id: string;
-  payload: {
-    outcome: 'approved' | 'findings';
-    findings: string;
-  };
-}
-
 export interface WorkCompleteEvent extends BaseEvent {
   event: 'work_complete';
   run_id: string;
@@ -294,7 +284,6 @@ export type OrcEvent =
   | ClaimExpiredEvent
   | ClaimReleasedEvent
   | RunStartedEvent
-  | ReviewSubmittedEvent
   | WorkCompleteEvent
   | FinalizeRebaseStartedEvent
   | ReadyToMergeEvent
