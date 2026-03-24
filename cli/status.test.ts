@@ -153,6 +153,51 @@ describe('cli/status.ts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc-status --mine --agent-id=<id> [--json]');
   });
+
+  it('--watch --once renders one frame with ANSI clear and update footer', () => {
+    seedValidState({
+      agents: [
+        { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+      ],
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-1',
+        task_ref: 'docs/task-1',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: '2026-01-01T00:00:00Z',
+        lease_expires_at: '2099-01-01T00:00:00Z',
+      }],
+    });
+    const result = runStatus(['--watch', '--once']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('\x1b[2J\x1b[H');
+    expect(result.stdout).toContain('Orchestrator Status');
+    expect(result.stdout).toContain('watch interval:');
+    expect(result.stdout).toContain('updated at:');
+  });
+
+  it('--watch --once exits 1 when state is invalid', () => {
+    // empty dir — no state files seeded
+    const result = runStatus(['--watch', '--once']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('State validation failed');
+  });
+
+  it('-w --once is equivalent to --watch --once', () => {
+    seedValidState();
+    const result = runStatus(['-w', '--once']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('watch interval:');
+    expect(result.stdout).toContain('updated at:');
+  });
+
+  it('--watch --once respects --interval-ms in footer', () => {
+    seedValidState();
+    const result = runStatus(['--watch', '--once', '--interval-ms=2000']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('watch interval: 2000ms');
+  });
 });
 
 function runStatus(args: string[]) {
