@@ -14,6 +14,7 @@ const SUPPORTED_EVENTS = new Set([
   'need_input',
   'input_provided',
   'unblocked',
+  'review_submitted',
 ]);
 
 const EVENTS_REQUIRING_PHASE = new Set(['phase_started', 'phase_finished']);

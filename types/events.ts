@@ -258,6 +258,15 @@ export interface SessionStartFailedEvent extends BaseEvent {
   payload: { reason: string; code?: string | undefined; working_directory?: string | undefined; [key: string]: unknown };
 }
 
+// ── Review events ─────────────────────────────────────────────────────────────
+
+export interface ReviewSubmittedEvent extends BaseEvent {
+  event: 'review_submitted';
+  run_id: string;
+  agent_id: string;
+  payload: { outcome: 'approved' | 'findings'; findings: string; [key: string]: unknown };
+}
+
 // ── Coordinator events ────────────────────────────────────────────────────────
 
 export interface CoordinatorStartedEvent extends BaseEvent {
@@ -305,7 +314,8 @@ export type OrcEvent =
   | AgentMarkedDeadEvent
   | SessionStartFailedEvent
   | CoordinatorStartedEvent
-  | CoordinatorStoppedEvent;
+  | CoordinatorStoppedEvent
+  | ReviewSubmittedEvent;
 
 // ── Type guards ───────────────────────────────────────────────────────────────
 

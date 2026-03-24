@@ -60,14 +60,22 @@ git commit -m "feat(<scope>): <outcome>"
 # 2. Sub-agent review round
 #    a. Emit a heartbeat before spawning sub-agents:
 orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
-#    b. Spawn two independent sub-agents. Give each the acceptance criteria and
-#       the output of `git diff main` as context. Ask each to review the changes
-#       and return findings (or "approved").
-#    c. Wait for a final response from both sub-agents. Do not merge after only
-#       one response. If a reviewer fails explicitly, cannot complete, or remains
-#       non-responsive after a reasonable bounded wait, record that outcome and
-#       proceed with the completed review(s).
-#    d. Consolidate findings from all completed review responses.
+#    b. Spawn two independent sub-agents. Give each:
+#       - the acceptance criteria
+#       - the output of `git diff main`
+#       - their run_id, agent_id, and reviewer number
+#       IMPORTANT: instruct each reviewer to call before returning:
+#         orc review-submit --run-id=<run_id> --agent-id=<their_agent_id> \
+#           --outcome=<approved|findings> --reason="<findings text>"
+#       Findings written this way survive context compaction.
+#
+#    c. After both sub-agents complete (or after a bounded wait), retrieve
+#       findings from the event store — this works even after context compaction:
+#         orc review-read --run-id=<run_id>
+#       If a reviewer failed or is non-responsive, proceed with the reviews
+#       that were submitted. orc review-read exits 0 regardless of count.
+#
+#    d. Consolidate findings from the review-read output.
 #    e. Address all findings, then amend or add a fixup commit.
 #    This review round happens once.
 

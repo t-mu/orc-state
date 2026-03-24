@@ -2,7 +2,7 @@
 ref: general/33-review-read-cli-and-agents-protocol
 feature: general
 priority: normal
-status: todo
+status: done
 depends_on:
   - general/32-review-submit-cli
 ---
