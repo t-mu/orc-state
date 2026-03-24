@@ -42,6 +42,12 @@ export interface TaskDelegatedEvent extends BaseEvent {
   payload?: Record<string, unknown>;
 }
 
+export interface TaskDispatchBlockedEvent extends BaseEvent {
+  event: 'task_dispatch_blocked';
+  task_ref: string;
+  payload: { reason: string; findings: string[]; [key: string]: unknown };
+}
+
 // ── Claim events ─────────────────────────────────────────────────────────────
 
 export interface ClaimCreatedEvent extends BaseEvent {
@@ -272,6 +278,7 @@ export type OrcEvent =
   | TaskCancelledEvent
   | TaskReleasedEvent
   | TaskDelegatedEvent
+  | TaskDispatchBlockedEvent
   | ClaimCreatedEvent
   | ClaimRenewedEvent
   | ClaimExpiredEvent

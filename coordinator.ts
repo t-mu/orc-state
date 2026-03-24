@@ -1053,7 +1053,7 @@ async function tick() {
             success: false,
             failureReason: 'injection_scan_blocked',
             failureCode: 'ERR_INJECTION_SCAN',
-            policy: 'requeue',
+            policy: 'block',
           });
         }
         return;
