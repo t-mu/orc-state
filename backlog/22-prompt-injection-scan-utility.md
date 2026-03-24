@@ -2,7 +2,7 @@
 ref: general/22-prompt-injection-scan-utility
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 22 — Add Prompt-Injection Scan Utility
