@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { validateProgressCommandInput } from '../lib/progressValidation.ts';
+import { startRun } from '../lib/claimManager.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { readClaims } from '../lib/stateReader.ts';
@@ -33,8 +34,9 @@ try {
     policy: null,
   }, claim);
 
+  const at = new Date().toISOString();
   appendSequencedEvent(STATE_DIR, {
-    ts: new Date().toISOString(),
+    ts: at,
     event: 'run_started',
     actor_type: 'agent',
     actor_id: agentId,
@@ -43,6 +45,15 @@ try {
     agent_id: agentId,
     payload: {},
   }, { lockStrategy: 'none' });
+
+  // Update claims.json synchronously so enforceRunStartLifecycle sees in_progress
+  // immediately, without waiting for the coordinator's event polling cycle (~30 s).
+  try {
+    startRun(STATE_DIR, runId, agentId, { emitEvent: false, at });
+  } catch {
+    // Ignore: coordinator may have already transitioned the claim via event processing.
+  }
+
   console.log(`run_started: ${runId} (${agentId})`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
