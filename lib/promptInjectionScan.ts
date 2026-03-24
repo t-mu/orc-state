@@ -42,6 +42,8 @@ export function scanForInjection(text: string): ScanResult {
         break;
       }
     }
+    // Advance past the low surrogate for supplementary codepoints (> U+FFFF)
+    if (cp > 0xFFFF) i++;
   }
 
   // 2. Injection phrase scan (case-insensitive, whole text)
