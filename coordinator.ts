@@ -942,7 +942,11 @@ async function tick() {
     tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
     agents = tickAgents.agents ?? [];
     claims = tickClaims.claims ?? [];
-  } catch {
+  } catch (err) {
+    console.error(`[coordinator] ERROR in event processing tick: ${(err as Error)?.message ?? String(err)}`);
+    if ((err as Error)?.stack) {
+      console.error((err as Error).stack);
+    }
     latestActivityByRun = new Map();
   }
 
