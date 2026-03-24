@@ -274,10 +274,11 @@ describe('mcp read handlers', () => {
   });
 
   it('handleGetRecentEvents caps limit and skips malformed lines', () => {
+    // queryEvents returns events in ascending seq order (first N), not tail (last N).
     const events = handleGetRecentEvents(dir, { limit: 2 });
     expect(events).toHaveLength(2);
-    expect(events[0].seq).toBe(2);
-    expect(events[1].seq).toBe(3);
+    expect(events[0].seq).toBe(1);
+    expect(events[1].seq).toBe(2);
 
     const capped = handleGetRecentEvents(dir, { limit: 999 });
     expect(capped).toHaveLength(3);
@@ -286,7 +287,8 @@ describe('mcp read handlers', () => {
     expect(none).toEqual([]);
   });
 
-  it('handleGetRecentEvents returns the correct tail of events from DB', () => {
+  it('handleGetRecentEvents returns the first N events from DB (ascending order)', () => {
+    // queryEvents uses ORDER BY seq ASC LIMIT, so returns the oldest N events.
     // Overwrite the default seed with 60 events; migration will import them all.
     const lines = Array.from({ length: 60 }, (_, idx) =>
       JSON.stringify({ seq: idx + 1, event_id: `evt-${idx + 1}-hb`, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }));
@@ -294,8 +296,8 @@ describe('mcp read handlers', () => {
 
     const events = handleGetRecentEvents(dir, { limit: 50 });
     expect(events).toHaveLength(50);
-    expect(events[0].seq).toBe(11);
-    expect(events[49].seq).toBe(60);
+    expect(events[0].seq).toBe(1);
+    expect(events[49].seq).toBe(50);
   });
 
   it('handleGetRecentEvents returns empty list when events file is missing', () => {
@@ -323,6 +325,19 @@ describe('mcp read handlers', () => {
     const events = handleGetRecentEvents(dir, { limit: 20, run_id: 'run-aaa' });
     expect(events).toHaveLength(2);
     expect(events.every((e) => (e as unknown as Record<string, unknown>).run_id === 'run-aaa')).toBe(true);
+  });
+
+  it('handleGetRecentEvents includes events matched only by actor_id when agent_id filter is set', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event: 'run_started', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
+      // No agent_id field — matched only via actor_id
+      JSON.stringify({ seq: 2, event: 'task_delegated', actor_type: 'master', actor_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 3, event: 'run_started', actor_type: 'agent', actor_id: 'orc-2', agent_id: 'orc-2', ts: '2026-01-01T00:00:02.000Z' }),
+    ]);
+    const events = handleGetRecentEvents(dir, { agent_id: 'orc-1' });
+    expect(events).toHaveLength(2);
+    const seqs = events.map((e) => e.seq).sort();
+    expect(seqs).toEqual([1, 2]);
   });
 
   it('handleGetRecentEvents throws on invalid agent_id or run_id type', () => {

@@ -2,7 +2,7 @@
 ref: general/35-mcp-get-recent-events-sql-filters
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 35 — Push agent_id/run_id filters to SQL in get_recent_events handler
