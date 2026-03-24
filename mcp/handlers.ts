@@ -815,7 +815,7 @@ export function handleListWaitingInput(stateDir: string) {
 
 export function handleQueryEvents(
   stateDir: string,
-  { run_id, agent_id, event_type, after_seq, limit = 50 }: Record<string, unknown> = {},
+  { run_id, agent_id, event_type, after_seq, limit = 50, fts_query }: Record<string, unknown> = {},
 ) {
   const opts: Parameters<typeof queryEvents>[1] = {
     limit: Number.isInteger(limit) ? (limit as number) : 50,
@@ -824,7 +824,12 @@ export function handleQueryEvents(
   if (typeof agent_id === 'string') opts.agent_id = agent_id;
   if (typeof event_type === 'string') opts.event_type = event_type;
   if (typeof after_seq === 'number') opts.after_seq = after_seq;
-  return queryEvents(stateDir, opts);
+  if (typeof fts_query === 'string') opts.fts_query = fts_query;
+  try {
+    return queryEvents(stateDir, opts);
+  } catch (err) {
+    return { error: `query_events failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {

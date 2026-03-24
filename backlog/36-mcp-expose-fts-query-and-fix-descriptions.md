@@ -2,7 +2,7 @@
 ref: general/36-mcp-expose-fts-query-and-fix-descriptions
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 36 — Expose fts_query in query_events MCP tool and fix stale descriptions

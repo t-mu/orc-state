@@ -1318,13 +1318,13 @@ describe('handleQueryEvents', () => {
   it('filters by event_type', () => {
     const result = handleQueryEvents(dir, { event_type: 'run_started' });
     expect(result).toHaveLength(1);
-    expect((result[0] as unknown as Record<string, unknown>).event).toBe('run_started');
+    expect(((result as unknown[])[0] as Record<string, unknown>).event).toBe('run_started');
   });
 
   it('filters by after_seq', () => {
     const result = handleQueryEvents(dir, { after_seq: 2 });
     expect(result).toHaveLength(1);
-    expect((result[0] as unknown as Record<string, unknown>).seq).toBe(3);
+    expect(((result as unknown[])[0] as Record<string, unknown>).seq).toBe(3);
   });
 
   it('respects limit cap', () => {
