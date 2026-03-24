@@ -205,6 +205,9 @@ export function finishRun(
     if (!success && failureReason) claim.failure_reason = failureReason;
     claim.input_state = null;
     claim.input_requested_at = null;
+    claim.finalization_state = null;
+    claim.finalization_retry_count = 0;
+    claim.finalization_blocked_reason = null;
     claim.session_start_retry_count = 0;
     claim.session_start_retry_next_at = null;
     claim.session_start_last_error = null;
