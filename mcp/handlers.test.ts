@@ -1332,6 +1332,18 @@ describe('handleQueryEvents', () => {
     expect(result).toHaveLength(1);
   });
 
+  it('filters by fts_query', () => {
+    const result = handleQueryEvents(dir, { fts_query: 'run_started' });
+    expect(result).toHaveLength(1);
+    expect(((result as unknown[])[0] as Record<string, unknown>).event).toBe('run_started');
+  });
+
+  it('returns error object for malformed fts_query', () => {
+    const result = handleQueryEvents(dir, { fts_query: '"unclosed' }) as { error: string };
+    expect(result).toHaveProperty('error');
+    expect(result.error).toMatch(/query_events failed/);
+  });
+
   it('returns empty array when no events file exists', () => {
     rmSync(join(dir, 'events.jsonl'));
     expect(handleQueryEvents(dir)).toEqual([]);
