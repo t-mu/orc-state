@@ -39,6 +39,7 @@ const COMMANDS: Record<string, string> = {
   'run-work-complete':  'run-work-complete.ts',
   'run-finish':         'run-finish.ts',
   'run-fail':           'run-fail.ts',
+  'review-submit':      'review-submit.ts',
   'deregister':         'deregister.ts',
   'worker-remove':      'remove-worker.ts',
   'worker-gc':          'gc-workers.ts',
