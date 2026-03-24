@@ -156,7 +156,7 @@ export function handleGetRecentEvents(
   if (run_id !== undefined && typeof run_id !== 'string') {
     throw new Error('run_id must be a string');
   }
-  const cap = Math.min(limit as number, 200);
+  const cap = Math.min(limit as number, 50);
   if (cap === 0) return [];
   let events = readRecentEvents(join(stateDir, 'events.db'), cap);
   if (agent_id) {

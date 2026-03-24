@@ -303,7 +303,7 @@ export function readRecentEvents(logPath: string, limit = 50): OrcEvent[] {
 
   const stateDir = dirname(logPath);
   const db = getDb(stateDir);
-  const cap = Math.min(limit, 200);
+  const cap = Math.min(limit, 50);
   const rows = db.prepare(`SELECT payload FROM events ORDER BY seq DESC LIMIT ?`).all(cap) as Array<{ payload: string }>;
 
   return rows
