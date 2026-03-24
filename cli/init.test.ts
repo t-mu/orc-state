@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -31,7 +31,7 @@ describe('cli/init.ts', () => {
     expect(existsSync(join(stateDir, 'backlog.json'))).toBe(true);
     expect(existsSync(join(stateDir, 'agents.json'))).toBe(true);
     expect(existsSync(join(stateDir, 'claims.json'))).toBe(true);
-    expect(existsSync(join(stateDir, 'events.jsonl'))).toBe(true);
+    expect(existsSync(join(stateDir, 'events.db'))).toBe(true);
   });
 
   it('creates default feature when not provided', () => {
@@ -59,7 +59,6 @@ describe('cli/init.ts', () => {
 
   it('backs up files and overwrites when --force is used', () => {
     expect(run().status).toBe(0);
-    writeFileSync(join(dir, 'state', 'events.jsonl'), '{"seq":1}\n');
 
     const result = run(['--force']);
     expect(result.status).toBe(0);
@@ -67,6 +66,6 @@ describe('cli/init.ts', () => {
     expect(existsSync(join(stateDir, 'backlog.json.bak'))).toBe(true);
     expect(existsSync(join(stateDir, 'agents.json.bak'))).toBe(true);
     expect(existsSync(join(stateDir, 'claims.json.bak'))).toBe(true);
-    expect(existsSync(join(stateDir, 'events.jsonl.bak'))).toBe(true);
+    expect(existsSync(join(stateDir, 'events.db.bak'))).toBe(true);
   });
 });

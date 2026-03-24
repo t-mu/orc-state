@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryEvents } from '../lib/eventLog.ts';
 
 import {
   handleGetRecentEvents,
@@ -285,13 +286,11 @@ describe('mcp read handlers', () => {
     expect(none).toEqual([]);
   });
 
-  it('handleGetRecentEvents reads across rotation archives', () => {
-    const archive1 = Array.from({ length: 40 }, (_, idx) =>
-      JSON.stringify({ seq: idx + 1, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }));
-    const current = Array.from({ length: 20 }, (_, idx) =>
-      JSON.stringify({ seq: idx + 41, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }));
-    writeFileSync(join(dir, 'events.jsonl.1'), `${archive1.join('\n')}\n`, 'utf8');
-    writeFileSync(join(dir, 'events.jsonl'), `${current.join('\n')}\n`, 'utf8');
+  it('handleGetRecentEvents returns the correct tail of events from DB', () => {
+    // Overwrite the default seed with 60 events; migration will import them all.
+    const lines = Array.from({ length: 60 }, (_, idx) =>
+      JSON.stringify({ seq: idx + 1, event_id: `evt-${idx + 1}-hb`, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }));
+    writeFileSync(join(dir, 'events.jsonl'), `${lines.join('\n')}\n`, 'utf8');
 
     const events = handleGetRecentEvents(dir, { limit: 50 });
     expect(events).toHaveLength(50);
@@ -507,9 +506,10 @@ describe('mcp read handlers', () => {
     expect(tasks.some((task) => task.ref === created.ref)).toBe(true);
     expect(backlog.next_task_seq).toBe(2);
 
-    const eventsRaw = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-    expect(eventsRaw).toContain('"event":"task_added"');
-    expect(eventsRaw).toContain(`"task_ref":"${created.ref}"`);
+    const addedEvents = queryEvents(dir, { event_type: 'task_added' });
+    expect(addedEvents.length).toBeGreaterThanOrEqual(1);
+    const addedEvent = addedEvents.at(-1) as unknown as Record<string, unknown>;
+    expect(addedEvent.task_ref).toBe(created.ref);
     expect(created.priority).toBe('normal');
     expect(created.next_task_seq).toBe(2);
   });
@@ -746,12 +746,12 @@ describe('mcp read handlers', () => {
       required_provider: 'gemini',
       actor_id: 'master',
     });
-    const events = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-    const event = JSON.parse(events.trim().split('\n').at(-1)!);
+    const updatedEvents = queryEvents(dir, { event_type: 'task_updated' });
+    const event = updatedEvents.at(-1) as unknown as Record<string, unknown>;
     expect(event.event).toBe('task_updated');
     expect(event.task_ref).toBe('project/todo-one');
-    expect(event.payload.fields).toEqual(expect.arrayContaining(['priority', 'required_provider']));
-    expect(event.payload.fields).not.toContain('title');
+    expect((event.payload as Record<string, unknown>).fields).toEqual(expect.arrayContaining(['priority', 'required_provider']));
+    expect((event.payload as Record<string, unknown>).fields).not.toContain('title');
   });
 
   it('handleUpdateTask throws when task_ref is missing', () => {
@@ -825,9 +825,10 @@ describe('mcp read handlers', () => {
     expect(updated?.owner).toBe('orc-1');
     expect(updated?.delegated_by).toBe('master');
 
-    const eventsRaw = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-    expect(eventsRaw).toContain('"event":"task_delegated"');
-    expect(eventsRaw).toContain('"agent_id":"orc-1"');
+    const delegatedEvents = queryEvents(dir, { event_type: 'task_delegated' });
+    expect(delegatedEvents.length).toBeGreaterThanOrEqual(1);
+    const delegatedEvent = delegatedEvents.at(-1) as unknown as Record<string, unknown>;
+    expect(delegatedEvent.agent_id).toBe('orc-1');
   });
 
   it('handleDelegateTask transitions blocked task to todo and updates planning fields', () => {
@@ -1137,7 +1138,9 @@ describe('mcp read handlers', () => {
     const task = readBacklog().features.flatMap(feature => feature.tasks).find((entry) => entry.ref === 'project/todo-one')!;
     expect(task.status).toBe('blocked');
 
-    const event = JSON.parse(readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').at(-1)!);
+    const cancelledEvents = queryEvents(dir, { event_type: 'task_cancelled' });
+    expect(cancelledEvents.length).toBeGreaterThanOrEqual(1);
+    const event = cancelledEvents.at(-1) as unknown as Record<string, unknown>;
     expect(event.event).toBe('task_cancelled');
     expect(event.task_ref).toBe('project/todo-one');
   });
@@ -1155,11 +1158,13 @@ describe('mcp read handlers', () => {
     expect(remainingClaims).not.toContain('"run_id":"run-1"');
     expect(remainingClaims).not.toContain('"run_id":"run-4"');
 
-    const events = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-    expect(events).toContain('"event":"run_cancelled"');
-    expect(events).toContain('"run_id":"run-1"');
-    expect(events).toContain('"run_id":"run-4"');
-    expect(events).toContain('"event":"task_cancelled"');
+    const allEvents = queryEvents(dir, {});
+    const eventTypes = allEvents.map((e) => (e as unknown as Record<string, unknown>).event);
+    expect(eventTypes).toContain('run_cancelled');
+    expect(eventTypes).toContain('task_cancelled');
+    const runIds = allEvents.map((e) => (e as unknown as Record<string, unknown>).run_id).filter(Boolean);
+    expect(runIds).toContain('run-1');
+    expect(runIds).toContain('run-4');
 
     const notifications = readPendingNotifications(dir);
     expect(notifications.filter((n) => n.type === 'TASK_COMPLETE' && n.task_ref === 'project/todo-one' && n.success === false)).toHaveLength(2);
@@ -1234,11 +1239,13 @@ describe('mcp read handlers', () => {
     const claims = JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8'));
     expect(claims.claims[0].input_state).toBeNull();
     expect(claims.claims[0].input_requested_at).toBeNull();
-    const events = readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-    expect(events.some((event) =>
-      event.event === 'input_response'
-      && event.run_id === 'run-input-1'
-      && event.payload?.response === 'yes')).toBe(true);
+    const responseEvents = queryEvents(dir, { event_type: 'input_response', run_id: 'run-input-1' });
+    expect(responseEvents.some((event) => {
+      const ev = event as unknown as Record<string, unknown>;
+      return ev.event === 'input_response'
+        && ev.run_id === 'run-input-1'
+        && (ev.payload as Record<string, unknown>)?.response === 'yes';
+    })).toBe(true);
   });
 });
 
@@ -1311,13 +1318,13 @@ describe('handleQueryEvents', () => {
   it('filters by event_type', () => {
     const result = handleQueryEvents(dir, { event_type: 'run_started' });
     expect(result).toHaveLength(1);
-    expect((result[0] as Record<string, unknown>).event).toBe('run_started');
+    expect((result[0] as unknown as Record<string, unknown>).event).toBe('run_started');
   });
 
   it('filters by after_seq', () => {
     const result = handleQueryEvents(dir, { after_seq: 2 });
     expect(result).toHaveLength(1);
-    expect((result[0] as Record<string, unknown>).seq).toBe(3);
+    expect((result[0] as unknown as Record<string, unknown>).seq).toBe(3);
   });
 
   it('respects limit cap', () => {

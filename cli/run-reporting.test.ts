@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
+import { queryEvents, appendSequencedEvent } from '../lib/eventLog.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -34,9 +35,8 @@ function readAgents(): { agents: Array<Record<string, unknown>> } {
 }
 
 function readEvents(): Array<Record<string, unknown>> {
-  const raw = readFileSync(join(dir, 'events.jsonl'), 'utf8').trim();
-  if (!raw) return [];
-  return raw.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return queryEvents(dir, {}) as unknown as Array<any>;
 }
 
 function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' } = {}) {
@@ -502,8 +502,7 @@ describe('orc-run-input-request', () => {
         && (event.payload as Record<string, unknown>)?.question === 'Continue?')).toBe(true);
     expect(readClaims().claims[0].input_state).toBeUndefined();
 
-    writeFileSync(join(dir, 'events.jsonl'), `${readFileSync(join(dir, 'events.jsonl'), 'utf8')}${JSON.stringify({
-      seq: eventsAfterRequest.length + 1,
+    appendSequencedEvent(dir, {
       ts: '2026-01-01T00:00:01.000Z',
       event: 'input_response',
       actor_type: 'human',
@@ -512,7 +511,7 @@ describe('orc-run-input-request', () => {
       agent_id: 'worker-01',
       task_ref: 'docs/task-1',
       payload: { response: 'yes' },
-    })}\n`);
+    });
 
     const [code] = await once(child, 'close');
     expect(code).toBe(0);
@@ -619,9 +618,7 @@ describe('orc-run-input-request', () => {
     }
 
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
-    const currentEvents = readEvents();
-    writeFileSync(join(dir, 'events.jsonl'), `${readFileSync(join(dir, 'events.jsonl'), 'utf8')}${JSON.stringify({
-      seq: currentEvents.length + 1,
+    appendSequencedEvent(dir, {
       ts: new Date().toISOString(),
       event: 'input_response',
       actor_type: 'human',
@@ -630,7 +627,7 @@ describe('orc-run-input-request', () => {
       task_ref: 'docs/task-1',
       agent_id: 'worker-01',
       payload: { response: 'yes' },
-    })}\n`);
+    });
 
     const [code] = await once(child, 'close');
     expect(code).toBe(0);

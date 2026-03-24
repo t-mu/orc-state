@@ -207,7 +207,7 @@ describe('validateStateDir', () => {
     expect(errors).toEqual(expect.arrayContaining([
       expect.stringContaining('backlog.json: file not found'),
       expect.stringContaining('agents.json: file not found'),
-      expect.stringContaining('events.jsonl: file not found'),
+      expect.stringContaining('events.db: file not found'),
     ]));
   });
 

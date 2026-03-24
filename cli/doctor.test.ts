@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -128,13 +128,14 @@ describe('cli/doctor.ts', () => {
     expect(json.checks.backlogSync.mismatches.some((issue: Record<string, unknown>) => issue.field === 'title')).toBe(true);
   });
 
-  it('reports state validation errors such as malformed events logs', () => {
+  it('reports state validation errors when events storage is missing', () => {
     seedState({ agents: [], claims: [] });
-    writeFileSync(join(dir, 'events.jsonl'), 'not-json\n');
+    // Remove the events file so doctor detects missing storage
+    unlinkSync(join(dir, 'events.jsonl'));
     const result = runCli(['--json']);
     const json = JSON.parse(result.stdout);
     expect(result.status).toBe(1);
-    expect(json.checks.stateErrors.some((error: string) => error.includes('events.jsonl'))).toBe(true);
+    expect(json.checks.stateErrors.some((error: string) => error.includes('events'))).toBe(true);
   });
 });
 

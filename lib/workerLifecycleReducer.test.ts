@@ -135,7 +135,9 @@ describe('applies lifecycle transitions through the reducer boundary', () => {
 
   it('returns noop for heartbeat when run_id or agent_id is absent', () => {
     const claim = makeClaim();
-    const action = reduceLifecycleEvent(makeEvent({ event: 'heartbeat', run_id: undefined }), claim, NOW);
+    const noRunIdEvent: LifecycleEventInput = { ...makeEvent({ event: 'heartbeat' }) };
+    delete (noRunIdEvent as Partial<LifecycleEventInput>).run_id;
+    const action = reduceLifecycleEvent(noRunIdEvent, claim, NOW);
     expect(action.type).toBe('noop');
     if (action.type === 'noop') {
       expect(action.reason).toBe('missing_run_or_agent');
@@ -325,7 +327,8 @@ describe('timestamp handling', () => {
 
   it('falls back to nowIso for absent or invalid event timestamps', () => {
     const claim = makeClaim({ state: 'claimed', started_at: null });
-    const noTsEvent = makeEvent({ event: 'run_started', ts: undefined });
+    const noTsEvent: LifecycleEventInput = { ...makeEvent({ event: 'run_started' }) };
+    delete (noTsEvent as Partial<LifecycleEventInput>).ts;
     const action = reduceLifecycleEvent(noTsEvent, claim, NOW);
     expect(action.type).toBe('start_run');
     if (action.type === 'start_run') {

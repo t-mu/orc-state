@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendNotification, readPendingNotifications } from './lib/masterNotifyQueue.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
+import { queryEvents } from './lib/eventLog.ts';
 
 let dir: string;
 
@@ -45,9 +46,8 @@ function seedState(stateDir: string, { agents = [] as unknown[], tasks = [] as u
 }
 
 function readEvents(stateDir: string): Array<Record<string, unknown>> {
-  const raw = readFileSync(join(stateDir, 'events.jsonl'), 'utf8').trim();
-  if (!raw) return [];
-  return raw.split('\n').map((line) => JSON.parse(line));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return queryEvents(stateDir, {}) as unknown as Array<any>;
 }
 
 function resetCheckpoint(stateDir: string) {

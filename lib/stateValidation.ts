@@ -144,14 +144,15 @@ export function validateStateDir(stateDir: string): string[] {
     );
   }
 
-  const eventsPath = join(stateDir, 'events.jsonl');
-  if (!existsSync(eventsPath)) {
-    allErrors.push('events.jsonl: file not found');
+  const eventsDbPath = join(stateDir, 'events.db');
+  const eventsJsonlPath = join(stateDir, 'events.jsonl');
+  if (!existsSync(eventsDbPath) && !existsSync(eventsJsonlPath)) {
+    allErrors.push('events.db: file not found');
   } else {
     try {
-      readEvents(eventsPath);
+      readEvents(eventsJsonlPath);
     } catch (error) {
-      allErrors.push(`events.jsonl: ${(error as Error).message}`);
+      allErrors.push(`events.db: ${(error as Error).message}`);
     }
   }
 

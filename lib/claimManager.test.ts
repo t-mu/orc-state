@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { queryEvents } from './eventLog.ts';
 import {
   claimTask,
   startRun,
@@ -36,8 +37,8 @@ function seed(dir: string, { tasks = [makeTask('orch/init')], claims = [] as Cla
 function readBacklog(dir: string): Backlog { return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')) as Backlog; }
 function readClaims(dir: string)  { return JSON.parse(readFileSync(join(dir, 'claims.json'),  'utf8')) as { version: string; claims: Claim[] }; }
 function readEvents(dir: string)  {
-  const raw = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-  return raw.split('\n').filter(Boolean).map((l: string) => JSON.parse(l) as Record<string, unknown>);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return queryEvents(dir, {}) as unknown as Array<any>;
 }
 
 function pastDate(msAgo = 60_000) { return new Date(Date.now() - msAgo).toISOString(); }

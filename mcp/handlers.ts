@@ -1,9 +1,9 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
-import { appendSequencedEvent, readRecentEvents } from '../lib/eventLog.ts';
+import { appendSequencedEvent, queryEvents, readRecentEvents } from '../lib/eventLog.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
 import { appendNotification, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
@@ -158,7 +158,7 @@ export function handleGetRecentEvents(
   }
   const cap = Math.min(limit as number, 200);
   if (cap === 0) return [];
-  let events = readRecentEvents(join(stateDir, 'events.jsonl'), cap);
+  let events = readRecentEvents(join(stateDir, 'events.db'), cap);
   if (agent_id) {
     events = events.filter((e) => (e as unknown as Record<string, unknown>).agent_id === agent_id || e.actor_id === agent_id);
   }
@@ -785,24 +785,16 @@ export function handleListWaitingInput(stateDir: string) {
   const claims = readClaims(stateDir).claims;
   const waiting = claims.filter((c) => c.input_state === 'awaiting_input');
 
-  const eventsPath = join(stateDir, 'events.jsonl');
+  const inputRequestedEvents = queryEvents(stateDir, { event_type: 'input_requested' });
   const questionMap = new Map<string, { question: string | null; ts: string | null }>();
-
-  if (existsSync(eventsPath)) {
-    const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
-    for (const line of lines) {
-      try {
-        const ev = JSON.parse(line) as Record<string, unknown>;
-        if (ev.event === 'input_requested' && typeof ev.run_id === 'string') {
-          const payload = ev.payload as Record<string, unknown> | undefined;
-          questionMap.set(ev.run_id, {
-            question: typeof payload?.question === 'string' ? payload.question : null,
-            ts: typeof ev.ts === 'string' ? ev.ts : null,
-          });
-        }
-      } catch {
-        // skip malformed lines
-      }
+  for (const ev of inputRequestedEvents) {
+    const record = ev as unknown as Record<string, unknown>;
+    if (typeof record.run_id === 'string') {
+      const payload = record.payload as Record<string, unknown> | undefined;
+      questionMap.set(record.run_id, {
+        question: typeof payload?.question === 'string' ? payload.question : null,
+        ts: typeof ev.ts === 'string' ? ev.ts : null,
+      });
     }
   }
 
@@ -825,30 +817,14 @@ export function handleQueryEvents(
   stateDir: string,
   { run_id, agent_id, event_type, after_seq, limit = 50 }: Record<string, unknown> = {},
 ) {
-  const cap = Math.min(Number.isInteger(limit) ? (limit as number) : 50, 500);
-  const eventsPath = join(stateDir, 'events.jsonl');
-  if (!existsSync(eventsPath)) return [];
-
-  const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
-  const matched: unknown[] = [];
-
-  for (const line of lines) {
-    let ev: Record<string, unknown>;
-    try {
-      ev = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-
-    if (run_id != null && ev.run_id !== run_id) continue;
-    if (agent_id != null && ev.agent_id !== agent_id) continue;
-    if (event_type != null && ev.event !== event_type) continue;
-    if (after_seq != null && typeof ev.seq === 'number' && ev.seq <= (after_seq as number)) continue;
-
-    matched.push(ev);
-  }
-
-  return matched.slice(-cap);
+  const opts: Parameters<typeof queryEvents>[1] = {
+    limit: Number.isInteger(limit) ? (limit as number) : 50,
+  };
+  if (typeof run_id === 'string') opts.run_id = run_id;
+  if (typeof agent_id === 'string') opts.agent_id = agent_id;
+  if (typeof event_type === 'string') opts.event_type = event_type;
+  if (typeof after_seq === 'number') opts.after_seq = after_seq;
+  return queryEvents(stateDir, opts);
 }
 
 export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {
@@ -943,17 +919,13 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
     throw new Error('actor_id must be a valid agent id');
   }
 
-  const rawEvents = readFileSync(join(stateDir, 'events.jsonl'), 'utf8').trim();
-  const latestRequest = rawEvents
-    ? rawEvents.split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, unknown>)
-      .reverse()
-      .find((event: Record<string, unknown>) =>
-        event.event === 'input_requested'
-        && event.run_id === run_id
-        && event.agent_id === agent_id
-        && typeof (event.payload as Record<string, unknown>)?.question === 'string')
+  const inputRequests = queryEvents(stateDir, {
+    event_type: 'input_requested',
+    run_id: run_id as string,
+    agent_id: agent_id as string,
+  });
+  const latestRequest = inputRequests.length > 0
+    ? inputRequests.at(-1) as unknown as Record<string, unknown>
     : null;
 
   try {
