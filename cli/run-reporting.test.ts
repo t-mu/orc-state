@@ -172,16 +172,19 @@ function assertClaimUnchanged(runId: string, before: Record<string, unknown> | u
 }
 
 describe('orc-run-start', () => {
-  it('appends run_started without mutating claims or agents', () => {
+  it('appends run_started and transitions claim to in_progress', () => {
     seedClaimedRun({ runId: 'run-abc-001', agentId: 'worker-01' });
-    const before = claimSnapshot('run-abc-001');
 
     const result = runCli('run-start.ts', ['--run-id=run-abc-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_started');
 
-    assertClaimUnchanged('run-abc-001', before);
+    // Claim must now be in_progress — CLI updates claims.json synchronously so the
+    // coordinator's enforceRunStartLifecycle sees the new state immediately.
+    const claim = claimSnapshot('run-abc-001');
+    expect(claim?.state).toBe('in_progress');
+    expect(claim?.started_at).toBeTruthy();
 
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
@@ -203,15 +206,15 @@ describe('orc-run-start', () => {
     expect(result.stderr).toContain('Error');
   });
 
-  it('appends run_started for an already in_progress claim (duplicate start is lenient at CLI level)', () => {
-    // Worker-facing CLIs use a lenient validator (no state-machine checks).
-    // The coordinator is the sole enforcer of state; the CLI just appends events.
+  it('appends run_started for an already in_progress claim (duplicate start is idempotent)', () => {
+    // If the coordinator already transitioned the claim via event processing, the
+    // synchronous startRun() call in the CLI silently ignores the wrong-state error.
     seedInProgressRun({ runId: 'run-dup-start', agentId: 'worker-01' });
 
     const result = runCli('run-start.ts', ['--run-id=run-dup-start', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
-    // Claim must not be mutated by the CLI — coordinator owns state transitions.
+    // Claim stays in_progress — startRun() no-ops when already transitioned.
     expect(claimSnapshot('run-dup-start')?.state).toBe('in_progress');
     const events = readEvents();
     expect(events.some((e) => e.event === 'run_started' && e.run_id === 'run-dup-start')).toBe(true);
