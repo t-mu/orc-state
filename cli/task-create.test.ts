@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { queryEvents } from '../lib/eventLog.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -168,6 +169,6 @@ function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>
 }
 
 function readEvents() {
-  const raw = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-  return raw.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return queryEvents(dir, {}) as unknown as Array<any>;
 }

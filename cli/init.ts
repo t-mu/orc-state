@@ -10,11 +10,12 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
+import { initEventsDb } from '../lib/eventLog.ts';
 
 const force = process.argv.includes('--force') || (flag('force') ?? '') === 'true';
 const featureRef = flag('feature') ?? 'project';
 const featureTitle = flag('feature-title') ?? 'Project';
-const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.jsonl'];
+const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.db'];
 
 mkdirSync(STATE_DIR, { recursive: true });
 ensureGitignore();
@@ -43,7 +44,7 @@ const claims = { version: '1', claims: [] };
 writeFileSync(join(STATE_DIR, 'backlog.json'), JSON.stringify(backlog, null, 2) + '\n', 'utf8');
 writeFileSync(join(STATE_DIR, 'agents.json'), JSON.stringify(agents, null, 2) + '\n', 'utf8');
 writeFileSync(join(STATE_DIR, 'claims.json'), JSON.stringify(claims, null, 2) + '\n', 'utf8');
-writeFileSync(join(STATE_DIR, 'events.jsonl'), '', 'utf8');
+initEventsDb(STATE_DIR);
 
 const errors = validateStateDir(STATE_DIR);
 if (errors.length > 0) {
@@ -58,7 +59,7 @@ console.log(`Initialized orchestrator state in: ${STATE_DIR}`);
 console.log(`  backlog.json  - 1 feature ()`);
 console.log('  agents.json   - 0 agents');
 console.log('  claims.json   - 0 claims');
-console.log('  events.jsonl  - empty');
+console.log('  events.db     - empty');
 console.log('');
 console.log('Next steps:');
 console.log('  orc start-session');
