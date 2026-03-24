@@ -293,7 +293,7 @@ describe('formatStatus', () => {
     expect(formatStatus(buildStatus(dir))).toContain('Orchestrator Status');
   });
 
-  it('renders master, worker capacity, and active runs sections', () => {
+  it('renders agents table and active runs section', () => {
     writeState({
       agents: [{ agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent],
       claims: [{
@@ -308,13 +308,13 @@ describe('formatStatus', () => {
     writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
     writeEvents([]);
     const output = formatStatus(buildStatus(dir));
-    expect(output).toContain('Master:');
-    expect(output).toContain('Worker Capacity:');
+    expect(output).toContain('Agents');
+    expect(output).toContain('Active Tasks');
     expect(output).toContain('Active Runs (1):');
-    expect(output).toContain('orc-1');
+    expect(output).toContain('master');
   });
 
-  it('renders queued task refs in the capacity section', () => {
+  it('renders todo tasks in the active tasks table', () => {
     writeState({
       tasks: [{ ref: 'orch/task-queued', title: 'Queued', status: 'todo' }],
     });
@@ -322,7 +322,7 @@ describe('formatStatus', () => {
     writeEvents([]);
 
     const output = formatStatus(buildStatus(dir));
-    expect(output).toContain('queue:               orch/task-queued');
+    expect(output).toContain('orch/task-queued');
   });
 
   it('renders finalization state and preserved blocked work clearly', () => {
@@ -352,7 +352,7 @@ describe('formatStatus', () => {
 
     const output = formatStatus(buildStatus(dir));
     expect(output).toContain('Finalization (1):');
-    expect(output).toContain('blocked_preserved:        1');
+    expect(output).toContain('blocked_preserved=1');
     expect(output).toContain('preserved_work');
     expect(output).toContain('task/run-finalize-2');
     expect(output).toContain('/tmp/orc-worktrees/run-finalize-2');
