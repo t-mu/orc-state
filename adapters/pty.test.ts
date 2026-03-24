@@ -381,6 +381,56 @@ describe('pty adapter start() replacement', () => {
   });
 });
 
+// ─── sanitizePtyChunk (via log file) ────────────────────────────────────────
+
+describe('PTY log sanitization', () => {
+  it('strips CSI escape sequences from log output', async () => {
+    const { adapter, triggerData } = await makeAdapter();
+    await adapter.start('bob', {});
+    triggerData('\x1b[38;5;131m✢\x1b[39m hello\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const log = readFileSync(join(dir, 'pty-logs', 'bob.log'), 'utf8');
+    expect(log).toContain('✢ hello');
+    expect(log).not.toContain('\x1b[');
+  });
+
+  it('strips OSC sequences (window title sets) from log output', async () => {
+    const { adapter, triggerData } = await makeAdapter();
+    await adapter.start('bob', {});
+    triggerData('\x1b]0;window title\x07actual content\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const log = readFileSync(join(dir, 'pty-logs', 'bob.log'), 'utf8');
+    expect(log).toContain('actual content');
+    expect(log).not.toContain('window title');
+    expect(log).not.toContain('\x1b]');
+  });
+
+  it('collapses carriage-return spinner overwrites — keeps last frame only', async () => {
+    const { adapter, triggerData } = await makeAdapter();
+    await adapter.start('bob', {});
+    triggerData('⠋ working\r⠙ working\r⠹ working\rdone\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const log = readFileSync(join(dir, 'pty-logs', 'bob.log'), 'utf8');
+    expect(log).toContain('done');
+    expect(log).not.toContain('⠋');
+    expect(log).not.toContain('⠙');
+    expect(log).not.toContain('⠹');
+  });
+
+  it('preserves plain text with no escape codes unchanged', async () => {
+    const { adapter, triggerData } = await makeAdapter();
+    await adapter.start('bob', {});
+    triggerData('line one\nline two\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const log = readFileSync(join(dir, 'pty-logs', 'bob.log'), 'utf8');
+    expect(log).toContain('line one\nline two\n');
+  });
+});
+
 // ─── Factory and contract ───────────────────────────────────────────────────
 
 describe('adapter factory and contract', () => {
