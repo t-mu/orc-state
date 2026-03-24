@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
-import { appendSequencedEvent, queryEvents, readRecentEvents } from '../lib/eventLog.ts';
+import { appendSequencedEvent, queryEvents } from '../lib/eventLog.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
 import { appendNotification, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
@@ -158,12 +158,11 @@ export function handleGetRecentEvents(
   }
   const cap = Math.min(limit as number, 200);
   if (cap === 0) return [];
-  let events = readRecentEvents(join(stateDir, 'events.db'), cap);
+  let events = queryEvents(stateDir, { ...(run_id !== undefined ? { run_id } : {}), limit: cap });
   if (agent_id) {
-    events = events.filter((e) => (e as unknown as Record<string, unknown>).agent_id === agent_id || e.actor_id === agent_id);
-  }
-  if (run_id) {
-    events = events.filter((e) => (e as unknown as Record<string, unknown>).run_id === run_id);
+    events = events.filter(
+      (e) => (e as unknown as Record<string, unknown>).agent_id === agent_id || e.actor_id === agent_id,
+    );
   }
   return events;
 }

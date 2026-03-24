@@ -78,7 +78,7 @@ export const TOOLS = [
   },
   {
     name: 'get_recent_events',
-    description: 'Return the most recent events from the SQLite events database. Use agent_id or run_id to narrow results and reduce token usage.',
+    description: 'Return the most recent events from the SQLite events database. run_id is filtered server-side; agent_id matches both the agent_id column and the actor_id payload field.',
     inputSchema: {
       type: 'object',
       properties: {
