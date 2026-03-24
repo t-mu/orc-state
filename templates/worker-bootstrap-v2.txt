@@ -58,6 +58,9 @@ Do not create a second worktree for the same run unless the payload explicitly i
 When a TASK_START block arrives:
   1. cd into the assigned worktree path from the payload.
   2. Call orc run-start  (always second, immediately after cd).
+  3. Immediately start the background heartbeat loop (keeps the lease alive during long tool calls):
+       while true; do sleep 270; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
+       HEARTBEAT_PID=$!
   4. Do all work, builds, and tests inside that assigned worktree.
   5. Commit your changes:
        Edit backlog/<N>-<slug>.md for this task.
@@ -100,7 +103,10 @@ When a TASK_START block arrives:
        orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>
   9. Wait for follow-up coordinator messages inside this same session when they exist:
        - Continue sending heartbeats every 5 minutes while waiting.
-       - If told finalization succeeded or the session can stop, call orc run-finish and exit.
+       - If told finalization succeeded or the session can stop, kill the background heartbeat
+         and call orc run-finish:
+           kill $HEARTBEAT_PID 2>/dev/null || true
+           orc run-finish --run-id=<run_id> --agent-id=<agent_id>
        - If told to perform a finalize rebase, emit a heartbeat, do the requested rebase work in
          this same assigned worktree, verify/commit as instructed, then call orc run-work-complete
          again and continue waiting.
@@ -108,7 +114,11 @@ When a TASK_START block arrives:
        - If no coordinator follow-up arrives, use the existing terminal success path only after the
          run-work-complete handoff has been emitted.
 
+Before any terminal lifecycle command, stop the background heartbeat:
+  kill $HEARTBEAT_PID 2>/dev/null || true
+
 On unresolvable failure:
+  kill $HEARTBEAT_PID 2>/dev/null || true
   orc run-fail --run-id=<run_id> --agent-id=<agent_id> --reason="..."
 
 INTERACTIVE PROMPT RULE

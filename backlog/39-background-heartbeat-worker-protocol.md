@@ -2,7 +2,7 @@
 ref: general/39-background-heartbeat-worker-protocol
 feature: general
 priority: high
-status: todo
+status: done
 depends_on:
   - general/38-auto-ack-run-start-and-extend-timeout
 ---

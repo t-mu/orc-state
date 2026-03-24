@@ -84,7 +84,10 @@ orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>
 #    - If coordinator requests a finalize rebase, do it here, then emit
 #      `orc progress --event=finalize_rebase_started ...`, complete the rebase,
 #      then emit `orc run-work-complete` again.
-#    - If coordinator confirms finalization success, emit orc run-finish.
+#    - If coordinator confirms finalization success, stop the background heartbeat
+#      and emit orc run-finish:
+kill $HEARTBEAT_PID 2>/dev/null || true
+orc run-finish --run-id=<run_id> --agent-id=<agent_id>
 #    - If no follow-up arrives, only emit orc run-finish after the
 #      run-work-complete handoff has already been recorded.
 #    - Do not merge to main or clean up the worktree/branch yourself.
@@ -209,11 +212,29 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 
 ### Heartbeat requirement
 
-**Call `orc run-heartbeat` every 5 minutes throughout ALL work phases** — implementation,
-sub-agent review, rebase, and while waiting for coordinator finalization. The claim lease
-is 30 minutes; failure to heartbeat will cause the coordinator to expire and requeue the task.
+The claim lease is 30 minutes; failure to heartbeat will cause the coordinator to expire
+and requeue the task.
 
-Mandatory heartbeat call sites:
+**Primary mechanism — background heartbeat loop:**
+
+Immediately after `orc run-start`, start a background shell process that fires
+`orc run-heartbeat` every 270 seconds (4.5 min). This keeps the lease alive even while
+the worker is blocked inside a long-running Bash tool call (e.g. `npm test`, `git rebase`).
+
+```bash
+# Start background heartbeat — immediately after orc run-start
+while true; do sleep 270; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
+HEARTBEAT_PID=$!
+```
+
+Before emitting `orc run-finish` or `orc run-fail`, kill the background process:
+
+```bash
+# Stop background heartbeat
+kill $HEARTBEAT_PID 2>/dev/null || true
+```
+
+**Fallback — manual call sites** (if the background process unexpectedly dies):
 - Before spawning sub-agent reviewers
 - Immediately before `git rebase main`
 - Immediately before `orc run-work-complete`

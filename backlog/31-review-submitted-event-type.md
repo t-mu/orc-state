@@ -2,7 +2,7 @@
 ref: general/31-review-submitted-event-type
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 31 — Add `review_submitted` Event Type and Validation
