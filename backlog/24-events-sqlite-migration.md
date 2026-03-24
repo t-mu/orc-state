@@ -2,7 +2,7 @@
 ref: general/24-events-sqlite-migration
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 24 — Migrate events.jsonl to SQLite with FTS5
