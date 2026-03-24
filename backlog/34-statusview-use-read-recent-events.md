@@ -2,7 +2,7 @@
 ref: general/34-statusview-use-read-recent-events
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 34 — Replace readEvents + slice in statusView with readRecentEvents

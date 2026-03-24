@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { listCoordinatorAgents } from './agentRegistry.ts';
-import { readEvents } from './eventLog.ts';
+import { readEvents, readRecentEvents } from './eventLog.ts';
 import { latestRunActivityDetailMap } from './runActivity.ts';
 import { loadWorkerPoolConfig } from './providers.ts';
 import { readJson } from './stateReader.ts';
@@ -171,7 +171,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   let eventReadError = '';
   try {
     allEvents = readEvents(eventsPath);
-    recentEvents = allEvents.slice(-20);
+    recentEvents = readRecentEvents(eventsPath, 20);
   } catch (error) {
     eventReadError = (error as Error).message;
   }
