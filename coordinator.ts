@@ -65,7 +65,7 @@ function getAdapter(provider: string): ReturnType<typeof createAdapter> {
 
 const INTERVAL_MS = intFlag('interval-ms', 30000);
 const MODE        = flag('mode') ?? 'autonomous';
-const RUN_START_TIMEOUT_MS = intFlag('run-start-timeout-ms', 300000);
+const RUN_START_TIMEOUT_MS = intFlag('run-start-timeout-ms', 600000);
 const RUN_INACTIVE_TIMEOUT_MS = intFlag('run-inactive-timeout-ms', 1800000);
 const RUN_START_NUDGE_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.1);
 const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
@@ -254,6 +254,14 @@ async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, wo
       envelope,
     );
     log(`dispatched ${taskRef} to ${agent.agent_id}`);
+    try {
+      startRun(STATE_DIR, runId, agent.agent_id, {
+        actorType: 'coordinator',
+        actorId: 'coordinator',
+      });
+    } catch {
+      // Worker already called orc run-start before us — idempotent, safe to ignore
+    }
     return true;
   } catch (err) {
     finishRun(STATE_DIR, runId, agent.agent_id, {

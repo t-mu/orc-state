@@ -2,7 +2,7 @@
 ref: general/38-auto-ack-run-start-and-extend-timeout
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 38 — Auto-Ack `run_started` on TASK_START Injection and Extend Kill Timer

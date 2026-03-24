@@ -6,7 +6,7 @@ import { appendSequencedEvent } from './eventLog.ts';
 import { readJson, findTask } from './stateReader.ts';
 import type { Claim, ClaimsState, FinalizationState, InputState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
-import type { OrcEventInput } from '../types/events.ts';
+import type { ActorType, OrcEventInput } from '../types/events.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 const FINALIZATION_STATES = new Set<FinalizationState | null>([
@@ -96,13 +96,20 @@ export function startRun(
   stateDir: string,
   runId: string,
   agentId: string,
-  { emitEvent = true, at = new Date().toISOString() }: { emitEvent?: boolean; at?: string } = {},
+  {
+    emitEvent = true,
+    at = new Date().toISOString(),
+    actorType = 'agent' as ActorType,
+    actorId,
+  }: { emitEvent?: boolean; at?: string; actorType?: ActorType; actorId?: string } = {},
 ): void {
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
     if (!claim) throw new Error(`Claim not found: ${runId}`);
     if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
+    // Idempotent: if already in_progress, silently return without error or duplicate event
+    if (claim.state === 'in_progress') return;
     if (claim.state !== 'claimed') throw new Error(`Claim ${runId} is not in 'claimed' state (got: ${claim.state})`);
 
     if (!Number.isFinite(new Date(at).getTime())) {
@@ -124,7 +131,7 @@ export function startRun(
     if (emitEvent) {
       emit(stateDir, {
         ts: at, event: 'run_started',
-        actor_type: 'agent', actor_id: agentId,
+        actor_type: actorType, actor_id: actorId ?? agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
       });
     }
