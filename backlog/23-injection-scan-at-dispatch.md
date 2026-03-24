@@ -2,7 +2,7 @@
 ref: general/23-injection-scan-at-dispatch
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 23 — Apply Injection Scan to Task Spec Content at Dispatch

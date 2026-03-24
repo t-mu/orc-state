@@ -55,6 +55,7 @@
         "task_cancelled",
         "task_released",
         "task_delegated",
+        "task_dispatch_blocked",
         "coordinator_started",
         "coordinator_stopped"
       ],

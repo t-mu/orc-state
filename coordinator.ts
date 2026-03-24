@@ -37,7 +37,7 @@ import { appendNotification } from './lib/masterNotifyQueue.ts';
 import { loadWorkerPoolConfig } from './lib/providers.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { resolveRepoRoot } from './lib/repoRoot.ts';
-import { readTaskSpecSections } from './lib/taskSpecReader.ts';
+import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
@@ -247,10 +247,11 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
 
 async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, workerPoolConfig: WorkerPoolConfig) {
   const adapter = getAdapter(agent.provider);
+  const envelope = buildTaskEnvelope(taskRef, runId, agent.agent_id);
   try {
     await adapter.send(
       agent.session_handle!,
-      buildTaskEnvelope(taskRef, runId, agent.agent_id),
+      envelope,
     );
     log(`dispatched ${taskRef} to ${agent.agent_id}`);
     return true;
@@ -1032,10 +1033,31 @@ async function tick() {
       try {
         await sendTaskEnvelope(agent, taskRef, runId, workerPoolConfig);
       } catch (err) {
-        runId = null;
+        // InjectionScanError: finishRun not yet called — preserve runId for outer catch
+        if (!(err instanceof InjectionScanError)) {
+          runId = null;
+        }
         throw err;
       }
     } catch (err) {
+      if (err instanceof InjectionScanError) {
+        emit({
+          event: 'task_dispatch_blocked',
+          actor_type: 'coordinator',
+          actor_id: 'coordinator',
+          task_ref: taskRef,
+          payload: { reason: 'injection_scan', findings: err.findings },
+        });
+        if (runId) {
+          finishRun(STATE_DIR, runId, agent.agent_id, {
+            success: false,
+            failureReason: 'injection_scan_blocked',
+            failureCode: 'ERR_INJECTION_SCAN',
+            policy: 'requeue',
+          });
+        }
+        return;
+      }
       if (runId) {
         finishRun(STATE_DIR, runId, agent.agent_id, {
           success: false,

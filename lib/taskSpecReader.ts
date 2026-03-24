@@ -1,7 +1,17 @@
 import { BACKLOG_DOCS_DIR } from './paths.ts';
 import { discoverActiveTaskSpecs } from './backlogSync.ts';
+import { scanForInjection } from './promptInjectionScan.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+export class InjectionScanError extends Error {
+  findings: string[];
+  constructor(findings: string[]) {
+    super(`Injection scan blocked dispatch: ${findings.join('; ')}`);
+    this.name = 'InjectionScanError';
+    this.findings = findings;
+  }
+}
 
 function normalizeHeading(text: string): string {
   return text.trim().toLowerCase();
@@ -85,6 +95,11 @@ export function readTaskSpecSections(taskRef: string, docsDir: string = BACKLOG_
       verification: '',
       source_path: null,
     };
+  }
+
+  const scan = scanForInjection(spec.content);
+  if (!scan.safe) {
+    throw new InjectionScanError(scan.findings);
   }
 
   return {
