@@ -338,6 +338,7 @@ export function queryEvents(
     after_seq,
     limit = 50,
     fts_query,
+    order = 'asc',
   }: {
     run_id?: string;
     agent_id?: string;
@@ -345,6 +346,7 @@ export function queryEvents(
     after_seq?: number;
     limit?: number;
     fts_query?: string;
+    order?: 'asc' | 'desc';
   } = {},
 ): OrcEvent[] {
   const db = getDb(stateDir);
@@ -379,7 +381,8 @@ export function queryEvents(
   params.push(cap);
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const rows = db.prepare(`SELECT payload FROM events ${where} ORDER BY seq LIMIT ?`).all(...params) as Array<{ payload: string }>;
+  const orderDir = order === 'desc' ? 'DESC' : 'ASC';
+  const rows = db.prepare(`SELECT payload FROM events ${where} ORDER BY seq ${orderDir} LIMIT ?`).all(...params) as Array<{ payload: string }>;
 
   return rows.map((row) => JSON.parse(row.payload) as OrcEvent);
 }

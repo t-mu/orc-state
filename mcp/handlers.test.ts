@@ -274,11 +274,11 @@ describe('mcp read handlers', () => {
   });
 
   it('handleGetRecentEvents caps limit and skips malformed lines', () => {
-    // queryEvents returns events in ascending seq order (first N), not tail (last N).
+    // With 3 valid events (seq 1, 2, 3) and limit 2, returns the most recent 2 in ascending order.
     const events = handleGetRecentEvents(dir, { limit: 2 });
     expect(events).toHaveLength(2);
-    expect(events[0].seq).toBe(1);
-    expect(events[1].seq).toBe(2);
+    expect(events[0].seq).toBe(2);
+    expect(events[1].seq).toBe(3);
 
     const capped = handleGetRecentEvents(dir, { limit: 999 });
     expect(capped).toHaveLength(3);
@@ -287,8 +287,7 @@ describe('mcp read handlers', () => {
     expect(none).toEqual([]);
   });
 
-  it('handleGetRecentEvents returns the first N events from DB (ascending order)', () => {
-    // queryEvents uses ORDER BY seq ASC LIMIT, so returns the oldest N events.
+  it('handleGetRecentEvents returns the most recent N events in chronological order', () => {
     // Overwrite the default seed with 60 events; migration will import them all.
     const lines = Array.from({ length: 60 }, (_, idx) =>
       JSON.stringify({ seq: idx + 1, event_id: `evt-${idx + 1}-hb`, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }));
@@ -296,8 +295,25 @@ describe('mcp read handlers', () => {
 
     const events = handleGetRecentEvents(dir, { limit: 50 });
     expect(events).toHaveLength(50);
-    expect(events[0].seq).toBe(1);
-    expect(events[49].seq).toBe(50);
+    // Should be the 50 highest-seq events (11..60), returned in ascending order.
+    expect(events[0].seq).toBe(11);
+    expect(events[49].seq).toBe(60);
+  });
+
+  it('handleGetRecentEvents returns highest-seq events when there are more than limit', () => {
+    // Seed 5 events; requesting limit 3 should return seq 3, 4, 5 — not seq 1, 2, 3.
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
+      JSON.stringify({ seq: 2, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 3, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
+      JSON.stringify({ seq: 4, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:03.000Z' }),
+      JSON.stringify({ seq: 5, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:04.000Z' }),
+    ]);
+    const events = handleGetRecentEvents(dir, { limit: 3 });
+    expect(events).toHaveLength(3);
+    expect(events[0].seq).toBe(3);
+    expect(events[1].seq).toBe(4);
+    expect(events[2].seq).toBe(5);
   });
 
   it('handleGetRecentEvents returns empty list when events file is missing', () => {

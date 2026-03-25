@@ -1,7 +1,7 @@
 ---
 ref: general/40-fix-get-recent-events-ordering
 title: "40 Fix Get Recent Events Ordering"
-status: todo
+status: done
 feature: general
 task_type: fix
 priority: high

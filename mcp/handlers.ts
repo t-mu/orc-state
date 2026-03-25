@@ -158,7 +158,7 @@ export function handleGetRecentEvents(
   }
   const cap = Math.min(limit as number, 200);
   if (cap === 0) return [];
-  let events = queryEvents(stateDir, { ...(run_id !== undefined ? { run_id } : {}), limit: cap });
+  let events = queryEvents(stateDir, { ...(run_id !== undefined ? { run_id } : {}), limit: cap, order: 'desc' }).reverse();
   if (agent_id) {
     events = events.filter(
       (e) => (e as unknown as Record<string, unknown>).agent_id === agent_id || e.actor_id === agent_id,
