@@ -1,7 +1,7 @@
 ---
 ref: general/44-worker-needs-attention-event-type
 title: "44 Worker Needs Attention Event Type"
-status: todo
+status: done
 feature: general
 task_type: implementation
 priority: high

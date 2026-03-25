@@ -58,7 +58,8 @@
         "task_delegated",
         "task_dispatch_blocked",
         "coordinator_started",
-        "coordinator_stopped"
+        "coordinator_stopped",
+        "worker_needs_attention"
       ],
       "description": "Event type discriminator."
     },

@@ -267,6 +267,16 @@ export interface ReviewSubmittedEvent extends BaseEvent {
   payload: { outcome: 'approved' | 'findings'; findings: string; [key: string]: unknown };
 }
 
+// ── Worker attention events ───────────────────────────────────────────────────
+
+export interface WorkerNeedsAttentionEvent extends BaseEvent {
+  event: 'worker_needs_attention';
+  run_id: string;
+  agent_id: string;
+  task_ref: string;
+  payload: { reason: 'stale'; idle_ms: number };
+}
+
 // ── Coordinator events ────────────────────────────────────────────────────────
 
 export interface CoordinatorStartedEvent extends BaseEvent {
@@ -315,7 +325,8 @@ export type OrcEvent =
   | SessionStartFailedEvent
   | CoordinatorStartedEvent
   | CoordinatorStoppedEvent
-  | ReviewSubmittedEvent;
+  | ReviewSubmittedEvent
+  | WorkerNeedsAttentionEvent;
 
 // ── Type guards ───────────────────────────────────────────────────────────────
 
