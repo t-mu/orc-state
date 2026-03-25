@@ -2,7 +2,7 @@
 ref: orc-warroom/51-orc-warroom-tui-components
 feature: orc-warroom
 priority: normal
-status: todo
+status: done
 required_provider: codex
 ---
 
