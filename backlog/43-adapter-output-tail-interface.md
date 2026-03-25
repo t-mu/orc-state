@@ -1,7 +1,7 @@
 ---
 ref: general/43-adapter-output-tail-interface
 title: "43 Adapter Output Tail Interface"
-status: todo
+status: done
 feature: general
 task_type: implementation
 priority: high

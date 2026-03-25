@@ -43,7 +43,7 @@
  * Call this in tests and factory functions to catch misconfigured adapters.
  */
 export function assertAdapterContract(adapter: unknown) {
-  for (const method of ['start', 'send', 'attach', 'heartbeatProbe', 'stop']) {
+  for (const method of ['start', 'send', 'attach', 'heartbeatProbe', 'stop', 'getOutputTail']) {
     if (typeof (adapter as Record<string, unknown>)[method] !== 'function') {
       throw new Error(`Adapter missing required method: ${method}`);
     }
@@ -61,6 +61,16 @@ export function assertAdapterContract(adapter: unknown) {
 export function adapterOwnsSession(adapter: unknown, sessionHandle: string) {
   if (typeof (adapter as Record<string, (...args: unknown[]) => unknown>)?.ownsSession !== 'function') return true;
   return (adapter as Record<string, (...args: unknown[]) => unknown>).ownsSession(sessionHandle);
+}
+
+/**
+ * Optional capability helper for adapters that can retrieve the last N bytes
+ * of a session's output log, stripped of ANSI escape codes.
+ * Returns null if the adapter does not implement getOutputTail.
+ */
+export function adapterGetOutputTail(adapter: unknown, sessionHandle: string) {
+  if (typeof (adapter as Record<string, (...args: unknown[]) => unknown>)?.getOutputTail !== 'function') return null;
+  return (adapter as Record<string, (...args: unknown[]) => unknown>).getOutputTail(sessionHandle) as string | null;
 }
 
 /**

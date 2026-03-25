@@ -1,5 +1,5 @@
 import { createPtyAdapter } from './pty.ts';
-import { assertAdapterContract } from './interface.ts';
+import { assertAdapterContract, adapterGetOutputTail } from './interface.ts';
 
 const SUPPORTED_PROVIDERS = new Set(['claude', 'codex', 'gemini']);
 
@@ -23,4 +23,4 @@ export function createAdapter(provider: string, options: Record<string, unknown>
   return adapter;
 }
 
-export { createPtyAdapter, assertAdapterContract };
+export { createPtyAdapter, assertAdapterContract, adapterGetOutputTail };
