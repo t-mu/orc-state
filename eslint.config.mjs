@@ -7,6 +7,8 @@ export default tseslint.config(
       'build/**',
       'coverage/**',
       'node_modules/**',
+      '.orc-state/**',
+      '.worktrees/**',
       'eslint.config.mjs',
       'vitest.config.mjs',
       'vitest.e2e.config.mjs',
