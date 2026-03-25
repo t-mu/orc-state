@@ -104,36 +104,49 @@ const INSPECTION = [
   'backlog-blocked',
 ];
 
-const [subcommand, ...rest] = process.argv.slice(2);
-
-if (!subcommand || subcommand === '--help' || subcommand === '-h') {
-  console.log('Usage: orc <subcommand> [args...]');
-  console.log('\nBlessed workflow commands:');
-  for (const name of BLESSED) {
-    console.log(`  ${name}`);
+export function buildNodeArgs(subcommand: string, scriptPath: string, rest: string[]): string[] {
+  if (subcommand === 'watch') {
+    return ['--import', 'tsx/esm', scriptPath, ...rest];
   }
-  console.log('\nRecovery / debug commands:');
-  for (const name of RECOVERY_DEBUG) {
-    console.log(`  ${name}`);
-  }
-  console.log('\nSupported inspection commands:');
-  for (const name of INSPECTION) {
-    console.log(`  ${name}`);
-  }
-  console.log('\nAdvanced / specialized commands:');
-  for (const name of Object.keys(COMMANDS).filter((name) => !BLESSED.includes(name) && !RECOVERY_DEBUG.includes(name) && !INSPECTION.includes(name))) {
-    console.log(`  ${name}`);
-  }
-  process.exit(0);
+  return ['--experimental-strip-types', scriptPath, ...rest];
 }
 
-const script = COMMANDS[subcommand];
-if (!script) {
-  console.error(`Unknown subcommand: ${subcommand}`);
-  console.error(`Run "orc --help" to see available subcommands.`);
-  process.exit(1);
+export function main(argv: string[]): number {
+  const [subcommand, ...rest] = argv;
+
+  if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+    console.log('Usage: orc <subcommand> [args...]');
+    console.log('\nBlessed workflow commands:');
+    for (const name of BLESSED) {
+      console.log(`  ${name}`);
+    }
+    console.log('\nRecovery / debug commands:');
+    for (const name of RECOVERY_DEBUG) {
+      console.log(`  ${name}`);
+    }
+    console.log('\nSupported inspection commands:');
+    for (const name of INSPECTION) {
+      console.log(`  ${name}`);
+    }
+    console.log('\nAdvanced / specialized commands:');
+    for (const name of Object.keys(COMMANDS).filter((name) => !BLESSED.includes(name) && !RECOVERY_DEBUG.includes(name) && !INSPECTION.includes(name))) {
+      console.log(`  ${name}`);
+    }
+    return 0;
+  }
+
+  const script = COMMANDS[subcommand];
+  if (!script) {
+    console.error(`Unknown subcommand: ${subcommand}`);
+    console.error('Run "orc --help" to see available subcommands.');
+    return 1;
+  }
+
+  const scriptPath = resolve(import.meta.dirname, script);
+  const result = spawnSync(process.execPath, buildNodeArgs(subcommand, scriptPath, rest), { stdio: 'inherit' });
+  return result.status ?? 1;
 }
 
-const scriptPath = resolve(import.meta.dirname, script);
-const result = spawnSync(process.execPath, ['--experimental-strip-types', scriptPath, ...rest], { stdio: 'inherit' });
-process.exit(result.status ?? 1);
+if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+  process.exit(main(process.argv.slice(2)));
+}

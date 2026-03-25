@@ -46,7 +46,7 @@
     "pre-commit": "npx lint-staged"
   },
   "lint-staged": {
-    "*.{ts,mts,cts}": "eslint --fix"
+    "*.{ts,tsx,mts,cts}": "eslint --fix"
   },
   "engines": {
     "node": ">=24"
@@ -59,12 +59,18 @@
     "boxen": "8.0.1",
     "chalk": "5.4.1",
     "figlet": "1.8.0",
-    "node-pty": "1.1.0"
+    "ink": "5.2.1",
+    "ink-spinner": "5.0.0",
+    "node-pty": "1.1.0",
+    "react": "18.3.1",
+    "terminal-image": "3.0.0",
+    "tsx": "4.19.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "@types/figlet": "1.7.0",
     "@types/node": "25.5.0",
+    "@types/react": "18.3.21",
     "eslint": "10.0.3",
     "lint-staged": "16.3.3",
     "simple-git-hooks": "2.13.1",

@@ -2,7 +2,7 @@
 ref: orc-warroom/49-orc-warroom-toolchain-prep
 feature: orc-warroom
 priority: normal
-status: todo
+status: done
 required_provider: codex
 ---
 

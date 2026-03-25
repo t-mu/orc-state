@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { buildNodeArgs } from './orc.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 
@@ -32,5 +33,22 @@ describe('cli/orc.ts', () => {
     });
 
     expect(result.status).toBe(0);
+  });
+
+  it('dispatches watch with tsx/esm', () => {
+    expect(buildNodeArgs('watch', '/tmp/watch.ts', ['--once'])).toEqual([
+      '--import',
+      'tsx/esm',
+      '/tmp/watch.ts',
+      '--once',
+    ]);
+  });
+
+  it('keeps non-watch commands on experimental-strip-types', () => {
+    expect(buildNodeArgs('status', '/tmp/status.ts', ['--json'])).toEqual([
+      '--experimental-strip-types',
+      '/tmp/status.ts',
+      '--json',
+    ]);
   });
 });
