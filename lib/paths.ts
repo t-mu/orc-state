@@ -5,7 +5,7 @@ export const STATE_DIR = process.env.ORCH_STATE_DIR
   ? resolve(process.env.ORCH_STATE_DIR)
   : resolve(resolveRepoRoot(), '.orc-state');
 
-export const EVENTS_FILE = resolve(STATE_DIR, 'events.jsonl');
+export const EVENTS_FILE = resolve(STATE_DIR, 'events.db');
 // Config lives at repo root (parent of .orc-state/), not inside the state dir.
 // Use ORC_CONFIG_FILE to override the path explicitly.
 export const ORCHESTRATOR_CONFIG_FILE = process.env.ORC_CONFIG_FILE

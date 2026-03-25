@@ -3,11 +3,12 @@
  * cli/events-filter.ts
  * Usage: orc events-filter [--run-id=<id>] [--agent-id=<id>] [--event=<type>] [--last=<N>] [--json]
  *
- * Filter events.jsonl with AND-combined filters.
+ * Filter events.db with AND-combined filters.
  */
 import { join } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { flag, flagAll, intFlag } from '../lib/args.ts';
+import { readEvents } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 
 const asJson = process.argv.includes('--json');
@@ -20,7 +21,7 @@ const eventTypeFilter = new Set(
 );
 const last = intFlag('last', 0); // 0 means all
 
-const eventsPath = join(STATE_DIR, 'events.jsonl');
+const eventsPath = join(STATE_DIR, 'events.db');
 if (!existsSync(eventsPath)) {
   if (asJson) {
     console.log(JSON.stringify([]));
@@ -30,20 +31,14 @@ if (!existsSync(eventsPath)) {
   process.exit(0);
 }
 
-const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+const allEvents = readEvents(eventsPath);
 
 const matched: unknown[] = [];
-for (const line of lines) {
-  let ev: Record<string, unknown>;
-  try {
-    ev = JSON.parse(line) as Record<string, unknown>;
-  } catch {
-    continue;
-  }
-
-  if (runIdFilter && ev.run_id !== runIdFilter) continue;
-  if (agentIdFilter && ev.agent_id !== agentIdFilter) continue;
-  if (eventTypeFilter.size > 0 && !eventTypeFilter.has(ev.event as string)) continue;
+for (const ev of allEvents) {
+  const e = ev as unknown as Record<string, unknown>;
+  if (runIdFilter && e.run_id !== runIdFilter) continue;
+  if (agentIdFilter && e.agent_id !== agentIdFilter) continue;
+  if (eventTypeFilter.size > 0 && !eventTypeFilter.has(e.event as string)) continue;
 
   matched.push(ev);
 }

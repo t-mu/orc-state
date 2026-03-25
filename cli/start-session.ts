@@ -43,6 +43,7 @@ import {
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { startMasterPtyForwarder } from '../lib/masterPtyForwarder.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
+import { initEventsDb } from '../lib/eventLog.ts';
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
 
@@ -65,9 +66,7 @@ function ensureState() {
   if (!existsSync(join(STATE_DIR, 'claims.json'))) {
     atomicWriteJson(join(STATE_DIR, 'claims.json'), { version: '1', claims: [] });
   }
-  if (!existsSync(join(STATE_DIR, 'events.jsonl'))) {
-    writeFileSync(join(STATE_DIR, 'events.jsonl'), '');
-  }
+  initEventsDb(STATE_DIR);
 }
 
 // ── Coordinator helpers ────────────────────────────────────────────────────

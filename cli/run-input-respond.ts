@@ -1,9 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { flag } from '../lib/args.ts';
-import { appendSequencedEvent } from '../lib/eventLog.ts';
+import { appendSequencedEvent, queryEvents } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 
 const runId = flag('run-id');
@@ -18,17 +15,15 @@ if (!runId || !agentId || !response) {
 
 function readLatestInputRequest(currentRunId: string, currentAgentId: string): Record<string, unknown> | null {
   try {
-    const raw = readFileSync(join(STATE_DIR, 'events.jsonl'), 'utf8').trim();
-    if (!raw) return null;
-    const events = raw.split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, unknown>)
-      .reverse();
-    return events.find((event) =>
-      event.event === 'input_requested'
-      && event.run_id === currentRunId
-      && event.agent_id === currentAgentId
-      && typeof (event.payload as Record<string, unknown>)?.question === 'string') ?? null;
+    const events = queryEvents(STATE_DIR, {
+      run_id: currentRunId,
+      agent_id: currentAgentId,
+      event_type: 'input_requested',
+    });
+    const reversed = [...events].reverse();
+    return (reversed.find((event) =>
+      typeof (event.payload as Record<string, unknown>)?.question === 'string',
+    ) as unknown as Record<string, unknown> | null) ?? null;
   } catch {
     return null;
   }

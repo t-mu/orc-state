@@ -63,7 +63,7 @@ if (eventReadError) {
 function readRunActivity(): { runActivity: Map<string, RunActivityDetail>; eventReadError: string } {
   try {
     return {
-      runActivity: latestRunActivityDetailMap(readEvents(join(STATE_DIR, 'events.jsonl'))),
+      runActivity: latestRunActivityDetailMap(readEvents(join(STATE_DIR, 'events.db'))),
       eventReadError: '',
     };
   } catch (error) {

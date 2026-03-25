@@ -147,7 +147,7 @@ describe('cli/start-session.ts', () => {
       expect(existsSync(join(freshDir, 'backlog.json'))).toBe(true);
       expect(existsSync(join(freshDir, 'agents.json'))).toBe(true);
       expect(existsSync(join(freshDir, 'claims.json'))).toBe(true);
-      expect(existsSync(join(freshDir, 'events.jsonl'))).toBe(true);
+      expect(existsSync(join(freshDir, 'events.db'))).toBe(true);
     });
 
     it('does not overwrite existing state files', () => {

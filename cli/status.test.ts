@@ -49,7 +49,7 @@ describe('cli/status.ts', () => {
     const result = runStatus([]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('State validation failed');
-    expect(result.stderr).toContain('events.jsonl schema error at line 1');
+    expect(result.stderr).toContain('events.db schema error at line 1');
   });
 
   it('fails hard on contradictory lifecycle state instead of printing status output', () => {
