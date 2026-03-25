@@ -17,15 +17,17 @@ Independent. Blocks Tasks 50, 51, 52.
 - Add `ink@5.2.1`, `react@18.3.1`, `terminal-image@3.0.0`, `ink-spinner@5.0.0` to `dependencies`
 - Add `@types/react@18.3.21` to `devDependencies`
 - Update `tsconfig.json` and `tsconfig.check.json` to support JSX and `.tsx` files
+- Update `tsconfig.test.json` to include `.test.tsx` coverage for test typechecking
 - Update `eslint.config.mjs` to include `.tsx` files
 - Update `lint-staged` config to include `.tsx` pattern
 - Update `vitest.config.mjs` to include `.tsx` test files
 - Update `cli/orc.ts` to use `--import tsx/esm` for the `watch` subcommand only
+- Add or update focused tests for `cli/orc.ts` dispatch behavior
 
 **Out of scope:**
 - Do not create any `.tsx` component files yet (that is Task 51)
 - Do not modify any existing `.ts` files beyond `cli/orc.ts` and config files
-- Do not modify any test files
+- Do not modify tests outside the focused `cli/orc.ts` dispatch coverage needed for this task
 
 ---
 
@@ -48,9 +50,12 @@ The `watch` subcommand is dispatched with `node --import tsx/esm` instead of `--
 
 **Affected files:**
 - `package.json`
+- `package-lock.json`
 - `cli/orc.ts`
+- `cli/orc.test.ts`
 - `tsconfig.json`
 - `tsconfig.check.json`
+- `tsconfig.test.json`
 - `eslint.config.mjs`
 - `vitest.config.mjs`
 - (lint-staged config — wherever it lives in the project)
@@ -65,8 +70,11 @@ The `watch` subcommand is dispatched with `node --import tsx/esm` instead of `--
 4. Must update `cli/orc.ts` so only the `watch` subcommand is spawned with `--import tsx/esm`; all others remain on `--experimental-strip-types`.
 5. Must add `"jsx": "react-jsx"` and `"jsxImportSource": "react"` to `tsconfig.json` compilerOptions.
 6. Must add `"**/*.tsx"` to `tsconfig.json` `include`.
-7. Must update eslint, lint-staged, and vitest to recognize `.tsx` files.
-8. Must pass `npm test` — no existing tests broken.
+7. Must update `tsconfig.test.json` so `.test.tsx` files are included in test typechecking.
+8. Must update `tsconfig.check.json` exclusions so `.test.tsx` / `.e2e.test.tsx` files do not leak into production typechecking.
+9. Must update eslint, lint-staged, and vitest to recognize `.tsx` files.
+10. Must add focused coverage proving `watch` dispatches via `--import tsx/esm` while other subcommands continue using `--experimental-strip-types`.
+11. Must pass `npm test` — no existing tests broken.
 
 ---
 
@@ -122,30 +130,60 @@ Update `include`:
 
 ### Step 4 — Update `tsconfig.check.json`
 
-Apply the same `jsx` and `jsxImportSource` additions. Update `include` to `["**/*.ts", "**/*.tsx"]`.
+Do not duplicate JSX settings unless needed — they already inherit from `tsconfig.json`.
+Instead, update exclusions so test TSX files stay out of production typechecking:
 
-### Step 5 — Update `eslint.config.mjs`
+```json
+"exclude": [
+  "node_modules",
+  "**/*.test.ts",
+  "**/*.test.tsx",
+  "**/*.e2e.test.ts",
+  "**/*.e2e.test.tsx",
+  "test-fixtures/**"
+]
+```
 
-Extend the files pattern to include `**/*.tsx` wherever `**/*.ts` appears.
+### Step 5 — Update `tsconfig.test.json`
 
-### Step 6 — Update `vitest.config.mjs`
+Update include patterns so Vitest typecheck covers TSX tests:
+
+```json
+"include": ["**/*.test.ts", "**/*.test.tsx", "test-fixtures/**/*.ts", "test-fixtures/**/*.tsx"]
+```
+
+### Step 6 — Update `eslint.config.mjs`
+
+Extend explicit test-file globs to include `.tsx` variants anywhere `.test.ts` patterns are used.
+
+### Step 7 — Update `vitest.config.mjs`
 
 ```javascript
 include: ['**/*.test.ts', '**/*.test.tsx']
 ```
 
-### Step 7 — Update lint-staged config
+### Step 8 — Update lint-staged config
 
 Find the lint-staged pattern (likely in `package.json` or `.lintstagedrc`). Change `"*.{ts,mts,cts}"` to `"*.{ts,tsx,mts,cts}"`.
+
+### Step 9 — Add focused `cli/orc.ts` dispatch coverage
+
+Update `cli/orc.test.ts` to assert:
+- `watch` dispatches with `['--import', 'tsx/esm', ...]`
+- a non-watch command still dispatches with `['--experimental-strip-types', ...]`
+
+Prefer mocking `spawnSync` or otherwise verifying the actual spawned node args. Do not use temporary `console.error(...)` probes for verification.
 
 ---
 
 ## Acceptance criteria
 
 - [ ] `npm install` succeeds with all new packages at exact specified versions.
-- [ ] `orc watch` dispatches via `node --import tsx/esm` (verify by adding a temporary `console.error(process.argv)` to `watch.ts` and running `orc watch --once`).
-- [ ] `orc status` still dispatches via `--experimental-strip-types` (other commands unaffected).
+- [ ] `package-lock.json` is updated to match the exact dependency pins.
+- [ ] Focused tests prove `orc watch` dispatches via `node --import tsx/esm`.
+- [ ] Focused tests prove a non-watch command such as `orc status` still dispatches via `--experimental-strip-types`.
 - [ ] `tsconfig.json` contains `"jsx": "react-jsx"` and `"jsxImportSource": "react"`.
+- [ ] `tsconfig.test.json` includes `.test.tsx`, and `tsconfig.check.json` excludes `.test.tsx` / `.e2e.test.tsx`.
 - [ ] `npm test` passes with zero failures.
 - [ ] No changes to files outside the stated scope.
 
@@ -153,7 +191,7 @@ Find the lint-staged pattern (likely in `package.json` or `.lintstagedrc`). Chan
 
 ## Tests
 
-No new tests. Verify dispatch change manually and confirm existing test suite passes.
+Update `cli/orc.test.ts` with focused dispatcher coverage for `watch` vs non-watch node args. Confirm the existing test suite still passes.
 
 ---
 
@@ -161,11 +199,6 @@ No new tests. Verify dispatch change manually and confirm existing test suite pa
 
 ```bash
 nvm use 24 && npm test
-```
-
-```bash
-orc watch --once   # should still work (watch.ts unchanged at this point, tsx can run .ts files too)
-orc status         # unaffected
 ```
 
 ---
