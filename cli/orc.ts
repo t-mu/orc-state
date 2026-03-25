@@ -59,6 +59,7 @@ const COMMANDS: Record<string, string> = {
   'worker-status':      'worker-status.ts',
   'backlog-ready':      'backlog-ready.ts',
   'backlog-blocked':    'backlog-blocked.ts',
+  'notifications-clear': 'notifications-clear.ts',
 };
 
 const BLESSED = [

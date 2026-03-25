@@ -63,6 +63,9 @@ query_events(run_id?, agent_id?, event_type?, after_seq?, limit?)
 list_worktrees()
   List all registered run worktrees with agent, task, path, and branch information.
 
+clear_notifications()
+  Mark all pending master notifications as consumed. Returns count cleared.
+
 WRITE STATE
 
 create_task(feature, title, task_type?, required_capabilities?, owner?, ref?, actor_id?)
