@@ -17,6 +17,7 @@
   },
   "files": [
     "adapters",
+    "assets",
     "cli",
     "coordinator.ts",
     "index.ts",
