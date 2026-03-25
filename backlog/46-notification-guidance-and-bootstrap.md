@@ -1,7 +1,7 @@
 ---
 ref: general/46-notification-guidance-and-bootstrap
 title: "46 Notification Guidance And Bootstrap"
-status: todo
+status: blocked
 feature: general
 task_type: implementation
 priority: normal
