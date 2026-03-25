@@ -114,6 +114,8 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleListWorktrees(stateDir);
     case 'clear_notifications':
       return handlers.handleClearNotifications(stateDir);
+    case 'get_notifications':
+      return handlers.handleGetNotifications(stateDir, args);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

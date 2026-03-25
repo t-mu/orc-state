@@ -299,17 +299,22 @@ Before reporting any task complete:
 
 ## Interactive Prompt Rule
 
-If you encounter an interactive confirmation prompt you cannot bypass (e.g. a
-tool asking "Would you like to apply these changes? [y/n]"), do NOT sit and wait.
-Call `orc run-input-request` first so the question is bubbled to the master:
+`orc run-input-request` is for genuine blockers only. Do NOT call it for:
+- Tool permission prompts — Claude Code's bypass permissions mode handles these automatically.
+- Routine confirmation dialogs you can answer yourself.
+
+Call `orc run-input-request` ONLY when blocked on:
+- Ambiguous or missing spec requirements that block implementation.
+- Merge conflicts that are genuinely unresolvable without human input.
+- External dependencies that are unavailable (service down, credential missing).
 
 ```bash
 orc run-input-request --run-id=<run_id> --agent-id=<agent_id> \
-  --question="Blocked on interactive prompt while <action>. Prompt asked: <prompt text>. What should I answer?"
+  --question="Blocked on <specific situation>. <What you need from master>."
 ```
 
 That command waits for a matching `input_response` while keeping the run alive.
-Only call `orc run-fail` if the prompt remains unrecoverable even after master input.
+Only call `orc run-fail` if the blocker is truly unrecoverable even after master input.
 
 ---
 

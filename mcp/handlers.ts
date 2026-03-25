@@ -3,10 +3,10 @@ import { join } from 'node:path';
 
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
-import { appendSequencedEvent, queryEvents } from '../lib/eventLog.ts';
+import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
-import { appendNotification, clearNotifications, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
+import { clearNotifications, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
@@ -224,6 +224,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     task_counts: taskCounts,
     active_tasks: activeTasks,
     pending_notifications: readPendingNotifications(stateDir).length,
+    last_notification_seq: getLastNotificationSeq(stateDir),
     stalled_runs: handleListStalledRuns(stateDir).length,
     next_task_seq: getNextTaskSeq(backlog),
   };
@@ -738,19 +739,6 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
     };
   });
 
-  for (const cancelledRun of cancelledRuns) {
-    const deposited = appendNotification(stateDir, {
-      type: 'TASK_COMPLETE',
-      task_ref,
-      agent_id: cancelledRun.agent_id,
-      success: false,
-      finished_at: now,
-    });
-    if (!deposited) {
-      console.warn(`[mcp] WARNING: failed to deposit cancellation notification for ${typeof task_ref === 'string' ? task_ref : '(unknown)'} (${cancelledRun.run_id})`);
-    }
-  }
-
   return result;
 }
 
@@ -963,4 +951,16 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
 export function handleClearNotifications(stateDir: string) {
   const count = clearNotifications(stateDir);
   return { ok: true, cleared: count };
+}
+
+export function handleGetNotifications(stateDir: string, { after_seq }: { after_seq?: unknown } = {}) {
+  const afterSeq = after_seq == null ? 0 : (after_seq as number);
+  if (!Number.isInteger(afterSeq) || afterSeq < 0) {
+    throw new Error('after_seq must be a non-negative integer');
+  }
+  const notifications = queryNotificationEvents(stateDir, afterSeq);
+  const lastSeq = notifications.length > 0
+    ? ((notifications[notifications.length - 1] as unknown as Record<string, unknown>).seq as number ?? afterSeq)
+    : afterSeq;
+  return { notifications, last_seq: lastSeq };
 }

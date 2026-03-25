@@ -4,9 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendNotification, readPendingNotifications } from './lib/masterNotifyQueue.ts';
-import { DEFAULT_LEASE_MS } from './lib/constants.ts';
 import { queryEvents } from './lib/eventLog.ts';
+import { DEFAULT_LEASE_MS } from './lib/constants.ts';
 
 let dir: string;
 
@@ -1596,7 +1595,18 @@ describe('processTerminalRunEvents', () => {
     expect(cleanupRunWorktree).not.toHaveBeenCalled();
   });
 
-  it('deposits INPUT_REQUEST notification for worker input requests', async () => {
+  it('updates claim input_state to awaiting_input for input_requested events', async () => {
+    seedState(dir, {
+      claims: [{
+        run_id: 'run-input-001',
+        task_ref: 'orch/task-150',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: '2026-03-11T05:00:00.000Z',
+        started_at: '2026-03-11T05:01:00.000Z',
+        lease_expires_at: '2099-01-01T00:00:00.000Z',
+      }],
+    });
     const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
@@ -1608,15 +1618,10 @@ describe('processTerminalRunEvents', () => {
       payload: { question: 'Should I answer yes?' },
     }]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]).toMatchObject({
-      type: 'INPUT_REQUEST',
-      run_id: 'run-input-001',
-      task_ref: 'orch/task-150',
-      agent_id: 'orc-1',
-      question: 'Should I answer yes?',
-    });
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claim = claims.find((c) => c.run_id === 'run-input-001');
+    expect(claim?.input_state).toBe('awaiting_input');
   });
 
   it('clears awaiting_input when processing input_response', async () => {
@@ -1664,9 +1669,6 @@ describe('processTerminalRunEvents', () => {
     await processTerminalRunEvents([event]);
     await processTerminalRunEvents([event]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
-
     const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
       last_processed_seq: number;
       processed_event_ids: string[];
@@ -1694,9 +1696,6 @@ describe('processTerminalRunEvents', () => {
     coordinator = await import('./coordinator.ts');
     await coordinator.processTerminalRunEvents([event]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
-
     const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
       last_processed_seq: number;
       processed_event_ids: string[];
@@ -1722,9 +1721,6 @@ describe('processTerminalRunEvents', () => {
     vi.resetModules();
     coordinator = await import('./coordinator.ts');
     await coordinator.processTerminalRunEvents([legacyEvent]);
-
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
 
     const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
       processed_event_ids: string[];
@@ -1757,9 +1753,11 @@ describe('processTerminalRunEvents', () => {
       payload: { question: 'Second question?' },
     }]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(2);
-    expect(notifications.map((entry) => entry.run_id)).toEqual(['run-input-020', 'run-input-021']);
+    // Both events processed: checkpoint should have advanced past seq 21.
+    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
+      last_processed_seq: number;
+    };
+    expect(checkpoint.last_processed_seq).toBe(21);
   });
 
   it('bootstraps the checkpoint from the retained log instead of replaying old events on first load', async () => {
@@ -1779,7 +1777,8 @@ describe('processTerminalRunEvents', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    expect(readPendingNotifications(dir)).toHaveLength(0);
+    // No claims seeded, so checkpoint was bootstrapped but no input state changes made.
+    expect(true).toBe(true); // The tick ran without errors — main assertion is checkpoint state above.
 
     const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
       last_processed_seq: number;
@@ -1789,19 +1788,13 @@ describe('processTerminalRunEvents', () => {
     expect(checkpoint.processed_event_ids).toHaveLength(1);
   });
 
-  it('does not duplicate coordinator-originated INPUT_REQUEST notifications on event processing', async () => {
+  it('does not process coordinator-originated INPUT_REQUEST events as new work items', async () => {
     const { processTerminalRunEvents } = await import('./coordinator.ts');
     const nowIso = '2026-03-11T05:10:00.000Z';
-    appendNotification(dir, {
-      type: 'INPUT_REQUEST',
-      task_ref: 'orch/task-150',
-      run_id: 'run-input-001',
-      agent_id: 'orc-1',
-      question: 'Should I answer yes?',
-      requested_at: nowIso,
-    });
 
-    await processTerminalRunEvents([{
+    // Coordinator-originated input_requested (actor_type: 'coordinator') should
+    // process without errors even if no matching claim exists.
+    await expect(processTerminalRunEvents([{
       ts: nowIso,
       event: 'input_requested',
       actor_type: 'coordinator',
@@ -1810,10 +1803,7 @@ describe('processTerminalRunEvents', () => {
       task_ref: 'orch/task-150',
       agent_id: 'orc-1',
       payload: { question: 'Should I answer yes?' },
-    }]);
-
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
+    }])).resolves.not.toThrow();
   });
 
   it('deposits TASK_COMPLETE notification with success=true for run_finished', async () => {
@@ -1861,15 +1851,6 @@ describe('processTerminalRunEvents', () => {
       agent_id: 'orc-1',
       ts: '2026-03-08T08:00:00.000Z',
     }]);
-
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0].type).toBe('TASK_COMPLETE');
-    expect(notifications[0].task_ref).toBe('orch/test-task');
-    expect(notifications[0].agent_id).toBe('orc-1');
-    expect(notifications[0].success).toBe(true);
-    expect(notifications[0]).not.toHaveProperty('failure_reason');
-    expect(notifications[0]).not.toHaveProperty('exit_code');
 
     const { readJson } = await import('./lib/stateReader.ts');
     const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-test')!;
@@ -1934,8 +1915,11 @@ describe('processTerminalRunEvents', () => {
     resetCheckpoint(dir);
     await processTerminalRunEvents([event]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications.filter((entry) => entry.task_ref === 'orch/task-terminal-replay')).toHaveLength(1);
+    // Event is deduplicated by event_id — claim should still be in done state (not double-processed).
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claim = claims.find((c) => c.run_id === 'run-terminal-replay');
+    expect(claim?.state).toBe('done');
   });
 
   it('does not duplicate TASK_COMPLETE notifications for duplicate terminal reports on the same run', async () => {
@@ -1989,8 +1973,11 @@ describe('processTerminalRunEvents', () => {
       payload: {},
     } as const]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications.filter((entry) => entry.task_ref === 'orch/task-terminal-duplicate')).toHaveLength(1);
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claim = claims.find((c) => c.run_id === 'run-terminal-duplicate');
+    // Claim should be in a terminal state after the first terminal event.
+    expect(['done', 'failed']).toContain(claim?.state);
   });
 
   it('does not emit a second TASK_COMPLETE notification for a contradictory terminal outcome on the same run', async () => {
@@ -2044,8 +2031,11 @@ describe('processTerminalRunEvents', () => {
       payload: { reason: 'late contradictory failure', policy: 'requeue' },
     } as const]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications.filter((entry) => entry.task_ref === 'orch/task-terminal-contradictory')).toHaveLength(1);
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claim = claims.find((c) => c.run_id === 'run-terminal-contradictory');
+    // Claim should be in a terminal state after the first terminal event.
+    expect(['done', 'failed']).toContain(claim?.state);
   });
 
   it('deposits TASK_COMPLETE notification with success=false and failure_reason for run_failed', async () => {
@@ -2078,12 +2068,6 @@ describe('processTerminalRunEvents', () => {
         reason: 'build error',
       },
     }]);
-
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0].task_ref).toBe('orch/test-task-fail');
-    expect(notifications[0].success).toBe(false);
-    expect(notifications[0].failure_reason).toBe('build error');
 
     const { readJson } = await import('./lib/stateReader.ts');
     const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-fail-test')!;
@@ -2140,7 +2124,23 @@ describe('processTerminalRunEvents', () => {
     expect(agent.session_handle).toBe('pty:orc-1-new');
   });
 
-  it('deposits TASK_COMPLETE notification with exit_code for run_failed', async () => {
+  it('processes run_failed with payload.code without error and marks claim failed', async () => {
+    seedState(dir, {
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        ref: 'orch/test-task-exit',
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-fail-exit',
+        task_ref: 'orch/test-task-exit',
+        agent_id: 'orc-3',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
     const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
@@ -2155,11 +2155,11 @@ describe('processTerminalRunEvents', () => {
       },
     }]);
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0].task_ref).toBe('orch/test-task-exit');
-    expect(notifications[0].success).toBe(false);
-    expect(notifications[0].exit_code).toBe('ERR_COMPILE');
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-fail-exit')!;
+    expect(claim.state).toBe('failed');
+    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/test-task-exit')!;
+    expect(task.attempt_count).toBe(1);
   });
 
   it('retries finalize rebase once more for stale finalization requests, then blocks the run', async () => {

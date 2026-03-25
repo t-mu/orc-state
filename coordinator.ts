@@ -33,7 +33,7 @@ import { nextEligibleTask } from './lib/taskScheduler.ts';
 import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, ORCHESTRATOR_CONFIG_FILE } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
-import { appendNotification, clearNotifications } from './lib/masterNotifyQueue.ts';
+import { clearNotifications } from './lib/masterNotifyQueue.ts';
 import { loadWorkerPoolConfig } from './lib/providers.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { resolveRepoRoot } from './lib/repoRoot.ts';
@@ -350,15 +350,6 @@ async function processManagedSessionStartRetries(
       if (agent.status !== 'offline') {
         await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
       }
-      appendNotification(STATE_DIR, {
-        type: 'SESSION_START_FAILED',
-        task_ref: claim.task_ref,
-        run_id: claim.run_id,
-        agent_id: claim.agent_id,
-        reason: failReason,
-        failed_at: new Date().toISOString(),
-        dedupe_key: `session_start_failed:${claim.run_id}`,
-      });
       console.error(`[coordinator] Failed to start session for '${claim.agent_id}': bounded retries exhausted — ${failReason}`);
       continue;
     }
@@ -438,15 +429,6 @@ async function markFinalizeBlocked(claim: Claim, workerPoolConfig: WorkerPoolCon
   }
   await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
   log(`run ${claim.run_id} blocked during finalization: ${reason}`);
-  appendNotification(STATE_DIR, {
-    type: 'FINALIZE_BLOCKED',
-    task_ref: claim.task_ref,
-    run_id: claim.run_id,
-    agent_id: claim.agent_id,
-    reason,
-    blocked_at: new Date().toISOString(),
-    dedupe_key: `finalize_blocked:${claim.run_id}`,
-  });
   return true;
 }
 
@@ -455,15 +437,6 @@ function checkMasterHealth(agents: Agent[]): void {
   if (!master) return;
   if (master.status !== 'offline' && master.status !== 'dead') return;
 
-  appendNotification(STATE_DIR, {
-    type: 'MASTER_OFFLINE',
-    agent_id: master.agent_id,
-    status: master.status,
-    offline_since: master.last_status_change_at ?? new Date().toISOString(),
-    dedupe_key: 'master_offline',
-  });
-  // Warn on every tick while master is offline — appendNotification's return value
-  // cannot distinguish "newly written" from "dedup suppressed", so always warn.
   console.warn(`[coordinator] MASTER OFFLINE: agent '${master.agent_id}' is ${master.status}. Run 'orc start-session' to restore the master session.`);
 }
 
@@ -587,14 +560,6 @@ function recordCoordinatorInputRequest(claim: Claim, question: string, reason: s
       question,
       reason,
     },
-  });
-  appendNotification(STATE_DIR, {
-    type: 'INPUT_REQUEST',
-    task_ref: claim.task_ref,
-    run_id: claim.run_id,
-    agent_id: claim.agent_id,
-    question,
-    requested_at: nowIso,
   });
   log(`run ${claim.run_id} is awaiting input: ${reason}`);
   return true;
@@ -1041,15 +1006,6 @@ async function tick() {
         if (agent.status !== 'offline') {
           await cleanupRunCapacity(agent.agent_id, workerPoolConfig);
         }
-        appendNotification(STATE_DIR, {
-          type: 'SESSION_START_FAILED',
-          task_ref: taskRef,
-          run_id: runId,
-          agent_id: agent.agent_id,
-          reason: failReason,
-          failed_at: new Date().toISOString(),
-          dedupe_key: `session_start_failed:${runId}`,
-        });
         return;
       }
 
@@ -1303,60 +1259,14 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       });
     }
 
-    // ── Unconditional side effects for input_requested ────────────────────
-    // Notification is deposited regardless of whether the claim was updated.
-    if (event.event === 'input_requested' && event.actor_type !== 'coordinator') {
-      const requestedAt = action.type === 'set_input_state' ? action.requestedAt : eventTs;
-      const deposited = appendNotification(STATE_DIR, {
-        type: 'INPUT_REQUEST',
-        dedupe_key: `input-request:${normalizedEventId}`,
-        task_ref: (event as { task_ref?: string }).task_ref ?? '(unknown)',
-        run_id: runId!,
-        agent_id: agentId,
-        question: (event as { payload: { question: string } }).payload.question,
-        requested_at: requestedAt,
-      });
-      if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit input request notification for ${(event as { task_ref?: string }).task_ref ?? '(unknown)'}`);
-      }
-    }
-
     // ── Unconditional side effects for terminal run events ────────────────
-    // Cleanup and notification happen regardless of current claim state, so
-    // that a re-delivered terminal event still deposits its notification.
+    // Cleanup happens regardless of current claim state so that a re-delivered
+    // terminal event still triggers capacity release and worktree cleanup.
     if (event.event === 'run_finished' || event.event === 'run_failed') {
-      const stateTs = action.type === 'finish_run'
-        ? action.at
-        : authoritativeStateTs(eventTs);
-      const failed = event.event === 'run_failed';
-      const failureReason = failed
-        ? ((event as { payload?: { reason?: string } }).payload?.reason ?? null)
-        : null;
-      const exitCode = failed
-        ? ((event as { payload?: { code?: string } }).payload?.code ?? null)
-        : null;
       if (!hasOtherActiveClaim(agentId, runId!)) {
         await cleanupRunCapacity(agentId, workerPoolConfig);
       }
       deleteRunWorktree(STATE_DIR, runId!);
-      const notification: Record<string, unknown> = {
-        type: 'TASK_COMPLETE',
-        dedupe_key: `task-complete:${runId}`,
-        task_ref: (event as { task_ref: string }).task_ref,
-        agent_id: agentId,
-        success: !failed,
-        finished_at: stateTs,
-      };
-      if (failed && typeof failureReason === 'string' && failureReason.trim()) {
-        notification.failure_reason = failureReason;
-      }
-      if (failed && (typeof exitCode === 'string' || typeof exitCode === 'number')) {
-        notification.exit_code = exitCode;
-      }
-      const deposited = appendNotification(STATE_DIR, { ...notification });
-      if (!deposited) {
-        console.warn(`[coordinator] WARNING: failed to deposit notification for ${(event as { task_ref: string }).task_ref}`);
-      }
     }
 
     // ── Unconditional finalization trigger for work/merge events ──────────
