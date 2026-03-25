@@ -6,7 +6,7 @@ import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
 
 const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
-const VALID_SPEC_STATUSES = new Set<string>(['todo', 'blocked', 'done', 'released']);
+const VALID_SPEC_STATUSES = new Set<string>(['todo', 'blocked', 'done', 'released', 'cancelled']);
 const LEGACY_DIR_RE = /^legacy\//;
 
 function humanizeSlug(slug: string): string {

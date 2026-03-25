@@ -17,7 +17,7 @@ import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
-const TASK_STATUSES = new Set(['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released']);
+const TASK_STATUSES = new Set(['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled']);
 const AGENT_ROLES = new Set(['worker', 'reviewer', 'master']);
 const TASK_TYPES = new Set(['implementation', 'refactor']);
 const TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
@@ -57,7 +57,7 @@ function readBacklogFresh(stateDir: string, { lockAlreadyHeld = false }: { lockA
 // After create_task commits, it becomes the next number after the task just created.
 
 // Fields returned by list_tasks (summary view). Use get_task() for full detail.
-const TERMINAL_STATUSES = new Set(['done', 'released']);
+const TERMINAL_STATUSES = new Set(['done', 'released', 'cancelled']);
 
 function toTaskSummary(task: Task & { feature_ref: string }) {
   return {
@@ -88,7 +88,7 @@ export function handleListTasks(stateDir: string, { status, feature }: { status?
     tasks = tasks.filter((task) => task.status === status);
   } else {
     // Exclude terminal statuses by default to keep payload small.
-    // Use status="done" or status="released" to retrieve those explicitly.
+    // Use status="done", "released", or "cancelled" to retrieve terminal tasks explicitly.
     tasks = tasks.filter((task) => !TERMINAL_STATUSES.has(task.status));
   }
   if (feature) tasks = tasks.filter((task) => task.feature_ref === feature);
@@ -204,6 +204,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
   if (include_done_count) {
     taskCounts.done = 0;
     taskCounts.released = 0;
+    taskCounts.cancelled = 0;
   }
 
   const activeTasks: Array<{ ref: string; title: string; status: string; feature_ref: string; owner: string | null }> = [];
@@ -212,7 +213,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
       if (Object.hasOwn(taskCounts, task.status)) {
         taskCounts[task.status] += 1;
       }
-      if (task.status === 'done' || task.status === 'released') continue;
+      if (TERMINAL_STATUSES.has(task.status)) continue;
       activeTasks.push({
         ref: task.ref,
         title: task.title,
@@ -264,7 +265,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
   for (const feature of backlog.features) {
     for (const task of feature.tasks) {
       if (task.owner !== agent_id) continue;
-      if (task.status === 'done' || task.status === 'released') continue;
+      if (TERMINAL_STATUSES.has(task.status)) continue;
       if (activeRun?.task_ref === task.ref) continue;
 
       const blockers: string[] = [];
@@ -442,8 +443,8 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   if (required_provider !== undefined && required_provider !== null && !isSupportedProvider(required_provider)) {
     throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
   }
-  if (status !== undefined && !['todo', 'in_progress', 'blocked', 'done', 'released'].includes(status as string)) {
-    throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}. Must be one of: todo, in_progress, blocked, done, released.`);
+  if (status !== undefined && !['todo', 'in_progress', 'blocked', 'done', 'released', 'cancelled'].includes(status as string)) {
+    throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}. Must be one of: todo, in_progress, blocked, done, released, cancelled.`);
   }
 
   const now = new Date().toISOString();
@@ -661,7 +662,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
     const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
-    if (task.status === 'done' || task.status === 'released') {
+    if (TERMINAL_STATUSES.has(task.status)) {
       return { error: 'already_terminal', task_ref, status: task.status };
     }
 

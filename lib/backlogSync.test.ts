@@ -67,6 +67,22 @@ describe('syncBacklogFromSpecs', () => {
     ]);
   });
 
+  it('accepts cancelled as a valid spec status and syncs it into runtime backlog', async () => {
+    writeSpec(dir, '156-cancelled.md', {
+      ref: 'orch/task-156-cancelled',
+      feature: 'orch',
+      status: 'cancelled',
+      title: 'Cancelled Task',
+    });
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    const result = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(result.added_tasks).toBe(1);
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('cancelled');
+  });
+
   it('adds a missing feature when a spec references an unknown feature', async () => {
     writeSpec(dir, '200-other.md', {
       ref: 'other/task-200-example',

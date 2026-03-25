@@ -22,8 +22,8 @@ READ STATE
 
 list_tasks(status?, feature?)
   Returns summary view of backlog tasks (ref, title, status, feature_ref, task_type,
-  owner, depends_on). By default excludes done/released tasks to keep the payload
-  small. Pass status="done" or status="released" to retrieve terminal tasks.
+  owner, depends_on). By default excludes terminal tasks to keep the payload
+  small. Pass status="done", status="released", or status="cancelled" to retrieve terminal tasks.
   Use get_task(ref) for full detail (description, acceptance_criteria, etc.).
 
 list_agents(role?)

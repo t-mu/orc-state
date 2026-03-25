@@ -1,13 +1,13 @@
 export const TOOLS = [
   {
     name: 'list_tasks',
-    description: 'List backlog tasks (summary view: ref, title, status, feature_ref, task_type, priority, owner, depends_on). By default excludes done/released tasks — pass status="done" or status="released" to retrieve them. Use get_task(ref) for full detail including description and acceptance_criteria.',
+    description: 'List backlog tasks (summary view: ref, title, status, feature_ref, task_type, priority, owner, depends_on). By default excludes terminal tasks — pass status="done", "released", or "cancelled" to retrieve them. Use get_task(ref) for full detail including description and acceptance_criteria.',
     inputSchema: {
       type: 'object',
       properties: {
         status: {
           type: 'string',
-          enum: ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released'],
+          enum: ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled'],
           description: 'Filter by task status',
         },
         feature: {
@@ -108,7 +108,7 @@ export const TOOLS = [
       properties: {
         include_done_count: {
           type: 'boolean',
-          description: 'Include done/released counts in task_counts (default: false)',
+          description: 'Include terminal task counts, including done/released/cancelled (default: false)',
         },
       },
       additionalProperties: false,

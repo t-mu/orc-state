@@ -308,7 +308,7 @@ export function buildAgentStatus(stateDir: string, agentId: string): Record<stri
   for (const feature of backlogFile.features ?? []) {
     for (const task of feature.tasks ?? []) {
       if (task.owner !== agentId) continue;
-      if (task.status === 'done' || task.status === 'released') continue;
+      if (task.status === 'done' || task.status === 'released' || task.status === 'cancelled') continue;
       if (claimedTaskRefs.has(task.ref)) continue;
       queuedTasks.push({
         ref: task.ref,

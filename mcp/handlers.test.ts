@@ -221,7 +221,7 @@ describe('mcp read handlers', () => {
     expect(all.every((task) => typeof task.priority === 'string')).toBe(true);
     expect(all.find((task) => task.ref === 'project/todo-one')?.priority).toBe('normal');
 
-    // Explicit status= includes done/released tasks.
+    // Explicit status= includes terminal tasks.
     const done = handleListTasks(dir, { status: 'done' });
     expect(done.map((task) => task.ref)).toEqual(['project/done-one']);
 
@@ -230,6 +230,24 @@ describe('mcp read handlers', () => {
 
     const infra = handleListTasks(dir, { feature: 'infra' });
     expect(infra.map((task) => task.ref)).toEqual(['infra/blocked-one']);
+  });
+
+  it('handleListTasks excludes cancelled tasks by default and returns them when requested', () => {
+    const backlog = readBacklog();
+    backlog.features[0].tasks.push({
+      ref: 'project/cancelled-one',
+      title: 'Cancelled one',
+      status: 'cancelled',
+      task_type: 'implementation',
+      planning_state: 'ready_for_dispatch',
+      delegated_by: 'master',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    });
+    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+
+    expect(handleListTasks(dir).some((task) => task.ref === 'project/cancelled-one')).toBe(false);
+    expect(handleListTasks(dir, { status: 'cancelled' }).map((task) => task.ref)).toEqual(['project/cancelled-one']);
   });
 
   it('syncs authoritative markdown before serving backlog-backed reads', () => {
@@ -406,11 +424,22 @@ describe('mcp read handlers', () => {
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-01T00:00:00.000Z',
     });
+    (project.tasks as unknown[]).push({
+      ref: 'project/cancelled-one',
+      title: 'Cancelled one',
+      status: 'cancelled',
+      task_type: 'implementation',
+      planning_state: 'ready_for_dispatch',
+      delegated_by: 'master',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    });
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
 
     const status = handleGetStatus(dir, { include_done_count: true });
     expect((status.task_counts as Record<string, unknown>).done).toBe(1);
     expect((status.task_counts as Record<string, unknown>).released).toBe(1);
+    expect((status.task_counts as Record<string, unknown>).cancelled).toBe(1);
   });
 
   it('handleGetStatus response stays <= 2KB for 3 workers and 10 active tasks', () => {

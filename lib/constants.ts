@@ -6,7 +6,7 @@ export const TASK_TYPES: readonly string[] = ['implementation', 'refactor'];
 
 export const AGENT_ROLES: readonly string[] = ['worker', 'reviewer', 'master'];
 
-export const TASK_STATUSES: readonly string[] = ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released'];
+export const TASK_STATUSES: readonly string[] = ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled'];
 
 export const AGENT_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 

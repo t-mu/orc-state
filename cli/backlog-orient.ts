@@ -49,11 +49,12 @@ if (asJson) {
     const tasks = feature.tasks ?? [];
     const todo = tasks.filter((t) => t.status === 'todo').length;
     const done = tasks.filter((t) => t.status === 'done' || t.status === 'released').length;
+    const cancelled = tasks.filter((t) => t.status === 'cancelled').length;
     const active = tasks.filter((t) => t.status === 'claimed' || t.status === 'in_progress').length;
     return {
       ref: feature.ref,
       title: feature.title,
-      task_counts: { total: tasks.length, todo, active, done },
+      task_counts: { total: tasks.length, todo, active, done, cancelled },
     };
   });
   console.log(JSON.stringify({
@@ -72,6 +73,7 @@ for (const feature of features) {
   const tasks = feature.tasks ?? [];
   const todo = tasks.filter((t) => t.status === 'todo').length;
   const done = tasks.filter((t) => t.status === 'done' || t.status === 'released').length;
+  const cancelled = tasks.filter((t) => t.status === 'cancelled').length;
   const active = tasks.filter((t) => t.status === 'claimed' || t.status === 'in_progress').length;
-  console.log(`  ${feature.ref} — ${feature.title} (${tasks.length} tasks: ${todo} todo, ${active} active, ${done} done)`);
+  console.log(`  ${feature.ref} — ${feature.title} (${tasks.length} tasks: ${todo} todo, ${active} active, ${done} done, ${cancelled} cancelled)`);
 }

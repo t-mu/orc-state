@@ -42,7 +42,7 @@ try {
       throw new Error(`task not found for run: ${claim.task_ref}`);
     }
 
-    if (task.status === 'done' || task.status === 'released') {
+    if (task.status === 'done' || task.status === 'released' || task.status === 'cancelled') {
       throw new Error(`task is already terminal (status: ${task.status}): ${claim.task_ref}`);
     }
 

@@ -1,6 +1,6 @@
 import type { ProviderName } from '../lib/providers.ts';
 
-export type TaskStatus = 'todo' | 'claimed' | 'in_progress' | 'blocked' | 'done' | 'released';
+export type TaskStatus = 'todo' | 'claimed' | 'in_progress' | 'blocked' | 'done' | 'released' | 'cancelled';
 export type TaskRef = string;
 
 export interface Task {
