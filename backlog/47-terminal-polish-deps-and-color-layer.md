@@ -3,7 +3,6 @@ ref: terminal-polish/47-terminal-polish-deps-and-color-layer
 feature: terminal-polish
 priority: normal
 status: todo
-required_provider: codex
 ---
 
 # Task 47 — Add color library deps and create CLI color layer
