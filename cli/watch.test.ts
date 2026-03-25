@@ -56,6 +56,38 @@ describe('cli/watch.ts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('State validation failed');
   });
+
+  it('renders with warnings when lifecycle invariants are broken', () => {
+    seedValidState({
+      agents: [
+        { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+        { agent_id: 'orc-2', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+      ],
+      claims: [
+        {
+          run_id: 'run-old',
+          task_ref: 'docs/task-1',
+          agent_id: 'orc-1',
+          state: 'claimed',
+          claimed_at: '2026-01-01T00:00:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        },
+        {
+          run_id: 'run-new',
+          task_ref: 'docs/task-1',
+          agent_id: 'orc-2',
+          state: 'claimed',
+          claimed_at: '2026-01-01T00:05:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        },
+      ],
+    });
+    const result = runCli(['--once']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Orchestrator Status');
+    expect(result.stdout).toContain('State validation warnings:');
+    expect(result.stdout).toContain('keep oldest run run-old');
+  });
 });
 
 function seedValidState({ agents = [] as unknown[], claims = [] as unknown[], runWorktrees = [] as unknown[] } = {}) {
