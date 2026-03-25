@@ -21,7 +21,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
@@ -69,6 +69,7 @@ const RUN_INACTIVE_TIMEOUT_MS = intFlag('run-inactive-timeout-ms', 1800000);
 const RUN_START_NUDGE_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.1);
 const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
 const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', 600000);           // 10 min default
+const RUN_INACTIVE_ESCALATE_MS = intFlag('run-inactive-escalate-ms', 900000);      // 15 min default
 const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', 300000); // 5 min default
 const CONCURRENCY_LIMIT = 8;
 const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
@@ -804,7 +805,55 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
     }
 
     if (idleMs < RUN_INACTIVE_NUDGE_MS) continue;
-    const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
+    const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id);
+    if (lastNudgeAt == null) {
+      const agent = byAgent.get(claim.agent_id);
+      if (!agent?.session_handle || agent.status === 'offline') continue;
+      const adapter = getAdapter(agent.provider);
+      const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
+      if (blockingQuestion) {
+        recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
+        runInactiveNudgeAtMs.delete(claim.run_id);
+        continue;
+      }
+
+      const claimSnapshot = { ...claim };
+      const agentProvider = agent.provider;
+      const agentSessionHandle = agent.session_handle;
+      nudgeWork.push(async () => {
+        const adapter = getAdapter(agentProvider);
+        await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot));
+        emit({
+          event: 'need_input',
+          actor_type: 'coordinator',
+          actor_id: 'coordinator',
+          run_id: claimSnapshot.run_id,
+          task_ref: claimSnapshot.task_ref,
+          agent_id: claimSnapshot.agent_id,
+          payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs },
+        });
+        runInactiveNudgeAtMs.set(claimSnapshot.run_id, nowMs);
+        log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id}`);
+        return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
+      });
+      continue;
+    }
+
+    if (!claim.escalation_notified_at && idleMs >= RUN_INACTIVE_ESCALATE_MS) {
+      emit({
+        event: 'worker_needs_attention',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claim.run_id,
+        task_ref: claim.task_ref,
+        agent_id: claim.agent_id,
+        payload: { reason: 'stale', idle_ms: idleMs },
+      });
+      setEscalationNotified(STATE_DIR, claim.run_id);
+      log(`escalated stale worker ${claim.agent_id} for run ${claim.run_id}`);
+      continue;
+    }
+
     if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) continue;
 
     const agent = byAgent.get(claim.agent_id);

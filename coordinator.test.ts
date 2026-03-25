@@ -796,6 +796,208 @@ describe('agent ttl dead marking', () => {
   });
 });
 
+describe('in-progress stale escalation', () => {
+  it('nudges first, then emits worker_needs_attention once after the escalation threshold', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-stale-escalate',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        lease_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        last_heartbeat_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        escalation_notified_at: null,
+      }],
+    });
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await tick();
+    await tick();
+
+    process.argv = originalArgv;
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const events = readEvents(dir);
+    expect(events.filter((event) => event.event === 'need_input' && event.run_id === 'run-stale-escalate')).toHaveLength(1);
+
+    const attentionEvents = events.filter((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-escalate');
+    expect(attentionEvents).toHaveLength(1);
+    expect(attentionEvents[0]?.payload).toMatchObject({ reason: 'stale' });
+    expect(Number((attentionEvents[0]?.payload as Record<string, unknown>).idle_ms)).toBeGreaterThanOrEqual(1);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-stale-escalate')!;
+    expect(claim.escalation_notified_at).toBeTruthy();
+  });
+
+  it('does not emit worker_needs_attention before the initial nudge has fired', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-stale-no-escalate-yet',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        lease_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        last_heartbeat_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        escalation_notified_at: null,
+      }],
+    });
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    process.argv = originalArgv;
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const events = readEvents(dir);
+    expect(events.some((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-no-escalate-yet')).toBe(false);
+  });
+
+  it('does not re-fire worker_needs_attention when the claim already has escalation_notified_at', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-stale-already-escalated',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        lease_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        last_heartbeat_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        escalation_notified_at: '2026-03-25T09:00:00.000Z',
+      }],
+    });
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    vi.resetModules();
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+    const restartedCoordinator = await import('./coordinator.ts');
+    await restartedCoordinator.tick();
+
+    process.argv = originalArgv;
+
+    const events = readEvents(dir);
+    expect(events.some((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-already-escalated')).toBe(false);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('processTerminalRunEvents', () => {
   it('processes queued heartbeats before lease expiry on tick', async () => {
     seedState(dir, {
