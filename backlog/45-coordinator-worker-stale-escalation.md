@@ -44,10 +44,10 @@ coordinator restarts.
 4. `RUN_INACTIVE_ESCALATE_MS` is a configurable int-flag constant in
    coordinator, defaulting to 15 minutes, alongside the existing
    `RUN_INACTIVE_NUDGE_MS` and `RUN_INACTIVE_TIMEOUT_MS`.
-5. `lib/masterPtyForwarder.ts` `formatNotifications()` handles
-   `WORKER_NEEDS_ATTENTION`: formats a human-readable block showing agent ID,
-   task ref, idle duration, and PTY tail (truncated to 800 chars for PTY
-   display).
+5. **DO NOT touch `lib/masterPtyForwarder.ts`** — task 55
+   (events-as-notification-source) deprecated the PTY forwarder. The
+   `worker_needs_attention` event is surfaced to master via `get_notifications`
+   MCP tool; no PTY formatting is needed.
 6. Unit tests cover: escalation fires after nudge + idle threshold; escalation
    does not fire before nudge; escalation does not re-fire on second tick;
    escalation does not re-fire after coordinator restart (claim already has
@@ -66,10 +66,11 @@ coordinator restarts.
 
 ## Files to Change
 
-- `coordinator.ts`
-- `lib/masterPtyForwarder.ts`
-- `lib/masterPtyForwarder.test.ts`
-- `coordinator.test.ts`
+- `coordinator.ts` — add `RUN_INACTIVE_ESCALATE_MS`, escalation logic in `enforceInProgressLifecycle`, `setEscalationNotified`
+- `coordinator.test.ts` — add escalation unit tests
+- `types/claims.ts` (or wherever `Claim` type lives) — add `escalation_notified_at?: string | null`
+
+**Do NOT read or modify:** `lib/masterPtyForwarder.ts`, `lib/masterNotifyQueue.ts` — these are deprecated by task 55.
 
 ## Verification
 
