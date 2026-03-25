@@ -74,6 +74,9 @@ describe('renderTemplate', () => {
       current_state: 'Current state text.',
       desired_state: 'Desired state text.',
       start_here: '- coordinator.mjs',
+      files_to_change: '- coordinator.mjs',
+      avoid_reading: 'lib/masterPtyForwarder.ts',
+      implementation_notes: '- keep the patch surgical',
       verification: '```bash\nnpx vitest\n```',
       task_spec_path: 'docs/backlog/142-redesign-fresh-worker-bootstrap-and-run-contract.md',
       assigned_worktree: '/tmp/orc-worktrees/run-1',
@@ -82,6 +85,9 @@ describe('renderTemplate', () => {
     expect(rendered).toContain('current_state:');
     expect(rendered).toContain('desired_state:');
     expect(rendered).toContain('start_here:');
+    expect(rendered).toContain('files_to_change:');
+    expect(rendered).toContain('avoid_reading:');
+    expect(rendered).toContain('implementation_notes:');
     expect(rendered).toContain('targeted_verification:');
     expect(rendered).toContain('task_spec_path: docs/backlog/142-redesign-fresh-worker-bootstrap-and-run-contract.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-1');

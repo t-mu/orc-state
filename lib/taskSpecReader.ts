@@ -54,7 +54,22 @@ export interface TaskSpecSections {
   current_state: string;
   desired_state: string;
   start_here: string;
+  files_to_change: string;
+  implementation_notes: string;
+  avoid_reading: string;
   verification: string;
+}
+
+function extractInlineDirective(content: string, label: string): string {
+  const pattern = new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n]+)`, 'i');
+  const match = pattern.exec(content);
+  return match?.[1]?.trim() ?? '';
+}
+
+function stripInlineDirective(content: string, label: string): string {
+  return content
+    .replace(new RegExp(`\\n?\\*\\*${label}:\\*\\*\\s*[^\\n]+`, 'ig'), '')
+    .trim();
 }
 
 export function parseTaskSpecSections(markdown: string): TaskSpecSections {
@@ -64,6 +79,9 @@ export function parseTaskSpecSections(markdown: string): TaskSpecSections {
     current_state: '',
     desired_state: '',
     start_here: '',
+    files_to_change: '',
+    implementation_notes: '',
+    avoid_reading: extractInlineDirective(clean, 'Do NOT read or modify'),
     verification: '',
   };
 
@@ -77,6 +95,10 @@ export function parseTaskSpecSections(markdown: string): TaskSpecSections {
       sections.desired_state = collectSection(lines, index);
     } else if (heading === 'start here') {
       sections.start_here = collectSection(lines, index);
+    } else if (heading === 'files to change') {
+      sections.files_to_change = collectSection(lines, index);
+    } else if (heading === 'implementation notes') {
+      sections.implementation_notes = stripInlineDirective(collectSection(lines, index), 'Do NOT read or modify');
     } else if (heading === 'verification') {
       sections.verification = collectSection(lines, index);
     }
@@ -92,6 +114,9 @@ export function readTaskSpecSections(taskRef: string, docsDir: string = BACKLOG_
       current_state: '',
       desired_state: '',
       start_here: '',
+      files_to_change: '',
+      implementation_notes: '',
+      avoid_reading: '',
       verification: '',
       source_path: null,
     };

@@ -26,6 +26,14 @@ Desired state text.
 ### Start here
 - first/file.ts
 
+## Files to Change
+- first/file.ts
+
+## Implementation Notes
+- keep the patch narrow
+
+**Do NOT read or modify:** second/file.ts, third/file.ts
+
 ## Verification
 \`\`\`bash
 npm test
@@ -36,6 +44,9 @@ npm test
       current_state: 'Current state text.',
       desired_state: 'Desired state text.',
       start_here: '- first/file.ts',
+      files_to_change: '- first/file.ts',
+      implementation_notes: '- keep the patch narrow',
+      avoid_reading: 'second/file.ts, third/file.ts',
       verification: '```bash\nnpm test\n```',
     });
   });
@@ -60,6 +71,11 @@ Desired state text.
 ### Start here
 - foo.mjs
 
+## Files to Change
+- foo.mjs
+
+**Do NOT read or modify:** bar.mjs
+
 ## Verification
 \`\`\`bash
 npx vitest
@@ -70,6 +86,8 @@ npx vitest
     expect(result.current_state).toBe('Current state text.');
     expect(result.desired_state).toBe('Desired state text.');
     expect(result.start_here).toContain('foo.mjs');
+    expect(result.files_to_change).toContain('foo.mjs');
+    expect(result.avoid_reading).toContain('bar.mjs');
     expect(result.verification).toContain('npx vitest');
     expect(result.source_path).toBe(join(docsDir, '142-sample.md'));
   });

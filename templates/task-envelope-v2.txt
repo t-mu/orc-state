@@ -25,6 +25,15 @@ desired_state:
 start_here:
 {{start_here}}
 
+files_to_change:
+{{files_to_change}}
+
+avoid_reading:
+{{avoid_reading}}
+
+implementation_notes:
+{{implementation_notes}}
+
 targeted_verification:
 {{verification}}
 
