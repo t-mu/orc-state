@@ -54,7 +54,7 @@ export function appendNotification(stateDir: string, notification: Record<string
         return;
       }
       const nextSeq = computeNextSeq(lines);
-      const entry: QueueEntry = { seq: nextSeq, consumed: false, ...notification };
+      const entry: QueueEntry = { seq: nextSeq, consumed: false, ts: new Date().toISOString(), ...notification };
       appendFileSync(path, `${JSON.stringify(entry)}\n`, 'utf8');
     });
     return true;
@@ -140,6 +140,45 @@ export function readAndMarkConsumed(stateDir: string): QueueEntry[] {
       `[master-notify-queue] readAndMarkConsumed failed: ${(error as Error)?.message ?? 'unknown error'}`,
     );
     return [];
+  }
+}
+
+export function clearNotifications(stateDir: string, olderThanMs?: number): number {
+  const lockPath = join(stateDir, '.lock');
+  try {
+    return withLock(lockPath, () => {
+      const path = queuePath(stateDir);
+      if (!existsSync(path)) return 0;
+
+      const nowMs = Date.now();
+      const lines = readQueueLines(path);
+      let cleared = 0;
+      const rewritten = lines.map((line) => {
+        const parsed = parseJsonLine(line);
+        if (!parsed || parsed.consumed === true) return line;
+
+        if (olderThanMs !== undefined) {
+          const ts = typeof parsed.ts === 'string' ? parsed.ts : null;
+          const entryMs = ts ? new Date(ts).getTime() : null;
+          const isOldEnough = entryMs == null || Number.isNaN(entryMs) || (nowMs - entryMs) >= olderThanMs;
+          if (!isOldEnough) return line;
+        }
+
+        cleared += 1;
+        return JSON.stringify({ ...parsed, consumed: true });
+      });
+
+      if (cleared > 0) {
+        const output = rewritten.length > 0 ? `${rewritten.join('\n')}\n` : '';
+        writeFileSync(path, output, 'utf8');
+      }
+      return cleared;
+    });
+  } catch (error) {
+    console.error(
+      `[master-notify-queue] clearNotifications failed: ${(error as Error)?.message ?? 'unknown error'}`,
+    );
+    return 0;
   }
 }
 

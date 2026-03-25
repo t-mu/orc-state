@@ -8,6 +8,7 @@ import {
   markConsumed,
   readAndMarkConsumed,
   compactQueue,
+  clearNotifications,
 } from './masterNotifyQueue.ts';
 
 let dir: string;
@@ -313,5 +314,66 @@ describe('compactQueue', () => {
 
   it('completes gracefully when queue file is missing', () => {
     expect(() => compactQueue(dir)).not.toThrow();
+  });
+});
+
+describe('clearNotifications', () => {
+  it('marks all pending notifications as consumed and returns count', () => {
+    appendNotification(dir, { type: 'TASK_COMPLETE', task_ref: 'orch/task-1', agent_id: 'orc-1', success: true, finished_at: '2026-03-08T07:00:00.000Z' });
+    appendNotification(dir, { type: 'TASK_COMPLETE', task_ref: 'orch/task-2', agent_id: 'orc-1', success: false, finished_at: '2026-03-08T07:01:00.000Z' });
+
+    const count = clearNotifications(dir);
+
+    expect(count).toBe(2);
+    expect(readPendingNotifications(dir)).toHaveLength(0);
+  });
+
+  it('returns 0 when no pending notifications exist', () => {
+    appendNotification(dir, { type: 'TASK_COMPLETE', task_ref: 'orch/task-1', agent_id: 'orc-1', success: true, finished_at: '2026-03-08T07:00:00.000Z' });
+    clearNotifications(dir);
+
+    const count = clearNotifications(dir);
+
+    expect(count).toBe(0);
+  });
+
+  it('returns 0 when queue file is missing', () => {
+    expect(clearNotifications(dir)).toBe(0);
+  });
+
+  it('preserves already-consumed entries (dedup keys survive)', () => {
+    appendNotification(dir, { type: 'TASK_COMPLETE', task_ref: 'orch/task-1', agent_id: 'orc-1', success: true, finished_at: '2026-03-08T07:00:00.000Z', dedupe_key: 'task-complete:run-1' });
+    clearNotifications(dir);
+
+    const lines = readFileSync(queuePath, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]).dedupe_key).toBe('task-complete:run-1');
+    expect(JSON.parse(lines[0]).consumed).toBe(true);
+  });
+
+  it('only clears entries older than olderThanMs when threshold provided', () => {
+    const oldTs = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); // 2h ago
+    const newTs = new Date(Date.now() - 10 * 1000).toISOString();           // 10s ago
+
+    writeFileSync(queuePath, [
+      JSON.stringify({ seq: 1, consumed: false, ts: oldTs, type: 'TASK_COMPLETE' }),
+      JSON.stringify({ seq: 2, consumed: false, ts: newTs, type: 'TASK_COMPLETE' }),
+    ].join('\n') + '\n', 'utf8');
+
+    const count = clearNotifications(dir, 60 * 60 * 1000); // 1h threshold
+
+    expect(count).toBe(1);
+    const pending = readPendingNotifications(dir);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].seq).toBe(2);
+  });
+
+  it('clears entries with no ts field when olderThanMs threshold provided', () => {
+    writeFileSync(queuePath, JSON.stringify({ seq: 1, consumed: false, type: 'TASK_COMPLETE' }) + '\n', 'utf8');
+
+    const count = clearNotifications(dir, 60 * 60 * 1000);
+
+    expect(count).toBe(1);
+    expect(readPendingNotifications(dir)).toHaveLength(0);
   });
 });

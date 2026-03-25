@@ -365,4 +365,13 @@ export const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'clear_notifications',
+    description: 'Mark all pending (unconsumed) master notifications as consumed. Returns count of cleared notifications.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
 ];

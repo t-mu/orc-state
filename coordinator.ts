@@ -30,10 +30,10 @@ import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
 import { selectDispatchableAgents, buildDispatchPlan } from './lib/dispatchPlanner.ts';
 import { nextEligibleTask } from './lib/taskScheduler.ts';
-import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR } from './lib/paths.ts';
+import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, ORCHESTRATOR_CONFIG_FILE } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
-import { appendNotification } from './lib/masterNotifyQueue.ts';
+import { appendNotification, clearNotifications } from './lib/masterNotifyQueue.ts';
 import { loadWorkerPoolConfig } from './lib/providers.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { resolveRepoRoot } from './lib/repoRoot.ts';
@@ -71,6 +71,17 @@ const RUN_START_NUDGE_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.1);
 const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
 const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', 600000);           // 10 min default
 const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', 300000); // 5 min default
+const NOTIFICATION_AUTO_EXPIRE_MS = (() => {
+  const DEFAULT_MS = 24 * 60 * 60 * 1000;
+  try {
+    if (existsSync(ORCHESTRATOR_CONFIG_FILE)) {
+      const cfg = JSON.parse(readFileSync(ORCHESTRATOR_CONFIG_FILE, 'utf8')) as Record<string, unknown>;
+      const v = Number(cfg.notification_auto_expire_ms);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+  } catch { /* use default */ }
+  return DEFAULT_MS;
+})();
 const CONCURRENCY_LIMIT = 8;
 const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
 const AGENT_HEARTBEAT_REFRESH_MS = 60_000;
@@ -1453,6 +1464,7 @@ export async function main() {
   }
 
   reconcileState(STATE_DIR);
+  clearNotifications(STATE_DIR, NOTIFICATION_AUTO_EXPIRE_MS);
   emit({ event: 'coordinator_started', actor_type: 'coordinator', actor_id: 'coordinator', payload: { mode: MODE } });
 
   // First tick immediately.

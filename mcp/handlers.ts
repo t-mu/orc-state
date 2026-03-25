@@ -6,7 +6,7 @@ import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlan
 import { appendSequencedEvent, queryEvents } from '../lib/eventLog.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
-import { appendNotification, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
+import { appendNotification, clearNotifications, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
@@ -958,4 +958,9 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
     agent_id,
     responded_by: effectiveActorId,
   };
+}
+
+export function handleClearNotifications(stateDir: string) {
+  const count = clearNotifications(stateDir);
+  return { ok: true, cleared: count };
 }

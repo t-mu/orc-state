@@ -1,7 +1,7 @@
 ---
 ref: general/42-notifications-bulk-clear
 title: "42 Notifications Bulk Clear"
-status: todo
+status: done
 feature: general
 task_type: implementation
 priority: high
