@@ -5,9 +5,8 @@
  *
  * Show all claims currently awaiting input, with the question text.
  */
-import { join } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
 import { STATE_DIR } from '../lib/paths.ts';
+import { queryEvents } from '../lib/eventLog.ts';
 import { readClaims } from '../lib/stateReader.ts';
 
 const asJson = process.argv.includes('--json');
@@ -17,25 +16,22 @@ const claimsState = readClaims(STATE_DIR);
 const waiting = claimsState.claims.filter((c) => c.input_state === 'awaiting_input');
 
 // Build map of run_id -> most recent input_requested event
-const eventsPath = join(STATE_DIR, 'events.jsonl');
 const questionMap = new Map<string, { question: string | null; ts: string | null }>();
 
-if (existsSync(eventsPath)) {
-  const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
-  for (const line of lines) {
-    try {
-      const ev = JSON.parse(line) as Record<string, unknown>;
-      if (ev.event === 'input_requested' && typeof ev.run_id === 'string') {
-        const payload = ev.payload as Record<string, unknown> | undefined;
-        questionMap.set(ev.run_id, {
-          question: typeof payload?.question === 'string' ? payload.question : null,
-          ts: typeof ev.ts === 'string' ? ev.ts : null,
-        });
-      }
-    } catch {
-      // skip malformed lines
+try {
+  const inputEvents = queryEvents(STATE_DIR, { event_type: 'input_requested' });
+  for (const ev of inputEvents) {
+    const e = ev as unknown as Record<string, unknown>;
+    if (typeof e.run_id === 'string') {
+      const payload = e.payload as Record<string, unknown> | undefined;
+      questionMap.set(e.run_id, {
+        question: typeof payload?.question === 'string' ? payload.question : null,
+        ts: typeof e.ts === 'string' ? e.ts : null,
+      });
     }
   }
+} catch {
+  // ignore event read errors — claims data is still usable
 }
 
 const rows = waiting.map((c) => {

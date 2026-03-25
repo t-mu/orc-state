@@ -150,7 +150,7 @@ export function validateStateDir(stateDir: string): string[] {
     allErrors.push('events.db: file not found');
   } else {
     try {
-      readEvents(eventsJsonlPath);
+      readEvents(eventsDbPath);
     } catch (error) {
       allErrors.push(`events.db: ${(error as Error).message}`);
     }

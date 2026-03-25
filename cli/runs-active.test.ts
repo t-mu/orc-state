@@ -52,7 +52,7 @@ describe('cli/runs-active.ts', () => {
     const result = runCli(['--json']);
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout);
-    expect(json.event_read_error).toContain('events.jsonl schema error at line 1');
+    expect(json.event_read_error).toContain('events.db schema error at line 1');
   });
 });
 

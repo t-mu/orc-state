@@ -2,7 +2,7 @@
 ref: general/37-fix-stale-events-jsonl-references
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 37 — Fix Stale `events.jsonl` References After SQLite Migration

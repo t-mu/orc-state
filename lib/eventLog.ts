@@ -259,14 +259,14 @@ export function readEvents(logPath: string): OrcEvent[] {
       const event = ensureEventIdentity(JSON.parse(row.payload) as OrcEvent, { createIfMissing: false });
       const validationErrors = validateEventObject(event);
       if (validationErrors.length > 0) {
-        throw new Error(`events.jsonl schema error at line ${i + 1}: ${validationErrors.join('; ')}`);
+        throw new Error(`events.db schema error at line ${i + 1}: ${validationErrors.join('; ')}`);
       }
       events.push(event);
     } catch (error) {
-      if (String((error as Error).message ?? '').startsWith('events.jsonl schema error at line')) {
+      if (String((error as Error).message ?? '').startsWith('events.db schema error at line')) {
         throw error;
       }
-      throw new Error(`events.jsonl parse error at line ${i + 1}: ${(error as Error).message}`);
+      throw new Error(`events.db parse error at line ${i + 1}: ${(error as Error).message}`);
     }
   }
   return events;

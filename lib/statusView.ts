@@ -165,7 +165,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   const awaitingRunStarted = activeClaims.filter((c) => c.state === 'claimed').length;
   const inProgressRuns = activeClaims.filter((c) => c.state === 'in_progress').length;
 
-  const eventsPath = join(stateDir, 'events.jsonl');
+  const eventsPath = join(stateDir, 'events.db');
   let allEvents: unknown[] = [];
   let recentEvents: unknown[] = [];
   let eventReadError = '';

@@ -185,14 +185,14 @@ export function detectLifecycleIssues(stateDir: string): LifecycleIssue[] {
   }
 
   try {
-    const events = readEvents(join(stateDir, 'events.jsonl'));
+    const events = readEvents(join(stateDir, 'events.db'));
     const eventIds = new Set<string>();
     for (const event of events) {
       const identity = eventIdentity(event);
       if (eventIds.has(identity)) {
         issues.push({
           code: 'duplicate_event_identity',
-          message: `events.jsonl contains duplicate event identity ${identity}`,
+          message: `events.db contains duplicate event identity ${identity}`,
           hint: 'Event replay and dedupe rely on unique identities within the retained log.',
         });
       } else {

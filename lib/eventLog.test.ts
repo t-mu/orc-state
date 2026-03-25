@@ -242,7 +242,7 @@ describe('appendSequencedEvent', () => {
 
   it('rejects invalid event contracts on read', () => {
     writeFileSync(logPath, `${JSON.stringify(validEvent(1))}\n${JSON.stringify({ seq: 2, ts: '2026-01-01T00:00:00Z', event: 'handoff_completed', actor_type: 'agent', actor_id: 'worker-01', task_ref: 'docs/task-1' })}\n`, 'utf8');
-    expect(() => readEvents(logPath)).toThrow('events.jsonl schema error at line 2');
+    expect(() => readEvents(logPath)).toThrow('events.db schema error at line 2');
   });
 
   it('supports lock-free appends without using the shared state lock', () => {
