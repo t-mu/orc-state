@@ -25,8 +25,8 @@ import {
   handleQueryEvents,
   handleResetTask,
   handleListWorktrees,
+  handleGetNotifications,
 } from './handlers.ts';
-import { readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 
 let dir: string;
 
@@ -370,7 +370,7 @@ describe('mcp read handlers', () => {
     const status = handleGetStatus(dir);
 
     expect(Object.keys(status).sort()).toEqual(
-      ['active_tasks', 'agents', 'next_task_seq', 'pending_notifications', 'stalled_runs', 'task_counts'].sort(),
+      ['active_tasks', 'agents', 'last_notification_seq', 'next_task_seq', 'pending_notifications', 'stalled_runs', 'task_counts'].sort(),
     );
     expect((status.agents as Array<Record<string, unknown>>).every((agent) =>
       ['agent_id', 'role', 'status', 'provider', 'active_task_ref'].every((key) => Object.hasOwn(agent, key)))).toBe(true);
@@ -385,6 +385,7 @@ describe('mcp read handlers', () => {
       ['ref', 'title', 'status', 'feature_ref', 'owner'].every((key) => Object.hasOwn(task, key)))).toBe(true);
     expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done' || task.status === 'released')).toBe(false);
     expect(status.pending_notifications).toBe(1);
+    expect(status.last_notification_seq).toBe(0);
     expect(status.stalled_runs).toBe(3);
     expect(status.next_task_seq).toBe(1);
   });
@@ -1197,8 +1198,8 @@ describe('mcp read handlers', () => {
     expect(runIds).toContain('run-1');
     expect(runIds).toContain('run-4');
 
-    const notifications = readPendingNotifications(dir);
-    expect(notifications.filter((n) => n.type === 'TASK_COMPLETE' && n.task_ref === 'project/todo-one' && n.success === false)).toHaveLength(2);
+    const cancelledEvents = queryEvents(dir, { event_type: 'run_cancelled' });
+    expect(cancelledEvents.filter((e) => (e as unknown as Record<string, unknown>).task_ref === 'project/todo-one')).toHaveLength(2);
   });
 
   it('handleCancelTask returns already_terminal on done task without state change', () => {
@@ -1519,5 +1520,67 @@ describe('handleUpdateTask required_provider', () => {
         actor_id: 'master',
       }),
     ).toThrow(/invalid required_provider/i);
+  });
+});
+
+describe('handleGetNotifications', () => {
+  it('returns empty notifications and last_seq=0 when no notification events exist', () => {
+    const result = handleGetNotifications(dir);
+    expect(result.notifications).toEqual([]);
+    expect(result.last_seq).toBe(0);
+  });
+
+  it('returns notification events after seeding them', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event_id: 'e1', event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 2, event_id: 'e2', event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
+      JSON.stringify({ seq: 3, event_id: 'e3', event: 'run_failed', actor_type: 'agent', actor_id: 'orc-2', run_id: 'run-2', task_ref: 'project/todo-one', agent_id: 'orc-2', ts: '2026-01-01T00:00:03.000Z', payload: { policy: 'requeue' } }),
+      JSON.stringify({ seq: 4, event_id: 'e4', event: 'input_requested', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:04.000Z', payload: { question: 'yes?' } }),
+    ]);
+
+    const result = handleGetNotifications(dir);
+    expect(result.notifications).toHaveLength(3);
+    expect(result.notifications.map((e) => e.event)).toEqual(['run_finished', 'run_failed', 'input_requested']);
+    expect(result.last_seq).toBe(4);
+  });
+
+  it('respects after_seq cursor', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event_id: 'e1', event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 2, event_id: 'e2', event: 'run_failed', actor_type: 'agent', actor_id: 'orc-2', run_id: 'run-2', task_ref: 'project/todo-one', agent_id: 'orc-2', ts: '2026-01-01T00:00:02.000Z', payload: { policy: 'requeue' } }),
+    ]);
+
+    const result = handleGetNotifications(dir, { after_seq: 1 });
+    expect(result.notifications).toHaveLength(1);
+    expect(result.notifications[0].event).toBe('run_failed');
+    expect(result.last_seq).toBe(2);
+  });
+
+  it('returns last_seq equal to after_seq when no new events exist', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event_id: 'e1', event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
+    ]);
+
+    const result = handleGetNotifications(dir, { after_seq: 5 });
+    expect(result.notifications).toHaveLength(0);
+    expect(result.last_seq).toBe(5);
+  });
+
+  it('throws on invalid after_seq', () => {
+    expect(() => handleGetNotifications(dir, { after_seq: -1 })).toThrow(/after_seq/);
+    expect(() => handleGetNotifications(dir, { after_seq: 1.5 })).toThrow(/after_seq/);
+  });
+
+  it('excludes non-notification events', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event_id: 'e1', event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 2, event_id: 'e2', event: 'task_added', actor_type: 'agent', actor_id: 'master', ts: '2026-01-01T00:00:02.000Z', task_ref: 'project/todo-one' }),
+      JSON.stringify({ seq: 3, event_id: 'e3', event: 'run_cancelled', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:03.000Z' }),
+    ]);
+
+    const result = handleGetNotifications(dir);
+    expect(result.notifications).toHaveLength(1);
+    expect(result.notifications[0].event).toBe('run_cancelled');
+    expect(result.last_seq).toBe(3);
   });
 });

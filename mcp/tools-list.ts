@@ -102,7 +102,7 @@ export const TOOLS = [
   },
   {
     name: 'get_status',
-    description: 'Return compact aggregate status (agents, task counts, active tasks, pending notifications, stalled runs, next_task_seq).',
+    description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, next_task_seq).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -371,6 +371,21 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_notifications',
+    description: 'Poll for notification-class events (task completions, failures, cancellations, input requests) using a cursor. Returns events and a last_seq cursor for the next call. On startup, call with no after_seq to catch up on any missed events.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        after_seq: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Return events with seq > after_seq. Omit (or pass 0) on first call to retrieve all notification events.',
+        },
+      },
       additionalProperties: false,
     },
   },

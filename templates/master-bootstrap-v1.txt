@@ -43,7 +43,8 @@ get_recent_events(limit?)
 
 get_status(include_done_count?)
   Returns compact aggregate status (agents, task_counts, active_tasks,
-  pending_notifications, stalled_runs).
+  last_notification_seq, stalled_runs).
+  Use last_notification_seq to bootstrap your get_notifications cursor on startup.
 
 get_agent_workview(agent_id)
   Returns a compact actionable work summary for one agent:
@@ -65,6 +66,10 @@ list_worktrees()
 
 clear_notifications()
   Mark all pending master notifications as consumed. Returns count cleared.
+
+get_notifications(after_seq?)
+  Poll for notification-class events using a cursor. Returns { notifications, last_seq }.
+  Pass last_seq back as after_seq on the next call to receive only new events.
 
 WRITE STATE
 
@@ -103,42 +108,39 @@ reset_task(task_ref, actor_id?)
 
 NOTIFICATIONS
 
-When you receive a [ORCHESTRATOR] TASK_COMPLETE block, do the following:
-1. Immediately inform the user that a worker task has completed. Include the
-   task ref, worker ID, and whether it succeeded or failed.
-2. Ask the user to choose:
-     1) Ignore for now — continue with the current conversation
-     2) React immediately — review the result and take next steps
-3. Wait for the user's choice before proceeding.
+Notifications use cursor polling via get_notifications(after_seq?). There are
+no push-injected [ORCHESTRATOR] blocks — poll the event store directly.
 
-If the user chooses option 2, use list_tasks() and get_task(task_ref) to
-review what was done, then propose follow-up actions.
+On startup:
+  Call get_notifications() with no after_seq to catch up on any missed events.
+  Store the returned last_seq as your cursor.
 
-The TASK_COMPLETE block format is:
+After any significant pause or user interaction:
+  Call get_notifications(after_seq=<last_seq>) and update your cursor.
 
-[ORCHESTRATOR] TASK_COMPLETE
-  Task:    <task_ref>
-  Worker:  <agent_id>
-  Result:  ✓ success | ✗ failed
-  Time:    <ISO timestamp>
+For each event in the returned notifications list:
 
-Please let the user know a task has completed and ask: 1) Ignore for now  2) React immediately
+  run_finished / run_failed / run_cancelled:
+    Surface to the user: task ref, worker ID, success/failure.
+    Ask: 1) Ignore for now  2) React immediately
+    If option 2: use get_task(task_ref) to review, then propose follow-up.
 
-When you receive a [ORCHESTRATOR] INPUT_REQUEST block, do the following:
-1. Immediately surface the worker's question to the user.
-2. Once the user answers, call respond_input(run_id, agent_id, response).
-3. Confirm to the user that the answer was sent back to the worker.
+  worker_needs_attention:
+    Surface: agent_id, task_ref, idle_ms.
+    Offer: wait / force-fail (run-fail) / intervene.
 
-FALLBACK CHECK
+  input_requested:
+    Surface the question to the user.
+    Once the user answers, call respond_input(run_id, agent_id, response).
+    Confirm to the user that the answer was sent.
 
-If you have not received a TASK_COMPLETE notification but suspect workers
-may have finished (e.g. after a long pause), check via MCP tools:
+  input_response:
+    Informational — no action required unless you need to track responses.
 
-  list_tasks(status="done")       - see recently completed tasks
-  get_recent_events(limit=20)     - see latest coordinator activity
-
-Review the output and inform the user of any completed tasks you find,
-then ask: 1) Ignore for now  2) React immediately
+get_notifications response shape:
+  { notifications: OrcEvent[], last_seq: number }
+  last_seq is the highest seq returned (or the after_seq passed in if empty).
+  Always pass last_seq back as after_seq on the next call.
 
 RESOURCES
 

@@ -1,7 +1,7 @@
 ---
 ref: general/55-events-as-notification-source
 title: "Replace master notify queue with event cursor polling"
-status: todo
+status: done
 feature: general
 task_type: implementation
 priority: high

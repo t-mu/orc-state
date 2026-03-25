@@ -386,3 +386,37 @@ export function queryEvents(
 
   return rows.map((row) => JSON.parse(row.payload) as OrcEvent);
 }
+
+const NOTIFICATION_EVENT_TYPES = [
+  'run_finished',
+  'run_failed',
+  'run_cancelled',
+  'worker_needs_attention',
+  'input_requested',
+  'input_response',
+] as const;
+
+/**
+ * Query notification-class events with seq > afterSeq, ordered by seq ASC.
+ * Returns at most 200 results.
+ */
+export function queryNotificationEvents(stateDir: string, afterSeq: number): OrcEvent[] {
+  const db = getDb(stateDir);
+  const placeholders = NOTIFICATION_EVENT_TYPES.map(() => '?').join(', ');
+  const rows = db.prepare(
+    `SELECT payload FROM events WHERE event IN (${placeholders}) AND seq > ? ORDER BY seq ASC LIMIT 200`,
+  ).all(...NOTIFICATION_EVENT_TYPES, afterSeq) as Array<{ payload: string }>;
+  return rows.map((row) => JSON.parse(row.payload) as OrcEvent);
+}
+
+/**
+ * Return the highest seq of any notification-class event, or 0 if none exist.
+ */
+export function getLastNotificationSeq(stateDir: string): number {
+  const db = getDb(stateDir);
+  const placeholders = NOTIFICATION_EVENT_TYPES.map(() => '?').join(', ');
+  const row = db.prepare(
+    `SELECT MAX(seq) as max_seq FROM events WHERE event IN (${placeholders})`,
+  ).get(...NOTIFICATION_EVENT_TYPES) as { max_seq: number | null };
+  return row.max_seq ?? 0;
+}
