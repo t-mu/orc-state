@@ -126,8 +126,14 @@ export async function main(): Promise<number | null> {
 }
 
 if (import.meta.url === new URL(process.argv[1], 'file:').href) {
-  const code = await main();
-  if (code !== null) {
-    process.exit(code);
-  }
+  void main()
+    .then(code => {
+      if (code !== null) {
+        process.exit(code);
+      }
+    })
+    .catch(error => {
+      console.error((error as Error).message);
+      process.exit(1);
+    });
 }
