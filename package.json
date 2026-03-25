@@ -64,7 +64,7 @@
     "ink-spinner": "5.0.0",
     "node-pty": "1.1.0",
     "react": "18.3.1",
-    "terminal-image": "3.0.0",
+    "terminal-image": "^3.0.0",
     "tsx": "4.19.3"
   },
   "devDependencies": {
@@ -73,6 +73,7 @@
     "@types/node": "25.5.0",
     "@types/react": "18.3.21",
     "eslint": "10.0.3",
+    "ink-testing-library": "^4.0.0",
     "lint-staged": "16.3.3",
     "simple-git-hooks": "2.13.1",
     "typescript": "5.9.3",
