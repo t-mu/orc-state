@@ -76,6 +76,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'input_provided',
     'input_requested',
     'input_response',
+    'worker_needs_attention',
   ]);
   const agentEvents = new Set([
     'agent_registered',
@@ -108,6 +109,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'unblocked',
     'need_input',
     'input_provided',
+    'worker_needs_attention',
   ]).has(eventName)) {
     requireTaskRef(event, errors);
     requireAgentId(event, errors);
@@ -198,6 +200,23 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
       'reason',
       (v) => typeof v === 'string' && v.length > 0,
       'must be a non-empty string',
+      errors,
+    );
+  }
+
+  if (eventName === 'worker_needs_attention') {
+    requirePayloadField(
+      event,
+      'reason',
+      (v) => v === 'stale',
+      'must be "stale"',
+      errors,
+    );
+    requirePayloadField(
+      event,
+      'idle_ms',
+      (v) => Number.isInteger(v) && (v as number) >= 0,
+      'must be a non-negative integer',
       errors,
     );
   }

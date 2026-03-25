@@ -389,6 +389,22 @@ export function setRunSessionStartRetryState(
   });
 }
 
+export function setEscalationNotified(
+  stateDir: string,
+  runId: string,
+): Claim {
+  return withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
+    if (!claim) throw new Error(`Claim not found: ${runId}`);
+
+    claim.escalation_notified_at = new Date().toISOString();
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+
+    return claim;
+  });
+}
+
 function _expireLeasesCore(
   stateDir: string,
   { policy = 'requeue', actorId = 'coordinator' }: { policy?: string; actorId?: string } = {},

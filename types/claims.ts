@@ -28,6 +28,7 @@ export interface Claim {
   session_start_retry_count?: number;
   session_start_retry_next_at?: string | null;
   session_start_last_error?: string | null;
+  escalation_notified_at?: string | null;
 }
 
 export interface ClaimsState {
