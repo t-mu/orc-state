@@ -83,6 +83,7 @@ describe('coordinator policy e2e', () => {
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -151,6 +152,7 @@ describe('coordinator policy e2e', () => {
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -182,6 +184,7 @@ describe('coordinator policy e2e', () => {
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -223,6 +226,7 @@ describe('coordinator policy e2e', () => {
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -260,6 +264,7 @@ describe('coordinator policy e2e', () => {
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -305,6 +310,7 @@ describe('coordinator policy e2e', () => {
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -375,6 +381,7 @@ describe('coordinator policy e2e', () => {
       send: vi.fn().mockResolvedValue(''),
       attach: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
       detectInputBlock: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));

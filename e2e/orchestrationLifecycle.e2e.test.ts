@@ -40,6 +40,7 @@ function makeTmuxMockAdapter(agentId = 'worker-01') {
     attach: vi.fn(),
     heartbeatProbe: vi.fn().mockResolvedValue(true),
     stop: vi.fn().mockResolvedValue(undefined),
+    getOutputTail: vi.fn().mockReturnValue(null),
   };
 }
 
@@ -237,6 +238,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
         attach: vi.fn(),
         heartbeatProbe: vi.fn().mockResolvedValue(true),
         stop,
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('../lib/runWorktree.ts', () => ({
@@ -341,6 +343,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -388,6 +391,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -433,6 +437,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -484,6 +489,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -535,6 +541,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -582,6 +589,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -631,6 +639,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -686,6 +695,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       attach: vi.fn(),
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       stop: vi.fn().mockResolvedValue(undefined),
+      getOutputTail: vi.fn().mockReturnValue(null),
     };
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 

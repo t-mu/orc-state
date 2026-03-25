@@ -29,6 +29,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
+import { stripAnsi } from '../lib/masterPtyForwarder.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
   claude: 'claude',
@@ -268,6 +269,16 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         const agentId = parseHandle(sessionHandle);
         const text = readLogTail(agentId);
         return detectBlockingPromptFromText(text);
+      } catch {
+        return null;
+      }
+    },
+
+    getOutputTail(sessionHandle: string): string | null {
+      try {
+        const agentId = parseHandle(sessionHandle);
+        const raw = readLogTail(agentId);
+        return stripAnsi(raw).trim();
       } catch {
         return null;
       }

@@ -107,6 +107,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: mockSend,
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -165,6 +166,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -241,6 +243,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: mockSend,
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -317,6 +320,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: mockSend,
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -393,6 +397,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
 
@@ -433,6 +438,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
 
@@ -471,6 +477,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -529,6 +536,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: mockStop,
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -579,6 +587,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: mockStop,
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -626,6 +635,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({
@@ -699,6 +709,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         send,
         stop: vi.fn(),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
 
@@ -834,6 +845,7 @@ describe('processTerminalRunEvents', () => {
         send: vi.fn(),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn(),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
 
@@ -2190,6 +2202,7 @@ describe('processTerminalRunEvents', () => {
         send,
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
 
@@ -2551,6 +2564,7 @@ describe('stale lease expiry and recovery via tick', () => {
         send: vi.fn().mockResolvedValue(''),
         stop: vi.fn().mockResolvedValue(undefined),
         attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
       }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => ({

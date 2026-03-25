@@ -431,6 +431,34 @@ describe('PTY log sanitization', () => {
   });
 });
 
+// ─── getOutputTail() ─────────────────────────────────────────────────────────
+
+describe('pty adapter getOutputTail()', () => {
+  it('returns empty string when log file does not exist', async () => {
+    const { adapter } = await makeAdapter();
+    await adapter.start('bob', {});
+    // Remove the log file to simulate missing log
+    const logFile = join(dir, 'pty-logs', 'bob.log');
+    rmSync(logFile, { force: true });
+    expect(adapter.getOutputTail('pty:bob')).toBe('');
+  });
+
+  it('returns ANSI-stripped and trimmed log tail', async () => {
+    const { adapter, triggerData } = await makeAdapter();
+    await adapter.start('bob', {});
+    triggerData('\x1b[32mhello world\x1b[0m\n');
+    await new Promise((r) => setTimeout(r, 20));
+    const tail = adapter.getOutputTail('pty:bob');
+    expect(tail).toBe('hello world');
+    expect(tail).not.toContain('\x1b[');
+  });
+
+  it('returns null on invalid session handle', async () => {
+    const { adapter } = await makeAdapter();
+    expect(adapter.getOutputTail('invalid-handle')).toBeNull();
+  });
+});
+
 // ─── Factory and contract ───────────────────────────────────────────────────
 
 describe('adapter factory and contract', () => {
