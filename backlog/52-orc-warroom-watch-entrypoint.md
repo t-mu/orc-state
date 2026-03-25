@@ -2,7 +2,7 @@
 ref: orc-warroom/52-orc-warroom-watch-entrypoint
 feature: orc-warroom
 priority: normal
-status: todo
+status: done
 required_provider: codex
 ---
 
