@@ -9,7 +9,9 @@
  * --interval-ms Polling interval in ms (default 5000). Only relevant with --watch.
  */
 import { flag, intFlag } from '../lib/args.ts';
-import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from '../lib/statusView.ts';
+import { buildAgentStatus, buildStatus } from '../lib/statusView.ts';
+import { renderBanner } from '../lib/banner.ts';
+import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 
@@ -44,7 +46,8 @@ if (!watch && !once) {
     if (json) {
       console.log(JSON.stringify(agentStatus, null, 2));
     } else {
-      console.log(formatAgentStatus(agentStatus, agentId as string));
+      console.log(renderBanner());
+      console.log(colorFormatAgentStatus(agentStatus, agentId as string));
     }
     process.exit(0);
   }
@@ -53,7 +56,8 @@ if (!watch && !once) {
   if (json) {
     console.log(JSON.stringify(status, null, 2));
   } else {
-    console.log(formatStatus(status));
+    console.log(renderBanner());
+    console.log(colorFormatStatus(status));
   }
   process.exit(0);
 }
@@ -69,16 +73,17 @@ function render(): boolean {
   }
   try {
     process.stdout.write('\x1b[2J\x1b[H');
+    console.log(renderBanner());
     if (mine) {
       const agentStatus = buildAgentStatus(STATE_DIR, agentId as string);
       if (!agentStatus.agent) {
         console.error(`Agent not found: ${agentId}`);
         return false;
       }
-      console.log(formatAgentStatus(agentStatus, agentId as string));
+      console.log(colorFormatAgentStatus(agentStatus, agentId as string));
     } else {
       const status = buildStatus(STATE_DIR);
-      console.log(formatStatus(status));
+      console.log(colorFormatStatus(status));
     }
   } catch (err) {
     // buildStatus can fail transiently if coordinator is mid-write. Log and continue.

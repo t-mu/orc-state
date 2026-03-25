@@ -2,7 +2,7 @@
 ref: terminal-polish/48-terminal-polish-apply-to-cli
 feature: terminal-polish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 48 — Wire banner and colors into status and watch CLI commands
