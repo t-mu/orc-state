@@ -112,8 +112,6 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleResetTask(stateDir, args);
     case 'list_worktrees':
       return handlers.handleListWorktrees(stateDir);
-    case 'clear_notifications':
-      return handlers.handleClearNotifications(stateDir);
     case 'get_notifications':
       return handlers.handleGetNotifications(stateDir, args);
     default:

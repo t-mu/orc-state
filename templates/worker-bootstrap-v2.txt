@@ -87,7 +87,7 @@ When a TASK_START block arrives:
             orc run-finish, orc run-fail, orc run-input-request,
             orc task-mark-done, orc delegate, orc task-reset,
             orc task-unblock, orc kill-all
-          You MUST NOT write to backlog.json, claims.json, or events.jsonl.
+          You MUST NOT write to backlog.json, claims.json, or events.db.
           You MUST NOT spawn further sub-agents or delegates.
           You MUST NOT make any file edits, commits, or git operations.
           Return ONLY a list of findings or the single word "approved".

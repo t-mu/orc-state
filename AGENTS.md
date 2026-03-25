@@ -128,9 +128,8 @@ orc preflight                                     # lightweight environment heal
 
 # Supported inspection
 orc watch                                         # live-refresh status
-orc events-tail                                   # tail the events.jsonl log
+orc events-tail                                   # tail the event stream
 orc runs-active                                   # list in-progress/claimed runs
-orc master-check                                  # check pending master notifications
 
 # Session management
 orc start-session                                 # start coordinator + master session (requires TTY)
@@ -189,7 +188,7 @@ orc run-input-respond --run-id=<id> --agent-id=<id> \
 | `.orc-state/backlog.json` | Backlog features and tasks |
 | `.orc-state/agents.json` | Registered agents |
 | `.orc-state/claims.json` | Active and recent claims |
-| `.orc-state/events.jsonl` | Append-only event log (NDJSON) |
+| `.orc-state/events.db` | SQLite event store |
 
 ### Write rules
 **For agents:** use `orc` CLI commands or MCP tools for all state changes. Never call `withLock`, `atomicWriteJson`, or other internal library functions directly — those are for code authors implementing new handlers, not for agents operating the system.

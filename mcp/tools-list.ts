@@ -366,15 +366,6 @@ export const TOOLS = [
     },
   },
   {
-    name: 'clear_notifications',
-    description: 'Mark all pending (unconsumed) master notifications as consumed. Returns count of cleared notifications.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'get_notifications',
     description: 'Poll for notification-class events (task completions, failures, cancellations, input requests) using a cursor. Returns events and a last_seq cursor for the next call. On startup, call with no after_seq to catch up on any missed events.',
     inputSchema: {

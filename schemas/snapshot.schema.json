@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "schemas/snapshot.schema.json",
   "title": "Snapshot",
-  "description": "Materialized current state rebuilt from events.jsonl. Used for fast startup reads. Never treated as authoritative — always rebuildable from the event log.",
+  "description": "Materialized current state rebuilt from the SQLite event store. Used for fast startup reads. Never treated as authoritative — always rebuildable from the event log.",
   "type": "object",
   "required": ["version", "rebuilt_at", "last_event_seq", "agents", "claims", "task_statuses"],
   "additionalProperties": false,

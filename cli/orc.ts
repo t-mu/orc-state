@@ -18,7 +18,6 @@ const COMMANDS: Record<string, string> = {
   'start-worker-session': 'start-worker-session.ts',
   'status':             'status.ts',
   'watch':              'watch.ts',
-  'master-check':       'master-check.ts',
   'attach':             'attach.ts',
   'control-worker':     'control-worker.ts',
   'task-create':        'task-create.ts',
@@ -59,7 +58,6 @@ const COMMANDS: Record<string, string> = {
   'worker-status':      'worker-status.ts',
   'backlog-ready':      'backlog-ready.ts',
   'backlog-blocked':    'backlog-blocked.ts',
-  'notifications-clear': 'notifications-clear.ts',
 };
 
 const BLESSED = [
@@ -98,7 +96,6 @@ const INSPECTION = [
   'watch',
   'runs-active',
   'events-tail',
-  'master-check',
   'waiting-input',
   'run-info',
   'worker-status',

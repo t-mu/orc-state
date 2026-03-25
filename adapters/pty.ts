@@ -29,7 +29,7 @@ import {
 } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
-import { stripAnsi } from '../lib/masterPtyForwarder.ts';
+import { stripAnsi } from '../lib/ansi.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
   claude: 'claude',

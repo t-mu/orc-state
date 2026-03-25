@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "schemas/event.schema.json",
   "title": "Event",
-  "description": "Schema for one NDJSON line in events.jsonl. The log is append-only; entries are never modified.",
+  "description": "Schema for one persisted event payload stored in the SQLite event store.",
   "type": "object",
   "required": ["seq", "ts", "event", "actor_type", "actor_id"],
   "additionalProperties": false,

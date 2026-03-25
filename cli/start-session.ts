@@ -41,7 +41,6 @@ import {
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
-import { startMasterPtyForwarder } from '../lib/masterPtyForwarder.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { initEventsDb } from '../lib/eventLog.ts';
 
@@ -367,8 +366,6 @@ const stdoutResizeHandler = () => {
     masterPty.resize(process.stdout.columns ?? 220, process.stdout.rows ?? 50);
   }
 };
-let stopForwarder = () => {};
-
 const cliResult = await new Promise<{ type: string; error?: Error | undefined; code?: number | undefined; signal?: string | undefined }>((resolvePromise) => {
   try {
     masterPty = pty.spawn(binary, spawnArgs, {
@@ -387,9 +384,6 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
   writeFileSync(masterPidPath, String(masterPty.pid));
 
   masterPty.onData((data) => process.stdout.write(data));
-  stopForwarder = startMasterPtyForwarder(STATE_DIR, masterPty, masterPty, {
-    provider: master.provider,
-  });
   masterPty.onExit(({ exitCode, signal }) => resolvePromise({ type: 'close', code: exitCode, signal: signal as string | undefined }));
 
   if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
@@ -403,7 +397,6 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
 
 process.stdin.off('data', stdinDataHandler);
 process.stdout.off('resize', stdoutResizeHandler);
-stopForwarder();
 if (stdinRawEnabled && process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
   process.stdin.setRawMode(false);
 }

@@ -39,7 +39,7 @@ get_task(task_ref)
   Returns one task or { error: "not_found" }.
 
 get_recent_events(limit?)
-  Returns recent events from events.jsonl. Default 50, max 200.
+  Returns recent events from the SQLite events database. Default 50, max 200.
 
 get_status(include_done_count?)
   Returns compact aggregate status (agents, task_counts, active_tasks,
@@ -59,13 +59,10 @@ list_waiting_input()
   Returns all claims currently awaiting worker input, with question text and wait time.
 
 query_events(run_id?, agent_id?, event_type?, after_seq?, limit?)
-  Query events.jsonl with optional AND-combined filters. Default limit 50, max 500.
+  Query the SQLite events database with optional AND-combined filters. Default limit 50, max 500.
 
 list_worktrees()
   List all registered run worktrees with agent, task, path, and branch information.
-
-clear_notifications()
-  Mark all pending master notifications as consumed. Returns count cleared.
 
 get_notifications(after_seq?)
   Poll for notification-class events using a cursor. Returns { notifications, last_seq }.

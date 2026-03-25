@@ -79,8 +79,7 @@ These commands are for observability. They are supported, but they are not alter
 |---------|-------|-------|
 | `watch` | `orc watch` | Live-refresh status display. |
 | `runs-active` | `orc runs-active` | List all in-progress/claimed runs. |
-| `events-tail` | `orc events-tail` | Tail the events.jsonl event log. |
-| `master-check` | `orc master-check` | Print pending master notifications not yet forwarded to the foreground master. |
+| `events-tail` | `orc events-tail` | Tail the persisted event stream. |
 
 ### Task Management
 

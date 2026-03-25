@@ -362,15 +362,10 @@ describe('mcp read handlers', () => {
   });
 
   it('handleGetStatus returns aggregate keys and expected value shapes', () => {
-    writeFileSync(
-      join(dir, 'master-notify-queue.jsonl'),
-      `${JSON.stringify({ seq: 1, consumed: false, type: 'TASK_COMPLETE', task_ref: 'project/todo-one', agent_id: 'orc-1', success: false, finished_at: '2026-01-01T00:00:00.000Z' })}\n`,
-      'utf8',
-    );
     const status = handleGetStatus(dir);
 
     expect(Object.keys(status).sort()).toEqual(
-      ['active_tasks', 'agents', 'last_notification_seq', 'next_task_seq', 'pending_notifications', 'stalled_runs', 'task_counts'].sort(),
+      ['active_tasks', 'agents', 'last_notification_seq', 'next_task_seq', 'stalled_runs', 'task_counts'].sort(),
     );
     expect((status.agents as Array<Record<string, unknown>>).every((agent) =>
       ['agent_id', 'role', 'status', 'provider', 'active_task_ref'].every((key) => Object.hasOwn(agent, key)))).toBe(true);
@@ -384,7 +379,6 @@ describe('mcp read handlers', () => {
     expect((status.active_tasks as Array<Record<string, unknown>>).every((task) =>
       ['ref', 'title', 'status', 'feature_ref', 'owner'].every((key) => Object.hasOwn(task, key)))).toBe(true);
     expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done' || task.status === 'released')).toBe(false);
-    expect(status.pending_notifications).toBe(1);
     expect(status.last_notification_seq).toBe(0);
     expect(status.stalled_runs).toBe(3);
     expect(status.next_task_seq).toBe(1);

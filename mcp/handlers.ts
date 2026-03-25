@@ -6,7 +6,6 @@ import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlan
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
-import { clearNotifications, readPendingNotifications } from '../lib/masterNotifyQueue.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
@@ -223,7 +222,6 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     })),
     task_counts: taskCounts,
     active_tasks: activeTasks,
-    pending_notifications: readPendingNotifications(stateDir).length,
     last_notification_seq: getLastNotificationSeq(stateDir),
     stalled_runs: handleListStalledRuns(stateDir).length,
     next_task_seq: getNextTaskSeq(backlog),
@@ -946,11 +944,6 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
     agent_id,
     responded_by: effectiveActorId,
   };
-}
-
-export function handleClearNotifications(stateDir: string) {
-  const count = clearNotifications(stateDir);
-  return { ok: true, cleared: count };
 }
 
 export function handleGetNotifications(stateDir: string, { after_seq }: { after_seq?: unknown } = {}) {
