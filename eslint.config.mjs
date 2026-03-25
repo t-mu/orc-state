@@ -35,7 +35,7 @@ export default tseslint.config(
   //   prefer-promise-reject-errors: test scenarios intentionally reject with non-Error values
   //   no-unused-vars argsIgnorePattern: _-prefixed params suppress unused-arg warnings
   {
-    files: ['**/*.test.ts', '**/*.e2e.test.ts', 'test-fixtures/**/*.ts', 'package-contract.test.ts'],
+    files: ['**/*.test.ts', '**/*.test.tsx', '**/*.e2e.test.ts', '**/*.e2e.test.tsx', 'test-fixtures/**/*.ts', 'test-fixtures/**/*.tsx', 'package-contract.test.ts'],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
