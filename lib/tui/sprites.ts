@@ -1,23 +1,109 @@
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
-import terminalImage from 'terminal-image';
+import chalk from 'chalk';
 
 export type SpriteState = 'idle' | 'work' | 'done' | 'fail';
 export type SpriteMap = Map<SpriteState, string[]>;
 
-export const FRAME_SETS: Readonly<Record<SpriteState, readonly string[]>> = {
-  idle: ['idle-1.png', 'idle-2.png'],
-  work: ['work-1.png', 'work-2.png', 'work-3.png'],
-  done: ['done-1.png', 'done-2.png'],
-  fail: ['fail-1.png'],
+type PaletteToken = '.' | 'G' | 'K' | 'T' | 'D' | 'Y' | 'R';
+
+const PALETTE: Readonly<Record<Exclude<PaletteToken, '.'>, string>> = {
+  G: '#59b45d',
+  K: '#1c1c1c',
+  T: '#f0e2c0',
+  D: '#6f5f4d',
+  Y: '#d4af37',
+  R: '#ff3b30',
 };
 
-const SPRITES_DIR = fileURLToPath(new URL('../../assets/sprites/orc/', import.meta.url));
-const RENDER_OPTIONS = {
-  width: 16,
-  preserveAspectRatio: true,
-} as const;
+const FRAME_SETS: Readonly<Record<SpriteState, readonly string[][]>> = {
+  idle: [
+    [
+      '....KKKK....',
+      '...KGGGGK...',
+      '..KGGTTGGK..',
+      '..GGGGGGGG..',
+      '..GGGGGGGG..',
+      '...DDDDDD...',
+      '..D......D..',
+      '............',
+    ],
+    [
+      '....KKKK....',
+      '...KGGGGK...',
+      '..KGG..GGK..',
+      '..GGGGGGGG..',
+      '..GGGGGGGG..',
+      '...DDDDDD...',
+      '..D......D..',
+      '............',
+    ],
+  ],
+  work: [
+    [
+      '....KKKK....',
+      '...KGGGGK...',
+      '..KGGTTGGK..',
+      '..GGGGGGGG..',
+      '...DYYYYD...',
+      '..DDDDDDDD..',
+      '..D......D..',
+      '............',
+    ],
+    [
+      '....KKKK....',
+      '...KGGGGK...',
+      '..KGGTTGGK..',
+      '..GGGGGGGG..',
+      '..DYYYYYYD..',
+      '..DDDDDDDD..',
+      '...D....D...',
+      '............',
+    ],
+    [
+      '....KKKK....',
+      '...KGGGGK...',
+      '..KGGTTGGK..',
+      '..GGGGGGGG..',
+      '.DYYYYYYYD..',
+      '..DDDDDDDD..',
+      '..D......D..',
+      '............',
+    ],
+  ],
+  done: [
+    [
+      '...K....K...',
+      '..KGGGGGGK..',
+      '..GGGTTGGG..',
+      '..GGGGGGGG..',
+      '...GGGGGG...',
+      '..DYYYYYYD..',
+      '..DDDDDDDD..',
+      '............',
+    ],
+    [
+      '..K......K..',
+      '.KGGGGGGGGK.',
+      '..GGGTTGGG..',
+      '..GGGGGGGG..',
+      '...GGGGGG...',
+      '..DYYYYYYD..',
+      '..DDDDDDDD..',
+      '............',
+    ],
+  ],
+  fail: [
+    [
+      '....KKKK....',
+      '...KGGGGK...',
+      '..KGRRRGGK..',
+      '..GGGGGGGG..',
+      '...GGTTGG...',
+      '..DDDDDDDD..',
+      '..D......D..',
+      '............',
+    ],
+  ],
+};
 
 let spritesPromise: Promise<SpriteMap> | undefined;
 
@@ -26,7 +112,7 @@ export function preloadSprites(): Promise<SpriteMap> {
     return spritesPromise;
   }
 
-  spritesPromise = loadSprites().catch(error => {
+  spritesPromise = Promise.resolve().then(() => renderSpriteMap()).catch(error => {
     spritesPromise = undefined;
     throw error;
   });
@@ -34,40 +120,41 @@ export function preloadSprites(): Promise<SpriteMap> {
   return spritesPromise;
 }
 
-async function loadSprites(): Promise<SpriteMap> {
+export function renderSpriteMap(frameSets: Readonly<Record<SpriteState, readonly string[][]>> = FRAME_SETS): SpriteMap {
   const spriteMap: SpriteMap = new Map();
 
-  for (const [state, frames] of Object.entries(FRAME_SETS) as Array<[SpriteState, readonly string[]]>) {
-    const renderedFrames: string[] = [];
-
-    for (const frameName of frames) {
-      const framePath = join(SPRITES_DIR, frameName);
-      const frameBuffer = await readFrame(state, frameName, framePath);
-      renderedFrames.push(await renderFrame(state, frameName, frameBuffer));
-    }
-
-    spriteMap.set(state, renderedFrames);
+  for (const [state, frames] of Object.entries(frameSets) as Array<[SpriteState, readonly string[][]]>) {
+    spriteMap.set(state, frames.map((frame, frameIndex) => renderFrame(state, frameIndex, frame)));
   }
 
   return spriteMap;
 }
 
-async function readFrame(state: SpriteState, frameName: string, framePath: string): Promise<Buffer> {
-  try {
-    return await readFile(framePath);
-  } catch (error) {
-    throw new Error(`Missing sprite frame for "${state}": ${frameName} (${framePath})`, {
-      cause: error,
-    });
-  }
+function renderFrame(state: SpriteState, frameIndex: number, frame: readonly string[]): string {
+  return frame.map((row, rowIndex) => renderRow(state, frameIndex, rowIndex, row)).join('\n');
 }
 
-async function renderFrame(state: SpriteState, frameName: string, frameBuffer: Buffer): Promise<string> {
-  try {
-    return await terminalImage.buffer(frameBuffer, RENDER_OPTIONS);
-  } catch (error) {
-    throw new Error(`Failed to render sprite frame for "${state}": ${frameName}`, {
-      cause: error,
-    });
+function renderRow(state: SpriteState, frameIndex: number, rowIndex: number, row: string): string {
+  let rendered = '';
+
+  for (const token of row as Iterable<string>) {
+    rendered += renderToken(state, frameIndex, rowIndex, token);
   }
+
+  return rendered;
+}
+
+function renderToken(state: SpriteState, frameIndex: number, rowIndex: number, token: string): string {
+  if (token === '.') {
+    return ' ';
+  }
+
+  const color = PALETTE[token as keyof typeof PALETTE];
+  if (!color) {
+    throw new Error(
+      `Unknown sprite palette token "${token}" in ${state} frame ${frameIndex + 1} row ${rowIndex + 1}`,
+    );
+  }
+
+  return chalk.hex(color)('█');
 }
