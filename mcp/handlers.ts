@@ -960,7 +960,7 @@ export function handleGetNotifications(stateDir: string, { after_seq }: { after_
   }
   const notifications = queryNotificationEvents(stateDir, afterSeq);
   const lastSeq = notifications.length > 0
-    ? ((notifications[notifications.length - 1] as unknown as Record<string, unknown>).seq as number ?? afterSeq)
+    ? (notifications[notifications.length - 1].seq ?? afterSeq)
     : afterSeq;
   return { notifications, last_seq: lastSeq };
 }
