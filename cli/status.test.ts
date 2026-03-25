@@ -52,7 +52,7 @@ describe('cli/status.ts', () => {
     expect(result.stderr).toContain('events.db schema error at line 1');
   });
 
-  it('fails hard on contradictory lifecycle state instead of printing status output', () => {
+  it('renders status and surfaces lifecycle invariant warnings without failing', () => {
     seedValidState({
       agents: [
         { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
@@ -79,8 +79,9 @@ describe('cli/status.ts', () => {
       ],
     });
     const result = runStatus([]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('State validation failed');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Orchestrator Status');
+    expect(result.stderr).toContain('State validation warnings:');
     expect(result.stderr).toContain('keep oldest run run-old');
   });
 
@@ -182,6 +183,39 @@ describe('cli/status.ts', () => {
     const result = runStatus(['--watch', '--once']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('State validation failed');
+  });
+
+  it('--watch --once renders with warnings when lifecycle invariants are broken', () => {
+    seedValidState({
+      agents: [
+        { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+        { agent_id: 'orc-2', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+      ],
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }],
+      claims: [
+        {
+          run_id: 'run-old',
+          task_ref: 'docs/task-1',
+          agent_id: 'orc-1',
+          state: 'claimed',
+          claimed_at: '2026-01-01T00:00:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        },
+        {
+          run_id: 'run-new',
+          task_ref: 'docs/task-1',
+          agent_id: 'orc-2',
+          state: 'claimed',
+          claimed_at: '2026-01-01T00:05:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        },
+      ],
+    });
+    const result = runStatus(['--watch', '--once']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Orchestrator Status');
+    expect(result.stdout).toContain('State validation warnings:');
+    expect(result.stdout).toContain('keep oldest run run-old');
   });
 
   it('-w --once is equivalent to --watch --once', () => {

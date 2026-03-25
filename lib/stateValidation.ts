@@ -180,3 +180,18 @@ export function validateStateDir(stateDir: string): string[] {
 
   return allErrors;
 }
+
+export function partitionValidationErrors(errors: string[]): { fatal: string[]; warnings: string[] } {
+  const fatal: string[] = [];
+  const warnings: string[] = [];
+
+  for (const error of errors) {
+    if (error.startsWith('invariant: ')) {
+      warnings.push(error);
+    } else {
+      fatal.push(error);
+    }
+  }
+
+  return { fatal, warnings };
+}

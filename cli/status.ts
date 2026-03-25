@@ -13,7 +13,7 @@ import { buildAgentStatus, buildStatus } from '../lib/statusView.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
-import { validateStateDir } from '../lib/stateValidation.ts';
+import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
 
 const json = process.argv.includes('--json');
 const mine = process.argv.includes('--mine');
@@ -27,13 +27,19 @@ if (mine && !agentId) {
   process.exit(1);
 }
 
+function printValidationWarnings(warnings: string[]) {
+  if (warnings.length === 0) return;
+  console.warn('State validation warnings:');
+  for (const warning of warnings) console.warn(`  - ${warning}`);
+}
+
 // ── Non-watch path (original single-shot behavior) ───────────────────────────
 
 if (!watch && !once) {
-  const errors = validateStateDir(STATE_DIR);
-  if (errors.length > 0) {
+  const { fatal, warnings } = partitionValidationErrors(validateStateDir(STATE_DIR));
+  if (fatal.length > 0) {
     console.error('State validation failed:');
-    for (const e of errors) console.error(' ', e);
+    for (const error of fatal) console.error(' ', error);
     process.exit(1);
   }
 
@@ -45,9 +51,11 @@ if (!watch && !once) {
     }
     if (json) {
       console.log(JSON.stringify(agentStatus, null, 2));
+      printValidationWarnings(warnings);
     } else {
       console.log(renderBanner());
       console.log(colorFormatAgentStatus(agentStatus, agentId as string));
+      printValidationWarnings(warnings);
     }
     process.exit(0);
   }
@@ -55,9 +63,11 @@ if (!watch && !once) {
   const status = buildStatus(STATE_DIR);
   if (json) {
     console.log(JSON.stringify(status, null, 2));
+    printValidationWarnings(warnings);
   } else {
     console.log(renderBanner());
     console.log(colorFormatStatus(status));
+    printValidationWarnings(warnings);
   }
   process.exit(0);
 }
@@ -65,10 +75,10 @@ if (!watch && !once) {
 // ── Watch path ────────────────────────────────────────────────────────────────
 
 function render(): boolean {
-  const errors = validateStateDir(STATE_DIR);
-  if (errors.length > 0) {
+  const { fatal, warnings } = partitionValidationErrors(validateStateDir(STATE_DIR));
+  if (fatal.length > 0) {
     console.error('State validation failed:');
-    for (const e of errors) console.error(`  - ${e}`);
+    for (const error of fatal) console.error(`  - ${error}`);
     return false;
   }
   try {
@@ -84,6 +94,11 @@ function render(): boolean {
     } else {
       const status = buildStatus(STATE_DIR);
       console.log(colorFormatStatus(status));
+    }
+    if (warnings.length > 0) {
+      console.log('');
+      console.log('State validation warnings:');
+      for (const warning of warnings) console.log(`  - ${warning}`);
     }
   } catch (err) {
     // buildStatus can fail transiently if coordinator is mid-write. Log and continue.
