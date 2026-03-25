@@ -15,6 +15,16 @@ export function readAuthoritativeTaskSpec(taskRef: string, docsDir: string = act
   return discoverActiveTaskSpecs(docsDir).find((spec) => spec.ref === taskRef) ?? null;
 }
 
+export function assertTaskSpecStatus(taskRef: string, expectedStatus: string, docsDir: string = activeBacklogDocsDir()) {
+  const spec = readAuthoritativeTaskSpec(taskRef, docsDir);
+  if (!spec) {
+    throw new Error(`Task spec not found in backlog/: ${taskRef}. Update the markdown spec first.`);
+  }
+  if (spec.status !== expectedStatus) {
+    throw new Error(`Task spec ${taskRef} must be status: ${expectedStatus} before continuing (got: ${spec.status}).`);
+  }
+}
+
 export function assertTaskSpecMatchesRegistration(
   {
     taskRef,

@@ -3,16 +3,16 @@
  * cli/task-mark-done.ts
  * Usage: orc task-mark-done <task_ref> [--actor-id=<id>]
  *
- * Mark a task as done in orchestrator state.
- * Also update the task spec frontmatter (backlog/<N>-<slug>.md) separately.
+ * Sync a markdown-updated done task into orchestrator state.
  */
 import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
-import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { STATE_DIR } from '../lib/paths.ts';
+import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, findTask } from '../lib/stateReader.ts';
+import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
+import { assertTaskSpecStatus } from '../lib/taskAuthority.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const actorId = flag('actor-id') ?? 'human';
@@ -24,20 +24,18 @@ if (!taskRef) {
 
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
-    const backlogPath = join(STATE_DIR, 'backlog.json');
     const now = new Date().toISOString();
 
-    const backlog = readBacklog(STATE_DIR);
-    const task = findTask(backlog, taskRef);
+    const beforeSync = readBacklog(STATE_DIR);
+    const previousStatus = findTask(beforeSync, taskRef)?.status ?? 'unregistered';
+    assertTaskSpecStatus(taskRef, 'done', BACKLOG_DOCS_DIR);
+    syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR, { lockAlreadyHeld: true });
+
+    const synced = readBacklog(STATE_DIR);
+    const task = findTask(synced, taskRef);
     if (!task) {
-      throw new Error(`task not found: ${taskRef}`);
+      throw new Error(`task not found after sync: ${taskRef}`);
     }
-
-    const previousStatus = task.status;
-    task.status = 'done';
-    task.updated_at = now;
-
-    atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(
       STATE_DIR,

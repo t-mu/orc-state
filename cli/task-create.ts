@@ -19,11 +19,12 @@ import { flag, flagAll } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { STATE_DIR } from '../lib/paths.ts';
-import { readBacklog } from '../lib/stateReader.ts';
+import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
+import { findTask, getNextTaskSeq, readBacklog } from '../lib/stateReader.ts';
 import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
+import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import type { Task } from '../types/backlog.ts';
 
 const featureRef = flag('feature');
@@ -81,30 +82,7 @@ if (requiredProvider && !isSupportedProvider(requiredProvider)) {
   process.exit(1);
 }
 
-const newTask: Task = {
-  ref: taskRef,
-  title,
-  status: 'todo',
-  task_type: taskType as Task['task_type'],
-  planning_state: 'ready_for_dispatch',
-  delegated_by: actorId,
-  depends_on: flagAll('depends-on'),
-  acceptance_criteria: flagAll('ac'),
-  required_capabilities: flagAll('required-capabilities'),
-  created_at: now,
-  updated_at: now,
-};
-
-const description = flag('description');
-if (description) newTask.description = description;
-
-if (owner) newTask.owner = owner;
-if (requiredProvider) newTask.required_provider = requiredProvider as Task['required_provider'];
-
-for (const key of ['depends_on', 'acceptance_criteria', 'required_capabilities'] as const) {
-  const arr = newTask[key];
-  if (Array.isArray(arr) && arr.length === 0) delete newTask[key];
-}
+const requiredCapabilities = flagAll('required-capabilities');
 
 try {
   assertTaskRegistrationFieldsAllowed({
@@ -114,31 +92,31 @@ try {
   });
   withLock(join(STATE_DIR, '.lock'), () => {
     const backlogPath = join(STATE_DIR, 'backlog.json');
-    const backlog = readBacklog(STATE_DIR);
-
-    const feature = backlog.features.find((e) => e.ref === featureRef);
-    if (!feature) {
-      throw new Error(`Feature not found: ${featureRef}`);
-    }
-
-    const existing = feature.tasks.find((t) => t.ref === taskRef);
+    const beforeSync = readBacklog(STATE_DIR);
+    const existing = findTask(beforeSync, taskRef);
     if (existing) {
       throw new Error(`Task already exists: ${taskRef}`);
     }
 
     assertTaskSpecMatchesRegistration({ taskRef, featureRef, title });
+    syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR, { lockAlreadyHeld: true });
 
-    // Validate all depends_on refs exist in the backlog.
-    if ((newTask.depends_on ?? []).length > 0) {
-      const allRefs = new Set(backlog.features.flatMap((e) => e.tasks.map((t) => t.ref)));
-      for (const dep of newTask.depends_on ?? []) {
-        if (!allRefs.has(dep)) {
-          throw new Error(`--depends-on task_ref not found in backlog: ${dep}`);
-        }
-      }
+    const backlog = readBacklog(STATE_DIR);
+    const currentNextTaskSeq = getNextTaskSeq(backlog);
+    const task = findTask(backlog, taskRef);
+    if (!task) {
+      throw new Error(`Task spec did not sync into orchestrator state: ${taskRef}`);
     }
 
-    feature.tasks = [...feature.tasks, newTask];
+    task.task_type = taskType as Task['task_type'];
+    task.planning_state = 'ready_for_dispatch';
+    task.delegated_by = actorId;
+    task.updated_at = now;
+    task.created_at ??= now;
+    if (requiredCapabilities.length > 0) task.required_capabilities = requiredCapabilities;
+    if (owner) task.owner = owner;
+    if (requiredProvider) task.required_provider = requiredProvider as Task['required_provider'];
+    backlog.next_task_seq = currentNextTaskSeq + 1;
     atomicWriteJson(backlogPath, backlog);
 
     appendSequencedEvent(

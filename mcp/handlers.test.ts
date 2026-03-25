@@ -232,6 +232,15 @@ describe('mcp read handlers', () => {
     expect(infra.map((task) => task.ref)).toEqual(['infra/blocked-one']);
   });
 
+  it('syncs authoritative markdown before serving backlog-backed reads', () => {
+    writeSpec('project/todo-one', 'project', 'Todo one renamed');
+    const tasks = handleListTasks(dir);
+    expect(tasks.find((task) => task.ref === 'project/todo-one')?.title).toBe('Todo one renamed');
+
+    const task = handleGetTask(dir, { task_ref: 'project/todo-one' }) as Record<string, unknown>;
+    expect(task.title).toBe('Todo one renamed');
+  });
+
   it('handleListAgents omits dead by default, includes dead when requested, and supports role filter', () => {
     const all = handleListAgents(dir) as Array<Record<string, unknown>>;
     expect(all).toHaveLength(2);
@@ -622,11 +631,12 @@ describe('mcp read handlers', () => {
       ref: 'todo-one',
       actor_id: 'master',
     })).toThrow(/Task already exists/);
+    writeSpec('missing-feature/something', 'missing-feature', 'Something');
     expect(() => handleCreateTask(dir, {
       feature: 'missing-feature',
       title: 'Something',
       actor_id: 'master',
-    })).toThrow(/Feature not found/);
+    })).not.toThrow();
   });
 
   it('handleCreateTask validates required fields and actor format', () => {

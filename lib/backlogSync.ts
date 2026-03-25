@@ -99,7 +99,69 @@ export interface SyncResult {
   added_features: number;
 }
 
-export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncResult {
+function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncResult {
+  let changed = false;
+  let addedTasks = 0;
+  let updatedTasks = 0;
+  let addedFeatures = 0;
+
+  for (const spec of specs) {
+    const ensured = ensureFeature(backlog, spec.feature);
+    if (ensured.created) {
+      changed = true;
+      addedFeatures += 1;
+    }
+
+    const existingEntry = findTaskEntry(backlog, spec.ref);
+    if (!existingEntry) {
+      ensured.feature.tasks = [
+        ...(ensured.feature.tasks ?? []),
+        {
+          ref: spec.ref,
+          title: spec.title,
+          status: spec.status as TaskStatus,
+          task_type: 'implementation',
+        },
+      ];
+      changed = true;
+      addedTasks += 1;
+      continue;
+    }
+
+    if (existingEntry.feature.ref !== spec.feature) {
+      removeTaskFromFeature(existingEntry.feature, spec.ref);
+      ensured.feature.tasks = [...(ensured.feature.tasks ?? []), existingEntry.task];
+      changed = true;
+    }
+
+    let taskUpdated = false;
+
+    if (existingEntry.task.title !== spec.title) {
+      existingEntry.task.title = spec.title;
+      changed = true;
+      taskUpdated = true;
+    }
+
+    if (!ACTIVE_STATUSES.has(existingEntry.task.status) && existingEntry.task.status !== spec.status) {
+      existingEntry.task.status = spec.status as TaskStatus;
+      changed = true;
+      taskUpdated = true;
+    }
+
+    if (taskUpdated) {
+      updatedTasks += 1;
+    }
+  }
+
+  return {
+    updated: changed,
+    added_tasks: addedTasks,
+    updated_tasks: updatedTasks,
+    added_features: addedFeatures,
+  };
+}
+
+export function syncBacklogFromSpecs(stateDir: string, docsDir: string, { lockAlreadyHeld = false }: { lockAlreadyHeld?: boolean } = {}): SyncResult {
   const specs = discoverActiveTaskSpecs(docsDir);
   if (specs.length === 0) {
     return { updated: false, added_tasks: 0, updated_tasks: 0, added_features: 0 };
@@ -107,70 +169,15 @@ export function syncBacklogFromSpecs(stateDir: string, docsDir: string): SyncRes
 
   const backlogPath = join(stateDir, 'backlog.json');
 
-  return withLock(join(stateDir, '.lock'), () => {
+  const runSync = () => {
     const backlog = JSON.parse(readFileSync(backlogPath, 'utf8')) as Backlog;
-    let changed = false;
-    let addedTasks = 0;
-    let updatedTasks = 0;
-    let addedFeatures = 0;
-
-    for (const spec of specs) {
-      const ensured = ensureFeature(backlog, spec.feature);
-      if (ensured.created) {
-        changed = true;
-        addedFeatures += 1;
-      }
-
-      const existingEntry = findTaskEntry(backlog, spec.ref);
-      if (!existingEntry) {
-        ensured.feature.tasks = [
-          ...(ensured.feature.tasks ?? []),
-          {
-            ref: spec.ref,
-            title: spec.title,
-            status: spec.status as TaskStatus,
-            task_type: 'implementation',
-          },
-        ];
-        changed = true;
-        addedTasks += 1;
-        continue;
-      }
-
-      if (existingEntry.feature.ref !== spec.feature) {
-        removeTaskFromFeature(existingEntry.feature, spec.ref);
-        ensured.feature.tasks = [...(ensured.feature.tasks ?? []), existingEntry.task];
-        changed = true;
-      }
-
-      let taskUpdated = false;
-
-      if (existingEntry.task.title !== spec.title) {
-        existingEntry.task.title = spec.title;
-        changed = true;
-        taskUpdated = true;
-      }
-
-      if (!ACTIVE_STATUSES.has(existingEntry.task.status) && existingEntry.task.status !== spec.status) {
-        existingEntry.task.status = spec.status as TaskStatus;
-        changed = true;
-        taskUpdated = true;
-      }
-
-      if (taskUpdated) {
-        updatedTasks += 1;
-      }
-    }
-
-    if (changed) {
+    const result = syncBacklogFromSpecsLoaded(backlog, specs);
+    if (result.updated) {
       atomicWriteJson(backlogPath, backlog);
     }
+    return result;
+  };
 
-    return {
-      updated: changed,
-      added_tasks: addedTasks,
-      updated_tasks: updatedTasks,
-      added_features: addedFeatures,
-    };
-  });
+  if (lockAlreadyHeld) return runSync();
+  return withLock(join(stateDir, '.lock'), runSync);
 }

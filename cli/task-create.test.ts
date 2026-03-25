@@ -57,14 +57,15 @@ describe('cli/task-create.ts', () => {
     expect(task).toBeTruthy();
   });
 
-  it('fails when feature does not exist', () => {
+  it('syncs the feature from markdown when runtime backlog is stale', () => {
     writeSpec('missing/bad', 'missing', 'Bad');
     const result = runCli([
       '--feature=missing',
       '--title=Bad',
     ]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Feature not found');
+    expect(result.status).toBe(0);
+    const task = readBacklog().features.flatMap((feature) => feature.tasks).find((entry) => entry.ref === 'missing/bad');
+    expect(task).toBeTruthy();
   });
 
   it('fails when task ref already exists', () => {

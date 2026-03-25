@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
+import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
@@ -10,7 +11,7 @@ import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
-import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
+import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
@@ -41,6 +42,16 @@ function defaultActorId(stateDir: string) {
   return listAgents(stateDir).find((agent) => agent.role === 'master')?.agent_id ?? 'master';
 }
 
+function backlogDocsDirForState(stateDir: string) {
+  const colocatedDocsDir = join(stateDir, 'backlog');
+  return existsSync(colocatedDocsDir) ? colocatedDocsDir : BACKLOG_DOCS_DIR;
+}
+
+function readBacklogFresh(stateDir: string, { lockAlreadyHeld = false }: { lockAlreadyHeld?: boolean } = {}) {
+  syncBacklogFromSpecs(stateDir, backlogDocsDirForState(stateDir), { lockAlreadyHeld });
+  return readBacklog(stateDir);
+}
+
 // `next_task_seq` always means "the next available numeric sequence from this state snapshot".
 // Before create_task mutates backlog.json, it is the number to consume next.
 // After create_task commits, it becomes the next number after the task just created.
@@ -68,7 +79,7 @@ export function handleListTasks(stateDir: string, { status, feature }: { status?
   if (feature != null && typeof feature !== 'string') {
     throw new Error('feature must be a string');
   }
-  const backlog = readBacklog(stateDir);
+  const backlog = readBacklogFresh(stateDir);
   let tasks = backlog.features.flatMap((featureObj) =>
     featureObj.tasks.map((task): Task & { feature_ref: string } => ({ ...task, feature_ref: featureObj.ref })),
   );
@@ -136,7 +147,7 @@ export function handleListStalledRuns(stateDir: string, { stale_after_ms = 600_0
 
 export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unknown } = {}) {
   if (!task_ref) throw new Error('task_ref is required');
-  const backlog = readBacklog(stateDir);
+  const backlog = readBacklogFresh(stateDir);
   const task = findTask(backlog, task_ref as string);
   if (!task) return { error: 'not_found', task_ref };
   return task;
@@ -171,7 +182,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     throw new Error('include_done_count must be a boolean');
   }
 
-  const backlog = readBacklog(stateDir);
+  const backlog = readBacklogFresh(stateDir);
   const claims = readClaims(stateDir).claims;
   const agents = listAgents(stateDir).filter((agent) => agent.status !== 'dead');
 
@@ -231,7 +242,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
 export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_id?: unknown } = {}) {
   if (!agent_id) throw new Error('agent_id is required');
 
-  const backlog = readBacklog(stateDir);
+  const backlog = readBacklogFresh(stateDir);
   const claims = readClaims(stateDir).claims;
   const agents = listAgents(stateDir);
   const agent = agents.find((entry) => entry.agent_id === agent_id);
@@ -305,6 +316,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
 }
 
 export function handleReadBacklog(stateDir: string) {
+  syncBacklogFromSpecs(stateDir, backlogDocsDirForState(stateDir));
   return readFileSync(join(stateDir, 'backlog.json'), 'utf8');
 }
 
@@ -361,16 +373,8 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
 
     const backlogPath = join(stateDir, 'backlog.json');
     const backlog = readBacklog(stateDir);
-    const currentNextTaskSeq = getNextTaskSeq(backlog);
 
-    if (resolvedFeature === 'general' && !backlog.features.some((candidate) => candidate.ref === 'general')) {
-      backlog.features = [...backlog.features, { ref: 'general', title: 'General', tasks: [] }];
-    }
-
-    const featureObj = backlog.features.find((candidate) => candidate.ref === resolvedFeature);
-    if (!featureObj) throw new Error(`Feature not found: ${resolvedFeature}`);
-
-    const existing = featureObj.tasks.find((task) => task.ref === taskRef);
+    const existing = findTask(backlog, taskRef);
     if (existing) throw new Error(`Task already exists: ${taskRef}`);
 
     assertTaskSpecMatchesRegistration({
@@ -379,38 +383,24 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
       title: title as string,
     });
 
-    if (((depends_on ?? []) as unknown[]).length > 0) {
-      const allRefs = new Set(backlog.features.flatMap((candidate) => candidate.tasks.map((task) => task.ref)));
-      for (const dep of depends_on as string[]) {
-        if (!allRefs.has(dep)) throw new Error(`depends_on task_ref not found in backlog: ${dep}`);
-      }
+    const syncedBacklog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
+    const currentNextTaskSeq = getNextTaskSeq(syncedBacklog);
+    const newTask = findTask(syncedBacklog, taskRef);
+    if (!newTask) throw new Error(`Task spec did not sync into orchestrator state: ${taskRef}`);
+    newTask.task_type = task_type as Task['task_type'];
+    newTask.priority = priority as Task['priority'];
+    newTask.planning_state = 'ready_for_dispatch';
+    newTask.delegated_by = actor_id as string;
+    newTask.created_at ??= now;
+    newTask.updated_at = now;
+    if ((required_capabilities as string[] | undefined)?.length) {
+      newTask.required_capabilities = required_capabilities as string[];
     }
-
-    const newTask: Task = {
-      ref: taskRef,
-      title: title as string,
-      status: 'todo',
-      task_type: task_type as Task['task_type'],
-      priority: priority as Task['priority'],
-      planning_state: 'ready_for_dispatch',
-      delegated_by: actor_id as string,
-      depends_on: (depends_on as string[] | undefined) ?? [],
-      acceptance_criteria: (acceptance_criteria as string[] | undefined) ?? [],
-      required_capabilities: (required_capabilities as string[] | undefined) ?? [],
-      created_at: now,
-      updated_at: now,
-    };
-    if (description) newTask.description = description as string;
     if (owner) newTask.owner = owner as string;
     if (required_provider != null) newTask.required_provider = required_provider as Task['required_provider'];
 
-    if ((newTask.depends_on?.length ?? 0) === 0) delete newTask.depends_on;
-    if ((newTask.acceptance_criteria?.length ?? 0) === 0) delete newTask.acceptance_criteria;
-    if ((newTask.required_capabilities?.length ?? 0) === 0) delete newTask.required_capabilities;
-
-    featureObj.tasks = [...featureObj.tasks, newTask];
-    backlog.next_task_seq = currentNextTaskSeq + 1;
-    atomicWriteJson(backlogPath, backlog);
+    syncedBacklog.next_task_seq = currentNextTaskSeq + 1;
+    atomicWriteJson(backlogPath, syncedBacklog);
 
     appendSequencedEvent(
       stateDir,
@@ -425,7 +415,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
       { lockAlreadyHeld: true },
     );
     // Return the post-write value so callers can immediately see the next available sequence.
-    return { ...newTask, next_task_seq: backlog.next_task_seq };
+    return { ...newTask, next_task_seq: syncedBacklog.next_task_seq };
   });
 }
 
@@ -461,7 +451,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
 
   return withLock(join(stateDir, '.lock'), () => {
     const backlogPath = join(stateDir, 'backlog.json');
-    const backlog = readBacklog(stateDir);
+    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
     const authoritativeUpdates: Partial<Pick<Task, 'title' | 'description' | 'acceptance_criteria' | 'depends_on' | 'status'>> = {};
@@ -542,7 +532,7 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
 
   return withLock(join(stateDir, '.lock'), () => {
     const backlogPath = join(stateDir, 'backlog.json');
-    const backlog = readBacklog(stateDir);
+    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const claims = readClaims(stateDir).claims;
     const allAgents = listAgents(stateDir);
     const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
@@ -656,7 +646,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
   const result = withLock(join(stateDir, '.lock'), () => {
     const backlogPath = join(stateDir, 'backlog.json');
     const claimsPath = join(stateDir, 'claims.json');
-    const backlog = readBacklog(stateDir);
+    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const claimsData = readClaims(stateDir);
     const claims = claimsData.claims;
 
@@ -755,7 +745,7 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
   const claim = claims.find((c) => c.run_id === run_id);
   if (!claim) return { error: 'not_found', run_id };
 
-  const backlog = readBacklog(stateDir);
+  const backlog = readBacklogFresh(stateDir);
   const task = findTask(backlog, claim.task_ref);
   const taskTitle = task?.title ?? null;
 
@@ -828,7 +818,7 @@ export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human'
     const claimsPath = join(stateDir, 'claims.json');
     const now = new Date().toISOString();
 
-    const backlog = readBacklog(stateDir);
+    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
@@ -876,7 +866,7 @@ export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human'
 export function handleListWorktrees(stateDir: string) {
   const worktrees = readRunWorktreesState(stateDir);
   const claims = readClaims(stateDir).claims;
-  const backlog = readBacklog(stateDir);
+  const backlog = readBacklogFresh(stateDir);
 
   const claimByRunId = new Map(claims.map((c) => [c.run_id, c]));
 
