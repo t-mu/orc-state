@@ -19,14 +19,14 @@ describe('cli/orc.ts', () => {
     expect(result.stdout).toContain('start-session');
     expect(result.stdout).toContain('task-create');
     expect(result.stdout).toContain('register-worker');
-    expect(result.stdout).toContain('master-check');
+    expect(result.stdout).toContain('events-tail');
     expect(result.stdout.indexOf('Blessed workflow commands:')).toBeLessThan(result.stdout.indexOf('Recovery / debug commands:'));
     expect(result.stdout.indexOf('Recovery / debug commands:')).toBeLessThan(result.stdout.indexOf('Supported inspection commands:'));
     expect(result.stdout.indexOf('Supported inspection commands:')).toBeLessThan(result.stdout.indexOf('Advanced / specialized commands:'));
   });
 
   it('dispatches documented inspection commands', () => {
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/orc.ts', 'master-check'], {
+    const result = spawnSync('node', ['--experimental-strip-types', 'cli/orc.ts', 'events-tail'], {
       cwd: repoRoot,
       encoding: 'utf8',
     });

@@ -9,7 +9,7 @@ The orchestrator reads/writes JSON state under `ORCH_STATE_DIR` (default `<repo-
 - `backlog.json`
 - `agents.json`
 - `claims.json`
-- `events.jsonl`
+- `events.db`
 
 ## Session Ownership and Operator Model
 

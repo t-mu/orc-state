@@ -39,7 +39,7 @@ get_task(task_ref)
   Returns one task or { error: "not_found" }.
 
 get_recent_events(limit?)
-  Returns recent events from events.jsonl. Default 50, max 200.
+  Returns recent events from the SQLite events database. Default 50, max 200.
 
 get_status(include_done_count?)
   Returns compact aggregate status (agents, task_counts, active_tasks,

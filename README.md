@@ -15,7 +15,7 @@ One master. Many headless workers. Autonomous coding, coordinated.
 
 ## The 30-second mental model
 
-State lives in `.orc-state/`: `backlog.json`, `agents.json`, `claims.json`, `events.jsonl`.
+State lives in `.orc-state/`: `backlog.json`, `agents.json`, `claims.json`, `events.db`.
 
 A coordinator dispatches `todo` tasks to headless PTY workers. Workers run in their own git worktrees, heartbeat every 5 min, and signal done when finished. The foreground master orchestrates everything from your terminal.
 
@@ -75,7 +75,6 @@ orc status          # capacity, active runs, finalization, recent failures
 orc watch           # live-refresh
 orc runs-active     # what's running right now
 orc events-tail     # stream the event log
-orc master-check    # unconsumed TASK_COMPLETE notifications
 orc doctor          # health check
 ```
 

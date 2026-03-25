@@ -14,7 +14,6 @@ type StatusResult = {
   finalization: { total: number; blocked_finalize: number; blocked_preserved: Array<{ run_branch: string; run_worktree_path: string }> };
   failures: { startup: Array<{ reason: string }>; lifecycle: Array<{ event: string }> };
   next_task_seq: number;
-  pending_notifications: number;
   stalled_runs: number;
   active_tasks: Array<Record<string, unknown>>;
   task_counts: Record<string, number>;
