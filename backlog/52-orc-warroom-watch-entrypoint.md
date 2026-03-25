@@ -3,6 +3,7 @@ ref: orc-warroom/52-orc-warroom-watch-entrypoint
 feature: orc-warroom
 priority: normal
 status: todo
+required_provider: codex
 ---
 
 # Task 52 — Replace cli/watch.ts with ink entrypoint and non-TTY fallback

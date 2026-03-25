@@ -3,6 +3,7 @@ ref: agent-lens/54-agent-lens-keyboard-nav
 feature: agent-lens
 priority: normal
 status: todo
+required_provider: codex
 ---
 
 # Task 54 — Add keyboard navigation to the TUI

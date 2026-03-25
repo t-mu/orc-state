@@ -3,6 +3,7 @@ ref: orc-warroom/49-orc-warroom-toolchain-prep
 feature: orc-warroom
 priority: normal
 status: todo
+required_provider: codex
 ---
 
 # Task 49 — Toolchain prep: TSX loader, JSX config, and ink dependency pins

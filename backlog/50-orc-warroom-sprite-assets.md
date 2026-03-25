@@ -3,6 +3,7 @@ ref: orc-warroom/50-orc-warroom-sprite-assets
 feature: orc-warroom
 priority: normal
 status: todo
+required_provider: codex
 ---
 
 # Task 50 — Create orc pixel art sprite assets and async pre-loader

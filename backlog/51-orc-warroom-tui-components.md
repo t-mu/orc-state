@@ -3,6 +3,7 @@ ref: orc-warroom/51-orc-warroom-tui-components
 feature: orc-warroom
 priority: normal
 status: todo
+required_provider: codex
 ---
 
 # Task 51 — Build core ink TUI component tree

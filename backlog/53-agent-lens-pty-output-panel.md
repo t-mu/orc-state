@@ -3,6 +3,7 @@ ref: agent-lens/53-agent-lens-pty-output-panel
 feature: agent-lens
 priority: normal
 status: todo
+required_provider: codex
 ---
 
 # Task 53 — Stream live worker PTY output into TUI worker slot panels
