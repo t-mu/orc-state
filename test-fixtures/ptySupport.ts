@@ -1,17 +1,36 @@
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 function probePtySupport(env = process.env) {
-  const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
-  const args = process.platform === 'win32' ? ['/d', '/c', 'exit 0'] : ['-lc', 'exit 0'];
+  const fixtureBin = fileURLToPath(new URL('./bin', import.meta.url));
+  const adapterPath = fileURLToPath(new URL('../adapters/pty.ts', import.meta.url));
   const script = [
-    "import pty from 'node-pty'",
-    `const proc = pty.spawn(${JSON.stringify(shell)}, ${JSON.stringify(args)}, { name: 'xterm', cols: 80, rows: 24, cwd: process.cwd(), env: process.env })`,
-    "setTimeout(() => process.exit(0), 50)",
+    "import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'",
+    "import { tmpdir } from 'node:os'",
+    "import { join } from 'node:path'",
+    `const { createPtyAdapter } = await import(${JSON.stringify(adapterPath)})`,
+    "const stateDir = mkdtempSync(join(tmpdir(), 'orc-pty-probe-'))",
+    "process.env.ORCH_STATE_DIR = stateDir",
+    "const adapter = createPtyAdapter({ provider: 'claude' })",
+    "let ok = false",
+    "try {",
+    "  await adapter.start('probe', { system_prompt: 'PING' })",
+    "  const logFile = join(stateDir, 'pty-logs', 'probe.log')",
+    "  await new Promise((resolve) => setTimeout(resolve, 2500))",
+    "  ok = existsSync(logFile) && (() => { const log = readFileSync(logFile, 'utf8'); return log.includes('FIXTURE_READY provider=claude') && log.includes('FIXTURE_PONG'); })()",
+    "} finally {",
+    "  try { await adapter.stop('pty:probe'); } catch {}",
+    "  rmSync(stateDir, { recursive: true, force: true })",
+    "}",
+    "process.exit(ok ? 0 : 1)",
   ].join(';');
 
-  const result = spawnSync(process.execPath, ['-e', script], {
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', '-e', script], {
     stdio: 'ignore',
-    env,
+    env: {
+      ...env,
+      PATH: `${fixtureBin}:${env.PATH ?? ''}`,
+    },
   });
   return result.status === 0;
 }

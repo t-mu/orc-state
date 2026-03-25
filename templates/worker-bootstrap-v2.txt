@@ -72,7 +72,9 @@ When a TASK_START block arrives:
             orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
        b. Spawn two independent sub-agents. Give each:
           - The acceptance criteria for this task
-          - The output of `git diff main`
+          - The changed file list from `git diff --name-only main...HEAD`
+          - The changed hunks from `git diff --stat --patch main...HEAD -- <changed files>`
+          - Scope note: review only touched code and obvious adjacent regressions
           - The following MANDATORY CONSTRAINTS block verbatim:
 
           --- REVIEWER CONSTRAINTS (read this before doing anything) ---

@@ -20,15 +20,15 @@ and gives master no signal about why.
 This task adds a second escalation threshold in `enforceInProgressLifecycle`:
 after the nudge has fired AND the run remains idle past `RUN_INACTIVE_ESCALATE_MS`
 (default 15 min), the coordinator reads the worker's PTY tail via the adapter
-interface, emits a `worker_needs_attention` event, and sends a
-`WORKER_NEEDS_ATTENTION` master notification. Deduplication is via
+interface, emits a `worker_needs_attention` event, and records any
+master-facing follow-up through the event cursor polling model introduced by
+task 55. Deduplication is via
 `claim.escalation_notified_at` (set by `setEscalationNotified`) so it survives
 coordinator restarts.
 
 ## Acceptance Criteria
 
-1. Coordinator emits `worker_needs_attention` event and appends a
-   `WORKER_NEEDS_ATTENTION` master notification exactly once per run, only
+1. Coordinator emits `worker_needs_attention` exactly once per run, only
    after:
    - `idle_ms >= RUN_INACTIVE_ESCALATE_MS` (default 15 min), AND
    - The nudge has already fired for this run (`runInactiveNudgeAtMs` has an
@@ -37,10 +37,12 @@ coordinator restarts.
 2. `claim.escalation_notified_at` is set via `setEscalationNotified` after
    emitting — escalation does not re-fire on subsequent ticks or coordinator
    restarts.
-3. The `WORKER_NEEDS_ATTENTION` notification payload includes:
-   `{ agent_id, run_id, task_ref, pty_tail: string, idle_ms: number }`.
-   `pty_tail` comes from `adapter.getOutputTail(sessionHandle)` — empty string
-   if adapter returns null or session handle is unavailable.
+3. `worker_needs_attention` remains aligned with task 44 and task 55:
+   - the durable event payload stays `{ reason: 'stale', idle_ms: number }`
+   - do not add `pty_tail` to the event payload or reintroduce PTY-forwarded
+     notifications
+   - if PTY tail is still needed later, it must be handled in a separate,
+     explicitly scoped follow-up task
 4. `RUN_INACTIVE_ESCALATE_MS` is a configurable int-flag constant in
    coordinator, defaulting to 15 minutes, alongside the existing
    `RUN_INACTIVE_NUDGE_MS` and `RUN_INACTIVE_TIMEOUT_MS`.

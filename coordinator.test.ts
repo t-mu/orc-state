@@ -2241,6 +2241,9 @@ describe('buildTaskEnvelope', () => {
         current_state: 'Current state text.',
         desired_state: 'Desired state text.',
         start_here: '- coordinator.ts',
+        files_to_change: '- coordinator.ts\n- coordinator.test.ts',
+        implementation_notes: '- keep review scope narrow',
+        avoid_reading: 'lib/masterPtyForwarder.ts',
         verification: '```bash\nnpx vitest\n```',
         source_path: 'docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md',
       }),
@@ -2264,6 +2267,12 @@ describe('buildTaskEnvelope', () => {
     expect(rendered).toContain('Desired state text.');
     expect(rendered).toContain('start_here:');
     expect(rendered).toContain('- coordinator.ts');
+    expect(rendered).toContain('files_to_change:');
+    expect(rendered).toContain('- coordinator.test.ts');
+    expect(rendered).toContain('avoid_reading:');
+    expect(rendered).toContain('lib/masterPtyForwarder.ts');
+    expect(rendered).toContain('implementation_notes:');
+    expect(rendered).toContain('- keep review scope narrow');
     expect(rendered).toContain('targeted_verification:');
     expect(rendered).toContain('task_spec_path: docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-envelope-1');

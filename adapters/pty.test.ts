@@ -28,6 +28,10 @@ function makeMockPty(pid = 12345) {
   return { ptyProcess, triggerData: (s: string) => dataCallback?.(s) };
 }
 
+function binaryMatcher(name: string) {
+  return expect.stringMatching(new RegExp(`(^|/)${name}$`));
+}
+
 async function makeAdapter({ provider = 'claude', spawnReturn, spawnThrow }: { provider?: string; spawnReturn?: ReturnType<typeof makeMockPty>; spawnThrow?: Error } = {}) {
   const { ptyProcess, triggerData } = spawnReturn ?? makeMockPty();
   const spawnSpy = spawnThrow
@@ -54,7 +58,7 @@ describe('pty adapter start()', () => {
       session_handle: 'pty:bob',
       provider_ref: { pid: ptyProcess.pid, provider: 'claude', binary: 'claude' },
     });
-    expect(spawnSpy).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), ['--dangerously-skip-permissions'], expect.objectContaining({
       name: 'xterm-256color',
       cols: 220,
       rows: 50,
@@ -65,7 +69,7 @@ describe('pty adapter start()', () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', { working_directory: '/tmp/orc-worktree' });
 
-    expect(spawnSpy).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), ['--dangerously-skip-permissions'], expect.objectContaining({
       cwd: '/tmp/orc-worktree',
     }));
   });
@@ -79,7 +83,7 @@ describe('pty adapter start()', () => {
       },
     });
 
-    expect(spawnSpy).toHaveBeenCalledWith('claude', ['--dangerously-skip-permissions'], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), ['--dangerously-skip-permissions'], expect.objectContaining({
       env: expect.objectContaining({
         ORCH_STATE_DIR: '/tmp/shared-state',
         ORC_REPO_ROOT: '/tmp/repo-root',
@@ -132,12 +136,12 @@ describe('pty adapter start()', () => {
   it('uses provider binary mapping for codex and gemini', async () => {
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', {});
-    expect(codex.spawnSpy).toHaveBeenCalledWith('codex', ['--no-alt-screen', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'], expect.any(Object));
+    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--no-alt-screen', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'], expect.any(Object));
 
     vi.resetModules();
     const gemini = await makeAdapter({ provider: 'gemini' });
     await gemini.adapter.start('g', {});
-    expect(gemini.spawnSpy).toHaveBeenCalledWith('gemini', [], expect.any(Object));
+    expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
   });
 
   it('passes codex bootstrap as startup prompt arg instead of PTY write', async () => {
@@ -145,7 +149,7 @@ describe('pty adapter start()', () => {
     await adapter.start('codex-worker', { system_prompt: 'BOOTSTRAP TEXT' });
 
     expect(spawnSpy).toHaveBeenCalledWith(
-      'codex',
+      binaryMatcher('codex'),
       ['--no-alt-screen', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', 'BOOTSTRAP TEXT'],
       expect.any(Object),
     );
@@ -215,6 +219,15 @@ describe('pty adapter send()', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(adapter.detectInputBlock('pty:bob')).toBe('Would you like to apply these changes? [y/n]');
+  });
+
+  it('detects quota and context exhaustion output as a blocking condition', async () => {
+    const { adapter, triggerData } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('bob', {});
+    triggerData('You are running out of session quota. Try again later.\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(adapter.detectInputBlock('pty:bob')).toBe('You are running out of session quota. Try again later.');
   });
   it('throws on malformed session handles', async () => {
     const { adapter } = await makeAdapter();

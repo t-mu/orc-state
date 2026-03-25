@@ -27,7 +27,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/masterPtyForwarder.ts';
 
@@ -118,6 +118,17 @@ function readLogTail(agentId: string) {
   return buf.slice(-OUTPUT_TAIL_BYTES).toString('utf8');
 }
 
+function resolveBinary(binary: string, env: Record<string, string>) {
+  if (!binary || binary.includes('/') || isAbsolute(binary)) return binary;
+  const searchPath = env.PATH ?? process.env.PATH ?? '';
+  for (const dir of searchPath.split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, binary);
+    if (existsSync(candidate)) return candidate;
+  }
+  return binary;
+}
+
 function detectBlockingPromptFromText(text: string) {
   const lines = String(text)
     .split('\n')
@@ -126,6 +137,16 @@ function detectBlockingPromptFromText(text: string) {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index];
     if (BLOCKING_PROMPT_PATTERNS.some((pattern) => pattern.test(line))) {
+      return line;
+    }
+    if (
+      /quota/i.test(line)
+      || /token limit/i.test(line)
+      || /context (window|limit|length)/i.test(line)
+      || /session quota/i.test(line)
+      || /rate limit/i.test(line)
+      || /try again later/i.test(line)
+    ) {
       return line;
     }
   }
@@ -171,8 +192,10 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         const spawnArgs = buildStartArgs(provider, config);
 
         // Strip CLAUDECODE so nested claude sessions are not rejected.
-        const { CLAUDECODE: _cc, ...spawnEnv } = process.env;
-        ptyProcess = pty.spawn(binary, spawnArgs, {
+        const { CLAUDECODE: _cc, ...baseEnv } = process.env;
+        const spawnEnv = { ...baseEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>;
+        const resolvedBinary = resolveBinary(binary, spawnEnv);
+        ptyProcess = pty.spawn(resolvedBinary, spawnArgs, {
           name: 'xterm-256color',
           cols: 220,
           rows: 50,
@@ -182,7 +205,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           cwd:  (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT
             ?? (config.working_directory as string)
             ?? process.cwd(),
-          env:  { ...spawnEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>,
+          env: spawnEnv,
         });
 
         ptyProcess.onData((data) => stream!.write(sanitizePtyChunk(data)));
