@@ -100,6 +100,35 @@ Resources: `orchestrator://state/backlog`, `orchestrator://state/agents`.
 
 ---
 
+## Local Skill Development
+
+The canonical authored skills live in [`skills/`](./skills). `orc install-skills`
+is for consumers who want to copy the packaged skills into their provider-specific
+directories.
+
+For local development in this repo, symlink your agent skill directories to the
+source tree instead of reinstalling after every edit:
+
+```bash
+bash scripts/link-local-skills.sh
+```
+
+That creates:
+
+- `.codex/skills -> ../skills`
+- `.claude/skills -> ../skills`
+
+You can also target one provider only:
+
+```bash
+bash scripts/link-local-skills.sh codex
+bash scripts/link-local-skills.sh claude
+```
+
+The helper backs up an existing non-symlink `skills` directory before replacing it.
+
+---
+
 ## Providers
 
 | Provider | Auth |
