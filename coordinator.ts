@@ -1161,6 +1161,7 @@ const PHASE_NUDGE_MESSAGES: Record<string, string> = {
   implement: 'Are tests passing? Run npm test and move to Phase 3 when ready.',
   review: 'Have reviewers responded? Check orc review-read and address findings.',
   complete: 'Run orc run-work-complete to hand off to the coordinator.',
+  finalize: 'Waiting for coordinator merge. If requested, perform the finalize rebase.',
 };
 
 function buildInProgressNudge(claim: Claim, phase: string | null = null) {
@@ -1171,6 +1172,7 @@ function buildInProgressNudge(claim: Claim, phase: string | null = null) {
     `RUN_NUDGE`,
     `run_id: ${claim.run_id}`,
     `task_ref: ${claim.task_ref}`,
+    `No recent activity detected.`,
     phaseHint,
     `Call this command via your Bash tool to keep the run active:`,
     `orc run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,

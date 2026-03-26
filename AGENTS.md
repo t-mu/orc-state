@@ -52,11 +52,11 @@ Do NOT skip phases. Do NOT reorder phases.
 
 ### Phase 1 — Explore
 
+Signal phase: `orc progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id=<agent_id>`
 Read the full task spec in `backlog/<N>-<slug>.md`. Identify all affected files.
 Check existing patterns in those files before writing any code.
 
 **Gate:** Run `orc run-start --run-id=<run_id> --agent-id=<agent_id>`.
-Signal phase: `orc progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id=<agent_id>`
 Start the background heartbeat immediately after:
 ```bash
 while true; do sleep 270; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
@@ -112,6 +112,7 @@ Do NOT call run-work-complete without calling task-mark-done first.
 
 ### Phase 5 — Finalize
 
+Signal phase: `orc progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id=<agent_id>`
 Wait for coordinator follow-up. If coordinator requests a finalize rebase:
 1. Emit `orc progress --event=finalize_rebase_started --run-id=<run_id> --agent-id=<agent_id>`
 2. Perform the rebase.
