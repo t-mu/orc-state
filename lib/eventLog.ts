@@ -92,6 +92,18 @@ export function initEventsDb(stateDir: string): void {
   getDb(stateDir);
 }
 
+/**
+ * Close all open SQLite database connections. Call during graceful shutdown
+ * to ensure WAL checkpointing and file handle release.
+ * Idempotent — safe to call multiple times.
+ */
+export function closeAllDatabases(): void {
+  for (const [key, db] of _dbs) {
+    try { db.close(); } catch { /* best-effort */ }
+    _dbs.delete(key);
+  }
+}
+
 export function ensureEventIdentity<T extends { event_id?: string }>(
   event: T,
   { createIfMissing = true }: { createIfMissing?: boolean } = {},

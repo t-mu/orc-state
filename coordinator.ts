@@ -25,7 +25,7 @@ import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setEscalati
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
-import { appendSequencedEvent, eventIdentity, readEvents } from './lib/eventLog.ts';
+import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
 import { selectDispatchableAgents, buildDispatchPlan } from './lib/dispatchPlanner.ts';
@@ -1454,6 +1454,7 @@ export async function doShutdown() {
   }
 
   emit({ event: 'coordinator_stopped', actor_type: 'coordinator', actor_id: 'coordinator', payload: {} });
+  try { closeAllDatabases(); } catch { /* best-effort */ }
   releaseCoordinatorLock();
   log('shutdown complete.');
   process.exit(0);

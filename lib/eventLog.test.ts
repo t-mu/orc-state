@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import {
   appendEvent,
   appendSequencedEvent,
+  closeAllDatabases,
   queryEvents,
   readEvents,
   readEventsSince,
@@ -24,6 +25,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  closeAllDatabases();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -467,5 +469,23 @@ describe('WAL concurrent reads', () => {
       expect(events).toHaveLength(10);
       expect(events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
+  });
+});
+
+describe('closeAllDatabases', () => {
+  it('closes connections and clears cache so next access re-opens', () => {
+    appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
+    expect(readEvents(logPath)).toHaveLength(1);
+
+    closeAllDatabases();
+
+    // After closing, the next read should re-open the DB and still work
+    expect(readEvents(logPath)).toHaveLength(1);
+  });
+
+  it('is idempotent — calling twice does not throw', () => {
+    appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
+    closeAllDatabases();
+    closeAllDatabases(); // second call should be a no-op
   });
 });
