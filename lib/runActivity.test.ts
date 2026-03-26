@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { latestRunActivityMap, latestRunActivityDetailMap, runIdleMs } from './runActivity.ts';
+import { latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs } from './runActivity.ts';
 import type { OrcEvent } from '../types/index.ts';
 
 describe('latestRunActivityMap', () => {
@@ -29,6 +29,46 @@ describe('latestRunActivityDetailMap', () => {
       event: 'heartbeat',
       source: 'worker-runtime-owner',
     });
+  });
+});
+
+describe('latestRunPhaseMap', () => {
+  it('returns last phase per run from phase_started events', () => {
+    const events = [
+      { run_id: 'run-1', event: 'phase_started', phase: 'explore', ts: '2026-01-01T00:00:00Z' },
+      { run_id: 'run-1', event: 'phase_started', phase: 'implement', ts: '2026-01-01T00:05:00Z' },
+      { run_id: 'run-2', event: 'phase_started', phase: 'review', ts: '2026-01-01T00:06:00Z' },
+    ];
+    const map = latestRunPhaseMap(events as OrcEvent[]);
+    expect(map.get('run-1')).toBe('implement');
+    expect(map.get('run-2')).toBe('review');
+  });
+
+  it('returns empty map for runs with no phase events', () => {
+    const events = [
+      { run_id: 'run-1', event: 'run_started', ts: '2026-01-01T00:00:00Z' },
+      { run_id: 'run-1', event: 'heartbeat', ts: '2026-01-01T00:01:00Z' },
+    ];
+    const map = latestRunPhaseMap(events as OrcEvent[]);
+    expect(map.has('run-1')).toBe(false);
+  });
+
+  it('reads phase from payload.phase when top-level phase is missing', () => {
+    const events = [
+      { run_id: 'run-1', event: 'phase_started', payload: { phase: 'complete' }, ts: '2026-01-01T00:00:00Z' },
+    ];
+    const map = latestRunPhaseMap(events as unknown as OrcEvent[]);
+    expect(map.get('run-1')).toBe('complete');
+  });
+
+  it('uses latest phase when multiple phase events exist for a run', () => {
+    const events = [
+      { run_id: 'run-1', event: 'phase_started', phase: 'explore', ts: '2026-01-01T00:00:00Z' },
+      { run_id: 'run-1', event: 'phase_started', phase: 'implement', ts: '2026-01-01T00:05:00Z' },
+      { run_id: 'run-1', event: 'phase_started', phase: 'review', ts: '2026-01-01T00:10:00Z' },
+    ];
+    const map = latestRunPhaseMap(events as OrcEvent[]);
+    expect(map.get('run-1')).toBe('review');
   });
 });
 
