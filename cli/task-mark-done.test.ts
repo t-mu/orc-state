@@ -42,11 +42,33 @@ describe('cli/task-mark-done.ts', () => {
     expect(event?.payload).toMatchObject({ status: 'done', previous_status: 'todo' });
   });
 
-  it('fails when markdown has not been updated to done yet', () => {
+  it('auto-updates markdown spec from todo to done', () => {
     writeSpec('docs/task-1', 'docs', 'Task 1', 'todo');
     const result = runCli(['docs/task-1']);
+    expect(result.status).toBe(0);
+
+    // Verify the spec file was updated
+    const specContent = readFileSync(join(dir, 'backlog', '999-task-1.md'), 'utf8');
+    expect(specContent).toContain('status: done');
+    expect(specContent).not.toContain('status: todo');
+
+    // Verify backlog.json synced
+    const task = readBacklog().features[0].tasks.find((entry) => entry.ref === 'docs/task-1');
+    expect(task?.status).toBe('done');
+  });
+
+  it('is idempotent when spec is already done', () => {
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'done');
+    const result = runCli(['docs/task-1']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('task marked done');
+  });
+
+  it('fails when spec file is not found', () => {
+    // No spec file written — only backlog.json has the task
+    const result = runCli(['docs/task-1']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('must be status: done');
+    expect(result.stderr).toContain('Task spec not found');
   });
 });
 
