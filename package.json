@@ -35,6 +35,7 @@
     "typecheck:test": "tsc --project tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "link-local-skills": "bash scripts/link-local-skills.sh",
     "prepare": "simple-git-hooks && chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true",
     "pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint .",
     "test": "vitest run",

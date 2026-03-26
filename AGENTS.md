@@ -328,7 +328,7 @@ Before reporting any task complete:
 ## Interactive Prompt Rule
 
 `orc run-input-request` is for genuine blockers only. Do NOT call it for:
-- Tool permission prompts — Claude Code's bypass permissions mode handles these automatically.
+- Tool permission prompts — local CLI/tool permission handling should resolve these automatically.
 - Routine confirmation dialogs you can answer yourself.
 
 Call `orc run-input-request` ONLY when blocked on:

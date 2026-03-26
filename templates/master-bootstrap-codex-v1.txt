@@ -123,7 +123,7 @@ TYPICAL FLOW
 
 Planning new work:
 1. Write a task spec to backlog/<N>-<slug>.md following the template.
-   Use the task-writer skill or write the file directly. Assign the next
+   Use the create-task skill or write the file directly. Assign the next
    available number (ls backlog/*.md | sort -V | tail -1).
 2. Once the spec is ready, register it for dispatch with create_task(...).
 3. list_agents(role="worker") to verify worker availability.

@@ -123,11 +123,15 @@ The canonical authored skills live in [`skills/`](./skills). `orc install-skills
 is for consumers who want to copy the packaged skills into their provider-specific
 directories.
 
+Repo-local `.claude/` and `.codex/` directories are ignored local runtime mirrors,
+not authored source. Do not maintain separate skill copies there.
+
 For local development in this repo, symlink your agent skill directories to the
 source tree instead of reinstalling after every edit:
 
 ```bash
 bash scripts/link-local-skills.sh
+npm run link-local-skills
 ```
 
 That creates:
@@ -143,6 +147,8 @@ bash scripts/link-local-skills.sh claude
 ```
 
 The helper backs up an existing non-symlink `skills` directory before replacing it.
+Use this after clone/bootstrap in any local environment, including Docker, when
+you want provider-local skill discovery to follow the live `skills/` source tree.
 
 ---
 
