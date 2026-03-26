@@ -7,7 +7,7 @@
  * Copies skills from the package's skills/ directory into the consumer's
  * tool directories for each selected provider:
  *   claude  →  <target>/.claude/skills/<name>/
- *   codex   →  <target>/.codex/rules/<name>/
+ *   codex   →  <target>/.codex/skills/<name>/
  *
  * Skills are provider-agnostic — the same files are installed for all
  * selected providers. Use --provider= to restrict which providers are targeted.
@@ -24,7 +24,7 @@ const SKILLS_ROOT = resolve(fileURLToPath(import.meta.url), '../../skills');
 
 const PROVIDER_TARGETS: Record<string, (base: string) => string> = {
   claude: (base) => join(base, '.claude', 'skills'),
-  codex:  (base) => join(base, '.codex', 'rules'),
+  codex:  (base) => join(base, '.codex', 'skills'),
 };
 
 function parseArgs() {
