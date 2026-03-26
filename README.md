@@ -124,6 +124,13 @@ agent prompts live in [`agents/`](./agents). `orc install-skills` and
 `orc install-agents` are for consumers who want to copy the packaged content
 into their provider-specific directories.
 
+Consumer install flow:
+
+```bash
+npx orc install-skills
+npx orc install-agents
+```
+
 Repo-local `.claude/` and `.codex/` directories are ignored local runtime mirrors,
 not authored source. Do not maintain separate skill or agent copies there.
 
@@ -132,6 +139,8 @@ source tree instead of reinstalling after every edit:
 
 ```bash
 bash scripts/link-local-skills.sh
+bash scripts/link-local-agents.sh
+npm run link-local-all
 npm run link-local-skills
 ```
 
