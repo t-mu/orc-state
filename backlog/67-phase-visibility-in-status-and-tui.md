@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/67-phase-visibility-in-status-and-tui
 title: "Surface current phase in orc status and warroom TUI"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: normal
