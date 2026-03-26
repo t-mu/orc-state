@@ -21,6 +21,7 @@ export interface TuiClaim {
   state: string;
   age_seconds: number | null;
   idle_seconds: number | null;
+  current_phase: string | null;
   finalization_state?: string | null;
 }
 
@@ -79,6 +80,7 @@ export interface WorkerSlotViewModel {
   slot_state: string;
   task_ref: string | null;
   run_state: string | null;
+  current_phase: string | null;
   age_seconds: number | null;
   idle_seconds: number | null;
   sprite_state: SpriteState;
@@ -147,6 +149,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       slot_state: slot?.slot_state ?? 'available',
       task_ref: claim?.task_ref ?? slot?.active_task_ref ?? null,
       run_state: runState,
+      current_phase: claim?.current_phase ?? null,
       age_seconds: claim?.age_seconds ?? null,
       idle_seconds: claim?.idle_seconds ?? null,
       sprite_state: runStateToSpriteState(runState),

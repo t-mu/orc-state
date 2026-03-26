@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { listCoordinatorAgents } from './agentRegistry.ts';
 import { readEvents, readRecentEvents } from './eventLog.ts';
-import { latestRunActivityDetailMap } from './runActivity.ts';
+import { latestRunActivityDetailMap, latestRunPhaseMap } from './runActivity.ts';
 import { loadWorkerPoolConfig } from './providers.ts';
 import { readJson } from './stateReader.ts';
 import type { Agent } from '../types/agents.ts';
@@ -177,6 +177,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   }
 
   const runActivity = latestRunActivityDetailMap(allEvents as Parameters<typeof latestRunActivityDetailMap>[0]);
+  const runPhase = latestRunPhaseMap(allEvents as Parameters<typeof latestRunPhaseMap>[0]);
   const nowMs = Date.now();
 
   const activeClaimsWithMetrics = activeClaims.map((claim) => {
@@ -196,6 +197,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       last_activity_event: activity?.event ?? null,
       last_activity_source: activity?.source ?? null,
       stalled: !Number.isNaN(idleMs) && idleMs >= (STALLED_RUN_IDLE_SECONDS * 1000),
+      current_phase: runPhase.get(claim.run_id) ?? null,
       run_worktree_path: runWorktreeByRunId.get(claim.run_id)?.worktree_path ?? null,
       run_branch: runWorktreeByRunId.get(claim.run_id)?.branch ?? null,
     };
@@ -362,6 +364,7 @@ export function formatStatus(status: Record<string, unknown>): string {
       finalization_retry_count?: number;
       age_seconds?: number | null;
       idle_seconds?: number | null;
+      current_phase?: string | null;
     }>;
   };
   const finalization = status['finalization'] as {
@@ -439,11 +442,12 @@ export function formatStatus(status: Record<string, unknown>): string {
     for (const c of claims.active) {
       const exp = c.lease_expires_at ? `expires ${msUntil(c.lease_expires_at)}` : '';
       const stalledLabel = c.stalled ? ' stalled' : '';
+      const phaseLabel = c.current_phase ? ` phase=${c.current_phase}` : '';
       const finalizationLabel = c.finalization_state
         ? ` finalize=${c.finalization_state} retry=${c.finalization_retry_count ?? 0}`
         : '';
       lines.push(
-        `  ${c.run_id.padEnd(24)} ${(c.task_ref ?? '').padEnd(24)} ${(c.agent_id ?? '').padEnd(12)} ${c.state.padEnd(12)} ${exp} age=${c.age_seconds ?? '?'}s idle=${c.idle_seconds ?? '?'}s${finalizationLabel}${stalledLabel}`,
+        `  ${c.run_id.padEnd(24)} ${(c.task_ref ?? '').padEnd(24)} ${(c.agent_id ?? '').padEnd(12)} ${c.state.padEnd(12)} ${exp} age=${c.age_seconds ?? '?'}s idle=${c.idle_seconds ?? '?'}s${phaseLabel}${finalizationLabel}${stalledLabel}`,
       );
     }
   }

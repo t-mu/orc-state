@@ -172,6 +172,43 @@ describe('buildStatus', () => {
     expect(s.claims.active[0].last_activity_event).toBe('phase_started');
   });
 
+  it('includes current_phase from phase_started events', () => {
+    const now = new Date();
+    writeState({
+      claims: [{
+        run_id: 'run-phase',
+        task_ref: 'a/1',
+        agent_id: 'agent-01',
+        state: 'in_progress',
+        claimed_at: new Date(now.getTime() - 60_000).toISOString(),
+        lease_expires_at: new Date(now.getTime() + 60_000).toISOString(),
+      }],
+    });
+    writeEvents([
+      { event_id: 'evt-p1', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', event: 'phase_started', phase: 'explore', ts: new Date(now.getTime() - 50_000).toISOString() },
+      { event_id: 'evt-p2', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', event: 'phase_started', phase: 'implement', ts: new Date(now.getTime() - 30_000).toISOString() },
+    ]);
+    const s = buildStatus(dir) as unknown as StatusResult;
+    expect((s.claims.active[0] as Record<string, unknown>).current_phase).toBe('implement');
+  });
+
+  it('returns null current_phase when no phase events exist', () => {
+    const now = new Date();
+    writeState({
+      claims: [{
+        run_id: 'run-nophase',
+        task_ref: 'a/1',
+        agent_id: 'agent-01',
+        state: 'in_progress',
+        claimed_at: new Date(now.getTime() - 60_000).toISOString(),
+        lease_expires_at: new Date(now.getTime() + 60_000).toISOString(),
+      }],
+    });
+    writeEvents([]);
+    const s = buildStatus(dir) as unknown as StatusResult;
+    expect((s.claims.active[0] as Record<string, unknown>).current_phase).toBeNull();
+  });
+
   it('counts dispatch-ready work waiting for capacity', () => {
     writeState({
       agents: [{ agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', session_handle: 'pty:orc-1' } as Agent],
