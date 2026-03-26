@@ -44,62 +44,86 @@ Worktree lifecycle commands are pre-authorized — do not stop to ask for permis
 
 Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). After calling `orc run-start`, `cd` into that path. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
 
-### Finish — after all acceptance criteria are met
+## Phased Workflow
+
+Every task MUST follow these five phases in order. Each phase has a gate —
+a command that MUST exit 0 before you proceed to the next phase.
+Do NOT skip phases. Do NOT reorder phases.
+
+### Phase 1 — Explore
+
+Read the full task spec in `backlog/<N>-<slug>.md`. Identify all affected files.
+Check existing patterns in those files before writing any code.
+
+**Gate:** Run `orc run-start --run-id=<run_id> --agent-id=<agent_id>`.
+Start the background heartbeat immediately after:
 ```bash
-# 0. Mark the task complete — two things required:
-#    a. Edit the task spec file:
-#       backlog/<N>-<slug>.md — change frontmatter: status: todo -> status: done
-#    b. Update orchestrator state (backlog.json):
-node --experimental-strip-types cli/task-mark-done.ts <task-ref>
-#       do not use generic update_task() for status changes
+while true; do sleep 270; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
+HEARTBEAT_PID=$!
+```
+Do NOT write code until run-start succeeds.
 
-# 1. Commit inside the worktree
-git add -p
-git commit -m "feat(<scope>): <outcome>"
+### Phase 2 — Implement
 
-# 2. Sub-agent review round
-#    a. Emit a heartbeat before spawning sub-agents:
-orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
-#    b. Spawn two independent sub-agents. Give each:
-#       - the acceptance criteria
-#       - the output of `git diff main`
-#       - their run_id, agent_id, and reviewer number
-#       IMPORTANT: instruct each reviewer to call before returning:
-#         orc review-submit --run-id=<run_id> --agent-id=<their_agent_id> \
-#           --outcome=<approved|findings> --reason="<findings text>"
-#       Findings written this way survive context compaction.
-#
-#    c. After both sub-agents complete (or after a bounded wait), retrieve
-#       findings from the event store — this works even after context compaction:
-#         orc review-read --run-id=<run_id>
-#       If a reviewer failed or is non-responsive, proceed with the reviews
-#       that were submitted. orc review-read exits 0 regardless of count.
-#
-#    d. Consolidate findings from the review-read output.
-#    e. Address all findings, then amend or add a fixup commit.
-#    This review round happens once.
+Write code changes. Write tests for all new logic. Run `npm test`.
 
-# 3. Rebase onto latest main — resolve any conflicts before proceeding
-git rebase main
-# If conflicts arise: resolve each conflicted file, then:
-#   git add <resolved-file> && git rebase --continue
-# Only call orc run-fail if a conflict is genuinely unresolvable.
+**Gate:** `npm test` MUST exit 0. Do NOT proceed to Phase 3 with failing tests.
 
-# 4. Report implementation complete before any terminal success signal
-orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>
+### Phase 3 — Review
 
-# 5. Remain alive in the same worktree for coordinator follow-up when it exists
-#    - If coordinator requests a finalize rebase, do it here, then emit
-#      `orc progress --event=finalize_rebase_started ...`, complete the rebase,
-#      then emit `orc run-work-complete` again.
-#    - If coordinator confirms finalization success, stop the background heartbeat
-#      and emit orc run-finish:
+1. Commit your changes: `git commit -m "feat(<scope>): <outcome>"`
+2. Emit a heartbeat before spawning sub-agents:
+   `orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>`
+3. Spawn two independent sub-agent reviewers. Give each:
+   - the acceptance criteria from the task spec
+   - the output of `git diff main`
+   - their run_id, agent_id, and reviewer number
+   IMPORTANT: instruct each reviewer to call before returning:
+   ```bash
+   orc review-submit --run-id=<run_id> --agent-id=<their_agent_id> \
+     --outcome=<approved|findings> --reason="<findings text>"
+   ```
+   Findings written this way survive context compaction.
+4. Retrieve findings: `orc review-read --run-id=<run_id>`
+   If a reviewer failed or is non-responsive, proceed with the reviews
+   that were submitted. `orc review-read` exits 0 regardless of count.
+5. Address ALL findings in a fixup commit.
+
+**Gate:** Parse `orc review-read` output — all submitted reviewers report `approved`.
+`orc review-read` always exits 0; you MUST inspect the output for outcomes.
+One review round only.
+
+### Phase 4 — Complete
+
+1. Mark the task done (updates spec + state in one action):
+   `orc task-mark-done <task-ref>`
+2. Rebase onto main: `git rebase main`
+   If conflicts arise: resolve each conflicted file, then `git add <file> && git rebase --continue`.
+   Only call `orc run-fail` if a conflict is genuinely unresolvable.
+3. Signal the coordinator:
+   `orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>`
+
+**Gate:** `run-work-complete` MUST exit 0. It rejects if task-mark-done was not called.
+Do NOT call run-work-complete without calling task-mark-done first.
+
+### Phase 5 — Finalize
+
+Wait for coordinator follow-up. If coordinator requests a finalize rebase:
+1. Emit `orc progress --event=finalize_rebase_started --run-id=<run_id> --agent-id=<agent_id>`
+2. Perform the rebase.
+3. Emit `orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>` again.
+
+When coordinator confirms success, stop heartbeat and signal finish:
+```bash
 kill $HEARTBEAT_PID 2>/dev/null || true
 orc run-finish --run-id=<run_id> --agent-id=<agent_id>
-#    - If no follow-up arrives, only emit orc run-finish after the
-#      run-work-complete handoff has already been recorded.
-#    - Do not merge to main or clean up the worktree/branch yourself.
 ```
+
+If no coordinator follow-up arrives, only emit `orc run-finish` after the
+`run-work-complete` handoff has already been recorded.
+
+**Gate:** `orc run-finish` — terminal success signal. Do NOT merge to main yourself.
+Do NOT clean up the worktree or branch yourself.
 
 ---
 
@@ -112,7 +136,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 1. Session startup: `orc start-session`
 2. Task authoring: edit `backlog/<N>-<slug>.md`
 3. Task registration/sync: create/update runtime state to match markdown, then run `orc backlog-sync-check`
-4. Task completion: `orc task-mark-done <task-ref>`
+4. Task completion: `orc task-mark-done <task-ref>` (updates spec + state in one action)
 5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
 6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
 
@@ -137,7 +161,7 @@ orc kill-all                                      # ⚠️ stop coordinator + cl
 
 # Task management
 orc task-create                                   # register a task that already has a matching markdown spec
-orc task-mark-done <task-ref>                     # mark a task done in orchestrator state
+orc task-mark-done <task-ref>                     # mark done: updates spec frontmatter + syncs state
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
 orc delegate                                      # assign/dispatch a task to an agent
@@ -251,12 +275,12 @@ kill $HEARTBEAT_PID 2>/dev/null || true
 
 ## Task Execution Workflow
 
-1. Read the task spec in `backlog/<N>-<slug>.md` (or the path given in the task envelope) fully before starting.
-2. Plan (identify files to change, check existing patterns).
-3. Implement (small, atomic edits per step).
-4. Self-review against acceptance criteria.
-5. Run verification commands from the task spec.
-6. Emit `orc run-work-complete` when implementation work is done, then use it as the required handoff before any terminal success signal.
+Follow the **Phased Workflow** above. The five phases are:
+1. **Explore** — read spec, identify files (gate: `orc run-start`)
+2. **Implement** — code + tests (gate: `npm test`)
+3. **Review** — commit, sub-agent review, fix findings (gate: reviewers accept)
+4. **Complete** — `orc task-mark-done`, rebase, `orc run-work-complete` (gate: run-work-complete exits 0)
+5. **Finalize** — coordinator follow-up, `orc run-finish` (gate: terminal success)
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 

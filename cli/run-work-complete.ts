@@ -3,7 +3,7 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { validateProgressCommandInput } from '../lib/progressValidation.ts';
-import { readClaims } from '../lib/stateReader.ts';
+import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
 import type { Claim } from '../types/claims.ts';
 
 const runId = flag('run-id');
@@ -51,6 +51,19 @@ try {
     reason: null,
     policy: null,
   }, claim);
+  // Gate: reject if task not marked done
+  const taskRef = validatedClaim.task_ref;
+  if (taskRef) {
+    const backlog = readBacklog(STATE_DIR);
+    const task = findTask(backlog, taskRef);
+    if (task && task.status !== 'done') {
+      console.error(
+        `Error: task not marked done — call orc task-mark-done ${taskRef} first`,
+      );
+      process.exit(1);
+    }
+  }
+
   const transition = nextFinalizationTransition(validatedClaim);
   appendSequencedEvent(STATE_DIR, {
     ts: new Date().toISOString(),

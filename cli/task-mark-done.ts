@@ -3,16 +3,17 @@
  * cli/task-mark-done.ts
  * Usage: orc task-mark-done <task_ref> [--actor-id=<id>]
  *
- * Sync a markdown-updated done task into orchestrator state.
+ * Single-action task completion: updates the markdown spec frontmatter to
+ * status: done, syncs orchestrator state, and emits the task_updated event.
  */
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, findTask } from '../lib/stateReader.ts';
-import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
-import { assertTaskSpecStatus } from '../lib/taskAuthority.ts';
+import { discoverActiveTaskSpecs, syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const actorId = flag('actor-id') ?? 'human';
@@ -28,7 +29,24 @@ try {
 
     const beforeSync = readBacklog(STATE_DIR);
     const previousStatus = findTask(beforeSync, taskRef)?.status ?? 'unregistered';
-    assertTaskSpecStatus(taskRef, 'done', BACKLOG_DOCS_DIR);
+
+    // Step 1: Update the markdown spec frontmatter to status: done
+    const specs = discoverActiveTaskSpecs(BACKLOG_DOCS_DIR);
+    const spec = specs.find((s) => s.ref === taskRef);
+    if (!spec) {
+      throw new Error(`Task spec not found in backlog/: ${taskRef}`);
+    }
+    if (spec.status !== 'done') {
+      const specPath = join(BACKLOG_DOCS_DIR, spec.file);
+      const content = readFileSync(specPath, 'utf8');
+      const updated = content.replace(/^(status:\s*).+$/m, '$1done');
+      if (updated === content) {
+        throw new Error(`Could not locate status field in frontmatter of ${spec.file}`);
+      }
+      writeFileSync(specPath, updated, 'utf8');
+    }
+
+    // Step 2: Sync state from the (now-updated) spec
     syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR, { lockAlreadyHeld: true });
 
     const synced = readBacklog(STATE_DIR);
@@ -37,6 +55,7 @@ try {
       throw new Error(`task not found after sync: ${taskRef}`);
     }
 
+    // Step 3: Emit event
     appendSequencedEvent(
       STATE_DIR,
       {
