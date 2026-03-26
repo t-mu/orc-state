@@ -124,7 +124,7 @@ is for consumers who want to copy the packaged skills into their provider-specif
 directories.
 
 Repo-local `.claude/` and `.codex/` directories are ignored local runtime mirrors,
-not authored source. Do not maintain separate skill copies there.
+not authored source. Do not maintain separate skill or agent copies there.
 
 For local development in this repo, symlink your agent skill directories to the
 source tree instead of reinstalling after every edit:
@@ -149,6 +149,20 @@ bash scripts/link-local-skills.sh claude
 The helper backs up an existing non-symlink `skills` directory before replacing it.
 Use this after clone/bootstrap in any local environment, including Docker, when
 you want provider-local skill discovery to follow the live `skills/` source tree.
+
+For provider-local agent prompts, use the matching helper:
+
+```bash
+bash scripts/link-local-agents.sh
+npm run link-local-agents
+```
+
+Or one provider only:
+
+```bash
+bash scripts/link-local-agents.sh codex
+bash scripts/link-local-agents.sh claude
+```
 
 ---
 
