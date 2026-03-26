@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/57-resilient-event-reading
 title: "Skip corrupted event rows instead of failing entire read"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: high

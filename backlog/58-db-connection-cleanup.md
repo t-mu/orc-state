@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/58-db-connection-cleanup
 title: "Add closeAllDatabases() and call during coordinator shutdown"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: normal
