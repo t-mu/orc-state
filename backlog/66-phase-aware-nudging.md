@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/66-phase-aware-nudging
 title: "Phase-aware coordinator nudging"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: normal
