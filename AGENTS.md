@@ -56,6 +56,7 @@ Read the full task spec in `backlog/<N>-<slug>.md`. Identify all affected files.
 Check existing patterns in those files before writing any code.
 
 **Gate:** Run `orc run-start --run-id=<run_id> --agent-id=<agent_id>`.
+Signal phase: `orc progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id=<agent_id>`
 Start the background heartbeat immediately after:
 ```bash
 while true; do sleep 270; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
@@ -65,12 +66,14 @@ Do NOT write code until run-start succeeds.
 
 ### Phase 2 — Implement
 
+Signal phase: `orc progress --event=phase_started --phase=implement --run-id=<run_id> --agent-id=<agent_id>`
 Write code changes. Write tests for all new logic. Run `npm test`.
 
 **Gate:** `npm test` MUST exit 0. Do NOT proceed to Phase 3 with failing tests.
 
 ### Phase 3 — Review
 
+Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_id> --agent-id=<agent_id>`
 1. Commit your changes: `git commit -m "feat(<scope>): <outcome>"`
 2. Emit a heartbeat before spawning sub-agents:
    `orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>`
@@ -95,6 +98,7 @@ One review round only.
 
 ### Phase 4 — Complete
 
+Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=<agent_id>`
 1. Mark the task done (updates spec + state in one action):
    `orc task-mark-done <task-ref>`
 2. Rebase onto main: `git rebase main`

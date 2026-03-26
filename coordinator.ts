@@ -26,7 +26,7 @@ import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAge
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
-import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
+import { latestRunActivityMap, latestRunPhaseMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
 import { selectDispatchableAgents, buildDispatchPlan } from './lib/dispatchPlanner.ts';
 import { nextEligibleTask } from './lib/taskScheduler.ts';
@@ -88,6 +88,7 @@ let timerHandle: ReturnType<typeof setInterval> | null = null;
 let shutdownStarted = false;
 let coordinatorLockReleased = false;
 let latestActivityByRun: Map<string, string> = new Map();
+let latestPhaseByRun: Map<string, string> = new Map();
 const runStartNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -741,7 +742,7 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
   return nudgedAgentIds;
 }
 
-async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], activityByRun: Map<string, string>) {
+async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], activityByRun: Map<string, string>, phaseByRun: Map<string, string> = new Map()) {
   const nowMs = Date.now();
   const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
   const nudgeWork = [];
@@ -820,9 +821,10 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
       const claimSnapshot = { ...claim };
       const agentProvider = agent.provider;
       const agentSessionHandle = agent.session_handle;
+      const currentPhase = phaseByRun.get(claimSnapshot.run_id) ?? null;
       nudgeWork.push(async () => {
         const adapter = getAdapter(agentProvider);
-        await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot));
+        await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot, currentPhase));
         emit({
           event: 'need_input',
           actor_type: 'coordinator',
@@ -830,10 +832,10 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
           run_id: claimSnapshot.run_id,
           task_ref: claimSnapshot.task_ref,
           agent_id: claimSnapshot.agent_id,
-          payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs },
+          payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs, phase: currentPhase },
         });
         runInactiveNudgeAtMs.set(claimSnapshot.run_id, nowMs);
-        log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id}`);
+        log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id} (phase: ${currentPhase ?? 'unknown'})`);
         return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
       });
       continue;
@@ -869,9 +871,10 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
     const claimSnapshot = { ...claim };
     const agentProvider = agent.provider;
     const agentSessionHandle = agent.session_handle;
+    const currentPhase = phaseByRun.get(claim.run_id) ?? null;
     nudgeWork.push(async () => {
       const adapter = getAdapter(agentProvider);
-      await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot));
+      await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot, currentPhase));
       emit({
         event: 'need_input',
         actor_type: 'coordinator',
@@ -879,10 +882,10 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
         run_id: claimSnapshot.run_id,
         task_ref: claimSnapshot.task_ref,
         agent_id: claimSnapshot.agent_id,
-        payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs },
+        payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs, phase: currentPhase },
       });
       runInactiveNudgeAtMs.set(claimSnapshot.run_id, nowMs);
-      log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id}`);
+      log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id} (phase: ${currentPhase ?? 'unknown'})`);
       return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
     });
   }
@@ -948,6 +951,7 @@ async function tick() {
     const processedEventIds = new Set(eventCheckpoint.processed_event_ids);
     const newEvents = allEvents.filter((event) => !processedEventIds.has(eventIdentity(event)));
     latestActivityByRun = latestRunActivityMap(allEvents);
+    latestPhaseByRun = latestRunPhaseMap(allEvents);
     if (newEvents.length > 0) {
       await processTerminalRunEvents(newEvents, workerPoolConfig);
     }
@@ -961,6 +965,7 @@ async function tick() {
       console.error((err as Error).stack);
     }
     latestActivityByRun = new Map();
+    latestPhaseByRun = new Map();
   }
 
   const expired = expireStaleLeasesDetailed(STATE_DIR);
@@ -983,7 +988,7 @@ async function tick() {
   claims = tickClaims.claims ?? [];
 
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
-  const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun);
+  const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun);
   tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
   tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
   agents = tickAgents.agents ?? [];
@@ -1151,12 +1156,22 @@ function buildRunStartNudge(claim: Claim) {
   ].join('\n');
 }
 
-function buildInProgressNudge(claim: Claim) {
+const PHASE_NUDGE_MESSAGES: Record<string, string> = {
+  explore: 'Have you started implementing? Move to Phase 2 when exploration is complete.',
+  implement: 'Are tests passing? Run npm test and move to Phase 3 when ready.',
+  review: 'Have reviewers responded? Check orc review-read and address findings.',
+  complete: 'Run orc run-work-complete to hand off to the coordinator.',
+};
+
+function buildInProgressNudge(claim: Claim, phase: string | null = null) {
+  const phaseHint = phase && PHASE_NUDGE_MESSAGES[phase]
+    ? `Current phase: ${phase}. ${PHASE_NUDGE_MESSAGES[phase]}`
+    : 'No phase signal received. Have you started exploring the task spec?';
   return [
     `RUN_NUDGE`,
     `run_id: ${claim.run_id}`,
     `task_ref: ${claim.task_ref}`,
-    `Run is in_progress but no recent heartbeat was received.`,
+    phaseHint,
     `Call this command via your Bash tool to keep the run active:`,
     `orc run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     `RUN_NUDGE_END`,

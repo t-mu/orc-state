@@ -57,6 +57,23 @@ export function latestRunActivityDetailMap(events: OrcEvent[] | null | undefined
 }
 
 /**
+ * Build a map of run_id -> latest phase name from phase_started events.
+ * Returns null for runs with no phase events.
+ */
+export function latestRunPhaseMap(events: OrcEvent[] | null | undefined): Map<string, string> {
+  const phaseByRun = new Map<string, string>();
+  for (const ev of events ?? []) {
+    const e = ev as { run_id?: string; event?: string; ts?: string; phase?: string; payload?: { phase?: string } };
+    if (!e?.run_id || e.event !== 'phase_started') continue;
+    const phase = e.phase ?? e.payload?.phase;
+    if (typeof phase === 'string' && phase.length > 0) {
+      phaseByRun.set(e.run_id, phase);
+    }
+  }
+  return phaseByRun;
+}
+
+/**
  * Return idle milliseconds for a run claim using newest known activity point.
  */
 export function runIdleMs(
