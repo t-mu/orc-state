@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/65-task-mark-done-auto-spec-update
 title: "Unify task completion and enforce phased workflow gates"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: high
