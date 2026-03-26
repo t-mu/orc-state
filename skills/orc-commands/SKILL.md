@@ -54,6 +54,7 @@ Outside the blessed workflow, use only:
 | `preflight` | `orc preflight` | Lightweight environment health check. |
 | `init` | `orc init [--force]` | Initialise state directory. `--force` overwrites existing files. |
 | `kill-all` | `orc kill-all` | ⚠️ Stops coordinator + clears ALL agents. Use only to fully reset. **Never run in a loop or batch script** — it has no `--help` guard and executes immediately. |
+| `install-agents` | `orc install-agents [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic agent prompts into `.claude/agents/` or `.codex/agents/`. |
 | `install-skills` | `orc install-skills [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic skills into `.claude/skills/` or `.codex/skills/`. |
 
 ### Worker Management

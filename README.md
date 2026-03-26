@@ -119,9 +119,10 @@ Codex sessions in this repo can use the orchestrator MCP directly.
 
 ## Local Skill Development
 
-The canonical authored skills live in [`skills/`](./skills). `orc install-skills`
-is for consumers who want to copy the packaged skills into their provider-specific
-directories.
+The canonical authored skills live in [`skills/`](./skills) and the canonical
+agent prompts live in [`agents/`](./agents). `orc install-skills` and
+`orc install-agents` are for consumers who want to copy the packaged content
+into their provider-specific directories.
 
 Repo-local `.claude/` and `.codex/` directories are ignored local runtime mirrors,
 not authored source. Do not maintain separate skill or agent copies there.

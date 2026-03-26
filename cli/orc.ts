@@ -48,6 +48,7 @@ const COMMANDS: Record<string, string> = {
   'mcp-server':         'mcp-server.ts',
   'backlog-sync':       'backlog-sync.ts',
   'backlog-sync-check': 'backlog-sync-check.ts',
+  'install-agents':     'install-agents.ts',
   'install-skills':     'install-skills.ts',
   'waiting-input':      'waiting-input.ts',
   'run-info':           'run-info.ts',
