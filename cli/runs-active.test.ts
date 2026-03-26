@@ -37,7 +37,7 @@ describe('cli/runs-active.ts', () => {
     expect(json.runs[0].last_activity_source).toBe('worker-runtime-owner');
   });
 
-  it('survives malformed events log and reports warning', () => {
+  it('survives malformed events log by skipping corrupted rows', () => {
     seedState({
       claims: [{
         run_id: 'run-1',
@@ -52,7 +52,8 @@ describe('cli/runs-active.ts', () => {
     const result = runCli(['--json']);
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout);
-    expect(json.event_read_error).toContain('events.db schema error at line 1');
+    // Corrupted rows are skipped — no error reported
+    expect(json.event_read_error).toBeNull();
   });
 });
 

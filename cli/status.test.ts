@@ -43,13 +43,11 @@ describe('cli/status.ts', () => {
     expect(json.claims.total).toBe(1);
   });
 
-  it('fails with actionable parse error for malformed events log', () => {
+  it('survives malformed events log by skipping corrupted rows', () => {
     seedValidState();
     writeFileSync(join(dir, 'events.jsonl'), '{"seq":1}\nnot-json\n');
     const result = runStatus([]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('State validation failed');
-    expect(result.stderr).toContain('events.db schema error at line 1');
+    expect(result.status).toBe(0);
   });
 
   it('renders status and surfaces lifecycle invariant warnings without failing', () => {

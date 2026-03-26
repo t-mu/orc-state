@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import {
   appendEvent,
   appendSequencedEvent,
@@ -111,6 +112,64 @@ describe('readEvents', () => {
     appendEvent(logPath, validEvent(2), { fsyncPolicy: 'never' });
     const events = readEvents(logPath);
     expect(events).toHaveLength(2);
+  });
+});
+
+describe('readEvents resilience', () => {
+  it('skips rows with unparseable JSON and returns remaining events', () => {
+    // Insert a valid event, then manually corrupt one row in the DB.
+    appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
+    appendEvent(logPath, validEvent(2), { fsyncPolicy: 'never' });
+    appendEvent(logPath, validEvent(3), { fsyncPolicy: 'never' });
+
+    // Directly corrupt row 2 payload in SQLite
+    // better-sqlite3 imported at top level
+    const db = new Database(join(dir, 'events.db'));
+    db.prepare(`UPDATE events SET payload = 'NOT-VALID-JSON' WHERE seq = 2`).run();
+    db.close();
+
+    const events = readEvents(logPath);
+    expect(events).toHaveLength(2);
+    expect(events.map((e) => e.seq)).toEqual([1, 3]);
+  });
+
+  it('skips rows that fail validation and returns remaining events', () => {
+    appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
+    appendEvent(logPath, validEvent(2), { fsyncPolicy: 'never' });
+
+    // Corrupt row 2 with valid JSON but invalid event schema
+    // better-sqlite3 imported at top level
+    const db = new Database(join(dir, 'events.db'));
+    db.prepare(`UPDATE events SET payload = ? WHERE seq = 2`).run(
+      JSON.stringify({ seq: 2, ts: '2026-01-01T00:00:00Z', event: 'handoff_completed', actor_type: 'agent', actor_id: 'worker-01', task_ref: 'docs/task-1' }),
+    );
+    db.close();
+
+    const events = readEvents(logPath);
+    expect(events).toHaveLength(1);
+    expect(events[0].seq).toBe(1);
+  });
+
+  it('logs console.error for each skipped row', () => {
+    appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
+
+    // better-sqlite3 imported at top level
+    const db = new Database(join(dir, 'events.db'));
+    db.prepare(`UPDATE events SET payload = 'CORRUPT' WHERE seq = 1`).run();
+    db.close();
+
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args.join(' '));
+    try {
+      const events = readEvents(logPath);
+      expect(events).toHaveLength(0);
+      expect(errors.length).toBe(1);
+      expect(errors[0]).toContain('[eventLog]');
+      expect(errors[0]).toContain('row 1');
+    } finally {
+      console.error = origError;
+    }
   });
 });
 
@@ -240,9 +299,11 @@ describe('appendSequencedEvent', () => {
     } as OrcEvent, { fsyncPolicy: 'never' })).toThrow('event validation failed');
   });
 
-  it('rejects invalid event contracts on read', () => {
+  it('skips invalid events on read and returns remaining valid events', () => {
     writeFileSync(logPath, `${JSON.stringify(validEvent(1))}\n${JSON.stringify({ seq: 2, ts: '2026-01-01T00:00:00Z', event: 'handoff_completed', actor_type: 'agent', actor_id: 'worker-01', task_ref: 'docs/task-1' })}\n`, 'utf8');
-    expect(() => readEvents(logPath)).toThrow('events.db schema error at line 2');
+    const events = readEvents(logPath);
+    expect(events).toHaveLength(1);
+    expect(events[0].seq).toBe(1);
   });
 
   it('supports lock-free appends without using the shared state lock', () => {

@@ -245,8 +245,30 @@ export function appendSequencedEvent(
 }
 
 /**
+ * Parse a single event row payload, returning null for corrupted or invalid rows.
+ * Logs a console.error for each skipped row to preserve observability.
+ */
+function parseEventRow(row: { payload: string }, index: number, { validate = false }: { validate?: boolean } = {}): OrcEvent | null {
+  try {
+    const event = ensureEventIdentity(JSON.parse(row.payload) as OrcEvent, { createIfMissing: false });
+    if (validate) {
+      const validationErrors = validateEventObject(event);
+      if (validationErrors.length > 0) {
+        console.error(`[eventLog] skipping invalid event at row ${index + 1}: ${validationErrors.join('; ')}`);
+        return null;
+      }
+    }
+    return event;
+  } catch (error) {
+    console.error(`[eventLog] skipping corrupted event at row ${index + 1}: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/**
  * Read and parse all events from the SQLite events DB.
  * Returns an empty array if no events exist.
+ * Corrupted or invalid rows are skipped with a console.error warning.
  */
 export function readEvents(logPath: string): OrcEvent[] {
   const stateDir = dirname(logPath);
@@ -254,20 +276,8 @@ export function readEvents(logPath: string): OrcEvent[] {
   const rows = db.prepare(`SELECT payload FROM events ORDER BY seq`).all() as Array<{ payload: string }>;
   const events: OrcEvent[] = [];
   for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    try {
-      const event = ensureEventIdentity(JSON.parse(row.payload) as OrcEvent, { createIfMissing: false });
-      const validationErrors = validateEventObject(event);
-      if (validationErrors.length > 0) {
-        throw new Error(`events.db schema error at line ${i + 1}: ${validationErrors.join('; ')}`);
-      }
-      events.push(event);
-    } catch (error) {
-      if (String((error as Error).message ?? '').startsWith('events.db schema error at line')) {
-        throw error;
-      }
-      throw new Error(`events.db parse error at line ${i + 1}: ${(error as Error).message}`);
-    }
+    const event = parseEventRow(rows[i], i, { validate: true });
+    if (event) events.push(event);
   }
   return events;
 }
@@ -281,13 +291,9 @@ export function readEventsSince(logPath: string, afterSeq: number): OrcEvent[] {
   const db = getDb(stateDir);
   const rows = db.prepare(`SELECT payload FROM events WHERE seq > ? ORDER BY seq`).all(afterSeq) as Array<{ payload: string }>;
   const events: OrcEvent[] = [];
-  for (const row of rows) {
-    try {
-      const event = ensureEventIdentity(JSON.parse(row.payload) as OrcEvent, { createIfMissing: false });
-      events.push(event);
-    } catch {
-      // Skip malformed payloads
-    }
+  for (let i = 0; i < rows.length; i++) {
+    const event = parseEventRow(rows[i], i);
+    if (event) events.push(event);
   }
   return events;
 }
@@ -306,12 +312,13 @@ export function readRecentEvents(logPath: string, limit = 50): OrcEvent[] {
   const cap = Math.min(limit, 200);
   const rows = db.prepare(`SELECT payload FROM events ORDER BY seq DESC LIMIT ?`).all(cap) as Array<{ payload: string }>;
 
-  return rows
-    .reverse()
-    .map((row) => {
-      const event = JSON.parse(row.payload) as OrcEvent;
-      return ensureEventIdentity(event, { createIfMissing: false });
-    });
+  const events: OrcEvent[] = [];
+  const reversed = rows.reverse();
+  for (let i = 0; i < reversed.length; i++) {
+    const event = parseEventRow(reversed[i], i);
+    if (event) events.push(event);
+  }
+  return events;
 }
 
 /**
@@ -369,7 +376,7 @@ export function queryEvents(
       LIMIT ?
     `).all(...params) as Array<{ payload: string }>;
 
-    return rows.map((row) => JSON.parse(row.payload) as OrcEvent);
+    return rows.flatMap((row, i) => { const e = parseEventRow(row, i); return e ? [e] : []; });
   }
 
   const conditions: string[] = [];
@@ -384,7 +391,7 @@ export function queryEvents(
   const orderDir = order === 'desc' ? 'DESC' : 'ASC';
   const rows = db.prepare(`SELECT payload FROM events ${where} ORDER BY seq ${orderDir} LIMIT ?`).all(...params) as Array<{ payload: string }>;
 
-  return rows.map((row) => JSON.parse(row.payload) as OrcEvent);
+  return rows.flatMap((row, i) => { const e = parseEventRow(row, i); return e ? [e] : []; });
 }
 
 const NOTIFICATION_EVENT_TYPES = [
@@ -406,7 +413,7 @@ export function queryNotificationEvents(stateDir: string, afterSeq: number): Orc
   const rows = db.prepare(
     `SELECT payload FROM events WHERE event IN (${placeholders}) AND seq > ? ORDER BY seq ASC LIMIT 200`,
   ).all(...NOTIFICATION_EVENT_TYPES, afterSeq) as Array<{ payload: string }>;
-  return rows.map((row) => JSON.parse(row.payload) as OrcEvent);
+  return rows.flatMap((row, i) => { const e = parseEventRow(row, i); return e ? [e] : []; });
 }
 
 /**
