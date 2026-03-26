@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
   jq \
   less \
   openssh-client \
+  passwd \
   procps \
   python3 \
   ripgrep \
