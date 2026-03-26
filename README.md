@@ -98,6 +98,23 @@ Tools: `list_tasks`, `get_task`, `create_task`, `update_task`, `delegate_task`, 
 
 Resources: `orchestrator://state/backlog`, `orchestrator://state/agents`.
 
+Repo-local MCP config lives in [`.mcp.json`](./.mcp.json). It starts the
+orchestrator server with repo-relative paths and `ORCH_STATE_DIR=.orc-state`.
+
+### Codex repo-local setup
+
+Codex CLI does not currently get the orchestrator MCP injected automatically by
+`orc start-session --provider=codex`. For local development, register the repo's
+orchestrator MCP with Codex once:
+
+```bash
+codex mcp add orchestrator --env ORCH_STATE_DIR=.orc-state -- \
+  node --experimental-strip-types mcp/server.ts
+```
+
+Run that from the repo root so the relative paths resolve correctly. After that,
+Codex sessions in this repo can use the orchestrator MCP directly.
+
 ---
 
 ## Local Skill Development
@@ -134,7 +151,7 @@ The helper backs up an existing non-symlink `skills` directory before replacing 
 | Provider | Auth |
 |----------|------|
 | `claude` | CLI auth, MCP config auto-written by `start-session` |
-| `codex`  | CLI auth, bootstrap via `--instructions` |
+| `codex`  | CLI auth, bootstrap via `--instructions`; configure orchestrator MCP locally via `codex mcp add ...` |
 | `gemini` | CLI auth, MCP config + `--system-instruction` |
 
 ---

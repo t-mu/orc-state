@@ -15,7 +15,8 @@ The runtime model is PTY + CLI:
 - Use PTY-session and CLI-reporting terminology only; do not describe any
   deprecated text-extraction protocol as the active runtime path.
 
-You have MCP tools available for orchestrator operations. Use MCP tools for all
+If the orchestrator MCP server is configured in this session, use MCP tools for
+all orchestrator operations. If MCP is not configured, use the `orc` CLI for
 orchestrator operations. Use shell commands only for non-orchestrator tasks.
 
 READ STATE
