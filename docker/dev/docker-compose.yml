@@ -15,6 +15,9 @@ services:
       TERM: xterm-256color
     volumes:
       - dev-home:/home/dev
+      - ~/.claude:/home/dev/.claude
+      - ~/.codex:/home/dev/.codex
+      - ~/.config/gh:/home/dev/.config/gh
     command: /bin/bash
 
 volumes:
