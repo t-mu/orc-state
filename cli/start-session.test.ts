@@ -844,8 +844,9 @@ describe('cli/start-session.ts', () => {
       expect(providerCall).toBeTruthy();
       expect(providerCall![1]).not.toContain('--mcp-config');
       expect(providerCall![1]).not.toContain('--instructions');
-      expect(providerCall![1]).toHaveLength(1);
-      expect(providerCall![1][0]).toContain('MASTER_BOOTSTRAP v2');
+      expect(providerCall![1]).toContain('--dangerously-bypass-approvals-and-sandbox');
+      expect(providerCall![1]).toHaveLength(2);
+      expect(providerCall![1][1]).toContain('MASTER_BOOTSTRAP v2');
     });
 
     it('writes mcp-config.json and spawns gemini with mcp and system-instruction flags', async () => {

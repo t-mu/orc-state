@@ -327,7 +327,7 @@ try {
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    spawnArgs = [bootstrap];
+    spawnArgs = ['--dangerously-bypass-approvals-and-sandbox', bootstrap];
     console.log('  Master bootstrap loaded via initial prompt.');
     console.log('\n----- MASTER BOOTSTRAP -----');
     console.log(bootstrap);
