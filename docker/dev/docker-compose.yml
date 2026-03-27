@@ -3,22 +3,17 @@ services:
     build:
       context: ../..
       dockerfile: docker/dev/Dockerfile
-      args:
-        USERNAME: dev
-        USER_UID: 1000
-        USER_GID: 1000
     container_name: devbox
     tty: true
     stdin_open: true
-    working_dir: /home/dev/workspace
+    working_dir: /home/node/workspace
     environment:
+      CODEX_HOME: /home/node/.codex
       TERM: xterm-256color
     volumes:
-      - dev-home:/home/dev
-      - ~/.claude:/home/dev/.claude
-      - ~/.codex:/home/dev/.codex
-      - ~/.config/gh:/home/dev/.config/gh
+      - node-home:/home/node
+      - ~/.config/gh:/home/node/.config/gh
     command: /bin/bash
 
 volumes:
-  dev-home:
+  node-home:

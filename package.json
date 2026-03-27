@@ -35,6 +35,7 @@
     "typecheck:test": "tsc --project tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "codex": "codex --dangerously-bypass-approvals-and-sandbox",
     "link-local-agents": "bash scripts/link-local-agents.sh",
     "link-local-all": "bash scripts/link-local-skills.sh && bash scripts/link-local-agents.sh",
     "link-local-skills": "bash scripts/link-local-skills.sh",
