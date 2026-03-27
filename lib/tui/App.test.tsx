@@ -62,6 +62,7 @@ describe('App', () => {
         slots: [
           {
             agent_id: 'orc-1',
+            role: 'worker',
             provider: 'codex',
             model: null,
             status: 'running',
@@ -75,6 +76,28 @@ describe('App', () => {
         ],
       },
       tasks: { counts: { todo: 2 }, total: 2 },
+      scout_capacity: {
+        total_slots: 1,
+        investigating_slots: 1,
+        idle_slots: 0,
+        warming_slots: 0,
+        unavailable_slots: 0,
+        slots: [
+          {
+            agent_id: 'scout-1',
+            role: 'scout',
+            provider: 'codex',
+            model: null,
+            status: 'running',
+            session_handle: 'pty:scout-1',
+            slot_state: 'investigating',
+            active_run_id: null,
+            active_task_ref: null,
+            last_status_change_at: null,
+            last_heartbeat_at: null,
+          },
+        ],
+      },
       claims: {
         active: [
           {
@@ -102,6 +125,8 @@ describe('App', () => {
     expect(frame).toContain('orc-1');
     expect(frame).toContain('orc-2');
     expect(frame).toContain('orc-3');
+    expect(frame).toContain('scout-1');
+    expect(frame).toContain('[SCOUT]');
   });
 
   it('refreshes status on the polling interval', async () => {
@@ -119,6 +144,14 @@ describe('App', () => {
           slots: [],
         },
         tasks: { counts: { todo: 0 }, total: 0 },
+        scout_capacity: {
+          total_slots: 0,
+          investigating_slots: 0,
+          idle_slots: 0,
+          warming_slots: 0,
+          unavailable_slots: 0,
+          slots: [],
+        },
         claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
         failures: { startup: [], lifecycle: [] },
         recentEvents: [],
@@ -137,6 +170,7 @@ describe('App', () => {
           slots: [
             {
               agent_id: 'orc-1',
+              role: 'worker',
               provider: 'codex',
               model: null,
               status: 'running',
@@ -150,6 +184,28 @@ describe('App', () => {
           ],
         },
         tasks: { counts: { todo: 1 }, total: 1 },
+        scout_capacity: {
+          total_slots: 1,
+          investigating_slots: 0,
+          idle_slots: 1,
+          warming_slots: 0,
+          unavailable_slots: 0,
+          slots: [
+            {
+              agent_id: 'scout-1',
+              role: 'scout',
+              provider: 'codex',
+              model: null,
+              status: 'idle',
+              session_handle: null,
+              slot_state: 'idle',
+              active_run_id: null,
+              active_task_ref: null,
+              last_status_change_at: null,
+              last_heartbeat_at: null,
+            },
+          ],
+        },
         claims: {
           active: [
             {
@@ -176,6 +232,7 @@ describe('App', () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(app.lastFrame()).toContain('feat/task-1');
+    expect(app.lastFrame()).toContain('scout-1');
     expect(mockBuildStatus).toHaveBeenCalledTimes(3);
   });
 });

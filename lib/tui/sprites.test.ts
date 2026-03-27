@@ -4,14 +4,27 @@ import { preloadSprites, renderSpriteMap } from './sprites.ts';
 const ANSI_PATTERN = /\u001B\[[0-9;]*m/g;
 
 describe('preloadSprites', () => {
-  it('loads all four states with deterministic frame ordering', async () => {
+  it('loads base and scout sprite keys with deterministic frame ordering', async () => {
     const spriteMap = await preloadSprites();
 
-    expect(Array.from(spriteMap.keys())).toEqual(['idle', 'work', 'done', 'fail']);
+    expect(Array.from(spriteMap.keys())).toEqual([
+      'idle',
+      'work',
+      'done',
+      'fail',
+      'scout:idle',
+      'scout:work',
+      'scout:done',
+      'scout:fail',
+    ]);
     expect(spriteMap.get('idle')).toHaveLength(2);
     expect(spriteMap.get('work')).toHaveLength(3);
     expect(spriteMap.get('done')).toHaveLength(2);
     expect(spriteMap.get('fail')).toHaveLength(1);
+    expect(spriteMap.get('scout:idle')).toHaveLength(2);
+    expect(spriteMap.get('scout:work')).toHaveLength(3);
+    expect(spriteMap.get('scout:done')).toHaveLength(2);
+    expect(spriteMap.get('scout:fail')).toHaveLength(1);
   });
 
   it('caches the rendered sprite map after the first load', async () => {
@@ -52,5 +65,12 @@ describe('preloadSprites', () => {
 
     expect(plain.split('\n')).toHaveLength(8);
     expect(plain).toContain('█');
+  });
+
+  it('renders scout frames differently from worker frames', async () => {
+    const spriteMap = await preloadSprites();
+
+    expect(spriteMap.get('scout:idle')?.[0]).not.toBe(spriteMap.get('idle')?.[0]);
+    expect(spriteMap.get('scout:work')?.[0]).not.toBe(spriteMap.get('work')?.[0]);
   });
 });

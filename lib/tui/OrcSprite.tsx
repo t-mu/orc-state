@@ -1,9 +1,17 @@
 import { Text } from 'ink';
 import { useEffect, useState } from 'react';
-import type { SpriteMap, SpriteState } from './sprites.ts';
+import type { SpriteMap, SpriteRole, SpriteState } from './sprites.ts';
 
-export function OrcSprite({ spriteState, sprites }: { spriteState: SpriteState; sprites: SpriteMap }) {
-  const frames = sprites.get(spriteState) ?? sprites.get('idle') ?? ['?'];
+export function OrcSprite({
+  spriteState,
+  role = 'worker',
+  sprites,
+}: {
+  spriteState: SpriteState;
+  role?: SpriteRole;
+  sprites: SpriteMap;
+}) {
+  const frames = sprites.get(`${role}:${spriteState}`) ?? sprites.get(spriteState) ?? sprites.get('idle') ?? ['?'];
   const [index, setIndex] = useState(0);
 
   useEffect(() => {

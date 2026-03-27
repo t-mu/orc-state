@@ -9,6 +9,8 @@ const sprites: SpriteMap = new Map([
   ['work', ['WORK-1', 'WORK-2']],
   ['done', ['DONE-1']],
   ['fail', ['FAIL-1']],
+  ['scout:idle', ['SCOUT-IDLE-1', 'SCOUT-IDLE-2']],
+  ['scout:work', ['SCOUT-WORK-1', 'SCOUT-WORK-2']],
 ]);
 
 beforeEach(() => {
@@ -31,5 +33,11 @@ describe('OrcSprite', () => {
 
     await vi.advanceTimersByTimeAsync(500);
     expect(sprite.lastFrame()).toContain('WORK-1');
+  });
+
+  it('uses role-specific scout frames when available', () => {
+    const sprite = render(<OrcSprite spriteState="idle" role="scout" sprites={sprites} />);
+
+    expect(sprite.lastFrame()).toBe('SCOUT-IDLE-1');
   });
 });
