@@ -20,6 +20,11 @@ The compose file uses a persistent Docker volume for `/home/node`, so Codex and
 Claude auth/config live inside the container environment and survive restarts.
 GitHub CLI auth is shared from the host via `~/.config/gh`.
 
+The image also sets `NPM_CONFIG_PREFIX=/home/node/.npm-global` and includes that
+bin directory on `PATH`. When the cloned repo exists at
+`/home/node/workspace/orc-state`, the devbox entrypoint runs `npm link` there so
+the local source tree provides the `orc` binary directly.
+
 On container startup, the devbox entrypoint writes `/home/node/.codex/config.toml`
 with:
 
@@ -39,9 +44,14 @@ the repo-local `.claude/settings.local.json` contains:
 
 ```json
 {
+  "enabledMcpjsonServers": [
+    "orchestrator"
+  ],
+  "enableAllProjectMcpServers": true,
   "permissions": {
     "defaultMode": "bypassPermissions"
-  }
+  },
+  "skipDangerousModePermissionPrompt": true
 }
 ```
 
@@ -75,6 +85,18 @@ git clone <repo-url> orc-state
 cd orc-state
 npm install
 npm run link-local-all
+npm link
+```
+
+If you cloned the repo after the container was already running, either run
+`npm link` once manually as above or restart the container so the entrypoint can
+link `orc` automatically on startup.
+
+Verify:
+
+```bash
+which orc
+orc --help
 ```
 
 ## Log in

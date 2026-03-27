@@ -54,6 +54,13 @@ write_claude_settings "$CLAUDE_HOME_SETTINGS_FILE"
 
 if [[ -d "$REPO_DIR" ]]; then
   write_claude_settings "$CLAUDE_PROJECT_SETTINGS_FILE"
+
+  if [[ -f "$REPO_DIR/package.json" ]]; then
+    (
+      cd "$REPO_DIR"
+      npm link >/dev/null 2>&1 || true
+    )
+  fi
 fi
 
 exec "$@"

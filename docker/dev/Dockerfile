@@ -1,6 +1,7 @@
 FROM node:24-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
 ENV PATH=/home/node/.local/bin:/home/node/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update && apt-get install -y \
@@ -31,7 +32,6 @@ USER node
 WORKDIR /home/node/workspace
 
 RUN mkdir -p /home/node/.local/bin /home/node/.npm-global \
-  && npm config set prefix /home/node/.npm-global \
   && echo 'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"' >> /home/node/.bashrc
 
 RUN npm install -g @openai/codex opencode-ai@latest
