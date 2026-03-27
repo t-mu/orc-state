@@ -321,13 +321,14 @@ describe('promptRole()', () => {
       expect(result).toBe('master');
     });
 
-    it('passes all three role choices to select()', async () => {
+    it('passes all role choices to select()', async () => {
       vi.mocked(select).mockResolvedValue('worker');
       await promptRole(null);
       expect(select).toHaveBeenCalledWith(expect.objectContaining({
         choices: expect.arrayContaining([
           expect.objectContaining({ value: 'worker' }),
           expect.objectContaining({ value: 'reviewer' }),
+          expect.objectContaining({ value: 'scout' }),
           expect.objectContaining({ value: 'master' }),
         ]),
       }));
@@ -368,14 +369,15 @@ describe('promptWorkerRole()', () => {
   describe('interactive', () => {
     beforeEach(() => setTTY(true));
 
-    it('only offers worker and reviewer roles', async () => {
+    it('offers worker, reviewer, and scout roles but not master', async () => {
       vi.mocked(select).mockResolvedValue('worker');
       await promptWorkerRole(null);
       expect(select).toHaveBeenCalledWith(expect.objectContaining({
-        message: 'Select worker role',
+        message: 'Select non-master role',
         choices: expect.arrayContaining([
           expect.objectContaining({ value: 'worker' }),
           expect.objectContaining({ value: 'reviewer' }),
+          expect.objectContaining({ value: 'scout' }),
         ]),
       }));
       const call = vi.mocked(select).mock.calls.at(-1)?.[0];

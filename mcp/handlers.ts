@@ -1,11 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { createAdapter } from '../adapters/index.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
-import { listAgents } from '../lib/agentRegistry.ts';
+import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
@@ -13,12 +14,14 @@ import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRoutin
 import { isSupportedProvider } from '../lib/providers.ts';
 import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
+import { launchWorkerSession } from '../lib/workerRuntime.ts';
+import { renderTemplate } from '../lib/templateRender.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
 const TASK_STATUSES = new Set(['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled']);
-const AGENT_ROLES = new Set(['worker', 'reviewer', 'master']);
+const AGENT_ROLES = new Set(['worker', 'reviewer', 'master', 'scout']);
 const TASK_TYPES = new Set(['implementation', 'refactor']);
 const TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
 const ACTOR_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -40,6 +43,18 @@ function assertStringArray(value: unknown, field: string) {
 
 function defaultActorId(stateDir: string) {
   return listAgents(stateDir).find((agent) => agent.role === 'master')?.agent_id ?? 'master';
+}
+
+function assertActorId(stateDir: string, actorId: unknown) {
+  if (typeof actorId !== 'string' || !ACTOR_ID_RE.test(actorId)) {
+    throw new Error(`Invalid actor-id: ${typeof actorId === 'string' ? actorId : '(unknown)'}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  }
+  if (actorId === 'human') return;
+  const allAgents = listAgents(stateDir);
+  const actorExists = allAgents.some((agent) => agent.agent_id === actorId);
+  if (!actorExists) {
+    throw new Error(`Actor agent not found: ${String(actorId)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
+  }
 }
 
 function backlogDocsDirForState(stateDir: string) {
@@ -740,6 +755,11 @@ function readRunWorktreesState(stateDir?: string): RunWorktreesState {
   }
 }
 
+function scopeLines(scopePaths: string[] | undefined) {
+  if (!scopePaths || scopePaths.length === 0) return '- (no specific paths provided)';
+  return scopePaths.map((path) => `- ${path}`).join('\n');
+}
+
 export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } = {}) {
   if (!run_id) throw new Error('run_id is required');
   const claims = readClaims(stateDir).claims;
@@ -755,6 +775,91 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
   const worktreePath = wtEntry?.worktree_path ?? null;
 
   return { ...claim, task_title: taskTitle, worktree_path: worktreePath };
+}
+
+export async function handleRequestScout(stateDir: string, {
+  objective,
+  provider,
+  run_id = null,
+  task_ref = null,
+  scope_paths = [],
+  use_web = false,
+  actor_id = defaultActorId(stateDir),
+}: Record<string, unknown> = {}) {
+  if (typeof objective !== 'string' || objective.trim().length === 0) {
+    throw new Error('objective is required');
+  }
+  if (provider != null && !isSupportedProvider(provider)) {
+    throw new Error(`Invalid provider: ${typeof provider === 'string' ? provider : '(unknown)'}`);
+  }
+  if (run_id != null && typeof run_id !== 'string') throw new Error('run_id must be a string');
+  if (task_ref != null && typeof task_ref !== 'string') throw new Error('task_ref must be a string');
+  assertStringArray(scope_paths, 'scope_paths');
+  if (typeof use_web !== 'boolean') throw new Error('use_web must be a boolean');
+  assertActorId(stateDir, actor_id);
+
+  const actor = typeof actor_id === 'string' ? getAgent(stateDir, actor_id) : null;
+  if (actor_id !== 'human' && actor?.role !== 'master') {
+    throw new Error(`request_scout may only be invoked by master or human actors; got role '${actor?.role ?? 'unknown'}'`);
+  }
+  const resolvedProvider = (typeof provider === 'string' ? provider : actor?.provider ?? 'codex');
+  const scoutId = nextAvailableScoutId(stateDir);
+  const repoRoot = process.env.ORC_REPO_ROOT ?? join(stateDir, '..');
+  const worktrees = readRunWorktreesState(stateDir);
+  const linkedWorktree = typeof run_id === 'string'
+    ? (worktrees.runs.find((entry) => entry.run_id === run_id)?.worktree_path ?? null)
+    : null;
+  const workingDirectory = linkedWorktree ?? repoRoot;
+
+  const scout = registerAgent(stateDir, {
+    agent_id: scoutId,
+    provider: resolvedProvider,
+    role: 'scout',
+  });
+
+  const adapter = createAdapter(resolvedProvider);
+  const launchResult = await launchWorkerSession(stateDir, scout, {
+    adapter,
+    workingDirectory,
+    repoRoot,
+    emit: (event) => appendSequencedEvent(stateDir, event),
+  });
+  if (!launchResult.ok || !launchResult.session_handle) {
+    removeAgent(stateDir, scout.agent_id);
+    throw new Error(`Failed to launch scout ${scoutId}: ${launchResult.reason ?? 'unknown error'}`);
+  }
+
+  const brief = renderTemplate('scout-brief-v1.txt', {
+    agent_id: scout.agent_id,
+    provider: scout.provider,
+    objective: objective.trim(),
+    run_id: typeof run_id === 'string' ? run_id : '(none)',
+    task_ref: typeof task_ref === 'string' ? task_ref : '(none)',
+    working_directory: workingDirectory,
+    use_web: use_web ? 'yes' : 'no',
+    scope_paths: scopeLines(scope_paths as string[]),
+  });
+  try {
+    await adapter.send(launchResult.session_handle, brief);
+  } catch (error) {
+    await adapter.stop(launchResult.session_handle);
+    removeAgent(stateDir, scout.agent_id);
+    throw new Error(`Failed to brief scout ${scoutId}: ${(error as Error)?.message ?? 'unknown error'}`);
+  }
+
+  return {
+    agent_id: scout.agent_id,
+    role: 'scout',
+    provider: scout.provider,
+    status: scout.status,
+    objective: objective.trim(),
+    run_id: typeof run_id === 'string' ? run_id : null,
+    task_ref: typeof task_ref === 'string' ? task_ref : null,
+    use_web,
+    scope_paths,
+    working_directory: workingDirectory,
+    session_handle: launchResult.session_handle,
+  };
 }
 
 export function handleListWaitingInput(stateDir: string) {

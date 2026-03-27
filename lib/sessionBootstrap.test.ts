@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import {
   buildSessionBootstrap,
   getMasterBootstrap,
+  getScoutBootstrap,
   getWorkerBootstrap,
 } from './sessionBootstrap.ts';
 import { renderTemplate } from './templateRender.ts';
@@ -43,6 +44,16 @@ describe('getMasterBootstrap', () => {
   });
 });
 
+describe('getScoutBootstrap', () => {
+  it('returns non-empty string for codex', () => {
+    const rendered = getScoutBootstrap('codex');
+    expect(rendered).toContain('provider: codex');
+    expect(rendered).toContain('agent_id: scout');
+    expect(rendered).toContain('investigation-only agent');
+    expect(rendered).toContain('read-only sandbox mode');
+  });
+});
+
 describe('buildSessionBootstrap', () => {
   it('uses master-bootstrap-v1.txt for master role', () => {
     const rendered = buildSessionBootstrap('master', 'claude', 'master');
@@ -64,6 +75,14 @@ describe('buildSessionBootstrap', () => {
     const rendered = buildSessionBootstrap('carol', 'codex', 'reviewer');
     expect(rendered).toContain('provider: codex');
     expect(rendered).toContain('orc run-work-complete');
+  });
+
+  it('uses scout-bootstrap-v1.txt for scout role', () => {
+    const rendered = buildSessionBootstrap('scout-1', 'codex', 'scout');
+    expect(rendered).toContain('SCOUT_BOOTSTRAP');
+    expect(rendered).toContain('agent_id: scout-1');
+    expect(rendered).toContain('investigation-only agent');
+    expect(rendered).not.toContain('orc run-work-complete');
   });
 
   it('worker bootstrap template contains REVIEWER CONSTRAINTS block', () => {

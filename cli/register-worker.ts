@@ -2,7 +2,7 @@
 /**
  * cli/register-worker.ts
  * Usage:
- *   node cli/register-worker.ts <worker_id> --provider=<codex|claude|gemini> [--dispatch-mode=<mode>] [--role=<worker|reviewer>] [--capabilities=a,b]
+ *   node cli/register-worker.ts <worker_id> --provider=<codex|claude|gemini> [--dispatch-mode=<mode>] [--role=<worker|reviewer|scout>] [--capabilities=a,b]
  *
  * Advanced/debug path for manually creating a worker record.
  * Missing flags trigger interactive prompts when running in a TTY.

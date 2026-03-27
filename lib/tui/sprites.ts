@@ -1,9 +1,11 @@
 import chalk from 'chalk';
 
 export type SpriteState = 'idle' | 'work' | 'done' | 'fail';
-export type SpriteMap = Map<SpriteState, string[]>;
+export type SpriteRole = 'worker' | 'reviewer' | 'scout';
+export type SpriteKey = SpriteState | `${SpriteRole}:${SpriteState}`;
+export type SpriteMap = Map<SpriteKey, string[]>;
 
-type PaletteToken = '.' | 'G' | 'K' | 'T' | 'D' | 'Y' | 'R';
+type PaletteToken = '.' | 'G' | 'K' | 'T' | 'D' | 'Y' | 'R' | 'C' | 'S';
 
 const PALETTE: Readonly<Record<Exclude<PaletteToken, '.'>, string>> = {
   G: '#59b45d',
@@ -12,6 +14,8 @@ const PALETTE: Readonly<Record<Exclude<PaletteToken, '.'>, string>> = {
   D: '#6f5f4d',
   Y: '#d4af37',
   R: '#ff3b30',
+  C: '#2d9c9c',
+  S: '#c0cad4',
 };
 
 const FRAME_SETS: Readonly<Record<SpriteState, readonly string[][]>> = {
@@ -105,6 +109,97 @@ const FRAME_SETS: Readonly<Record<SpriteState, readonly string[][]>> = {
   ],
 };
 
+const SCOUT_FRAME_SETS: Readonly<Record<SpriteState, readonly string[][]>> = {
+  idle: [
+    [
+      '...SSSSSS...',
+      '..SSKKKKSS..',
+      '..SKGGGGKS..',
+      '..GGTTTTGG..',
+      '.CGGGGGGGGC.',
+      '..CCCCCCCC..',
+      '...C....C...',
+      '............',
+    ],
+    [
+      '...SSSSSS...',
+      '..SSKKKKSS..',
+      '..SKGGGGKS..',
+      '..GGTT..GG..',
+      '.CGGGGGGGGC.',
+      '..CCCCCCCC..',
+      '..C......C..',
+      '............',
+    ],
+  ],
+  work: [
+    [
+      '...SSSSSS...',
+      '..SSKKKKSS..',
+      '..SKGGGGKS..',
+      '.CGGTTTTGGC.',
+      '..CCCCCCCC..',
+      '..CCYYYYCC..',
+      '...C....C...',
+      '............',
+    ],
+    [
+      '...SSSSSS...',
+      '..SSKKKKSS..',
+      '..SKGGGGKS..',
+      '.CGGTTTTGGC.',
+      '.CCCCCCCCCC.',
+      '..CYYYYYYC..',
+      '..C......C..',
+      '............',
+    ],
+    [
+      '...SSSSSS...',
+      '..SSKKKKSS..',
+      '..SKGGGGKS..',
+      '.CGGTTTTGGC.',
+      'CCCCCCCCCCCC',
+      '..CCYYYYCC..',
+      '..C......C..',
+      '............',
+    ],
+  ],
+  done: [
+    [
+      '..SS....SS..',
+      '.SSKKKKKKSS.',
+      '..GGTTTTGG..',
+      '.CGGGGGGGGC.',
+      '...GGGGGG...',
+      '..CCYYYYCC..',
+      '..CCCCCCCC..',
+      '............',
+    ],
+    [
+      '.SS......SS.',
+      'SSKKKKKKKKSS',
+      '..GGTTTTGG..',
+      '.CGGGGGGGGC.',
+      '...GGGGGG...',
+      '..CCYYYYCC..',
+      '..CCCCCCCC..',
+      '............',
+    ],
+  ],
+  fail: [
+    [
+      '...SSSSSS...',
+      '..SSKKKKSS..',
+      '..SKGRRKS...',
+      '.CGGTTTTGGC.',
+      '..CCCCCCCC..',
+      '.CCCCCCCCCC.',
+      '..C......C..',
+      '............',
+    ],
+  ],
+};
+
 let spritesPromise: Promise<SpriteMap> | undefined;
 
 export function preloadSprites(): Promise<SpriteMap> {
@@ -125,6 +220,9 @@ export function renderSpriteMap(frameSets: Readonly<Record<SpriteState, readonly
 
   for (const [state, frames] of Object.entries(frameSets) as Array<[SpriteState, readonly string[][]]>) {
     spriteMap.set(state, frames.map((frame, frameIndex) => renderFrame(state, frameIndex, frame)));
+  }
+  for (const [state, frames] of Object.entries(SCOUT_FRAME_SETS) as Array<[SpriteState, readonly string[][]]>) {
+    spriteMap.set(`scout:${state}`, frames.map((frame, frameIndex) => renderFrame(state, frameIndex, frame)));
   }
 
   return spriteMap;

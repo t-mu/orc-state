@@ -98,6 +98,7 @@ interface Adapter {
     system_prompt: string;
     model: string | null;
     working_directory: string | null | undefined;
+    read_only?: boolean;
     env: Record<string, string>;
   }): Promise<{ session_handle: string; provider_ref: unknown }>;
 }
@@ -129,6 +130,7 @@ export async function launchWorkerSession(
       system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker'),
       model: agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
+      read_only: agent.role === 'scout',
       env: normalizeWorkerEnv({
         ORCH_STATE_DIR: stateDir,
       }, repoRoot),

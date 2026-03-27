@@ -6,7 +6,8 @@ import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from '
 import type { Agent, Task, Claim } from '../types/index.ts';
 
 type StatusResult = {
-  worker_capacity: { configured_slots: number; available_slots: number; used_slots: number; warming_slots: number; dispatch_ready_count: number; waiting_for_capacity: number; slots: Array<{ agent_id: string }> };
+  worker_capacity: { configured_slots: number; available_slots: number; used_slots: number; warming_slots: number; dispatch_ready_count: number; waiting_for_capacity: number; slots: Array<{ agent_id: string; role?: string }> };
+  scout_capacity: { total_slots: number; investigating_slots: number; idle_slots: number; warming_slots: number; unavailable_slots: number; slots: Array<{ agent_id: string; slot_state: string }> };
   tasks: { total: number; counts: Record<string, number> };
   claims: { total: number; active: Array<Record<string, unknown>>; in_progress: number; awaiting_run_started: number; stalled: number };
   master: { agent_id: string } | null;
@@ -86,6 +87,26 @@ describe('buildStatus', () => {
     expect(s.worker_capacity.configured_slots).toBe(2);
     expect(s.worker_capacity.available_slots).toBe(2);
     expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['orc-1', 'orc-2']);
+  });
+
+  it('surfaces scouts in a separate scout capacity block', () => {
+    writeState({
+      agents: [
+        { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
+        { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
+        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1' } as Agent,
+        { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'idle' } as Agent,
+      ],
+    });
+    writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
+    writeEvents([]);
+
+    const s = buildStatus(dir) as unknown as StatusResult;
+    expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['orc-1']);
+    expect(s.scout_capacity.total_slots).toBe(2);
+    expect(s.scout_capacity.investigating_slots).toBe(1);
+    expect(s.scout_capacity.idle_slots).toBe(1);
+    expect(s.scout_capacity.slots.map((slot) => slot.agent_id)).toEqual(['scout-1', 'scout-2']);
   });
 
   it('counts tasks by status', () => {
@@ -431,6 +452,22 @@ describe('formatStatus', () => {
     expect(output).toContain('preserved_work');
     expect(output).toContain('task/run-finalize-2');
     expect(output).toContain('/tmp/orc-worktrees/run-finalize-2');
+  });
+
+  it('renders a separate scout slots section', () => {
+    writeState({
+      agents: [
+        { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
+        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1' } as Agent,
+        { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'offline' } as Agent,
+      ],
+    });
+    writeEvents([]);
+
+    const output = formatStatus(buildStatus(dir));
+    expect(output).toContain('scout-1');
+    expect(output).toContain('scout-2');
+    expect(output).toContain('scout    investigating');
   });
 });
 

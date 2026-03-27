@@ -229,3 +229,17 @@ export function nextAvailableWorkerId(stateDir: string): string {
   while (used.has(candidate)) candidate += 1;
   return `orc-${candidate}`;
 }
+
+export function nextAvailableScoutId(stateDir: string): string {
+  const used = new Set<number>();
+  for (const agent of listAgents(stateDir)) {
+    const match = /^scout-(\d+)$/.exec(agent.agent_id ?? '');
+    if (!match) continue;
+    const num = Number(match[1]);
+    if (Number.isInteger(num) && num > 0) used.add(num);
+  }
+
+  let candidate = 1;
+  while (used.has(candidate)) candidate += 1;
+  return `scout-${candidate}`;
+}

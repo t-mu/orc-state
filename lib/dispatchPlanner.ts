@@ -48,6 +48,7 @@ export function selectDispatchableAgents(
     (a) => a.status !== 'offline'
       && a.status !== 'dead'
       && a.role !== 'master'
+      && a.role !== 'scout'
       && !busyAgents.has(a.agent_id),
   );
 }
@@ -119,7 +120,7 @@ export function describeAutoTargetFailure({ task, taskType, allAgents, claims }:
   );
 
   return (allAgents ?? [])
-    .filter((agent) => agent.status !== 'dead' && agent.role !== 'master')
+    .filter((agent) => agent.status !== 'dead' && agent.role !== 'master' && agent.role !== 'scout')
     .map((agent) => {
       const reasons: string[] = [];
       if (agent.status === 'offline') reasons.push('agent_offline');

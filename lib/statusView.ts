@@ -86,6 +86,13 @@ function classifyWorkerSlot(slot: Agent, activeClaim: Claim | null): string {
   return 'available';
 }
 
+function classifyScoutSlot(agent: Agent): string {
+  if (agent.status === 'offline') return 'unavailable';
+  if (agent.status === 'running' && !agent.session_handle) return 'warming';
+  if (agent.status === 'running') return 'investigating';
+  return 'idle';
+}
+
 interface FailureEntry {
   ts: string | null;
   run_id: string | null;
@@ -213,10 +220,12 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       .map((claim) => [claim.agent_id, claim]),
   );
   const workerSlots = agents.filter((agent) => isManagedSlot(agent.agent_id, workerPoolConfig.max_workers));
+  const scoutAgents = agents.filter((agent) => agent.role === 'scout');
   const slotDetails = workerSlots.map((slot) => {
     const activeClaim = activeClaimByAgentId.get(slot.agent_id) ?? null;
     return {
       agent_id: slot.agent_id,
+      role: slot.role,
       provider: slot.provider,
       model: slot.model ?? null,
       status: slot.status,
@@ -228,6 +237,17 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       last_heartbeat_at: slot.last_heartbeat_at ?? null,
     };
   });
+  const scoutDetails = scoutAgents.map((agent) => ({
+    agent_id: agent.agent_id,
+    role: agent.role,
+    provider: agent.provider,
+    model: agent.model ?? null,
+    status: agent.status,
+    session_handle: agent.session_handle ?? null,
+    slot_state: classifyScoutSlot(agent),
+    last_status_change_at: agent.last_status_change_at ?? null,
+    last_heartbeat_at: agent.last_heartbeat_at ?? null,
+  }));
   const dispatchReadyTasks = listDispatchReadyTasks(backlogFile);
   const availableSlots = slotDetails.filter((slot) => slot.slot_state === 'available').length;
   const startupFailures = collectRecentFailures(allEvents);
@@ -277,6 +297,14 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       dispatch_ready_tasks: dispatchReadyTasks,
       dispatch_ready_count: dispatchReadyTasks.length,
       waiting_for_capacity: Math.max(0, dispatchReadyTasks.length - availableSlots),
+    },
+    scout_capacity: {
+      total_slots: scoutDetails.length,
+      investigating_slots: scoutDetails.filter((slot) => slot.slot_state === 'investigating').length,
+      idle_slots: scoutDetails.filter((slot) => slot.slot_state === 'idle').length,
+      warming_slots: scoutDetails.filter((slot) => slot.slot_state === 'warming').length,
+      unavailable_slots: scoutDetails.filter((slot) => slot.slot_state === 'unavailable').length,
+      slots: scoutDetails,
     },
     tasks,
     claims: {
@@ -350,7 +378,15 @@ export function formatStatus(status: Record<string, unknown>): string {
     dispatch_ready_count: number;
     waiting_for_capacity: number;
     dispatch_ready_tasks: Array<{ ref: string }>;
-    slots: Array<{ session_handle: string | null; agent_id: string; slot_state: string; status: string; active_run_id: string | null; active_task_ref: string | null }>;
+    slots: Array<{ session_handle: string | null; agent_id: string; role: string; slot_state: string; status: string; active_run_id: string | null; active_task_ref: string | null }>;
+  };
+  const scoutCapacity = status['scout_capacity'] as {
+    total_slots: number;
+    investigating_slots: number;
+    idle_slots: number;
+    warming_slots: number;
+    unavailable_slots: number;
+    slots: Array<{ session_handle: string | null; agent_id: string; role: string; slot_state: string; status: string }>;
   };
   const claims = status['claims'] as {
     total: number;
@@ -423,15 +459,26 @@ export function formatStatus(status: Record<string, unknown>): string {
       lines.push(`  queue:               +${workerCapacity.dispatch_ready_tasks.length - 3} more`);
     }
   }
-  const spawnedSlots = workerCapacity.slots.filter((slot) => slot.session_handle !== null);
-  if (spawnedSlots.length === 0) {
+  const visibleSlots = [
+    ...workerCapacity.slots
+      .filter((slot) => slot.session_handle !== null)
+      .map((slot) => ({ ...slot, attached: true })),
+    ...scoutCapacity.slots
+      .map((slot) => ({ ...slot, attached: slot.session_handle !== null })),
+  ];
+  if (visibleSlots.length === 0) {
     lines.push('  slots: (none spawned)');
   } else {
-    for (const slot of spawnedSlots) {
-      const suffix = slot.active_run_id
-        ? ` run=${slot.active_run_id} task=${slot.active_task_ref ?? 'n/a'}`
-        : '';
-      lines.push(`  ${slot.agent_id.padEnd(12)} ${slot.slot_state.padEnd(12)} ${slot.status.padEnd(10)}${suffix}`);
+    for (const slot of visibleSlots) {
+      const runId = 'active_run_id' in slot && typeof slot.active_run_id === 'string'
+        ? slot.active_run_id
+        : null;
+      const taskRef = 'active_task_ref' in slot && typeof slot.active_task_ref === 'string'
+        ? slot.active_task_ref
+        : null;
+      const suffix = runId ? ` run=${runId} task=${taskRef ?? 'n/a'}` : '';
+      const attached = slot.attached ? 'attached' : 'detached';
+      lines.push(`  ${slot.agent_id.padEnd(12)} ${slot.role.padEnd(8)} ${slot.slot_state.padEnd(14)} ${slot.status.padEnd(10)} ${attached}${suffix}`);
     }
   }
 

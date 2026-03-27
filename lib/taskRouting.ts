@@ -72,8 +72,8 @@ export function evaluateTaskEligibility(task: TaskLike | null | undefined, agent
   }
 
   const role = agent?.role ?? 'worker';
-  if (role === 'master') {
-    addReason(reasons, 'role_ineligible:master');
+  if (role === 'master' || role === 'scout') {
+    addReason(reasons, `role_ineligible:${role}`);
   }
 
   if (task?.owner && task.owner !== agent?.agent_id) {

@@ -3,6 +3,7 @@ import type { SpriteState } from './sprites.ts';
 
 export interface TuiSlot {
   agent_id: string;
+  role: string;
   provider: string | null;
   model: string | null;
   status: string;
@@ -55,6 +56,14 @@ export interface TuiStatus {
     waiting_for_capacity: number;
     slots: TuiSlot[];
   };
+  scout_capacity: {
+    total_slots: number;
+    investigating_slots: number;
+    idle_slots: number;
+    warming_slots: number;
+    unavailable_slots: number;
+    slots: TuiSlot[];
+  };
   tasks: {
     counts: Record<string, number>;
     total: number;
@@ -76,6 +85,7 @@ export interface TuiStatus {
 
 export interface WorkerSlotViewModel {
   slot_id: string;
+  role: string;
   provider: string | null;
   slot_state: string;
   task_ref: string | null;
@@ -97,6 +107,14 @@ export function emptyTuiStatus(): TuiStatus {
       provider: 'unknown',
       dispatch_ready_count: 0,
       waiting_for_capacity: 0,
+      slots: [],
+    },
+    scout_capacity: {
+      total_slots: 0,
+      investigating_slots: 0,
+      idle_slots: 0,
+      warming_slots: 0,
+      unavailable_slots: 0,
       slots: [],
     },
     tasks: {
@@ -145,6 +163,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
 
     viewModels.push({
       slot_id: slotId,
+      role: slot?.role ?? 'worker',
       provider: slot?.provider ?? null,
       slot_state: slot?.slot_state ?? 'available',
       task_ref: claim?.task_ref ?? slot?.active_task_ref ?? null,
@@ -156,6 +175,22 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
     });
   }
 
+  for (const scout of status.scout_capacity.slots) {
+    const agentId = scout.agent_id;
+    viewModels.push({
+      slot_id: agentId,
+      role: scout.role,
+      provider: scout.provider ?? null,
+      slot_state: scout.slot_state,
+      task_ref: null,
+      run_state: scout.slot_state,
+      current_phase: null,
+      age_seconds: null,
+      idle_seconds: null,
+      sprite_state: scoutStateToSpriteState(scout.slot_state),
+    });
+  }
+
   return viewModels;
 }
 
@@ -163,5 +198,11 @@ export function runStateToSpriteState(runState: string | null | undefined): Spri
   if (runState === 'in_progress' || runState === 'claimed') return 'work';
   if (runState === 'done' || runState === 'released') return 'done';
   if (runState === 'blocked' || runState === 'failed') return 'fail';
+  return 'idle';
+}
+
+function scoutStateToSpriteState(slotState: string | null | undefined): SpriteState {
+  if (slotState === 'investigating' || slotState === 'warming') return 'work';
+  if (slotState === 'unavailable') return 'fail';
   return 'idle';
 }

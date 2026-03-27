@@ -156,6 +156,17 @@ describe('pty adapter start()', () => {
     expect(ptyProcess.write).not.toHaveBeenCalled();
   });
 
+  it('uses read-only sandbox mode for codex scout sessions', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('scout-1', { system_prompt: 'SCOUT', read_only: true });
+
+    expect(spawnSpy).toHaveBeenCalledWith(
+      binaryMatcher('codex'),
+      ['--no-alt-screen', '--sandbox', 'read-only', '--ask-for-approval', 'never', 'SCOUT'],
+      expect.any(Object),
+    );
+  });
+
   it('cleans up and does not write pid file when pty.spawn throws', async () => {
     const { adapter } = await makeAdapter({ spawnThrow: new Error('spawn failed') });
     await expect(adapter.start('bob', {})).rejects.toThrow('spawn failed');

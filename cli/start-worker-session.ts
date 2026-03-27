@@ -2,7 +2,7 @@
 /**
  * cli/start-worker-session.ts
  * Usage:
- *   node cli/start-worker-session.ts <worker_id> --provider=<codex|claude|gemini> [--role=<worker|reviewer>] [--force-rebind]
+ *   node cli/start-worker-session.ts <worker_id> --provider=<codex|claude|gemini> [--role=<worker|reviewer|scout>] [--force-rebind]
  *
  * Advanced/debug path for manually asking the coordinator to provision or
  * rebind a headless worker session.
@@ -23,7 +23,7 @@ console.log('orc-worker-start-session (debug worker session control)');
 
 workerId = await promptAgentId(workerId);
 if (!workerId) {
-  console.error('Usage: orc-worker-start-session <worker_id> --provider=<codex|claude|gemini> [--role=<worker|reviewer>] [--force-rebind]');
+  console.error('Usage: orc-worker-start-session <worker_id> --provider=<codex|claude|gemini> [--role=<worker|reviewer|scout>] [--force-rebind]');
   process.exit(1);
 }
 if (workerId === 'master') {
