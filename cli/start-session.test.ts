@@ -828,7 +828,7 @@ describe('cli/start-session.ts', () => {
       expect(config.mcpServers.orchestrator.env.ORCH_STATE_DIR).toBe(dir);
     });
 
-    it('does not write mcp-config.json and spawns codex without mcp flag', async () => {
+    it('does not write mcp-config.json and passes codex bootstrap as the initial prompt', async () => {
       seedState([masterAgent({ provider: 'codex' })]);
       const spawnMock = makeSpawnMock();
       mockSpawn(spawnMock);
@@ -843,6 +843,9 @@ describe('cli/start-session.ts', () => {
       const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[]] | undefined;
       expect(providerCall).toBeTruthy();
       expect(providerCall![1]).not.toContain('--mcp-config');
+      expect(providerCall![1]).not.toContain('--instructions');
+      expect(providerCall![1]).toHaveLength(1);
+      expect(providerCall![1][0]).toContain('MASTER_BOOTSTRAP v2');
     });
 
     it('writes mcp-config.json and spawns gemini with mcp and system-instruction flags', async () => {
@@ -928,6 +931,7 @@ describe('cli/start-session.ts', () => {
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
       expect(codexLines.join('\n')).not.toContain('MCP server: orchestrator tools available');
+      expect(codexLines.join('\n')).toContain('Master bootstrap loaded via initial prompt.');
     });
   });
 });

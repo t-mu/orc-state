@@ -189,7 +189,7 @@ describe('buildStatus', () => {
       { event_id: 'evt-p2', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', event: 'phase_started', phase: 'implement', ts: new Date(now.getTime() - 30_000).toISOString() },
     ]);
     const s = buildStatus(dir) as unknown as StatusResult;
-    expect((s.claims.active[0] as Record<string, unknown>).current_phase).toBe('implement');
+    expect(s.claims.active[0].current_phase).toBe('implement');
   });
 
   it('returns null current_phase when no phase events exist', () => {
@@ -206,7 +206,7 @@ describe('buildStatus', () => {
     });
     writeEvents([]);
     const s = buildStatus(dir) as unknown as StatusResult;
-    expect((s.claims.active[0] as Record<string, unknown>).current_phase).toBeNull();
+    expect(s.claims.active[0].current_phase).toBeNull();
   });
 
   it('counts dispatch-ready work waiting for capacity', () => {
