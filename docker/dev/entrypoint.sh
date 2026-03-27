@@ -15,25 +15,45 @@ multi_agent = true
 EOF
 
 REPO_DIR="/home/node/workspace/orc-state"
-CLAUDE_SETTINGS_FILE="$REPO_DIR/.claude/settings.local.json"
+CLAUDE_HOME_DIR="/home/node/.claude"
+CLAUDE_HOME_SETTINGS_FILE="$CLAUDE_HOME_DIR/settings.json"
+CLAUDE_PROJECT_SETTINGS_FILE="$REPO_DIR/.claude/settings.local.json"
 
-if [[ -d "$REPO_DIR" ]]; then
-  mkdir -p "$(dirname "$CLAUDE_SETTINGS_FILE")"
+write_claude_settings() {
+  local target_file="$1"
+  local tmp_settings
   tmp_settings="$(mktemp)"
 
-  if [[ -f "$CLAUDE_SETTINGS_FILE" ]]; then
-    jq '.permissions.defaultMode = "bypassPermissions"' "$CLAUDE_SETTINGS_FILE" > "$tmp_settings"
+  if [[ -f "$target_file" ]]; then
+    jq '
+      .enabledMcpjsonServers = ["orchestrator"]
+      | .enableAllProjectMcpServers = true
+      | .permissions.defaultMode = "bypassPermissions"
+      | .skipDangerousModePermissionPrompt = true
+    ' "$target_file" > "$tmp_settings"
   else
     cat > "$tmp_settings" <<'EOF'
 {
+  "enabledMcpjsonServers": [
+    "orchestrator"
+  ],
+  "enableAllProjectMcpServers": true,
   "permissions": {
     "defaultMode": "bypassPermissions"
-  }
+  },
+  "skipDangerousModePermissionPrompt": true
 }
 EOF
   fi
 
-  mv "$tmp_settings" "$CLAUDE_SETTINGS_FILE"
+  mkdir -p "$(dirname "$target_file")"
+  mv "$tmp_settings" "$target_file"
+}
+
+write_claude_settings "$CLAUDE_HOME_SETTINGS_FILE"
+
+if [[ -d "$REPO_DIR" ]]; then
+  write_claude_settings "$CLAUDE_PROJECT_SETTINGS_FILE"
 fi
 
 exec "$@"
