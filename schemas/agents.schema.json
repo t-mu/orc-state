@@ -51,8 +51,8 @@
         },
         "role": {
           "type": "string",
-          "enum": ["worker", "reviewer", "master"],
-          "description": "Primary orchestration role. Workers and reviewers execute tasks; master creates and delegates tasks only."
+          "enum": ["worker", "reviewer", "master", "scout"],
+          "description": "Primary orchestration role. Workers and reviewers execute tasks; master creates and delegates tasks; scouts investigate in read-only mode."
         },
         "capabilities": {
           "type": "array",

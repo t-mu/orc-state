@@ -48,6 +48,11 @@ describe('canAgentExecuteTaskType', () => {
     expect(canAgentExecuteTaskType('refactor', { role: 'master' })).toBe(false);
   });
 
+  it('returns false for all task types for scout role', () => {
+    expect(canAgentExecuteTaskType('implementation', { role: 'scout' })).toBe(false);
+    expect(canAgentExecuteTaskType('refactor', { role: 'scout' })).toBe(false);
+  });
+
   it('returns false for unknown task types', () => {
     expect(canAgentExecuteTaskType('unknown', { role: 'worker' })).toBe(false);
   });
@@ -92,6 +97,20 @@ describe('evaluateTaskEligibility', () => {
       reason_details: [{
         code: 'role_ineligible:master',
         message: "agent role 'master' cannot execute routed tasks",
+      }],
+    });
+  });
+
+  it('rejects scout role with a role_ineligible reason', () => {
+    expect(evaluateTaskEligibility(
+      { task_type: 'implementation' },
+      { agent_id: 'scout-1', role: 'scout', capabilities: [] },
+    )).toEqual({
+      eligible: false,
+      reasons: ['role_ineligible:scout'],
+      reason_details: [{
+        code: 'role_ineligible:scout',
+        message: "agent role 'scout' cannot execute routed tasks",
       }],
     });
   });

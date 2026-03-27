@@ -1,7 +1,7 @@
 export type AgentId = string;
 export type AgentStatus = 'idle' | 'running' | 'offline' | 'dead';
 export type Provider = 'codex' | 'claude' | 'gemini' | 'human';
-export type AgentRole = 'worker' | 'reviewer' | 'master';
+export type AgentRole = 'worker' | 'reviewer' | 'master' | 'scout';
 export type DispatchMode = 'autonomous' | 'supervised' | 'human-commanded' | null;
 
 export interface Agent {

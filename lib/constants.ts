@@ -4,7 +4,7 @@
 
 export const TASK_TYPES: readonly string[] = ['implementation', 'refactor'];
 
-export const AGENT_ROLES: readonly string[] = ['worker', 'reviewer', 'master'];
+export const AGENT_ROLES: readonly string[] = ['worker', 'reviewer', 'master', 'scout'];
 
 export const TASK_STATUSES: readonly string[] = ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled'];
 

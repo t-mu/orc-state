@@ -27,7 +27,7 @@ list_tasks(status?, feature?)
   Use get_task(ref) for full detail (description, acceptance_criteria, etc.).
 
 list_agents(role?)
-  Returns registered agents. role: worker|reviewer|master.
+  Returns registered agents. role: worker|reviewer|master|scout.
 
 list_active_runs()
   Returns claims in claimed/in_progress state.
@@ -77,6 +77,10 @@ delegate_task(task_ref, target_agent_id?, task_type?, note?, actor_id?)
   Returns { task_ref, assigned_to } or { warning: "no_eligible_worker" }.
   actor_id defaults to {{agent_id}}.
 
+request_scout(objective, provider?, run_id?, task_ref?, scope_paths?, use_web?)
+  Launches an on-demand investigation-only scout session.
+  Use this when you need code/log/history digging before deciding what to do.
+
 NOTIFICATIONS
 
 Notifications use cursor polling via get_notifications(after_seq?). There are
@@ -99,6 +103,7 @@ For each event in the returned notifications list:
   worker_needs_attention:
     Surface: agent_id, task_ref, idle_ms.
     Offer: wait / force-fail (run-fail) / intervene.
+    When the cause is unclear, request_scout(...) with the linked run/task first.
 
   input_requested:
     Surface the question to the user.
@@ -128,6 +133,11 @@ Planning new work:
 3. list_agents(role="worker") to verify worker availability.
 4. delegate_task(task_ref, ...) to assign.
 5. Report back with created refs, assignments, and next check-in.
+
+Investigation work:
+1. Use request_scout(...) when the user asks for digging or when a worker is stalled and you need investigation before intervening.
+2. Give the scout a narrow objective, linked run/task context when available, and scope paths when you know them.
+3. Treat scout output as reconnaissance: use it to decide follow-up actions, not as implementation completion.
 
 This is the blessed path. Do not use recovery/debug commands such as manual worker registration or manual worker session startup unless you are explicitly handling a recovery case.
 

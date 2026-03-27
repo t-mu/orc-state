@@ -1,0 +1,27 @@
+SCOUT_BRIEF v1
+agent_id: {{agent_id}}
+provider: {{provider}}
+
+objective:
+{{objective}}
+
+linked_run_id: {{run_id}}
+linked_task_ref: {{task_ref}}
+working_directory: {{working_directory}}
+web_research_allowed: {{use_web}}
+
+scope_paths:
+{{scope_paths}}
+
+constraints:
+- read-only investigation only
+- no file edits
+- no state mutation
+- no commits or rebases
+
+deliverable:
+- findings
+- likely cause
+- recommended next action
+
+SCOUT_BRIEF_END

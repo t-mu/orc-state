@@ -10,6 +10,7 @@ import {
   listCoordinatorAgents,
   removeAgent,
   reconcileManagedWorkerSlots,
+  nextAvailableScoutId,
   nextAvailableWorkerId,
 } from './agentRegistry.ts';
 
@@ -113,6 +114,11 @@ describe('registerAgent', () => {
     registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
     registerAgent(dir, { agent_id: 'agent-02', provider: 'codex' });
     expect(listAgents(dir)).toHaveLength(2);
+  });
+
+  it('accepts scout as a supported role', () => {
+    registerAgent(dir, { agent_id: 'scout-1', provider: 'codex', role: 'scout' });
+    expect(getAgent(dir, 'scout-1')?.role).toBe('scout');
   });
 });
 
@@ -272,5 +278,17 @@ describe('nextAvailableWorkerId', () => {
     registerAgent(dir, { agent_id: 'alice', provider: 'codex', role: 'worker' });
     registerAgent(dir, { agent_id: 'orc-2', provider: 'gemini', role: 'worker' });
     expect(nextAvailableWorkerId(dir)).toBe('orc-1');
+  });
+});
+
+describe('nextAvailableScoutId', () => {
+  it('returns scout-1 when no scouts exist', () => {
+    expect(nextAvailableScoutId(dir)).toBe('scout-1');
+  });
+
+  it('fills the smallest missing scout slot', () => {
+    registerAgent(dir, { agent_id: 'scout-1', provider: 'codex', role: 'scout' });
+    registerAgent(dir, { agent_id: 'scout-3', provider: 'claude', role: 'scout' });
+    expect(nextAvailableScoutId(dir)).toBe('scout-2');
   });
 });

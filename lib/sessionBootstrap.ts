@@ -2,6 +2,7 @@ import { renderTemplate } from './templateRender.ts';
 import { isSupportedProvider, type ProviderName } from './providers.ts';
 
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
+const SCOUT_BOOTSTRAP_TEMPLATE = 'scout-bootstrap-v1.txt';
 
 const MASTER_BOOTSTRAP_TEMPLATES: Record<ProviderName, string> = {
   claude: 'master-bootstrap-v1.txt',
@@ -30,6 +31,13 @@ export function getWorkerBootstrap(provider: string, agentId: string = 'worker')
   return renderBootstrap(WORKER_BOOTSTRAP_TEMPLATE, resolvedProvider, agentId);
 }
 
+export function getScoutBootstrap(provider: string): string;
+export function getScoutBootstrap(provider: string, agentId: string): string;
+export function getScoutBootstrap(provider: string, agentId: string = 'scout'): string {
+  const resolvedProvider = assertProvider(provider);
+  return renderBootstrap(SCOUT_BOOTSTRAP_TEMPLATE, resolvedProvider, agentId);
+}
+
 export function getMasterBootstrap(provider: string): string;
 export function getMasterBootstrap(provider: string, agentId: string): string;
 export function getMasterBootstrap(provider: string, agentId: string = 'master'): string {
@@ -43,7 +51,7 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
  * the task-scoped worker bootstrap contract.
  */
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string {
-  return role === 'master'
-    ? getMasterBootstrap(provider, agentId)
-    : getWorkerBootstrap(provider, agentId);
+  if (role === 'master') return getMasterBootstrap(provider, agentId);
+  if (role === 'scout') return getScoutBootstrap(provider, agentId);
+  return getWorkerBootstrap(provider, agentId);
 }

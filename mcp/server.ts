@@ -100,6 +100,8 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleDelegateTask(stateDir, args);
     case 'cancel_task':
       return handlers.handleCancelTask(stateDir, args);
+    case 'request_scout':
+      return handlers.handleRequestScout(stateDir, args);
     case 'respond_input':
       return handlers.handleRespondInput(stateDir, args);
     case 'get_run':
@@ -135,7 +137,7 @@ export function readResource(stateDir: string, uri: string) {
 
 server.setRequestHandler(ListToolsRequestSchema, () => Promise.resolve({ tools: TOOLS }));
 
-server.setRequestHandler(CallToolRequestSchema, (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
   const validation = validateToolArguments(name, args);
   if (!validation.ok) {
@@ -143,11 +145,12 @@ server.setRequestHandler(CallToolRequestSchema, (request) => {
   }
 
   try {
-    return Promise.resolve(asToolResult(invokeTool(STATE_DIR, name, args)));
+    const payload = await invokeTool(STATE_DIR, name, args);
+    return asToolResult(payload);
   } catch (err) {
     if (err instanceof McpError) throw err;
     if (isExpectedToolError(err)) {
-      return Promise.resolve(asToolError((err as Error).message));
+      return asToolError((err as Error).message);
     }
     throw new McpError(ErrorCode.InternalError, 'Internal MCP tool execution failure');
   }

@@ -46,6 +46,7 @@ describe('orchestrator mcp server foundation', () => {
     expect(names).toContain('update_task');
     expect(names).toContain('delegate_task');
     expect(names).toContain('cancel_task');
+    expect(names).toContain('request_scout');
     expect(names).toContain('respond_input');
   });
 
@@ -82,7 +83,9 @@ describe('orchestrator mcp server foundation', () => {
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', owner: 'orc-1' }).ok).toBe(false);
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Bad', priority: 'urgent' }).ok).toBe(false);
     expect(validateToolArguments('list_agents', { include_dead: true }).ok).toBe(true);
+    expect(validateToolArguments('list_agents', { role: 'scout' }).ok).toBe(true);
     expect(validateToolArguments('get_status', { include_done_count: true }).ok).toBe(true);
+    expect(validateToolArguments('request_scout', { objective: 'Inspect stalled run' }).ok).toBe(true);
     expect(validateToolArguments('get_agent_workview', { agent_id: 'master' }).ok).toBe(true);
     expect(validateToolArguments('cancel_task', { task_ref: 'project/task-1' }).ok).toBe(true);
     expect(validateToolArguments('respond_input', { run_id: 'run-1', agent_id: 'orc-1', response: 'yes' }).ok).toBe(true);

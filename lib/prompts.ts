@@ -70,6 +70,7 @@ export async function promptRole(existing: string | null): Promise<string | null
     choices: [
       { value: 'worker',   name: 'Worker',   description: 'executes tasks'      },
       { value: 'reviewer', name: 'Reviewer', description: 'reviews output'      },
+      { value: 'scout',    name: 'Scout',    description: 'investigates read-only' },
       { value: 'master',   name: 'Master',   description: 'delegates and plans' },
     ],
   }).catch(onCancel);
@@ -80,10 +81,11 @@ export async function promptWorkerRole(existing: string | null): Promise<string 
   if (!isInteractive()) return null;
   const { select } = await getPromptModule();
   return select({
-    message: 'Select worker role',
+    message: 'Select non-master role',
     choices: [
       { value: 'worker',   name: 'Worker',   description: 'executes delegated tasks' },
       { value: 'reviewer', name: 'Reviewer', description: 'reviews worker output' },
+      { value: 'scout',    name: 'Scout',    description: 'investigates code, logs, and runs' },
     ],
   }).catch(onCancel);
 }

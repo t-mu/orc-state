@@ -26,7 +26,7 @@ export const TOOLS = [
       properties: {
         role: {
           type: 'string',
-          enum: ['worker', 'reviewer', 'master'],
+          enum: ['worker', 'reviewer', 'master', 'scout'],
           description: 'Filter by agent role',
         },
         include_dead: {
@@ -221,6 +221,43 @@ export const TOOLS = [
         actor_id: {
           type: 'string',
           description: 'Defaults to master agent_id',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'request_scout',
+    description: 'Launch an on-demand investigation-only scout session. Scouts inspect code, logs, git history, runtime state, and optionally the web, then report findings without editing files or mutating orchestrator state.',
+    inputSchema: {
+      type: 'object',
+      required: ['objective'],
+      properties: {
+        objective: {
+          type: 'string',
+          description: 'Investigation brief for the scout',
+        },
+        provider: {
+          type: 'string',
+          enum: ['codex', 'claude', 'gemini'],
+          description: 'Provider for the scout session. Defaults to the requesting master provider.',
+        },
+        run_id: {
+          type: 'string',
+          description: 'Optional linked run id to investigate',
+        },
+        task_ref: {
+          type: 'string',
+          description: 'Optional linked task ref to investigate',
+        },
+        scope_paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional file or directory paths the scout should prioritize',
+        },
+        use_web: {
+          type: 'boolean',
+          description: 'Whether the scout may use web research if the provider/session supports it',
         },
       },
       additionalProperties: false,
