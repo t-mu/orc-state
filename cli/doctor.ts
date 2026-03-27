@@ -9,6 +9,7 @@ import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/
 import { readAgents, readClaims } from '../lib/stateReader.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
+import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { validateBacklogSync } from './backlog-sync-check.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
@@ -67,11 +68,12 @@ for (const claim of claims) {
   }
 
   const anchor = claim.state === 'claimed'
-    ? claim.claimed_at
+    ? claimedRunStartupAnchor(claim)
     : (claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at);
   const idleMs = anchor ? nowMs - new Date(anchor).getTime() : NaN;
   if (Number.isNaN(idleMs)) continue;
   if (claim.input_state === 'awaiting_input') continue;
+  if (claim.state === 'claimed' && !claim.task_envelope_sent_at) continue;
 
   const isStale = claim.state === 'claimed'
     ? idleMs >= staleStartThresholdMs

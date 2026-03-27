@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { listCoordinatorAgents } from './agentRegistry.ts';
 import { readEvents, readRecentEvents } from './eventLog.ts';
-import { latestRunActivityDetailMap, latestRunPhaseMap } from './runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap } from './runActivity.ts';
 import { loadWorkerPoolConfig } from './providers.ts';
 import { readJson } from './stateReader.ts';
 import type { Agent } from '../types/agents.ts';
@@ -181,17 +181,21 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   const nowMs = Date.now();
 
   const activeClaimsWithMetrics = activeClaims.map((claim) => {
-    const claimedAtMs = claim.claimed_at ? new Date(claim.claimed_at).getTime() : NaN;
+    const startupAnchor = claimedRunStartupAnchor(claim);
+    const ageAnchor = claim.state === 'claimed'
+      ? startupAnchor
+      : (claim.started_at ?? claim.task_envelope_sent_at ?? claim.claimed_at ?? null);
+    const ageMs = ageAnchor ? new Date(ageAnchor).getTime() : NaN;
     const activity = runActivity.get(claim.run_id) ?? null;
     const idleAnchor = activity?.ts
       ?? claim.last_heartbeat_at
       ?? claim.started_at
-      ?? claim.claimed_at
+      ?? (claim.state === 'claimed' ? startupAnchor : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null))
       ?? null;
     const idleMs = idleAnchor ? nowMs - new Date(idleAnchor).getTime() : NaN;
     return {
       ...claim,
-      age_seconds: Number.isNaN(claimedAtMs) ? null : Math.max(0, Math.round((nowMs - claimedAtMs) / 1000)),
+      age_seconds: Number.isNaN(ageMs) ? null : Math.max(0, Math.round((nowMs - ageMs) / 1000)),
       idle_seconds: Number.isNaN(idleMs) ? null : Math.max(0, Math.round(idleMs / 1000)),
       last_activity_at: activity?.ts ?? null,
       last_activity_event: activity?.event ?? null,

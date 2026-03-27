@@ -275,13 +275,14 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(slot?.session_handle).toBe('pty:orc-1');
 
     const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
-    expect(claims[0]?.state).toBe('in_progress');
+    expect(claims[0]?.state).toBe('claimed');
+    expect(claims[0]?.task_envelope_sent_at).toBeTruthy();
     expect(claims[0]?.session_start_retry_count).toBe(0);
     expect(claims[0]?.session_start_retry_next_at).toBeNull();
     expect(claims[0]?.session_start_last_error).toBeNull();
 
     const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
-    expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+    expect(backlog.features[0].tasks[0].status).toBe('claimed');
 
     expect(readEvents(dir).some((event) => event.event === 'session_start_failed')).toBe(false);
     expect(mockStart).toHaveBeenCalledTimes(3);
@@ -364,7 +365,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
       ({ readJson } = await import('./lib/stateReader.ts'));
       ({ claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }));
-      expect(claims[0]?.state).toBe('in_progress');
+      expect(claims[0]?.state).toBe('claimed');
+      expect(claims[0]?.task_envelope_sent_at).toBeTruthy();
       expect(claims[0]?.session_start_retry_count).toBe(0);
       expect(claims[0]?.session_start_last_error).toBeNull();
       expect(mockStart).toHaveBeenCalledTimes(3);
@@ -613,7 +615,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(agent.session_handle).toBe('pty:worker-01-new');
   });
 
-  it('auto-acks run_started after successful TASK_START injection', async () => {
+  it('records TASK_START delivery without auto-acking run_started', async () => {
     seedState(dir, {
       agents: [{
         agent_id: 'worker-01',
@@ -654,18 +656,136 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const { readJson } = await import('./lib/stateReader.ts');
     const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
-    expect(claims[0]?.state).toBe('in_progress');
-    expect(claims[0]?.started_at).toBeTruthy();
+    expect(claims[0]?.state).toBe('claimed');
+    expect(claims[0]?.task_envelope_sent_at).toBeTruthy();
+    expect(claims[0]?.started_at).toBeNull();
 
     const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
-    expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+    expect(backlog.features[0].tasks[0].status).toBe('claimed');
 
     const events = readEvents(dir);
-    const runStarted = events.find((e) => e.event === 'run_started');
-    expect(runStarted).toBeTruthy();
-    expect(runStarted!.actor_type).toBe('coordinator');
-    expect(runStarted!.actor_id).toBe('coordinator');
-    expect(runStarted!.agent_id).toBe('worker-01');
+    const envelopeSent = events.find((e) => e.event === 'task_envelope_sent');
+    expect(envelopeSent).toBeTruthy();
+    expect(envelopeSent!.actor_type).toBe('coordinator');
+    expect(envelopeSent!.actor_id).toBe('coordinator');
+    expect(envelopeSent!.agent_id).toBe('worker-01');
+    expect(events.find((e) => e.event === 'run_started')).toBeFalsy();
+  });
+
+  it('does not nudge or timeout a claimed run before TASK_START delivery is recorded', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-awaiting-delivery',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'claimed',
+        claimed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        task_envelope_sent_at: null,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send,
+        stop: vi.fn(),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(send).not.toHaveBeenCalled();
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-awaiting-delivery')!;
+    expect(claim.state).toBe('claimed');
+    expect(claim.finished_at).toBeFalsy();
+  });
+
+  it('starts missing-run_started nudges from task_envelope_sent_at instead of claimed_at', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-recent-delivery',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'claimed',
+        claimed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        task_envelope_sent_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send,
+        stop: vi.fn(),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(send).not.toHaveBeenCalled();
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-recent-delivery')!;
+    expect(claim.state).toBe('claimed');
+    expect(claim.finished_at).toBeFalsy();
   });
 
   it('does not nudge or timeout an in-progress run while awaiting master input', async () => {

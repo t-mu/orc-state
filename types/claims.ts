@@ -16,6 +16,7 @@ export interface Claim {
   state: ClaimState;
   claimed_at: string;
   lease_expires_at: string;
+  task_envelope_sent_at?: string | null;
   last_heartbeat_at?: string | null;
   started_at?: string | null;
   finished_at?: string | null;

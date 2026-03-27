@@ -29,6 +29,7 @@
         "claim_renewed",
         "claim_expired",
         "claim_released",
+        "task_envelope_sent",
         "run_started",
         "review_submitted",
         "work_complete",

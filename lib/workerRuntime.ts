@@ -2,9 +2,32 @@ import { updateAgentRuntime } from './agentRegistry.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
+import { delimiter, join } from 'node:path';
+import { existsSync } from 'node:fs';
 
 function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
   Object.assign(agent, updates);
+}
+
+function withPrependedPath(pathValue: string | undefined, entry: string): string {
+  const segments = (pathValue ?? '').split(delimiter).filter(Boolean);
+  if (segments.includes(entry)) return pathValue ?? entry;
+  return [entry, ...segments].join(delimiter);
+}
+
+export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string | null = null): Record<string, string> {
+  const env = { ...baseEnv } as Record<string, string>;
+  const home = env.HOME ?? process.env.HOME ?? '';
+  const npmGlobalBin = home ? join(home, '.npm-global', 'bin') : '';
+  if (npmGlobalBin && existsSync(npmGlobalBin)) {
+    env.PATH = withPrependedPath(env.PATH ?? process.env.PATH ?? '', npmGlobalBin);
+  } else if (env.PATH == null && process.env.PATH) {
+    env.PATH = process.env.PATH;
+  }
+  if (repoRoot) {
+    env.ORC_REPO_ROOT = repoRoot;
+  }
+  return env;
 }
 
 function emitSessionStartFailed(
@@ -106,10 +129,9 @@ export async function launchWorkerSession(
       system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker'),
       model: agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
-      env: {
+      env: normalizeWorkerEnv({
         ORCH_STATE_DIR: stateDir,
-        ...(repoRoot ? { ORC_REPO_ROOT: repoRoot } : {}),
-      },
+      }, repoRoot),
     });
     const updates: Partial<Agent> = {
       status: 'running',

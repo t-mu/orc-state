@@ -92,6 +92,14 @@ export interface RunStartedEvent extends BaseEvent {
   payload?: Record<string, unknown>;
 }
 
+export interface TaskEnvelopeSentEvent extends BaseEvent {
+  event: 'task_envelope_sent';
+  run_id: string;
+  task_ref: string;
+  agent_id: string;
+  payload?: Record<string, unknown>;
+}
+
 export interface WorkCompleteEvent extends BaseEvent {
   event: 'work_complete';
   run_id: string;
@@ -302,6 +310,7 @@ export type OrcEvent =
   | ClaimRenewedEvent
   | ClaimExpiredEvent
   | ClaimReleasedEvent
+  | TaskEnvelopeSentEvent
   | RunStartedEvent
   | WorkCompleteEvent
   | FinalizeRebaseStartedEvent

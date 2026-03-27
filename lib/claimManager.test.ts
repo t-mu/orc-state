@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { queryEvents } from './eventLog.ts';
 import {
   claimTask,
+  markTaskEnvelopeSent,
   startRun,
   heartbeat,
   finishRun,
@@ -189,6 +190,42 @@ describe('startRun', () => {
     expect(ev!.actor_type).toBe('coordinator');
     expect(ev!.actor_id).toBe('coordinator');
     expect(ev!.agent_id).toBe('agent-01');
+  });
+});
+
+describe('markTaskEnvelopeSent', () => {
+  it('records envelope delivery while leaving the claim in claimed state', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+
+    markTaskEnvelopeSent(dir, run_id, 'agent-01');
+
+    const claim = readClaims(dir).claims.find(c => c.run_id === run_id);
+    expect(claim!.state).toBe('claimed');
+    expect(claim!.task_envelope_sent_at).toBeTruthy();
+    expect(claim!.started_at).toBeNull();
+
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.status).toBe('claimed');
+
+    const ev = readEvents(dir).find(e => e.event === 'task_envelope_sent');
+    expect(ev).toBeTruthy();
+    expect(ev!.run_id).toBe(run_id);
+  });
+
+  it('is idempotent for duplicate delivery records', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+
+    markTaskEnvelopeSent(dir, run_id, 'agent-01');
+    const claimBefore = readClaims(dir).claims.find(c => c.run_id === run_id)!;
+    const eventsBefore = readEvents(dir);
+
+    expect(() => markTaskEnvelopeSent(dir, run_id, 'agent-01')).not.toThrow();
+
+    const claimAfter = readClaims(dir).claims.find(c => c.run_id === run_id)!;
+    expect(claimAfter.task_envelope_sent_at).toBe(claimBefore.task_envelope_sent_at);
+    expect(readEvents(dir)).toHaveLength(eventsBefore.length);
   });
 });
 

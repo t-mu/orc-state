@@ -1,6 +1,7 @@
 import type { OrcEvent } from '../types/events.ts';
 
 const RUN_ACTIVITY_EVENTS = new Set([
+  'task_envelope_sent',
   'run_started',
   'heartbeat',
   'work_complete',
@@ -18,6 +19,12 @@ export interface RunActivityDetail {
   ts: string;
   event: string;
   source: string;
+}
+
+export function claimedRunStartupAnchor(
+  claim: { task_envelope_sent_at?: string | null; claimed_at?: string | null } | null | undefined,
+): string | null {
+  return claim?.task_envelope_sent_at ?? null;
 }
 
 /**
@@ -83,14 +90,19 @@ export function latestRunPhaseMap(events: OrcEvent[] | null | undefined): Map<st
  * Return idle milliseconds for a run claim using newest known activity point.
  */
 export function runIdleMs(
-  claim: { last_heartbeat_at?: string | null; started_at?: string | null; claimed_at?: string | null } | null | undefined,
+  claim: {
+    last_heartbeat_at?: string | null;
+    started_at?: string | null;
+    task_envelope_sent_at?: string | null;
+    claimed_at?: string | null;
+  } | null | undefined,
   latestActivityTs: string | null | undefined,
   nowMs: number = Date.now(),
 ): number | null {
   const anchor = latestActivityTs
     ?? claim?.last_heartbeat_at
     ?? claim?.started_at
-    ?? claim?.claimed_at
+    ?? claimedRunStartupAnchor(claim)
     ?? null;
   if (!anchor) return null;
   const ts = new Date(anchor).getTime();

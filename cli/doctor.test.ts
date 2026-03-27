@@ -28,6 +28,7 @@ describe('cli/doctor.ts', () => {
         agent_id: 'bob',
         state: 'claimed',
         claimed_at: '2026-01-01T00:00:00Z',
+        task_envelope_sent_at: '2026-01-01T00:00:01Z',
         lease_expires_at: '2099-01-01T00:00:00Z',
       }],
     });
@@ -35,6 +36,24 @@ describe('cli/doctor.ts', () => {
     const json = JSON.parse(result.stdout);
     expect(json.checks.staleActiveClaims.length).toBe(1);
     expect(json.checks.staleActiveClaims[0].hint).toContain('Check coordinator logs');
+  });
+
+  it('does not flag claimed runs as stale before task envelope delivery', () => {
+    seedState({
+      agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+      claims: [{
+        run_id: 'run-1',
+        task_ref: 'docs/task-1',
+        agent_id: 'bob',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00Z',
+        task_envelope_sent_at: null,
+        lease_expires_at: '2099-01-01T00:00:00Z',
+      }],
+    });
+    const result = runCli(['--json', '--stale-start-ms=1']);
+    const json = JSON.parse(result.stdout);
+    expect(json.checks.staleActiveClaims.length).toBe(0);
   });
 
   it('reports orphaned active claims', () => {

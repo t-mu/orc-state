@@ -34,6 +34,18 @@ describe('validateEventObject', () => {
     expect(errors).toContain('agent_id is required and must be a valid agent_id');
   });
 
+  it('accepts task_envelope_sent with run_id, task_ref, and agent_id', () => {
+    const errors = validateEventObject(base('task_envelope_sent', {
+      actor_type: 'coordinator',
+      actor_id: 'coordinator',
+      run_id: 'run-1',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+      payload: {},
+    }));
+    expect(errors).toEqual([]);
+  });
+
   it('accepts work_complete with run_id, task_ref, and agent_id', () => {
     const errors = validateEventObject(base('work_complete', {
       run_id: 'run-1',
