@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { buildNodeArgs } from './orc.ts';
+import { join } from 'node:path';
+import { buildNodeArgs, isMainModule } from './orc.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 
@@ -51,5 +54,27 @@ describe('cli/orc.ts', () => {
       '/tmp/status.ts',
       '--json',
     ]);
+  });
+
+  it('treats symlinked entrypoints as the main module', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'orc-main-'));
+    const symlinkPath = join(tempDir, 'orc.ts');
+    symlinkSync(resolve(repoRoot, 'cli/orc.ts'), symlinkPath);
+
+    expect(isMainModule(symlinkPath, new URL('./orc.ts', import.meta.url).href)).toBe(true);
+  });
+
+  it('prints help when invoked through a symlinked path', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'orc-cli-'));
+    const symlinkPath = join(tempDir, 'orc.ts');
+    symlinkSync(resolve(repoRoot, 'cli/orc.ts'), symlinkPath);
+
+    const result = spawnSync('node', ['--experimental-strip-types', symlinkPath, '--help'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Usage: orc <subcommand> [args...]');
   });
 });

@@ -10,7 +10,9 @@
  *   orc watch
  */
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { resolve }   from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const COMMANDS: Record<string, string> = {
   'start-session':      'start-session.ts',
@@ -148,6 +150,18 @@ export function main(argv: string[]): number {
   return result.status ?? 1;
 }
 
-if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+export function isMainModule(argvEntry: string | undefined, moduleUrl: string): boolean {
+  if (!argvEntry) {
+    return false;
+  }
+
+  try {
+    return realpathSync(argvEntry) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(process.argv[1], import.meta.url)) {
   process.exit(main(process.argv.slice(2)));
 }
