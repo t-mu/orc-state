@@ -21,7 +21,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
@@ -255,14 +255,10 @@ async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, wo
       envelope,
     );
     log(`dispatched ${taskRef} to ${agent.agent_id}`);
-    try {
-      startRun(STATE_DIR, runId, agent.agent_id, {
-        actorType: 'coordinator',
-        actorId: 'coordinator',
-      });
-    } catch {
-      // Worker already called orc run-start before us — idempotent, safe to ignore
-    }
+    markTaskEnvelopeSent(STATE_DIR, runId, agent.agent_id, {
+      actorType: 'coordinator',
+      actorId: 'coordinator',
+    });
     return true;
   } catch (err) {
     finishRun(STATE_DIR, runId, agent.agent_id, {
@@ -680,7 +676,13 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
       continue;
     }
 
-    const ageMs = nowMs - new Date(claim.claimed_at).getTime();
+    const envelopeAnchor = claim.task_envelope_sent_at ?? null;
+    if (!envelopeAnchor) {
+      runStartNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+
+    const ageMs = nowMs - new Date(envelopeAnchor).getTime();
     if (Number.isNaN(ageMs)) continue;
 
     if (ageMs >= RUN_START_TIMEOUT_MS) {

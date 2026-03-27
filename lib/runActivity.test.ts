@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs } from './runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs } from './runActivity.ts';
 import type { OrcEvent } from '../types/index.ts';
 
 describe('latestRunActivityMap', () => {
@@ -9,11 +9,12 @@ describe('latestRunActivityMap', () => {
       { run_id: 'run-1', event: 'phase_started', ts: '2026-01-01T00:01:00Z' },
       { run_id: 'run-1', event: 'work_complete', ts: '2026-01-01T00:02:00Z' },
       { run_id: 'run-2', event: 'run_started', ts: '2026-01-01T00:03:00Z' },
+      { run_id: 'run-2', event: 'task_envelope_sent', ts: '2026-01-01T00:03:30Z' },
       { run_id: 'run-1', event: 'coordinator_started', ts: '2026-01-01T00:04:00Z' }, // ignored
     ];
     const map = latestRunActivityMap(events as OrcEvent[]);
     expect(map.get('run-1')).toBe('2026-01-01T00:02:00Z');
-    expect(map.get('run-2')).toBe('2026-01-01T00:03:00Z');
+    expect(map.get('run-2')).toBe('2026-01-01T00:03:30Z');
   });
 });
 
@@ -73,6 +74,16 @@ describe('latestRunPhaseMap', () => {
 });
 
 describe('runIdleMs', () => {
+  it('uses task_envelope_sent_at before claimed_at for claimed runs', () => {
+    const now = new Date('2026-01-01T00:10:00Z').getTime();
+    const claim = {
+      task_envelope_sent_at: '2026-01-01T00:08:30Z',
+      claimed_at: '2026-01-01T00:01:00Z',
+    };
+    const idle = runIdleMs(claim, null, now);
+    expect(idle).toBe(90 * 1000);
+  });
+
   it('uses latest activity when provided', () => {
     const now = new Date('2026-01-01T00:10:00Z').getTime();
     const claim = { started_at: '2026-01-01T00:00:00Z' };
@@ -85,5 +96,21 @@ describe('runIdleMs', () => {
     const claim = { started_at: '2026-01-01T00:06:00Z', claimed_at: '2026-01-01T00:05:00Z' };
     const idle = runIdleMs(claim, null, now);
     expect(idle).toBe(4 * 60 * 1000);
+  });
+});
+
+describe('claimedRunStartupAnchor', () => {
+  it('prefers task_envelope_sent_at when present', () => {
+    expect(claimedRunStartupAnchor({
+      task_envelope_sent_at: '2026-01-01T00:02:00Z',
+      claimed_at: '2026-01-01T00:01:00Z',
+    })).toBe('2026-01-01T00:02:00Z');
+  });
+
+  it('returns null when task_envelope_sent_at is missing', () => {
+    expect(claimedRunStartupAnchor({
+      task_envelope_sent_at: null,
+      claimed_at: '2026-01-01T00:01:00Z',
+    })).toBeNull();
   });
 });

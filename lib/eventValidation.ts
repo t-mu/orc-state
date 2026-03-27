@@ -61,6 +61,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'claim_renewed',
     'claim_expired',
     'claim_released',
+    'task_envelope_sent',
     'run_started',
     'work_complete',
     'finalize_rebase_started',
@@ -96,6 +97,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
 
   if (eventName && new Set([
     'claim_created',
+    'task_envelope_sent',
     'run_started',
     'work_complete',
     'finalize_rebase_started',

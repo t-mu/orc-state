@@ -39,6 +39,23 @@ function readEvents(): Array<Record<string, unknown>> {
   return queryEvents(dir, {}) as unknown as Array<any>;
 }
 
+async function appendEventWithRetry(event: Parameters<typeof appendSequencedEvent>[1], attempts = 5) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      appendSequencedEvent(dir, event);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof Error) || !error.message.includes('UNIQUE constraint failed: events.seq')) {
+        throw error;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+    }
+  }
+  throw lastError;
+}
+
 function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
@@ -207,8 +224,8 @@ describe('orc-run-start', () => {
   });
 
   it('exits 0 without emitting a duplicate event when claim is already in_progress', () => {
-    // If the coordinator already auto-acked the run (claim is in_progress),
-    // orc run-start must exit 0 silently without appending a duplicate event.
+    // Duplicate worker acknowledgements must remain harmless once the run has
+    // already transitioned to in_progress.
     seedInProgressRun({ runId: 'run-dup-start', agentId: 'worker-01' });
     const eventsBefore = readEvents();
 
@@ -648,7 +665,7 @@ describe('orc-run-input-request', () => {
     }
 
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
-    appendSequencedEvent(dir, {
+    await appendEventWithRetry({
       ts: new Date().toISOString(),
       event: 'input_response',
       actor_type: 'human',

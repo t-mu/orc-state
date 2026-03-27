@@ -6,7 +6,7 @@
 import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readEvents } from '../lib/eventLog.ts';
-import { latestRunActivityDetailMap } from '../lib/runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityDetailMap } from '../lib/runActivity.ts';
 import { flag } from '../lib/args.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import type { RunActivityDetail } from '../lib/runActivity.ts';
@@ -21,9 +21,14 @@ const { runActivity, eventReadError } = readRunActivity();
 const active = claims.filter((c) => ['claimed', 'in_progress'].includes(c.state));
 
 const rows = active.map((c) => {
-  const ageMs = c.claimed_at ? now - new Date(c.claimed_at).getTime() : null;
+  const startupAnchor = claimedRunStartupAnchor(c);
+  const ageAnchor = c.state === 'claimed' ? startupAnchor : (c.started_at ?? c.task_envelope_sent_at ?? c.claimed_at ?? null);
+  const ageMs = ageAnchor ? now - new Date(ageAnchor).getTime() : null;
   const activity = runActivity.get(c.run_id) ?? null;
-  const idleAnchor = activity?.ts ?? c.last_heartbeat_at ?? c.started_at ?? c.claimed_at ?? null;
+  const idleAnchor = activity?.ts
+    ?? c.last_heartbeat_at
+    ?? c.started_at
+    ?? (c.state === 'claimed' ? startupAnchor : (c.task_envelope_sent_at ?? c.claimed_at ?? null));
   const idleMs = idleAnchor ? now - new Date(idleAnchor).getTime() : null;
   return {
     run_id: c.run_id,

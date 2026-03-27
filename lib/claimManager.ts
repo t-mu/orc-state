@@ -71,6 +71,7 @@ export function claimTask(
     claims.claims.push({
       run_id, task_ref: taskRef, agent_id: agentId,
       state: 'claimed', claimed_at: now.toISOString(), lease_expires_at,
+      task_envelope_sent_at: null,
       last_heartbeat_at: null, started_at: null, finished_at: null,
       finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
       input_state: null, input_requested_at: null,
@@ -135,6 +136,52 @@ export function startRun(
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
       });
     }
+  });
+}
+
+export function markTaskEnvelopeSent(
+  stateDir: string,
+  runId: string,
+  agentId: string,
+  {
+    emitEvent = true,
+    at = new Date().toISOString(),
+    actorType = 'coordinator' as ActorType,
+    actorId = 'coordinator',
+  }: { emitEvent?: boolean; at?: string; actorType?: ActorType; actorId?: string } = {},
+): Claim {
+  return withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
+    if (!claim) throw new Error(`Claim not found: ${runId}`);
+    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
+    if (!['claimed', 'in_progress'].includes(claim.state)) {
+      throw new Error(`Claim ${runId} cannot record envelope delivery from state '${claim.state}'`);
+    }
+    if (!Number.isFinite(new Date(at).getTime())) {
+      throw new Error(`Invalid task envelope timestamp: ${at}`);
+    }
+    if (claim.task_envelope_sent_at) {
+      return claim;
+    }
+
+    claim.task_envelope_sent_at = at;
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+
+    if (emitEvent) {
+      emit(stateDir, {
+        ts: at,
+        event: 'task_envelope_sent',
+        actor_type: actorType,
+        actor_id: actorId,
+        run_id: runId,
+        task_ref: claim.task_ref,
+        agent_id: agentId,
+        payload: {},
+      });
+    }
+
+    return claim;
   });
 }
 

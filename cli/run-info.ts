@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims, readBacklog, findTask } from '../lib/stateReader.ts';
+import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 
 const asJson = process.argv.includes('--json');
 const runId = process.argv.slice(2).find((a) => !a.startsWith('-'));
@@ -46,7 +47,9 @@ if (existsSync(runWorktreesPath)) {
 
 // Compute idle
 const now = Date.now();
-const idleAnchor = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at ?? null;
+const idleAnchor = claim.last_heartbeat_at
+  ?? claim.started_at
+  ?? (claim.state === 'claimed' ? claimedRunStartupAnchor(claim) : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null));
 const idleSec = idleAnchor ? Math.round((now - new Date(idleAnchor).getTime()) / 1000) : null;
 
 if (asJson) {
@@ -58,6 +61,7 @@ console.log(`Run: ${claim.run_id}`);
 console.log(`  task:        ${claim.task_ref}${taskTitle ? ` — ${taskTitle}` : ''}`);
 console.log(`  agent:       ${claim.agent_id}`);
 console.log(`  state:       ${claim.state}`);
+console.log(`  envelope:    ${claim.task_envelope_sent_at ?? 'not yet'}`);
 console.log(`  started:     ${claim.started_at ?? 'not yet'}`);
 console.log(`  idle:        ${idleSec ?? '?'}s`);
 console.log(`  worktree:    ${worktreePath ?? 'none'}`);

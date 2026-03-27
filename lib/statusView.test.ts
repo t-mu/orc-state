@@ -172,6 +172,45 @@ describe('buildStatus', () => {
     expect(s.claims.active[0].last_activity_event).toBe('phase_started');
   });
 
+  it('anchors claimed run age on task_envelope_sent_at when present', () => {
+    const now = new Date();
+    writeState({
+      claims: [{
+        run_id: 'run-claimed',
+        task_ref: 'a/1',
+        agent_id: 'agent-01',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00Z',
+        task_envelope_sent_at: new Date(now.getTime() - 20_000).toISOString(),
+        lease_expires_at: new Date(now.getTime() + 60_000).toISOString(),
+      }],
+    });
+    writeEvents([]);
+    const s = buildStatus(dir) as unknown as StatusResult;
+    expect((s.claims.active[0].age_seconds as number)).toBeLessThan(60);
+    expect((s.claims.active[0].idle_seconds as number)).toBeLessThan(60);
+  });
+
+  it('does not mark pre-delivery claimed runs as aged or stalled', () => {
+    writeState({
+      claims: [{
+        run_id: 'run-awaiting-delivery',
+        task_ref: 'a/1',
+        agent_id: 'agent-01',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00Z',
+        task_envelope_sent_at: null,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+    writeEvents([]);
+    const s = buildStatus(dir) as unknown as StatusResult;
+    expect(s.claims.active[0].age_seconds).toBeNull();
+    expect(s.claims.active[0].idle_seconds).toBeNull();
+    expect(s.claims.active[0].stalled).toBe(false);
+    expect(s.claims.stalled).toBe(0);
+  });
+
   it('includes current_phase from phase_started events', () => {
     const now = new Date();
     writeState({

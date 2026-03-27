@@ -54,6 +54,11 @@
           "format": "date-time",
           "description": "Absolute expiry timestamp. Coordinator auto-requeues or marks blocked after this passes."
         },
+        "task_envelope_sent_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp when the coordinator successfully delivered TASK_START into the worker PTY session."
+        },
         "last_heartbeat_at": {
           "type": ["string", "null"],
           "format": "date-time",

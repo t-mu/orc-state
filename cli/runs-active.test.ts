@@ -55,6 +55,49 @@ describe('cli/runs-active.ts', () => {
     // Corrupted rows are skipped — no error reported
     expect(json.event_read_error).toBeNull();
   });
+
+  it('anchors claimed run age and idle on task_envelope_sent_at when present', () => {
+    const now = new Date();
+    const recentEnvelopeTs = new Date(now.getTime() - 5_000).toISOString();
+    seedState({
+      claims: [{
+        run_id: 'run-1',
+        task_ref: 'docs/task-1',
+        agent_id: 'bob',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00Z',
+        task_envelope_sent_at: recentEnvelopeTs,
+        lease_expires_at: '2099-01-01T00:00:00Z',
+      }],
+      eventsRaw: `${JSON.stringify({ seq: 1, ts: recentEnvelopeTs, event: 'task_envelope_sent', actor_type: 'coordinator', actor_id: 'coordinator', agent_id: 'bob', run_id: 'run-1', payload: { source: 'dispatch' } })}\n`,
+    });
+    const result = runCli(['--json']);
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout);
+    expect(json.runs[0].age_seconds).toBeLessThan(30);
+    expect(json.runs[0].idle_seconds).toBeLessThan(30);
+    expect(json.runs[0].awaiting_run_started).toBe(true);
+  });
+
+  it('leaves age and idle unknown for claimed runs before task envelope delivery', () => {
+    seedState({
+      claims: [{
+        run_id: 'run-1',
+        task_ref: 'docs/task-1',
+        agent_id: 'bob',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00Z',
+        task_envelope_sent_at: null,
+        lease_expires_at: '2099-01-01T00:00:00Z',
+      }],
+    });
+    const result = runCli(['--json']);
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout);
+    expect(json.runs[0].age_seconds).toBeNull();
+    expect(json.runs[0].idle_seconds).toBeNull();
+    expect(json.runs[0].awaiting_run_started).toBe(true);
+  });
 });
 
 function runCli(args: string[]) {
