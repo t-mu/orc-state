@@ -272,7 +272,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
         role: 'scout',
         status: agent.status,
         provider: agent.provider,
-        launched_at: agent.registered_at ?? null,
+        launched_at: agent.last_heartbeat_at ?? agent.registered_at ?? null,
       },
       active_run: null,
       queued_tasks: [],
@@ -774,8 +774,11 @@ function readRunWorktreesState(stateDir?: string): RunWorktreesState {
 }
 
 function scopeLines(scopePaths: string[] | undefined) {
-  if (!scopePaths || scopePaths.length === 0) return '- (no specific paths provided)';
-  return scopePaths.map((path) => `- ${path}`).join('\n');
+  if (!scopePaths || scopePaths.length === 0) {
+    return '- (none specified — search broadly from working_directory)';
+  }
+  return scopePaths.map((path) => `- ${path}`).join('\n')
+    + '\nDo not expand beyond scope_paths unless all listed paths are exhausted with no findings.';
 }
 
 export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } = {}) {
@@ -848,12 +851,15 @@ export async function handleRequestScout(stateDir: string, {
   }
 
   const launchedAt = new Date().toISOString();
+  const contextLines = [
+    typeof run_id === 'string' ? `linked_run_id: ${run_id}` : null,
+    typeof task_ref === 'string' ? `linked_task_ref: ${task_ref}` : null,
+  ].filter(Boolean).join('\n');
   const brief = renderTemplate('scout-brief-v1.txt', {
     agent_id: scout.agent_id,
     provider: scout.provider,
     objective: objective.trim(),
-    run_id_line: typeof run_id === 'string' ? `linked_run_id: ${run_id}` : '',
-    task_ref_line: typeof task_ref === 'string' ? `linked_task_ref: ${task_ref}` : '',
+    context_lines: contextLines,
     working_directory: workingDirectory,
     use_web: use_web ? 'yes' : 'no',
     scope_paths: scopeLines(scope_paths as string[]),

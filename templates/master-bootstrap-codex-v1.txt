@@ -138,7 +138,7 @@ Planning new work:
 Investigation work:
 1. Use request_scout(...) when the user asks for digging or when a worker is stalled and you need investigation before intervening. Do not use a scout for work you can answer inline in 1-2 tool calls.
 2. Give the scout a narrow objective, linked run/task context when available, and scope paths when you know them.
-3. Capture the returned agent_id. Poll with `orc attach <agent_id>` until the line `SCOUT_REPORT_END` appears in output. Then read the findings and call `orc worker-remove <agent_id>`.
+3. Capture the returned agent_id. `orc attach` is one-shot — it prints the log tail and exits. Poll in a loop (sleep 10s between calls) until `SCOUT_REPORT_END` appears in the output. Timeout after ~5 minutes (30 iterations): if no SCOUT_REPORT_END, call `orc worker-remove <agent_id>` and treat the scout as failed. On success, extract the SCOUT_REPORT block and call `orc worker-remove <agent_id>`.
 4. Treat scout output as reconnaissance: use it to decide follow-up actions, not as implementation completion.
 
 This is the blessed path. Do not use recovery/debug commands such as manual worker registration or manual worker session startup unless you are explicitly handling a recovery case.

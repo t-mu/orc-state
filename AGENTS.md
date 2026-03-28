@@ -313,8 +313,15 @@ result = request_scout(objective, ...)   ← capture result.agent_id
                                → scout investigates (read-only PTY session)
                                → scout outputs SCOUT_REPORT block
 
-poll: orc attach <result.agent_id>       ← repeat until SCOUT_REPORT_END appears in output
-read: extract findings from SCOUT_REPORT block
+# poll loop — orc attach is one-shot (prints log tail, then exits); call in a loop:
+while true; do
+  orc attach <result.agent_id> 2>/dev/null | grep -q "SCOUT_REPORT_END" && break
+  sleep 10
+done
+# timeout after ~5 minutes:
+# if no SCOUT_REPORT_END after 30 iterations, call orc worker-remove and treat as failed
+
+read: extract SCOUT_REPORT…SCOUT_REPORT_END block from: orc attach <result.agent_id>
 cleanup: orc worker-remove <result.agent_id>
 ```
 
