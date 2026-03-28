@@ -136,7 +136,7 @@ describe('pty adapter start()', () => {
   it('uses provider binary mapping for codex and gemini', async () => {
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', {});
-    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--no-alt-screen', '--sandbox', 'workspace-write', '--ask-for-approval', 'never'], expect.any(Object));
+    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox'], expect.any(Object));
 
     vi.resetModules();
     const gemini = await makeAdapter({ provider: 'gemini' });
@@ -150,19 +150,19 @@ describe('pty adapter start()', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--no-alt-screen', '--sandbox', 'workspace-write', '--ask-for-approval', 'never', 'BOOTSTRAP TEXT'],
+      ['--dangerously-bypass-approvals-and-sandbox', 'BOOTSTRAP TEXT'],
       expect.any(Object),
     );
     expect(ptyProcess.write).not.toHaveBeenCalled();
   });
 
-  it('uses read-only sandbox mode for codex scout sessions', async () => {
+  it('uses bypass mode for codex scout sessions too', async () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
     await adapter.start('scout-1', { system_prompt: 'SCOUT', read_only: true });
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--no-alt-screen', '--sandbox', 'read-only', '--ask-for-approval', 'never', 'SCOUT'],
+      ['--dangerously-bypass-approvals-and-sandbox', 'SCOUT'],
       expect.any(Object),
     );
   });
