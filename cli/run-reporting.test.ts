@@ -122,6 +122,24 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
+function writeTaskSpec({ taskRef = 'docs/task-1', feature = 'docs', title = 'Task 1', status = 'todo' } = {}) {
+  mkdirSync(join(dir, 'backlog'), { recursive: true });
+  const slug = taskRef.split('/')[1];
+  writeFileSync(
+    join(dir, 'backlog', `999-${slug}.md`),
+    [
+      '---',
+      `ref: ${taskRef}`,
+      `feature: ${feature}`,
+      `status: ${status}`,
+      '---',
+      '',
+      `# Task 999 — ${title}`,
+      '',
+    ].join('\n'),
+  );
+}
+
 function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
@@ -393,6 +411,23 @@ describe('orc-run-work-complete', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('task not marked done');
     expect(result.stderr).toContain('orc task-mark-done');
+  });
+
+  it('accepts run-work-complete after task-mark-done transitions an active task to done', () => {
+    seedInProgressRun({ runId: 'run-work-mark-done', agentId: 'worker-01' });
+    writeTaskSpec();
+
+    const markResult = spawnSync('node', ['--experimental-strip-types', 'cli/task-mark-done.ts', 'docs/task-1'], {
+      cwd: repoRoot,
+      env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+      encoding: 'utf8',
+    });
+    expect(markResult.status).toBe(0);
+
+    const result = runCli('run-work-complete.ts', ['--run-id=run-work-mark-done', '--agent-id=worker-01']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('work_complete');
   });
 });
 
