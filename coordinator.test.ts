@@ -1166,6 +1166,8 @@ describe('in-progress stale escalation', () => {
     process.argv = originalArgv;
 
     expect(send).toHaveBeenCalledTimes(1);
+    expect(String(send.mock.calls[0]?.[1] ?? '')).toContain('run-heartbeat --run-id=run-stale-escalate --agent-id=worker-01');
+    expect(String(send.mock.calls[0]?.[1] ?? '')).not.toContain('\norc run-heartbeat');
     const events = readEvents(dir);
     expect(events.filter((event) => event.event === 'need_input' && event.run_id === 'run-stale-escalate')).toHaveLength(1);
 

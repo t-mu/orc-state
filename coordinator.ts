@@ -1144,6 +1144,7 @@ const PHASE_NUDGE_MESSAGES: Record<string, string> = {
 };
 
 function buildInProgressNudge(claim: Claim, phase: string | null = null) {
+  const orcBin = resolveOrcBinSh(REPO_ROOT);
   const phaseHint = phase && PHASE_NUDGE_MESSAGES[phase]
     ? `Current phase: ${phase}. ${PHASE_NUDGE_MESSAGES[phase]}`
     : 'No phase signal received. Have you started exploring the task spec?';
@@ -1154,7 +1155,7 @@ function buildInProgressNudge(claim: Claim, phase: string | null = null) {
     `No recent activity detected.`,
     phaseHint,
     `Call this command via your Bash tool to keep the run active:`,
-    `orc run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `${orcBin} run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     `RUN_NUDGE_END`,
   ].join('\n');
 }

@@ -207,7 +207,9 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       last_activity_at: activity?.ts ?? null,
       last_activity_event: activity?.event ?? null,
       last_activity_source: activity?.source ?? null,
-      stalled: !Number.isNaN(idleMs) && idleMs >= (STALLED_RUN_IDLE_SECONDS * 1000),
+      stalled: claim.input_state !== 'awaiting_input'
+        && !Number.isNaN(idleMs)
+        && idleMs >= (STALLED_RUN_IDLE_SECONDS * 1000),
       current_phase: runPhase.get(claim.run_id) ?? null,
       run_worktree_path: runWorktreeByRunId.get(claim.run_id)?.worktree_path ?? null,
       run_branch: runWorktreeByRunId.get(claim.run_id)?.branch ?? null,

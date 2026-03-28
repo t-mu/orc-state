@@ -233,6 +233,29 @@ describe('buildStatus', () => {
     expect(s.claims.stalled).toBe(0);
   });
 
+  it('does not mark awaiting-input runs as stalled even when idle', () => {
+    const now = new Date();
+    writeState({
+      claims: [{
+        run_id: 'run-awaiting-input',
+        task_ref: 'a/1',
+        agent_id: 'agent-01',
+        state: 'claimed',
+        claimed_at: new Date(now.getTime() - 20 * 60_000).toISOString(),
+        task_envelope_sent_at: new Date(now.getTime() - 19 * 60_000).toISOString(),
+        lease_expires_at: new Date(now.getTime() + 60_000).toISOString(),
+        input_state: 'awaiting_input',
+        input_requested_at: new Date(now.getTime() - 18 * 60_000).toISOString(),
+      }],
+    });
+    writeEvents([]);
+
+    const s = buildStatus(dir) as unknown as StatusResult;
+    expect(s.claims.active[0].idle_seconds).toBeGreaterThan(0);
+    expect(s.claims.active[0].stalled).toBe(false);
+    expect(s.claims.stalled).toBe(0);
+  });
+
   it('includes current_phase from phase_started events', () => {
     const now = new Date();
     writeState({
