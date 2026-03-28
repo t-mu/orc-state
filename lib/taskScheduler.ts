@@ -21,6 +21,7 @@ function priorityRank(priority: string | undefined): number {
 export function nextEligibleTaskFromBacklog(
   backlog: unknown,
   agentOrId: Agent | string | null = null,
+  { excludeTaskRefs = new Set<string>() }: { excludeTaskRefs?: ReadonlySet<string> } = {},
 ): string | null {
   const b = backlog as Backlog | null;
   const agentId = typeof agentOrId === 'string' ? agentOrId : (agentOrId?.agent_id ?? null);
@@ -40,6 +41,7 @@ export function nextEligibleTaskFromBacklog(
   for (const feature of (b?.features ?? [])) {
     for (const task of (feature.tasks ?? [])) {
       if (task.status !== 'todo') continue;
+      if (excludeTaskRefs.has(task.ref)) continue;
       if (task.planning_state && task.planning_state !== 'ready_for_dispatch') continue;
       if (task.owner && agentId && task.owner !== agentId) continue;
       if (task.owner && !agentId) continue;
@@ -63,7 +65,15 @@ export function nextEligibleTaskFromBacklog(
 export function nextEligibleTask(
   stateDir: string,
   agentOrId: Agent | string | null = null,
-  { backlog = null, agents = null }: { backlog?: unknown; agents?: unknown } = {},
+  {
+    backlog = null,
+    agents = null,
+    excludeTaskRefs = new Set<string>(),
+  }: {
+    backlog?: unknown;
+    agents?: unknown;
+    excludeTaskRefs?: ReadonlySet<string>;
+  } = {},
 ): string | null {
   const backlogData = backlog ?? readJson(stateDir, 'backlog.json');
   if (typeof agentOrId === 'string') {
@@ -75,7 +85,7 @@ export function nextEligibleTask(
     } catch {
       agent = null;
     }
-    return nextEligibleTaskFromBacklog(backlogData, agent ?? agentOrId);
+    return nextEligibleTaskFromBacklog(backlogData, agent ?? agentOrId, { excludeTaskRefs });
   }
-  return nextEligibleTaskFromBacklog(backlogData, agentOrId);
+  return nextEligibleTaskFromBacklog(backlogData, agentOrId, { excludeTaskRefs });
 }

@@ -59,13 +59,15 @@ export function selectDispatchableAgents(
  */
 export function buildDispatchPlan(
   agents: Agent[] | null | undefined,
-  pickTaskForAgent: (agent: Agent) => string | null,
+  pickTaskForAgent: (agent: Agent, reservedTaskRefs: ReadonlySet<string>) => string | null,
 ): Array<{ agent: Agent; task_ref: string }> {
   const plan: Array<{ agent: Agent; task_ref: string }> = [];
+  const reservedTaskRefs = new Set<string>();
   for (const agent of agents ?? []) {
-    const taskRef = pickTaskForAgent(agent);
+    const taskRef = pickTaskForAgent(agent, reservedTaskRefs);
     if (!taskRef) continue;
     plan.push({ agent, task_ref: taskRef });
+    reservedTaskRefs.add(taskRef);
   }
   return plan;
 }

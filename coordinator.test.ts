@@ -514,6 +514,90 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(onlineEvent.task_ref).toBe('proj/fix-bug');
   });
 
+  it('assigns distinct tasks to different workers within the same dispatch tick', async () => {
+    seedState(dir, {
+      agents: [
+        {
+          agent_id: 'worker-01',
+          provider: 'claude',
+          role: 'worker',
+          status: 'idle',
+          session_handle: null,
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+        },
+        {
+          agent_id: 'worker-02',
+          provider: 'claude',
+          role: 'worker',
+          status: 'idle',
+          session_handle: null,
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+        },
+      ],
+      tasks: [
+        {
+          ...DISPATCHABLE_TASK,
+          ref: 'proj/task-a',
+          title: 'Task A',
+        },
+        {
+          ...DISPATCHABLE_TASK,
+          ref: 'proj/task-b',
+          title: 'Task B',
+        },
+      ],
+    });
+
+    const mockStart = vi.fn()
+      .mockResolvedValueOnce({ session_handle: 'pty:worker-01', provider_ref: null })
+      .mockResolvedValueOnce({ session_handle: 'pty:worker-02', provider_ref: null });
+    const mockSend = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: mockStart,
+        send: mockSend,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn().mockImplementation((_: string, { runId }: { runId: string }) => ({
+        run_id: runId,
+        branch: `task/${runId}`,
+        worktree_path: `/tmp/orc-worktrees/${runId}`,
+      })),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue(null),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(mockStart).toHaveBeenCalledTimes(2);
+    expect(mockSend).toHaveBeenCalledTimes(2);
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    expect(claims).toHaveLength(2);
+    expect(claims.map((claim) => claim.task_ref)).toEqual(['proj/task-a', 'proj/task-b']);
+
+    const backlog = readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> };
+    expect(backlog.features[0].tasks.map((task) => `${task.ref}:${task.status}`)).toEqual([
+      'proj/task-a:claimed',
+      'proj/task-b:claimed',
+    ]);
+
+    const payloads = mockSend.mock.calls.map(([, payload]) => String(payload));
+    expect(payloads.some((payload) => payload.includes('task_ref: proj/task-a'))).toBe(true);
+    expect(payloads.some((payload) => payload.includes('task_ref: proj/task-b'))).toBe(true);
+  });
+
   it('restarts an existing worker session in the assigned run worktree before dispatch', async () => {
     seedState(dir, {
       agents: [{
