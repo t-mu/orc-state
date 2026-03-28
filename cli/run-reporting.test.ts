@@ -259,25 +259,33 @@ describe('orc-run-heartbeat', () => {
     expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-hb-001')).toBe(true);
   });
 
+  it('rejects heartbeat before run_started when the claim is still claimed', () => {
+    seedClaimedRun({ runId: 'run-claimed-hb', agentId: 'worker-01' });
+
+    const result = runCli('run-heartbeat.ts', ['--run-id=run-claimed-hb', '--agent-id=worker-01']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("heartbeat requires run_started first");
+    const events = readEvents();
+    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-claimed-hb')).toBe(false);
+  });
+
   it('exits with code 1 and prints usage when args are missing', () => {
     const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 
-  it('appends a stale heartbeat for a terminated run without error (CLI is lenient)', () => {
-    // Worker-facing CLIs do not enforce state-machine rules — they append events
-    // and let the coordinator decide what to do. A heartbeat from a worker that
-    // does not yet know its run failed is accepted; the coordinator ignores it.
+  it('rejects heartbeat for a terminated run', () => {
     seedFailedRun({ runId: 'run-stale-hb', agentId: 'worker-01' });
 
     const result = runCli('run-heartbeat.ts', ['--run-id=run-stale-hb', '--agent-id=worker-01']);
 
-    expect(result.status).toBe(0);
-    // Claim must remain failed — the CLI does not mutate state.
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("heartbeat requires run_started first");
     expect(claimSnapshot('run-stale-hb')?.state).toBe('failed');
     const events = readEvents();
-    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-stale-hb')).toBe(true);
+    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-stale-hb')).toBe(false);
   });
 });
 

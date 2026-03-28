@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { validateProgressCommandInput } from '../lib/progressValidation.ts';
+import { validateProgressInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { readClaims } from '../lib/stateReader.ts';
@@ -24,7 +24,7 @@ function loadClaim(currentRunId: string): Claim | null {
 
 try {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressCommandInput({
+  const { claim: validatedClaim } = validateProgressInput({
     event: 'heartbeat',
     runId,
     agentId,
