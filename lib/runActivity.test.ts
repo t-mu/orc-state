@@ -9,12 +9,21 @@ describe('latestRunActivityMap', () => {
       { run_id: 'run-1', event: 'phase_started', ts: '2026-01-01T00:01:00Z' },
       { run_id: 'run-1', event: 'work_complete', ts: '2026-01-01T00:02:00Z' },
       { run_id: 'run-2', event: 'run_started', ts: '2026-01-01T00:03:00Z' },
-      { run_id: 'run-2', event: 'task_envelope_sent', ts: '2026-01-01T00:03:30Z' },
       { run_id: 'run-1', event: 'coordinator_started', ts: '2026-01-01T00:04:00Z' }, // ignored
     ];
     const map = latestRunActivityMap(events as OrcEvent[]);
     expect(map.get('run-1')).toBe('2026-01-01T00:02:00Z');
-    expect(map.get('run-2')).toBe('2026-01-01T00:03:30Z');
+    expect(map.get('run-2')).toBe('2026-01-01T00:03:00Z');
+  });
+
+  it('ignores coordinator-generated activity-like events', () => {
+    const events = [
+      { run_id: 'run-1', event: 'run_started', ts: '2026-01-01T00:00:00Z', actor_type: 'agent' },
+      { run_id: 'run-1', event: 'need_input', ts: '2026-01-01T00:05:00Z', actor_type: 'coordinator' },
+      { run_id: 'run-1', event: 'input_requested', ts: '2026-01-01T00:06:00Z', actor_type: 'coordinator' },
+    ];
+    const map = latestRunActivityMap(events as unknown as OrcEvent[]);
+    expect(map.get('run-1')).toBe('2026-01-01T00:00:00Z');
   });
 });
 
@@ -29,6 +38,19 @@ describe('latestRunActivityDetailMap', () => {
       ts: '2026-01-01T00:01:00Z',
       event: 'heartbeat',
       source: 'worker-runtime-owner',
+    });
+  });
+
+  it('ignores coordinator-generated need_input when computing latest detail', () => {
+    const events = [
+      { run_id: 'run-1', event: 'run_started', ts: '2026-01-01T00:00:00Z', actor_type: 'agent' },
+      { run_id: 'run-1', event: 'need_input', ts: '2026-01-01T00:01:00Z', actor_type: 'coordinator' },
+    ];
+    const map = latestRunActivityDetailMap(events as unknown as OrcEvent[]);
+    expect(map.get('run-1')).toEqual({
+      ts: '2026-01-01T00:00:00Z',
+      event: 'run_started',
+      source: 'run_started',
     });
   });
 });

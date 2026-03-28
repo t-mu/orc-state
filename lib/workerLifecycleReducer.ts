@@ -129,7 +129,7 @@ export function reduceLifecycleEvent(
     if (!event.run_id || !event.agent_id) {
       return { type: 'noop', reason: 'missing_run_or_agent' };
     }
-    if (!claim || !['claimed', 'in_progress'].includes(claim.state)) {
+    if (!claim || claim.state !== 'in_progress') {
       return { type: 'noop', reason: claim ? `wrong_state:${claim.state}` : 'no_claim' };
     }
     const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;

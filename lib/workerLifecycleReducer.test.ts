@@ -127,10 +127,13 @@ describe('applies lifecycle transitions through the reducer boundary', () => {
     }
   });
 
-  it('returns heartbeat for heartbeat event on a claimed claim', () => {
+  it('returns noop for heartbeat event on a claimed claim', () => {
     const claim = makeClaim({ state: 'claimed' });
     const action = reduceLifecycleEvent(makeEvent({ event: 'heartbeat' }), claim, NOW);
-    expect(action.type).toBe('heartbeat');
+    expect(action.type).toBe('noop');
+    if (action.type === 'noop') {
+      expect(action.reason).toContain('wrong_state:claimed');
+    }
   });
 
   it('returns noop for heartbeat when run_id or agent_id is absent', () => {

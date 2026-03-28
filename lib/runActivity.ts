@@ -1,16 +1,16 @@
 import type { OrcEvent } from '../types/events.ts';
 
 const RUN_ACTIVITY_EVENTS = new Set([
-  'task_envelope_sent',
   'run_started',
   'heartbeat',
   'work_complete',
+  'finalize_rebase_started',
+  'ready_to_merge',
   'phase_started',
   'phase_finished',
   'blocked',
   'need_input',
   'input_requested',
-  'input_response',
   'input_provided',
   'unblocked',
 ]);
@@ -33,8 +33,9 @@ export function claimedRunStartupAnchor(
 export function latestRunActivityMap(events: OrcEvent[] | null | undefined): Map<string, string> {
   const latestByRun = new Map<string, string>();
   for (const ev of events ?? []) {
-    const e = ev as { run_id?: string; event?: string; ts?: string };
+    const e = ev as { run_id?: string; event?: string; ts?: string; actor_type?: string };
     if (!e?.run_id || !RUN_ACTIVITY_EVENTS.has(e.event ?? '') || !e.ts) continue;
+    if (e.actor_type === 'coordinator' || e.actor_type === 'human') continue;
     const prev = latestByRun.get(e.run_id);
     if (!prev || new Date(e.ts).getTime() > new Date(prev).getTime()) {
       latestByRun.set(e.run_id, e.ts);
@@ -49,8 +50,9 @@ export function latestRunActivityMap(events: OrcEvent[] | null | undefined): Map
 export function latestRunActivityDetailMap(events: OrcEvent[] | null | undefined): Map<string, RunActivityDetail> {
   const latestByRun = new Map<string, RunActivityDetail>();
   for (const ev of events ?? []) {
-    const e = ev as { run_id?: string; event?: string; ts?: string; payload?: { source?: string } };
+    const e = ev as { run_id?: string; event?: string; ts?: string; actor_type?: string; payload?: { source?: string } };
     if (!e?.run_id || !RUN_ACTIVITY_EVENTS.has(e.event ?? '') || !e.ts) continue;
+    if (e.actor_type === 'coordinator' || e.actor_type === 'human') continue;
     const prev = latestByRun.get(e.run_id);
     if (!prev || new Date(e.ts).getTime() > new Date(prev.ts).getTime()) {
       latestByRun.set(e.run_id, {

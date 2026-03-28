@@ -45,7 +45,6 @@ import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
-import { FINALIZE_LEASE_MS } from './lib/constants.ts';
 import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 
@@ -74,7 +73,6 @@ const RUN_INACTIVE_ESCALATE_MS = intFlag('run-inactive-escalate-ms', 900000);   
 const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', 300000); // 5 min default
 const CONCURRENCY_LIMIT = 8;
 const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
-const AGENT_HEARTBEAT_REFRESH_MS = 60_000;
 const MANAGED_SESSION_START_MAX_ATTEMPTS = 3;
 const MANAGED_SESSION_START_RETRY_DELAY_MS = 30_000;
 const GIT_OP_TIMEOUT_MS = 30_000; // abort coordinator git ops after 30s to prevent tick blockage
@@ -151,22 +149,6 @@ async function runBounded(thunks: Array<() => Promise<unknown>>, limit = CONCURR
   return results;
 }
 
-function refreshAgentHeartbeat(agent: Agent, nowIso: string, { force = false } = {}) {
-  const nowMs = new Date(nowIso).getTime();
-  const lastMs = typeof agent.last_heartbeat_at === 'string'
-    ? new Date(agent.last_heartbeat_at).getTime()
-    : NaN;
-  const shouldRefresh = force || !Number.isFinite(lastMs) || (nowMs - lastMs) >= AGENT_HEARTBEAT_REFRESH_MS;
-  if (!shouldRefresh) return;
-
-  updateAgentRuntime(STATE_DIR, agent.agent_id, {
-    status: 'running',
-    last_heartbeat_at: nowIso,
-  });
-  agent.status = 'running';
-  agent.last_heartbeat_at = nowIso;
-}
-
 function readTaskContext(stateDir: string, taskRef: string) {
   try {
     const backlog = readBacklog(stateDir);
@@ -224,7 +206,6 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
       log(`worker ${agent.agent_id} session is alive but not owned by this coordinator; cleared handle for recreation`);
       return { ok: false, reason: 'session not owned by this coordinator' };
     }
-    refreshAgentHeartbeat(agent, new Date().toISOString());
     return { ok: true };
   }
 
@@ -447,17 +428,6 @@ async function requestFinalizeRebase(claim: Claim, workerPoolConfig: WorkerPoolC
     return false;
   }
 
-  // Extend the lease before attempting to send so the claim stays alive even
-  // if the send fails and the coordinator must retry on the next tick.
-  try {
-    heartbeat(STATE_DIR, updatedClaim.run_id, updatedClaim.agent_id, {
-      emitEvent: false,
-      leaseDurationMs: FINALIZE_LEASE_MS,
-    });
-  } catch (error) {
-    log(`warning: failed to extend lease during finalize rebase request for ${updatedClaim.run_id}: ${(error as Error).message}`);
-  }
-
   const sent = await sendCoordinatorMessage(updatedClaim.agent_id, buildFinalizeRebaseRequest(updatedClaim, reason));
   if (!sent) {
     log(`warning: failed to deliver finalize rebase request to ${updatedClaim.agent_id} for ${updatedClaim.run_id}`);
@@ -527,7 +497,6 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
 function recordCoordinatorInputRequest(claim: Claim, question: string, reason: string) {
   const nowIso = new Date().toISOString();
   try {
-    heartbeat(STATE_DIR, claim.run_id, claim.agent_id, { emitEvent: false });
     setRunInputState(STATE_DIR, claim.run_id, claim.agent_id, {
       inputState: 'awaiting_input',
       requestedAt: nowIso,

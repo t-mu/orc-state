@@ -375,8 +375,8 @@ export function setRunInputState(
     const claim = claims.claims.find((candidate) => candidate.run_id === runId);
     if (!claim) throw new Error(`Claim not found: ${runId}`);
     if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
-    if (claim.state !== 'in_progress') {
-      throw new Error(`Input state updates require in_progress claim state (got: ${claim.state})`);
+    if (!['claimed', 'in_progress'].includes(claim.state)) {
+      throw new Error(`Input state updates require claimed or in_progress claim state (got: ${claim.state})`);
     }
     if (![null, 'awaiting_input'].includes(inputState)) {
       throw new Error(`Unsupported input state: ${String(inputState)}`);

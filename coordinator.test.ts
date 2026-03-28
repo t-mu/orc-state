@@ -418,6 +418,40 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(claims).toHaveLength(0);
   });
 
+  it('does not refresh agent last_heartbeat_at just because a PTY session is reachable', async () => {
+    const staleTs = '2026-01-01T00:00:00.000Z';
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        last_heartbeat_at: staleTs,
+        registered_at: new Date().toISOString(),
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send: vi.fn().mockResolvedValue(''),
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'worker-01')!;
+    expect(agent.last_heartbeat_at).toBe(staleTs);
+  });
+
   it('sets status=idle (not running) when heartbeatProbe returns false', async () => {
     seedState(dir, {
       agents: [{
@@ -870,6 +904,80 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-recent-delivery')!;
     expect(claim.state).toBe('claimed');
     expect(claim.finished_at).toBeFalsy();
+  });
+
+  it('does not renew the lease when coordinator records an awaiting-input blocker for a claimed run', async () => {
+    const leaseExpiresAt = '2026-01-01T00:30:00.000Z';
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-awaiting-input-without-renewal',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00.000Z',
+        task_envelope_sent_at: '2026-01-01T00:00:05.000Z',
+        lease_expires_at: leaseExpiresAt,
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send: vi.fn().mockResolvedValue(''),
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        detectInputBlock: vi.fn().mockReturnValue('Would you like to apply these changes? [y/n]'),
+        getOutputTail: vi.fn().mockReturnValue('Would you like to apply these changes? [y/n]'),
+      }),
+    }));
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:02:00.000Z'));
+
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2), '--run-start-timeout-ms=600000'];
+
+    try {
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+    } finally {
+      process.argv = originalArgv;
+      vi.useRealTimers();
+    }
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-awaiting-input-without-renewal')!;
+    expect(claim.input_state).toBe('awaiting_input');
+    expect(claim.lease_expires_at).toBe(leaseExpiresAt);
+    expect(claim.last_heartbeat_at).toBeNull();
+
+    const events = readEvents(dir);
+    const inputRequested = events.find((event) => event.event === 'input_requested' && event.run_id === 'run-awaiting-input-without-renewal');
+    expect(inputRequested).toBeTruthy();
   });
 
   it('does not nudge or timeout an in-progress run while awaiting master input', async () => {

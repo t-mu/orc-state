@@ -567,6 +567,21 @@ describe('expireStaleLeases', () => {
     expect(claim.state).toBe('in_progress');
     expect(claim.input_state).toBe('awaiting_input');
   });
+
+  it('allows awaiting-input state to be recorded before run_start for claimed runs', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+
+    setRunInputState(dir, run_id, 'agent-01', {
+      inputState: 'awaiting_input',
+      requestedAt: new Date().toISOString(),
+    });
+
+    const claim = readClaims(dir).claims[0];
+    expect(claim.state).toBe('claimed');
+    expect(claim.input_state).toBe('awaiting_input');
+    expect(claim.input_requested_at).toBeTruthy();
+  });
 });
 
 // ── nextEligibleTask ───────────────────────────────────────────────────────

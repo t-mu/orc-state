@@ -183,6 +183,7 @@ describe('buildStatus', () => {
         run_id: 'run-1',
         task_ref: 'a/1',
         agent_id: 'agent-01',
+        actor_type: 'agent',
         event: 'phase_started',
         ts: new Date(now.getTime() - 30_000).toISOString(),
       },
@@ -245,8 +246,8 @@ describe('buildStatus', () => {
       }],
     });
     writeEvents([
-      { event_id: 'evt-p1', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', event: 'phase_started', phase: 'explore', ts: new Date(now.getTime() - 50_000).toISOString() },
-      { event_id: 'evt-p2', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', event: 'phase_started', phase: 'implement', ts: new Date(now.getTime() - 30_000).toISOString() },
+      { event_id: 'evt-p1', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'phase_started', phase: 'explore', ts: new Date(now.getTime() - 50_000).toISOString() },
+      { event_id: 'evt-p2', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'phase_started', phase: 'implement', ts: new Date(now.getTime() - 30_000).toISOString() },
     ]);
     const s = buildStatus(dir) as unknown as StatusResult;
     expect(s.claims.active[0].current_phase).toBe('implement');
