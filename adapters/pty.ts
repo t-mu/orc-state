@@ -86,11 +86,8 @@ function buildStartArgs(provider: string, config: Record<string, unknown>) {
   // Codex supports an initial prompt argument; pass bootstrap at spawn time
   // instead of PTY post-start injection, which the TUI treats as pasted text.
   if (provider === 'codex') {
-    const sandboxMode = config.read_only === true ? 'read-only' : 'workspace-write';
     const args = [
-      '--no-alt-screen',
-      '--sandbox', sandboxMode,
-      '--ask-for-approval', 'never',
+      '--dangerously-bypass-approvals-and-sandbox',
     ];
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
