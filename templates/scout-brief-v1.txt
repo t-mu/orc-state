@@ -5,22 +5,35 @@ provider: {{provider}}
 objective:
 {{objective}}
 
-linked_run_id: {{run_id}}
-linked_task_ref: {{task_ref}}
+{{run_id_line}}
+{{task_ref_line}}
 working_directory: {{working_directory}}
 web_research_allowed: {{use_web}}
 
 scope_paths:
 {{scope_paths}}
+If scope_paths is empty, search broadly from working_directory.
+Do not expand beyond scope_paths unless all listed paths are exhausted with no findings.
 
 constraints:
 - read-only investigation only
 - no file edits
 - no state mutation
 - no commits or rebases
+- if a file or log is inaccessible, note it in findings and continue with remaining scope
 
 deliverable:
-Output a SCOUT_REPORT block when investigation is complete (format defined in bootstrap).
-Sections: findings, likely_cause, recommended_action.
+When done, output a SCOUT_REPORT block using this exact format:
+
+SCOUT_REPORT
+findings:
+<what you found — max 20 lines>
+
+likely_cause:
+<root cause or explanation — max 5 lines>
+
+recommended_action:
+<concrete next step for master or worker — 1-3 lines>
+SCOUT_REPORT_END
 
 SCOUT_BRIEF_END

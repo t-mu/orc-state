@@ -282,6 +282,15 @@ kill $HEARTBEAT_PID 2>/dev/null || true
 
 Scouts are **read-only investigation agents** launched on demand by the master via the `request_scout` MCP tool. They do not participate in the task backlog lifecycle.
 
+### When to use a scout
+
+Use `request_scout` when:
+- A worker is stalled and the cause is unclear before you intervene
+- The user asks for investigation or digging into code/logs/history
+- You need reconnaissance before deciding what task to create or which worker to unblock
+
+Do NOT use a scout for work you can answer inline in one or two tool calls.
+
 ### What scouts do
 
 - Inspect code, logs, git history, runtime state, and optionally the web
@@ -296,19 +305,26 @@ Scouts are **read-only investigation agents** launched on demand by the master v
 
 ### Scout lifecycle (master perspective)
 
+Scout IDs are assigned sequentially (`scout-1`, `scout-2`, …). The assigned ID is returned in the `request_scout` response — capture it.
+
 ```
-request_scout(objective, ...) → scout-N spawned and briefed
+result = request_scout(objective, ...)   ← capture result.agent_id
+                               → scout-N spawned and briefed
                                → scout investigates (read-only PTY session)
                                → scout outputs SCOUT_REPORT block
-                               → master reads via: orc attach scout-N
-                               → master dismisses: orc worker-remove scout-N
+
+poll: orc attach <result.agent_id>       ← repeat until SCOUT_REPORT_END appears in output
+read: extract findings from SCOUT_REPORT block
+cleanup: orc worker-remove <result.agent_id>
 ```
 
-Scouts do not heartbeat and are not coordinated by the run lifecycle. They are ephemeral and should be cleaned up explicitly with `orc worker-remove <scout-id>` once the master has read the report.
+To check how long a scout has been running: `get_agent_workview(<agent_id>)` returns a `launched_at` timestamp.
+
+Scouts do not heartbeat and are not coordinated by the run lifecycle. They are ephemeral — clean up with `orc worker-remove <scout-id>` once the report is read.
 
 ### Scout lifecycle (scout perspective)
 
-You are launched with a `SCOUT_BOOTSTRAP` block followed by a `SCOUT_BRIEF` block from the master. Do your investigation, then output a `SCOUT_REPORT` block (format defined in bootstrap). Do not wait for further instructions — output the report and stop.
+You are launched with a `SCOUT_BOOTSTRAP` block followed by a `SCOUT_BRIEF` block. The brief contains your objective, `working_directory`, and optional `scope_paths`. Start from `working_directory`. Investigate `scope_paths` first; expand beyond them only if exhausted. Output a `SCOUT_REPORT` block when done (format defined in the bootstrap and repeated in the brief). Do not wait for further instructions after outputting the report.
 
 ---
 

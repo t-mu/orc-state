@@ -272,12 +272,13 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
         role: 'scout',
         status: agent.status,
         provider: agent.provider,
+        launched_at: agent.registered_at ?? null,
       },
       active_run: null,
       queued_tasks: [],
       blockers: [],
-      recommended_action: 'investigate',
-      note: 'Scout agents do not execute backlog tasks. Use orc attach <agent_id> to read investigation output.',
+      recommended_action: 'poll_for_report',
+      note: `Poll output with: orc attach ${agent.agent_id} — wait until SCOUT_REPORT_END appears, then call: orc worker-remove ${agent.agent_id}`,
     };
   }
 
@@ -846,12 +847,13 @@ export async function handleRequestScout(stateDir: string, {
     throw new Error(`Failed to launch scout ${scoutId}: ${launchResult.reason ?? 'unknown error'}`);
   }
 
+  const launchedAt = new Date().toISOString();
   const brief = renderTemplate('scout-brief-v1.txt', {
     agent_id: scout.agent_id,
     provider: scout.provider,
     objective: objective.trim(),
-    run_id: typeof run_id === 'string' ? run_id : '(none)',
-    task_ref: typeof task_ref === 'string' ? task_ref : '(none)',
+    run_id_line: typeof run_id === 'string' ? `linked_run_id: ${run_id}` : '',
+    task_ref_line: typeof task_ref === 'string' ? `linked_task_ref: ${task_ref}` : '',
     working_directory: workingDirectory,
     use_web: use_web ? 'yes' : 'no',
     scope_paths: scopeLines(scope_paths as string[]),
@@ -875,6 +877,7 @@ export async function handleRequestScout(stateDir: string, {
     use_web,
     scope_paths,
     working_directory: workingDirectory,
+    launched_at: launchedAt,
     session_handle: launchResult.session_handle,
   };
 }
