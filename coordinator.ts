@@ -1004,8 +1004,12 @@ async function tick() {
   const busyAgents = activeClaimAgents(claims);
   const availableAgents = selectDispatchableAgents(agents, { busyAgents });
   const dispatchableAgents = availableAgents.filter((a) => !nudgedThisTick.has(a.agent_id));
-  const dispatchPlan = buildDispatchPlan(dispatchableAgents, (agent) =>
-    nextEligibleTask(STATE_DIR, agent.agent_id, { backlog: tickBacklog, agents: tickAgents }),
+  const dispatchPlan = buildDispatchPlan(dispatchableAgents, (agent, reservedTaskRefs) =>
+    nextEligibleTask(STATE_DIR, agent.agent_id, {
+      backlog: tickBacklog,
+      agents: tickAgents,
+      excludeTaskRefs: reservedTaskRefs,
+    }),
   );
   const dispatchResults = await runBounded(dispatchPlan.map((item) => async () => {
     const agent = item.agent;

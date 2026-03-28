@@ -63,4 +63,18 @@ describe('buildDispatchPlan', () => {
     expect(plan[0].agent.agent_id).toBe('agent-b');
     expect(plan[0].task_ref).toBe('docs/task-2');
   });
+
+  it('reserves tasks already selected earlier in the same plan', () => {
+    const agents = [agent('agent-a'), agent('agent-b')];
+    const plan = buildDispatchPlan(agents, (candidate, reservedTaskRefs) => {
+      if (candidate.agent_id === 'agent-a') return 'docs/task-1';
+      return reservedTaskRefs.has('docs/task-1') ? 'docs/task-2' : 'docs/task-1';
+    });
+
+    expect(plan).toHaveLength(2);
+    expect(plan.map((entry) => `${entry.agent.agent_id}:${entry.task_ref}`)).toEqual([
+      'agent-a:docs/task-1',
+      'agent-b:docs/task-2',
+    ]);
+  });
 });

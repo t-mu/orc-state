@@ -70,6 +70,16 @@ describe('nextEligibleTaskFromBacklog', () => {
     expect(taskRef).toBe('docs/critical');
   });
 
+  it('skips tasks already reserved earlier in the current dispatch tick', () => {
+    const taskRef = nextEligibleTaskFromBacklog(backlog([
+      { ref: 'docs/a', title: 'A', status: 'todo', priority: 'critical' },
+      { ref: 'docs/b', title: 'B', status: 'todo', priority: 'normal' },
+    ]), { agent_id: 'worker-01', role: 'worker' } as Agent, {
+      excludeTaskRefs: new Set(['docs/a']),
+    });
+    expect(taskRef).toBe('docs/b');
+  });
+
   it('preserves original order for equal-priority tasks (stable)', () => {
     const taskRef = nextEligibleTaskFromBacklog(backlog([
       { ref: 'docs/a', title: 'A', status: 'todo', priority: 'high' },
