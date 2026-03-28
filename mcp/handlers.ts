@@ -778,7 +778,7 @@ function scopeLines(scopePaths: string[] | undefined) {
     return '- (none specified — search broadly from working_directory)';
   }
   return scopePaths.map((path) => `- ${path}`).join('\n')
-    + '\nDo not expand beyond scope_paths unless all listed paths are exhausted with no findings.';
+    + '\n\nDo not expand beyond scope_paths unless all listed paths are exhausted with no findings.';
 }
 
 export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } = {}) {

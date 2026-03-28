@@ -24,6 +24,7 @@ output rules:
 - Do not include markdown headers, bullet points, or code fences inside the block.
 - Stop when you can state a likely cause with confidence, or after at most 5 investigative steps.
 - One investigative step = one Bash or Read tool call.
+- If 5 steps are exhausted without a confident conclusion, emit the report anyway noting what was tried and what remains unknown.
 
 deliverable:
 When done, output a SCOUT_REPORT block using this exact format:
