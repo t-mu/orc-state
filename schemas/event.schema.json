@@ -49,6 +49,7 @@
         "heartbeat",
         "agent_registered",
         "agent_online",
+        "reported_for_duty",
         "agent_offline",
         "agent_marked_dead",
         "session_start_failed",

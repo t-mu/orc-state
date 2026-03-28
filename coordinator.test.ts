@@ -136,7 +136,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         ORCH_STATE_DIR: dir,
       }),
     }));
-    expect(mockSend).toHaveBeenCalledOnce();
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it('requeues a managed slot after a transient start failure instead of leaving it offline', async () => {
@@ -276,7 +276,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
     expect(claims[0]?.state).toBe('claimed');
-    expect(claims[0]?.task_envelope_sent_at).toBeTruthy();
+    expect(claims[0]?.task_envelope_sent_at).toBeNull();
     expect(claims[0]?.session_start_retry_count).toBe(0);
     expect(claims[0]?.session_start_retry_next_at).toBeNull();
     expect(claims[0]?.session_start_last_error).toBeNull();
@@ -286,8 +286,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     expect(readEvents(dir).some((event) => event.event === 'session_start_failed')).toBe(false);
     expect(mockStart).toHaveBeenCalledTimes(3);
-    expect(mockSend).toHaveBeenCalled();
-    expect(mockSend.mock.calls.some(([, payload]) => String(payload).includes('TASK_START'))).toBe(true);
+    expect(mockSend.mock.calls.some(([, payload]) => String(payload).includes('TASK_START'))).toBe(false);
   });
 
   it('resumes managed-slot start retries after coordinator restart', async () => {
@@ -366,11 +365,11 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       ({ readJson } = await import('./lib/stateReader.ts'));
       ({ claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }));
       expect(claims[0]?.state).toBe('claimed');
-      expect(claims[0]?.task_envelope_sent_at).toBeTruthy();
+      expect(claims[0]?.task_envelope_sent_at).toBeNull();
       expect(claims[0]?.session_start_retry_count).toBe(0);
       expect(claims[0]?.session_start_last_error).toBeNull();
       expect(mockStart).toHaveBeenCalledTimes(3);
-      expect(mockSend).toHaveBeenCalled();
+      expect(mockSend.mock.calls.some(([, payload]) => String(payload).includes('TASK_START'))).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -614,7 +613,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     await tick();
 
     expect(mockStart).toHaveBeenCalledTimes(2);
-    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(mockSend).toHaveBeenCalledTimes(0);
 
     const { readJson } = await import('./lib/stateReader.ts');
     const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
@@ -627,9 +626,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       'proj/task-b:claimed',
     ]);
 
-    const payloads = mockSend.mock.calls.map(([, payload]) => String(payload));
-    expect(payloads.some((payload) => payload.includes('task_ref: proj/task-a'))).toBe(true);
-    expect(payloads.some((payload) => payload.includes('task_ref: proj/task-b'))).toBe(true);
+    expect(claims.every((claim) => claim.task_envelope_sent_at == null)).toBe(true);
   });
 
   it('restarts an existing worker session in the assigned run worktree before dispatch', async () => {
@@ -733,7 +730,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(agent.session_handle).toBe('pty:worker-01-new');
   });
 
-  it('records TASK_START delivery without auto-acking run_started', async () => {
+  it('records TASK_START delivery without auto-acking run_started once the worker is ready', async () => {
     seedState(dir, {
       agents: [{
         agent_id: 'worker-01',
@@ -769,10 +766,22 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       getRunWorktree: vi.fn().mockReturnValue(null),
     }));
 
-    const { tick } = await import('./coordinator.ts');
+    const { tick, processTerminalRunEvents } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
+    let { readJson } = await import('./lib/stateReader.ts');
+    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'worker-01')!;
+    await processTerminalRunEvents([{
+      event: 'reported_for_duty',
+      ts: new Date().toISOString(),
+      actor_type: 'agent',
+      actor_id: 'worker-01',
+      agent_id: 'worker-01',
+      payload: { session_token: String(agent.session_token) },
+    }]);
+    await tick();
+
+    ({ readJson } = await import('./lib/stateReader.ts'));
     const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
     expect(claims[0]?.state).toBe('claimed');
     expect(claims[0]?.task_envelope_sent_at).toBeTruthy();
@@ -798,6 +807,9 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         role: 'worker',
         status: 'running',
         session_handle: 'pty:worker-01',
+        session_token: 'session-token-1',
+        session_started_at: new Date().toISOString(),
+        session_ready_at: null,
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -810,7 +822,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
         task_ref: 'proj/fix-bug',
         agent_id: 'worker-01',
         state: 'claimed',
-        claimed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        claimed_at: new Date().toISOString(),
         task_envelope_sent_at: null,
         lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
         last_heartbeat_at: null,
@@ -846,6 +858,249 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-awaiting-delivery')!;
     expect(claim.state).toBe('claimed');
     expect(claim.finished_at).toBeFalsy();
+  });
+
+  it('withholds TASK_START until the worker reports for duty', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        session_token: 'session-token-1',
+        session_started_at: new Date().toISOString(),
+        session_ready_at: null,
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-awaiting-duty',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'claimed',
+        claimed_at: new Date().toISOString(),
+        task_envelope_sent_at: null,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn(),
+        send,
+        stop: vi.fn(),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+
+    const { tick, processTerminalRunEvents } = await import('./coordinator.ts');
+    await tick();
+    expect(send).not.toHaveBeenCalled();
+
+    await processTerminalRunEvents([{
+      event: 'reported_for_duty',
+      ts: new Date().toISOString(),
+      actor_type: 'agent',
+      actor_id: 'worker-01',
+      agent_id: 'worker-01',
+      payload: { session_token: 'session-token-1' },
+    }]);
+    await tick();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toContain('TASK_START');
+  });
+
+  it('relaunches and eventually requeues a claimed run when the pre-duty session is lost', async () => {
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: null,
+        session_token: null,
+        session_started_at: null,
+        session_ready_at: null,
+        provider_ref: null,
+        registered_at: '2026-01-01T00:00:00.000Z',
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        owner: 'orc-1',
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-lost-before-duty',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'orc-1',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00.000Z',
+        task_envelope_sent_at: null,
+        lease_expires_at: '2026-01-01T00:30:00.000Z',
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:03:00.000Z'));
+
+    const start = vi.fn().mockImplementation((_agentId: string, _config: Record<string, unknown>) => Promise.resolve({
+      session_handle: 'pty:orc-1',
+      provider_ref: { pid: 123, provider: 'claude', binary: 'claude' },
+    }));
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start,
+        send,
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-lost-before-duty',
+        branch: 'task/run-lost-before-duty',
+        worktree_path: '/tmp/orc-worktrees/run-lost-before-duty',
+      }),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-lost-before-duty',
+        branch: 'task/run-lost-before-duty',
+        worktree_path: '/tmp/orc-worktrees/run-lost-before-duty',
+      }),
+    }));
+
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2), '--session-ready-timeout-ms=120000', '--session-ready-nudge-ms=1000', '--session-ready-nudge-interval-ms=1000'];
+
+    try {
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      vi.setSystemTime(new Date('2026-01-01T00:05:01.000Z'));
+      await tick();
+    } finally {
+      process.argv = originalArgv;
+      vi.useRealTimers();
+    }
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-lost-before-duty')!;
+    expect(start).toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('TASK_START'));
+    expect(claim.state).toBe('failed');
+    expect(claim.failure_reason).toContain('reported_for_duty timeout');
+  });
+
+  it('requeues a claimed non-managed worker run when the pre-duty relaunch fails', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: null,
+        session_token: null,
+        session_started_at: null,
+        session_ready_at: null,
+        provider_ref: null,
+        registered_at: '2026-01-01T00:00:00.000Z',
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        owner: 'worker-01',
+        status: 'claimed',
+      }],
+      claims: [{
+        run_id: 'run-nonmanaged-lost-before-duty',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'claimed',
+        claimed_at: new Date().toISOString(),
+        task_envelope_sent_at: null,
+        lease_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    const start = vi.fn().mockRejectedValue(new Error('spawn failed'));
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start,
+        send: vi.fn().mockResolvedValue(''),
+        stop: vi.fn().mockResolvedValue(undefined),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-nonmanaged-lost-before-duty',
+        branch: 'task/run-nonmanaged-lost-before-duty',
+        worktree_path: '/tmp/orc-worktrees/run-nonmanaged-lost-before-duty',
+      }),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-nonmanaged-lost-before-duty',
+        branch: 'task/run-nonmanaged-lost-before-duty',
+        worktree_path: '/tmp/orc-worktrees/run-nonmanaged-lost-before-duty',
+      }),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const { readJson } = await import('./lib/stateReader.ts');
+    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-nonmanaged-lost-before-duty')!;
+    expect(start).toHaveBeenCalled();
+    expect(claim.state).toBe('failed');
+    expect(claim.failure_reason).toContain('session_start_failed');
   });
 
   it('starts missing-run_started nudges from task_envelope_sent_at instead of claimed_at', async () => {

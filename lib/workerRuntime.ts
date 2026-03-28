@@ -5,6 +5,7 @@ import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
   Object.assign(agent, updates);
@@ -72,6 +73,9 @@ export function clearWorkerSessionRuntime(
   const updates: Partial<Agent> = {
     status,
     session_handle: null,
+    session_token: null,
+    session_started_at: null,
+    session_ready_at: null,
     provider_ref: null,
     last_status_change_at: nowIso,
   };
@@ -120,6 +124,7 @@ export async function launchWorkerSession(
     taskRef = null,
     retryable = false,
     emit,
+    sessionToken = randomUUID(),
   }: {
     adapter: Adapter;
     workingDirectory: string | null | undefined;
@@ -128,6 +133,7 @@ export async function launchWorkerSession(
     taskRef?: string | null;
     retryable?: boolean;
     emit: (event: OrcEventInput) => void;
+    sessionToken?: string;
   },
 ): Promise<{ ok: boolean; session_handle?: string; provider_ref?: unknown; reason?: string }> {
   try {
@@ -136,7 +142,7 @@ export async function launchWorkerSession(
       ORCH_STATE_DIR: stateDir,
     }, repoRoot);
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
-      system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc'),
+      system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc', sessionToken),
       model: agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
       read_only: agent.role === 'scout',
@@ -145,6 +151,9 @@ export async function launchWorkerSession(
     const updates: Partial<Agent> = {
       status: 'running',
       session_handle,
+      session_token: sessionToken,
+      session_started_at: nowIso,
+      session_ready_at: null,
       provider_ref: provider_ref as Agent['provider_ref'],
       last_heartbeat_at: nowIso,
       last_status_change_at: nowIso,

@@ -246,6 +246,12 @@ export interface AgentOnlineEvent extends BaseEvent {
   payload?: Record<string, unknown>;
 }
 
+export interface ReportedForDutyEvent extends BaseEvent {
+  event: 'reported_for_duty';
+  agent_id: string;
+  payload: { session_token: string; [key: string]: unknown };
+}
+
 export interface AgentOfflineEvent extends BaseEvent {
   event: 'agent_offline';
   agent_id: string;
@@ -329,6 +335,7 @@ export type OrcEvent =
   | HeartbeatEvent
   | AgentRegisteredEvent
   | AgentOnlineEvent
+  | ReportedForDutyEvent
   | AgentOfflineEvent
   | AgentMarkedDeadEvent
   | SessionStartFailedEvent

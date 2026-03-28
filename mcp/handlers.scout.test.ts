@@ -27,6 +27,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   dir = mkdtempSync(join(tmpdir(), 'orc-mcp-scout-test-'));
   process.env.ORC_REPO_ROOT = dir;
+  process.env.ORC_SCOUT_READY_TIMEOUT_MS = '25';
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
@@ -53,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.ORC_SCOUT_READY_TIMEOUT_MS;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -61,6 +63,9 @@ describe('handleRequestScout', () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
       agent.session_handle = `pty:${agent.agent_id}`;
+      agent.session_token = 'scout-token-1';
+      agent.session_started_at = '2026-01-01T00:00:00.000Z';
+      agent.session_ready_at = '2026-01-01T00:00:01.000Z';
       return Promise.resolve({ ok: true, session_handle: `pty:${agent.agent_id}`, provider_ref: { provider: agent.provider } });
     });
 
@@ -97,6 +102,9 @@ describe('handleRequestScout', () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
       agent.session_handle = `pty:${agent.agent_id}`;
+      agent.session_token = 'scout-token-1';
+      agent.session_started_at = '2026-01-01T00:00:00.000Z';
+      agent.session_ready_at = '2026-01-01T00:00:01.000Z';
       return Promise.resolve({ ok: true, session_handle: `pty:${agent.agent_id}`, provider_ref: { provider: agent.provider } });
     });
 
@@ -125,6 +133,23 @@ describe('handleRequestScout', () => {
 
     const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
     expect(agents.some((agent: { agent_id: string }) => agent.agent_id === 'scout-1')).toBe(false);
+  });
+
+  it('fails when the scout never reports for duty', async () => {
+    launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
+      agent.status = 'running';
+      agent.session_handle = `pty:${agent.agent_id}`;
+      agent.session_token = 'scout-token-2';
+      agent.session_started_at = '2026-01-01T00:00:00.000Z';
+      agent.session_ready_at = null;
+      return Promise.resolve({ ok: true, session_handle: `pty:${agent.agent_id}`, provider_ref: { provider: agent.provider } });
+    });
+
+    const { handleRequestScout } = await import('./handlers.ts');
+    await expect(handleRequestScout(dir, {
+      objective: 'Inspect readiness failure',
+      actor_id: 'master',
+    })).rejects.toThrow('did not report for duty in time');
   });
 
   it('rejects non-master non-human actors', async () => {

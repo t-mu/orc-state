@@ -65,6 +65,9 @@ function getAdapter(provider: string): ReturnType<typeof createAdapter> {
 const INTERVAL_MS = intFlag('interval-ms', 30000);
 const MODE        = flag('mode') ?? 'autonomous';
 const RUN_START_TIMEOUT_MS = intFlag('run-start-timeout-ms', 600000);
+const SESSION_READY_TIMEOUT_MS = intFlag('session-ready-timeout-ms', 120000);
+const SESSION_READY_NUDGE_MS = intFlag('session-ready-nudge-ms', 15000);
+const SESSION_READY_NUDGE_INTERVAL_MS = intFlag('session-ready-nudge-interval-ms', 30000);
 const RUN_INACTIVE_TIMEOUT_MS = intFlag('run-inactive-timeout-ms', 1800000);
 const RUN_START_NUDGE_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.1);
 const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
@@ -89,6 +92,7 @@ let coordinatorLockReleased = false;
 let latestActivityByRun: Map<string, string> = new Map();
 let latestPhaseByRun: Map<string, string> = new Map();
 const runStartNudgeAtMs = new Map<string, number>();
+const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -257,6 +261,126 @@ async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, wo
   }
 }
 
+function isAgentSessionReady(agent: Agent | null | undefined) {
+  if (!agent?.session_handle || !agent.session_token || !agent.session_started_at || !agent.session_ready_at) {
+    return false;
+  }
+  return new Date(agent.session_ready_at).getTime() >= new Date(agent.session_started_at).getTime();
+}
+
+function buildReportForDutyNudge(agent: Agent) {
+  return [
+    'SESSION_NUDGE',
+    `agent_id: ${agent.agent_id}`,
+    `session_token: ${agent.session_token ?? '(missing)'}`,
+    'Missing required reported_for_duty acknowledgement for this PTY session.',
+    'Call this command immediately via your Bash tool:',
+    `${resolveOrcBinSh(REPO_ROOT)} report-for-duty --agent-id=${agent.agent_id} --session-token=${agent.session_token ?? ''}`,
+    'SESSION_NUDGE_END',
+  ].join('\n');
+}
+
+async function processClaimedSessionReadiness(
+  agents: Agent[],
+  claims: Claim[],
+  workerPoolConfig: WorkerPoolConfig,
+) {
+  const nowMs = Date.now();
+  const byAgent = new Map(agents.map((agent) => [agent.agent_id, agent]));
+  const nudgeWork = [];
+
+  for (const claim of claims ?? []) {
+    if (claim.state !== 'claimed') {
+      sessionReadyNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+    if (claim.task_envelope_sent_at) {
+      sessionReadyNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+    if (
+      claim.session_start_retry_count
+      && claim.session_start_retry_next_at
+      && nowMs < new Date(claim.session_start_retry_next_at).getTime()
+    ) {
+      continue;
+    }
+
+    const agent = byAgent.get(claim.agent_id);
+    if (!agent || agent.status === 'offline') continue;
+
+    if (!agent.session_handle) {
+      const ready = await ensureSessionReady(agent, {
+        working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? null,
+        run_id: claim.run_id,
+        task_ref: claim.task_ref,
+        retryable: isManagedSlot(agent.agent_id, workerPoolConfig),
+      });
+      if (!ready.ok || !agent.session_handle || agent.status === 'offline') {
+        if (isManagedSlot(agent.agent_id, workerPoolConfig) && agent.status !== 'offline') {
+          setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
+            retryCount: Math.max(claim.session_start_retry_count ?? 0, 1),
+            nextRetryAt: new Date(nowMs + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
+            lastError: ready.reason ?? 'worker session could not be relaunched while awaiting reported_for_duty',
+          });
+        } else if (!isManagedSlot(agent.agent_id, workerPoolConfig)) {
+          const failReason = ready.reason ?? 'worker session could not be relaunched while awaiting reported_for_duty';
+          finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+            success: false,
+            failureReason: `session_start_failed: ${failReason}`,
+            failureCode: 'ERR_SESSION_START_FAILED',
+            policy: 'requeue',
+          });
+        }
+        continue;
+      }
+    }
+
+    if (isAgentSessionReady(agent)) {
+      try {
+        await sendTaskEnvelope(agent, claim.task_ref, claim.run_id, workerPoolConfig);
+      } catch (err) {
+        log(`ERROR dispatching pending envelope for ${claim.task_ref} to ${claim.agent_id}: ${(err as Error).message}`);
+      }
+      sessionReadyNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+
+    const sessionAnchor = agent.session_started_at ?? claim.claimed_at ?? null;
+    if (!sessionAnchor) continue;
+    const ageMs = nowMs - new Date(sessionAnchor).getTime();
+    if (Number.isNaN(ageMs)) continue;
+
+    if (ageMs >= SESSION_READY_TIMEOUT_MS) {
+      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+        success: false,
+        failureReason: 'reported_for_duty timeout: worker did not acknowledge session readiness in time',
+        failureCode: 'ERR_SESSION_READY_TIMEOUT',
+        policy: 'requeue',
+      });
+      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      sessionReadyNudgeAtMs.delete(claim.run_id);
+      log(`run ${claim.run_id} timed out waiting for reported_for_duty; requeued ${claim.task_ref}`);
+      continue;
+    }
+
+    if (ageMs < SESSION_READY_NUDGE_MS || !agent.session_token) continue;
+    const lastNudgeAt = sessionReadyNudgeAtMs.get(claim.run_id) ?? 0;
+    if (nowMs - lastNudgeAt < SESSION_READY_NUDGE_INTERVAL_MS) continue;
+
+    const agentSnapshot = { ...agent };
+    const runId = claim.run_id;
+    nudgeWork.push(async () => {
+      const adapter = getAdapter(agentSnapshot.provider);
+      await adapter.send(agentSnapshot.session_handle!, buildReportForDutyNudge(agentSnapshot));
+      sessionReadyNudgeAtMs.set(runId, nowMs);
+      log(`nudged ${agentSnapshot.agent_id} for missing reported_for_duty on session ${agentSnapshot.session_token}`);
+    });
+  }
+
+  await runBounded(nudgeWork);
+}
+
 async function processManagedSessionStartRetries(
   agents: Agent[],
   claims: Claim[],
@@ -285,11 +409,6 @@ async function processManagedSessionStartRetries(
       setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
         retryCount: 0,
       });
-      try {
-        await sendTaskEnvelope(agent, claim.task_ref, claim.run_id, workerPoolConfig);
-      } catch (err) {
-        log(`ERROR dispatching ${claim.task_ref} to ${agent.agent_id}: ${(err as Error).message}`);
-      }
       continue;
     }
 
@@ -967,6 +1086,11 @@ async function tick() {
   tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
   agents = tickAgents.agents ?? [];
   claims = tickClaims.claims ?? [];
+  await processClaimedSessionReadiness(agents, claims, workerPoolConfig);
+  tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
+  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+  agents = tickAgents.agents ?? [];
+  claims = tickClaims.claims ?? [];
   await ensureSessionPoolReady(agents, workerPoolConfig);
   // Agents that received a nudge this tick are excluded from dispatch to avoid
   // sending them a new task envelope in the same tick as an in-flight nudge.
@@ -1029,14 +1153,16 @@ async function tick() {
         return;
       }
 
-      try {
-        await sendTaskEnvelope(agent, taskRef, runId, workerPoolConfig);
-      } catch (err) {
-        // InjectionScanError: finishRun not yet called — preserve runId for outer catch
-        if (!(err instanceof InjectionScanError)) {
-          runId = null;
+      if (isAgentSessionReady(agent)) {
+        try {
+          await sendTaskEnvelope(agent, taskRef, runId, workerPoolConfig);
+        } catch (err) {
+          // InjectionScanError: finishRun not yet called — preserve runId for outer catch
+          if (!(err instanceof InjectionScanError)) {
+            runId = null;
+          }
+          throw err;
         }
-        throw err;
       }
     } catch (err) {
       if (err instanceof InjectionScanError) {
@@ -1221,6 +1347,23 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     const nowIso = new Date().toISOString();
     const runId = (event as { run_id?: string }).run_id;
     const agentId = (event as { agent_id?: string }).agent_id ?? '';
+
+    if (event.event === 'reported_for_duty') {
+      const agent = getAgent(STATE_DIR, agentId);
+      const sessionToken = typeof event.payload?.session_token === 'string' ? event.payload.session_token : null;
+      if (agent && sessionToken && agent.session_token === sessionToken) {
+        updateAgentRuntime(STATE_DIR, agentId, {
+          session_ready_at: eventTs,
+          last_heartbeat_at: eventTs,
+        });
+        recordAgentActivity(STATE_DIR, agentId, { at: eventTs });
+      }
+      if (seq > 0) {
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
+      }
+      continue;
+    }
+
     const claim = runId ? getClaim(runId) : null;
     const action = reduceLifecycleEvent(
       event as Parameters<typeof reduceLifecycleEvent>[0],
