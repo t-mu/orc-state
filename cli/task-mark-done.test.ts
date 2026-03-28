@@ -29,8 +29,9 @@ afterEach(() => {
 });
 
 describe('cli/task-mark-done.ts', () => {
-  it('syncs a markdown-done task into runtime state and emits task_updated', () => {
+  it('reconciles a markdown-done spec with an active runtime task and emits task_updated', () => {
     writeSpec('docs/task-1', 'docs', 'Task 1', 'done');
+    seedBacklogTask('in_progress');
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
 
@@ -39,11 +40,12 @@ describe('cli/task-mark-done.ts', () => {
 
     const event = readEvents().find((entry) => entry.event === 'task_updated' && entry.task_ref === 'docs/task-1');
     expect(event).toBeTruthy();
-    expect(event?.payload).toMatchObject({ status: 'done', previous_status: 'todo' });
+    expect(event?.payload).toMatchObject({ status: 'done', previous_status: 'in_progress' });
   });
 
   it('auto-updates markdown spec from todo to done', () => {
     writeSpec('docs/task-1', 'docs', 'Task 1', 'todo');
+    seedBacklogTask('in_progress');
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
 
@@ -59,16 +61,62 @@ describe('cli/task-mark-done.ts', () => {
 
   it('is idempotent when spec is already done', () => {
     writeSpec('docs/task-1', 'docs', 'Task 1', 'done');
+    seedBacklogTask('claimed');
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('task marked done');
   });
 
+  it('is retryable when runtime state is already done', () => {
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'done');
+    seedBacklogTask('done');
+
+    const result = runCli(['docs/task-1']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('task marked done');
+    const event = readEvents().find((entry) => entry.event === 'task_updated' && entry.task_ref === 'docs/task-1');
+    expect(event?.payload).toMatchObject({ status: 'done', previous_status: 'done' });
+  });
+
   it('fails when spec file is not found', () => {
     // No spec file written — only backlog.json has the task
+    seedBacklogTask('in_progress');
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Task spec not found');
+  });
+
+  it('completes an in-progress runtime task even though generic sync would not overwrite it', () => {
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'todo');
+    seedBacklogTask('in_progress');
+
+    const result = runCli(['docs/task-1']);
+
+    expect(result.status).toBe(0);
+    const task = readBacklog().features[0].tasks.find((entry) => entry.ref === 'docs/task-1');
+    expect(task?.status).toBe('done');
+    expect(readFileSync(join(dir, 'backlog', '999-task-1.md'), 'utf8')).toContain('status: done');
+  });
+
+  it('rejects completion from todo', () => {
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'todo');
+    seedBacklogTask('todo');
+
+    const result = runCli(['docs/task-1']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('must be claimed or in_progress');
+  });
+
+  it('rejects completion from blocked', () => {
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'blocked');
+    seedBacklogTask('blocked');
+
+    const result = runCli(['docs/task-1']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('must be claimed or in_progress');
   });
 });
 
@@ -95,6 +143,17 @@ function writeSpec(taskRef: string, feature: string, title: string, status: stri
       '',
     ].join('\n'),
   );
+}
+
+function seedBacklogTask(status: string) {
+  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+    version: '1',
+    features: [{
+      ref: 'docs',
+      title: 'Docs',
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status }],
+    }],
+  }));
 }
 
 function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
