@@ -264,6 +264,23 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
   const agent = agents.find((entry) => entry.agent_id === agent_id);
   if (!agent) return { error: 'not_found', agent_id };
 
+  if (agent.role === 'scout') {
+    return {
+      agent_id,
+      agent: {
+        agent_id: agent.agent_id,
+        role: 'scout',
+        status: agent.status,
+        provider: agent.provider,
+      },
+      active_run: null,
+      queued_tasks: [],
+      blockers: [],
+      recommended_action: 'investigate',
+      note: 'Scout agents do not execute backlog tasks. Use orc attach <agent_id> to read investigation output.',
+    };
+  }
+
   const activeRun = claims.find((claim) =>
     claim.agent_id === agent_id && ['claimed', 'in_progress'].includes(claim.state),
   ) ?? null;

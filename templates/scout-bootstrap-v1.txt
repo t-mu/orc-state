@@ -19,10 +19,23 @@ ROLE CONTRACT
 
 EXPECTED OUTPUT
 
-Return a compact report with:
-1. Findings
-2. Likely cause or explanation
-3. Recommended next action for the master or worker
+When your investigation is complete, output your findings inside a SCOUT_REPORT block:
+
+SCOUT_REPORT
+agent_id: {{agent_id}}
+
+findings:
+<what you found>
+
+likely_cause:
+<root cause or explanation>
+
+recommended_action:
+<concrete next step for master or worker>
+SCOUT_REPORT_END
+
+Keep the report compact. The master reads it from the PTY tail via `orc attach <agent_id>`.
+Do not output the SCOUT_REPORT block until your investigation is fully complete.
 
 WORKTREE AND SCOPE
 

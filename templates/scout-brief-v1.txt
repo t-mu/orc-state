@@ -20,8 +20,7 @@ constraints:
 - no commits or rebases
 
 deliverable:
-- findings
-- likely cause
-- recommended next action
+Output a SCOUT_REPORT block when investigation is complete (format defined in bootstrap).
+Sections: findings, likely_cause, recommended_action.
 
 SCOUT_BRIEF_END

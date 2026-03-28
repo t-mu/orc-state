@@ -609,6 +609,7 @@ function hasOtherActiveClaim(agentId: string, runId: string) {
 async function ensureSessionPoolReady(agents: Agent[], _workerPoolConfig: WorkerPoolConfig) {
   const candidates = (agents ?? []).filter(
     (agent) => agent?.role !== 'master'
+      && agent?.role !== 'scout'
       && agent.status !== 'offline'
       && agent.status !== 'dead'
       && agent.session_handle,
@@ -632,6 +633,7 @@ function markStaleAgentsDead(agents: Agent[], claims: Claim[], nowMs = Date.now(
   for (const agent of agents ?? []) {
     if (!agent?.agent_id) continue;
     if (agent.role === 'master') continue;
+    if (agent.role === 'scout') continue; // scouts are ephemeral; cleaned up by worker-gc or worker-remove
     if (agent.status === 'dead') continue;
     if (busyAgents.has(agent.agent_id)) continue;
     if (typeof agent.last_heartbeat_at !== 'string') continue;

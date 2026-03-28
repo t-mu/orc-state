@@ -278,6 +278,40 @@ kill $HEARTBEAT_PID 2>/dev/null || true
 
 ---
 
+## Scout Role
+
+Scouts are **read-only investigation agents** launched on demand by the master via the `request_scout` MCP tool. They do not participate in the task backlog lifecycle.
+
+### What scouts do
+
+- Inspect code, logs, git history, runtime state, and optionally the web
+- Return a structured `SCOUT_REPORT` block with findings, likely cause, and recommended next action
+- The master reads output via `orc attach <scout-id>`
+
+### What scouts must NOT do
+
+- Edit files or write state
+- Run git commands that mutate history or working tree
+- Call state-mutating `orc` commands or claim tasks
+
+### Scout lifecycle (master perspective)
+
+```
+request_scout(objective, ...) → scout-N spawned and briefed
+                               → scout investigates (read-only PTY session)
+                               → scout outputs SCOUT_REPORT block
+                               → master reads via: orc attach scout-N
+                               → master dismisses: orc worker-remove scout-N
+```
+
+Scouts do not heartbeat and are not coordinated by the run lifecycle. They are ephemeral and should be cleaned up explicitly with `orc worker-remove <scout-id>` once the master has read the report.
+
+### Scout lifecycle (scout perspective)
+
+You are launched with a `SCOUT_BOOTSTRAP` block followed by a `SCOUT_BRIEF` block from the master. Do your investigation, then output a `SCOUT_REPORT` block (format defined in bootstrap). Do not wait for further instructions — output the report and stop.
+
+---
+
 ## Task Execution Workflow
 
 Follow the **Phased Workflow** above. The five phases are:
