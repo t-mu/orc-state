@@ -67,6 +67,18 @@ describe('cli/task-mark-done.ts', () => {
     expect(result.stdout).toContain('task marked done');
   });
 
+  it('is retryable when runtime state is already done', () => {
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'done');
+    seedBacklogTask('done');
+
+    const result = runCli(['docs/task-1']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('task marked done');
+    const event = readEvents().find((entry) => entry.event === 'task_updated' && entry.task_ref === 'docs/task-1');
+    expect(event?.payload).toMatchObject({ status: 'done', previous_status: 'done' });
+  });
+
   it('fails when spec file is not found', () => {
     // No spec file written — only backlog.json has the task
     seedBacklogTask('in_progress');

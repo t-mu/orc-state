@@ -16,8 +16,7 @@ import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, findTask } from '../lib/stateReader.ts';
 import { discoverActiveTaskSpecs } from '../lib/backlogSync.ts';
 
-const TERMINAL_STATUSES = new Set(['done', 'released', 'cancelled']);
-const COMPLETABLE_STATUSES = new Set(['claimed', 'in_progress']);
+const NON_COMPLETABLE_STATUSES = new Set(['todo', 'blocked', 'released', 'cancelled']);
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const actorId = flag('actor-id') ?? 'human';
@@ -38,10 +37,7 @@ try {
     if (!task) {
       throw new Error(`task not found: ${taskRef}`);
     }
-    if (TERMINAL_STATUSES.has(task.status)) {
-      throw new Error(`task ${taskRef} cannot be marked done from terminal status '${task.status}'`);
-    }
-    if (!COMPLETABLE_STATUSES.has(task.status)) {
+    if (NON_COMPLETABLE_STATUSES.has(task.status)) {
       throw new Error(`task ${taskRef} must be claimed or in_progress before completion (got: ${task.status})`);
     }
 
@@ -63,10 +59,12 @@ try {
 
     // Step 2: Transition runtime state directly. Generic backlog sync intentionally
     // does not overwrite active task statuses, so completion must update runtime here.
-    task.status = 'done';
-    task.updated_at = now;
-    delete task.blocked_reason;
-    atomicWriteJson(backlogPath, backlog);
+    if (task.status !== 'done') {
+      task.status = 'done';
+      task.updated_at = now;
+      delete task.blocked_reason;
+      atomicWriteJson(backlogPath, backlog);
+    }
 
     // Step 3: Emit event
     appendSequencedEvent(
