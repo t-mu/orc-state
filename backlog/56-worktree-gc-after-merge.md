@@ -1,7 +1,7 @@
 ---
 ref: general/56-worktree-gc-after-merge
 title: "Fix worktree cleanup: remove git worktree and branch after merge"
-status: todo
+status: done
 feature: general
 task_type: implementation
 priority: high

@@ -2,7 +2,7 @@
 ref: agent-lens/53-agent-lens-pty-output-panel
 feature: agent-lens
 priority: normal
-status: todo
+status: done
 required_provider: codex
 ---
 
