@@ -6,7 +6,7 @@
  */
 import { flag } from '../lib/args.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { validateProgressCommandInput } from '../lib/progressValidation.ts';
+import { validateProgressCommandInput, validateProgressInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import type { EventFinalizationStatus, FailurePolicy, OrcEvent } from '../types/events.ts';
@@ -52,7 +52,8 @@ function finalizationPayload(eventName: string): { status: EventFinalizationStat
 
 try {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressCommandInput({
+  const validator = event === 'heartbeat' ? validateProgressInput : validateProgressCommandInput;
+  const { claim: validatedClaim } = validator({
     event: event as OrcEvent['event'],
     runId,
     agentId,

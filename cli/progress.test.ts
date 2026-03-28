@@ -66,6 +66,15 @@ describe('cli/progress.ts', () => {
     expect(readEvents().some((event) => event.event === 'work_complete' && event.run_id === 'run-1')).toBe(true);
   });
 
+  it('rejects heartbeat before run_started', () => {
+    const before = readClaims();
+    const result = runProgress(['--event=heartbeat', '--run-id=run-1', '--agent-id=bob']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("heartbeat requires run_started first");
+    expect(readClaims()).toEqual(before);
+    expect(readEvents().some((event) => event.event === 'heartbeat' && event.run_id === 'run-1')).toBe(false);
+  });
+
   it('requires reason for run_failed', () => {
     runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
     const result = runProgress(['--event=run_failed', '--run-id=run-1', '--agent-id=bob', '--policy=requeue']);
