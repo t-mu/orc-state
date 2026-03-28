@@ -7,11 +7,11 @@ description: {{description}}
 
 Report progress using your Bash tool — call these orc commands directly:
 
-  orc run-start --run-id={{run_id}} --agent-id={{agent_id}}     ← call immediately
-  orc run-heartbeat --run-id={{run_id}} --agent-id={{agent_id}} ← every ~5 min during long work
-  orc run-work-complete --run-id={{run_id}} --agent-id={{agent_id}} ← when implementation/review/rebase work is done and before any terminal success signal
-  orc run-finish --run-id={{run_id}} --agent-id={{agent_id}}    ← after the work-complete handoff, when the run can terminate cleanly
-  orc run-fail --run-id={{run_id}} --agent-id={{agent_id}} --reason="..." ← on unrecoverable failure
+  {{orc_bin}} run-start --run-id={{run_id}} --agent-id={{agent_id}}     ← call immediately
+  {{orc_bin}} run-heartbeat --run-id={{run_id}} --agent-id={{agent_id}} ← every ~5 min during long work
+  {{orc_bin}} run-work-complete --run-id={{run_id}} --agent-id={{agent_id}} ← when implementation/review/rebase work is done and before any terminal success signal
+  {{orc_bin}} run-finish --run-id={{run_id}} --agent-id={{agent_id}}    ← after the work-complete handoff, when the run can terminate cleanly
+  {{orc_bin}} run-fail --run-id={{run_id}} --agent-id={{agent_id}} --reason="..." ← on unrecoverable failure
 
 acceptance_criteria:
 {{acceptance_criteria_lines}}
@@ -45,11 +45,11 @@ task_contract_v1_json:
 assigned_worktree: {{assigned_worktree}}
 start_immediately:
   Step 1: cd {{assigned_worktree}}
-  Step 2: orc run-start --run-id={{run_id}} --agent-id={{agent_id}}
+  Step 2: {{orc_bin}} run-start --run-id={{run_id}} --agent-id={{agent_id}}
   Step 3: Start background heartbeat (required — keeps lease alive during long tool calls):
-    while true; do sleep 270; orc run-heartbeat --run-id={{run_id}} --agent-id={{agent_id}}; done &
+    while true; do sleep 270; {{orc_bin}} run-heartbeat --run-id={{run_id}} --agent-id={{agent_id}}; done &
     HEARTBEAT_PID=$!
   Step 4: inspect the richer task-spec context above and execute the task.
-  Before orc run-finish or orc run-fail: kill $HEARTBEAT_PID 2>/dev/null || true
-Before commit, edit backlog/<N>-<slug>.md for this task and change status: todo to status: done. After commit/review/verification and git rebase main, call orc run-work-complete and remain alive for coordinator finalization follow-up when present. If an interactive prompt needs master input, use orc run-input-request instead of hanging or failing immediately. Be ready to handle a finalize-rebase request in this same worktree before terminal success, and do not merge or clean up the worktree yourself.
+  Before {{orc_bin}} run-finish or {{orc_bin}} run-fail: kill $HEARTBEAT_PID 2>/dev/null || true
+Before commit, edit backlog/<N>-<slug>.md for this task and change status: todo to status: done. After commit/review/verification and git rebase main, call {{orc_bin}} run-work-complete and remain alive for coordinator finalization follow-up when present. If an interactive prompt needs master input, use {{orc_bin}} run-input-request instead of hanging or failing immediately. Be ready to handle a finalize-rebase request in this same worktree before terminal success, and do not merge or clean up the worktree yourself.
 TASK_END

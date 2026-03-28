@@ -47,6 +47,7 @@ import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, 
 import { join } from 'node:path';
 import { FINALIZE_LEASE_MS } from './lib/constants.ts';
 import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
+import { resolveOrcBinSh } from './lib/orcBin.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -1142,6 +1143,7 @@ export function buildTaskEnvelope(taskRef: string, runId: string, agentId: strin
     verification: taskSpec.verification || fallback,
     task_spec_path: taskSpec.source_path ?? '(task spec not found)',
     assigned_worktree: runWorktree?.worktree_path ?? join(WORKTREES_DIR, runId),
+    orc_bin: resolveOrcBinSh(REPO_ROOT),
     task_contract_json: JSON.stringify(taskContract, null, 2),
   });
 }
@@ -1153,7 +1155,7 @@ function buildRunStartNudge(claim: Claim) {
     `task_ref: ${claim.task_ref}`,
     `Missing required run_started acknowledgement.`,
     `Call this command immediately via your Bash tool:`,
-    `orc run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `${resolveOrcBinSh(REPO_ROOT)} run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     `RUN_NUDGE_END`,
   ].join('\n');
 }

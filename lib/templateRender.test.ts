@@ -6,6 +6,7 @@ describe('renderTemplate', () => {
   it('renders known placeholders and leaves no raw markers', () => {
     const rendered = renderTemplate('worker-bootstrap-v2.txt', {
       agent_id: 'bob',
+      orc_bin: 'orc',
       provider: 'codex',
     });
     expect(rendered).toContain('agent_id: bob');
@@ -51,13 +52,14 @@ describe('renderTemplate', () => {
   it('renders task-scoped worker bootstrap language', () => {
     const rendered = renderTemplate('worker-bootstrap-v2.txt', {
       agent_id: 'worker-01',
+      orc_bin: '/tmp/node_modules/.bin/orc',
       provider: 'codex',
     });
     expect(rendered).toContain('task-scoped orchestration worker');
     expect(rendered).toContain('one task run');
     expect(rendered).toContain('assigned worktree');
-    expect(rendered).toContain('orc run-work-complete');
-    expect(rendered).toContain('orc run-input-request');
+    expect(rendered).toContain('/tmp/node_modules/.bin/orc run-work-complete');
+    expect(rendered).toContain('/tmp/node_modules/.bin/orc run-input-request');
     expect(rendered).toContain('Do not merge to main');
     expect(rendered).not.toContain('keeps it alive while you are registered');
   });
@@ -70,6 +72,7 @@ describe('renderTemplate', () => {
       feature: 'orch',
       description: 'bootstrap redesign',
       agent_id: 'orc-1',
+      orc_bin: '/tmp/node_modules/.bin/orc',
       acceptance_criteria_lines: '  1. first',
       current_state: 'Current state text.',
       desired_state: 'Desired state text.',
@@ -91,8 +94,8 @@ describe('renderTemplate', () => {
     expect(rendered).toContain('targeted_verification:');
     expect(rendered).toContain('task_spec_path: docs/backlog/142-redesign-fresh-worker-bootstrap-and-run-contract.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-1');
-    expect(rendered).toContain('orc run-work-complete');
-    expect(rendered).toContain('orc run-input-request');
+    expect(rendered).toContain('/tmp/node_modules/.bin/orc run-work-complete');
+    expect(rendered).toContain('/tmp/node_modules/.bin/orc run-input-request');
     expect(rendered).toContain('remain alive for coordinator finalization follow-up when present');
     expect(rendered).not.toContain('worktree_setup: git worktree add');
   });

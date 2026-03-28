@@ -1,4 +1,5 @@
 import { updateAgentRuntime } from './agentRegistry.ts';
+import { resolveOrcBin } from './orcBin.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
@@ -17,6 +18,10 @@ function withPrependedPath(pathValue: string | undefined, entry: string): string
 
 export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string | null = null): Record<string, string> {
   const env = { ...baseEnv } as Record<string, string>;
+  const localBin = repoRoot ? join(repoRoot, 'node_modules', '.bin') : '';
+  if (localBin && existsSync(localBin)) {
+    env.PATH = withPrependedPath(env.PATH ?? process.env.PATH ?? '', localBin);
+  }
   const home = env.HOME ?? process.env.HOME ?? '';
   const npmGlobalBin = home ? join(home, '.npm-global', 'bin') : '';
   if (npmGlobalBin && existsSync(npmGlobalBin)) {
@@ -27,6 +32,7 @@ export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string 
   if (repoRoot) {
     env.ORC_REPO_ROOT = repoRoot;
   }
+  env.ORC_BIN = resolveOrcBin(repoRoot, env);
   return env;
 }
 
@@ -126,14 +132,15 @@ export async function launchWorkerSession(
 ): Promise<{ ok: boolean; session_handle?: string; provider_ref?: unknown; reason?: string }> {
   try {
     const nowIso = new Date().toISOString();
+    const workerEnv = normalizeWorkerEnv({
+      ORCH_STATE_DIR: stateDir,
+    }, repoRoot);
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
-      system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker'),
+      system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc'),
       model: agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
       read_only: agent.role === 'scout',
-      env: normalizeWorkerEnv({
-        ORCH_STATE_DIR: stateDir,
-      }, repoRoot),
+      env: workerEnv,
     });
     const updates: Partial<Agent> = {
       status: 'running',

@@ -2598,6 +2598,7 @@ describe('buildTaskEnvelope', () => {
     expect(rendered).toContain('targeted_verification:');
     expect(rendered).toContain('task_spec_path: docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-envelope-1');
+    expect(rendered).toContain("'orc' run-start --run-id=run-envelope-1 --agent-id=orc-1");
   });
 });
 

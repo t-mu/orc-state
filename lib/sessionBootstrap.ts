@@ -20,6 +20,7 @@ function assertProvider(provider: string): ProviderName {
 function renderBootstrap(template: string, provider: string, agentId: string): string {
   return renderTemplate(template, {
     agent_id: agentId,
+    orc_bin: 'orc',
     provider,
   });
 }
@@ -50,8 +51,14 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
  * Master agents keep their existing bootstrap path; all non-master roles use
  * the task-scoped worker bootstrap contract.
  */
-export function buildSessionBootstrap(agentId: string, provider: string, role: string): string {
+export function buildSessionBootstrap(agentId: string, provider: string, role: string): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string = 'orc'): string {
   if (role === 'master') return getMasterBootstrap(provider, agentId);
   if (role === 'scout') return getScoutBootstrap(provider, agentId);
-  return getWorkerBootstrap(provider, agentId);
+  return renderTemplate(WORKER_BOOTSTRAP_TEMPLATE, {
+    agent_id: agentId,
+    orc_bin: orcBin,
+    provider,
+  });
 }
