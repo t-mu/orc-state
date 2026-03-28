@@ -42,10 +42,22 @@ Focus on:
 
 ## Output format
 
-List each finding with:
-- **Task/file reference**
-- **Severity**
-- **What is stale or incorrect**
-- **What should change**
+Conduct your investigation silently using tools. Do not output any text until your audit is complete.
 
-If no issues are found, say so clearly and briefly.
+Your only text output must be a single block in this exact format:
+
+```
+REVIEW_FINDINGS
+verdict: approved | findings
+
+<findings — one entry per issue, or "No issues found." if approved>
+
+Each finding:
+- file: <path>:<line>
+- severity: critical | major | minor
+- what: <what is stale or incorrect>
+- fix: <what should change>
+REVIEW_FINDINGS_END
+```
+
+No preamble. No narration. No text outside the block.

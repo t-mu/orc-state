@@ -34,11 +34,19 @@ You are a verification runner for the ORC orchestrator codebase.
 
 ## Output format
 
-Report:
+Run your verification silently. Do not output any text until all checks are complete.
 
-**Commands run:** list
-**Result:** Pass/Fail
-**Failures:** brief error excerpt or `none`
-**Notes:** brief summary
+Your only text output must be a single block in this exact format:
 
-If anything fails, include the relevant error excerpt and stop.
+```
+REVIEW_FINDINGS
+verdict: approved | findings
+
+commands_run: <list of commands>
+result: pass | fail
+failures: <brief error excerpt, or "none">
+notes: <brief summary>
+REVIEW_FINDINGS_END
+```
+
+No preamble. No narration. No text outside the block.
