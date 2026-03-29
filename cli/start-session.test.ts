@@ -14,6 +14,7 @@ let dir: string;
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
+  vi.doUnmock('../lib/agentRegistry.ts');
   vi.doUnmock('../lib/prompts.ts');
   vi.doUnmock('../lib/binaryCheck.ts');
   vi.doUnmock('../lib/templateRender.ts');
@@ -25,6 +26,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
+  vi.doUnmock('../lib/agentRegistry.ts');
   vi.doUnmock('node-pty');
   vi.doUnmock('node:child_process');
   delete process.env.ORCH_STATE_DIR;
@@ -865,6 +867,47 @@ describe('cli/start-session.ts', () => {
 
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('exited with code 2'));
+    });
+
+    it('rolls back reset and suppresses session_started when master runtime update fails after spawn', async () => {
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      seedActiveRuntimeState();
+      mockSpawn(makeSpawnMock());
+      mockBinaryCheck(true);
+      vi.doMock('../lib/agentRegistry.ts', async () => {
+        const actual = await vi.importActual<typeof import('../lib/agentRegistry.ts')>('../lib/agentRegistry.ts');
+        return {
+          ...actual,
+          updateAgentRuntime: vi.fn().mockImplementation((stateDir: string, agentId: string, patch: Record<string, unknown>) => {
+            if (patch.status === 'running') {
+              throw new Error('update failed');
+            }
+            return actual.updateAgentRuntime(stateDir, agentId, patch);
+          }),
+        };
+      });
+      const exitSpy = mockProcessExit();
+
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(false);
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents()[0]).toMatchObject({
+        status: 'running',
+        session_handle: 'pty:master',
+      });
     });
 
     it('exits 1 when master session preparation fails before provider spawn', async () => {

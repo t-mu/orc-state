@@ -374,13 +374,13 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       cwd: process.cwd(),
       env: process.env as Record<string, string>,
     });
-    appendSessionStartedEvent(STATE_DIR, sessionReset);
     const startedAt = new Date().toISOString();
     updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'running',
       last_heartbeat_at: startedAt,
       last_status_change_at: startedAt,
     });
+    appendSessionStartedEvent(STATE_DIR, sessionReset);
   } catch (error) {
     restoreVolatileRuntimeStateFromSnapshot(STATE_DIR, sessionReset.snapshot);
     if (masterPty) {
