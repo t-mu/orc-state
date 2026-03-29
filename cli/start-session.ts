@@ -43,6 +43,7 @@ import {
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { initEventsDb } from '../lib/eventLog.ts';
+import { resetVolatileRuntimeStateForSession } from '../lib/sessionState.ts';
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
 
@@ -237,10 +238,12 @@ if (masterAction === 'replace' && master) {
   master = null;
 }
 
+ensureState();
+resetVolatileRuntimeStateForSession(STATE_DIR);
+
 // ── Register master if absent ──────────────────────────────────────────────
 
 if (!master) {
-  ensureState(); // create state files only when we need to write
   const agentId = flag('agent-id') ?? 'master';
   const provider = await promptProvider(flag('provider'), {
     message: 'Select provider for MASTER session (this terminal only)',

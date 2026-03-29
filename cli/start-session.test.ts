@@ -5,6 +5,7 @@ import {
 import { tmpdir }        from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync }     from 'node:child_process';
+import { queryEvents } from '../lib/eventLog.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const coordinatorScriptPath = resolve(import.meta.dirname, '..', 'coordinator.ts');
@@ -61,6 +62,10 @@ function masterAgent(overrides = {}) {
 
 function readAgents() {
   return JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
+}
+
+function readClaims() {
+  return JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')).claims;
 }
 
 function setEnv(stateDir: string) {
@@ -164,6 +169,48 @@ describe('cli/start-session.ts', () => {
 
       const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
       expect(backlog.features[0].ref).toBe('sentinel');
+    });
+
+    it('resets volatile runtime state and appends session_started on startup', async () => {
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+        version: '1',
+        features: [{
+          ref: 'project',
+          title: 'Project',
+          tasks: [{ ref: 'project/task-1', title: 'Task 1', status: 'in_progress' }],
+        }],
+      }));
+      writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+        version: '1',
+        claims: [{
+          run_id: 'run-1',
+          task_ref: 'project/task-1',
+          agent_id: 'orc-1',
+          state: 'in_progress',
+          claimed_at: '2026-01-01T00:00:00Z',
+          lease_expires_at: '2099-01-01T00:00:00Z',
+        }],
+      }));
+
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
+
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('todo');
+      expect(readClaims()[0]).toMatchObject({ state: 'failed', failure_reason: 'session_reset' });
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(true);
     });
   });
 

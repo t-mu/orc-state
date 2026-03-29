@@ -272,6 +272,11 @@ export interface SessionStartFailedEvent extends BaseEvent {
   payload: { reason: string; code?: string | undefined; working_directory?: string | undefined; [key: string]: unknown };
 }
 
+export interface SessionStartedEvent extends BaseEvent {
+  event: 'session_started';
+  payload: { session_id: string; reset_tasks: number; reset_claims: number; reset_agents: number; [key: string]: unknown };
+}
+
 // ── Review events ─────────────────────────────────────────────────────────────
 
 export interface ReviewSubmittedEvent extends BaseEvent {
@@ -339,6 +344,7 @@ export type OrcEvent =
   | AgentOfflineEvent
   | AgentMarkedDeadEvent
   | SessionStartFailedEvent
+  | SessionStartedEvent
   | CoordinatorStartedEvent
   | CoordinatorStoppedEvent
   | ReviewSubmittedEvent
