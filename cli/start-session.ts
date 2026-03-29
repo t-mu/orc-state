@@ -43,7 +43,7 @@ import {
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { initEventsDb } from '../lib/eventLog.ts';
-import { resetVolatileRuntimeStateForSession } from '../lib/sessionState.ts';
+import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession } from '../lib/sessionState.ts';
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
 
@@ -239,7 +239,7 @@ if (masterAction === 'replace' && master) {
 }
 
 ensureState();
-resetVolatileRuntimeStateForSession(STATE_DIR);
+const sessionReset = resetVolatileRuntimeStateForSession(STATE_DIR);
 
 // ── Register master if absent ──────────────────────────────────────────────
 
@@ -378,6 +378,7 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       cwd: process.cwd(),
       env: process.env as Record<string, string>,
     });
+    appendSessionStartedEvent(STATE_DIR, sessionReset);
   } catch (error) {
     resolvePromise({ type: 'error', error: error as Error });
     return;

@@ -796,6 +796,8 @@ describe('cli/start-session.ts', () => {
       await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(false);
     });
 
     it('exits 1 when master provider CLI spawn fails', async () => {
@@ -815,6 +817,8 @@ describe('cli/start-session.ts', () => {
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to start master provider CLI'));
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).not.toContain('Master session ended.');
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(false);
     });
 
     it('exits 1 when master provider CLI exits non-zero', async () => {

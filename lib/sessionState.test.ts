@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { queryEvents } from './eventLog.ts';
-import { resetVolatileRuntimeStateForSession } from './sessionState.ts';
+import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession } from './sessionState.ts';
 
 let dir: string;
 
@@ -76,7 +76,7 @@ afterEach(() => {
 });
 
 describe('resetVolatileRuntimeStateForSession', () => {
-  it('resets active runtime state and appends a session_started event', () => {
+  it('resets active runtime state and appends a session_started event on demand', () => {
     const result = resetVolatileRuntimeStateForSession(dir);
 
     const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')) as { features: Array<{ tasks: Array<{ ref: string; status: string }> }> };
@@ -108,6 +108,10 @@ describe('resetVolatileRuntimeStateForSession', () => {
     expect(result.reset_agents).toBe(2);
     expect(result.session_id).toContain('session-');
 
+    const beforeEvents = queryEvents(dir, {});
+    expect(beforeEvents).toHaveLength(0);
+
+    const seq = appendSessionStartedEvent(dir, result);
     const events = queryEvents(dir, {});
     expect(events.at(-1)).toMatchObject({
       event: 'session_started',
@@ -120,5 +124,6 @@ describe('resetVolatileRuntimeStateForSession', () => {
         reset_agents: 2,
       },
     });
+    expect(events.at(-1)?.seq).toBe(seq);
   });
 });

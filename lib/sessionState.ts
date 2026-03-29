@@ -63,12 +63,10 @@ export interface SessionResetResult {
   reset_tasks: number;
   reset_claims: number;
   reset_agents: number;
-  event_seq: number;
 }
 
 export function resetVolatileRuntimeStateForSession(
   stateDir: string,
-  { actorId = 'human' }: { actorId?: string } = {},
 ): SessionResetResult {
   return withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
@@ -99,29 +97,35 @@ export function resetVolatileRuntimeStateForSession(
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
     atomicWriteJson(join(stateDir, 'agents.json'), agents);
 
-    const eventSeq = appendSequencedEvent(
-      stateDir,
-      {
-        ts: now,
-        event: 'session_started',
-        actor_type: 'human',
-        actor_id: actorId,
-        payload: {
-          session_id: sessionId,
-          reset_tasks: resetTasks,
-          reset_claims: resetClaims,
-          reset_agents: resetAgents,
-        },
-      },
-      { lockAlreadyHeld: true },
-    );
-
     return {
       session_id: sessionId,
       reset_tasks: resetTasks,
       reset_claims: resetClaims,
       reset_agents: resetAgents,
-      event_seq: eventSeq,
     };
   });
+}
+
+export function appendSessionStartedEvent(
+  stateDir: string,
+  session: SessionResetResult,
+  { actorId = 'human' }: { actorId?: string } = {},
+): number {
+  return withLock(join(stateDir, '.lock'), () =>
+    appendSequencedEvent(
+      stateDir,
+      {
+        ts: new Date().toISOString(),
+        event: 'session_started',
+        actor_type: 'human',
+        actor_id: actorId,
+        payload: {
+          session_id: session.session_id,
+          reset_tasks: session.reset_tasks,
+          reset_claims: session.reset_claims,
+          reset_agents: session.reset_agents,
+        },
+      },
+      { lockAlreadyHeld: true },
+    ));
 }
