@@ -316,8 +316,8 @@ async function processClaimedSessionReadiness(
         task_ref: claim.task_ref,
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig),
       });
-      if (!ready.ok || !agent.session_handle || agent.status === 'offline') {
-        if (isManagedSlot(agent.agent_id, workerPoolConfig) && agent.status !== 'offline') {
+      if (!ready.ok || !agent.session_handle) {
+        if (isManagedSlot(agent.agent_id, workerPoolConfig)) {
           setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
             retryCount: Math.max(claim.session_start_retry_count ?? 0, 1),
             nextRetryAt: new Date(nowMs + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
@@ -1131,8 +1131,8 @@ async function tick() {
         task_ref: taskRef,
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig),
       });
-      if (!ready.ok || !agent.session_handle || agent.status === 'offline') {
-        if (isManagedSlot(agent.agent_id, workerPoolConfig) && agent.status !== 'offline') {
+      if (!ready.ok || !agent.session_handle) {
+        if (isManagedSlot(agent.agent_id, workerPoolConfig)) {
           setRunSessionStartRetryState(STATE_DIR, runId, agent.agent_id, {
             retryCount: 1,
             nextRetryAt: new Date(Date.now() + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
