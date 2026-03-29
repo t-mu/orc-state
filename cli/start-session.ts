@@ -43,6 +43,11 @@ import {
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { initEventsDb } from '../lib/eventLog.ts';
+import {
+  appendSessionStartedEvent,
+  resetVolatileRuntimeStateForSession,
+  restoreVolatileRuntimeStateFromSnapshot,
+} from '../lib/sessionState.ts';
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
 
@@ -237,10 +242,11 @@ if (masterAction === 'replace' && master) {
   master = null;
 }
 
+ensureState();
+
 // ── Register master if absent ──────────────────────────────────────────────
 
 if (!master) {
-  ensureState(); // create state files only when we need to write
   const agentId = flag('agent-id') ?? 'master';
   const provider = await promptProvider(flag('provider'), {
     message: 'Select provider for MASTER session (this terminal only)',
@@ -271,16 +277,9 @@ if (!binaryOk) {
   process.exit(1);
 }
 
-// ── Mark master running before coordinator starts (avoids lock race on first tick) ──
-
-const now = new Date().toISOString();
-updateAgentRuntime(STATE_DIR, master.agent_id, {
-  status: 'running',
-  last_heartbeat_at: now,
-  last_status_change_at: now,
-});
-
 // ── Coordinator ────────────────────────────────────────────────────────────
+
+const sessionReset = resetVolatileRuntimeStateForSession(STATE_DIR);
 
 const { running, pid: existingPid } = coordinatorStatus();
 if (running) {
@@ -375,7 +374,23 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       cwd: process.cwd(),
       env: process.env as Record<string, string>,
     });
+    const startedAt = new Date().toISOString();
+    updateAgentRuntime(STATE_DIR, master.agent_id, {
+      status: 'running',
+      last_heartbeat_at: startedAt,
+      last_status_change_at: startedAt,
+    });
+    appendSessionStartedEvent(STATE_DIR, sessionReset);
   } catch (error) {
+    restoreVolatileRuntimeStateFromSnapshot(STATE_DIR, sessionReset.snapshot);
+    if (masterPty) {
+      try {
+        masterPty.kill();
+      } catch {
+        // best effort
+      }
+      masterPty = null;
+    }
     resolvePromise({ type: 'error', error: error as Error });
     return;
   }
@@ -428,7 +443,6 @@ if (cliResult.type === 'error') {
   console.error(
     `Failed to start master provider CLI '${String(binary)}' for ${master.provider}: ${cliResult.error?.message ?? 'unknown error'}`,
   );
-  markMasterOffline();
   process.exit(1);
 } else if (cliResult.code !== 0) {
   console.error(

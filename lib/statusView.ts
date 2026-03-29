@@ -102,6 +102,17 @@ interface FailureEntry {
   event?: string;
 }
 
+function latestSessionBoundarySeq(events: unknown[]): number {
+  let boundary = 0;
+  for (const ev of events) {
+    const event = ev as { event?: string; seq?: number } | null;
+    if (event?.event === 'session_started' && Number.isInteger(event.seq)) {
+      boundary = Math.max(boundary, event.seq as number);
+    }
+  }
+  return boundary;
+}
+
 function collectRecentFailures(events: unknown[]): { startup: FailureEntry[]; lifecycle: FailureEntry[] } {
   const startup: FailureEntry[] = [];
   const lifecycle: FailureEntry[] = [];
@@ -182,6 +193,13 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   } catch (error) {
     eventReadError = (error as Error).message;
   }
+  const sessionBoundarySeq = latestSessionBoundarySeq(allEvents);
+  const sessionEvents = sessionBoundarySeq > 0
+    ? allEvents.filter((event) => {
+      const seq = (event as { seq?: number } | null)?.seq;
+      return Number.isInteger(seq) && (seq as number) >= sessionBoundarySeq;
+    })
+    : allEvents;
 
   const runActivity = latestRunActivityDetailMap(allEvents as Parameters<typeof latestRunActivityDetailMap>[0]);
   const runPhase = latestRunPhaseMap(allEvents as Parameters<typeof latestRunPhaseMap>[0]);
@@ -252,7 +270,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   }));
   const dispatchReadyTasks = listDispatchReadyTasks(backlogFile);
   const availableSlots = slotDetails.filter((slot) => slot.slot_state === 'available').length;
-  const startupFailures = collectRecentFailures(allEvents);
+  const startupFailures = collectRecentFailures(sessionEvents);
   const tasks = buildTaskCounts(backlogFile);
   const finalizationRuns = activeClaimsWithMetrics
     .filter((claim) => claim.finalization_state != null)

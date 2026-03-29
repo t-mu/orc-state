@@ -217,6 +217,37 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     );
   }
 
+  if (eventName === 'session_started') {
+    requirePayloadField(
+      event,
+      'session_id',
+      (v) => typeof v === 'string' && v.length > 0,
+      'must be a non-empty string',
+      errors,
+    );
+    requirePayloadField(
+      event,
+      'reset_tasks',
+      (v) => Number.isInteger(v) && (v as number) >= 0,
+      'must be a non-negative integer',
+      errors,
+    );
+    requirePayloadField(
+      event,
+      'reset_claims',
+      (v) => Number.isInteger(v) && (v as number) >= 0,
+      'must be a non-negative integer',
+      errors,
+    );
+    requirePayloadField(
+      event,
+      'reset_agents',
+      (v) => Number.isInteger(v) && (v as number) >= 0,
+      'must be a non-negative integer',
+      errors,
+    );
+  }
+
   if (eventName === 'worker_needs_attention') {
     requirePayloadField(
       event,

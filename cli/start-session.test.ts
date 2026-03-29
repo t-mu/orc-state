@@ -5,6 +5,7 @@ import {
 import { tmpdir }        from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync }     from 'node:child_process';
+import { queryEvents } from '../lib/eventLog.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const coordinatorScriptPath = resolve(import.meta.dirname, '..', 'coordinator.ts');
@@ -13,6 +14,7 @@ let dir: string;
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
+  vi.doUnmock('../lib/agentRegistry.ts');
   vi.doUnmock('../lib/prompts.ts');
   vi.doUnmock('../lib/binaryCheck.ts');
   vi.doUnmock('../lib/templateRender.ts');
@@ -24,6 +26,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
+  vi.doUnmock('../lib/agentRegistry.ts');
   vi.doUnmock('node-pty');
   vi.doUnmock('node:child_process');
   delete process.env.ORCH_STATE_DIR;
@@ -61,6 +64,32 @@ function masterAgent(overrides = {}) {
 
 function readAgents() {
   return JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
+}
+
+function readClaims() {
+  return JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')).claims;
+}
+
+function seedActiveRuntimeState() {
+  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+    version: '1',
+    features: [{
+      ref: 'project',
+      title: 'Project',
+      tasks: [{ ref: 'project/task-1', title: 'Task 1', status: 'in_progress' }],
+    }],
+  }));
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+    version: '1',
+    claims: [{
+      run_id: 'run-1',
+      task_ref: 'project/task-1',
+      agent_id: 'orc-1',
+      state: 'in_progress',
+      claimed_at: '2026-01-01T00:00:00Z',
+      lease_expires_at: '2099-01-01T00:00:00Z',
+    }],
+  }));
 }
 
 function setEnv(stateDir: string) {
@@ -164,6 +193,30 @@ describe('cli/start-session.ts', () => {
 
       const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
       expect(backlog.features[0].ref).toBe('sentinel');
+    });
+
+    it('resets volatile runtime state and appends session_started on startup', async () => {
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      seedActiveRuntimeState();
+
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
+
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('todo');
+      expect(readClaims()[0]).toMatchObject({ state: 'failed', failure_reason: 'session_reset' });
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(true);
     });
   });
 
@@ -738,7 +791,13 @@ describe('cli/start-session.ts', () => {
     });
 
     it('exits 1 when binary check fails', async () => {
-      seedState();
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      seedActiveRuntimeState();
       mockSpawn();
       mockBinaryCheck(false);
       const exitSpy = mockProcessExit();
@@ -749,10 +808,25 @@ describe('cli/start-session.ts', () => {
       await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(false);
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents()[0]).toMatchObject({
+        status: 'running',
+        session_handle: 'pty:master',
+      });
     });
 
     it('exits 1 when master provider CLI spawn fails', async () => {
-      seedState();
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      seedActiveRuntimeState();
       mockSpawn(makeSpawnMock({ providerSpawnError: new Error('ENOENT: spawn claude') }));
       mockBinaryCheck(true);
       const exitSpy = mockProcessExit();
@@ -768,6 +842,15 @@ describe('cli/start-session.ts', () => {
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to start master provider CLI'));
       const output = logSpy.mock.calls.flat().join('\n');
       expect(output).not.toContain('Master session ended.');
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(false);
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents()[0]).toMatchObject({
+        status: 'running',
+        session_handle: 'pty:master',
+      });
     });
 
     it('exits 1 when master provider CLI exits non-zero', async () => {
@@ -784,6 +867,47 @@ describe('cli/start-session.ts', () => {
 
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('exited with code 2'));
+    });
+
+    it('rolls back reset and suppresses session_started when master runtime update fails after spawn', async () => {
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      seedActiveRuntimeState();
+      mockSpawn(makeSpawnMock());
+      mockBinaryCheck(true);
+      vi.doMock('../lib/agentRegistry.ts', async () => {
+        const actual = await vi.importActual<typeof import('../lib/agentRegistry.ts')>('../lib/agentRegistry.ts');
+        return {
+          ...actual,
+          updateAgentRuntime: vi.fn().mockImplementation((stateDir: string, agentId: string, patch: Record<string, unknown>) => {
+            if (patch.status === 'running') {
+              throw new Error('update failed');
+            }
+            return actual.updateAgentRuntime(stateDir, agentId, patch);
+          }),
+        };
+      });
+      const exitSpy = mockProcessExit();
+
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const events = queryEvents(dir, {});
+      expect(events.some((event) => event.event === 'session_started')).toBe(false);
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents()[0]).toMatchObject({
+        status: 'running',
+        session_handle: 'pty:master',
+      });
     });
 
     it('exits 1 when master session preparation fails before provider spawn', async () => {

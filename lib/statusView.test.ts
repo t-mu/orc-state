@@ -13,7 +13,7 @@ type StatusResult = {
   master: { agent_id: string } | null;
   recentEvents: Array<{ seq: number }>;
   finalization: { total: number; blocked_finalize: number; blocked_preserved: Array<{ run_branch: string; run_worktree_path: string }> };
-  failures: { startup: Array<{ reason: string }>; lifecycle: Array<{ event: string }> };
+  failures: { startup: Array<{ reason: string }>; lifecycle: Array<{ event: string; reason: string }> };
   next_task_seq: number;
   stalled_runs: number;
   active_tasks: Array<Record<string, unknown>>;
@@ -362,6 +362,49 @@ describe('buildStatus', () => {
     expect(s.claims.stalled).toBe(1);
     expect(s.failures.startup[0].reason).toBe('binary missing');
     expect(s.failures.lifecycle[0].event).toBe('blocked');
+  });
+
+  it('scopes recent failures to the latest session_started boundary', () => {
+    const now = new Date();
+    writeState({
+      tasks: [{ ref: 'orch/task-1', title: 'Task 1', status: 'todo' }],
+    });
+    writeEvents([
+      {
+        event: 'run_failed',
+        run_id: 'run-old',
+        task_ref: 'orch/task-1',
+        agent_id: 'orc-1',
+        actor_type: 'agent',
+        actor_id: 'orc-1',
+        payload: { reason: 'yesterday failure', policy: 'requeue' },
+        ts: new Date(now.getTime() - 60_000).toISOString(),
+      },
+      {
+        event: 'session_started',
+        payload: {
+          session_id: 'session-1',
+          reset_tasks: 0,
+          reset_claims: 0,
+          reset_agents: 0,
+        },
+        ts: new Date(now.getTime() - 30_000).toISOString(),
+      },
+      {
+        event: 'blocked',
+        run_id: 'run-new',
+        task_ref: 'orch/task-1',
+        agent_id: 'orc-1',
+        actor_type: 'agent',
+        actor_id: 'orc-1',
+        payload: { reason: 'current failure' },
+        ts: new Date(now.getTime() - 10_000).toISOString(),
+      },
+    ]);
+
+    const s = buildStatus(dir) as unknown as StatusResult;
+    expect(s.failures.lifecycle).toHaveLength(1);
+    expect(s.failures.lifecycle[0].reason).toBe('current failure');
   });
 
   it('surfaces finalization counts and preserved blocked work metadata', () => {
