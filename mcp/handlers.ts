@@ -25,6 +25,7 @@ const AGENT_ROLES = new Set(['worker', 'reviewer', 'master', 'scout']);
 const TASK_TYPES = new Set(['implementation', 'refactor']);
 const TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
 const ACTOR_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+const DEFAULT_SCOUT_READY_TIMEOUT_MS = 60_000;
 
 function slugify(text: string) {
   return text
@@ -781,6 +782,38 @@ function scopeLines(scopePaths: string[] | undefined) {
     + '\n\nDo not expand beyond scope_paths unless all listed paths are exhausted with no findings.';
 }
 
+async function waitForScoutReportedForDuty(
+  stateDir: string,
+  agentId: string,
+  sessionToken: string,
+  initialAgent: ReturnType<typeof getAgent> | null = null,
+  timeoutMs = Number(process.env.ORC_SCOUT_READY_TIMEOUT_MS ?? DEFAULT_SCOUT_READY_TIMEOUT_MS),
+) {
+  const initialReady = initialAgent?.session_handle
+    && initialAgent.session_token === sessionToken
+    && initialAgent.session_ready_at
+    && initialAgent.session_started_at
+    && new Date(initialAgent.session_ready_at).getTime() >= new Date(initialAgent.session_started_at).getTime();
+  if (initialReady) {
+    return true;
+  }
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) < timeoutMs) {
+    const agent = getAgent(stateDir, agentId);
+    if (
+      agent?.session_handle
+      && agent.session_token === sessionToken
+      && agent.session_ready_at
+      && agent.session_started_at
+      && new Date(agent.session_ready_at).getTime() >= new Date(agent.session_started_at).getTime()
+    ) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
+
 export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } = {}) {
   if (!run_id) throw new Error('run_id is required');
   const claims = readClaims(stateDir).claims;
@@ -851,6 +884,19 @@ export async function handleRequestScout(stateDir: string, {
   }
 
   const launchedAt = new Date().toISOString();
+  const launchedScout = getAgent(stateDir, scout.agent_id);
+  const sessionToken = launchedScout?.session_token ?? scout.session_token ?? null;
+  if (!sessionToken) {
+    await adapter.stop(launchResult.session_handle);
+    removeAgent(stateDir, scout.agent_id);
+    throw new Error(`Failed to launch scout ${scoutId}: missing session token after launch`);
+  }
+  const ready = await waitForScoutReportedForDuty(stateDir, scout.agent_id, sessionToken, scout);
+  if (!ready) {
+    await adapter.stop(launchResult.session_handle);
+    removeAgent(stateDir, scout.agent_id);
+    throw new Error(`Failed to brief scout ${scoutId}: scout did not report for duty in time`);
+  }
   const contextLines = [
     typeof run_id === 'string' ? `linked_run_id: ${run_id}` : null,
     typeof task_ref === 'string' ? `linked_task_ref: ${task_ref}` : null,

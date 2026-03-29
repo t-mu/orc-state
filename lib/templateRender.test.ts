@@ -8,6 +8,7 @@ describe('renderTemplate', () => {
       agent_id: 'bob',
       orc_bin: 'orc',
       provider: 'codex',
+      session_token: 'token-1',
     });
     expect(rendered).toContain('agent_id: bob');
     expect(rendered).toContain('provider: codex');
@@ -54,6 +55,7 @@ describe('renderTemplate', () => {
       agent_id: 'worker-01',
       orc_bin: '/tmp/node_modules/.bin/orc',
       provider: 'codex',
+      session_token: 'token-2',
     });
     expect(rendered).toContain('task-scoped orchestration worker');
     expect(rendered).toContain('one task run');

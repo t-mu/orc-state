@@ -13,6 +13,9 @@ export interface Agent {
   role?: AgentRole | undefined;
   capabilities?: string[] | undefined;
   session_handle?: string | null | undefined;
+  session_token?: string | null | undefined;
+  session_started_at?: string | null | undefined;
+  session_ready_at?: string | null | undefined;
   provider_ref?: Record<string, unknown> | null | undefined;
   registered_at: string;
   last_heartbeat_at?: string | null | undefined;

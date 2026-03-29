@@ -63,26 +63,29 @@ describe('buildSessionBootstrap', () => {
   });
 
   it('renders coordinator-owned finalization guidance for worker role', () => {
-    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', '/tmp/node_modules/.bin/orc');
+    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', '/tmp/node_modules/.bin/orc', 'token-123');
     expect(rendered).toContain('task-scoped orchestration worker');
     expect(rendered).toContain('assigned worktree');
     expect(rendered).toContain('/tmp/node_modules/.bin/orc run-work-complete');
     expect(rendered).toContain('/tmp/node_modules/.bin/orc run-input-request');
+    expect(rendered).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-token=token-123');
     expect(rendered).toContain('Do not merge to main');
     expect(rendered).not.toContain('git worktree add .worktrees/<run_id>');
   });
 
   it('uses worker-bootstrap-v2.txt for reviewer role', () => {
-    const rendered = buildSessionBootstrap('carol', 'codex', 'reviewer', '/usr/local/bin/orc');
+    const rendered = buildSessionBootstrap('carol', 'codex', 'reviewer', '/usr/local/bin/orc', 'token-456');
     expect(rendered).toContain('provider: codex');
     expect(rendered).toContain('/usr/local/bin/orc run-work-complete');
+    expect(rendered).toContain('session_token: token-456');
   });
 
   it('uses scout-bootstrap-v1.txt for scout role', () => {
-    const rendered = buildSessionBootstrap('scout-1', 'codex', 'scout');
+    const rendered = buildSessionBootstrap('scout-1', 'codex', 'scout', 'orc', 'scout-token');
     expect(rendered).toContain('SCOUT_BOOTSTRAP');
     expect(rendered).toContain('agent_id: scout-1');
     expect(rendered).toContain('investigation-only agent');
+    expect(rendered).toContain('orc report-for-duty --agent-id=scout-1 --session-token=scout-token');
     expect(rendered).not.toContain('orc run-work-complete');
   });
 

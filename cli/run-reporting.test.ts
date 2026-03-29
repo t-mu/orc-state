@@ -103,7 +103,15 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
-    agents: [{ agent_id: agentId, provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+    agents: [{
+      agent_id: agentId,
+      provider: 'claude',
+      status: 'running',
+      session_token: 'session-token-1',
+      session_started_at: '2026-01-01T00:00:00.000Z',
+      session_ready_at: null,
+      registered_at: '2026-01-01T00:00:00Z',
+    }],
   }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({
     version: '1',
@@ -147,7 +155,15 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
-    agents: [{ agent_id: agentId, provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+    agents: [{
+      agent_id: agentId,
+      provider: 'claude',
+      status: 'running',
+      session_token: 'session-token-1',
+      session_started_at: '2026-01-01T00:00:00.000Z',
+      session_ready_at: null,
+      registered_at: '2026-01-01T00:00:00Z',
+    }],
   }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({
     version: '1',
@@ -176,7 +192,15 @@ function seedFailedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef 
   }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
-    agents: [{ agent_id: agentId, provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+    agents: [{
+      agent_id: agentId,
+      provider: 'claude',
+      status: 'running',
+      session_token: 'session-token-1',
+      session_started_at: '2026-01-01T00:00:00.000Z',
+      session_ready_at: null,
+      registered_at: '2026-01-01T00:00:00Z',
+    }],
   }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({
     version: '1',
@@ -255,6 +279,33 @@ describe('orc-run-start', () => {
     expect(claimSnapshot('run-dup-start')?.state).toBe('in_progress');
     // No duplicate event appended.
     expect(readEvents()).toHaveLength(eventsBefore.length);
+  });
+});
+
+describe('orc-report-for-duty', () => {
+  it('records readiness for the current session token', () => {
+    seedClaimedRun({ runId: 'run-duty-001', agentId: 'worker-01' });
+
+    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-token=session-token-1']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('reported_for_duty');
+
+    const agent = readAgents().agents[0];
+    expect(agent.session_ready_at).toBeTruthy();
+    expect(agent.last_heartbeat_at).toBeTruthy();
+
+    const events = readEvents();
+    expect(events.some((e) => e.event === 'reported_for_duty' && e.agent_id === 'worker-01')).toBe(true);
+  });
+
+  it('rejects a stale or mismatched session token', () => {
+    seedClaimedRun({ runId: 'run-duty-002', agentId: 'worker-01' });
+
+    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-token=wrong-token']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Session token mismatch');
   });
 });
 

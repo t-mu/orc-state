@@ -22,6 +22,7 @@ function renderBootstrap(template: string, provider: string, agentId: string): s
     agent_id: agentId,
     orc_bin: 'orc',
     provider,
+    session_token: 'session-token-unset',
   });
 }
 
@@ -53,12 +54,21 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
  */
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string): string;
-export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string = 'orc'): string {
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string = 'orc', sessionToken: string = 'session-token-unset'): string {
   if (role === 'master') return getMasterBootstrap(provider, agentId);
-  if (role === 'scout') return getScoutBootstrap(provider, agentId);
+  if (role === 'scout') {
+    return renderTemplate(SCOUT_BOOTSTRAP_TEMPLATE, {
+      agent_id: agentId,
+      orc_bin: orcBin,
+      provider,
+      session_token: sessionToken,
+    });
+  }
   return renderTemplate(WORKER_BOOTSTRAP_TEMPLATE, {
     agent_id: agentId,
     orc_bin: orcBin,
     provider,
+    session_token: sessionToken,
   });
 }
