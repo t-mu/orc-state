@@ -65,9 +65,19 @@ export interface SessionResetResult {
   reset_agents: number;
 }
 
+export interface SessionStateSnapshot {
+  backlog: Backlog;
+  agents: AgentsState;
+  claims: ClaimsState;
+}
+
+export interface PreparedSessionReset extends SessionResetResult {
+  snapshot: SessionStateSnapshot;
+}
+
 export function resetVolatileRuntimeStateForSession(
   stateDir: string,
-): SessionResetResult {
+): PreparedSessionReset {
   return withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
     const sessionId = `session-${now.replace(/[-:.]/g, '').replace(/Z$/, 'Z')}-${randomUUID().slice(0, 8)}`;
@@ -75,6 +85,11 @@ export function resetVolatileRuntimeStateForSession(
     const backlog = readBacklogState(stateDir);
     const agents = readAgentsState(stateDir);
     const claims = readClaimsState(stateDir);
+    const snapshot = {
+      backlog: structuredClone(backlog),
+      agents: structuredClone(agents),
+      claims: structuredClone(claims),
+    };
 
     let resetTasks = 0;
     for (const feature of backlog.features ?? []) {
@@ -102,7 +117,19 @@ export function resetVolatileRuntimeStateForSession(
       reset_tasks: resetTasks,
       reset_claims: resetClaims,
       reset_agents: resetAgents,
+      snapshot,
     };
+  });
+}
+
+export function restoreVolatileRuntimeStateFromSnapshot(
+  stateDir: string,
+  snapshot: SessionStateSnapshot,
+): void {
+  withLock(join(stateDir, '.lock'), () => {
+    atomicWriteJson(join(stateDir, 'backlog.json'), snapshot.backlog);
+    atomicWriteJson(join(stateDir, 'claims.json'), snapshot.claims);
+    atomicWriteJson(join(stateDir, 'agents.json'), snapshot.agents);
   });
 }
 

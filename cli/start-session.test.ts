@@ -845,7 +845,10 @@ describe('cli/start-session.ts', () => {
       const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
       expect(backlog.features[0].tasks[0].status).toBe('in_progress');
       expect(readClaims()[0].state).toBe('in_progress');
-      expect(readAgents()[0].status).toBe('offline');
+      expect(readAgents()[0]).toMatchObject({
+        status: 'running',
+        session_handle: 'pty:master',
+      });
     });
 
     it('exits 1 when master provider CLI exits non-zero', async () => {
