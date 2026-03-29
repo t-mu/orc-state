@@ -68,6 +68,28 @@ function readClaims() {
   return JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')).claims;
 }
 
+function seedActiveRuntimeState() {
+  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+    version: '1',
+    features: [{
+      ref: 'project',
+      title: 'Project',
+      tasks: [{ ref: 'project/task-1', title: 'Task 1', status: 'in_progress' }],
+    }],
+  }));
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+    version: '1',
+    claims: [{
+      run_id: 'run-1',
+      task_ref: 'project/task-1',
+      agent_id: 'orc-1',
+      state: 'in_progress',
+      claimed_at: '2026-01-01T00:00:00Z',
+      lease_expires_at: '2099-01-01T00:00:00Z',
+    }],
+  }));
+}
+
 function setEnv(stateDir: string) {
   process.env.ORCH_STATE_DIR = stateDir;
 }
@@ -178,25 +200,7 @@ describe('cli/start-session.ts', () => {
         provider_ref: { pid: 111 },
         last_heartbeat_at: '2026-01-01T00:00:00Z',
       })]);
-      writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-        version: '1',
-        features: [{
-          ref: 'project',
-          title: 'Project',
-          tasks: [{ ref: 'project/task-1', title: 'Task 1', status: 'in_progress' }],
-        }],
-      }));
-      writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-        version: '1',
-        claims: [{
-          run_id: 'run-1',
-          task_ref: 'project/task-1',
-          agent_id: 'orc-1',
-          state: 'in_progress',
-          claimed_at: '2026-01-01T00:00:00Z',
-          lease_expires_at: '2099-01-01T00:00:00Z',
-        }],
-      }));
+      seedActiveRuntimeState();
 
       const spawnMock = makeSpawnMock();
       mockSpawn(spawnMock);
@@ -785,7 +789,13 @@ describe('cli/start-session.ts', () => {
     });
 
     it('exits 1 when binary check fails', async () => {
-      seedState();
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      seedActiveRuntimeState();
       mockSpawn();
       mockBinaryCheck(false);
       const exitSpy = mockProcessExit();
@@ -798,10 +808,23 @@ describe('cli/start-session.ts', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(false);
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents()[0]).toMatchObject({
+        status: 'running',
+        session_handle: 'pty:master',
+      });
     });
 
     it('exits 1 when master provider CLI spawn fails', async () => {
-      seedState();
+      seedState([masterAgent({
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: { pid: 111 },
+        last_heartbeat_at: '2026-01-01T00:00:00Z',
+      })]);
+      seedActiveRuntimeState();
       mockSpawn(makeSpawnMock({ providerSpawnError: new Error('ENOENT: spawn claude') }));
       mockBinaryCheck(true);
       const exitSpy = mockProcessExit();
@@ -819,6 +842,10 @@ describe('cli/start-session.ts', () => {
       expect(output).not.toContain('Master session ended.');
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(false);
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents()[0].status).toBe('offline');
     });
 
     it('exits 1 when master provider CLI exits non-zero', async () => {
