@@ -1752,6 +1752,25 @@ export async function doShutdown() {
     });
   }
 
+  // Stop all managed worker PTY sessions
+  try {
+    const agents = listCoordinatorAgents(STATE_DIR);
+    for (const agent of agents) {
+      if (!agent.session_handle) continue;
+      try {
+        const adapter = getAdapter(agent.provider);
+        if (adapterOwnsSession(adapter, agent.session_handle)) {
+          await adapter.stop(agent.session_handle);
+          log(`stopped session for ${agent.agent_id}`);
+        }
+      } catch (err) {
+        log(`warning: failed to stop session for ${agent.agent_id}: ${(err as Error).message}`);
+      }
+    }
+  } catch (err) {
+    log(`warning: session cleanup failed: ${(err as Error).message}`);
+  }
+
   emit({ event: 'coordinator_stopped', actor_type: 'coordinator', actor_id: 'coordinator', payload: {} });
   try { closeAllDatabases(); } catch { /* best-effort */ }
   releaseCoordinatorLock();

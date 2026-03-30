@@ -3052,6 +3052,130 @@ describe('buildTaskEnvelope', () => {
 });
 
 describe('doShutdown', () => {
+  it('stops all managed PTY sessions before coordinator_stopped event', async () => {
+    process.env.ORC_MAX_WORKERS = '2';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
+    seedState(dir, {
+      agents: [
+        {
+          agent_id: 'orc-1',
+          provider: 'claude',
+          role: 'worker',
+          status: 'running',
+          session_handle: 'pty:orc-1',
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+          last_heartbeat_at: new Date().toISOString(),
+        },
+        {
+          agent_id: 'orc-2',
+          provider: 'claude',
+          role: 'worker',
+          status: 'running',
+          session_handle: 'pty:orc-2',
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+          last_heartbeat_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const mockStop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn().mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null }),
+        send: vi.fn().mockResolvedValue(''),
+        stop: mockStop,
+        ownsSession: vi.fn().mockReturnValue(true),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+        detectInputBlock: vi.fn().mockReturnValue(null),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn(),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue(null),
+    }));
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    await coordinator.doShutdown();
+
+    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(mockStop).toHaveBeenCalledTimes(2);
+    expect(mockStop).toHaveBeenCalledWith('pty:orc-1');
+    expect(mockStop).toHaveBeenCalledWith('pty:orc-2');
+  });
+
+  it('doShutdown continues if one session stop fails', async () => {
+    process.env.ORC_MAX_WORKERS = '2';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
+    seedState(dir, {
+      agents: [
+        {
+          agent_id: 'orc-1',
+          provider: 'claude',
+          role: 'worker',
+          status: 'running',
+          session_handle: 'pty:orc-1',
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+          last_heartbeat_at: new Date().toISOString(),
+        },
+        {
+          agent_id: 'orc-2',
+          provider: 'claude',
+          role: 'worker',
+          status: 'running',
+          session_handle: 'pty:orc-2',
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+          last_heartbeat_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const mockStop = vi.fn()
+      .mockRejectedValueOnce(new Error('session already dead'))
+      .mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => ({
+      createAdapter: () => ({
+        heartbeatProbe: vi.fn().mockResolvedValue(true),
+        start: vi.fn().mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null }),
+        send: vi.fn().mockResolvedValue(''),
+        stop: mockStop,
+        ownsSession: vi.fn().mockReturnValue(true),
+        attach: vi.fn().mockResolvedValue(''),
+        getOutputTail: vi.fn().mockReturnValue(null),
+        detectInputBlock: vi.fn().mockReturnValue(null),
+      }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => ({
+      ensureRunWorktree: vi.fn(),
+      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+      deleteRunWorktree: vi.fn().mockReturnValue(true),
+      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+      getRunWorktree: vi.fn().mockReturnValue(null),
+    }));
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    await coordinator.doShutdown();
+
+    // Should still exit cleanly despite one stop failure
+    expect(exitSpy).toHaveBeenCalledWith(0);
+    // Both sessions should have been attempted
+    expect(mockStop).toHaveBeenCalledTimes(2);
+  });
+
   it('releases coordinator lock only once across shutdown and exit hook', async () => {
     seedState(dir);
 

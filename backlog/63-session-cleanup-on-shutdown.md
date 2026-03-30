@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/63-session-cleanup-on-shutdown
 title: "Stop all managed PTY sessions during coordinator shutdown"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: normal
