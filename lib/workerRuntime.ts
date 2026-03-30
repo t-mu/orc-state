@@ -33,6 +33,11 @@ export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string 
   if (repoRoot) {
     env.ORC_REPO_ROOT = repoRoot;
   }
+  // Prevent interactive editors, pagers, and merge-tool prompts from blocking
+  // headless PTY sessions. Workers never need an interactive editor.
+  env.EDITOR = 'true';
+  env.GIT_EDITOR = 'true';
+  env.PAGER = 'cat';
   env.ORC_BIN = resolveOrcBin(repoRoot, env);
   return env;
 }

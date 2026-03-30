@@ -27,4 +27,14 @@ describe('paths', () => {
     const { STATE_DIR } = await import('./paths.ts');
     expect(STATE_DIR).toBe('/tmp/override-state');
   });
+
+  it('hookEventPath returns per-agent ndjson file under pty-hook-events', async () => {
+    vi.doMock('./repoRoot.ts', () => ({
+      resolveRepoRoot: vi.fn().mockReturnValue('/tmp/repo-root'),
+    }));
+
+    const { hookEventPath } = await import('./paths.ts');
+    expect(hookEventPath('agent-1')).toBe('/tmp/repo-root/.orc-state/pty-hook-events/agent-1.ndjson');
+    expect(hookEventPath('scout-3')).toBe('/tmp/repo-root/.orc-state/pty-hook-events/scout-3.ndjson');
+  });
 });

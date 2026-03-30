@@ -58,18 +58,35 @@ describe('pty adapter start()', () => {
       session_handle: 'pty:bob',
       provider_ref: { pid: ptyProcess.pid, provider: 'claude', binary: 'claude' },
     });
-    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), ['--dangerously-skip-permissions'], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.arrayContaining(['--dangerously-skip-permissions', '--settings']), expect.objectContaining({
       name: 'xterm-256color',
       cols: 220,
       rows: 50,
     }));
+    // --settings path should point to the per-agent settings file
+    const spawnArgs = spawnSpy.mock.calls[0][1] as string[];
+    expect(spawnArgs[0]).toBe('--dangerously-skip-permissions');
+    expect(spawnArgs[1]).toBe('--settings');
+    expect(spawnArgs[2]).toMatch(/pty-settings[/\\]bob\.json$/);
+  });
+
+  it('writes a settings file with Notification hook for claude provider', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
+    const settingsFile = join(dir, 'pty-settings', 'bob.json');
+    expect(existsSync(settingsFile)).toBe(true);
+    const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
+    expect(settings).toMatchObject({
+      hooks: { Notification: [{ hooks: [{ type: 'command', command: expect.stringContaining('permission_prompt') }] }] },
+    });
   });
 
   it('launches the provider inside the requested working directory when provided', async () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', { working_directory: '/tmp/orc-worktree' });
 
-    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), ['--dangerously-skip-permissions'], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.arrayContaining(['--dangerously-skip-permissions']), expect.objectContaining({
       cwd: '/tmp/orc-worktree',
     }));
   });
@@ -83,7 +100,7 @@ describe('pty adapter start()', () => {
       },
     });
 
-    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), ['--dangerously-skip-permissions'], expect.objectContaining({
+    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.arrayContaining(['--dangerously-skip-permissions']), expect.objectContaining({
       env: expect.objectContaining({
         ORCH_STATE_DIR: '/tmp/shared-state',
         ORC_REPO_ROOT: '/tmp/repo-root',
@@ -240,6 +257,26 @@ describe('pty adapter send()', () => {
 
     expect(adapter.detectInputBlock('pty:bob')).toBe('You are running out of session quota. Try again later.');
   });
+
+  it('detects permission prompt patterns in PTY output', async () => {
+    const { adapter, triggerData } = await makeAdapter({ provider: 'gemini' });
+    await adapter.start('bob', {});
+    triggerData('Allow this tool to execute? [y/n]\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(adapter.detectInputBlock('pty:bob')).toMatch(/allow this tool/i);
+  });
+
+  it('returns hook events file message as fast-path over PTY scan', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
+    // Write a fake hook event directly to the hook events file
+    const hookFile = join(dir, 'pty-hook-events', 'bob.ndjson');
+    writeFileSync(hookFile, JSON.stringify({ type: 'permission', message: 'Approve bash command?', ts: new Date().toISOString() }) + '\n');
+
+    expect(adapter.detectInputBlock('pty:bob')).toBe('Approve bash command?');
+  });
   it('throws on malformed session handles', async () => {
     const { adapter } = await makeAdapter();
     await expect(adapter.send('bad-handle', 'text')).rejects.toThrow(/Invalid pty session handle/);
@@ -367,6 +404,22 @@ describe('pty adapter stop()', () => {
 
     await expect(adapter.stop('pty:bob')).resolves.toBeUndefined();
     expect(existsSync(pidPath)).toBe(false);
+  });
+
+  it('removes hook events and settings files on stop', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
+    const hookFile = join(dir, 'pty-hook-events', 'bob.ndjson');
+    const settingsFile = join(dir, 'pty-settings', 'bob.json');
+    // settings file is written by start(); create hook events file to simulate usage
+    writeFileSync(hookFile, JSON.stringify({ type: 'permission', message: 'test', ts: '' }) + '\n');
+    expect(existsSync(settingsFile)).toBe(true);
+
+    await adapter.stop('pty:bob');
+
+    expect(existsSync(hookFile)).toBe(false);
+    expect(existsSync(settingsFile)).toBe(false);
   });
 
   it('kills a live pid-file session even when the PTY is not owned in memory', async () => {
