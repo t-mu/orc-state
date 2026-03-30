@@ -1664,6 +1664,20 @@ export async function main() {
   }
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  process.on('unhandledRejection', (reason) => {
+    console.error('[coordinator] unhandled rejection:', reason);
+    try {
+      emit({ event: 'coordinator_stopped', actor_type: 'coordinator', actor_id: 'coordinator', reason: `unhandled_rejection: ${String(reason).slice(0, 500)}` });
+    } catch { /* best-effort */ }
+    doShutdown().catch(() => { /* already shutting down */ });
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('[coordinator] uncaught exception:', err);
+    try {
+      emit({ event: 'coordinator_stopped', actor_type: 'coordinator', actor_id: 'coordinator', reason: `uncaught_exception: ${String(err.message).slice(0, 500)}` });
+    } catch { /* best-effort */ }
+    doShutdown().catch(() => { /* already shutting down */ });
+  });
   log(`starting — mode=${MODE} interval=${INTERVAL_MS}ms run_start_timeout=${RUN_START_TIMEOUT_MS}ms run_inactive_timeout=${RUN_INACTIVE_TIMEOUT_MS}ms run_inactive_nudge=${RUN_INACTIVE_NUDGE_MS}ms run_inactive_nudge_interval=${RUN_INACTIVE_NUDGE_INTERVAL_MS}ms`);
   for (const file of ['backlog.json', 'agents.json', 'claims.json', 'events.db']) {
     if (!existsSync(join(STATE_DIR, file))) {

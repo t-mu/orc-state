@@ -3080,6 +3080,59 @@ describe('doShutdown', () => {
   });
 });
 
+describe('global error handlers', () => {
+  it('unhandledRejection triggers doShutdown and logs to stderr', async () => {
+    seedState(dir);
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onSpy = vi.spyOn(process, 'on');
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+
+    const handler = onSpy.mock.calls.find(([event]) => event === 'unhandledRejection')?.[1] as ((reason: unknown) => void) | undefined;
+    expect(typeof handler).toBe('function');
+    handler!(new Error('boom'));
+
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('unhandled rejection'), expect.anything());
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('uncaughtException triggers doShutdown and logs to stderr', async () => {
+    seedState(dir);
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onSpy = vi.spyOn(process, 'on');
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+
+    const handler = onSpy.mock.calls.find(([event]) => event === 'uncaughtException')?.[1] as ((err: Error) => void) | undefined;
+    expect(typeof handler).toBe('function');
+    handler!(new Error('oops'));
+
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('uncaught exception'), expect.anything());
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('double doShutdown() is safe — shutdownStarted guard prevents re-entrance', async () => {
+    seedState(dir);
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    await coordinator.doShutdown();
+    await coordinator.doShutdown(); // second call must not throw or double-exit
+
+    // process.exit(0) should have been called exactly once
+    expect(exitSpy).toHaveBeenCalledTimes(1);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+});
+
 describe('lifecycle reducer integration', () => {
   it('applies lifecycle transitions through the reducer boundary', async () => {
     // Verify that the coordinator routes run_started / heartbeat / run_finished
