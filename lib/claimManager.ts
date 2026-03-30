@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
-import { DEFAULT_LEASE_MS } from './constants.ts';
+import { DEFAULT_LEASE_MS, INPUT_WAIT_TIMEOUT_MS } from './constants.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { readJson, findTask } from './stateReader.ts';
@@ -459,21 +459,31 @@ function _expireLeasesCore(
   const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
   const backlog = readJson(stateDir, 'backlog.json') as Backlog;
   const now     = new Date();
-  const expired: Array<{ run_id: string; task_ref: string; agent_id: string }> = [];
+  const expired: Array<{ run_id: string; task_ref: string; agent_id: string; code: string }> = [];
 
   for (const claim of claims.claims) {
     if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-    if (claim.input_state === 'awaiting_input') continue;
-    if (!claim.lease_expires_at || new Date(claim.lease_expires_at) > now) continue;
 
+    if (claim.input_state === 'awaiting_input') {
+      const inputRequestedAt = claim.input_requested_at
+        ? new Date(claim.input_requested_at).getTime()
+        : new Date(claim.last_heartbeat_at ?? claim.claimed_at).getTime();
+      if (now.getTime() - inputRequestedAt < INPUT_WAIT_TIMEOUT_MS) continue;
+      // Input wait exceeded — fall through to expiry with ERR_INPUT_TIMEOUT
+    } else if (!claim.lease_expires_at || new Date(claim.lease_expires_at) > now) {
+      continue;
+    }
+
+    const code = claim.input_state === 'awaiting_input' ? 'ERR_INPUT_TIMEOUT' : 'ERR_LEASE_EXPIRED';
     claim.state       = 'failed';
     claim.finished_at = now.toISOString();
+    if (code === 'ERR_INPUT_TIMEOUT') claim.failure_reason = 'ERR_INPUT_TIMEOUT';
     claim.input_state = null;
     claim.input_requested_at = null;
     claim.session_start_retry_count = 0;
     claim.session_start_retry_next_at = null;
     claim.session_start_last_error = null;
-    expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id });
+    expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id, code });
 
     const task = findTask(backlog, claim.task_ref);
     if (task) {
@@ -496,11 +506,11 @@ function _expireLeasesCore(
   if (expired.length > 0) {
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
     atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-    for (const { run_id, task_ref } of expired) {
+    for (const { run_id, task_ref, code } of expired) {
       emit(stateDir, {
         ts: now.toISOString(), event: 'claim_expired',
         actor_type: 'coordinator', actor_id: actorId,
-        run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code: 'ERR_LEASE_EXPIRED' },
+        run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code },
       });
     }
   }
