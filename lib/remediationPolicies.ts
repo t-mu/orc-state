@@ -80,7 +80,8 @@ export function builtinPolicies(config: RemediationConfig): RemediationPolicy[] 
     },
     {
       id: 'phase_stuck',
-
+      // nudgeCount > 0: the first nudge is always sent by the fallback time-based
+      // cascade in enforceInProgressLifecycle, which seeds nudgeCount for policies.
       match: (s) => s.nudgeCount > 0 && s.nudgeCount < config.maxNudges && !s.phaseChanged && s.idleMs >= config.phaseStuckMs,
       action: 'nudge_targeted',
       message: (s) => s.phase

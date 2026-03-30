@@ -853,6 +853,27 @@ describe('cli/start-session.ts', () => {
       });
     });
 
+    it('does not spawn coordinator when pty.spawn fails', async () => {
+      seedState();
+      const spawnMock = makeSpawnMock({ providerSpawnError: new Error('ENOENT: spawn claude') });
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+      mockProcessExit();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      setEnv(dir);
+      // Do NOT seed coordinator — we want to verify it's never spawned
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
+
+      // Coordinator spawn (child_process.spawn with coordinator.ts arg) should not have been called
+      const coordinatorCalls = spawnMock.mock.calls.filter(
+        (c: unknown[]) => (c[1] as string[] ?? []).some((a: string) => String(a).endsWith('coordinator.ts')),
+      );
+      expect(coordinatorCalls).toHaveLength(0);
+    });
+
     it('exits 1 when master provider CLI exits non-zero', async () => {
       seedState();
       mockSpawn(makeSpawnMock({ providerCloseCode: 2 }));
