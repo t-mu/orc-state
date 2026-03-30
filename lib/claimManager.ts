@@ -9,10 +9,11 @@ import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
-const BACKOFF_BASE_MS = 30_000; // 30 s base; doubles each attempt: 30s→60s→120s→240s
+const BACKOFF_BASE_MS = 30_000;   // 30 s base; doubles each attempt: 30s→60s→120s→240s
+const BACKOFF_MAX_MS  = 600_000;  // cap at 10 min
 
-function requeueBackoffMs(attemptCount: number): number {
-  return BACKOFF_BASE_MS * Math.pow(2, attemptCount - 1);
+export function requeueBackoffMs(attemptCount: number): number {
+  return Math.min(BACKOFF_BASE_MS * Math.pow(2, attemptCount - 1), BACKOFF_MAX_MS);
 }
 const FINALIZATION_STATES = new Set<FinalizationState | null>([
   'awaiting_finalize',

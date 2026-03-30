@@ -13,6 +13,7 @@ import {
   setRunInputState,
   expireStaleLeases,
   expireStaleLeasesDetailed,
+  requeueBackoffMs,
 } from './claimManager.ts';
 import { nextEligibleTask, nextEligibleTaskFromBacklog } from './taskScheduler.ts';
 
@@ -770,6 +771,19 @@ describe('requeue backoff — finishRun', () => {
     // attempt_count=2 → backoff=60s
     expect(eligible).toBeGreaterThanOrEqual(before + 60_000);
     expect(eligible).toBeLessThanOrEqual(after  + 60_000);
+  });
+
+  it('caps backoff at 600 000 ms regardless of attempt count', () => {
+    // requeueBackoffMs is exported so we can test the cap formula directly
+    // (end-to-end cap is unreachable with current MAX_ATTEMPTS=5, but the
+    //  formula must enforce the guard for future MAX_ATTEMPTS increases)
+    expect(requeueBackoffMs(1)).toBe(30_000);
+    expect(requeueBackoffMs(2)).toBe(60_000);
+    expect(requeueBackoffMs(3)).toBe(120_000);
+    expect(requeueBackoffMs(4)).toBe(240_000);
+    expect(requeueBackoffMs(5)).toBe(480_000);
+    expect(requeueBackoffMs(6)).toBe(600_000); // would be 960 000 — capped
+    expect(requeueBackoffMs(100)).toBe(600_000);
   });
 
   it('does NOT set requeue_eligible_after for infra failures', () => {
