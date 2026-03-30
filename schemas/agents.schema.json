@@ -63,6 +63,20 @@
           "type": ["string", "null"],
           "description": "Local attach target (adapter-specific handle, e.g. pty:agent-id). Null when offline."
         },
+        "session_token": {
+          "type": ["string", "null"],
+          "description": "Opaque session authentication token. Set on session start, cleared on session end."
+        },
+        "session_started_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp when the current session was started. Null when no session is active."
+        },
+        "session_ready_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp when the session reported ready (bootstrap complete). Null until ready."
+        },
         "provider_ref": {
           "type": ["object", "null"],
           "description": "Adapter-internal reference (e.g. Codex session UUID, Claude session ID). Opaque to core.",

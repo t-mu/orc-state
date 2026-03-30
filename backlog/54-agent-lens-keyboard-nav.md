@@ -2,7 +2,7 @@
 ref: agent-lens/54-agent-lens-keyboard-nav
 feature: agent-lens
 priority: normal
-status: todo
+status: done
 required_provider: codex
 ---
 
