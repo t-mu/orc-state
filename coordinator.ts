@@ -915,6 +915,8 @@ async function enforceInProgressLifecycle(
   for (const claim of claims ?? []) {
     if (claim.state !== 'in_progress') {
       runInactiveNudgeAtMs.delete(claim.run_id);
+      runNudgeCount.delete(claim.run_id);
+      runLastPhase.delete(claim.run_id);
       continue;
     }
 
@@ -1022,6 +1024,8 @@ async function enforceInProgressLifecycle(
       });
       await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
       runInactiveNudgeAtMs.delete(claim.run_id);
+      runNudgeCount.delete(claim.run_id);
+      runLastPhase.delete(claim.run_id);
       log(`run ${claim.run_id} timed out for inactivity; requeued ${claim.task_ref}`);
       continue;
     }
