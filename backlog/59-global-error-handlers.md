@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/59-global-error-handlers
 title: "Add unhandledRejection and uncaughtException handlers to coordinator"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: high
