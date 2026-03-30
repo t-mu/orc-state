@@ -118,11 +118,40 @@ describe('cli/task-mark-done.ts', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('must be claimed or in_progress');
   });
+
+  it('writes spec update to worktree backlog when cwd differs from repo root', () => {
+    // Simulate a worktree: create a separate directory with its own backlog/
+    const worktreeDir = mkdtempSync(join(tmpdir(), 'orc-worktree-'));
+    mkdirSync(join(worktreeDir, 'backlog'), { recursive: true });
+    // Write spec in the worktree backlog — spec frontmatter uses 'todo' (spec-level status),
+    // while runtime backlog.json has 'in_progress' (runtime-level status).
+    writeFileSync(
+      join(worktreeDir, 'backlog', '999-task-1.md'),
+      ['---', 'ref: docs/task-1', 'feature: docs', 'status: todo', '---', '', '# Task 1', ''].join('\n'),
+    );
+    // Also write spec in the main backlog (should NOT be touched)
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'todo');
+    seedBacklogTask('in_progress');
+
+    // Run from worktreeDir (simulates worker cwd)
+    const result = runCli(['docs/task-1'], { cwd: worktreeDir });
+    expect(result.status).toBe(0);
+
+    // The worktree copy should be updated to done
+    const worktreeSpec = readFileSync(join(worktreeDir, 'backlog', '999-task-1.md'), 'utf8');
+    expect(worktreeSpec).toContain('status: done');
+
+    // The main checkout copy should NOT have been modified
+    const mainSpec = readFileSync(join(dir, 'backlog', '999-task-1.md'), 'utf8');
+    expect(mainSpec).toContain('status: todo');
+
+    rmSync(worktreeDir, { recursive: true, force: true });
+  });
 });
 
-function runCli(args: string[]) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/task-mark-done.ts', ...args], {
-    cwd: repoRoot,
+function runCli(args: string[], { cwd = dir }: { cwd?: string } = {}) {
+  return spawnSync('node', ['--experimental-strip-types', join(repoRoot, 'cli/task-mark-done.ts'), ...args], {
+    cwd,
     env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
     encoding: 'utf8',
   });

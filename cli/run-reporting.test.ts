@@ -468,8 +468,8 @@ describe('orc-run-work-complete', () => {
     seedInProgressRun({ runId: 'run-work-mark-done', agentId: 'worker-01' });
     writeTaskSpec();
 
-    const markResult = spawnSync('node', ['--experimental-strip-types', 'cli/task-mark-done.ts', 'docs/task-1'], {
-      cwd: repoRoot,
+    const markResult = spawnSync('node', ['--experimental-strip-types', join(repoRoot, 'cli/task-mark-done.ts'), 'docs/task-1'], {
+      cwd: dir,
       env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
       encoding: 'utf8',
     });
