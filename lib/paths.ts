@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveRepoRoot } from './repoRoot.ts';
 
 export const STATE_DIR = process.env.ORCH_STATE_DIR
@@ -24,4 +25,42 @@ export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
 /** Path to per-agent hook-events NDJSON file written by the Notification hook. */
 export function hookEventPath(agentId: string): string {
   return join(STATE_DIR, 'pty-hook-events', `${agentId}.ndjson`);
+}
+
+/**
+ * Atomically consume hook events for an agent.
+ *
+ * Protocol: rename → read → delete. The rename is atomic on POSIX and moves
+ * the file out of the hook writer's append path, so no events are lost even
+ * if the hook fires while the coordinator is reading.
+ *
+ * Returns parsed event objects, or an empty array if no file exists.
+ */
+export function consumeHookEvents(agentId: string): Array<{ type: string; message: string; ts: string }> {
+  const src = hookEventPath(agentId);
+  if (!existsSync(src)) return [];
+  const processing = `${src}.processing`;
+  try {
+    renameSync(src, processing);
+  } catch {
+    // File disappeared between existsSync and rename (consumed by another tick or stop()).
+    return [];
+  }
+  let lines: string[] = [];
+  try {
+    lines = readFileSync(processing, 'utf8').split('\n').filter(Boolean);
+  } catch { /* read failed — file was removed externally */ }
+  try { unlinkSync(processing); } catch { /* already gone */ }
+  const events: Array<{ type: string; message: string; ts: string }> = [];
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as { type?: string; message?: string; ts?: string };
+      events.push({
+        type: typeof parsed.type === 'string' ? parsed.type : 'unknown',
+        message: typeof parsed.message === 'string' ? parsed.message : '',
+        ts: typeof parsed.ts === 'string' ? parsed.ts : '',
+      });
+    } catch { /* skip malformed line */ }
+  }
+  return events;
 }

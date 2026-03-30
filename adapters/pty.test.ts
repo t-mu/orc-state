@@ -258,13 +258,31 @@ describe('pty adapter send()', () => {
     expect(adapter.detectInputBlock('pty:bob')).toBe('You are running out of session quota. Try again later.');
   });
 
-  it('detects permission prompt patterns in PTY output', async () => {
+  it('detects permission prompt patterns with [y/n] in PTY output', async () => {
     const { adapter, triggerData } = await makeAdapter({ provider: 'gemini' });
     await adapter.start('bob', {});
     triggerData('Allow this tool to execute? [y/n]\n');
     await new Promise((r) => setTimeout(r, 20));
 
     expect(adapter.detectInputBlock('pty:bob')).toMatch(/allow this tool/i);
+  });
+
+  it('does NOT match "permission required" in non-interactive text', async () => {
+    const { adapter, triggerData } = await makeAdapter({ provider: 'gemini' });
+    await adapter.start('bob', {});
+    triggerData('Note: permission required to access /etc/shadow\nDone.\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(adapter.detectInputBlock('pty:bob')).toBeNull();
+  });
+
+  it('does NOT match "do you want to allow" in echoed documentation', async () => {
+    const { adapter, triggerData } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('bob', {});
+    triggerData('The dialog asks: "Do you want to allow this extension to run?"\nInstallation complete.\n');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(adapter.detectInputBlock('pty:bob')).toBeNull();
   });
 
   it('returns hook events file message as fast-path over PTY scan', async () => {
@@ -276,6 +294,9 @@ describe('pty adapter send()', () => {
     writeFileSync(hookFile, JSON.stringify({ type: 'permission', message: 'Approve bash command?', ts: new Date().toISOString() }) + '\n');
 
     expect(adapter.detectInputBlock('pty:bob')).toBe('Approve bash command?');
+    // After atomic consume, the file and .processing file should both be gone
+    expect(existsSync(hookFile)).toBe(false);
+    expect(existsSync(`${hookFile}.processing`)).toBe(false);
   });
   it('throws on malformed session handles', async () => {
     const { adapter } = await makeAdapter();
@@ -406,19 +427,22 @@ describe('pty adapter stop()', () => {
     expect(existsSync(pidPath)).toBe(false);
   });
 
-  it('removes hook events and settings files on stop', async () => {
+  it('removes hook events, .processing, and settings files on stop', async () => {
     const { adapter } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', {});
 
     const hookFile = join(dir, 'pty-hook-events', 'bob.ndjson');
+    const processingFile = `${hookFile}.processing`;
     const settingsFile = join(dir, 'pty-settings', 'bob.json');
-    // settings file is written by start(); create hook events file to simulate usage
+    // settings file is written by start(); create hook events + .processing to simulate mid-consume
     writeFileSync(hookFile, JSON.stringify({ type: 'permission', message: 'test', ts: '' }) + '\n');
+    writeFileSync(processingFile, JSON.stringify({ type: 'permission', message: 'stale', ts: '' }) + '\n');
     expect(existsSync(settingsFile)).toBe(true);
 
     await adapter.stop('pty:bob');
 
     expect(existsSync(hookFile)).toBe(false);
+    expect(existsSync(processingFile)).toBe(false);
     expect(existsSync(settingsFile)).toBe(false);
   });
 

@@ -30,7 +30,7 @@ import { latestRunActivityMap, latestRunPhaseMap, runIdleMs } from './lib/runAct
 import { renderTemplate } from './lib/templateRender.ts';
 import { selectDispatchableAgents, buildDispatchPlan } from './lib/dispatchPlanner.ts';
 import { nextEligibleTask } from './lib/taskScheduler.ts';
-import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, hookEventPath } from './lib/paths.ts';
+import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig } from './lib/providers.ts';
@@ -841,25 +841,17 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
   const nudgeWork = [];
   const workerPoolConfig = loadWorkerPoolConfig();
 
-  // Fast-path pre-pass: consume push-based hook event files written by provider
-  // Notification hooks. These fire in real time when a permission dialog appears,
-  // so we detect and record the block before the inactivity nudge timer fires.
+  // Fast-path pre-pass: atomically consume push-based hook event files written
+  // by provider Notification hooks. These fire in real time when a permission
+  // dialog appears, so we detect and record the block before the inactivity
+  // nudge timer fires. Uses rename-read-delete protocol to avoid event loss
+  // from concurrent hook appends.
   for (const claim of claims ?? []) {
     if (claim.state !== 'in_progress') continue;
-    const eventsFile = hookEventPath(claim.agent_id);
-    if (!existsSync(eventsFile)) continue;
-    let lines: string[] = [];
-    try {
-      lines = readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean);
-    } catch { /* file may have been deleted between existsSync and readFileSync */ }
-    // Always delete the file — consumed now or stale (claim already awaiting_input).
-    try { unlinkSync(eventsFile); } catch { /* already gone */ }
-    if (!lines.length || claimAwaitingInput(claim)) continue;
-    let message = 'permission prompt detected';
-    try {
-      const event = JSON.parse(lines[0]) as { message?: string };
-      if (typeof event.message === 'string' && event.message) message = event.message;
-    } catch { /* use default message */ }
+    if (claimAwaitingInput(claim)) continue;
+    const events = consumeHookEvents(claim.agent_id);
+    if (!events.length) continue;
+    const message = events[0].message || 'permission prompt detected';
     recordCoordinatorInputRequest(claim, message, 'hook_permission_prompt');
   }
 

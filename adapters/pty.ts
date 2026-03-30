@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
-import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
+import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
@@ -40,14 +40,16 @@ const PROVIDER_BINARIES: Record<string, string> = {
 const OUTPUT_TAIL_BYTES  = 8 * 1024; // 8 KB
 const STARTUP_DELAY_MS   = 1500;     // wait for CLI to initialise before sending bootstrap
 const BYPASS_SETTLE_MS   = 800;      // wait after bypass-accept for dialog to dismiss
+// PTY-scan patterns must be narrow to avoid false positives from diagnostic text,
+// echoed instructions, or tool output that merely mentions permission concepts.
+// Only match lines that look like actual interactive confirmation prompts.
 const BLOCKING_PROMPT_PATTERNS = [
   /would you like[^\n]*\[(?:y\/n|yes\/no)\]/i,
   /\b(?:apply|approve|continue|proceed|confirm)[^\n]*\[(?:y\/n|yes\/no)\]/i,
   /[^\n?]+\?\s*\[(?:y\/n|yes\/no)\]/i,
-  // Claude Code permission dialogs
-  /allow\s+(?:this\s+)?(?:tool|command|action|operation)[^\n]*\?/i,
-  /do you (?:want|wish) to (?:allow|grant|permit|run|execute)[^\n]*/i,
-  /permission (?:required|needed|requested)[^\n]*/i,
+  // Interactive permission prompts that require a [y/n] or (y/n) response
+  /allow[^\n]*\?\s*[\[(](?:y\/n|yes\/no)[\])]/i,
+  /(?:grant|permit|run|execute)[^\n]*\?\s*[\[(](?:y\/n|yes\/no)[\])]/i,
 ];
 
 function pidPath(agentId: string) { return join(STATE_DIR, 'pty-pids', `${agentId}.pid`); }
@@ -315,16 +317,12 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
     detectInputBlock(sessionHandle: string) {
       try {
         const agentId = parseHandle(sessionHandle);
-        // Fast path (claude only): check push-based hook events file first.
-        const eventsFile = hookEventPath(agentId);
-        if (existsSync(eventsFile)) {
-          try {
-            const lines = readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean);
-            if (lines.length > 0) {
-              const event = JSON.parse(lines[0]) as { message?: string };
-              return (typeof event.message === 'string' && event.message) ? event.message : 'permission prompt detected';
-            }
-          } catch { /* fall through to PTY scan */ }
+        // Fast path: check push-based hook events (atomic consume via rename).
+        // Hook events are high-confidence — written by the provider's own
+        // notification system, not heuristic text matching.
+        const events = consumeHookEvents(agentId);
+        if (events.length > 0) {
+          return events[0].message || 'permission prompt detected';
         }
         // Universal fallback: scan recent PTY output for blocking prompt patterns.
         const text = readLogTail(agentId);
@@ -428,6 +426,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         try { unlinkSync(pidFile); } catch { /* already gone */ }
         // Clean up hook events and settings files created for this session.
         try { unlinkSync(hookEventPath(agentId)); } catch { /* already gone or never created */ }
+        try { unlinkSync(`${hookEventPath(agentId)}.processing`); } catch { /* already gone */ }
         try { unlinkSync(settingsPath(agentId)); } catch { /* already gone or never created */ }
       } catch {
         // No-op — malformed handle or session already cleaned up.
