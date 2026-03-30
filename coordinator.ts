@@ -897,6 +897,9 @@ async function executeRemediation(
       break;
     }
 
+    default:
+      log(`remediation[${policyId}]: unknown action "${action}"`);
+      break;
   }
 }
 
@@ -919,6 +922,10 @@ async function enforceInProgressLifecycle(
       runLastPhase.delete(claim.run_id);
       continue;
     }
+
+    // Consume hook events for all in_progress claims to prevent disk
+    // accumulation, regardless of finalization or awaiting-input state.
+    const hookEvents = consumeHookEvents(claim.agent_id);
 
     const idleMs = runIdleMs(claim, activityByRun.get(claim.run_id), nowMs);
     if (idleMs == null) continue;
@@ -964,10 +971,6 @@ async function enforceInProgressLifecycle(
     // when no policy matches.
     const agent = byAgent.get(claim.agent_id);
     const currentPhase = phaseByRun.get(claim.run_id) ?? null;
-
-    // Always consume hook events to prevent disk accumulation, even when
-    // the agent record is missing and remediation is skipped.
-    const hookEvents = consumeHookEvents(claim.agent_id);
 
     // Track phase changes across ticks
     const prevPhase = runLastPhase.get(claim.run_id);
