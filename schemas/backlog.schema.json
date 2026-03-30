@@ -89,6 +89,11 @@
           "minimum": 0,
           "description": "Number of times this task has been dispatched and subsequently failed or expired. Auto-blocked after reaching MAX_ATTEMPTS."
         },
+        "requeue_eligible_after": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp before which the task scheduler must not re-dispatch this task. Set on requeue to enforce exponential backoff."
+        },
         "blocked_reason": {
           "type": "string",
           "description": "Human-readable reason when status is 'blocked'."

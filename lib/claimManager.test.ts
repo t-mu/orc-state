@@ -13,6 +13,7 @@ import {
   setRunInputState,
   expireStaleLeases,
   expireStaleLeasesDetailed,
+  requeueBackoffMs,
 } from './claimManager.ts';
 import { nextEligibleTask, nextEligibleTaskFromBacklog } from './taskScheduler.ts';
 
@@ -734,5 +735,133 @@ describe('nextEligibleTaskFromBacklog', () => {
     ]);
     expect(nextEligibleTaskFromBacklog(backlog, 'alice')).toBe('orch/a');
     expect(nextEligibleTaskFromBacklog(backlog, 'bob')).toBe('orch/b');
+  });
+});
+
+// ── requeue backoff ────────────────────────────────────────────────────────
+
+describe('requeue backoff — finishRun', () => {
+  it('sets requeue_eligible_after on first genuine failure', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    const before = Date.now();
+    finishRun(dir, run_id, 'agent-01', { success: false });
+    const after = Date.now();
+
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.status).toBe('todo');
+    expect(task.requeue_eligible_after).toBeTruthy();
+    const eligible = new Date(task.requeue_eligible_after!).getTime();
+    // attempt_count=1 → backoff=30s
+    expect(eligible).toBeGreaterThanOrEqual(before + 30_000);
+    expect(eligible).toBeLessThanOrEqual(after  + 30_000);
+  });
+
+  it('doubles backoff on second failure (60s)', () => {
+    seed(dir, { tasks: [{ ...makeTask('orch/init'), attempt_count: 1 }] });
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    const before = Date.now();
+    finishRun(dir, run_id, 'agent-01', { success: false });
+    const after = Date.now();
+
+    const task = readBacklog(dir).features[0].tasks[0];
+    const eligible = new Date(task.requeue_eligible_after!).getTime();
+    // attempt_count=2 → backoff=60s
+    expect(eligible).toBeGreaterThanOrEqual(before + 60_000);
+    expect(eligible).toBeLessThanOrEqual(after  + 60_000);
+  });
+
+  it('caps backoff at 600 000 ms regardless of attempt count', () => {
+    // requeueBackoffMs is exported so we can test the cap formula directly
+    // (end-to-end cap is unreachable with current MAX_ATTEMPTS=5, but the
+    //  formula must enforce the guard for future MAX_ATTEMPTS increases)
+    expect(requeueBackoffMs(1)).toBe(30_000);
+    expect(requeueBackoffMs(2)).toBe(60_000);
+    expect(requeueBackoffMs(3)).toBe(120_000);
+    expect(requeueBackoffMs(4)).toBe(240_000);
+    expect(requeueBackoffMs(5)).toBe(480_000);
+    expect(requeueBackoffMs(6)).toBe(600_000); // would be 960 000 — capped
+    expect(requeueBackoffMs(100)).toBe(600_000);
+  });
+
+  it('does NOT set requeue_eligible_after for infra failures', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: false, failureCode: 'ERR_DISPATCH_FAILURE' });
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.requeue_eligible_after).toBeUndefined();
+  });
+
+  it('does NOT set requeue_eligible_after on policy=block', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: false, policy: 'block' });
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.requeue_eligible_after).toBeUndefined();
+  });
+
+  it('does NOT set requeue_eligible_after on success', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: true });
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.requeue_eligible_after).toBeUndefined();
+  });
+});
+
+describe('requeue backoff — expireStaleLeases', () => {
+  it('sets requeue_eligible_after when a lease expires and task is requeued', () => {
+    seed(dir);
+    claimTask(dir, 'orch/init', 'agent-01', { leaseDurationMs: -1000 });
+    const before = Date.now();
+    expireStaleLeases(dir);
+    const after = Date.now();
+
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.status).toBe('todo');
+    expect(task.requeue_eligible_after).toBeTruthy();
+    const eligible = new Date(task.requeue_eligible_after!).getTime();
+    expect(eligible).toBeGreaterThanOrEqual(before + 30_000);
+    expect(eligible).toBeLessThanOrEqual(after  + 30_000);
+  });
+
+  it('does NOT set requeue_eligible_after when policy=block on expiry', () => {
+    seed(dir);
+    claimTask(dir, 'orch/init', 'agent-01', { leaseDurationMs: -1000 });
+    expireStaleLeases(dir, { policy: 'block' });
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.requeue_eligible_after).toBeUndefined();
+  });
+});
+
+describe('requeue backoff — task scheduler skips', () => {
+  it('skips a task that is in its backoff window', () => {
+    const futureEligible = new Date(Date.now() + 60_000).toISOString();
+    const bl = makeBacklog([
+      { ...makeTask('orch/a'), requeue_eligible_after: futureEligible },
+      { ...makeTask('orch/b') },
+    ]);
+    expect(nextEligibleTaskFromBacklog(bl, null)).toBe('orch/b');
+  });
+
+  it('dispatches a task whose backoff window has elapsed', () => {
+    const pastEligible = new Date(Date.now() - 1000).toISOString();
+    const bl = makeBacklog([
+      { ...makeTask('orch/a'), requeue_eligible_after: pastEligible },
+    ]);
+    expect(nextEligibleTaskFromBacklog(bl, null)).toBe('orch/a');
+  });
+
+  it('returns null when all todo tasks are in backoff', () => {
+    const futureEligible = new Date(Date.now() + 60_000).toISOString();
+    const bl = makeBacklog([
+      { ...makeTask('orch/a'), requeue_eligible_after: futureEligible },
+    ]);
+    expect(nextEligibleTaskFromBacklog(bl, null)).toBeNull();
   });
 });

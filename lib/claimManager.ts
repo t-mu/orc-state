@@ -9,6 +9,12 @@ import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
+const BACKOFF_BASE_MS = 30_000;   // 30 s base; doubles each attempt: 30s→60s→120s→240s
+const BACKOFF_MAX_MS  = 600_000;  // cap at 10 min
+
+export function requeueBackoffMs(attemptCount: number): number {
+  return Math.min(BACKOFF_BASE_MS * Math.pow(2, attemptCount - 1), BACKOFF_MAX_MS);
+}
 const FINALIZATION_STATES = new Set<FinalizationState | null>([
   'awaiting_finalize',
   'finalize_rebase_requested',
@@ -292,6 +298,7 @@ export function finishRun(
             task.blocked_reason = `max_attempts_exceeded: failed ${attempts} times`;
           } else {
             task.status = 'todo';
+            task.requeue_eligible_after = new Date(new Date(at).getTime() + requeueBackoffMs(attempts)).toISOString();
           }
         } else {
           task.status = 'todo';
@@ -501,6 +508,7 @@ function _expireLeasesCore(
           task.blocked_reason = `max_attempts_exceeded: expired ${attempts} times`;
         } else {
           task.status = 'todo';
+          task.requeue_eligible_after = new Date(now.getTime() + requeueBackoffMs(attempts)).toISOString();
         }
       }
     }

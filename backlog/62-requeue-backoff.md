@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/62-requeue-backoff
 title: "Add exponential backoff delay before requeued tasks become eligible"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: high
