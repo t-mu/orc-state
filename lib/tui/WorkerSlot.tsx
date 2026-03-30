@@ -16,7 +16,7 @@ export function WorkerSlot({ slot, sprites }: { slot: WorkerSlotViewModel; sprit
       </Text>
       <OrcSprite spriteState={slot.sprite_state} role={slot.role === 'scout' ? 'scout' : 'worker'} sprites={sprites} />
       <Text>{truncate(slot.task_ref ?? `${slot.provider ?? 'unknown'} ${slot.slot_state}`, 20)}</Text>
-      <Text dimColor>{slot.run_state ?? slot.slot_state}{slot.current_phase ? ` (${slot.current_phase})` : ''}</Text>
+      <Text dimColor>{slot.run_state ? `${slot.run_state}${slot.current_phase ? ` (${slot.current_phase})` : ''}` : ''}</Text>
       <Text dimColor>
         age: {formatSeconds(slot.age_seconds)} idle: {formatSeconds(slot.idle_seconds)}
       </Text>
