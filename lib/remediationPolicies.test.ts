@@ -67,17 +67,20 @@ describe('evaluateRemediationPolicies', () => {
     expect(result!.message).toBe('hook: permission dialog');
   });
 
-  it('matches repeated_failure when attemptCount >= threshold', () => {
-    const result = evaluateRemediationPolicies(policies, baseSignals({ attemptCount: 3 }));
+  it('matches repeated_failure when attemptCount >= threshold and nudges started', () => {
+    const result = evaluateRemediationPolicies(policies, baseSignals({ attemptCount: 3, nudgeCount: 1 }));
     expect(result).not.toBeNull();
     expect(result!.policy.id).toBe('repeated_failure');
     expect(result!.policy.action).toBe('block');
   });
 
   it('does not match repeated_failure when attemptCount < threshold', () => {
-    const result = evaluateRemediationPolicies(policies, baseSignals({ attemptCount: 2 }));
-    // Only repeated_failure checks attemptCount; other policies shouldn't match
-    // with defaults (sessionAlive=true, no prompts, no nudges, idleMs=0)
+    const result = evaluateRemediationPolicies(policies, baseSignals({ attemptCount: 2, nudgeCount: 1 }));
+    expect(result).toBeNull();
+  });
+
+  it('does not match repeated_failure before nudges start', () => {
+    const result = evaluateRemediationPolicies(policies, baseSignals({ attemptCount: 3, nudgeCount: 0 }));
     expect(result).toBeNull();
   });
 

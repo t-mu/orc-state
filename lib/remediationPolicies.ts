@@ -73,8 +73,9 @@ export function builtinPolicies(config: RemediationConfig): RemediationPolicy[] 
     },
     {
       id: 'repeated_failure',
-
-      match: (s) => s.attemptCount >= config.maxAttempts,
+      // Only fires after nudges have started (nudgeCount > 0), giving the worker
+      // a chance to succeed before being blocked for repeated failures.
+      match: (s) => s.nudgeCount > 0 && s.attemptCount >= config.maxAttempts,
       action: 'block',
       message: (s) => `task blocked after ${s.attemptCount} failed attempts`,
     },
