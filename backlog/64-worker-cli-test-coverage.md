@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/64-worker-cli-test-coverage
 title: "Add edge-case tests for run lifecycle CLI commands"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: high
