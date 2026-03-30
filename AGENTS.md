@@ -44,6 +44,19 @@ Worktree lifecycle commands are pre-authorized — do not stop to ask for permis
 
 Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). After calling `orc run-start`, `cd` into that path. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
 
+### Worktree cleanup ordering
+
+When merging and cleaning up a worktree, **always delete the branch before removing the worktree**. Removing the worktree destroys the shell's working directory, which makes all subsequent Bash commands fail. The correct order is:
+
+```bash
+# 1. Merge from the main checkout (not from inside the worktree)
+git -C <main-repo> merge <branch> --no-ff -m "task(<ref>): merge worktree"
+# 2. Delete the branch WHILE the worktree directory still exists
+git branch -D <branch>
+# 3. Remove the worktree LAST — this invalidates the cwd
+git worktree remove <worktree-path>
+```
+
 ## Phased Workflow
 
 Every task MUST follow these five phases in order. Each phase has a gate —
