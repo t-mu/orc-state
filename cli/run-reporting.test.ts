@@ -356,6 +356,42 @@ describe('orc-run-heartbeat', () => {
     const events = readEvents();
     expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-stale-hb')).toBe(false);
   });
+
+  it('rejects heartbeat when lease has already expired', () => {
+    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+      version: '1',
+      features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }] }],
+    }));
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+      version: '1',
+      agents: [{ agent_id: 'worker-01', provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+    }));
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+      version: '1',
+      claims: [{
+        run_id: 'run-expired-hb',
+        task_ref: 'docs/task-1',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: '2020-01-01T00:00:00.000Z',
+        started_at: '2020-01-01T00:01:00.000Z',
+        lease_expires_at: '2020-01-01T00:31:00.000Z',
+        last_heartbeat_at: null,
+        finished_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+      }],
+    }));
+    writeFileSync(join(dir, 'events.jsonl'), '');
+
+    const result = runCli('run-heartbeat.ts', ['--run-id=run-expired-hb', '--agent-id=worker-01']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('expired');
+    const events = readEvents();
+    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-expired-hb')).toBe(false);
+  });
 });
 
 // run-work-complete requires task status=done (gate enforced by task-mark-done).
