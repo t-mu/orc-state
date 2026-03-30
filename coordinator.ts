@@ -880,49 +880,23 @@ async function executeRemediation(
       break;
 
     case 'requeue_now':
+    case 'block': {
+      const policy = action === 'block' ? 'block' as const : 'requeue' as const;
       finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
         success: false,
         failureReason: `remediation[${policyId}]: ${message}`,
-        failureCode: 'ERR_REMEDIATION_REQUEUE',
-        policy: 'requeue',
+        failureCode: action === 'block' ? 'ERR_REMEDIATION_BLOCK' : 'ERR_REMEDIATION_REQUEUE',
+        policy,
       });
       await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
       runInactiveNudgeAtMs.delete(claim.run_id);
       runNudgeCount.delete(claim.run_id);
       runLastPhase.delete(claim.run_id);
       emitRemediationEvent();
-      log(`remediation[${policyId}]: requeued run ${claim.run_id}`);
+      log(`remediation[${policyId}]: ${action === 'block' ? 'blocked' : 'requeued'} run ${claim.run_id}`);
       break;
+    }
 
-    case 'block':
-      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
-        success: false,
-        failureReason: `remediation[${policyId}]: ${message}`,
-        failureCode: 'ERR_REMEDIATION_BLOCK',
-        policy: 'block',
-      });
-      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
-      runInactiveNudgeAtMs.delete(claim.run_id);
-      runNudgeCount.delete(claim.run_id);
-      runLastPhase.delete(claim.run_id);
-      emitRemediationEvent();
-      log(`remediation[${policyId}]: blocked run ${claim.run_id}`);
-      break;
-
-    case 'escalate':
-      emit({
-        event: 'worker_needs_attention',
-        actor_type: 'coordinator',
-        actor_id: 'coordinator',
-        run_id: claim.run_id,
-        task_ref: claim.task_ref,
-        agent_id: claim.agent_id,
-        payload: { reason: 'stale', idle_ms: 0 },
-      });
-      setEscalationNotified(STATE_DIR, claim.run_id);
-      emitRemediationEvent();
-      log(`remediation[${policyId}]: escalated run ${claim.run_id}`);
-      break;
   }
 }
 
@@ -989,49 +963,51 @@ async function enforceInProgressLifecycle(
     const agent = byAgent.get(claim.agent_id);
     const currentPhase = phaseByRun.get(claim.run_id) ?? null;
 
+    // Always consume hook events to prevent disk accumulation, even when
+    // the agent record is missing and remediation is skipped.
+    const hookEvents = consumeHookEvents(claim.agent_id);
+
     // Track phase changes across ticks
     const prevPhase = runLastPhase.get(claim.run_id);
     const phaseChanged = currentPhase != null && prevPhase != null && currentPhase !== prevPhase;
     if (currentPhase != null) runLastPhase.set(claim.run_id, currentPhase);
     if (phaseChanged) runNudgeCount.set(claim.run_id, 0);
 
-    // Collect signals: hook events consumed atomically, session liveness,
-    // blocking prompt detection
-    // Skip remediation evaluation when agent record is missing (e.g. managed
-    // slot not currently provisioned). The existing time-based escalation still
-    // handles these claims via idleMs guards that don't need the agent object.
-    if (!agent) continue;
-
-    const hookEvents = consumeHookEvents(claim.agent_id);
-    let sessionAlive = true;
-    let blockingPrompt: string | null = null;
-    if (agent.session_handle && agent.status !== 'offline') {
-      const adapter = getAdapter(agent.provider);
-      sessionAlive = await adapter.heartbeatProbe(agent.session_handle);
-      if (sessionAlive) {
-        blockingPrompt = detectBlockingPromptQuestion(adapter, agent.session_handle);
+    // Remediation requires agent record for signal collection (heartbeat
+    // probe, session handle). Skip policy evaluation when agent is missing
+    // (e.g. managed slot not currently provisioned) but fall through to the
+    // existing time-based escalation which handles agentless claims.
+    if (agent) {
+      let sessionAlive = true;
+      let blockingPrompt: string | null = null;
+      if (agent.session_handle && agent.status !== 'offline') {
+        const adapter = getAdapter(agent.provider);
+        sessionAlive = await adapter.heartbeatProbe(agent.session_handle);
+        if (sessionAlive) {
+          blockingPrompt = detectBlockingPromptQuestion(adapter, agent.session_handle);
+        }
+      } else {
+        sessionAlive = false;
       }
-    } else {
-      sessionAlive = false;
-    }
 
-    const signals: RemediationSignals = {
-      claim,
-      agent,
-      idleMs,
-      phase: currentPhase,
-      phaseChanged,
-      hookEvents,
-      blockingPrompt,
-      sessionAlive,
-      attemptCount: attemptsByTask.get(claim.task_ref) ?? 0,
-      nudgeCount: runNudgeCount.get(claim.run_id) ?? 0,
-    };
+      const signals: RemediationSignals = {
+        claim,
+        agent,
+        idleMs,
+        phase: currentPhase,
+        phaseChanged,
+        hookEvents,
+        blockingPrompt,
+        sessionAlive,
+        attemptCount: attemptsByTask.get(claim.task_ref) ?? 0,
+        nudgeCount: runNudgeCount.get(claim.run_id) ?? 0,
+      };
 
-    const remediationResult = evaluateRemediationPolicies(REMEDIATION_POLICIES, signals);
-    if (remediationResult) {
-      await executeRemediation(remediationResult.policy.id, remediationResult.policy.action, remediationResult.message, claim, agent, workerPoolConfig);
-      continue;
+      const remediationResult = evaluateRemediationPolicies(REMEDIATION_POLICIES, signals);
+      if (remediationResult) {
+        await executeRemediation(remediationResult.policy.id, remediationResult.policy.action, remediationResult.message, claim, agent, workerPoolConfig);
+        continue;
+      }
     }
     // ── End remediation policy evaluation ─────────────────────────────────
 

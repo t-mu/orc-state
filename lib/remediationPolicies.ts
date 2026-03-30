@@ -14,8 +14,7 @@ export type RemediationAction =
   | 'record_input'
   | 'nudge_targeted'
   | 'requeue_now'
-  | 'block'
-  | 'escalate';
+  | 'block';
 
 export interface RemediationSignals {
   claim: Claim;
@@ -32,13 +31,12 @@ export interface RemediationSignals {
 
 export interface RemediationPolicy {
   id: string;
-  description: string;
   match: (signals: RemediationSignals) => boolean;
   action: RemediationAction;
   message: string | ((signals: RemediationSignals) => string);
 }
 
-export interface RemediationResult {
+interface RemediationResult {
   policy: RemediationPolicy;
   message: string;
 }
@@ -50,11 +48,6 @@ export function loadRemediationConfig(argv?: string[]) {
     maxAttempts: intFlag('remediation-max-attempts', 3, argv),
     phaseStuckMs: intFlag('remediation-phase-stuck-ms', 1_200_000, argv),  // 20 min
     maxNudges: intFlag('remediation-max-nudges', 3, argv),
-    disabledPolicies: new Set(
-      (argv ?? process.argv.slice(2))
-        .filter((a) => a.startsWith('--remediation-disable='))
-        .flatMap((a) => a.split('=').slice(1).join('=').split(',')),
-    ),
   };
 }
 
@@ -66,28 +59,28 @@ export function builtinPolicies(config: RemediationConfig): RemediationPolicy[] 
   const all: RemediationPolicy[] = [
     {
       id: 'session_dead',
-      description: 'PTY session process is no longer alive',
+
       match: (s) => !s.sessionAlive,
       action: 'requeue_now',
       message: 'worker PTY session is dead; requeueing task',
     },
     {
       id: 'permission_prompt',
-      description: 'Blocking permission prompt detected in worker session',
+
       match: (s) => s.blockingPrompt != null || s.hookEvents.length > 0,
       action: 'record_input',
       message: (s) => s.blockingPrompt ?? s.hookEvents[0]?.message ?? 'permission prompt detected',
     },
     {
       id: 'repeated_failure',
-      description: 'Task has failed too many times',
+
       match: (s) => s.attemptCount >= config.maxAttempts,
       action: 'block',
       message: (s) => `task blocked after ${s.attemptCount} failed attempts`,
     },
     {
       id: 'phase_stuck',
-      description: 'Worker stuck in same phase with no progress after nudges started',
+
       match: (s) => s.nudgeCount > 0 && !s.phaseChanged && s.idleMs >= config.phaseStuckMs,
       action: 'nudge_targeted',
       message: (s) => s.phase
@@ -96,14 +89,14 @@ export function builtinPolicies(config: RemediationConfig): RemediationPolicy[] 
     },
     {
       id: 'excessive_nudges',
-      description: 'Multiple nudges sent with no phase advance',
+
       match: (s) => s.nudgeCount >= config.maxNudges && !s.phaseChanged,
       action: 'requeue_now',
       message: (s) => `no progress after ${s.nudgeCount} nudges; requeueing task`,
     },
   ];
 
-  return all.filter((p) => !config.disabledPolicies.has(p.id));
+  return all;
 }
 
 // ── Evaluation ────────────────────────────────────────────────────────────

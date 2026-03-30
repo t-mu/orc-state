@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './remediationPolicies.ts';
 import type { RemediationSignals, RemediationPolicy } from './remediationPolicies.ts';
 
+
 function baseSignals(overrides: Partial<RemediationSignals> = {}): RemediationSignals {
   return {
     claim: {
@@ -133,16 +134,14 @@ describe('evaluateRemediationPolicies', () => {
   it('skips a throwing match function gracefully', () => {
     const badPolicy: RemediationPolicy = {
       id: 'bad',
-      description: 'throws',
       match: () => { throw new Error('boom'); },
       action: 'requeue_now',
       message: 'bad',
     };
     const goodPolicy: RemediationPolicy = {
       id: 'good',
-      description: 'always matches',
       match: () => true,
-      action: 'escalate',
+      action: 'requeue_now',
       message: 'caught',
     };
     const result = evaluateRemediationPolicies([badPolicy, goodPolicy], baseSignals());
@@ -157,7 +156,6 @@ describe('loadRemediationConfig', () => {
     expect(config.maxAttempts).toBe(3);
     expect(config.phaseStuckMs).toBe(1_200_000);
     expect(config.maxNudges).toBe(3);
-    expect(config.disabledPolicies.size).toBe(0);
   });
 
   it('parses CLI flags', () => {
@@ -169,25 +167,5 @@ describe('loadRemediationConfig', () => {
     expect(config.maxAttempts).toBe(5);
     expect(config.phaseStuckMs).toBe(60000);
     expect(config.maxNudges).toBe(10);
-  });
-
-  it('parses disabled policies', () => {
-    const config = loadRemediationConfig(['--remediation-disable=session_dead,phase_stuck']);
-    expect(config.disabledPolicies.has('session_dead')).toBe(true);
-    expect(config.disabledPolicies.has('phase_stuck')).toBe(true);
-    expect(config.disabledPolicies.has('permission_prompt')).toBe(false);
-  });
-});
-
-describe('builtinPolicies', () => {
-  it('filters out disabled policies', () => {
-    const config = loadRemediationConfig(['--remediation-disable=session_dead,excessive_nudges']);
-    const policies = builtinPolicies(config);
-    const ids = policies.map((p) => p.id);
-    expect(ids).not.toContain('session_dead');
-    expect(ids).not.toContain('excessive_nudges');
-    expect(ids).toContain('permission_prompt');
-    expect(ids).toContain('repeated_failure');
-    expect(ids).toContain('phase_stuck');
   });
 });
