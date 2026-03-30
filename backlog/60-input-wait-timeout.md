@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/60-input-wait-timeout
 title: "Add secondary timeout for claims stuck in awaiting_input"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: high
