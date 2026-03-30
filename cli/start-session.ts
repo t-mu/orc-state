@@ -31,6 +31,7 @@ import {
   updateAgentRuntime,
 } from '../lib/agentRegistry.ts';
 import { STATE_DIR }             from '../lib/paths.ts';
+import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { atomicWriteJson }       from '../lib/atomicWrite.ts';
 import {
@@ -308,29 +309,34 @@ console.log('  Check status:       orc status');
 console.log('  Recovery/debug:     orc register-worker / orc start-worker-session / orc control-worker');
 
 let spawnArgs: string[] = [];
+const masterConfig = loadMasterConfig();
+const masterModelArgs = masterConfig.model ? ['--model', masterConfig.model] : [];
 try {
   if (master.provider === 'claude') {
     const mcpConfigPath = writeMcpConfig();
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap];
+    spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap, ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
     console.log('  Master bootstrap loaded via --system-prompt.');
+    if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
     console.log('\n----- MASTER BOOTSTRAP -----');
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    spawnArgs = ['--dangerously-bypass-approvals-and-sandbox', bootstrap];
+    spawnArgs = ['--dangerously-bypass-approvals-and-sandbox', ...masterModelArgs, bootstrap];
     console.log('  Master bootstrap loaded via initial prompt.');
+    if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
     console.log('\n----- MASTER BOOTSTRAP -----');
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'gemini') {
     const mcpConfigPath = writeMcpConfig();
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    spawnArgs = ['--mcp-config', mcpConfigPath, '--system-instruction', bootstrap];
+    spawnArgs = ['--mcp-config', mcpConfigPath, '--system-instruction', bootstrap, ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
     console.log('  Master bootstrap loaded via --system-instruction.');
+    if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
     console.log('\n----- MASTER BOOTSTRAP -----');
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');

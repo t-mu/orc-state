@@ -1,8 +1,19 @@
 {
-  "default_provider": "codex",
-  "worker_pool": {
-    "provider": "codex",
-    "max_workers": 2,
+  "default_provider": "claude",
+
+  "master": {
+    "provider": "claude",
     "model": null
+  },
+
+  "worker_pool": {
+    "max_workers": 2,
+    "provider": "claude",
+    "model": null,
+    "provider_models": {
+      "claude": "claude-sonnet-4-6",
+      "codex": "gpt-5.4",
+      "gemini": "gemini-3-flash"
+    }
   }
 }

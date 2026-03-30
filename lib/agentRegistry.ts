@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
-import { isSupportedProvider, loadWorkerPoolConfig } from './providers.ts';
+import { isSupportedProvider, loadWorkerPoolConfig, resolveWorkerModel } from './providers.ts';
 import type { Agent, AgentsState, AgentRole, Provider, DispatchMode } from '../types/agents.ts';
 import type { WorkerPoolConfig } from './providers.ts';
 import { AGENT_ROLES } from './constants.ts';
@@ -21,7 +21,7 @@ function createManagedSlotEntry(agentId: string, workerPoolConfig: WorkerPoolCon
   return {
     agent_id: agentId,
     provider: workerPoolConfig.provider,
-    model: workerPoolConfig.model,
+    model: resolveWorkerModel(workerPoolConfig),
     dispatch_mode: null,
     role: 'worker',
     capabilities: [],
@@ -174,12 +174,13 @@ export function reconcileManagedWorkerSlots(
         && existing.session_handle == null
         && existing.status !== 'running';
 
+      const resolvedModel = resolveWorkerModel(workerPoolConfig);
       if (canRefreshProviderBinding && (
         existing.provider !== workerPoolConfig.provider
-        || existing.model !== workerPoolConfig.model
+        || existing.model !== resolvedModel
       )) {
         existing.provider = workerPoolConfig.provider;
-        existing.model = workerPoolConfig.model;
+        existing.model = resolvedModel;
         modified = true;
       }
     }

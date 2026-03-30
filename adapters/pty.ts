@@ -99,6 +99,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     const args = [
       '--dangerously-bypass-approvals-and-sandbox',
     ];
+    if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
   }
@@ -107,7 +108,11 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     // without blocking on "Do you want to proceed?" confirmations.
     const args = ['--dangerously-skip-permissions'];
     if (claudeSettingsPath) args.push('--settings', claudeSettingsPath);
+    if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     return args;
+  }
+  if (typeof config.model === 'string' && config.model) {
+    return ['--model', config.model];
   }
   return [];
 }

@@ -13,7 +13,7 @@
 import { spawnSync } from 'node:child_process';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
-import type { WorkerPoolConfig } from './lib/providers.ts';
+import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig } from './lib/providers.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
 // Distributive Omit — preserves discriminated union across all members
@@ -33,7 +33,7 @@ import { nextEligibleTask } from './lib/taskScheduler.ts';
 import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
-import { loadWorkerPoolConfig } from './lib/providers.ts';
+import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
@@ -64,22 +64,25 @@ function getAdapter(provider: string): ReturnType<typeof createAdapter> {
 
 // ── CLI args ───────────────────────────────────────────────────────────────
 
-const INTERVAL_MS = intFlag('interval-ms', 30000);
-const MODE        = flag('mode') ?? 'autonomous';
-const RUN_START_TIMEOUT_MS = intFlag('run-start-timeout-ms', 600000);
-const SESSION_READY_TIMEOUT_MS = intFlag('session-ready-timeout-ms', 120000);
-const SESSION_READY_NUDGE_MS = intFlag('session-ready-nudge-ms', 15000);
-const SESSION_READY_NUDGE_INTERVAL_MS = intFlag('session-ready-nudge-interval-ms', 30000);
-const RUN_INACTIVE_TIMEOUT_MS = intFlag('run-inactive-timeout-ms', 1800000);
+// Config-backed constants: config file values are defaults, CLI flags override.
+const COORD_CONFIG: CoordinatorConfig = loadCoordinatorConfig();
+const LEASE_CONFIG: LeaseConfig = loadLeaseConfig();
+const INTERVAL_MS = intFlag('interval-ms', COORD_CONFIG.tick_interval_ms);
+const MODE        = flag('mode') ?? COORD_CONFIG.mode;
+const RUN_START_TIMEOUT_MS = intFlag('run-start-timeout-ms', COORD_CONFIG.run_start_timeout_ms);
+const SESSION_READY_TIMEOUT_MS = intFlag('session-ready-timeout-ms', COORD_CONFIG.session_ready_timeout_ms);
+const SESSION_READY_NUDGE_MS = intFlag('session-ready-nudge-ms', COORD_CONFIG.session_ready_nudge_ms);
+const SESSION_READY_NUDGE_INTERVAL_MS = intFlag('session-ready-nudge-interval-ms', COORD_CONFIG.session_ready_nudge_interval_ms);
+const RUN_INACTIVE_TIMEOUT_MS = intFlag('run-inactive-timeout-ms', COORD_CONFIG.run_inactive_timeout_ms);
 const RUN_START_NUDGE_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.1);
 const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
-const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', 600000);           // 10 min default
-const RUN_INACTIVE_ESCALATE_MS = intFlag('run-inactive-escalate-ms', 900000);      // 15 min default
-const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', 300000); // 5 min default
-const CONCURRENCY_LIMIT = 8;
+const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', COORD_CONFIG.run_inactive_nudge_ms);
+const RUN_INACTIVE_ESCALATE_MS = intFlag('run-inactive-escalate-ms', COORD_CONFIG.run_inactive_escalate_ms);
+const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', COORD_CONFIG.run_inactive_nudge_interval_ms);
+const CONCURRENCY_LIMIT = COORD_CONFIG.concurrency_limit;
 const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
-const MANAGED_SESSION_START_MAX_ATTEMPTS = 3;
-const MANAGED_SESSION_START_RETRY_DELAY_MS = 30_000;
+const MANAGED_SESSION_START_MAX_ATTEMPTS = COORD_CONFIG.session_start_max_attempts;
+const MANAGED_SESSION_START_RETRY_DELAY_MS = COORD_CONFIG.session_start_retry_delay_ms;
 const GIT_OP_TIMEOUT_MS = 30_000; // abort coordinator git ops after 30s to prevent tick blockage
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
@@ -1244,7 +1247,7 @@ async function tick() {
     try {
       if (agent.status === 'dead') return;
 
-      const claimed = claimTask(STATE_DIR, taskRef, agent.agent_id);
+      const claimed = claimTask(STATE_DIR, taskRef, agent.agent_id, { leaseDurationMs: LEASE_CONFIG.default_ms });
       runId = claimed.run_id;
       log(`claimed ${taskRef} for ${agent.agent_id} (${runId})`);
       const runWorktree = ensureRunWorktree(STATE_DIR, {
