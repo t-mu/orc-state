@@ -81,7 +81,7 @@ export function builtinPolicies(config: RemediationConfig): RemediationPolicy[] 
     {
       id: 'phase_stuck',
 
-      match: (s) => s.nudgeCount > 0 && !s.phaseChanged && s.idleMs >= config.phaseStuckMs,
+      match: (s) => s.nudgeCount > 0 && s.nudgeCount < config.maxNudges && !s.phaseChanged && s.idleMs >= config.phaseStuckMs,
       action: 'nudge_targeted',
       message: (s) => s.phase
         ? `No progress in phase "${s.phase}" for ${Math.round(s.idleMs / 1000)}s. Check if you are blocked and need help.`

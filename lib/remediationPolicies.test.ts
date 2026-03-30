@@ -114,6 +114,18 @@ describe('evaluateRemediationPolicies', () => {
     expect(result!.policy.action).toBe('requeue_now');
   });
 
+  it('excessive_nudges wins over phase_stuck when nudge budget exhausted', () => {
+    const result = evaluateRemediationPolicies(policies, baseSignals({
+      idleMs: 1_200_001,
+      phase: 'implement',
+      phaseChanged: false,
+      nudgeCount: 3,
+    }));
+    expect(result).not.toBeNull();
+    expect(result!.policy.id).toBe('excessive_nudges');
+    expect(result!.policy.action).toBe('requeue_now');
+  });
+
   it('does not match excessive_nudges when phase changed', () => {
     const result = evaluateRemediationPolicies(policies, baseSignals({
       nudgeCount: 5,
