@@ -18,6 +18,9 @@ export const LOCK_STALE_MS = 30_000;
 /** Default claim lease duration (ms). */
 export const DEFAULT_LEASE_MS = 30 * 60 * 1000;
 
+/** Secondary timeout for claims stuck awaiting input (ms). */
+export const INPUT_WAIT_TIMEOUT_MS = 3_600_000; // 1 hour
+
 /**
  * Extended lease duration for the finalize phase (awaiting_finalize,
  * finalize_rebase_requested, finalize_rebase_in_progress). Gives the worker

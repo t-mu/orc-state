@@ -568,6 +568,56 @@ describe('expireStaleLeases', () => {
     expect(claim.input_state).toBe('awaiting_input');
   });
 
+  it('does not expire awaiting_input claims within INPUT_WAIT_TIMEOUT_MS', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    // input requested just now — well within the 1-hour timeout
+    setRunInputState(dir, run_id, 'agent-01', {
+      inputState: 'awaiting_input',
+      requestedAt: new Date().toISOString(),
+    });
+    // expire the normal lease
+    const claims = readClaims(dir);
+    claims.claims[0].lease_expires_at = pastDate(5_000);
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
+
+    expect(expireStaleLeases(dir)).toEqual([]);
+    const claim = readClaims(dir).claims[0];
+    expect(claim.state).toBe('in_progress');
+    expect(claim.input_state).toBe('awaiting_input');
+  });
+
+  it('expires awaiting_input claims exceeding INPUT_WAIT_TIMEOUT_MS with ERR_INPUT_TIMEOUT', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    // input requested over 1 hour ago
+    const oldRequestedAt = new Date(Date.now() - 3_600_001).toISOString();
+    setRunInputState(dir, run_id, 'agent-01', {
+      inputState: 'awaiting_input',
+      requestedAt: oldRequestedAt,
+    });
+    const claims = readClaims(dir);
+    claims.claims[0].lease_expires_at = pastDate(5_000);
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
+
+    const expired = expireStaleLeases(dir);
+    expect(expired).toEqual([run_id]);
+
+    const claim = readClaims(dir).claims[0];
+    expect(claim.state).toBe('failed');
+    expect(claim.failure_reason).toBe('ERR_INPUT_TIMEOUT');
+    expect(claim.input_state).toBeNull();
+
+    const task = readBacklog(dir).features[0].tasks[0];
+    expect(task.status).toBe('todo');
+
+    const ev = readEvents(dir).find(e => e.event === 'claim_expired');
+    expect(ev).toBeDefined();
+    expect(ev.payload.code).toBe('ERR_INPUT_TIMEOUT');
+  });
+
   it('allows awaiting-input state to be recorded before run_start for claimed runs', () => {
     seed(dir);
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
