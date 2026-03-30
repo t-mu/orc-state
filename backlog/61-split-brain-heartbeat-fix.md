@@ -1,7 +1,7 @@
 ---
 ref: runtime-robustness/61-split-brain-heartbeat-fix
 title: "Reject heartbeat on expired or requeued claims to prevent split-brain"
-status: todo
+status: done
 feature: runtime-robustness
 task_type: implementation
 priority: critical

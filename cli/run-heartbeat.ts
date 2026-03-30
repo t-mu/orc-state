@@ -33,6 +33,11 @@ try {
     policy: null,
   }, claim);
 
+  if (validatedClaim.lease_expires_at && new Date(validatedClaim.lease_expires_at) < new Date()) {
+    console.error(`Error: Lease for run ${runId} has already expired at ${validatedClaim.lease_expires_at}. The task may have been requeued.`);
+    process.exit(1);
+  }
+
   appendSequencedEvent(STATE_DIR, {
     ts: new Date().toISOString(),
     event: 'heartbeat',

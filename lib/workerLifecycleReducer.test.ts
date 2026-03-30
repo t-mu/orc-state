@@ -136,6 +136,18 @@ describe('applies lifecycle transitions through the reducer boundary', () => {
     }
   });
 
+  it('returns noop for heartbeat event when lease has already expired', () => {
+    const expiredClaim = makeClaim({
+      state: 'in_progress',
+      lease_expires_at: '2026-03-11T07:00:00.000Z', // before NOW
+    });
+    const action = reduceLifecycleEvent(makeEvent({ event: 'heartbeat', ts: NOW }), expiredClaim, NOW);
+    expect(action.type).toBe('noop');
+    if (action.type === 'noop') {
+      expect(action.reason).toBe('lease_expired');
+    }
+  });
+
   it('returns noop for heartbeat when run_id or agent_id is absent', () => {
     const claim = makeClaim();
     const noRunIdEvent: LifecycleEventInput = { ...makeEvent({ event: 'heartbeat' }) };

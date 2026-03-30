@@ -281,6 +281,15 @@ describe('heartbeat', () => {
     heartbeat(dir, run_id, 'agent-01', { emitEvent: false });
     expect(readEvents(dir).some((e) => e.event === 'heartbeat')).toBe(false);
   });
+
+  it('throws when lease has already expired', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01', { leaseDurationMs: 60_000 });
+    startRun(dir, run_id, 'agent-01');
+    // Use an `at` timestamp 2 minutes in the future — past the 1-minute lease
+    const futureAt = new Date(Date.now() + 120_000).toISOString();
+    expect(() => heartbeat(dir, run_id, 'agent-01', { at: futureAt })).toThrow('expired');
+  });
 });
 
 describe('setRunFinalizationState', () => {

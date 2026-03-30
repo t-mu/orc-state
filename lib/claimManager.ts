@@ -211,6 +211,9 @@ export function heartbeat(
     if (!Number.isFinite(now.getTime())) {
       throw new Error(`Invalid heartbeat timestamp: ${at}`);
     }
+    if (claim.lease_expires_at && new Date(claim.lease_expires_at) < now) {
+      throw new Error(`Lease has already expired for run ${runId} (expired at ${claim.lease_expires_at})`);
+    }
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
     claim.last_heartbeat_at = at;
     claim.lease_expires_at  = lease_expires_at;

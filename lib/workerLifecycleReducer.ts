@@ -132,6 +132,9 @@ export function reduceLifecycleEvent(
     if (!claim || claim.state !== 'in_progress') {
       return { type: 'noop', reason: claim ? `wrong_state:${claim.state}` : 'no_claim' };
     }
+    if (claim.lease_expires_at && new Date(claim.lease_expires_at) < new Date(nowIso)) {
+      return { type: 'noop', reason: 'lease_expired' };
+    }
     const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
     return {
       type: 'heartbeat',
