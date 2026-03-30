@@ -118,7 +118,17 @@ function initializeEventCheckpoint() {
   return writeEventCheckpoint(STATE_DIR, seededCheckpoint);
 }
 
-let eventCheckpoint = initializeEventCheckpoint();
+// Lazy-initialized on first access. In production, main() initializes it
+// after acquiring the coordinator lock. In tests that call tick() directly,
+// it initializes on first tick.
+let eventCheckpoint: ReturnType<typeof initializeEventCheckpoint> | null = null;
+
+function getEventCheckpoint() {
+  if (!eventCheckpoint) {
+    eventCheckpoint = initializeEventCheckpoint();
+  }
+  return eventCheckpoint;
+}
 
 function emit(event: Omit<OrcEventInput, 'ts'> | Record<string, unknown>) {
   appendSequencedEvent(STATE_DIR, { ts: new Date().toISOString(), ...event } as OrcEventInput);
@@ -1156,11 +1166,12 @@ async function tick() {
     // A future task should window this to recent events only.
     const allEvents = readEvents(EVENTS_FILE);
     const allEventIds = allEvents.map((event) => eventIdentity(event));
-    const prunedCheckpoint = pruneEventCheckpoint(eventCheckpoint, allEventIds);
-    if (prunedCheckpoint.processed_event_ids.length !== eventCheckpoint.processed_event_ids.length) {
+    const currentCheckpoint = getEventCheckpoint();
+    const prunedCheckpoint = pruneEventCheckpoint(currentCheckpoint, allEventIds);
+    if (prunedCheckpoint.processed_event_ids.length !== currentCheckpoint.processed_event_ids.length) {
       eventCheckpoint = writeEventCheckpoint(STATE_DIR, prunedCheckpoint);
     }
-    const processedEventIds = new Set(eventCheckpoint.processed_event_ids);
+    const processedEventIds = new Set(getEventCheckpoint().processed_event_ids);
     const newEvents = allEvents.filter((event) => !processedEventIds.has(eventIdentity(event)));
     latestActivityByRun = latestRunActivityMap(allEvents);
     latestPhaseByRun = latestRunPhaseMap(allEvents);
@@ -1464,9 +1475,9 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     const eventTs = coerceTs(event.ts);
 
     // ── Duplicate / already-processed events ──────────────────────────────
-    if (eventCheckpoint.processed_event_ids.includes(normalizedEventId)) {
+    if (getEventCheckpoint().processed_event_ids.includes(normalizedEventId)) {
       if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(getEventCheckpoint(), normalizedEventId, seq, eventTs));
       }
       continue;
     }
@@ -1489,7 +1500,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         recordAgentActivity(STATE_DIR, agentId, { at: eventTs });
       }
       if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
+        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(getEventCheckpoint(), normalizedEventId, seq, eventTs));
       }
       continue;
     }
@@ -1590,7 +1601,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     }
 
     if (seq > 0) {
-      eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(eventCheckpoint, normalizedEventId, seq, eventTs));
+      eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(getEventCheckpoint(), normalizedEventId, seq, eventTs));
     }
   }
 }
@@ -1609,7 +1620,7 @@ function acquireCoordinatorLock() {
   const lockFlags = constants.O_EXCL | constants.O_CREAT | constants.O_WRONLY;
   const payload = JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() });
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       const fd = openSync(COORDINATOR_PID_FILE, lockFlags);
       try {
@@ -1655,6 +1666,7 @@ function releaseCoordinatorLock() {
 
 export async function main() {
   acquireCoordinatorLock();
+  eventCheckpoint = initializeEventCheckpoint();
   process.on('exit', releaseCoordinatorLock);
   function shutdown() {
     doShutdown().catch((err) => { console.error(err); process.exit(1); });
