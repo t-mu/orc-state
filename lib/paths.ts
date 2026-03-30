@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { resolveRepoRoot } from './repoRoot.ts';
 
 export const STATE_DIR = process.env.ORCH_STATE_DIR
@@ -20,3 +20,8 @@ export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
 export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
   ? resolve(process.env.ORC_BACKLOG_DIR)
   : resolve(resolveRepoRoot(), 'backlog');
+
+/** Path to per-agent hook-events NDJSON file written by the Notification hook. */
+export function hookEventPath(agentId: string): string {
+  return join(STATE_DIR, 'pty-hook-events', `${agentId}.ndjson`);
+}

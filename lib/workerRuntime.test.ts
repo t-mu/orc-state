@@ -56,6 +56,21 @@ describe('normalizeWorkerEnv', () => {
     expect(env.ORC_BIN).toBe('/repo/root/node_modules/.bin/orc');
   });
 
+  it('sets EDITOR, GIT_EDITOR, and PAGER to prevent interactive blocking', async () => {
+    vi.stubEnv('HOME', '/home/tester');
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return { ...actual, existsSync: vi.fn(() => false) };
+    });
+
+    const { normalizeWorkerEnv } = await import('./workerRuntime.ts');
+    const env = normalizeWorkerEnv({});
+
+    expect(env.EDITOR).toBe('true');
+    expect(env.GIT_EDITOR).toBe('true');
+    expect(env.PAGER).toBe('cat');
+  });
+
   it('carries ORC_REPO_ROOT into the launch env', async () => {
     vi.stubEnv('HOME', '/home/tester');
     vi.doMock('node:fs', async () => {

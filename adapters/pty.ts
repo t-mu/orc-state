@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
-import { STATE_DIR } from '../lib/paths.ts';
+import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
@@ -44,6 +44,10 @@ const BLOCKING_PROMPT_PATTERNS = [
   /would you like[^\n]*\[(?:y\/n|yes\/no)\]/i,
   /\b(?:apply|approve|continue|proceed|confirm)[^\n]*\[(?:y\/n|yes\/no)\]/i,
   /[^\n?]+\?\s*\[(?:y\/n|yes\/no)\]/i,
+  // Claude Code permission dialogs
+  /allow\s+(?:this\s+)?(?:tool|command|action|operation)[^\n]*\?/i,
+  /do you (?:want|wish) to (?:allow|grant|permit|run|execute)[^\n]*/i,
+  /permission (?:required|needed|requested)[^\n]*/i,
 ];
 
 function pidPath(agentId: string) { return join(STATE_DIR, 'pty-pids', `${agentId}.pid`); }
@@ -77,12 +81,16 @@ function sanitizePtyChunk(raw: string): string {
     .join('\n');
 }
 
+function settingsPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.json`); }
+
 function ensureDirs() {
   mkdirSync(join(STATE_DIR, 'pty-pids'), { recursive: true });
   mkdirSync(join(STATE_DIR, 'pty-logs'), { recursive: true });
+  mkdirSync(join(STATE_DIR, 'pty-hook-events'), { recursive: true });
+  mkdirSync(join(STATE_DIR, 'pty-settings'), { recursive: true });
 }
 
-function buildStartArgs(provider: string, config: Record<string, unknown>) {
+function buildStartArgs(provider: string, config: Record<string, unknown>, claudeSettingsPath?: string) {
   // Codex supports an initial prompt argument; pass bootstrap at spawn time
   // instead of PTY post-start injection, which the TUI treats as pasted text.
   if (provider === 'codex') {
@@ -95,7 +103,9 @@ function buildStartArgs(provider: string, config: Record<string, unknown>) {
   if (provider === 'claude') {
     // Skip interactive permission prompts so workers can run bash commands
     // without blocking on "Do you want to proceed?" confirmations.
-    return ['--dangerously-skip-permissions'];
+    const args = ['--dangerously-skip-permissions'];
+    if (claudeSettingsPath) args.push('--settings', claudeSettingsPath);
+    return args;
   }
   return [];
 }
@@ -187,7 +197,24 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       try {
         stream = createWriteStream(logPath(agentId), { flags: 'w' });
         stream.on('error', () => { /* output stream teardown races are non-fatal */ });
-        const spawnArgs = buildStartArgs(provider, config);
+
+        // For claude: write a settings file that installs a Notification hook so
+        // permission_prompt events are pushed to the hook-events file in real time.
+        let claudeSettingsFile: string | undefined;
+        if (provider === 'claude') {
+          claudeSettingsFile = settingsPath(agentId);
+          const eventsFile = hookEventPath(agentId);
+          // Inline node one-liner: reads stdin JSON, filters to permission_prompt
+          // notifications, and appends a record to the hook-events NDJSON file.
+          const hookCmd = `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const e=JSON.parse(d);if(e.notification_type!=='permission_prompt')return;require('fs').appendFileSync(${JSON.stringify(eventsFile)},JSON.stringify({type:'permission',message:e.message||'',ts:new Date().toISOString()})+'\\\\n')}catch(x){}})"`;
+          writeFileSync(claudeSettingsFile, JSON.stringify({
+            hooks: {
+              Notification: [{ hooks: [{ type: 'command', command: hookCmd }] }],
+            },
+          }));
+        }
+
+        const spawnArgs = buildStartArgs(provider, config, claudeSettingsFile);
 
         // Strip CLAUDECODE so nested claude sessions are not rejected.
         const { CLAUDECODE: _cc, ...baseEnv } = process.env;
@@ -288,6 +315,18 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
     detectInputBlock(sessionHandle: string) {
       try {
         const agentId = parseHandle(sessionHandle);
+        // Fast path (claude only): check push-based hook events file first.
+        const eventsFile = hookEventPath(agentId);
+        if (existsSync(eventsFile)) {
+          try {
+            const lines = readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean);
+            if (lines.length > 0) {
+              const event = JSON.parse(lines[0]) as { message?: string };
+              return (typeof event.message === 'string' && event.message) ? event.message : 'permission prompt detected';
+            }
+          } catch { /* fall through to PTY scan */ }
+        }
+        // Universal fallback: scan recent PTY output for blocking prompt patterns.
         const text = readLogTail(agentId);
         return detectBlockingPromptFromText(text);
       } catch {
@@ -387,6 +426,9 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           }
         }
         try { unlinkSync(pidFile); } catch { /* already gone */ }
+        // Clean up hook events and settings files created for this session.
+        try { unlinkSync(hookEventPath(agentId)); } catch { /* already gone or never created */ }
+        try { unlinkSync(settingsPath(agentId)); } catch { /* already gone or never created */ }
       } catch {
         // No-op — malformed handle or session already cleaned up.
       }
