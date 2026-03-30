@@ -281,16 +281,10 @@ if (!binaryOk) {
 
 const sessionReset = resetVolatileRuntimeStateForSession(STATE_DIR);
 
-const { running, pid: existingPid } = coordinatorStatus();
-if (running) {
-  console.log(`✓ Coordinator already running  (PID ${existingPid})`);
-} else {
-  console.log('Starting coordinator...');
-  const newPid = await spawnCoordinator();
-  console.log(newPid
-    ? `✓ Coordinator running  (PID ${newPid})`
-    : '  Coordinator spawned (PID confirmation pending)');
-}
+// Coordinator spawn is deferred until after pty.spawn succeeds — see below.
+// This avoids a lock race: if pty.spawn throws, the error recovery path calls
+// restoreVolatileRuntimeStateFromSnapshot which needs the .lock file, but a
+// freshly spawned coordinator may be holding it during its first tick.
 
 // ── Master foreground session ──────────────────────────────────────────────
 
@@ -381,6 +375,21 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       last_status_change_at: startedAt,
     });
     appendSessionStartedEvent(STATE_DIR, sessionReset);
+
+    // Coordinator spawn deferred to here — pty.spawn succeeded, state is committed.
+    // Fire-and-forget: master session doesn't depend on coordinator being confirmed alive.
+    const { running: coordRunning, pid: coordPid } = coordinatorStatus();
+    if (coordRunning) {
+      console.log(`✓ Coordinator already running  (PID ${coordPid})`);
+    } else {
+      spawnCoordinator().then((newPid) => {
+        console.log(newPid
+          ? `✓ Coordinator running  (PID ${newPid})`
+          : '  Coordinator spawned (PID confirmation pending)');
+      }).catch((err: unknown) => {
+        console.warn(`Warning: coordinator failed to start: ${(err as Error)?.message ?? 'unknown'}. Master session continues without coordinator.`);
+      });
+    }
   } catch (error) {
     restoreVolatileRuntimeStateFromSnapshot(STATE_DIR, sessionReset.snapshot);
     if (masterPty) {
