@@ -36,6 +36,7 @@ try {
     const previousStatus = task.status;
     task.status = 'todo';
     delete task.blocked_reason;
+    delete task.requeue_eligible_after;
     task.updated_at = now;
 
     const claimsState = readClaims(STATE_DIR);

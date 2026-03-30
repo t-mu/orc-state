@@ -36,11 +36,13 @@ export function nextEligibleTaskFromBacklog(
     }
   }
 
+  const now = new Date();
   const eligible: Array<{ ref: string; rank: number; index: number }> = [];
   let index = 0;
   for (const feature of (b?.features ?? [])) {
     for (const task of (feature.tasks ?? [])) {
       if (task.status !== 'todo') continue;
+      if (task.requeue_eligible_after && new Date(task.requeue_eligible_after) > now) continue;
       if (excludeTaskRefs.has(task.ref)) continue;
       if (task.planning_state && task.planning_state !== 'ready_for_dispatch') continue;
       if (task.owner && agentId && task.owner !== agentId) continue;

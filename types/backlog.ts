@@ -18,6 +18,7 @@ export interface Task {
   depends_on?: TaskRef[] | undefined;
   acceptance_criteria?: string[] | undefined;
   attempt_count?: number | undefined;
+  requeue_eligible_after?: string | undefined;
   blocked_reason?: string | undefined;
   owner?: string | undefined;
   created_at?: string | undefined;
