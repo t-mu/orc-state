@@ -47,6 +47,8 @@ import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, 
 import { join } from 'node:path';
 import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
+import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
+import type { RemediationSignals } from './lib/remediationPolicies.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -79,6 +81,8 @@ const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
 const MANAGED_SESSION_START_MAX_ATTEMPTS = 3;
 const MANAGED_SESSION_START_RETRY_DELAY_MS = 30_000;
 const GIT_OP_TIMEOUT_MS = 30_000; // abort coordinator git ops after 30s to prevent tick blockage
+const REMEDIATION_CONFIG = loadRemediationConfig();
+const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 const REPO_ROOT = resolveRepoRoot();
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -94,6 +98,8 @@ let latestPhaseByRun: Map<string, string> = new Map();
 const runStartNudgeAtMs = new Map<string, number>();
 const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
+const runNudgeCount = new Map<string, number>();
+const runLastPhase = new Map<string, string>();
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function log(msg: string) { console.log(`[coordinator] ${new Date().toISOString()} ${msg}`); }
@@ -835,25 +841,102 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
   return nudgedAgentIds;
 }
 
-async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], activityByRun: Map<string, string>, phaseByRun: Map<string, string> = new Map()) {
+async function executeRemediation(
+  policyId: string,
+  action: string,
+  message: string,
+  claim: Claim,
+  agent: Agent,
+  workerPoolConfig: WorkerPoolConfig,
+) {
+  const emitRemediationEvent = () => {
+    emit({
+      event: 'remediation_applied',
+      actor_type: 'coordinator',
+      actor_id: 'coordinator',
+      run_id: claim.run_id,
+      task_ref: claim.task_ref,
+      agent_id: claim.agent_id,
+      payload: { policy_id: policyId, action, message },
+    });
+  };
+
+  switch (action) {
+    case 'record_input':
+      recordCoordinatorInputRequest(claim, message, `remediation_policy:${policyId}`);
+      emitRemediationEvent();
+      log(`remediation[${policyId}]: recorded input request for run ${claim.run_id}`);
+      break;
+
+    case 'nudge_targeted':
+      if (agent?.session_handle && agent.status !== 'offline') {
+        const adapter = getAdapter(agent.provider);
+        await adapter.send(agent.session_handle, buildInProgressNudge(claim, message));
+        runNudgeCount.set(claim.run_id, (runNudgeCount.get(claim.run_id) ?? 0) + 1);
+        runInactiveNudgeAtMs.set(claim.run_id, Date.now());
+      }
+      emitRemediationEvent();
+      log(`remediation[${policyId}]: sent targeted nudge for run ${claim.run_id}`);
+      break;
+
+    case 'requeue_now':
+      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+        success: false,
+        failureReason: `remediation[${policyId}]: ${message}`,
+        failureCode: 'ERR_REMEDIATION_REQUEUE',
+        policy: 'requeue',
+      });
+      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      runNudgeCount.delete(claim.run_id);
+      runLastPhase.delete(claim.run_id);
+      emitRemediationEvent();
+      log(`remediation[${policyId}]: requeued run ${claim.run_id}`);
+      break;
+
+    case 'block':
+      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+        success: false,
+        failureReason: `remediation[${policyId}]: ${message}`,
+        failureCode: 'ERR_REMEDIATION_BLOCK',
+        policy: 'block',
+      });
+      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      runNudgeCount.delete(claim.run_id);
+      runLastPhase.delete(claim.run_id);
+      emitRemediationEvent();
+      log(`remediation[${policyId}]: blocked run ${claim.run_id}`);
+      break;
+
+    case 'escalate':
+      emit({
+        event: 'worker_needs_attention',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claim.run_id,
+        task_ref: claim.task_ref,
+        agent_id: claim.agent_id,
+        payload: { reason: 'stale', idle_ms: 0 },
+      });
+      setEscalationNotified(STATE_DIR, claim.run_id);
+      emitRemediationEvent();
+      log(`remediation[${policyId}]: escalated run ${claim.run_id}`);
+      break;
+  }
+}
+
+async function enforceInProgressLifecycle(
+  agents: Agent[],
+  claims: Claim[],
+  activityByRun: Map<string, string>,
+  phaseByRun: Map<string, string> = new Map(),
+  attemptsByTask: Map<string, number> = new Map(),
+) {
   const nowMs = Date.now();
   const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
   const nudgeWork = [];
   const workerPoolConfig = loadWorkerPoolConfig();
-
-  // Fast-path pre-pass: atomically consume push-based hook event files written
-  // by provider Notification hooks. These fire in real time when a permission
-  // dialog appears, so we detect and record the block before the inactivity
-  // nudge timer fires. Uses rename-read-delete protocol to avoid event loss
-  // from concurrent hook appends.
-  for (const claim of claims ?? []) {
-    if (claim.state !== 'in_progress') continue;
-    if (claimAwaitingInput(claim)) continue;
-    const events = consumeHookEvents(claim.agent_id);
-    if (!events.length) continue;
-    const message = events[0].message || 'permission prompt detected';
-    recordCoordinatorInputRequest(claim, message, 'hook_permission_prompt');
-  }
 
   for (const claim of claims ?? []) {
     if (claim.state !== 'in_progress') {
@@ -899,6 +982,61 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
       continue;
     }
 
+    // ── Remediation policy evaluation ─────────────────────────────────────
+    // Collect signals for this claim, evaluate policies, and execute the
+    // matched action if any. Falls through to existing time-based escalation
+    // when no policy matches.
+    const agent = byAgent.get(claim.agent_id);
+    const currentPhase = phaseByRun.get(claim.run_id) ?? null;
+
+    // Track phase changes across ticks
+    const prevPhase = runLastPhase.get(claim.run_id);
+    const phaseChanged = currentPhase != null && prevPhase != null && currentPhase !== prevPhase;
+    if (currentPhase != null) runLastPhase.set(claim.run_id, currentPhase);
+    if (phaseChanged) runNudgeCount.set(claim.run_id, 0);
+
+    // Collect signals: hook events consumed atomically, session liveness,
+    // blocking prompt detection
+    // Skip remediation evaluation when agent record is missing (e.g. managed
+    // slot not currently provisioned). The existing time-based escalation still
+    // handles these claims via idleMs guards that don't need the agent object.
+    if (!agent) continue;
+
+    const hookEvents = consumeHookEvents(claim.agent_id);
+    let sessionAlive = true;
+    let blockingPrompt: string | null = null;
+    if (agent.session_handle && agent.status !== 'offline') {
+      const adapter = getAdapter(agent.provider);
+      sessionAlive = await adapter.heartbeatProbe(agent.session_handle);
+      if (sessionAlive) {
+        blockingPrompt = detectBlockingPromptQuestion(adapter, agent.session_handle);
+      }
+    } else {
+      sessionAlive = false;
+    }
+
+    const signals: RemediationSignals = {
+      claim,
+      agent,
+      idleMs,
+      phase: currentPhase,
+      phaseChanged,
+      hookEvents,
+      blockingPrompt,
+      sessionAlive,
+      attemptCount: attemptsByTask.get(claim.task_ref) ?? 0,
+      nudgeCount: runNudgeCount.get(claim.run_id) ?? 0,
+    };
+
+    const remediationResult = evaluateRemediationPolicies(REMEDIATION_POLICIES, signals);
+    if (remediationResult) {
+      await executeRemediation(remediationResult.policy.id, remediationResult.policy.action, remediationResult.message, claim, agent, workerPoolConfig);
+      continue;
+    }
+    // ── End remediation policy evaluation ─────────────────────────────────
+
+    // ── Existing time-based escalation cascade (default fallback) ─────────
+
     if (idleMs >= RUN_INACTIVE_TIMEOUT_MS) {
       finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
         success: false,
@@ -915,20 +1053,11 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
     if (idleMs < RUN_INACTIVE_NUDGE_MS) continue;
     const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id);
     if (lastNudgeAt == null) {
-      const agent = byAgent.get(claim.agent_id);
       if (!agent?.session_handle || agent.status === 'offline') continue;
-      const adapter = getAdapter(agent.provider);
-      const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
-      if (blockingQuestion) {
-        recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
-        runInactiveNudgeAtMs.delete(claim.run_id);
-        continue;
-      }
 
       const claimSnapshot = { ...claim };
       const agentProvider = agent.provider;
       const agentSessionHandle = agent.session_handle;
-      const currentPhase = phaseByRun.get(claimSnapshot.run_id) ?? null;
       nudgeWork.push(async () => {
         const adapter = getAdapter(agentProvider);
         await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot, currentPhase));
@@ -942,6 +1071,7 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
           payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs, phase: currentPhase },
         });
         runInactiveNudgeAtMs.set(claimSnapshot.run_id, nowMs);
+        runNudgeCount.set(claimSnapshot.run_id, (runNudgeCount.get(claimSnapshot.run_id) ?? 0) + 1);
         log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id} (phase: ${currentPhase ?? 'unknown'})`);
         return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
       });
@@ -965,20 +1095,11 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
 
     if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) continue;
 
-    const agent = byAgent.get(claim.agent_id);
     if (!agent?.session_handle || agent.status === 'offline') continue;
-    const adapter = getAdapter(agent.provider);
-    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
-    if (blockingQuestion) {
-      recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
-      runInactiveNudgeAtMs.delete(claim.run_id);
-      continue;
-    }
 
     const claimSnapshot = { ...claim };
     const agentProvider = agent.provider;
     const agentSessionHandle = agent.session_handle;
-    const currentPhase = phaseByRun.get(claim.run_id) ?? null;
     nudgeWork.push(async () => {
       const adapter = getAdapter(agentProvider);
       await adapter.send(agentSessionHandle, buildInProgressNudge(claimSnapshot, currentPhase));
@@ -992,6 +1113,7 @@ async function enforceInProgressLifecycle(agents: Agent[], claims: Claim[], acti
         payload: { reason: 'run_progress_stale', action: 'nudge_sent', idle_ms: idleMs, phase: currentPhase },
       });
       runInactiveNudgeAtMs.set(claimSnapshot.run_id, nowMs);
+      runNudgeCount.set(claimSnapshot.run_id, (runNudgeCount.get(claimSnapshot.run_id) ?? 0) + 1);
       log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id} (phase: ${currentPhase ?? 'unknown'})`);
       return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
     });
@@ -1094,8 +1216,19 @@ async function tick() {
   agents = tickAgents.agents ?? [];
   claims = tickClaims.claims ?? [];
 
+  // Build attempt_count lookup from backlog (one read per tick, not per claim)
+  const attemptsByTask = new Map<string, number>();
+  try {
+    const backlog = readBacklog(STATE_DIR);
+    for (const feature of backlog.features ?? []) {
+      for (const task of feature.tasks ?? []) {
+        if (task.attempt_count) attemptsByTask.set(task.ref, task.attempt_count);
+      }
+    }
+  } catch { /* backlog read failure is non-fatal for remediation */ }
+
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
-  const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun);
+  const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun, attemptsByTask);
   tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
   tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
   agents = tickAgents.agents ?? [];
