@@ -296,6 +296,16 @@ export interface WorkerNeedsAttentionEvent extends BaseEvent {
   payload: { reason: 'stale'; idle_ms: number };
 }
 
+// ── Remediation events ───────────────────────────────────────────────────────
+
+export interface RemediationAppliedEvent extends BaseEvent {
+  event: 'remediation_applied';
+  run_id: string;
+  agent_id: string;
+  task_ref: string;
+  payload: { policy_id: string; action: string; message: string };
+}
+
 // ── Coordinator events ────────────────────────────────────────────────────────
 
 export interface CoordinatorStartedEvent extends BaseEvent {
@@ -348,7 +358,8 @@ export type OrcEvent =
   | CoordinatorStartedEvent
   | CoordinatorStoppedEvent
   | ReviewSubmittedEvent
-  | WorkerNeedsAttentionEvent;
+  | WorkerNeedsAttentionEvent
+  | RemediationAppliedEvent;
 
 // ── Type guards ───────────────────────────────────────────────────────────────
 
