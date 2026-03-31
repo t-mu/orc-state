@@ -60,7 +60,7 @@ function migrateJsonlIfNeeded(db: Database.Database, stateDir: string): void {
       try {
         ev = JSON.parse(line) as Record<string, unknown>;
       } catch {
-        continue;
+        continue; // skip malformed JSONL lines — expected during migration of partially written files
       }
       const eventId = typeof ev.event_id === 'string' ? ev.event_id : randomUUID();
       const seq = typeof ev.seq === 'number' ? ev.seq : nextSeq;

@@ -42,14 +42,22 @@ export function consumeHookEvents(agentId: string): Array<{ type: string; messag
   const processing = `${src}.processing`;
   try {
     renameSync(src, processing);
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[paths] unexpected error renaming hook events file:', err);
+    }
     // File disappeared between existsSync and rename (consumed by another tick or stop()).
     return [];
   }
   let lines: string[] = [];
   try {
     lines = readFileSync(processing, 'utf8').split('\n').filter(Boolean);
-  } catch { /* read failed — file was removed externally */ }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[paths] unexpected error reading hook events file:', err);
+    }
+    /* read failed — file was removed externally */
+  }
   try { unlinkSync(processing); } catch { /* already gone */ }
   const events: Array<{ type: string; message: string; ts: string }> = [];
   for (const line of lines) {

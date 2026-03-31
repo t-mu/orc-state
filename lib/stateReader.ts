@@ -23,7 +23,10 @@ export function readBacklog(stateDir: string): Backlog {
 export function readAgents(stateDir: string): AgentsState {
   try {
     return readJson(stateDir, 'agents.json') as AgentsState;
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[stateReader] unexpected error reading agents.json:', err);
+    }
     return { version: '1', agents: [] };
   }
 }
@@ -31,7 +34,10 @@ export function readAgents(stateDir: string): AgentsState {
 export function readClaims(stateDir: string): ClaimsState {
   try {
     return readJson(stateDir, 'claims.json') as ClaimsState;
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[stateReader] unexpected error reading claims.json:', err);
+    }
     return { version: '1', claims: [] };
   }
 }

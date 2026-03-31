@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/75-replace-silent-error-swallowing
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 75 — Replace Silent catch {} Blocks with Structured Error Logging
