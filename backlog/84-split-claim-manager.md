@@ -2,7 +2,7 @@
 ref: craftsmanship-structure/84-split-claim-manager
 feature: craftsmanship-structure
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/73-extract-claim-reset-helpers
 ---
