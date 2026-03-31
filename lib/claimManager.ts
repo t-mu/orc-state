@@ -1,28 +1,19 @@
 import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
-import { DEFAULT_LEASE_MS, INPUT_WAIT_TIMEOUT_MS } from './constants.ts';
+import { DEFAULT_LEASE_MS } from './constants.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { readJson, findTask } from './stateReader.ts';
-import type { Claim, ClaimsState, FinalizationState, InputState } from '../types/claims.ts';
+import type { ClaimsState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
+import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
-const BACKOFF_BASE_MS = 30_000;   // 30 s base; doubles each attempt: 30s→60s→120s→240s
-const BACKOFF_MAX_MS  = 600_000;  // cap at 10 min
 
-export function requeueBackoffMs(attemptCount: number): number {
-  return Math.min(BACKOFF_BASE_MS * Math.pow(2, attemptCount - 1), BACKOFF_MAX_MS);
-}
-const FINALIZATION_STATES = new Set<FinalizationState | null>([
-  'awaiting_finalize',
-  'finalize_rebase_requested',
-  'finalize_rebase_in_progress',
-  'ready_to_merge',
-  'blocked_finalize',
-  null,
-]);
+export { requeueBackoffMs } from './claimLeaseManager.ts';
+export { expireStaleLeases, expireStaleLeasesDetailed } from './claimLeaseManager.ts';
+export { markTaskEnvelopeSent, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, setEscalationNotified } from './claimStateManager.ts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -32,7 +23,7 @@ function assertValidTimestamp(ts: string, label: string): void {
   }
 }
 
-function resetClaimVolatileFields(claim: Claim): void {
+function resetClaimVolatileFields(claim: import('../types/claims.ts').Claim): void {
   claim.input_state = null;
   claim.input_requested_at = null;
   claim.session_start_retry_count = 0;
@@ -153,50 +144,6 @@ export function startRun(
   });
 }
 
-export function markTaskEnvelopeSent(
-  stateDir: string,
-  runId: string,
-  agentId: string,
-  {
-    emitEvent = true,
-    at = new Date().toISOString(),
-    actorType = 'coordinator' as ActorType,
-    actorId = 'coordinator',
-  }: { emitEvent?: boolean; at?: string; actorType?: ActorType; actorId?: string } = {},
-): Claim {
-  return withLock(lockPath(stateDir), () => {
-    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
-    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
-    if (!['claimed', 'in_progress'].includes(claim.state)) {
-      throw new Error(`Claim ${runId} cannot record envelope delivery from state '${claim.state}'`);
-    }
-    assertValidTimestamp(at, 'task envelope');
-    if (claim.task_envelope_sent_at) {
-      return claim;
-    }
-
-    claim.task_envelope_sent_at = at;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    if (emitEvent) {
-      emit(stateDir, {
-        ts: at,
-        event: 'task_envelope_sent',
-        actor_type: actorType,
-        actor_id: actorId,
-        run_id: runId,
-        task_ref: claim.task_ref,
-        agent_id: agentId,
-        payload: {},
-      });
-    }
-
-    return claim;
-  });
-}
-
 /**
  * Renew the lease on an active claim. Returns { lease_expires_at }.
  */
@@ -296,7 +243,7 @@ export function finishRun(
             task.blocked_reason = `max_attempts_exceeded: failed ${attempts} times`;
           } else {
             task.status = 'todo';
-            task.requeue_eligible_after = new Date(new Date(at).getTime() + requeueBackoffMs(attempts)).toISOString();
+            task.requeue_eligible_after = new Date(new Date(at).getTime() + _requeueBackoffMs(attempts)).toISOString();
           }
         } else {
           task.status = 'todo';
@@ -323,220 +270,4 @@ export function finishRun(
       }
     }
   });
-}
-
-export function setRunFinalizationState(
-  stateDir: string,
-  runId: string,
-  agentId: string,
-  {
-    finalizationState,
-    retryCountDelta = 0,
-    blockedReason = null,
-  }: {
-    finalizationState?: FinalizationState;
-    retryCountDelta?: number;
-    blockedReason?: string | null;
-  } = {},
-): Claim {
-  return withLock(lockPath(stateDir), () => {
-    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
-    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
-    if (claim.state !== 'in_progress') {
-      throw new Error(`Finalization updates require in_progress claim state (got: ${claim.state})`);
-    }
-    if (!FINALIZATION_STATES.has(finalizationState ?? null)) {
-      throw new Error(`Unsupported finalization state: ${String(finalizationState)}`);
-    }
-    if (!Number.isInteger(retryCountDelta)) {
-      throw new Error(`retryCountDelta must be an integer (got: ${retryCountDelta})`);
-    }
-    if (blockedReason !== null && typeof blockedReason !== 'string') {
-      throw new Error('blockedReason must be a string or null');
-    }
-
-    claim.finalization_state = finalizationState ?? null;
-    claim.finalization_retry_count = Math.max(0, (claim.finalization_retry_count ?? 0) + retryCountDelta);
-    claim.finalization_blocked_reason = blockedReason;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    return claim;
-  });
-}
-
-export function setRunInputState(
-  stateDir: string,
-  runId: string,
-  agentId: string,
-  {
-    inputState = null,
-    requestedAt = null,
-  }: {
-    inputState?: InputState;
-    requestedAt?: string | null;
-  } = {},
-): Claim {
-  return withLock(lockPath(stateDir), () => {
-    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
-    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
-    if (!['claimed', 'in_progress'].includes(claim.state)) {
-      throw new Error(`Input state updates require claimed or in_progress claim state (got: ${claim.state})`);
-    }
-    if (![null, 'awaiting_input'].includes(inputState)) {
-      throw new Error(`Unsupported input state: ${String(inputState)}`);
-    }
-    if (requestedAt !== null && !Number.isFinite(new Date(requestedAt ?? '').getTime())) {
-      throw new Error(`requestedAt must be an ISO date-time string or null (got: ${String(requestedAt)})`);
-    }
-
-    claim.input_state = inputState;
-    claim.input_requested_at = inputState === 'awaiting_input'
-      ? (requestedAt ?? new Date().toISOString())
-      : null;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    return claim;
-  });
-}
-
-export function setRunSessionStartRetryState(
-  stateDir: string,
-  runId: string,
-  agentId: string,
-  {
-    retryCount = 0,
-    nextRetryAt = null,
-    lastError = null,
-  }: {
-    retryCount?: number;
-    nextRetryAt?: string | null;
-    lastError?: string | null;
-  } = {},
-): Claim {
-  return withLock(lockPath(stateDir), () => {
-    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
-    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
-    if (claim.state !== 'claimed') {
-      throw new Error(`Session start retry updates require claimed claim state (got: ${claim.state})`);
-    }
-    if (!Number.isInteger(retryCount) || retryCount < 0) {
-      throw new Error(`retryCount must be a non-negative integer (got: ${String(retryCount)})`);
-    }
-    if (nextRetryAt !== null && !Number.isFinite(new Date(nextRetryAt).getTime())) {
-      throw new Error(`nextRetryAt must be an ISO date-time string or null (got: ${String(nextRetryAt)})`);
-    }
-    if (lastError !== null && typeof lastError !== 'string') {
-      throw new Error('lastError must be a string or null');
-    }
-
-    claim.session_start_retry_count = retryCount;
-    claim.session_start_retry_next_at = retryCount > 0 ? nextRetryAt : null;
-    claim.session_start_last_error = retryCount > 0 ? lastError : null;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    return claim;
-  });
-}
-
-export function setEscalationNotified(
-  stateDir: string,
-  runId: string,
-): Claim {
-  return withLock(lockPath(stateDir), () => {
-    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
-    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-
-    claim.escalation_notified_at = new Date().toISOString();
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    return claim;
-  });
-}
-
-function _expireLeasesCore(
-  stateDir: string,
-  { policy = 'requeue', actorId = 'coordinator' }: { policy?: string; actorId?: string } = {},
-): Array<{ run_id: string; task_ref: string; agent_id: string }> {
-  const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
-  const backlog = readJson(stateDir, 'backlog.json') as Backlog;
-  const now     = new Date();
-  const expired: Array<{ run_id: string; task_ref: string; agent_id: string; code: string }> = [];
-
-  for (const claim of claims.claims) {
-    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-
-    if (claim.input_state === 'awaiting_input') {
-      const inputRequestedAt = claim.input_requested_at
-        ? new Date(claim.input_requested_at).getTime()
-        : new Date(claim.last_heartbeat_at ?? claim.claimed_at).getTime();
-      if (now.getTime() - inputRequestedAt < INPUT_WAIT_TIMEOUT_MS) continue;
-      // Input wait exceeded — fall through to expiry with ERR_INPUT_TIMEOUT
-    } else if (!claim.lease_expires_at || new Date(claim.lease_expires_at) > now) {
-      continue;
-    }
-
-    const code = claim.input_state === 'awaiting_input' ? 'ERR_INPUT_TIMEOUT' : 'ERR_LEASE_EXPIRED';
-    claim.state       = 'failed';
-    claim.finished_at = now.toISOString();
-    if (code === 'ERR_INPUT_TIMEOUT') claim.failure_reason = 'ERR_INPUT_TIMEOUT';
-    resetClaimVolatileFields(claim);
-    expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id, code });
-
-    const task = findTask(backlog, claim.task_ref);
-    if (task) {
-      if (policy === 'block') {
-        task.status = 'blocked';
-      } else {
-        // Requeue path: increment attempt counter, auto-block at MAX_ATTEMPTS.
-        const attempts = (task.attempt_count ?? 0) + 1;
-        task.attempt_count = attempts;
-        if (attempts >= MAX_ATTEMPTS) {
-          task.status = 'blocked';
-          task.blocked_reason = `max_attempts_exceeded: expired ${attempts} times`;
-        } else {
-          task.status = 'todo';
-          task.requeue_eligible_after = new Date(now.getTime() + requeueBackoffMs(attempts)).toISOString();
-        }
-      }
-    }
-  }
-
-  if (expired.length > 0) {
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-    for (const { run_id, task_ref, code } of expired) {
-      emit(stateDir, {
-        ts: now.toISOString(), event: 'claim_expired',
-        actor_type: 'coordinator', actor_id: actorId,
-        run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code },
-      });
-    }
-  }
-
-  return expired;
-}
-
-/**
- * Expire all stale leases (lease_expires_at < now).
- * Returns array of expired run_ids.
- */
-export function expireStaleLeases(
-  stateDir: string,
-  options: { policy?: string; actorId?: string } = {},
-): string[] {
-  return withLock(lockPath(stateDir), () => _expireLeasesCore(stateDir, options).map((e) => e.run_id));
-}
-
-export function expireStaleLeasesDetailed(
-  stateDir: string,
-  options: { policy?: string; actorId?: string } = {},
-): Array<{ run_id: string; task_ref: string; agent_id: string }> {
-  return withLock(lockPath(stateDir), () => _expireLeasesCore(stateDir, options));
 }
