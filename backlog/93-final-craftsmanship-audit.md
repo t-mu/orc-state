@@ -4,6 +4,17 @@ feature: craftsmanship-polish
 priority: normal
 status: todo
 depends_on:
+  - craftsmanship-foundations/71-extract-orphan-claim-detection
+  - craftsmanship-foundations/75-replace-silent-error-swallowing
+  - craftsmanship-foundations/76-dedup-run-activity-maps
+  - craftsmanship-foundations/77-dedup-state-init-logic
+  - craftsmanship-foundations/78-simplify-event-identity
+  - craftsmanship-foundations/79-remove-persistent-dispatch-state
+  - craftsmanship-foundations/80-reduce-prompt-regex-fragility
+  - craftsmanship-foundations/81-encapsulate-adapter-handle
+  - craftsmanship-structure/84-split-claim-manager
+  - craftsmanship-structure/85-decompose-build-status
+  - craftsmanship-structure/87-standardize-error-formatting
   - craftsmanship-decomposition/88-extract-tick-dispatch-block
   - craftsmanship-decomposition/89-extract-nudge-pattern
   - craftsmanship-decomposition/90-cli-concern-separation
