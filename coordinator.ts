@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
 import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig } from './lib/providers.ts';
+import { isManagedSlot } from './lib/workerSlots.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
 // Distributive Omit — preserves discriminated union across all members
@@ -185,12 +186,6 @@ function readTaskContext(stateDir: string, taskRef: string) {
   return null;
 }
 
-function isManagedSlot(agentId: string | null | undefined, workerPoolConfig: WorkerPoolConfig) {
-  const match = /^orc-(\d+)$/.exec(agentId ?? '');
-  if (!match) return false;
-  const slotNumber = Number(match[1]);
-  return Number.isInteger(slotNumber) && slotNumber >= 1 && slotNumber <= workerPoolConfig.max_workers;
-}
 
 async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unknown> | null = null) {
   const adapter = getAdapter(agent.provider);
@@ -332,16 +327,16 @@ async function processClaimedSessionReadiness(
         working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? null,
         run_id: claim.run_id,
         task_ref: claim.task_ref,
-        retryable: isManagedSlot(agent.agent_id, workerPoolConfig),
+        retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
       });
       if (!ready.ok || !agent.session_handle) {
-        if (isManagedSlot(agent.agent_id, workerPoolConfig)) {
+        if (isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
           setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
             retryCount: Math.max(claim.session_start_retry_count ?? 0, 1),
             nextRetryAt: new Date(nowMs + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
             lastError: ready.reason ?? 'worker session could not be relaunched while awaiting reported_for_duty',
           });
-        } else if (!isManagedSlot(agent.agent_id, workerPoolConfig)) {
+        } else if (!isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
           const failReason = ready.reason ?? 'worker session could not be relaunched while awaiting reported_for_duty';
           finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
             success: false,
@@ -412,7 +407,7 @@ async function processManagedSessionStartRetries(
     if (claim.state !== 'claimed' || retryCount <= 0 || nextRetryAt == null) continue;
 
     const agent = agentsById.get(claim.agent_id);
-    if (!agent || !isManagedSlot(claim.agent_id, workerPoolConfig)) {
+    if (!agent || !isManagedSlot(claim.agent_id, workerPoolConfig.max_workers)) {
       continue;
     }
     if (nowMs < new Date(nextRetryAt).getTime()) continue;
@@ -706,11 +701,11 @@ async function cleanupRunCapacity(agentId: string, workerPoolConfig: WorkerPoolC
   const agent = getAgent(STATE_DIR, agentId);
   if (!agent) return;
   await stopAgentSession(agent);
-  if (offlineReason && !isManagedSlot(agent.agent_id, workerPoolConfig)) {
+  if (offlineReason && !isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
     markWorkerOffline(STATE_DIR, agent, { emit, reason: offlineReason });
     return;
   }
-  if (agent.status === 'offline' && !isManagedSlot(agent.agent_id, workerPoolConfig)) {
+  if (agent.status === 'offline' && !isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
     clearWorkerSessionRuntime(STATE_DIR, agent, { status: 'offline' });
     return;
   }
@@ -1290,10 +1285,10 @@ async function tick() {
         working_directory: runWorktree.worktree_path,
         run_id: runId,
         task_ref: taskRef,
-        retryable: isManagedSlot(agent.agent_id, workerPoolConfig),
+        retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
       });
       if (!ready.ok || !agent.session_handle) {
-        if (isManagedSlot(agent.agent_id, workerPoolConfig)) {
+        if (isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
           setRunSessionStartRetryState(STATE_DIR, runId, agent.agent_id, {
             retryCount: 1,
             nextRetryAt: new Date(Date.now() + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),

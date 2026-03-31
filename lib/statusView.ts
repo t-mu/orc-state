@@ -8,15 +8,9 @@ import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
+import { isManagedSlot } from './workerSlots.ts';
 const STARTUP_FAILURE_LIMIT = 5;
 const LIFECYCLE_FAILURE_LIMIT = 5;
-
-function isManagedSlot(agentId: string | undefined, maxWorkers: number): boolean {
-  const match = /^orc-(\d+)$/.exec(agentId ?? '');
-  if (!match) return false;
-  const slotNumber = Number(match[1]);
-  return Number.isInteger(slotNumber) && slotNumber >= 1 && slotNumber <= maxWorkers;
-}
 
 interface TaskCounts {
   counts: Record<string, number>;
