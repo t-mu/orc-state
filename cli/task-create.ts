@@ -26,6 +26,7 @@ import { isSupportedProvider } from '../lib/providers.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import type { Task } from '../types/backlog.ts';
+import { cliError } from './shared.ts';
 
 const featureRef = flag('feature');
 const title = flag('title');
@@ -135,6 +136,5 @@ try {
     console.log(`task created: ${taskRef}`);
   });
 } catch (err) {
-  console.error((err as Error).message);
-  process.exit(1);
+  cliError(err);
 }

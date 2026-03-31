@@ -12,6 +12,7 @@ import { PROVIDERS } from '../lib/providers.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { promptAgentId, promptProvider, promptWorkerRole, promptCapabilities } from '../lib/prompts.ts';
+import { cliError } from './shared.ts';
 
 const argv = process.argv.slice(2);
 const args = argv.filter((a) => a.startsWith('--'));
@@ -73,6 +74,5 @@ try {
   console.log(`Registered ${entry.agent_id} (${entry.provider}) role=${entry.role}`);
   console.log('This command is for debug/recovery workflows. Normal startup uses orc-start-session and coordinator-managed workers.');
 } catch (error) {
-  console.error((error as Error).message);
-  process.exit(1);
+  cliError(error);
 }

@@ -7,6 +7,7 @@ import { readEvents } from '../lib/eventLog.ts';
 import { EVENTS_FILE } from '../lib/paths.ts';
 import { boolFlag, flag, intFlag } from '../lib/args.ts';
 import { isRunEvent, isTaskEvent, isAgentEvent } from '../types/events.ts';
+import { cliError } from './shared.ts';
 
 const asJson = boolFlag('json');
 const n = intFlag('n', 40);
@@ -16,8 +17,7 @@ let events: ReturnType<typeof readEvents>;
 try {
   events = readEvents(EVENTS_FILE);
 } catch (error) {
-  console.error((error as Error).message);
-  process.exit(1);
+  cliError(error);
 }
 
 if (eventName) {

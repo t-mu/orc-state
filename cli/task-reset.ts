@@ -12,6 +12,7 @@ import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
+import { cliError } from './shared.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const actorId = flag('actor-id') ?? 'human';
@@ -69,6 +70,5 @@ try {
     console.log(`task reset: ${taskRef} (was: ${previousStatus}, cancelled ${activeClaims.length} active claims)`);
   });
 } catch (err) {
-  console.error((err as Error).message);
-  process.exit(1);
+  cliError(err);
 }

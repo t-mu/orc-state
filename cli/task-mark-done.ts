@@ -15,6 +15,7 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, findTask } from '../lib/stateReader.ts';
 import { discoverActiveTaskSpecs } from '../lib/backlogSync.ts';
+import { cliError } from './shared.ts';
 
 // Resolve the backlog docs directory for spec writes.
 // Workers run inside worktrees where backlog/ is a separate copy of the specs.
@@ -100,6 +101,5 @@ try {
     console.log(`task marked done: ${taskRef} (was: ${previousStatus})`);
   });
 } catch (err) {
-  console.error((err as Error).message);
-  process.exit(1);
+  cliError(err);
 }

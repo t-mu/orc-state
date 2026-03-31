@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import type { TaskStatus } from '../types/backlog.ts';
 import { discoverActiveTaskSpecs, type SpecEntry } from '../lib/backlogSync.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
+import { formatErrorMessage } from './shared.ts';
 
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
 
@@ -161,7 +162,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     }
     console.log(output);
   } catch (error) {
-    console.error(`backlog sync FAILED: ${(error as Error).message}`);
+    console.error(`backlog sync FAILED: ${formatErrorMessage(error)}`);
     process.exit(1);
   }
 }

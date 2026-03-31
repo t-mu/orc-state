@@ -6,6 +6,7 @@
  */
 import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
+import { cliError } from './shared.ts';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
@@ -127,6 +128,5 @@ try {
     console.log(`task delegated: ${taskRef}${assignedTarget ? ` target=${assignedTarget}` : ''}`);
   });
 } catch (error) {
-  console.error((error as Error).message);
-  process.exit(1);
+  cliError(error);
 }
