@@ -49,6 +49,7 @@ import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
+import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS } from './lib/constants.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -80,10 +81,8 @@ const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', COORD_CONFIG.run_
 const RUN_INACTIVE_ESCALATE_MS = intFlag('run-inactive-escalate-ms', COORD_CONFIG.run_inactive_escalate_ms);
 const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', COORD_CONFIG.run_inactive_nudge_interval_ms);
 const CONCURRENCY_LIMIT = COORD_CONFIG.concurrency_limit;
-const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
 const MANAGED_SESSION_START_MAX_ATTEMPTS = COORD_CONFIG.session_start_max_attempts;
 const MANAGED_SESSION_START_RETRY_DELAY_MS = COORD_CONFIG.session_start_retry_delay_ms;
-const GIT_OP_TIMEOUT_MS = 30_000; // abort coordinator git ops after 30s to prevent tick blockage
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 const REPO_ROOT = resolveRepoRoot();
