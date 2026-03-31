@@ -10,6 +10,7 @@ import { readAgents, readClaims } from '../lib/stateReader.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
+import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { validateBacklogSync } from './backlog-sync-check.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
@@ -54,18 +55,10 @@ for (const agent of agents) {
   }
 }
 
+(checks.orphanedActiveClaims as unknown[]).push(...getOrphanedClaims(agents, claims));
+
 for (const claim of claims) {
   if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-  const owner = agents.find((a) => a.agent_id === claim.agent_id) ?? null;
-  if (!owner || owner.status === 'offline') {
-    (checks.orphanedActiveClaims as unknown[]).push({
-      run_id: claim.run_id,
-      task_ref: claim.task_ref,
-      agent_id: claim.agent_id,
-      claim_state: claim.state,
-      owner_status: owner?.status ?? 'missing',
-    });
-  }
 
   const anchor = claim.state === 'claimed'
     ? claimedRunStartupAnchor(claim)
