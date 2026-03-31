@@ -2,7 +2,7 @@
 ref: craftsmanship-structure/85-decompose-build-status
 feature: craftsmanship-structure
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/72-extract-is-managed-slot
 ---
