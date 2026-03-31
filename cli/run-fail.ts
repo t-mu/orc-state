@@ -1,10 +1,7 @@
 #!/usr/bin/env node
-import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { validateProgressCommandInput } from '../lib/progressValidation.ts';
-import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
-import { loadClaim, cliError } from './shared.ts';
-import type { FailurePolicy } from '../types/events.ts';
+import { executeRunFail } from '../lib/runCommands.ts';
+import { cliError } from './shared.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -24,31 +21,7 @@ if (!runId || !agentId) {
 }
 
 try {
-  const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressCommandInput({
-    event: 'run_failed',
-    runId,
-    agentId,
-    phase: null,
-    reason: failureReason,
-    policy,
-  }, claim);
-
-  appendSequencedEvent(STATE_DIR, {
-    ts: new Date().toISOString(),
-    event: 'run_failed',
-    actor_type: 'agent',
-    actor_id: agentId,
-    run_id: runId,
-    task_ref: validatedClaim.task_ref,
-    agent_id: agentId,
-    payload: {
-      reason: failureReason,
-      code: failureCode,
-      policy: policy as FailurePolicy,
-    },
-  }, { lockStrategy: 'none' });
-  console.log(`run_failed: ${runId} (${agentId}) reason=${failureReason}`);
+  executeRunFail(runId, agentId, failureReason, failureCode, policy);
 } catch (error) {
   cliError(error);
 }
