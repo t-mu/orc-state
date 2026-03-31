@@ -25,7 +25,7 @@ Independent.
 
 ### Current state
 
-Validation sets (`TASK_STATUSES`, `AGENT_ROLES`, `TASK_TYPES`, `TASK_PRIORITIES`) are defined as arrays in `lib/constants.ts`, then redefined as `new Set(...)` locally in `mcp/handlers.ts` (lines 23-26). The `AGENT_ID_RE` regex is in `lib/constants.ts`, but an identical `ACTOR_ID_RE` is defined locally in `mcp/handlers.ts` (line 27), and the same pattern appears inline in `lib/agentRegistry.ts`.
+Validation sets (`TASK_STATUSES`, `AGENT_ROLES`, `TASK_TYPES`) are defined as arrays in `lib/constants.ts`, but `TASK_PRIORITIES` is missing from it. All four are redefined as `new Set(...)` locally in `mcp/handlers.ts` (lines 23-26). The `AGENT_ID_RE` regex is in `lib/constants.ts`, but an identical `ACTOR_ID_RE` is defined locally in `mcp/handlers.ts` (line 27), and the same pattern appears inline in `lib/agentRegistry.ts`.
 
 ### Desired state
 
