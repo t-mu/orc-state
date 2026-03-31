@@ -2,7 +2,7 @@
 ref: craftsmanship-structure/87-standardize-error-formatting
 feature: craftsmanship-structure
 priority: low
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/70-extract-cli-shared-utils
 ---
