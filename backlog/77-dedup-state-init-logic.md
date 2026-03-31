@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/77-dedup-state-init-logic
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 77 — Extract State Init Logic into lib/stateInit.ts

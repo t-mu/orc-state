@@ -4,20 +4,19 @@
  * Usage:
  *   node cli/init.ts [--feature=<ref>] [--feature-title=<title>] [--force]
  */
-import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
-import { initEventsDb } from '../lib/eventLog.ts';
+import { ensureStateInitialized } from '../lib/stateInit.ts';
 
 const force = process.argv.includes('--force') || (flag('force') ?? '') === 'true';
 const featureRef = flag('feature') ?? 'project';
 const featureTitle = flag('feature-title') ?? 'Project';
 const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.db'];
 
-mkdirSync(STATE_DIR, { recursive: true });
 ensureGitignore();
 
 const existing = stateFiles.filter((name) => existsSync(join(STATE_DIR, name)));
@@ -32,19 +31,17 @@ if (force) {
     copyFileSync(join(STATE_DIR, file), join(STATE_DIR, `${file}.bak`));
     console.log(`backed up ${file} -> ${file}.bak`);
   }
+  for (const file of existing) {
+    try { unlinkSync(join(STATE_DIR, file)); } catch { /* already gone */ }
+  }
 }
 
-const backlog = {
-  version: '1',
-  features: [{ ref: featureRef, title: featureTitle, tasks: [] }],
-};
-const agents = { version: '1', agents: [] };
-const claims = { version: '1', claims: [] };
-
-writeFileSync(join(STATE_DIR, 'backlog.json'), JSON.stringify(backlog, null, 2) + '\n', 'utf8');
-writeFileSync(join(STATE_DIR, 'agents.json'), JSON.stringify(agents, null, 2) + '\n', 'utf8');
-writeFileSync(join(STATE_DIR, 'claims.json'), JSON.stringify(claims, null, 2) + '\n', 'utf8');
-initEventsDb(STATE_DIR);
+ensureStateInitialized(STATE_DIR);
+writeFileSync(
+  join(STATE_DIR, 'backlog.json'),
+  JSON.stringify({ version: '1', features: [{ ref: featureRef, title: featureTitle, tasks: [] }] }, null, 2) + '\n',
+  'utf8',
+);
 
 const errors = validateStateDir(STATE_DIR);
 if (errors.length > 0) {

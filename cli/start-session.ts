@@ -33,7 +33,7 @@ import {
 import { STATE_DIR }             from '../lib/paths.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
-import { atomicWriteJson }       from '../lib/atomicWrite.ts';
+import { ensureStateInitialized } from '../lib/stateInit.ts';
 import {
   promptProvider,
   isInteractive,
@@ -43,7 +43,6 @@ import {
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
-import { initEventsDb } from '../lib/eventLog.ts';
 import {
   appendSessionStartedEvent,
   resetVolatileRuntimeStateForSession,
@@ -51,28 +50,6 @@ import {
 } from '../lib/sessionState.ts';
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
-
-// ── State init (lazy) ──────────────────────────────────────────────────────
-// Only called when we are about to register a new master agent.
-// listAgents() is safe to call without any files present — readAgents()
-// catches file-not-found and returns { agents: [] }.
-
-function ensureState() {
-  mkdirSync(STATE_DIR, { recursive: true });
-  if (!existsSync(join(STATE_DIR, 'backlog.json'))) {
-    atomicWriteJson(join(STATE_DIR, 'backlog.json'), {
-      version: '1',
-      features: [{ ref: 'project', title: 'Project', tasks: [] }],
-    });
-  }
-  if (!existsSync(join(STATE_DIR, 'agents.json'))) {
-    atomicWriteJson(join(STATE_DIR, 'agents.json'), { version: '1', agents: [] });
-  }
-  if (!existsSync(join(STATE_DIR, 'claims.json'))) {
-    atomicWriteJson(join(STATE_DIR, 'claims.json'), { version: '1', claims: [] });
-  }
-  initEventsDb(STATE_DIR);
-}
 
 // ── Coordinator helpers ────────────────────────────────────────────────────
 
@@ -243,7 +220,7 @@ if (masterAction === 'replace' && master) {
   master = null;
 }
 
-ensureState();
+ensureStateInitialized(STATE_DIR);
 
 // ── Register master if absent ──────────────────────────────────────────────
 
