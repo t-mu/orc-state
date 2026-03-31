@@ -2,7 +2,7 @@
 ref: craftsmanship-decomposition/90-cli-concern-separation
 feature: craftsmanship-decomposition
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/70-extract-cli-shared-utils
   - craftsmanship-foundations/73-extract-claim-reset-helpers
