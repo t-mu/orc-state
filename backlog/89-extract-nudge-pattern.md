@@ -2,7 +2,7 @@
 ref: craftsmanship-decomposition/89-extract-nudge-pattern
 feature: craftsmanship-decomposition
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-decomposition/88-extract-tick-dispatch-block
 ---
