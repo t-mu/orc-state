@@ -43,7 +43,7 @@ import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } fro
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { fileURLToPath } from 'node:url';
-import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
+import { readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
@@ -171,21 +171,6 @@ async function runBounded(thunks: Array<() => Promise<unknown>>, limit = CONCURR
   }
   return results;
 }
-
-function readTaskContext(stateDir: string, taskRef: string) {
-  try {
-    const backlog = readBacklog(stateDir);
-    const task = findTask(backlog, taskRef);
-    if (task) {
-      const feature = backlog.features.find((e) => e.tasks.some((t) => t.ref === taskRef)) ?? null;
-      return { feature, task };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 
 async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unknown> | null = null) {
   const adapter = getAdapter(agent.provider);
@@ -1344,49 +1329,15 @@ async function tick() {
 }
 
 export function buildTaskEnvelope(taskRef: string, runId: string, agentId: string) {
-  const ctx = readTaskContext(STATE_DIR, taskRef);
   const taskSpec = readTaskSpecSections(taskRef);
-  const criteria = ctx?.task?.acceptance_criteria ?? [];
-  const description = ctx?.task?.description ?? '';
-  const taskType = ctx?.task?.task_type ?? 'implementation';
-  const planningState = ctx?.task?.planning_state ?? 'ready_for_dispatch';
-  const acceptanceCriteriaLines = criteria.length > 0
-    ? criteria.map((c, i) => `  ${i + 1}. ${c}`).join('\n')
-    : '  (none listed)';
-  const fallback = '  (not provided)';
   const runWorktree = getRunWorktree(STATE_DIR, runId);
-  const taskContract = {
-    contract_version: '1',
-    task_ref: taskRef,
-    run_id: runId,
-    assigned_agent_id: agentId,
-    task_type: taskType,
-    planning_state: planningState,
-    delegated_by: ctx?.task?.delegated_by ?? null,
-    title: ctx?.task?.title ?? '(untitled task)',
-    feature: ctx?.feature?.ref ?? '(unknown)',
-    description,
-    acceptance_criteria: criteria,
-  };
   return renderTemplate('task-envelope-v2.txt', {
     task_ref: taskRef,
     run_id: runId,
-    title: ctx?.task?.title ?? '(untitled task)',
-    feature: ctx?.feature?.ref ?? '(unknown)',
-    description,
     agent_id: agentId,
-    acceptance_criteria_lines: acceptanceCriteriaLines,
-    current_state: taskSpec.current_state || fallback,
-    desired_state: taskSpec.desired_state || fallback,
-    start_here: taskSpec.start_here || fallback,
-    files_to_change: taskSpec.files_to_change || fallback,
-    avoid_reading: taskSpec.avoid_reading || fallback,
-    implementation_notes: taskSpec.implementation_notes || fallback,
-    verification: taskSpec.verification || fallback,
     task_spec_path: taskSpec.source_path ?? '(task spec not found)',
     assigned_worktree: runWorktree?.worktree_path ?? join(WORKTREES_DIR, runId),
     orc_bin: resolveOrcBinSh(REPO_ROOT),
-    task_contract_json: JSON.stringify(taskContract, null, 2),
   });
 }
 

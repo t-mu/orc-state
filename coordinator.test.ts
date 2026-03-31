@@ -3004,7 +3004,7 @@ describe('processTerminalRunEvents', () => {
 });
 
 describe('buildTaskEnvelope', () => {
-  it('includes richer task-spec sections in the rendered TASK_START payload', async () => {
+  it('renders a minimal TASK_START payload with runtime handoff data only', async () => {
     seedState(dir, {
       tasks: [{
         ...DISPATCHABLE_TASK,
@@ -3038,22 +3038,18 @@ describe('buildTaskEnvelope', () => {
     const { buildTaskEnvelope } = await import('./coordinator.ts');
     const rendered = buildTaskEnvelope('proj/fix-bug', 'run-envelope-1', 'orc-1');
 
-    expect(rendered).toContain('current_state:');
-    expect(rendered).toContain('Current state text.');
-    expect(rendered).toContain('desired_state:');
-    expect(rendered).toContain('Desired state text.');
-    expect(rendered).toContain('start_here:');
-    expect(rendered).toContain('- coordinator.ts');
-    expect(rendered).toContain('files_to_change:');
-    expect(rendered).toContain('- coordinator.test.ts');
-    expect(rendered).toContain('avoid_reading:');
-    expect(rendered).toContain('lib/masterPtyForwarder.ts');
-    expect(rendered).toContain('implementation_notes:');
-    expect(rendered).toContain('- keep review scope narrow');
-    expect(rendered).toContain('targeted_verification:');
+    expect(rendered).toContain('TASK_START v4');
+    expect(rendered).toContain('task_ref: proj/fix-bug');
+    expect(rendered).toContain('run_id: run-envelope-1');
     expect(rendered).toContain('task_spec_path: docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-envelope-1');
-    expect(rendered).toContain("run-start --run-id=run-envelope-1 --agent-id=orc-1");
+    expect(rendered).toContain('TASK_END');
+    expect(rendered).not.toContain('current_state:');
+    expect(rendered).not.toContain('desired_state:');
+    expect(rendered).not.toContain('acceptance_criteria:');
+    expect(rendered).not.toContain('task_contract_v1_json:');
+    expect(rendered).not.toContain('run-start --run-id=run-envelope-1 --agent-id=orc-1');
+    expect(rendered).not.toContain('open docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
   });
 });
 
