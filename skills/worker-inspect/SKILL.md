@@ -1,94 +1,51 @@
 ---
 name: worker-inspect
 description: >
-  Inspect a worker agent's full state: status, run, PTY output, worktree,
-  hook events, and finalization state. Use when you need to check on a
-  specific worker, diagnose why it's stuck, or review its recent output.
+  Inspect a worker or run's state, progress, output, or stuck status using
+  MCP orchestrator tools. Use when asked about a specific worker's health,
+  what it is doing, or why it is stuck.
 argument-hint: "<agent-id>"
 ---
 
-# Worker Inspection
+# Worker Inspect
 
-Produce a structured diagnostic report for the specified worker agent.
-If no agent-id is given, ask the user which worker to inspect.
+**TRIGGER when:** "what is X doing?", "what's X up to?", "is X stuck?", "check on X",
+"how is X going?", "is X making progress?", "what's X working on?", "is X running?",
+"show X's logs", "what does X's output say?", "check on run Y", "what's run Y doing?"
 
-**Important:** All commands must be run from the repo root so that
-`.orc-state/` resolves correctly.
+**DO NOT TRIGGER for:** broad system status with no specific worker or run — use
+`get_status()` inline instead. Do not trigger on "are workers stuck?" without a
+specific agent or run reference.
 
-## Steps
+---
 
-1. **Resolve agent identity**
-   Run: `orc status`
-   Find the worker row matching the requested agent-id. Extract: status, run_id, task_ref, phase, idle time, lease expiry, finalization_state.
+## Lookup Table — match intent to MCP tool
 
-2. **Read claim details**
-   Read the claims file directly and find the claim for this agent:
-   ```bash
-   cat .orc-state/claims.json
-   ```
-   In the `claims` array, find the entry where `agent_id` matches. Note any: `input_state`, `finalization_state`, `finalization_blocked_reason`, `failure_reason`, `session_start_last_error`.
+Call **one** tool. Do not chain multiple tools unless the first result is insufficient.
 
-3. **Read PTY output (filtered)**
-   Run: `orc attach <agent-id>`
-   If the output is mostly blank/TUI artifacts, filter meaningful lines:
-   ```bash
-   grep -v '^\s*$' .orc-state/pty-logs/<agent-id>.log | grep -v '^[─│┌┐└┘├┤┬┴┼]' | tail -40
-   ```
-   Look for: error messages, test results, phase markers, `orc` CLI output, git output.
+| User intent | Tool to call |
+|---|---|
+| What is worker X doing? / What's X working on? / Is X making progress? | `get_agent_workview(agent_id: X)` |
+| Is X stuck? / Why is X not responding? | `get_agent_workview(agent_id: X)` — check `input_state` field in the result |
+| Is anyone waiting for input? / Are any workers blocked on a question? | `list_waiting_input()` |
+| Details on a specific run? / What's run Y doing? | `get_run(run_id: Y)` |
+| Show X's raw PTY log output | `orc attach <agent_id>` *(bash — no MCP equivalent)* |
+| What happened recently with X? | `get_recent_events(agent_id: X)` |
 
-4. **Check worktree state** (if a run is active)
-   The worktree path is shown in `orc status` output (e.g. `.worktrees/run-xxx`).
-   ```bash
-   git -C <worktree-path> status --short
-   git -C <worktree-path> log --oneline -5
-   ```
+**Always prefer MCP tools over bash `orc` commands** — they return structured JSON
+with no parsing needed. Fall back to `orc attach <agent_id>` only when raw PTY
+output is explicitly needed.
 
-5. **Check hook events** (permission prompts)
-   ```bash
-   cat .orc-state/pty-hook-events/<agent-id>.ndjson 2>/dev/null || echo "(none)"
-   ```
+---
 
-6. **Check recent events for this agent**
-   ```bash
-   orc events-tail --n=30 --json 2>/dev/null | grep '"<agent-id>"' | tail -10
-   ```
+## Diagnostic hints
 
-## Output Format
+After calling the matched tool, check for these patterns in the output:
 
-Present findings as a structured report:
-
-```
-Worker: <agent-id> (<provider>, <model>)
-Status: <status> / <run-state>
-Run:    <run-id>
-Task:   <task-ref>
-Phase:  <phase>
-Age:    <age>, idle <idle-time>
-Lease:  expires in <time>
-
-Worktree: <path>
-Branch:   <branch>
-Git:      <clean/dirty>, <N> commits ahead of main
-
-Finalization: <state or n/a>
-Input state:  <awaiting_input or none>
-Hook events:  <count or none>
-
-Last meaningful output:
-  <filtered PTY lines>
-
-Issues detected:
-  - <any problems found: stuck at prompt, permission dialog, test failure, rebase conflict, etc.>
-  - (none) if healthy
-```
-
-## Diagnostic Hints
-
-- **idle > 5min + phase=implement**: likely running long test suite or stuck
-- **lease expires in < 5min + status=running**: background heartbeat loop may have died; worker is at risk of lease expiry and task requeue
-- **finalize_rebase_requested + high retry count**: rebase is failing, check worktree for conflicts
-- **PTY shows "Press up to edit queued mess"**: worker lost context, needs reset via `orc task-reset <task-ref>`
-- **Hook events file exists**: permission prompt detected, check if coordinator recorded input_requested
-- **input_state=awaiting_input**: worker asked a question, check events for the question text
-- **status=offline but claim=in_progress**: session crashed, claim will expire on lease timeout
-- **finalization_blocked_reason set**: coordinator failed to merge, read the reason for the specific git error
+- **`input_state: awaiting_input`** — worker is blocked on a question; surface this to
+  the user and ask whether to respond. Do not call `respond_input()` autonomously.
+- **High idle time + `phase: implement`** — likely running a long test suite or genuinely stuck
+- **`finalization_state: blocked_finalize`** — coordinator failed to merge; check `finalization_blocked_reason`
+- **`status: offline`** with claim still active — session crashed; claim expires on lease timeout
+- **PTY shows "Press up to edit queued mess"** — worker lost context; reset with `orc task-reset <task-ref>`
+- **Lease expiring soon + `status: running`** — heartbeat loop may have died
