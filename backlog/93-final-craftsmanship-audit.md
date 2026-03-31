@@ -2,7 +2,7 @@
 ref: craftsmanship-polish/93-final-craftsmanship-audit
 feature: craftsmanship-polish
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/71-extract-orphan-claim-detection
   - craftsmanship-foundations/75-replace-silent-error-swallowing
