@@ -5,6 +5,7 @@ import { flag, intFlag } from '../lib/args.ts';
 import { appendSequencedEvent, readEventsSince } from '../lib/eventLog.ts';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
 import { EVENTS_FILE, STATE_DIR } from '../lib/paths.ts';
+import { INPUT_REQUEST_HEARTBEAT_INTERVAL_MS } from '../lib/constants.ts';
 import { validateProgressInput } from '../lib/progressValidation.ts';
 import { loadClaim, cliError } from './shared.ts';
 import type { FailurePolicy } from '../types/events.ts';
@@ -14,7 +15,6 @@ const agentId = flag('agent-id');
 const question = flag('question');
 const timeoutMs = intFlag('timeout-ms', DEFAULT_INPUT_REQUEST_TIMEOUT_MS);
 const pollMs = intFlag('poll-ms', 1000);
-const HEARTBEAT_INTERVAL_MS = 60_000;
 
 if (!runId || !agentId || !question) {
   console.error('Usage: orc-run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>] [--poll-ms=<ms>]');
@@ -74,7 +74,7 @@ while (Date.now() < deadline) {
     process.exit(0);
   }
 
-  if ((Date.now() - lastHeartbeatAt) >= HEARTBEAT_INTERVAL_MS) {
+  if ((Date.now() - lastHeartbeatAt) >= INPUT_REQUEST_HEARTBEAT_INTERVAL_MS) {
     appendSequencedEvent(STATE_DIR, {
       ts: new Date().toISOString(),
       event: 'heartbeat',

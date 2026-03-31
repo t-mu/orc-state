@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/69-consolidate-timing-constants
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 69 — Consolidate Magic Timing Constants into lib/constants.ts

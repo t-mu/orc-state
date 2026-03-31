@@ -13,6 +13,7 @@ import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateR
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
 import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
+import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
@@ -20,8 +21,6 @@ import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } 
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
-
-const DEFAULT_SCOUT_READY_TIMEOUT_MS = 60_000;
 
 function slugify(text: string) {
   return text

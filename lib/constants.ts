@@ -36,3 +36,15 @@ export const STALLED_RUN_IDLE_SECONDS = 10 * 60;
 
 /** Poll interval for the master PTY forwarder (ms). */
 export const PTY_POLL_INTERVAL_MS = 5_000;
+
+/** TTL after which an agent with no recent activity is considered dead (ms). */
+export const AGENT_DEAD_TTL_MS = 2 * 60 * 60 * 1000;
+
+/** Timeout for coordinator git operations to prevent tick blockage (ms). */
+export const GIT_OP_TIMEOUT_MS = 30_000;
+
+/** Timeout for waiting for a scout worker to become ready (ms). */
+export const DEFAULT_SCOUT_READY_TIMEOUT_MS = 60_000;
+
+/** Heartbeat interval used by the run-input-request poller (ms). */
+export const INPUT_REQUEST_HEARTBEAT_INTERVAL_MS = 60_000;
