@@ -2,7 +2,7 @@
 ref: craftsmanship-decomposition/88-extract-tick-dispatch-block
 feature: craftsmanship-decomposition
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-structure/83-extract-tick-state-reload
 ---
