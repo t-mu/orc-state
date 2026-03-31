@@ -10,8 +10,9 @@
 import { listAgents, updateAgentRuntime, removeAgent } from '../lib/agentRegistry.ts';
 import { createAdapter } from '../adapters/index.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { boolFlag } from '../lib/args.ts';
 
-const deregister = process.argv.includes('--deregister');
+const deregister = boolFlag('deregister');
 const workers = listAgents(STATE_DIR);
 let offlineCount = 0;
 let removedCount = 0;

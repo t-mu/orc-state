@@ -8,8 +8,9 @@
 import { STATE_DIR } from '../lib/paths.ts';
 import { queryEvents } from '../lib/eventLog.ts';
 import { readClaims } from '../lib/stateReader.ts';
+import { boolFlag } from '../lib/args.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 const now = Date.now();
 
 const claimsState = readClaims(STATE_DIR);

@@ -9,11 +9,11 @@
  */
 import { queryEvents } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
-import { flag } from '../lib/args.ts';
+import { boolFlag, flag } from '../lib/args.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 const runId = flag('run-id');
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 
 if (!runId) {
   console.error('--run-id is required');

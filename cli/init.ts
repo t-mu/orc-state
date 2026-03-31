@@ -7,12 +7,12 @@
 import { existsSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
-import { flag } from '../lib/args.ts';
+import { boolFlag, flag } from '../lib/args.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 
-const force = process.argv.includes('--force') || (flag('force') ?? '') === 'true';
+const force = boolFlag('force');
 const featureRef = flag('feature') ?? 'project';
 const featureTitle = flag('feature-title') ?? 'Project';
 const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.db'];

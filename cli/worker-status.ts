@@ -7,8 +7,9 @@
  */
 import { STATE_DIR } from '../lib/paths.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
+import { boolFlag } from '../lib/args.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 const agentId = process.argv.slice(2).find((a) => !a.startsWith('-'));
 
 const agentsState = readAgents(STATE_DIR);

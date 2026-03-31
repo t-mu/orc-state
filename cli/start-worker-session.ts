@@ -12,7 +12,7 @@
 import { getAgent, registerAgent, updateAgentRuntime } from '../lib/agentRegistry.ts';
 import { createAdapter } from '../adapters/index.ts';
 import { STATE_DIR } from '../lib/paths.ts';
-import { flag } from '../lib/args.ts';
+import { boolFlag, flag } from '../lib/args.ts';
 import { promptAgentId, promptProvider, promptWorkerRole } from '../lib/prompts.ts';
 import { checkAndInstallBinary } from '../lib/binaryCheck.ts';
 
@@ -33,7 +33,7 @@ if (workerId === 'master') {
 
 const provider = flag('provider');
 const roleFlag = flag('role');
-const forceRebind = process.argv.includes('--force-rebind');
+const forceRebind = boolFlag('force-rebind');
 
 let worker = getAgent(STATE_DIR, workerId);
 if (worker?.role === 'master') {

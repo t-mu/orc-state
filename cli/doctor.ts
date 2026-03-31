@@ -4,7 +4,7 @@
  * Usage: node cli/doctor.ts [--json]
  */
 import { STATE_DIR } from '../lib/paths.ts';
-import { flag, intFlag } from '../lib/args.ts';
+import { boolFlag, intFlag } from '../lib/args.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
@@ -15,7 +15,7 @@ import { validateBacklogSync } from './backlog-sync-check.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 
-const asJson = process.argv.includes('--json') || (flag('json') ?? '') === 'true';
+const asJson = boolFlag('json');
 const staleStartThresholdMs = intFlag('stale-start-ms', 5 * 60 * 1000);
 const staleProgressThresholdMs = intFlag('stale-progress-ms', 20 * 60 * 1000);
 const nowMs = Date.now();

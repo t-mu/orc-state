@@ -14,8 +14,9 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR, BACKLOG_DOCS_DIR } from '../lib/paths.ts';
+import { boolFlag } from '../lib/args.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 
 const backlogPath = join(STATE_DIR, 'backlog.json');
 

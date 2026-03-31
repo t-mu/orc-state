@@ -10,8 +10,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims, readBacklog, findTask } from '../lib/stateReader.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
+import { boolFlag } from '../lib/args.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 const runId = process.argv.slice(2).find((a) => !a.startsWith('-'));
 
 if (!runId) {
