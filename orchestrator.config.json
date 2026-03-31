@@ -8,7 +8,7 @@
 
   "worker_pool": {
     "max_workers": 1,
-    "provider": "codex",
+    "provider": "claude",
     "model": null,
     "provider_models": {
       "claude": "claude-sonnet-4-6",
