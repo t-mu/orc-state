@@ -43,13 +43,16 @@ const BYPASS_SETTLE_MS   = 800;      // wait after bypass-accept for dialog to d
 // PTY-scan patterns must be narrow to avoid false positives from diagnostic text,
 // echoed instructions, or tool output that merely mentions permission concepts.
 // Only match lines that look like actual interactive confirmation prompts.
+//
+// Both bracket forms are accepted: [y/n]/[yes/no] and (y/n)/(yes/no).
 const BLOCKING_PROMPT_PATTERNS = [
-  /would you like[^\n]*\[(?:y\/n|yes\/no)\]/i,
-  /\b(?:apply|approve|continue|proceed|confirm)[^\n]*\[(?:y\/n|yes\/no)\]/i,
-  /[^\n?]+\?\s*\[(?:y\/n|yes\/no)\]/i,
-  // Interactive permission prompts that require a [y/n] or (y/n) response
-  /allow[^\n]*\?\s*[\[(](?:y\/n|yes\/no)[\])]/i,
-  /(?:grant|permit|run|execute)[^\n]*\?\s*[\[(](?:y\/n|yes\/no)[\])]/i,
+  // Verb-led interactive prompts — matches action verbs followed by any text
+  // and a choice indicator. Handles prompts without a trailing question mark
+  // (e.g. "Would you like to proceed [y/n]", "Allow access? (yes/no)").
+  /\b(?:would you like|apply|approve|allow|grant|permit|continue|proceed|confirm|run|execute)[^\n]*[\[(](?:y\/n|yes\/no)[\])]/i,
+  // Generic question prompt — any line where a question mark is immediately
+  // followed by a choice indicator (e.g. "Overwrite file? [y/n]", "Continue? (yes/no)").
+  /[^\n]+\?\s*[\[(](?:y\/n|yes\/no)[\])]/i,
 ];
 
 function pidPath(agentId: string) { return join(STATE_DIR, 'pty-pids', `${agentId}.pid`); }
@@ -149,7 +152,7 @@ function resolveBinary(binary: string, env: Record<string, string>) {
   return binary;
 }
 
-function detectBlockingPromptFromText(text: string) {
+export function detectBlockingPromptFromText(text: string) {
   const lines = String(text)
     .split('\n')
     .map((line) => line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim())
