@@ -2,7 +2,7 @@
 ref: craftsmanship-structure/86-standardize-argv-parsing
 feature: craftsmanship-structure
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/70-extract-cli-shared-utils
 ---
