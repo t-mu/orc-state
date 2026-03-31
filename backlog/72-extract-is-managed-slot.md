@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/72-extract-is-managed-slot
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 72 — Extract isManagedSlot() into lib/workerSlots.ts
