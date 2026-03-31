@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-atomic-test-'));
+  dir = createTempStateDir('orch-atomic-test-');
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('atomicWriteJson', () => {

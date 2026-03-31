@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
+import { createTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { buildNodeArgs, isMainModule } from './orc.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -57,7 +57,7 @@ describe('cli/orc.ts', () => {
   });
 
   it('treats symlinked entrypoints as the main module', () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'orc-main-'));
+    const tempDir = createTempStateDir('orc-main-');
     const symlinkPath = join(tempDir, 'orc.ts');
     symlinkSync(resolve(repoRoot, 'cli/orc.ts'), symlinkPath);
 
@@ -65,7 +65,7 @@ describe('cli/orc.ts', () => {
   });
 
   it('prints help when invoked through a symlinked path', () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'orc-cli-'));
+    const tempDir = createTempStateDir('orc-cli-');
     const symlinkPath = join(tempDir, 'orc.ts');
     symlinkSync(resolve(repoRoot, 'cli/orc.ts'), symlinkPath);
 

@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-register-worker-test-'));
+  dir = createTempStateDir('orch-register-worker-test-');
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('cli/register-worker.ts', () => {

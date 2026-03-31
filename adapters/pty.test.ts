@@ -1,19 +1,19 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
-  dir = mkdtempSync(join(tmpdir(), 'pty-test-'));
+  dir = createTempStateDir('pty-test-');
   process.env.ORCH_STATE_DIR = dir;
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
   delete process.env.ORCH_STATE_DIR;
 });
 

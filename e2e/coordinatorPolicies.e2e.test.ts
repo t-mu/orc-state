@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -9,7 +9,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   vi.unmock('../adapters/index.ts');
-  dir = mkdtempSync(join(tmpdir(), 'orch-coordinator-policy-e2e-'));
+  dir = createTempStateDir('orch-coordinator-policy-e2e-');
   process.env.ORCH_STATE_DIR = dir;
   vi.doMock('../lib/runWorktree.ts', () => ({
     ensureRunWorktree: vi.fn((_stateDir, { runId }) => ({
@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
   delete process.env.ORCH_STATE_DIR;
   vi.unmock('../adapters/index.ts');
   vi.unmock('../lib/runWorktree.ts');

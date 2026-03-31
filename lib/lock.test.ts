@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, utimesSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, utimesSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireLock, releaseLock, withLock, withLockAsync } from './lock.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 let lockPath: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-lock-test-'));
+  dir = createTempStateDir('orch-lock-test-');
   lockPath = join(dir, '.lock');
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('acquireLock / releaseLock', () => {

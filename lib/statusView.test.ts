@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
 import type { Agent, Task, Claim } from '../types/index.ts';
 
@@ -29,11 +29,11 @@ type StatusResult = {
 let root: string;
 let dir: string;
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'orch-status-test-'));
+  root = createTempStateDir('orch-status-test-');
   dir = join(root, '.orc-state');
   mkdirSync(dir);
 });
-afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { cleanupTempStateDir(root); });
 
 function writeState({ agents = [] as Agent[], claims = [] as Claim[], tasks = [] as Task[], runWorktrees = [] as unknown[] } = {}) {
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));

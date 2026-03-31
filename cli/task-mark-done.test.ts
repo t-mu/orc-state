@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -9,7 +9,7 @@ const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orc-task-mark-done-test-'));
+  dir = createTempStateDir('orc-task-mark-done-test-');
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('cli/task-mark-done.ts', () => {
@@ -121,7 +121,7 @@ describe('cli/task-mark-done.ts', () => {
 
   it('writes spec update to worktree backlog when cwd differs from repo root', () => {
     // Simulate a worktree: create a separate directory with its own backlog/
-    const worktreeDir = mkdtempSync(join(tmpdir(), 'orc-worktree-'));
+    const worktreeDir = createTempStateDir('orc-worktree-');
     mkdirSync(join(worktreeDir, 'backlog'), { recursive: true });
     // Write spec in the worktree backlog — spec frontmatter uses 'todo' (spec-level status),
     // while runtime backlog.json has 'in_progress' (runtime-level status).
@@ -145,14 +145,14 @@ describe('cli/task-mark-done.ts', () => {
     const mainSpec = readFileSync(join(dir, 'backlog', '999-task-1.md'), 'utf8');
     expect(mainSpec).toContain('status: todo');
 
-    rmSync(worktreeDir, { recursive: true, force: true });
+    cleanupTempStateDir(worktreeDir);
   });
 
   it('writes spec to worktree via run-worktrees.json even when cwd is main checkout', () => {
     // This is the critical case: worker's CWD has been reset to main checkout
     // by the harness, but the active claim + worktree metadata should still
     // direct the write to the correct worktree backlog/.
-    const worktreeDir = mkdtempSync(join(tmpdir(), 'orc-worktree-'));
+    const worktreeDir = createTempStateDir('orc-worktree-');
     mkdirSync(join(worktreeDir, 'backlog'), { recursive: true });
     writeFileSync(
       join(worktreeDir, 'backlog', '999-task-1.md'),
@@ -200,7 +200,7 @@ describe('cli/task-mark-done.ts', () => {
     const mainSpec = readFileSync(join(dir, 'backlog', '999-task-1.md'), 'utf8');
     expect(mainSpec).toContain('status: todo');
 
-    rmSync(worktreeDir, { recursive: true, force: true });
+    cleanupTempStateDir(worktreeDir);
   });
 });
 

@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { queryEvents } from './lib/eventLog.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
 import {
+  createTempStateDir,
+  cleanupTempStateDir,
   seedState,
   makeAdapterMock,
   makeRunWorktreeMock,
@@ -21,14 +22,14 @@ beforeEach(() => {
   // Reset module cache BEFORE each test so vi.doMock + dynamic import picks up
   // a fresh coordinator.ts (and fresh paths.ts / adapterInstances Map).
   vi.resetModules();
-  dir = mkdtempSync(join(tmpdir(), 'orc-coord-test-'));
+  dir = createTempStateDir('orc-coord-test-');
   process.env.ORCH_STATE_DIR = dir;
   process.env.ORC_REPO_ROOT = dir;
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
   delete process.env.ORCH_STATE_DIR;
   delete process.env.ORC_REPO_ROOT;
   delete process.env.ORC_MAX_WORKERS;
@@ -2971,7 +2972,7 @@ describe('lifecycle reducer integration', () => {
 
 describe('main startup validation', () => {
   it('exits with code 1 when backlog.json is missing', () => {
-    const stateDir = mkdtempSync(join(tmpdir(), 'orc-coord-startup-test-'));
+    const stateDir = createTempStateDir('orc-coord-startup-test-');
     writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
     writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
     writeFileSync(join(stateDir, 'events.jsonl'), '');
@@ -2984,7 +2985,7 @@ describe('main startup validation', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('required state file missing: backlog.json');
 
-    rmSync(stateDir, { recursive: true, force: true });
+    cleanupTempStateDir(stateDir);
   });
 });
 

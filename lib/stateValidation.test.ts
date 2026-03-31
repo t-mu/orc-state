@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import {
   validateBacklog,
   validateAgents,
@@ -185,11 +185,11 @@ describe('validateStateDir', () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'orch-statedir-test-'));
+    dir = createTempStateDir('orch-statedir-test-');
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    cleanupTempStateDir(dir);
   });
 
   it('returns no errors for a fully valid state directory', () => {

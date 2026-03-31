@@ -1,6 +1,6 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -69,7 +69,7 @@ function writeSpec(taskRef: string, feature: string, title: string, status = 'to
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orc-mcp-handlers-test-'));
+  dir = createTempStateDir('orc-mcp-handlers-test-');
   process.env.ORC_REPO_ROOT = dir;
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedBacklog([
@@ -203,7 +203,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
   delete process.env.ORC_REPO_ROOT;
 });
 

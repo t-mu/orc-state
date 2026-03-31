@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 
@@ -9,7 +9,7 @@ const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orc-review-read-test-'));
+  dir = createTempStateDir('orc-review-read-test-');
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 function runCli(args: string[] = []) {

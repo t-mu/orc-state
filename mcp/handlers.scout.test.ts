@@ -1,6 +1,6 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionHandle } from '../adapters/pty.ts';
 
@@ -26,7 +26,7 @@ let dir: string;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dir = mkdtempSync(join(tmpdir(), 'orc-mcp-scout-test-'));
+  dir = createTempStateDir('orc-mcp-scout-test-');
   process.env.ORC_REPO_ROOT = dir;
   process.env.ORC_SCOUT_READY_TIMEOUT_MS = '25';
   mkdirSync(join(dir, 'backlog'), { recursive: true });
@@ -56,7 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.ORC_SCOUT_READY_TIMEOUT_MS;
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('handleRequestScout', () => {

@@ -1,8 +1,8 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { extractTaskSpecRefs, validateBacklogSync } from './backlog-sync-check.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -29,13 +29,13 @@ function writeState(baseDir: string, refs: string[]) {
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'backlog-sync-check-'));
+  dir = createTempStateDir('backlog-sync-check-');
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   mkdirSync(join(dir, 'orc-state'), { recursive: true });
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('validateBacklogSync', () => {

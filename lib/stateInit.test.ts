@@ -1,18 +1,18 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureStateInitialized } from './stateInit.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let tmpDir: string;
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
+  cleanupTempStateDir(tmpDir);
 });
 
 describe('ensureStateInitialized', () => {
   it('creates all state files in a fresh directory', () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'orc-state-init-test-'));
+    tmpDir = createTempStateDir('orc-state-init-test-');
     const stateDir = join(tmpDir, 'new-dir');
 
     ensureStateInitialized(stateDir);
@@ -24,7 +24,7 @@ describe('ensureStateInitialized', () => {
   });
 
   it('writes valid default JSON content', () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'orc-state-init-test-'));
+    tmpDir = createTempStateDir('orc-state-init-test-');
     const stateDir = join(tmpDir, 'state');
 
     ensureStateInitialized(stateDir);
@@ -55,7 +55,7 @@ describe('ensureStateInitialized', () => {
   });
 
   it('is idempotent — does not overwrite existing files on second call', () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'orc-state-init-test-'));
+    tmpDir = createTempStateDir('orc-state-init-test-');
     const stateDir = join(tmpDir, 'state');
 
     ensureStateInitialized(stateDir);

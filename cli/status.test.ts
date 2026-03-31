@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -9,13 +9,13 @@ let root: string;
 let dir: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'orch-status-cli-test-'));
+  root = createTempStateDir('orch-status-cli-test-');
   dir = join(root, '.orc-state');
   mkdirSync(dir);
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  cleanupTempStateDir(root);
 });
 
 describe('cli/status.ts', () => {

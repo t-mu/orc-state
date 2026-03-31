@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadWorkerPoolConfig, loadMasterConfig, loadCoordinatorConfig, loadLeaseConfig, resolveWorkerModel } from './providers.ts';
 import type { WorkerPoolConfig } from './providers.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-providers-test-'));
+  dir = createTempStateDir('orch-providers-test-');
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('loadWorkerPoolConfig', () => {

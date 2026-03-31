@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
-  mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync,
-} from 'node:fs';
-import { tmpdir }        from 'node:os';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync }     from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -20,7 +18,7 @@ beforeEach(() => {
   vi.doUnmock('../lib/templateRender.ts');
   vi.doUnmock('node:child_process');
   vi.doUnmock('node-pty');
-  dir = mkdtempSync(join(tmpdir(), 'orch-start-session-test-'));
+  dir = createTempStateDir('orch-start-session-test-');
 });
 
 afterEach(() => {
@@ -30,7 +28,7 @@ afterEach(() => {
   vi.doUnmock('node-pty');
   vi.doUnmock('node:child_process');
   delete process.env.ORCH_STATE_DIR;
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1069,8 +1067,8 @@ describe('cli/start-session.ts', () => {
       expect(lines.join('\n')).toContain('MASTER_BOOTSTRAP v2');
 
       // fresh state for codex branch
-      rmSync(dir, { recursive: true, force: true });
-      dir = mkdtempSync(join(tmpdir(), 'orch-start-session-test-'));
+      cleanupTempStateDir(dir);
+      dir = createTempStateDir('orch-start-session-test-');
       seedState([masterAgent({ provider: 'codex' })]);
       const spawnMockCodex = makeSpawnMock();
       vi.resetModules();

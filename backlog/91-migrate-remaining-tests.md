@@ -2,7 +2,7 @@
 ref: craftsmanship-decomposition/91-migrate-remaining-tests
 feature: craftsmanship-decomposition
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/74-create-shared-test-utilities
   - craftsmanship-structure/82-migrate-coordinator-tests-shared-utils
