@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSessionHandle } from '../adapters/pty.ts';
 
 const sendMock = vi.fn();
 const launchWorkerSessionMock = vi.fn();
@@ -62,11 +63,11 @@ describe('handleRequestScout', () => {
   it('registers a scout, launches a session, and sends the scout brief', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
-      agent.session_handle = `pty:${agent.agent_id}`;
+      agent.session_handle = createSessionHandle(agent.agent_id);
       agent.session_token = 'scout-token-1';
       agent.session_started_at = '2026-01-01T00:00:00.000Z';
       agent.session_ready_at = '2026-01-01T00:00:01.000Z';
-      return Promise.resolve({ ok: true, session_handle: `pty:${agent.agent_id}`, provider_ref: { provider: agent.provider } });
+      return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
 
     const { handleRequestScout } = await import('./handlers.ts');
@@ -101,11 +102,11 @@ describe('handleRequestScout', () => {
   it('defaults the working directory to the repo root when no run worktree is linked', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
-      agent.session_handle = `pty:${agent.agent_id}`;
+      agent.session_handle = createSessionHandle(agent.agent_id);
       agent.session_token = 'scout-token-1';
       agent.session_started_at = '2026-01-01T00:00:00.000Z';
       agent.session_ready_at = '2026-01-01T00:00:01.000Z';
-      return Promise.resolve({ ok: true, session_handle: `pty:${agent.agent_id}`, provider_ref: { provider: agent.provider } });
+      return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
 
     const { handleRequestScout } = await import('./handlers.ts');
@@ -138,11 +139,11 @@ describe('handleRequestScout', () => {
   it('fails when the scout never reports for duty', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
-      agent.session_handle = `pty:${agent.agent_id}`;
+      agent.session_handle = createSessionHandle(agent.agent_id);
       agent.session_token = 'scout-token-2';
       agent.session_started_at = '2026-01-01T00:00:00.000Z';
       agent.session_ready_at = null;
-      return Promise.resolve({ ok: true, session_handle: `pty:${agent.agent_id}`, provider_ref: { provider: agent.provider } });
+      return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
 
     const { handleRequestScout } = await import('./handlers.ts');

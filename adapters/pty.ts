@@ -117,6 +117,11 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
   return [];
 }
 
+/** Create a "pty:{agentId}" session handle from an agent ID. */
+export function createSessionHandle(agentId: string): string {
+  return `pty:${agentId}`;
+}
+
 /** Parse "pty:{agentId}" → agentId. Throws on malformed handle. */
 function parseHandle(sessionHandle: unknown) {
   const s = String(sessionHandle);
