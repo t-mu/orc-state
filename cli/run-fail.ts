@@ -3,8 +3,7 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { validateProgressCommandInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
-import { readClaims } from '../lib/stateReader.ts';
-import type { Claim } from '../types/claims.ts';
+import { loadClaim, cliError } from './shared.ts';
 import type { FailurePolicy } from '../types/events.ts';
 
 const runId = flag('run-id');
@@ -22,14 +21,6 @@ if (!VALID_POLICIES.includes(policy)) {
 if (!runId || !agentId) {
   console.error('Usage: orc-run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--code=<code>] [--policy=requeue|block]');
   process.exit(1);
-}
-
-function loadClaim(currentRunId: string): Claim | null {
-  try {
-    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
-  } catch {
-    return null;
-  }
 }
 
 try {
@@ -59,7 +50,5 @@ try {
   }, { lockStrategy: 'none' });
   console.log(`run_failed: ${runId} (${agentId}) reason=${failureReason}`);
 } catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Error: ${message}`);
-  process.exit(1);
+  cliError(error);
 }

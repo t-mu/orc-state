@@ -8,7 +8,7 @@ import { flag } from '../lib/args.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { validateProgressCommandInput, validateProgressInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
-import { readClaims } from '../lib/stateReader.ts';
+import { loadClaim, cliError } from './shared.ts';
 import type { EventFinalizationStatus, FailurePolicy, OrcEvent } from '../types/events.ts';
 
 const event = flag('event');
@@ -21,14 +21,6 @@ const policy = flag('policy') ?? 'requeue';
 if (!event || !runId || !agentId) {
   console.error('Usage: orc-progress --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--policy=<requeue|block>]');
   process.exit(1);
-}
-
-function loadClaim(currentRunId: string) {
-  try {
-    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
-  } catch {
-    return null;
-  }
 }
 
 function finalizationPayload(eventName: string): { status: EventFinalizationStatus } | null {
@@ -87,6 +79,5 @@ try {
 
   console.log(`progress event accepted: ${event} run=${runId} agent=${agentId}`);
 } catch (error) {
-  console.error((error as Error).message);
-  process.exit(1);
+  cliError(error);
 }

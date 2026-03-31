@@ -3,7 +3,8 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { validateProgressCommandInput } from '../lib/progressValidation.ts';
-import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
+import { readBacklog, findTask } from '../lib/stateReader.ts';
+import { loadClaim, cliError } from './shared.ts';
 import type { Claim } from '../types/claims.ts';
 
 const runId = flag('run-id');
@@ -12,14 +13,6 @@ const agentId = flag('agent-id');
 if (!runId || !agentId) {
   console.error('Usage: orc-run-work-complete --run-id=<id> --agent-id=<id>');
   process.exit(1);
-}
-
-function loadClaim(currentRunId: string): Claim | null {
-  try {
-    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
-  } catch {
-    return null;
-  }
 }
 
 function nextFinalizationTransition(claim: Claim | null) {
@@ -79,7 +72,5 @@ try {
   } as import('../types/events.ts').OrcEventInput, { lockStrategy: 'none' });
   console.log(`${transition.event}: ${runId} (${agentId}) ${transition.message}`);
 } catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Error: ${message}`);
-  process.exit(1);
+  cliError(error);
 }

@@ -2,6 +2,7 @@
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
+import { cliError } from './shared.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -37,7 +38,5 @@ try {
   });
   console.log(`review_submitted: run=${runId} agent=${agentId} outcome=${outcome}`);
 } catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Error: ${message}`);
-  process.exit(1);
+  cliError(error);
 }

@@ -6,8 +6,7 @@ import { appendSequencedEvent, readEventsSince } from '../lib/eventLog.ts';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
 import { EVENTS_FILE, STATE_DIR } from '../lib/paths.ts';
 import { validateProgressInput } from '../lib/progressValidation.ts';
-import { readClaims } from '../lib/stateReader.ts';
-import type { Claim } from '../types/claims.ts';
+import { loadClaim, cliError } from './shared.ts';
 import type { FailurePolicy } from '../types/events.ts';
 
 const runId = flag('run-id');
@@ -20,14 +19,6 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
 if (!runId || !agentId || !question) {
   console.error('Usage: orc-run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>] [--poll-ms=<ms>]');
   process.exit(1);
-}
-
-function loadClaim(currentRunId: string): Claim | null {
-  try {
-    return readClaims(STATE_DIR).claims.find((claim) => claim.run_id === currentRunId) ?? null;
-  } catch {
-    return null;
-  }
 }
 
 let requestSeq: number;
@@ -69,8 +60,7 @@ try {
     },
   });
 } catch (error) {
-  console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
+  cliError(error);
 }
 
 const deadline = Date.now() + timeoutMs;
