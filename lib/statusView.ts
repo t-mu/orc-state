@@ -155,6 +155,78 @@ function readRunWorktrees(stateDir: string): RunWorktreeEntry[] {
   }
 }
 
+function buildActiveClaimMetrics(
+  activeClaims: Claim[],
+  runActivity: ReturnType<typeof latestRunActivityDetailMap>,
+  runPhase: ReturnType<typeof latestRunPhaseMap>,
+  runWorktreeByRunId: Map<string, RunWorktreeEntry>,
+  nowMs: number,
+) {
+  return activeClaims.map((claim) => {
+    const startupAnchor = claimedRunStartupAnchor(claim);
+    const ageAnchor = claim.state === 'claimed'
+      ? startupAnchor
+      : (claim.started_at ?? claim.task_envelope_sent_at ?? claim.claimed_at ?? null);
+    const ageMs = ageAnchor ? new Date(ageAnchor).getTime() : NaN;
+    const activity = runActivity.get(claim.run_id) ?? null;
+    const idleAnchor = activity?.ts
+      ?? claim.last_heartbeat_at
+      ?? claim.started_at
+      ?? (claim.state === 'claimed' ? startupAnchor : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null))
+      ?? null;
+    const idleMs = idleAnchor ? nowMs - new Date(idleAnchor).getTime() : NaN;
+    return {
+      ...claim,
+      age_seconds: Number.isNaN(ageMs) ? null : Math.max(0, Math.round((nowMs - ageMs) / 1000)),
+      idle_seconds: Number.isNaN(idleMs) ? null : Math.max(0, Math.round(idleMs / 1000)),
+      last_activity_at: activity?.ts ?? null,
+      last_activity_event: activity?.event ?? null,
+      last_activity_source: activity?.source ?? null,
+      stalled: claim.input_state !== 'awaiting_input'
+        && !Number.isNaN(idleMs)
+        && idleMs >= (STALLED_RUN_IDLE_SECONDS * 1000),
+      current_phase: runPhase.get(claim.run_id) ?? null,
+      run_worktree_path: runWorktreeByRunId.get(claim.run_id)?.worktree_path ?? null,
+      run_branch: runWorktreeByRunId.get(claim.run_id)?.branch ?? null,
+    };
+  });
+}
+
+function buildSlotSummary(
+  workerSlots: Agent[],
+  scoutAgents: Agent[],
+  activeClaimByAgentId: Map<string, ReturnType<typeof buildActiveClaimMetrics>[number]>,
+) {
+  const slotDetails = workerSlots.map((slot) => {
+    const activeClaim = activeClaimByAgentId.get(slot.agent_id) ?? null;
+    return {
+      agent_id: slot.agent_id,
+      role: slot.role,
+      provider: slot.provider,
+      model: slot.model ?? null,
+      status: slot.status,
+      session_handle: slot.session_handle ?? null,
+      slot_state: classifyWorkerSlot(slot, activeClaim),
+      active_run_id: activeClaim?.run_id ?? null,
+      active_task_ref: activeClaim?.task_ref ?? null,
+      last_status_change_at: slot.last_status_change_at ?? null,
+      last_heartbeat_at: slot.last_heartbeat_at ?? null,
+    };
+  });
+  const scoutDetails = scoutAgents.map((agent) => ({
+    agent_id: agent.agent_id,
+    role: agent.role,
+    provider: agent.provider,
+    model: agent.model ?? null,
+    status: agent.status,
+    session_handle: agent.session_handle ?? null,
+    slot_state: classifyScoutSlot(agent),
+    last_status_change_at: agent.last_status_change_at ?? null,
+    last_heartbeat_at: agent.last_heartbeat_at ?? null,
+  }));
+  return { slotDetails, scoutDetails };
+}
+
 /**
  * Build a structured status object from base state files + recent events.
  * All fields are plain data — formatting is the CLI's responsibility.
@@ -199,34 +271,9 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   const runPhase = latestRunPhaseMap(allEvents as Parameters<typeof latestRunPhaseMap>[0]);
   const nowMs = Date.now();
 
-  const activeClaimsWithMetrics = activeClaims.map((claim) => {
-    const startupAnchor = claimedRunStartupAnchor(claim);
-    const ageAnchor = claim.state === 'claimed'
-      ? startupAnchor
-      : (claim.started_at ?? claim.task_envelope_sent_at ?? claim.claimed_at ?? null);
-    const ageMs = ageAnchor ? new Date(ageAnchor).getTime() : NaN;
-    const activity = runActivity.get(claim.run_id) ?? null;
-    const idleAnchor = activity?.ts
-      ?? claim.last_heartbeat_at
-      ?? claim.started_at
-      ?? (claim.state === 'claimed' ? startupAnchor : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null))
-      ?? null;
-    const idleMs = idleAnchor ? nowMs - new Date(idleAnchor).getTime() : NaN;
-    return {
-      ...claim,
-      age_seconds: Number.isNaN(ageMs) ? null : Math.max(0, Math.round((nowMs - ageMs) / 1000)),
-      idle_seconds: Number.isNaN(idleMs) ? null : Math.max(0, Math.round(idleMs / 1000)),
-      last_activity_at: activity?.ts ?? null,
-      last_activity_event: activity?.event ?? null,
-      last_activity_source: activity?.source ?? null,
-      stalled: claim.input_state !== 'awaiting_input'
-        && !Number.isNaN(idleMs)
-        && idleMs >= (STALLED_RUN_IDLE_SECONDS * 1000),
-      current_phase: runPhase.get(claim.run_id) ?? null,
-      run_worktree_path: runWorktreeByRunId.get(claim.run_id)?.worktree_path ?? null,
-      run_branch: runWorktreeByRunId.get(claim.run_id)?.branch ?? null,
-    };
-  });
+  const activeClaimsWithMetrics = buildActiveClaimMetrics(
+    activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs,
+  );
 
   const activeClaimByAgentId = new Map(
     activeClaimsWithMetrics
@@ -235,33 +282,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   );
   const workerSlots = agents.filter((agent) => isManagedSlot(agent.agent_id, workerPoolConfig.max_workers));
   const scoutAgents = agents.filter((agent) => agent.role === 'scout');
-  const slotDetails = workerSlots.map((slot) => {
-    const activeClaim = activeClaimByAgentId.get(slot.agent_id) ?? null;
-    return {
-      agent_id: slot.agent_id,
-      role: slot.role,
-      provider: slot.provider,
-      model: slot.model ?? null,
-      status: slot.status,
-      session_handle: slot.session_handle ?? null,
-      slot_state: classifyWorkerSlot(slot, activeClaim),
-      active_run_id: activeClaim?.run_id ?? null,
-      active_task_ref: activeClaim?.task_ref ?? null,
-      last_status_change_at: slot.last_status_change_at ?? null,
-      last_heartbeat_at: slot.last_heartbeat_at ?? null,
-    };
-  });
-  const scoutDetails = scoutAgents.map((agent) => ({
-    agent_id: agent.agent_id,
-    role: agent.role,
-    provider: agent.provider,
-    model: agent.model ?? null,
-    status: agent.status,
-    session_handle: agent.session_handle ?? null,
-    slot_state: classifyScoutSlot(agent),
-    last_status_change_at: agent.last_status_change_at ?? null,
-    last_heartbeat_at: agent.last_heartbeat_at ?? null,
-  }));
+  const { slotDetails, scoutDetails } = buildSlotSummary(workerSlots, scoutAgents, activeClaimByAgentId);
   const dispatchReadyTasks = listDispatchReadyTasks(backlogFile);
   const availableSlots = slotDetails.filter((slot) => slot.slot_state === 'available').length;
   const startupFailures = collectRecentFailures(sessionEvents);
