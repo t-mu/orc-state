@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/68-consolidate-constants-enums
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 68 — Consolidate Constants and Enums into Single Source of Truth
