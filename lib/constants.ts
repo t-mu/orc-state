@@ -8,6 +8,8 @@ export const AGENT_ROLES: readonly string[] = ['worker', 'reviewer', 'master', '
 
 export const TASK_STATUSES: readonly string[] = ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled'];
 
+export const TASK_PRIORITIES: readonly string[] = ['low', 'normal', 'high', 'critical'];
+
 export const AGENT_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export const TASK_REF_RE = /^[a-z0-9-]+\/[a-z0-9-]+$/;

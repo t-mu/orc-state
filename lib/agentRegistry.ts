@@ -5,7 +5,7 @@ import { atomicWriteJson } from './atomicWrite.ts';
 import { isSupportedProvider, loadWorkerPoolConfig, resolveWorkerModel } from './providers.ts';
 import type { Agent, AgentsState, AgentRole, Provider, DispatchMode } from '../types/agents.ts';
 import type { WorkerPoolConfig } from './providers.ts';
-import { AGENT_ROLES } from './constants.ts';
+import { AGENT_ID_RE, AGENT_ROLES } from './constants.ts';
 
 const VALID_ROLES = new Set<AgentRole>(AGENT_ROLES as AgentRole[]);
 
@@ -63,7 +63,7 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
   const { agent_id, provider } = agentDef;
   if (!agent_id) throw new Error('agent_id is required');
   if (!provider) throw new Error('provider is required');
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(agent_id)) {
+  if (!AGENT_ID_RE.test(agent_id)) {
     throw new Error(`Invalid agent_id: ${agent_id}`);
   }
   if (!isSupportedProvider(provider)) {
@@ -74,7 +74,7 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
     throw new Error(`Unsupported role: ${role}`);
   }
   const capabilities = agentDef.capabilities ?? [];
-  if (!Array.isArray(capabilities) || capabilities.some((c) => !/^[a-z0-9][a-z0-9-]*$/.test(c))) {
+  if (!Array.isArray(capabilities) || capabilities.some((c) => !AGENT_ID_RE.test(c))) {
     throw new Error('capabilities must be an array of kebab-case strings');
   }
 

@@ -16,15 +16,11 @@ import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
+import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
-const TASK_STATUSES = new Set(['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled']);
-const AGENT_ROLES = new Set(['worker', 'reviewer', 'master', 'scout']);
-const TASK_TYPES = new Set(['implementation', 'refactor']);
-const TASK_PRIORITIES = new Set(['low', 'normal', 'high', 'critical']);
-const ACTOR_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const DEFAULT_SCOUT_READY_TIMEOUT_MS = 60_000;
 
 function slugify(text: string) {
@@ -47,7 +43,7 @@ function defaultActorId(stateDir: string) {
 }
 
 function assertActorId(stateDir: string, actorId: unknown) {
-  if (typeof actorId !== 'string' || !ACTOR_ID_RE.test(actorId)) {
+  if (typeof actorId !== 'string' || !AGENT_ID_RE.test(actorId)) {
     throw new Error(`Invalid actor-id: ${typeof actorId === 'string' ? actorId : '(unknown)'}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   }
   if (actorId === 'human') return;
@@ -89,7 +85,7 @@ function toTaskSummary(task: Task & { feature_ref: string }) {
 }
 
 export function handleListTasks(stateDir: string, { status, feature }: { status?: unknown; feature?: unknown } = {}) {
-  if (status != null && !TASK_STATUSES.has(status as string)) {
+  if (status != null && !TASK_STATUSES.includes(status as string)) {
     throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}`);
   }
   if (feature != null && typeof feature !== 'string') {
@@ -115,7 +111,7 @@ export function handleListTasks(stateDir: string, { status, feature }: { status?
 }
 
 export function handleListAgents(stateDir: string, { role, include_dead = false }: { role?: unknown; include_dead?: unknown } = {}) {
-  if (role != null && !AGENT_ROLES.has(role as string)) {
+  if (role != null && !AGENT_ROLES.includes(role as string)) {
     throw new Error(`Invalid role: ${typeof role === 'string' ? role : '(unknown)'}`);
   }
   if (typeof include_dead !== 'boolean') {
@@ -377,10 +373,10 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
 
   const resolvedFeature = typeof feature === 'string' && (feature).trim().length > 0 ? feature : 'general';
   if (!title) throw new Error('title is required');
-  if (!TASK_TYPES.has(task_type as string)) throw new Error(`Invalid task_type: ${String(task_type)}`);
-  if (!TASK_PRIORITIES.has(priority as string)) throw new Error(`Invalid priority: ${String(priority)}`);
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (owner && !ACTOR_ID_RE.test(owner as string)) throw new Error(`Invalid owner: ${typeof owner === 'string' ? owner : '(unknown)'}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!TASK_TYPES.includes(task_type as string)) throw new Error(`Invalid task_type: ${String(task_type)}`);
+  if (!TASK_PRIORITIES.includes(priority as string)) throw new Error(`Invalid priority: ${String(priority)}`);
+  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (owner && !AGENT_ID_RE.test(owner as string)) throw new Error(`Invalid owner: ${typeof owner === 'string' ? owner : '(unknown)'}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 
   assertStringArray(acceptance_criteria, 'acceptance_criteria');
   assertStringArray(depends_on, 'depends_on');
@@ -468,10 +464,10 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   } = args;
 
   if (!task_ref) throw new Error('task_ref is required');
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor_id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor_id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   assertStringArray(acceptance_criteria, 'acceptance_criteria');
   assertStringArray(depends_on, 'depends_on');
-  if (priority !== undefined && !TASK_PRIORITIES.has(priority as string)) {
+  if (priority !== undefined && !TASK_PRIORITIES.includes(priority as string)) {
     throw new Error(`Invalid priority: ${typeof priority === 'string' ? priority : '(unknown)'}`);
   }
   if (required_provider !== undefined && required_provider !== null && !isSupportedProvider(required_provider)) {
@@ -560,8 +556,8 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
   } = args;
 
   if (!task_ref) throw new Error('task_ref is required');
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (!TASK_TYPES.has(task_type as string)) throw new Error(`Invalid task type: ${String(task_type)}`);
+  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!TASK_TYPES.includes(task_type as string)) throw new Error(`Invalid task type: ${String(task_type)}`);
 
   const now = new Date().toISOString();
 
@@ -673,7 +669,7 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
 
   if (!task_ref) throw new Error('task_ref is required');
   if (reason != null && typeof reason !== 'string') throw new Error('reason must be a string');
-  if (!ACTOR_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 
   const now = new Date().toISOString();
   let cancelledRuns: Claim[] = [];
@@ -987,7 +983,7 @@ export function handleQueryEvents(
 
 export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {
   if (!task_ref) throw new Error('task_ref is required');
-  if (typeof actor_id !== 'string' || !ACTOR_ID_RE.test(actor_id)) {
+  if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) {
     throw new Error(`Invalid actor_id: ${typeof actor_id === 'string' ? actor_id : '(unknown)'}`);
   }
 
@@ -1073,7 +1069,7 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
   }
 
   const effectiveActorId = (actor_id as string) ?? defaultActorId(stateDir);
-  if (!ACTOR_ID_RE.test(effectiveActorId)) {
+  if (!AGENT_ID_RE.test(effectiveActorId)) {
     throw new Error('actor_id must be a valid agent id');
   }
 
