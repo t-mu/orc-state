@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/79-remove-persistent-dispatch-state
 feature: craftsmanship-foundations
 priority: low
-status: todo
+status: done
 ---
 
 # Task 79 — Remove Persistent Round-Robin Dispatch State (YAGNI)

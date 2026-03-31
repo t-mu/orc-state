@@ -1011,15 +1011,12 @@ describe('mcp read handlers', () => {
       actor_id: 'master',
     });
 
-    expect(first).toEqual({ task_ref: 'project/todo-one', assigned_to: 'orc-1' });
-    expect(second).toEqual({ task_ref: 'project/todo-two', assigned_to: 'orc-2' });
-    expect(third).toEqual({ task_ref: 'project/todo-three', assigned_to: 'orc-1' });
-
-    const dispatchState = JSON.parse(readFileSync(join(dir, 'dispatch-state.json'), 'utf8'));
-    expect(dispatchState.last_assigned_agent_id).toBe('orc-1');
+    // Round-robin: consecutive delegations alternate workers, third wraps back to first.
+    expect(first.assigned_to).not.toBe(second.assigned_to);
+    expect(third.assigned_to).toBe(first.assigned_to);
   });
 
-  it('handleDelegateTask falls back to first-match when dispatch-state.json is missing', () => {
+  it('handleDelegateTask in-memory round-robin state persists across calls', () => {
     const backlog = readBacklog();
     const projectFeature = backlog.features.find(feature => feature.ref === 'project')!;
     projectFeature.tasks.push({
@@ -1040,21 +1037,21 @@ describe('mcp read handlers', () => {
       { agent_id: 'orc-2', provider: 'codex', role: 'worker', status: 'running' },
     ]);
 
+    // In-memory round-robin state persists across calls: consecutive delegations
+    // always alternate between workers regardless of which agent was last assigned.
     const first = handleDelegateTask(dir, {
       task_ref: 'project/todo-one',
       task_type: 'implementation',
       actor_id: 'master',
     });
-    expect(first).toEqual({ task_ref: 'project/todo-one', assigned_to: 'orc-1' });
-
-    rmSync(join(dir, 'dispatch-state.json'), { force: true });
-
     const second = handleDelegateTask(dir, {
       task_ref: 'project/todo-two',
       task_type: 'implementation',
       actor_id: 'master',
     });
-    expect(second).toEqual({ task_ref: 'project/todo-two', assigned_to: 'orc-1' });
+    expect(first.assigned_to).not.toBe(second.assigned_to);
+    expect(['orc-1', 'orc-2']).toContain(first.assigned_to);
+    expect(['orc-1', 'orc-2']).toContain(second.assigned_to);
   });
 
   it('handleDelegateTask errors on invalid target and missing task', () => {
@@ -1078,14 +1075,6 @@ describe('mcp read handlers', () => {
   });
 
   it('handleDelegateTask explicit target is unaffected by round-robin state', () => {
-    writeFileSync(
-      join(dir, 'dispatch-state.json'),
-      JSON.stringify({
-        version: '1',
-        last_assigned_agent_id: 'orc-2',
-        updated_at: '2026-01-01T00:00:00.000Z',
-      }),
-    );
     seedClaims([]);
     seedAgents([
       { agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' },
@@ -1093,15 +1082,14 @@ describe('mcp read handlers', () => {
       { agent_id: 'orc-2', provider: 'codex', role: 'worker', status: 'running' },
     ]);
 
+    // Explicit target always wins regardless of in-memory round-robin state.
     const result = handleDelegateTask(dir, {
       task_ref: 'project/todo-one',
       target_agent_id: 'orc-1',
+      task_type: 'implementation',
       actor_id: 'master',
     });
     expect(result).toEqual({ task_ref: 'project/todo-one', assigned_to: 'orc-1' });
-
-    const dispatchState = JSON.parse(readFileSync(join(dir, 'dispatch-state.json'), 'utf8'));
-    expect(dispatchState.last_assigned_agent_id).toBe('orc-2');
   });
 
   it('handleDelegateTask rejects targets that cannot execute task type', () => {
