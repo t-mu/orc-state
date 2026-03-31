@@ -606,7 +606,6 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
         taskType: task_type as string,
         allAgents,
         claims,
-        stateDir,
       });
     }
 

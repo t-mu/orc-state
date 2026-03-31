@@ -89,7 +89,6 @@ try {
         taskType,
         allAgents,
         claims,  // array of claim objects
-        stateDir: STATE_DIR,
       });
     }
 
