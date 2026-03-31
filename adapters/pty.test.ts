@@ -560,6 +560,90 @@ describe('pty adapter getOutputTail()', () => {
   });
 });
 
+// ─── detectBlockingPromptFromText() ──────────────────────────────────────────
+
+describe('detectBlockingPromptFromText()', () => {
+  let detect: (text: string) => string | null;
+
+  beforeEach(async () => {
+    const mod = await import('./pty.ts');
+    detect = mod.detectBlockingPromptFromText;
+  });
+
+  // -- bracket/paren forms --
+
+  it('matches [y/n] square-bracket form', () => {
+    expect(detect('Apply these changes? [y/n]')).toBe('Apply these changes? [y/n]');
+  });
+
+  it('matches (y/n) parenthesis form', () => {
+    expect(detect('Apply these changes? (y/n)')).toBe('Apply these changes? (y/n)');
+  });
+
+  it('matches [yes/no] square-bracket form', () => {
+    expect(detect('Continue? [yes/no]')).toBe('Continue? [yes/no]');
+  });
+
+  it('matches (yes/no) parenthesis form', () => {
+    expect(detect('Continue? (yes/no)')).toBe('Continue? (yes/no)');
+  });
+
+  // -- verb-led prompts without a trailing question mark --
+
+  it('matches verb-led prompt without question mark ("Would you like … [y/n]")', () => {
+    expect(detect('Would you like to proceed [y/n]')).toBe('Would you like to proceed [y/n]');
+  });
+
+  it('matches "grant" verb-led prompt', () => {
+    expect(detect('Grant access to this resource? (y/n)')).toBe('Grant access to this resource? (y/n)');
+  });
+
+  it('matches "permit" verb-led prompt', () => {
+    expect(detect('Permit execution of this script? [y/n]')).toBe('Permit execution of this script? [y/n]');
+  });
+
+  // -- ANSI stripping --
+
+  it('strips ANSI escape codes before matching', () => {
+    expect(detect('\x1b[32mContinue?\x1b[0m [y/n]')).toBe('Continue? [y/n]');
+  });
+
+  // -- multi-line: scan from bottom --
+
+  it('returns the matching line closest to the bottom of multi-line text', () => {
+    const text = 'Some earlier output\nApply patch? [y/n]\nInstall package? [y/n]';
+    expect(detect(text)).toBe('Install package? [y/n]');
+  });
+
+  // -- quota / rate-limit path --
+
+  it('returns matching line for rate limit text', () => {
+    expect(detect('API rate limit exceeded. Try again later.')).toBe('API rate limit exceeded. Try again later.');
+  });
+
+  it('returns matching line for context window exhaustion', () => {
+    expect(detect('Context window limit reached for this session.')).toBe('Context window limit reached for this session.');
+  });
+
+  // -- non-matching cases --
+
+  it('returns null for plain text with no prompt indicators', () => {
+    expect(detect('Running tests...\nAll tests passed.')).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(detect('')).toBeNull();
+  });
+
+  it('returns null for "permission required" diagnostic text without [y/n]', () => {
+    expect(detect('Note: permission required to access /etc/shadow')).toBeNull();
+  });
+
+  it('returns null for quoted dialog text without a real [y/n] indicator', () => {
+    expect(detect('The dialog asks: "Do you want to allow this extension to run?"\nInstallation complete.')).toBeNull();
+  });
+});
+
 // ─── Factory and contract ───────────────────────────────────────────────────
 
 describe('adapter factory and contract', () => {

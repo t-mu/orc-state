@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/80-reduce-prompt-regex-fragility
 feature: craftsmanship-foundations
 priority: low
-status: todo
+status: done
 ---
 
 # Task 80 — Reduce Blocking Prompt Regex Fragility
