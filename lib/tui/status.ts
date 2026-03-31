@@ -87,6 +87,7 @@ export interface WorkerSlotViewModel {
   slot_id: string;
   role: string;
   provider: string | null;
+  model: string | null;
   slot_state: string;
   task_ref: string | null;
   run_state: string | null;
@@ -165,6 +166,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       slot_id: slotId,
       role: slot?.role ?? 'worker',
       provider: slot?.provider ?? null,
+      model: slot?.model ?? null,
       slot_state: slot?.slot_state ?? 'available',
       task_ref: claim?.task_ref ?? slot?.active_task_ref ?? null,
       run_state: runState,
@@ -181,6 +183,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       slot_id: agentId,
       role: scout.role,
       provider: scout.provider ?? null,
+      model: scout.model ?? null,
       slot_state: scout.slot_state,
       task_ref: null,
       run_state: scout.slot_state,
