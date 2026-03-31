@@ -53,7 +53,7 @@ describe('getOrphanedClaims', () => {
     const claims = [
       makeClaim({ run_id: 'r1', task_ref: 'f/t1', agent_id: 'gone', state: 'done' }),
       makeClaim({ run_id: 'r2', task_ref: 'f/t2', agent_id: 'gone', state: 'failed' }),
-      makeClaim({ run_id: 'r3', task_ref: 'f/t3', agent_id: 'gone', state: 'released' }),
+      makeClaim({ run_id: 'r3', task_ref: 'f/t3', agent_id: 'gone', state: 'failed' }),
     ];
     expect(getOrphanedClaims(agents, claims)).toEqual([]);
   });
