@@ -10,8 +10,11 @@ export function loadClaim(runId: string): Claim | null {
   }
 }
 
+export function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function cliError(error: unknown): never {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Error: ${message}`);
+  console.error(`Error: ${formatErrorMessage(error)}`);
   process.exit(1);
 }

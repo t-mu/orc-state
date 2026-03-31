@@ -8,6 +8,7 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { readEvents } from '../lib/eventLog.ts';
 import { claimedRunStartupAnchor, latestRunActivityDetailMap } from '../lib/runActivity.ts';
 import { boolFlag } from '../lib/args.ts';
+import { formatErrorMessage } from './shared.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import type { RunActivityDetail } from '../lib/runActivity.ts';
 import type { Claim } from '../types/claims.ts';
@@ -74,7 +75,7 @@ function readRunActivity(): { runActivity: Map<string, RunActivityDetail>; event
   } catch (error) {
     return {
       runActivity: new Map<string, RunActivityDetail>(),
-      eventReadError: (error as Error).message,
+      eventReadError: formatErrorMessage(error),
     };
   }
 }

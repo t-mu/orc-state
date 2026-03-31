@@ -43,6 +43,7 @@ import {
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
+import { formatErrorMessage } from './shared.ts';
 import {
   appendSessionStartedEvent,
   prepareSessionReuse,
@@ -330,7 +331,7 @@ try {
     provider_ref: null,
     last_status_change_at: new Date().toISOString(),
   });
-  console.error(`Failed preparing master session: ${(error as Error)?.message ?? 'unknown error'}`);
+  console.error(`Failed preparing master session: ${formatErrorMessage(error)}`);
   process.exit(1);
 }
 
@@ -373,7 +374,7 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
           ? `✓ Coordinator running  (PID ${newPid})`
           : '  Coordinator spawned (PID confirmation pending)');
       }).catch((err: unknown) => {
-        console.warn(`Warning: coordinator failed to start: ${(err as Error)?.message ?? 'unknown'}. Master session continues without coordinator.`);
+        console.warn(`Warning: coordinator failed to start: ${formatErrorMessage(err)}. Master session continues without coordinator.`);
       });
     }
   } catch (error) {

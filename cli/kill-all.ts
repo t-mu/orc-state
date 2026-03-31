@@ -24,6 +24,7 @@ import { RUN_WORKTREES_FILE }       from '../lib/paths.ts';
 import { readBacklog, readClaims }  from '../lib/stateReader.ts';
 import { appendSequencedEvent }     from '../lib/eventLog.ts';
 import { boolFlag }                 from '../lib/args.ts';
+import { formatErrorMessage } from './shared.ts';
 
 const keepSessions = boolFlag('keep-sessions');
 
@@ -52,7 +53,7 @@ if (existsSync(pidFile)) {
         try { unlinkSync(pidFile); } catch { /* already gone */ }
         console.log('  Coordinator already stopped');
       } else {
-        console.error(`  Warning: could not signal coordinator: ${(e as Error).message}`);
+        console.error(`  Warning: could not signal coordinator: ${formatErrorMessage(e)}`);
       }
     }
   } else {
@@ -74,7 +75,7 @@ if (!keepSessions) {
       await adapter.stop(agent.session_handle!);
       console.log(`✓ Stopped session for ${agent.agent_id}`);
     } catch (e) {
-      console.error(`  Warning: could not stop session for ${agent.agent_id}: ${(e as Error).message}`);
+      console.error(`  Warning: could not stop session for ${agent.agent_id}: ${formatErrorMessage(e)}`);
     }
   }
 }
@@ -152,7 +153,7 @@ if (existsSync(RUN_WORKTREES_FILE)) {
       cleanupRunWorktree(STATE_DIR, entry.run_id);
       removedWorktrees++;
     } catch (e) {
-      console.error(`  Warning: could not remove worktree for run ${entry.run_id}: ${(e as Error).message}`);
+      console.error(`  Warning: could not remove worktree for run ${entry.run_id}: ${formatErrorMessage(e)}`);
     }
   }
 

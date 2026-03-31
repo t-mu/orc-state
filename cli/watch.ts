@@ -12,6 +12,7 @@ import { colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { buildStatus } from '../lib/statusView.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
+import { cliError, formatErrorMessage } from './shared.ts';
 
 export interface WatchOptions {
   intervalMs: number;
@@ -41,7 +42,7 @@ export function renderPlainSnapshot({ intervalMs, stateDir }: Pick<WatchOptions,
       for (const warning of warnings) console.log(`  - ${warning}`);
     }
   } catch (err) {
-    console.error(`buildStatus error (may be transient): ${(err as Error).message}`);
+    console.error(`buildStatus error (may be transient): ${formatErrorMessage(err)}`);
     return false;
   }
 
@@ -84,7 +85,7 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
   try {
     sprites = await preloadSprites();
   } catch (error) {
-    console.error(`Failed to preload watch sprites: ${(error as Error).message}`);
+    console.error(`Failed to preload watch sprites: ${formatErrorMessage(error)}`);
     return 1;
   }
 
@@ -133,7 +134,6 @@ if (import.meta.url === new URL(process.argv[1], 'file:').href) {
       }
     })
     .catch(error => {
-      console.error((error as Error).message);
-      process.exit(1);
+      cliError(error);
     });
 }

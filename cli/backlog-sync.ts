@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
+import { formatErrorMessage } from './shared.ts';
 
 export function formatBacklogRepairResult(result: {
   updated: boolean;
@@ -32,7 +33,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     const result = syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);
     console.log(formatBacklogRepairResult(result));
   } catch (error) {
-    console.error(`backlog sync FAILED: ${(error as Error).message}`);
+    console.error(`backlog sync FAILED: ${formatErrorMessage(error)}`);
     process.exit(1);
   }
 }

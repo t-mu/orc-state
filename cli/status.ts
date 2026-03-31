@@ -14,6 +14,7 @@ import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
+import { formatErrorMessage } from './shared.ts';
 
 const json = boolFlag('json');
 const mine = boolFlag('mine');
@@ -102,7 +103,7 @@ function render(): boolean {
     }
   } catch (err) {
     // buildStatus can fail transiently if coordinator is mid-write. Log and continue.
-    console.error(`buildStatus error (may be transient): ${(err as Error).message}`);
+    console.error(`buildStatus error (may be transient): ${formatErrorMessage(err)}`);
     return false;
   }
   console.log('');
