@@ -26,6 +26,20 @@ const FINALIZATION_STATES = new Set<FinalizationState | null>([
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+function assertValidTimestamp(ts: string, label: string): void {
+  if (!Number.isFinite(new Date(ts).getTime())) {
+    throw new Error(`Invalid ${label} timestamp: ${ts}`);
+  }
+}
+
+function resetClaimVolatileFields(claim: Claim): void {
+  claim.input_state = null;
+  claim.input_requested_at = null;
+  claim.session_start_retry_count = 0;
+  claim.session_start_retry_next_at = null;
+  claim.session_start_last_error = null;
+}
+
 function makeRunId(): string {
   const ts   = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
   const rand = Math.random().toString(16).slice(2, 6);
@@ -119,16 +133,10 @@ export function startRun(
     if (claim.state === 'in_progress') return;
     if (claim.state !== 'claimed') throw new Error(`Claim ${runId} is not in 'claimed' state (got: ${claim.state})`);
 
-    if (!Number.isFinite(new Date(at).getTime())) {
-      throw new Error(`Invalid startRun timestamp: ${at}`);
-    }
+    assertValidTimestamp(at, 'startRun');
     claim.state = 'in_progress';
     claim.started_at = at;
-    claim.input_state = null;
-    claim.input_requested_at = null;
-    claim.session_start_retry_count = 0;
-    claim.session_start_retry_next_at = null;
-    claim.session_start_last_error = null;
+    resetClaimVolatileFields(claim);
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
@@ -164,9 +172,7 @@ export function markTaskEnvelopeSent(
     if (!['claimed', 'in_progress'].includes(claim.state)) {
       throw new Error(`Claim ${runId} cannot record envelope delivery from state '${claim.state}'`);
     }
-    if (!Number.isFinite(new Date(at).getTime())) {
-      throw new Error(`Invalid task envelope timestamp: ${at}`);
-    }
+    assertValidTimestamp(at, 'task envelope');
     if (claim.task_envelope_sent_at) {
       return claim;
     }
@@ -213,10 +219,8 @@ export function heartbeat(
       throw new Error(`Cannot heartbeat claim in state: ${claim.state}`);
     }
 
+    assertValidTimestamp(at, 'heartbeat');
     const now = new Date(at);
-    if (!Number.isFinite(now.getTime())) {
-      throw new Error(`Invalid heartbeat timestamp: ${at}`);
-    }
     if (claim.lease_expires_at && new Date(claim.lease_expires_at) < now) {
       throw new Error(`Lease has already expired for run ${runId} (expired at ${claim.lease_expires_at})`);
     }
@@ -260,20 +264,14 @@ export function finishRun(
     if (!claim) throw new Error(`Claim not found: ${runId}`);
     if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
 
-    if (!Number.isFinite(new Date(at).getTime())) {
-      throw new Error(`Invalid finishRun timestamp: ${at}`);
-    }
+    assertValidTimestamp(at, 'finishRun');
     claim.state       = success ? 'done' : 'failed';
     claim.finished_at = at;
     if (!success && failureReason) claim.failure_reason = failureReason;
-    claim.input_state = null;
-    claim.input_requested_at = null;
+    resetClaimVolatileFields(claim);
     claim.finalization_state = null;
     claim.finalization_retry_count = 0;
     claim.finalization_blocked_reason = null;
-    claim.session_start_retry_count = 0;
-    claim.session_start_retry_next_at = null;
-    claim.session_start_last_error = null;
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
@@ -488,11 +486,7 @@ function _expireLeasesCore(
     claim.state       = 'failed';
     claim.finished_at = now.toISOString();
     if (code === 'ERR_INPUT_TIMEOUT') claim.failure_reason = 'ERR_INPUT_TIMEOUT';
-    claim.input_state = null;
-    claim.input_requested_at = null;
-    claim.session_start_retry_count = 0;
-    claim.session_start_retry_next_at = null;
-    claim.session_start_last_error = null;
+    resetClaimVolatileFields(claim);
     expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id, code });
 
     const task = findTask(backlog, claim.task_ref);

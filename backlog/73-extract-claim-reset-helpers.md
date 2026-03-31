@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/73-extract-claim-reset-helpers
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 73 — Extract Claim Reset and Timestamp Validation Helpers in claimManager
