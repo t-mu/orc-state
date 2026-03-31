@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,6 +47,21 @@ describe('readAgents', () => {
   it('returns empty default when missing', () => {
     expect(readAgents(dir)).toEqual({ version: '1', agents: [] });
   });
+
+  it('logs to stderr and returns empty default on non-ENOENT error', () => {
+    writeFileSync(join(dir, 'agents.json'), 'NOT VALID JSON');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = readAgents(dir);
+      expect(result).toEqual({ version: '1', agents: [] });
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[stateReader]'),
+        expect.anything(),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe('readClaims', () => {
@@ -57,6 +72,21 @@ describe('readClaims', () => {
 
   it('returns empty default when missing', () => {
     expect(readClaims(dir)).toEqual({ version: '1', claims: [] });
+  });
+
+  it('logs to stderr and returns empty default on non-ENOENT error', () => {
+    writeFileSync(join(dir, 'claims.json'), 'NOT VALID JSON');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = readClaims(dir);
+      expect(result).toEqual({ version: '1', claims: [] });
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[stateReader]'),
+        expect.anything(),
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

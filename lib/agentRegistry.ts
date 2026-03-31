@@ -12,7 +12,10 @@ const VALID_ROLES = new Set<AgentRole>(AGENT_ROLES as AgentRole[]);
 function readAgentsFile(stateDir: string): AgentsState {
   try {
     return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')) as AgentsState;
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[agentRegistry] unexpected error reading agents.json:', err);
+    }
     return { version: '1', agents: [] };
   }
 }

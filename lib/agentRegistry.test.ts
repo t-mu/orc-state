@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   registerAgent,
   updateAgentRuntime,
@@ -284,5 +287,35 @@ describe('nextAvailableScoutId', () => {
     registerAgent(dir, { agent_id: 'scout-1', provider: 'codex', role: 'scout' });
     registerAgent(dir, { agent_id: 'scout-3', provider: 'claude', role: 'scout' });
     expect(nextAvailableScoutId(dir)).toBe('scout-2');
+  });
+});
+
+describe('readAgentsFile error discrimination', () => {
+  it('logs to stderr and returns empty default when agents.json is corrupted', () => {
+    writeFileSync(join(dir, 'agents.json'), 'NOT VALID JSON');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const agents = listAgents(dir);
+      expect(agents).toEqual([]);
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[agentRegistry]'),
+        expect.anything(),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('does not log to stderr on ENOENT (missing file)', () => {
+    const freshDir = mkdtempSync(join(tmpdir(), 'orch-registry-enoent-'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const agents = listAgents(freshDir);
+      expect(agents).toEqual([]);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      rmSync(freshDir, { recursive: true, force: true });
+    }
   });
 });
