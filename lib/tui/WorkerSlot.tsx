@@ -10,7 +10,7 @@ export function WorkerSlot({ slot, sprites }: { slot: WorkerSlotViewModel; sprit
   const modelLabel = slot.model ? ` ${slot.model}` : '';
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1} flexGrow={1} flexBasis={20} maxWidth={36} marginRight={1} marginBottom={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1} flexGrow={1} flexBasis={20} width={36} marginRight={1} marginBottom={1}>
       <Text bold>
         {slot.slot_id}
         {' '}
