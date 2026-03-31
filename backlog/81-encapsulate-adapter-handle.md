@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/81-encapsulate-adapter-handle
 feature: craftsmanship-foundations
 priority: low
-status: todo
+status: done
 ---
 
 # Task 81 — Encapsulate Adapter Session Handle Format
