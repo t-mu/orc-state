@@ -1141,6 +1141,13 @@ async function enforceInProgressLifecycle(
 
 // ── Tick ───────────────────────────────────────────────────────────────────
 
+function reloadTickState(workerPoolConfig: WorkerPoolConfig): { agents: Agent[]; claims: Claim[]; backlog: unknown } {
+  const claims = (readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] }).claims ?? [];
+  const agents = listCoordinatorAgents(STATE_DIR, workerPoolConfig);
+  const backlog = readJson(STATE_DIR, 'backlog.json');
+  return { agents, claims, backlog };
+}
+
 async function tick() {
   tickCount++;
   log(`tick ${tickCount}`);
@@ -1149,31 +1156,24 @@ async function tick() {
   if (MODE !== 'autonomous') return;
 
   let tickBacklog: unknown;
-  let tickAgents: { version: string; agents: Agent[] } = { version: '1', agents: [] };
-  let tickClaims: { claims?: Claim[] } = {};
   let workerPoolConfig: WorkerPoolConfig;
+  let agents: Agent[] = [];
+  let claims: Claim[] = [];
   try {
     workerPoolConfig = loadWorkerPoolConfig();
     reconcileManagedWorkerSlots(STATE_DIR, workerPoolConfig);
-    tickBacklog = readJson(STATE_DIR, 'backlog.json');
-    tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-    pruneMissingRunWorktrees(STATE_DIR, (tickClaims.claims ?? [])
+    const preClaims = (readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] }).claims ?? [];
+    pruneMissingRunWorktrees(STATE_DIR, preClaims
       .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
       .map((claim) => claim.run_id));
-    tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
+    ({ agents, claims, backlog: tickBacklog } = reloadTickState(workerPoolConfig));
   } catch (err) {
     log(`ERROR: failed to load state files: ${(err as Error).message}`);
     return;
   }
 
-  let agents = tickAgents.agents ?? [];
-  let claims = tickClaims.claims ?? [];
   reconcileState(STATE_DIR);
-  tickBacklog = readJson(STATE_DIR, 'backlog.json');
-  tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
-  agents = tickAgents.agents ?? [];
-  claims = tickClaims.claims ?? [];
+  ({ agents, claims, backlog: tickBacklog } = reloadTickState(workerPoolConfig));
   markStaleAgentsDead(agents, claims);
 
   try {
@@ -1193,10 +1193,7 @@ async function tick() {
     if (newEvents.length > 0) {
       await processTerminalRunEvents(newEvents, workerPoolConfig);
     }
-    tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-    tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
-    agents = tickAgents.agents ?? [];
-    claims = tickClaims.claims ?? [];
+    ({ agents, claims } = reloadTickState(workerPoolConfig));
   } catch (err) {
     console.error(`[coordinator] ERROR in event processing tick: ${(err as Error)?.message ?? String(err)}`);
     if ((err as Error)?.stack) {
@@ -1212,18 +1209,12 @@ async function tick() {
       await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
     }
     log(`expired ${expired.length} stale lease(s): ${expired.map((claim) => claim.run_id).join(', ')}`);
-    tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-    tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
-    agents = tickAgents.agents ?? [];
-    claims = tickClaims.claims ?? [];
+    ({ agents, claims } = reloadTickState(workerPoolConfig));
   }
 
   checkMasterHealth(agents);
   await processManagedSessionStartRetries(agents, claims, workerPoolConfig);
-  tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
-  agents = tickAgents.agents ?? [];
-  claims = tickClaims.claims ?? [];
+  ({ agents, claims } = reloadTickState(workerPoolConfig));
 
   // Build attempt_count lookup from backlog (one read per tick, not per claim)
   const attemptsByTask = new Map<string, number>();
@@ -1238,15 +1229,9 @@ async function tick() {
 
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
   const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun, attemptsByTask);
-  tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
-  agents = tickAgents.agents ?? [];
-  claims = tickClaims.claims ?? [];
+  ({ agents, claims } = reloadTickState(workerPoolConfig));
   await processClaimedSessionReadiness(agents, claims, workerPoolConfig);
-  tickClaims = readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] };
-  tickAgents = { version: '1', agents: listCoordinatorAgents(STATE_DIR, workerPoolConfig) };
-  agents = tickAgents.agents ?? [];
-  claims = tickClaims.claims ?? [];
+  ({ agents, claims } = reloadTickState(workerPoolConfig));
   await ensureSessionPoolReady(agents, workerPoolConfig);
   // Agents that received a nudge this tick are excluded from dispatch to avoid
   // sending them a new task envelope in the same tick as an in-flight nudge.
@@ -1258,7 +1243,7 @@ async function tick() {
   const dispatchPlan = buildDispatchPlan(dispatchableAgents, (agent, reservedTaskRefs) =>
     nextEligibleTask(STATE_DIR, agent.agent_id, {
       backlog: tickBacklog,
-      agents: tickAgents,
+      agents: { version: '1', agents },
       excludeTaskRefs: reservedTaskRefs,
     }),
   );

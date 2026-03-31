@@ -2,7 +2,7 @@
 ref: craftsmanship-structure/83-extract-tick-state-reload
 feature: craftsmanship-structure
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/68-consolidate-constants-enums
   - craftsmanship-foundations/69-consolidate-timing-constants
