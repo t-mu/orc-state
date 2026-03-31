@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { queryEvents } from './eventLog.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState, readStateFile } from '../test-fixtures/stateHelpers.ts';
 import {
   claimTask,
   markTaskEnvelopeSent,
@@ -30,14 +30,11 @@ function makeTask(ref: string, status: Task['status'] = 'todo', deps: string[] =
 }
 
 function seed(dir: string, { tasks = [makeTask('orch/init')], claims = [] as Claim[] } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify(makeBacklog(tasks)));
-  writeFileSync(join(dir, 'agents.json'),  JSON.stringify({ version: '1', agents: [] }));
-  writeFileSync(join(dir, 'claims.json'),  JSON.stringify({ version: '1', claims }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  seedState(dir, { tasks, claims });
 }
 
-function readBacklog(dir: string): Backlog { return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')) as Backlog; }
-function readClaims(dir: string)  { return JSON.parse(readFileSync(join(dir, 'claims.json'),  'utf8')) as { version: string; claims: Claim[] }; }
+function readBacklog(dir: string): Backlog { return readStateFile<Backlog>(dir, 'backlog.json'); }
+function readClaims(dir: string) { return readStateFile<{ version: string; claims: Claim[] }>(dir, 'claims.json'); }
 function readEvents(dir: string)  {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return queryEvents(dir, {}) as unknown as Array<any>;
@@ -46,8 +43,8 @@ function readEvents(dir: string)  {
 function pastDate(msAgo = 60_000) { return new Date(Date.now() - msAgo).toISOString(); }
 
 let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'orch-claim-test-')); });
-afterEach(()  => { rmSync(dir, { recursive: true, force: true }); });
+beforeEach(() => { dir = createTempStateDir('orch-claim-test-'); });
+afterEach(()  => { cleanupTempStateDir(dir); });
 
 // ── claimTask ──────────────────────────────────────────────────────────────
 
