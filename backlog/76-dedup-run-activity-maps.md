@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/76-dedup-run-activity-maps
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 76 — Deduplicate runActivity Map Building with Generic Helper
