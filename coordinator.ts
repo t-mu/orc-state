@@ -1140,27 +1140,62 @@ async function tick() {
   // 2. Autonomous dispatch.
   if (MODE !== 'autonomous') return;
 
-  let tickBacklog: unknown;
-  let workerPoolConfig: WorkerPoolConfig;
-  let agents: Agent[] = [];
-  let claims: Claim[] = [];
-  try {
-    workerPoolConfig = loadWorkerPoolConfig();
-    reconcileManagedWorkerSlots(STATE_DIR, workerPoolConfig);
-    const preClaims = (readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] }).claims ?? [];
-    pruneMissingRunWorktrees(STATE_DIR, preClaims
-      .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
-      .map((claim) => claim.run_id));
-    ({ agents, claims, backlog: tickBacklog } = reloadTickState(workerPoolConfig));
-  } catch (err) {
-    log(`ERROR: failed to load state files: ${(err as Error).message}`);
-    return;
-  }
+  const tickInit = initializeTickState();
+  if (!tickInit) return;
+  const { workerPoolConfig } = tickInit;
+  let { agents, claims, tickBacklog } = tickInit;
 
   reconcileState(STATE_DIR);
   ({ agents, claims, backlog: tickBacklog } = reloadTickState(workerPoolConfig));
   markStaleAgentsDead(agents, claims);
 
+  ({ agents, claims } = await processEventCheckpoint(agents, claims, workerPoolConfig));
+  ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
+
+  checkMasterHealth(agents);
+  await processManagedSessionStartRetries(agents, claims, workerPoolConfig);
+  ({ agents, claims } = reloadTickState(workerPoolConfig));
+
+  const attemptsByTask = buildAttemptCountLookup();
+
+  const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
+  const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun, attemptsByTask);
+  ({ agents, claims } = reloadTickState(workerPoolConfig));
+  await processClaimedSessionReadiness(agents, claims, workerPoolConfig);
+  ({ agents, claims } = reloadTickState(workerPoolConfig));
+  await ensureSessionPoolReady(agents, workerPoolConfig);
+  // Agents that received a nudge this tick are excluded from dispatch to avoid
+  // sending them a new task envelope in the same tick as an in-flight nudge.
+  const nudgedThisTick = new Set([...nudgedByRunStart, ...nudgedByInProgress]);
+  await executeDispatchPlan(agents, claims, workerPoolConfig, tickBacklog, nudgedThisTick);
+}
+
+function initializeTickState(): {
+  agents: Agent[];
+  claims: Claim[];
+  workerPoolConfig: WorkerPoolConfig;
+  tickBacklog: unknown;
+} | null {
+  try {
+    const workerPoolConfig = loadWorkerPoolConfig();
+    reconcileManagedWorkerSlots(STATE_DIR, workerPoolConfig);
+    const preClaims = (readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] }).claims ?? [];
+    pruneMissingRunWorktrees(STATE_DIR, preClaims
+      .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
+      .map((claim) => claim.run_id));
+    const { agents, claims, backlog: tickBacklog } = reloadTickState(workerPoolConfig);
+    return { agents, claims, workerPoolConfig, tickBacklog };
+  } catch (err) {
+    log(`ERROR: failed to load state files: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+async function processEventCheckpoint(
+  agents: Agent[],
+  claims: Claim[],
+  workerPoolConfig: WorkerPoolConfig,
+): Promise<{ agents: Agent[]; claims: Claim[] }> {
   try {
     // TODO(perf): latestRunActivityMap currently scans all events.
     // A future task should window this to recent events only.
@@ -1187,7 +1222,14 @@ async function tick() {
     latestActivityByRun = new Map();
     latestPhaseByRun = new Map();
   }
+  return { agents, claims };
+}
 
+async function expireAndCleanupStaleLeases(
+  agents: Agent[],
+  claims: Claim[],
+  workerPoolConfig: WorkerPoolConfig,
+): Promise<{ agents: Agent[]; claims: Claim[] }> {
   const expired = expireStaleLeasesDetailed(STATE_DIR);
   if (expired.length > 0) {
     for (const claim of expired) {
@@ -1196,11 +1238,10 @@ async function tick() {
     log(`expired ${expired.length} stale lease(s): ${expired.map((claim) => claim.run_id).join(', ')}`);
     ({ agents, claims } = reloadTickState(workerPoolConfig));
   }
+  return { agents, claims };
+}
 
-  checkMasterHealth(agents);
-  await processManagedSessionStartRetries(agents, claims, workerPoolConfig);
-  ({ agents, claims } = reloadTickState(workerPoolConfig));
-
+function buildAttemptCountLookup(): Map<string, number> {
   // Build attempt_count lookup from backlog (one read per tick, not per claim)
   const attemptsByTask = new Map<string, number>();
   try {
@@ -1211,17 +1252,16 @@ async function tick() {
       }
     }
   } catch { /* backlog read failure is non-fatal for remediation */ }
+  return attemptsByTask;
+}
 
-  const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
-  const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun, attemptsByTask);
-  ({ agents, claims } = reloadTickState(workerPoolConfig));
-  await processClaimedSessionReadiness(agents, claims, workerPoolConfig);
-  ({ agents, claims } = reloadTickState(workerPoolConfig));
-  await ensureSessionPoolReady(agents, workerPoolConfig);
-  // Agents that received a nudge this tick are excluded from dispatch to avoid
-  // sending them a new task envelope in the same tick as an in-flight nudge.
-  const nudgedThisTick = new Set([...nudgedByRunStart, ...nudgedByInProgress]);
-
+async function executeDispatchPlan(
+  agents: Agent[],
+  claims: Claim[],
+  workerPoolConfig: WorkerPoolConfig,
+  tickBacklog: unknown,
+  nudgedThisTick: Set<string>,
+): Promise<void> {
   const busyAgents = activeClaimAgents(claims);
   const availableAgents = selectDispatchableAgents(agents, { busyAgents });
   const dispatchableAgents = availableAgents.filter((a) => !nudgedThisTick.has(a.agent_id));
