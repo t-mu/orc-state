@@ -65,3 +65,9 @@ All boolean flags use `boolFlag(name)` from `lib/args.ts`, consistent with exist
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+Pure refactoring — no new tests. Existing tests must continue to pass.

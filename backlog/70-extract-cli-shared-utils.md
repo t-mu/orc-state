@@ -72,3 +72,9 @@ npx vitest run cli/
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+Pure refactoring — no new tests. Existing tests must continue to pass.

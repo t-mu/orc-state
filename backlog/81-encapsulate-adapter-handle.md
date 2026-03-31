@@ -64,3 +64,9 @@ The `pty:{agentId}` session handle format is constructed inline in tests and pot
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+Pure refactoring — no new tests. Existing tests must continue to pass.

@@ -67,3 +67,9 @@ All timing constants with semantic names live in `lib/constants.ts`. Each origin
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+Pure refactoring — no new tests. Existing tests must continue to pass.

@@ -81,3 +81,9 @@ Verified that all patterns are eliminated. Any intentional deferrals documented.
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+Pure refactoring — no new tests. Existing tests must continue to pass.

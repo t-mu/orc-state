@@ -68,3 +68,9 @@ npx vitest run coordinator.test.ts
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+Pure refactoring — no new tests. Existing tests must continue to pass.

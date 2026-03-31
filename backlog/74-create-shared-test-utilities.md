@@ -69,3 +69,9 @@ npx vitest run lib/claimManager.test.ts lib/reconcile.test.ts
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+New tests are part of the core deliverable for this task. See acceptance criteria.

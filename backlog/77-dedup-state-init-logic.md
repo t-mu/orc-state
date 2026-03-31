@@ -64,3 +64,9 @@ Single `ensureStateInitialized(stateDir)` in `lib/stateInit.ts` called from both
 ```bash
 npm test
 ```
+
+---
+
+## Tests
+
+Pure refactoring — no new tests. Existing tests must continue to pass.
