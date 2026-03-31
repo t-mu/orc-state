@@ -2,7 +2,7 @@
 ref: craftsmanship-structure/82-migrate-coordinator-tests-shared-utils
 feature: craftsmanship-structure
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-foundations/74-create-shared-test-utilities
 ---
