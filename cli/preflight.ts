@@ -8,8 +8,8 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
+import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import type { Agent } from '../types/agents.ts';
-import type { Claim } from '../types/claims.ts';
 
 const asJson = process.argv.includes('--json') || (flag('json') ?? '') === 'true';
 
@@ -105,22 +105,6 @@ if (!ok) {
 console.log('');
 console.log('Preflight passed.');
 
-function getOrphanedClaims(agents: Agent[], claims: Claim[]) {
-  const out: Array<{ run_id: string; task_ref: string; agent_id: string; owner_status: string }> = [];
-  for (const claim of claims) {
-    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-    const owner = agents.find((a) => a.agent_id === claim.agent_id);
-    if (!owner || owner.status === 'offline') {
-      out.push({
-        run_id: claim.run_id,
-        task_ref: claim.task_ref,
-        agent_id: claim.agent_id,
-        owner_status: owner?.status ?? 'missing',
-      });
-    }
-  }
-  return out;
-}
 
 function getProviderBinaries(agents: Agent[]) {
   const providers = [...new Set(agents.map((a) => a.provider).filter(Boolean))];

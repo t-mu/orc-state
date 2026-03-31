@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/71-extract-orphan-claim-detection
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 71 — Extract Orphaned Claim Detection into lib/claimDiagnostics.ts
