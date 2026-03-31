@@ -172,6 +172,23 @@ async function runBounded(thunks: Array<() => Promise<unknown>>, limit = CONCURR
   return results;
 }
 
+/**
+ * Run nudge thunks with bounded concurrency, log failures, and return the set
+ * of agent IDs returned by successful thunks.
+ */
+async function executeNudgeBatch(nudgeThunks: Array<() => Promise<unknown>>): Promise<Set<string>> {
+  const results = await runBounded(nudgeThunks);
+  const nudgedAgentIds = new Set<string>();
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      log(`warning: nudge failed: ${(result.reason as Error)?.message ?? 'unknown error'}`);
+    } else if (typeof result.value === 'string') {
+      nudgedAgentIds.add(result.value);
+    }
+  }
+  return nudgedAgentIds;
+}
+
 async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unknown> | null = null) {
   const adapter = getAdapter(agent.provider);
 
@@ -376,7 +393,7 @@ async function processClaimedSessionReadiness(
     });
   }
 
-  await runBounded(nudgeWork);
+  await executeNudgeBatch(nudgeWork);
 }
 
 async function processManagedSessionStartRetries(
@@ -839,16 +856,7 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
     });
   }
 
-  const results = await runBounded(nudgeWork);
-  const nudgedAgentIds = new Set<string>();
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      log(`warning: failed to send run-start nudge: ${(result.reason as Error)?.message ?? 'unknown error'}`);
-    } else if (result.value) {
-      nudgedAgentIds.add(result.value as string);
-    }
-  }
-  return nudgedAgentIds;
+  return executeNudgeBatch(nudgeWork);
 }
 
 async function executeRemediation(
@@ -1112,16 +1120,7 @@ async function enforceInProgressLifecycle(
     });
   }
 
-  const results = await runBounded(nudgeWork);
-  const nudgedAgentIds = new Set<string>();
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      log(`warning: failed to send progress nudge: ${(result.reason as Error)?.message ?? 'unknown error'}`);
-    } else if (result.value) {
-      nudgedAgentIds.add(result.value as string);
-    }
-  }
-  return nudgedAgentIds;
+  return executeNudgeBatch(nudgeWork);
 }
 
 // ── Tick ───────────────────────────────────────────────────────────────────
