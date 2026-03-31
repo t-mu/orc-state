@@ -122,6 +122,28 @@ export function resetVolatileRuntimeStateForSession(
   });
 }
 
+/**
+ * Build a PreparedSessionReset for a "reuse" session start: captures a
+ * snapshot of the current state for error-recovery purposes but does NOT
+ * mutate any runtime state (tasks, claims, or agents).
+ */
+export function prepareSessionReuse(stateDir: string): PreparedSessionReset {
+  return withLock(join(stateDir, '.lock'), () => {
+    const now = new Date().toISOString();
+    const sessionId = `session-${now.replace(/[-:.]/g, '').replace(/Z$/, 'Z')}-${randomUUID().slice(0, 8)}`;
+    const backlog = readBacklogState(stateDir);
+    const agents = readAgentsState(stateDir);
+    const claims = readClaimsState(stateDir);
+    return {
+      session_id: sessionId,
+      reset_tasks: 0,
+      reset_claims: 0,
+      reset_agents: 0,
+      snapshot: { backlog, agents, claims },
+    };
+  });
+}
+
 export function restoreVolatileRuntimeStateFromSnapshot(
   stateDir: string,
   snapshot: SessionStateSnapshot,

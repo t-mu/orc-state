@@ -45,6 +45,7 @@ import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts'
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import {
   appendSessionStartedEvent,
+  prepareSessionReuse,
   resetVolatileRuntimeStateForSession,
   restoreVolatileRuntimeStateFromSnapshot,
 } from '../lib/sessionState.ts';
@@ -257,7 +258,9 @@ if (!binaryOk) {
 
 // ── Coordinator ────────────────────────────────────────────────────────────
 
-const sessionReset = resetVolatileRuntimeStateForSession(STATE_DIR);
+const sessionReset = coordinatorAction === 'reuse'
+  ? prepareSessionReuse(STATE_DIR)
+  : resetVolatileRuntimeStateForSession(STATE_DIR);
 
 // Coordinator spawn is deferred until after pty.spawn succeeds — see below.
 // This avoids a lock race: if pty.spawn throws, the error recovery path calls

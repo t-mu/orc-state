@@ -208,7 +208,9 @@ describe('cli/start-session.ts', () => {
       mockSpawn(spawnMock);
       mockBinaryCheck(true);
       setEnv(dir);
-      seedCoordinatorRunning();
+      // No coordinator running → coordinatorAction = 'start' → state reset fires.
+      // (If a coordinator were running, the non-interactive default is 'reuse',
+      //  which intentionally skips the reset — tested separately below.)
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
 
@@ -383,6 +385,7 @@ describe('cli/start-session.ts', () => {
 
     it('reuse exits without state change and starts coordinator if needed', async () => {
       seedState([masterAgent()]);
+      seedActiveRuntimeState();
       const spawnMock = makeSpawnMock({ writeCoordinatorPid: true });
       mockSpawn(spawnMock);
       vi.doMock('../lib/prompts.ts', () => ({
@@ -404,7 +407,11 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
 
       expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(true);
-      expect(readAgents()).toHaveLength(1);       // no state change
+      expect(readAgents()).toHaveLength(1);       // agents unchanged
+      // tasks and claims must NOT be reset — that is the whole point of 'reuse'
+      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
     });
 
     it('does not modify existing worker registrations during normal startup', async () => {
