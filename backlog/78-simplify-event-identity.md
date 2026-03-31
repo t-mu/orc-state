@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/78-simplify-event-identity
 feature: craftsmanship-foundations
 priority: low
-status: todo
+status: done
 ---
 
 # Task 78 — Simplify Over-Engineered Event Identity Fallback

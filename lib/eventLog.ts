@@ -123,25 +123,14 @@ export function ensureEventIdentity<T extends { event_id?: string }>(
 export function eventIdentity(event: {
   event_id?: unknown;
   seq?: unknown;
-  ts?: unknown;
-  event?: unknown;
-  run_id?: unknown;
-  task_ref?: unknown;
-  agent_id?: unknown;
 }): string {
   if (typeof event.event_id === 'string' && event.event_id.length > 0) {
     return event.event_id;
   }
-
-  const parts = [
-    typeof event.seq === 'number' ? `seq:${event.seq}` : 'seq:missing',
-    typeof event.ts === 'string' ? `ts:${event.ts}` : 'ts:missing',
-    typeof event.event === 'string' ? `event:${event.event}` : 'event:missing',
-    typeof event.run_id === 'string' ? `run:${event.run_id}` : 'run:missing',
-    typeof event.task_ref === 'string' ? `task:${event.task_ref}` : 'task:missing',
-    typeof event.agent_id === 'string' ? `agent:${event.agent_id}` : 'agent:missing',
-  ];
-  return `legacy:${parts.join('|')}`;
+  // Fallback for legacy pre-migration events that were inserted before SQLite
+  // started assigning event_id via randomUUID() on insert. seq is sufficient
+  // to identify them uniquely within their database.
+  return typeof event.seq === 'number' ? `legacy:seq:${event.seq}` : 'legacy:seq:missing';
 }
 
 /**
