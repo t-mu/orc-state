@@ -15,7 +15,7 @@ Before waiting for task instructions, report that this exact PTY session is read
 
 You should expect:
 
-  1. A TASK_START block containing the run_id, task contract, and richer task-spec context
+  1. A compact TASK_START block containing the run_id, task_ref, task_spec_path, and assigned_worktree
   2. RUN_NUDGE blocks if lifecycle reporting is missing or stale
 
 If no TASK_START arrives yet, remain idle until it does. After the task is complete, report the required handoff/terminal lifecycle events and stop doing work.
@@ -57,7 +57,7 @@ WORKTREE RULE
 
 The coordinator starts every worker session at the repo root.
 Shared orchestrator state lives under the main repo root, and the worker environment is preconfigured to reach it.
-The TASK_START payload contains the assigned worktree path in the `assigned_worktree` field.
+The TASK_START payload contains the assigned worktree path in the `assigned_worktree` field and the markdown spec path in `task_spec_path`.
 Do not create a second worktree for the same run unless the payload explicitly instructs you to recover a missing one.
 
 When a TASK_START block arrives:
@@ -66,13 +66,14 @@ When a TASK_START block arrives:
   3. Immediately start the background heartbeat loop (keeps the lease alive during long tool calls):
        while true; do sleep 270; {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
        HEARTBEAT_PID=$!
-  4. Do all work, builds, and tests inside that assigned worktree.
-  5. Commit your changes:
+  4. Read the task markdown at `task_spec_path` for the actual task details.
+  5. Do all work, builds, and tests inside that assigned worktree.
+  6. Commit your changes:
        Edit backlog/<N>-<slug>.md for this task.
        Change the frontmatter line: status: todo -> status: done
        git add -p
        git commit -m "feat(<scope>): <outcome>"
-  6. Sub-agent review round:
+  7. Sub-agent review round:
        a. Emit a heartbeat before spawning (mandatory):
             {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
        b. Spawn two independent sub-agents. Give each:
@@ -100,15 +101,15 @@ When a TASK_START block arrives:
        c. Consolidate findings from both sub-agents.
        d. Address all findings in the worktree, then amend or add a fixup commit.
        This review happens once — address findings and proceed regardless of outcome.
-  7. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
+  8. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>   # heartbeat before rebase
        git rebase main
        # on conflict: resolve files → git add <file> → git rebase --continue
        # repeat until clean. Only fail the run if conflict is truly unresolvable.
-  8. Report that implementation is complete and remain alive for coordinator-owned finalization:
+  9. Report that implementation is complete and remain alive for coordinator-owned finalization:
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>   # heartbeat immediately before work-complete
        {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id=<agent_id>
-  9. Wait for follow-up coordinator messages inside this same session when they exist:
+  10. Wait for follow-up coordinator messages inside this same session when they exist:
        - Continue sending heartbeats every 5 minutes while waiting.
        - If told finalization succeeded or the session can stop, kill the background heartbeat
          and call orc run-finish:
@@ -157,7 +158,7 @@ RULES
 - Call orc run-fail if you hit an unrecoverable blocker.
 - Call orc run-input-request when master input can unblock an interactive prompt.
 - Never call orc run-finish speculatively before the work is done.
-- Treat the TASK_START payload as the source of truth for this run's contract and richer task context.
+- Treat the TASK_START payload as the source of truth for runtime handoff data, then read the markdown spec from `task_spec_path` for the actual task details.
 - This session is task-scoped; after terminal success/failure, do not assume another task will be assigned.
 
 WORKER_BOOTSTRAP_END

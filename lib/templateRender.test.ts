@@ -66,39 +66,22 @@ describe('renderTemplate', () => {
     expect(rendered).not.toContain('keeps it alive while you are registered');
   });
 
-  it('renders enriched task envelope context for fresh workers', () => {
+  it('renders compact task envelope context for fresh workers', () => {
     const rendered = renderTemplate('task-envelope-v2.txt', {
       task_ref: 'orch/task-142',
       run_id: 'run-1',
-      title: 'Task 142',
-      feature: 'orch',
-      description: 'bootstrap redesign',
-      agent_id: 'orc-1',
-      orc_bin: '/tmp/node_modules/.bin/orc',
-      acceptance_criteria_lines: '  1. first',
-      current_state: 'Current state text.',
-      desired_state: 'Desired state text.',
-      start_here: '- coordinator.mjs',
-      files_to_change: '- coordinator.mjs',
-      avoid_reading: 'lib/masterPtyForwarder.ts',
-      implementation_notes: '- keep the patch surgical',
-      verification: '```bash\nnpx vitest\n```',
       task_spec_path: 'docs/backlog/142-redesign-fresh-worker-bootstrap-and-run-contract.md',
       assigned_worktree: '/tmp/orc-worktrees/run-1',
-      task_contract_json: '{}',
     });
-    expect(rendered).toContain('current_state:');
-    expect(rendered).toContain('desired_state:');
-    expect(rendered).toContain('start_here:');
-    expect(rendered).toContain('files_to_change:');
-    expect(rendered).toContain('avoid_reading:');
-    expect(rendered).toContain('implementation_notes:');
-    expect(rendered).toContain('targeted_verification:');
+    expect(rendered).toContain('TASK_START v4');
+    expect(rendered).toContain('task_ref: orch/task-142');
+    expect(rendered).toContain('run_id: run-1');
     expect(rendered).toContain('task_spec_path: docs/backlog/142-redesign-fresh-worker-bootstrap-and-run-contract.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-1');
-    expect(rendered).toContain('/tmp/node_modules/.bin/orc run-work-complete');
-    expect(rendered).toContain('/tmp/node_modules/.bin/orc run-input-request');
-    expect(rendered).toContain('remain alive for coordinator finalization follow-up when present');
-    expect(rendered).not.toContain('worktree_setup: git worktree add');
+    expect(rendered).toContain('TASK_END');
+    expect(rendered).not.toContain('acceptance_criteria:');
+    expect(rendered).not.toContain('task_contract_v1_json:');
+    expect(rendered).not.toContain('run-work-complete');
+    expect(rendered).not.toContain('run-input-request');
   });
 });
