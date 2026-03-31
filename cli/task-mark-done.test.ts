@@ -147,6 +147,61 @@ describe('cli/task-mark-done.ts', () => {
 
     rmSync(worktreeDir, { recursive: true, force: true });
   });
+
+  it('writes spec to worktree via run-worktrees.json even when cwd is main checkout', () => {
+    // This is the critical case: worker's CWD has been reset to main checkout
+    // by the harness, but the active claim + worktree metadata should still
+    // direct the write to the correct worktree backlog/.
+    const worktreeDir = mkdtempSync(join(tmpdir(), 'orc-worktree-'));
+    mkdirSync(join(worktreeDir, 'backlog'), { recursive: true });
+    writeFileSync(
+      join(worktreeDir, 'backlog', '999-task-1.md'),
+      ['---', 'ref: docs/task-1', 'feature: docs', 'status: todo', '---', '', '# Task 1', ''].join('\n'),
+    );
+    writeSpec('docs/task-1', 'docs', 'Task 1', 'todo');
+    seedBacklogTask('in_progress');
+
+    // Seed an active claim for the task
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+      version: '1',
+      claims: [{
+        run_id: 'run-test-123',
+        task_ref: 'docs/task-1',
+        agent_id: 'worker-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      }],
+    }));
+
+    // Seed run-worktrees.json pointing to the worktree
+    writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({
+      version: '1',
+      runs: [{
+        run_id: 'run-test-123',
+        task_ref: 'docs/task-1',
+        agent_id: 'worker-1',
+        branch: 'task/run-test-123',
+        worktree_path: worktreeDir,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }],
+    }));
+
+    // Run from main checkout dir (simulates CWD reset by harness)
+    const result = runCli(['docs/task-1'], { cwd: dir });
+    expect(result.status).toBe(0);
+
+    // The worktree copy should be updated to done
+    const worktreeSpec = readFileSync(join(worktreeDir, 'backlog', '999-task-1.md'), 'utf8');
+    expect(worktreeSpec).toContain('status: done');
+
+    // The main checkout copy should NOT have been modified
+    const mainSpec = readFileSync(join(dir, 'backlog', '999-task-1.md'), 'utf8');
+    expect(mainSpec).toContain('status: todo');
+
+    rmSync(worktreeDir, { recursive: true, force: true });
+  });
 });
 
 function runCli(args: string[], { cwd = dir }: { cwd?: string } = {}) {

@@ -12,25 +12,62 @@ import { flag } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
-import { readBacklog, findTask } from '../lib/stateReader.ts';
+import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE, STATE_DIR } from '../lib/paths.ts';
+import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
 import { discoverActiveTaskSpecs } from '../lib/backlogSync.ts';
 import { cliError } from './shared.ts';
+import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
 // Resolve the backlog docs directory for spec writes.
 // Workers run inside worktrees where backlog/ is a separate copy of the specs.
 // Writing to the worktree copy ensures the status update is included in the
-// worker's branch and merged naturally by the coordinator.
-// When cwd/backlog exists and differs from the canonical BACKLOG_DOCS_DIR,
-// prefer it — the caller is in a worktree.
-function resolveEffectiveBacklogDir(): string {
+// worker's branch and merged naturally by the coordinator — keeping the main
+// checkout clean so `git merge` does not fail on dirty files.
+//
+// Resolution order:
+// 1. Look up the active run worktree for the task (from run-worktrees.json via
+//    claims.json). This is the most robust path — it works even when the shell
+//    CWD has been reset to the main checkout by the harness.
+// 2. Fall back to CWD-based detection (cwd/backlog exists and differs from
+//    canonical BACKLOG_DOCS_DIR).
+// 3. Fall back to BACKLOG_DOCS_DIR (main checkout).
+function resolveEffectiveBacklogDir(taskRef: string): string {
+  // Strategy 1: look up the active worktree from runtime state.
+  const worktreeBacklog = resolveWorktreeBacklogForTask(taskRef);
+  if (worktreeBacklog) return worktreeBacklog;
+
+  // Strategy 2: CWD-based detection (worker is cd'd into worktree).
   const cwdBacklog = resolve(process.cwd(), 'backlog');
   if (existsSync(cwdBacklog) && resolve(cwdBacklog) !== resolve(BACKLOG_DOCS_DIR)) {
     return cwdBacklog;
   }
+
+  // Strategy 3: main checkout.
   return BACKLOG_DOCS_DIR;
 }
-const effectiveBacklogDir = resolveEffectiveBacklogDir();
+
+// Find the worktree backlog/ directory for a task by looking up claims → run worktrees.
+function resolveWorktreeBacklogForTask(taskRef: string): string | null {
+  try {
+    const claims = readClaims(STATE_DIR);
+    const activeClaim = claims.claims.find(
+      (c) => c.task_ref === taskRef && (c.state === 'claimed' || c.state === 'in_progress'),
+    );
+    if (!activeClaim) return null;
+
+    const worktrees = JSON.parse(readFileSync(RUN_WORKTREES_FILE, 'utf8')) as RunWorktreesState;
+    const entry = worktrees.runs.find((r) => r.run_id === activeClaim.run_id);
+    if (!entry?.worktree_path) return null;
+
+    const backlogDir = join(entry.worktree_path, 'backlog');
+    if (existsSync(backlogDir) && resolve(backlogDir) !== resolve(BACKLOG_DOCS_DIR)) {
+      return backlogDir;
+    }
+  } catch {
+    // State files unreadable — fall through to CWD/main strategies.
+  }
+  return null;
+}
 
 const NON_COMPLETABLE_STATUSES = new Set(['todo', 'blocked', 'released', 'cancelled']);
 
@@ -58,8 +95,9 @@ try {
     }
 
     // Step 1: Update the markdown spec frontmatter to status: done.
-    // Uses effectiveBacklogDir (cwd/backlog if it exists, else canonical BACKLOG_DOCS_DIR)
-    // so workers in worktrees write to their local copy and include the update in their branch.
+    // Resolves the effective backlog directory by checking the active run worktree
+    // first (robust against CWD resets), then CWD, then main checkout.
+    const effectiveBacklogDir = resolveEffectiveBacklogDir(taskRef);
     const specs = discoverActiveTaskSpecs(effectiveBacklogDir);
     const spec = specs.find((s) => s.ref === taskRef);
     if (!spec) {
