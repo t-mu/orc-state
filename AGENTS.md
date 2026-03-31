@@ -100,9 +100,16 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
      --outcome=<approved|findings> --reason="<findings text>"
    ```
    Findings written this way survive context compaction.
+   For named subagent types (critic, integrator, etc.) that have their own
+   output format, also instruct them to end their response with a grep-able
+   line: `VERDICT: approved` or `VERDICT: findings`. This applies to all
+   reviewer types — built-in or general-purpose.
 4. Retrieve findings: `orc review-read --run-id=<run_id>`
    If a reviewer failed or is non-responsive, proceed with the reviews
    that were submitted. `orc review-read` exits 0 regardless of count.
+   When reading reviewer output from an output file, always grep for
+   `VERDICT:` first — if absent, the reviewer hit its turn limit before
+   finishing and should be treated as non-responsive.
 5. Address ALL findings in a fixup commit.
 
 **Gate:** Parse `orc review-read` output — all submitted reviewers report `approved`.

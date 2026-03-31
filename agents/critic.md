@@ -2,7 +2,7 @@
 name: critic
 description: Primary code-review agent for ORC changes. Use after implementation to find bugs, regressions, stale docs, missing tests, and task-scope violations.
 tools: Read, Grep, Glob, Bash
-maxTurns: 15
+maxTurns: 20
 models:
   claude: sonnet
   codex: gpt-5.4
