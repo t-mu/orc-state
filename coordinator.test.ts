@@ -1947,6 +1947,7 @@ describe('processTerminalRunEvents', () => {
     const cleanupRunWorktree = vi.fn().mockReturnValue(true);
     const spawnSync = vi.fn()
       .mockReturnValueOnce({ status: 0, stdout: '' })
+      .mockReturnValueOnce({ status: 0, stdout: '' })
       .mockReturnValueOnce({ status: 0, stdout: '' });
     vi.doMock('node:child_process', async () => {
       const actual = await vi.importActual('node:child_process');
@@ -1987,6 +1988,10 @@ describe('processTerminalRunEvents', () => {
       encoding: 'utf8',
     }));
     expect(spawnSync).toHaveBeenNthCalledWith(2, 'git', ['merge', 'task/run-finalize-success', '--no-ff', '-m', 'task(orch/task-151): merge worktree'], expect.objectContaining({
+      cwd: dir,
+      encoding: 'utf8',
+    }));
+    expect(spawnSync).toHaveBeenNthCalledWith(3, 'git', ['push'], expect.objectContaining({
       cwd: dir,
       encoding: 'utf8',
     }));
@@ -2038,6 +2043,7 @@ describe('processTerminalRunEvents', () => {
     const stop = vi.fn().mockResolvedValue(undefined);
     const cleanupRunWorktree = vi.fn().mockReturnValue(false);
     const spawnSync = vi.fn()
+      .mockReturnValueOnce({ status: 0, stdout: '' })
       .mockReturnValueOnce({ status: 0, stdout: '' })
       .mockReturnValueOnce({ status: 0, stdout: '' });
     vi.doMock('node:child_process', async () => {

@@ -500,6 +500,18 @@ function branchContainsMain(branch: string) {
   throw new Error(`git merge-base failed for ${branch}: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
 }
 
+function pushMain() {
+  const result = spawnSync('git', ['push'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    timeout: GIT_OP_TIMEOUT_MS,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`git push failed: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
+  }
+}
+
 function mergeTaskBranch(branch: string, taskRef: string) {
   const result = spawnSync('git', ['merge', branch, '--no-ff', '-m', `task(${taskRef}): merge worktree`], {
     cwd: REPO_ROOT,
@@ -612,6 +624,12 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     mergeTaskBranch(runWorktree.branch, claim.task_ref);
   } catch (error) {
     return requestFinalizeRebase(claim, workerPoolConfig, (error as Error).message);
+  }
+
+  try {
+    pushMain();
+  } catch (error) {
+    log(`warning: git push failed after merging ${claim.task_ref}: ${(error as Error).message}`);
   }
 
   finishRun(STATE_DIR, claim.run_id, claim.agent_id, { success: true });
