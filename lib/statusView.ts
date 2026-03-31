@@ -155,7 +155,7 @@ function readRunWorktrees(stateDir: string): RunWorktreeEntry[] {
   }
 }
 
-function buildActiveClaimMetrics(
+export function buildActiveClaimMetrics(
   activeClaims: Claim[],
   runActivity: ReturnType<typeof latestRunActivityDetailMap>,
   runPhase: ReturnType<typeof latestRunPhaseMap>,
@@ -192,7 +192,7 @@ function buildActiveClaimMetrics(
   });
 }
 
-function buildSlotSummary(
+export function buildSlotSummary(
   workerSlots: Agent[],
   scoutAgents: Agent[],
   activeClaimByAgentId: Map<string, ReturnType<typeof buildActiveClaimMetrics>[number]>,
