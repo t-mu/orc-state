@@ -3,6 +3,7 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { getAgent, updateAgentRuntime } from '../lib/agentRegistry.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
+import { cliError } from './shared.ts';
 
 const agentId = flag('agent-id');
 const sessionToken = flag('session-token');
@@ -40,7 +41,5 @@ try {
 
   console.log(`reported_for_duty: ${agentId}`);
 } catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Error: ${message}`);
-  process.exit(1);
+  cliError(error);
 }

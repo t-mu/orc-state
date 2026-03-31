@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/70-extract-cli-shared-utils
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 70 — Extract loadClaim() and CLI Error Handler into cli/shared.ts
