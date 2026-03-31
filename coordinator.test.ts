@@ -6,6 +6,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { queryEvents } from './lib/eventLog.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
+import {
+  seedState,
+  makeAdapterMock,
+  makeRunWorktreeMock,
+  readAgents,
+  readClaims,
+  readBacklog,
+} from './test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -27,22 +35,6 @@ afterEach(() => {
   delete process.env.ORC_WORKER_PROVIDER;
   delete process.env.ORC_WORKER_MODEL;
 });
-
-function seedState(stateDir: string, { agents = [] as unknown[], tasks = [] as unknown[], claims = [] as unknown[] }: { agents?: unknown[]; tasks?: unknown[]; claims?: unknown[] } = {}) {
-  writeFileSync(
-    join(stateDir, 'agents.json'),
-    JSON.stringify({ version: '1', agents }),
-  );
-  writeFileSync(
-    join(stateDir, 'backlog.json'),
-    JSON.stringify({ version: '1', features: tasks.length ? [{ ref: 'proj', title: 'Project', tasks }] : [] }),
-  );
-  writeFileSync(
-    join(stateDir, 'claims.json'),
-    JSON.stringify({ version: '1', claims }),
-  );
-  writeFileSync(join(stateDir, 'events.jsonl'), '');
-}
 
 function readEvents(stateDir: string): Array<Record<string, unknown>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,31 +91,16 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       branch: 'task/run-allocated',
       worktree_path: '/tmp/orc-worktrees/run-allocated',
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: mockSend,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: ensureRunWorktreeMock,
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue({
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
+      getRunWorktree: vi.fn().mockReturnValue({ worktree_path: '/tmp/orc-worktrees/run-allocated' }),
     }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const agents = readAgents(dir);
     expect(agents.map((agent) => agent.agent_id)).toEqual(['master', 'orc-1', 'orc-2']);
     expect(agents.find((agent) => agent.agent_id === 'orc-1')?.provider).toBe('gemini');
     expect(agents.find((agent) => agent.agent_id === 'orc-2')?.provider).toBe('gemini');
@@ -158,27 +135,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const mockStart = vi.fn().mockRejectedValue(new Error('spawn failed'));
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     try {
       const { tick } = await import('./coordinator.ts');
@@ -191,17 +149,14 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       vi.useRealTimers();
     }
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
-    const slot = agents.find((agent) => agent.agent_id === 'orc-1');
+    const slot = readAgents(dir).find((agent) => agent.agent_id === 'orc-1');
     expect(slot?.status).toBe('idle');
     expect(slot?.session_handle).toBeNull();
 
-    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    const claims = readClaims(dir);
     expect(claims[0]?.state).toBe('failed');
 
-    const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> });
-    expect(backlog.features[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
 
     const events = readEvents(dir);
     const launchFailure = events.find((event) => event.event === 'session_start_failed' && event.agent_id === 'orc-1')!;
@@ -235,27 +190,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const mockSend = vi.fn().mockResolvedValue('');
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: mockSend,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     try {
       const { tick } = await import('./coordinator.ts');
@@ -268,21 +204,18 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       vi.useRealTimers();
     }
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
-    const slot = agents.find((agent) => agent.agent_id === 'orc-1');
+    const slot = readAgents(dir).find((agent) => agent.agent_id === 'orc-1');
     expect(slot?.status).toBe('running');
     expect(slot?.session_handle).toBe('pty:orc-1');
 
-    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    const claims = readClaims(dir);
     expect(claims[0]?.state).toBe('claimed');
     expect(claims[0]?.task_envelope_sent_at).toBeNull();
     expect(claims[0]?.session_start_retry_count).toBe(0);
     expect(claims[0]?.session_start_retry_next_at).toBeNull();
     expect(claims[0]?.session_start_last_error).toBeNull();
 
-    const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
-    expect(backlog.features[0].tasks[0].status).toBe('claimed');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('claimed');
 
     expect(readEvents(dir).some((event) => event.event === 'session_start_failed')).toBe(false);
     expect(mockStart).toHaveBeenCalledTimes(3);
@@ -312,25 +245,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const mockSend = vi.fn().mockResolvedValue('');
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: mockSend,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       getRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-allocated',
         branch: 'task/run-allocated',
@@ -342,8 +258,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       const firstCoordinator = await import('./coordinator.ts');
       await firstCoordinator.tick();
 
-      let { readJson } = await import('./lib/stateReader.ts');
-      let { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+      let claims = readClaims(dir);
       expect(claims[0]?.session_start_retry_count).toBe(1);
       expect(claims[0]?.session_start_last_error).toBe('spawn failed once');
 
@@ -352,8 +267,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       const secondCoordinator = await import('./coordinator.ts');
       await secondCoordinator.tick();
 
-      ({ readJson } = await import('./lib/stateReader.ts'));
-      ({ claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }));
+      claims = readClaims(dir);
       expect(claims[0]?.session_start_retry_count).toBe(2);
       expect(claims[0]?.session_start_last_error).toBe('spawn failed twice');
 
@@ -362,8 +276,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       const thirdCoordinator = await import('./coordinator.ts');
       await thirdCoordinator.tick();
 
-      ({ readJson } = await import('./lib/stateReader.ts'));
-      ({ claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }));
+      claims = readClaims(dir);
       expect(claims[0]?.state).toBe('claimed');
       expect(claims[0]?.task_envelope_sent_at).toBeNull();
       expect(claims[0]?.session_start_retry_count).toBe(0);
@@ -390,27 +303,15 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(mockStart).not.toHaveBeenCalled();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents, claims } = {
-      agents: (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents,
-      claims: (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims,
-    };
+    const agents = readAgents(dir);
+    const claims = readClaims(dir);
     expect(agents[0].status).toBe('idle');
     expect(agents[0].session_handle).toBeNull();
     expect(agents[0].last_heartbeat_at).toBeNull();
@@ -432,22 +333,12 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       }],
     });
 
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn() }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'worker-01')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'worker-01')!;
     expect(agent.last_heartbeat_at).toBe(staleTs);
   });
 
@@ -465,24 +356,15 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     // Mock adapter so heartbeatProbe reports the session is dead.
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(false),
-        start: vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null }),
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockResolvedValue(false),
     }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
     // Read agents.json back from disk.
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
-    const agent = agents.find((a) => a.agent_id === 'worker-01')!;
+    const agent = readAgents(dir).find((a) => a.agent_id === 'worker-01')!;
 
     expect(agent).toBeDefined();
     expect(agent.status).toBe('idle');
@@ -504,27 +386,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { tick } = await import('./coordinator.ts');
     await tick();
@@ -533,9 +396,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     // filtered out the agent and dispatch was skipped).
     expect(mockStart).toHaveBeenCalledOnce();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
-    const agent = agents.find((a) => a.agent_id === 'worker-01')!;
+    const agent = readAgents(dir).find((a) => a.agent_id === 'worker-01')!;
 
     expect(agent.status).toBe('running');
     expect(agent.session_handle).toBe('pty:worker-01');
@@ -587,26 +448,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       .mockResolvedValueOnce({ session_handle: 'pty:worker-01', provider_ref: null })
       .mockResolvedValueOnce({ session_handle: 'pty:worker-02', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: mockSend,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn().mockImplementation((_: string, { runId }: { runId: string }) => ({
         run_id: runId,
         branch: `task/${runId}`,
         worktree_path: `/tmp/orc-worktrees/${runId}`,
       })),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
     }));
 
     const { tick } = await import('./coordinator.ts');
@@ -615,13 +463,11 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(mockStart).toHaveBeenCalledTimes(2);
     expect(mockSend).toHaveBeenCalledTimes(0);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    const claims = readClaims(dir);
     expect(claims).toHaveLength(2);
     expect(claims.map((claim) => claim.task_ref)).toEqual(['proj/task-a', 'proj/task-b']);
 
-    const backlog = readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> };
-    expect(backlog.features[0].tasks.map((task) => `${task.ref}:${task.status}`)).toEqual([
+    expect(readBacklog(dir).features[0].tasks.map((task) => `${task.ref}:${task.status}`)).toEqual([
       'proj/task-a:claimed',
       'proj/task-b:claimed',
     ]);
@@ -645,27 +491,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null });
     const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: mockStart,
-        send: vi.fn().mockResolvedValue(''),
-        stop: mockStop,
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, stop: mockStop }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { tick } = await import('./coordinator.ts');
     await tick();
@@ -695,28 +522,12 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null });
     const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        ownsSession: vi.fn().mockReturnValue(false),
-        start: mockStart,
-        send: vi.fn().mockResolvedValue(''),
-        stop: mockStop,
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      ownsSession: vi.fn().mockReturnValue(false),
+      start: mockStart,
+      stop: mockStop,
     }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { tick } = await import('./coordinator.ts');
     await tick();
@@ -724,9 +535,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(mockStop).toHaveBeenCalledWith('pty:worker-01');
     expect(mockStart).toHaveBeenCalledOnce();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
-    const agent = agents.find((entry) => entry.agent_id === 'worker-01')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'worker-01')!;
     expect(agent.session_handle).toBe('pty:worker-01-new');
   });
 
@@ -744,33 +553,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       tasks: [DISPATCHABLE_TASK],
     });
 
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null }),
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { tick, processTerminalRunEvents } = await import('./coordinator.ts');
     await tick();
 
-    let { readJson } = await import('./lib/stateReader.ts');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'worker-01')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'worker-01')!;
     await processTerminalRunEvents([{
       event: 'reported_for_duty',
       ts: new Date().toISOString(),
@@ -781,14 +570,12 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     }]);
     await tick();
 
-    ({ readJson } = await import('./lib/stateReader.ts'));
-    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    const claims = readClaims(dir);
     expect(claims[0]?.state).toBe('claimed');
     expect(claims[0]?.task_envelope_sent_at).toBeTruthy();
     expect(claims[0]?.started_at).toBeNull();
 
-    const backlog = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
-    expect(backlog.features[0].tasks[0].status).toBe('claimed');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('claimed');
 
     const events = readEvents(dir);
     const envelopeSent = events.find((e) => e.event === 'task_envelope_sent');
@@ -839,23 +626,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn(),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send, stop: vi.fn() }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(send).not.toHaveBeenCalled();
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-awaiting-delivery')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-awaiting-delivery')!;
     expect(claim.state).toBe('claimed');
     expect(claim.finished_at).toBeFalsy();
   });
@@ -900,16 +677,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn(),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send, stop: vi.fn() }));
 
     const { tick, processTerminalRunEvents } = await import('./coordinator.ts');
     await tick();
@@ -979,25 +747,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       provider_ref: { pid: 123, provider: 'claude', binary: 'claude' },
     }));
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start,
-        send,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start, send }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-lost-before-duty',
         branch: 'task/run-lost-before-duty',
         worktree_path: '/tmp/orc-worktrees/run-lost-before-duty',
       }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-lost-before-duty',
         branch: 'task/run-lost-before-duty',
@@ -1018,8 +774,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       vi.useRealTimers();
     }
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-lost-before-duty')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-lost-before-duty')!;
     expect(start).toHaveBeenCalled();
     expect(send).not.toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('TASK_START'));
     expect(claim.state).toBe('failed');
@@ -1067,25 +822,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const start = vi.fn().mockRejectedValue(new Error('spawn failed'));
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start,
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-nonmanaged-lost-before-duty',
         branch: 'task/run-nonmanaged-lost-before-duty',
         worktree_path: '/tmp/orc-worktrees/run-nonmanaged-lost-before-duty',
       }),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         run_id: 'run-nonmanaged-lost-before-duty',
         branch: 'task/run-nonmanaged-lost-before-duty',
@@ -1096,8 +839,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-nonmanaged-lost-before-duty')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-nonmanaged-lost-before-duty')!;
     expect(start).toHaveBeenCalled();
     expect(claim.state).toBe('failed');
     expect(claim.failure_reason).toContain('session_start_failed');
@@ -1140,23 +882,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn(),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(send).not.toHaveBeenCalled();
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-recent-delivery')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-recent-delivery')!;
     expect(claim.state).toBe('claimed');
     expect(claim.finished_at).toBeFalsy();
   });
@@ -1198,16 +930,9 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       }],
     });
 
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        detectInputBlock: vi.fn().mockReturnValue('Would you like to apply these changes? [y/n]'),
-        getOutputTail: vi.fn().mockReturnValue('Would you like to apply these changes? [y/n]'),
-      }),
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      detectInputBlock: vi.fn().mockReturnValue('Would you like to apply these changes? [y/n]'),
+      getOutputTail: vi.fn().mockReturnValue('Would you like to apply these changes? [y/n]'),
     }));
 
     vi.useFakeTimers();
@@ -1224,8 +949,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       vi.useRealTimers();
     }
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-awaiting-input-without-renewal')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-awaiting-input-without-renewal')!;
     expect(claim.input_state).toBe('awaiting_input');
     expect(claim.lease_expires_at).toBe(leaseExpiresAt);
     expect(claim.last_heartbeat_at).toBeNull();
@@ -1268,23 +992,13 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn(),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
     expect(send).not.toHaveBeenCalled();
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-awaiting-input')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-awaiting-input')!;
     expect(claim.state).toBe('in_progress');
     expect(claim.input_state).toBe('awaiting_input');
   });
@@ -1309,8 +1023,7 @@ describe('agent ttl dead marking', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const agents = readAgents(dir);
     const worker = agents.find((a) => a.agent_id === 'worker-ttl')!;
     expect(worker.status).toBe('dead');
 
@@ -1352,8 +1065,7 @@ describe('agent ttl dead marking', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { agents } = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> });
+    const agents = readAgents(dir);
     const worker = agents.find((a) => a.agent_id === 'worker-claimed')!;
     expect(worker.status).toBe('idle');
     expect(worker.last_heartbeat_at).toBe(staleTs);
@@ -1398,16 +1110,7 @@ describe('in-progress stale escalation', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const originalArgv = process.argv;
     process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
@@ -1431,8 +1134,7 @@ describe('in-progress stale escalation', () => {
     expect(attentionEvents[0]?.payload).toMatchObject({ reason: 'stale' });
     expect(Number((attentionEvents[0]?.payload as Record<string, unknown>).idle_ms)).toBeGreaterThanOrEqual(1);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-stale-escalate')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-stale-escalate')!;
     expect(claim.escalation_notified_at).toBeTruthy();
   });
 
@@ -1470,16 +1172,7 @@ describe('in-progress stale escalation', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const originalArgv = process.argv;
     process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
@@ -1528,16 +1221,7 @@ describe('in-progress stale escalation', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const originalArgv = process.argv;
     process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
@@ -1546,16 +1230,7 @@ describe('in-progress stale escalation', () => {
     await tick();
     await new Promise((resolve) => setTimeout(resolve, 5));
     vi.resetModules();
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
     const restartedCoordinator = await import('./coordinator.ts');
     await restartedCoordinator.tick();
 
@@ -1608,25 +1283,15 @@ describe('processTerminalRunEvents', () => {
       payload: {},
     })}\n`);
     resetCheckpoint(dir);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn(),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn(),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-expiry-order')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-expiry-order')!;
     expect(claim.state).toBe('in_progress');
     expect(claim.last_heartbeat_at).toBeTruthy();
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-expiry-order')!;
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/task-expiry-order')!;
     expect(task.status).toBe('in_progress');
   });
 
@@ -1667,13 +1332,12 @@ describe('processTerminalRunEvents', () => {
       payload: {},
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-started-001')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-started-001')!;
     expect(claim.state).toBe('in_progress');
     expect(claim.started_at).toBeTruthy();
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('in_progress');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.last_heartbeat_at).toBe(claim.started_at);
   });
 
@@ -1716,11 +1380,10 @@ describe('processTerminalRunEvents', () => {
       payload: {},
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-001')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-heartbeat-001')!;
     expect(claim.last_heartbeat_at).toBeTruthy();
     expect(claim.lease_expires_at).not.toBe('2026-03-11T07:55:00.000Z');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.last_heartbeat_at).toBe(claim.last_heartbeat_at);
   });
 
@@ -1766,14 +1429,13 @@ describe('processTerminalRunEvents', () => {
 
     const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([heartbeatEvent]);
-    const { readJson } = await import('./lib/stateReader.ts');
-    const firstClaim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-replay')!;
+    const firstClaim = readClaims(dir).find((entry) => entry.run_id === 'run-heartbeat-replay')!;
     const firstLease = firstClaim.lease_expires_at;
 
     resetCheckpoint(dir);
     await processTerminalRunEvents([heartbeatEvent]);
 
-    const secondClaim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-replay')!;
+    const secondClaim = readClaims(dir).find((entry) => entry.run_id === 'run-heartbeat-replay')!;
     expect(secondClaim.last_heartbeat_at).toBe(firstClaim.last_heartbeat_at);
     expect(secondClaim.lease_expires_at).toBe(firstLease);
   });
@@ -1820,8 +1482,7 @@ describe('processTerminalRunEvents', () => {
       payload: {},
     } as const]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-heartbeat-future')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-heartbeat-future')!;
     expect(new Date(String(claim.last_heartbeat_at)).getTime()).toBeLessThanOrEqual(Date.now());
     expect(new Date(String(claim.lease_expires_at)).getTime()).toBeLessThanOrEqual(Date.now() + DEFAULT_LEASE_MS + 5_000);
   });
@@ -1867,8 +1528,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'finalize_rebase_in_progress', retry_count: 1 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-started')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-started')!;
     expect(claim.finalization_state).toBe('finalize_rebase_in_progress');
     expect(claim.finalization_retry_count).toBe(1);
     // Lease should be extended to FINALIZE_LEASE_MS (60 min) from now, not DEFAULT_LEASE_MS (30 min).
@@ -1905,8 +1565,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'awaiting_finalize' },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-wc-lease')!;
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-wc-lease')!;
     // Lease must be extended to at least 55 min from now (FINALIZE_LEASE_MS = 60 min).
     const leaseExpiresAt = new Date(claim.lease_expires_at as string).getTime();
     expect(leaseExpiresAt).toBeGreaterThan(Date.now() + 55 * 60 * 1000);
@@ -1953,20 +1612,10 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        stop,
-        send,
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop, send }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree,
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         branch: 'task/run-finalize-success',
         worktree_path: '/tmp/orc-worktrees/run-finalize-success',
@@ -1999,12 +1648,11 @@ describe('processTerminalRunEvents', () => {
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_SUCCESS'));
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-success');
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-success')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-success')!;
     expect(claim.state).toBe('done');
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('done');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
   });
@@ -2050,20 +1698,10 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        stop,
-        send,
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop, send }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree,
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         branch: 'task/run-finalize-cleanup-pending',
         worktree_path: '/tmp/orc-worktrees/run-finalize-cleanup-pending',
@@ -2080,10 +1718,9 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'awaiting_finalize', retry_count: 0 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-cleanup-pending')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-cleanup-pending')!;
     expect(claim.state).toBe('done');
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('done');
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-cleanup-pending');
   });
@@ -2119,20 +1756,9 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        send,
-        stop: vi.fn().mockResolvedValue(undefined),
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         branch: 'task/run-finalize-retry',
         worktree_path: '/tmp/orc-worktrees/run-finalize-retry',
@@ -2151,8 +1777,7 @@ describe('processTerminalRunEvents', () => {
 
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_WAIT'));
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_REBASE'));
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-retry')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-retry')!;
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(1);
     expect(claim.finalization_blocked_reason).toBeNull();
@@ -2190,20 +1815,9 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        send: deliverySend,
-        stop: vi.fn().mockResolvedValue(undefined),
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: deliverySend }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         branch: 'task/run-finalize-undelivered',
         worktree_path: '/tmp/orc-worktrees/run-finalize-undelivered',
@@ -2220,8 +1834,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'awaiting_finalize', retry_count: 0 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-undelivered')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-undelivered')!;
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(0);
     expect(claim.finalization_blocked_reason).toBeNull();
@@ -2261,20 +1874,9 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        send: deliverySend,
-        stop: vi.fn().mockResolvedValue(undefined),
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: deliverySend }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         branch: 'task/run-finalize-undeliverable-blocked',
         worktree_path: '/tmp/orc-worktrees/run-finalize-undeliverable-blocked',
@@ -2291,8 +1893,7 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'ready_to_merge', retry_count: 0 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-undeliverable-blocked')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-undeliverable-blocked')!;
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_retry_count).toBe(0);
     expect(claim.finalization_blocked_reason).toContain('finalize request could not be delivered twice');
@@ -2331,20 +1932,10 @@ describe('processTerminalRunEvents', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        send,
-        stop,
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send, stop }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
       cleanupRunWorktree,
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         branch: 'task/run-finalize-blocked',
         worktree_path: '/tmp/orc-worktrees/run-finalize-blocked',
@@ -2361,12 +1952,11 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'ready_to_merge', retry_count: 2 },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-blocked')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-blocked')!;
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_retry_count).toBe(2);
     expect(claim.finalization_blocked_reason).toContain('branch is not rebased onto latest main');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
     expect(cleanupRunWorktree).not.toHaveBeenCalled();
@@ -2395,8 +1985,7 @@ describe('processTerminalRunEvents', () => {
       payload: { question: 'Should I answer yes?' },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claims = readClaims(dir);
     const claim = claims.find((c) => c.run_id === 'run-input-001');
     expect(claim?.input_state).toBe('awaiting_input');
   });
@@ -2425,8 +2014,7 @@ describe('processTerminalRunEvents', () => {
       payload: { response: 'yes' },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    const claims = readClaims(dir);
     expect(claims[0]?.input_state).toBeNull();
   });
 
@@ -2610,15 +2198,7 @@ describe('processTerminalRunEvents', () => {
       }],
     });
     const stop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        stop,
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop }));
     const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     await processTerminalRunEvents([{
@@ -2629,12 +2209,11 @@ describe('processTerminalRunEvents', () => {
       ts: '2026-03-08T08:00:00.000Z',
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-test')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-test')!;
     expect(claim.state).toBe('done');
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/test-task')!;
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/test-task')!;
     expect(task.status).toBe('done');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).toHaveBeenCalledWith('pty:orc-1');
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
@@ -2667,15 +2246,7 @@ describe('processTerminalRunEvents', () => {
       }],
     });
     const stop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        stop,
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop }));
     const event = {
       seq: 7,
       event_id: 'evt-run-finished-replay',
@@ -2693,8 +2264,7 @@ describe('processTerminalRunEvents', () => {
     await processTerminalRunEvents([event]);
 
     // Event is deduplicated by event_id — claim should still be in done state (not double-processed).
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claims = readClaims(dir);
     const claim = claims.find((c) => c.run_id === 'run-terminal-replay');
     expect(claim?.state).toBe('done');
   });
@@ -2750,8 +2320,7 @@ describe('processTerminalRunEvents', () => {
       payload: {},
     } as const]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claims = readClaims(dir);
     const claim = claims.find((c) => c.run_id === 'run-terminal-duplicate');
     // Claim should be in a terminal state after the first terminal event.
     expect(['done', 'failed']).toContain(claim?.state);
@@ -2808,8 +2377,7 @@ describe('processTerminalRunEvents', () => {
       payload: { reason: 'late contradictory failure', policy: 'requeue' },
     } as const]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { claims } = readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> };
+    const claims = readClaims(dir);
     const claim = claims.find((c) => c.run_id === 'run-terminal-contradictory');
     // Claim should be in a terminal state after the first terminal event.
     expect(['done', 'failed']).toContain(claim?.state);
@@ -2846,11 +2414,10 @@ describe('processTerminalRunEvents', () => {
       },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-fail-test')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-fail-test')!;
     expect(claim.state).toBe('failed');
     expect(claim.failure_reason).toBe('build error');
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/test-task-fail')!;
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/test-task-fail')!;
     expect(task.status).toBe('todo');
   });
 
@@ -2875,15 +2442,7 @@ describe('processTerminalRunEvents', () => {
       }],
     });
     const stop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        stop,
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop }));
 
     const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
@@ -2894,8 +2453,7 @@ describe('processTerminalRunEvents', () => {
       ts: '2026-03-08T08:00:00.000Z',
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const agent = (readJson(dir, 'agents.json') as { agents: Array<Record<string, unknown>> }).agents.find((entry) => entry.agent_id === 'orc-1')!;
+    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).not.toHaveBeenCalled();
     expect(agent.status).toBe('running');
     expect(agent.session_handle).toBe('pty:orc-1-new');
@@ -2932,10 +2490,9 @@ describe('processTerminalRunEvents', () => {
       },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-fail-exit')!;
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-fail-exit')!;
     expect(claim.state).toBe('failed');
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((entry) => entry.ref === 'orch/test-task-exit')!;
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/test-task-exit')!;
     expect(task.attempt_count).toBe(1);
   });
 
@@ -2972,31 +2529,20 @@ describe('processTerminalRunEvents', () => {
     });
 
     const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send,
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const originalArgv = process.argv;
     process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-nudge-interval-ms=1'];
     const { tick } = await import('./coordinator.ts');
     await tick();
-    let { readJson } = await import('./lib/stateReader.ts');
-    let claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-nudge')!;
+    let claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-nudge')!;
     expect(send).toHaveBeenCalledWith('pty:worker-01', expect.stringContaining('FINALIZE_REBASE'));
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(2);
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     await tick();
-    readJson = (await import('./lib/stateReader.ts')).readJson;
-    claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((entry) => entry.run_id === 'run-finalize-nudge')!;
+    claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-nudge')!;
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_blocked_reason).toContain('finalization retry timed out waiting for worker progress');
     process.argv = originalArgv;
@@ -3025,11 +2571,8 @@ describe('buildTaskEnvelope', () => {
         source_path: 'docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md',
       }),
     }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         worktree_path: '/tmp/orc-worktrees/run-envelope-1',
       }),
@@ -3083,25 +2626,12 @@ describe('doShutdown', () => {
     });
 
     const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn().mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null }),
-        send: vi.fn().mockResolvedValue(''),
-        stop: mockStop,
-        ownsSession: vi.fn().mockReturnValue(true),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-        detectInputBlock: vi.fn().mockReturnValue(null),
-      }),
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      stop: mockStop,
+      ownsSession: vi.fn().mockReturnValue(true),
+      detectInputBlock: vi.fn().mockReturnValue(null),
     }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn(),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({ ensureRunWorktree: vi.fn() }));
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
@@ -3146,25 +2676,12 @@ describe('doShutdown', () => {
     const mockStop = vi.fn()
       .mockRejectedValueOnce(new Error('session already dead'))
       .mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn().mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null }),
-        send: vi.fn().mockResolvedValue(''),
-        stop: mockStop,
-        ownsSession: vi.fn().mockReturnValue(true),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-        detectInputBlock: vi.fn().mockReturnValue(null),
-      }),
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      stop: mockStop,
+      ownsSession: vi.fn().mockReturnValue(true),
+      detectInputBlock: vi.fn().mockReturnValue(null),
     }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn(),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({ ensureRunWorktree: vi.fn() }));
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 
@@ -3301,8 +2818,7 @@ describe('lifecycle reducer integration', () => {
       payload: {},
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const afterStart = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-001')!;
+    const afterStart = readClaims(dir).find((c) => c.run_id === 'run-reducer-001')!;
     expect(afterStart.state).toBe('in_progress');
     expect(afterStart.started_at).toBeTruthy();
 
@@ -3317,7 +2833,7 @@ describe('lifecycle reducer integration', () => {
       payload: {},
     }]);
 
-    const afterHb = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-001')!;
+    const afterHb = readClaims(dir).find((c) => c.run_id === 'run-reducer-001')!;
     expect(afterHb.last_heartbeat_at).toBeTruthy();
     expect(new Date(afterHb.lease_expires_at as string).getTime())
       .toBeGreaterThanOrEqual(new Date(beforeLease).getTime());
@@ -3332,11 +2848,11 @@ describe('lifecycle reducer integration', () => {
       payload: {},
     }]);
 
-    const afterFinish = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-001')!;
+    const afterFinish = readClaims(dir).find((c) => c.run_id === 'run-reducer-001')!;
     expect(afterFinish.state).toBe('done');
     expect(afterFinish.finished_at).toBeTruthy();
 
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'orch/reducer-task')!;
+    const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'orch/reducer-task')!;
     expect(task.status).toBe('done');
   });
 
@@ -3380,20 +2896,9 @@ describe('lifecycle reducer integration', () => {
       const actual = await vi.importActual('node:child_process');
       return { ...actual, spawnSync };
     });
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        stop: vi.fn().mockResolvedValue(undefined),
-        send: vi.fn().mockResolvedValue(''),
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
       getRunWorktree: vi.fn().mockReturnValue({
         branch: 'task/run-reducer-replay',
         worktree_path: '/tmp/orc-worktrees/run-reducer-replay',
@@ -3403,8 +2908,7 @@ describe('lifecycle reducer integration', () => {
     const { processTerminalRunEvents } = await import('./coordinator.ts');
 
     // A replayed run_started on an in_progress claim must not change state
-    const { readJson } = await import('./lib/stateReader.ts');
-    const beforeReplay = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-replay')!;
+    const beforeReplay = readClaims(dir).find((c) => c.run_id === 'run-reducer-replay')!;
     await processTerminalRunEvents([{
       event: 'run_started',
       run_id: 'run-reducer-replay',
@@ -3413,7 +2917,7 @@ describe('lifecycle reducer integration', () => {
       ts: new Date().toISOString(),
       payload: {},
     }]);
-    const afterReplay = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-replay')!;
+    const afterReplay = readClaims(dir).find((c) => c.run_id === 'run-reducer-replay')!;
     expect(afterReplay.state).toBe(beforeReplay.state);
     expect(afterReplay.started_at).toBe(beforeReplay.started_at);
   });
@@ -3458,8 +2962,7 @@ describe('lifecycle reducer integration', () => {
       payload: { phase: 'implementation' },
     }]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-reducer-phase')!;
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-reducer-phase')!;
     // phase_started should have renewed the lease (claim still alive)
     expect(claim.state).toBe('in_progress');
     expect(new Date(claim.lease_expires_at as string).getTime()).toBeGreaterThan(Date.now());
@@ -3517,33 +3020,17 @@ describe('stale lease expiry and recovery via tick', () => {
       }],
     });
 
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn().mockResolvedValue(''),
-        stop: vi.fn().mockResolvedValue(undefined),
-        attach: vi.fn().mockResolvedValue(''),
-        getOutputTail: vi.fn().mockReturnValue(null),
-      }),
-    }));
-    vi.doMock('./lib/runWorktree.ts', () => ({
-      ensureRunWorktree: vi.fn(),
-      cleanupRunWorktree: vi.fn().mockReturnValue(true),
-      deleteRunWorktree: vi.fn().mockReturnValue(true),
-      pruneMissingRunWorktrees: vi.fn().mockReturnValue(0),
-      getRunWorktree: vi.fn().mockReturnValue(null),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({ ensureRunWorktree: vi.fn() }));
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const { claims } = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> });
+    const claims = readClaims(dir);
     const claim = claims.find((c) => c.run_id === 'run-expiry-001')!;
     expect(claim.state).toBe('failed');
 
-    const { features } = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> });
+    const { features } = readBacklog(dir);
     const task = features[0].tasks.find((t) => t.ref === 'proj/expiry-task')!;
     expect(task.status).toBe('todo');
 
@@ -3588,15 +3075,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
     });
 
     const stop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => ({
-      createAdapter: () => ({
-        stop,
-        heartbeatProbe: vi.fn().mockResolvedValue(true),
-        start: vi.fn(),
-        send: vi.fn(),
-        attach: vi.fn(),
-      }),
-    }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop }));
 
     const { processTerminalRunEvents } = await import('./coordinator.ts');
     // Stale run_finished for an old run_id that no longer exists in claims.
@@ -3611,11 +3090,10 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
       payload: {},
     } as const]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'proj/stale-task')!;
+    const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'proj/stale-task')!;
     expect(task.status).toBe('in_progress'); // not corrupted by stale event
 
-    const activeClaim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-newer-active')!;
+    const activeClaim = readClaims(dir).find((c) => c.run_id === 'run-newer-active')!;
     expect(activeClaim.state).toBe('in_progress'); // active claim unaffected
 
     expect(stop).not.toHaveBeenCalled(); // active session not torn down
@@ -3670,8 +3148,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
     const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([startEvent]);
 
-    const { readJson: readJson1 } = await import('./lib/stateReader.ts');
-    const claimAfterFirst = (readJson1(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-dup-start')!;
+    const claimAfterFirst = readClaims(dir).find((c) => c.run_id === 'run-dup-start')!;
     expect(claimAfterFirst.state).toBe('in_progress');
     const startedAt = claimAfterFirst.started_at;
 
@@ -3679,8 +3156,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
     resetCheckpoint(dir);
     await processTerminalRunEvents([startEvent]);
 
-    const { readJson: readJson2 } = await import('./lib/stateReader.ts');
-    const claimAfterSecond = (readJson2(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-dup-start')!;
+    const claimAfterSecond = readClaims(dir).find((c) => c.run_id === 'run-dup-start')!;
     // State and timestamps must be identical — no double-application.
     expect(claimAfterSecond.state).toBe('in_progress');
     expect(claimAfterSecond.started_at).toBe(startedAt);
@@ -3735,8 +3211,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
     let coordinator = await import('./coordinator.ts');
     await coordinator.processTerminalRunEvents([finalizeStartedEvent]);
 
-    const { readJson: readJson1 } = await import('./lib/stateReader.ts');
-    const claimAfterFirst = (readJson1(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-restart-finalize')!;
+    const claimAfterFirst = readClaims(dir).find((c) => c.run_id === 'run-restart-finalize')!;
     expect(claimAfterFirst.finalization_state).toBe('finalize_rebase_in_progress');
     expect(claimAfterFirst.finalization_retry_count).toBe(1);
 
@@ -3745,8 +3220,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
     coordinator = await import('./coordinator.ts');
     await coordinator.processTerminalRunEvents([finalizeStartedEvent]);
 
-    const { readJson: readJson2 } = await import('./lib/stateReader.ts');
-    const claimAfterRestart = (readJson2(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-restart-finalize')!;
+    const claimAfterRestart = readClaims(dir).find((c) => c.run_id === 'run-restart-finalize')!;
     // retry_count must not be incremented a second time.
     expect(claimAfterRestart.finalization_state).toBe('finalize_rebase_in_progress');
     expect(claimAfterRestart.finalization_retry_count).toBe(1);
@@ -3799,13 +3273,12 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
       payload: {},
     } as const]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-expired-hb')!;
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-expired-hb')!;
     // State must remain failed — heartbeat must not re-activate the run.
     expect(claim.state).toBe('failed');
     expect(claim.last_heartbeat_at).toBeNull();
 
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'proj/delayed-hb-task')!;
+    const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'proj/delayed-hb-task')!;
     expect(task.status).toBe('todo'); // task remains in requeued state
   });
 
@@ -3856,11 +3329,10 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
       payload: { policy: 'requeue', reason: 'build error (delivered late)' },
     } as const]);
 
-    const { readJson } = await import('./lib/stateReader.ts');
-    const task = (readJson(dir, 'backlog.json') as { features: Array<{ tasks: Array<Record<string, unknown>> }> }).features[0].tasks.find((t) => t.ref === 'proj/late-fail-task')!;
+    const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'proj/late-fail-task')!;
     // Task must remain in todo (not block or corrupt the already-requeued state).
     expect(task.status).toBe('todo');
-    const claim = (readJson(dir, 'claims.json') as { claims: Array<Record<string, unknown>> }).claims.find((c) => c.run_id === 'run-late-fail')!;
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-late-fail')!;
     expect(claim.state).toBe('failed');
   });
 });
