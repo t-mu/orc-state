@@ -5,13 +5,13 @@
  */
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
-import { flag } from '../lib/args.ts';
+import { boolFlag } from '../lib/args.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import type { Agent } from '../types/agents.ts';
 
-const asJson = process.argv.includes('--json') || (flag('json') ?? '') === 'true';
+const asJson = boolFlag('json');
 
 const stateErrors = validateStateDir(STATE_DIR);
 const agentsRaw = readAgentsFromLib(STATE_DIR).agents ?? [];

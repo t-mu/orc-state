@@ -23,8 +23,9 @@ import { cleanupRunWorktree }       from '../lib/runWorktree.ts';
 import { RUN_WORKTREES_FILE }       from '../lib/paths.ts';
 import { readBacklog, readClaims }  from '../lib/stateReader.ts';
 import { appendSequencedEvent }     from '../lib/eventLog.ts';
+import { boolFlag }                 from '../lib/args.ts';
 
-const keepSessions = process.argv.includes('--keep-sessions');
+const keepSessions = boolFlag('keep-sessions');
 
 // ── Step 1: Kill coordinator ────────────────────────────────────────────────
 

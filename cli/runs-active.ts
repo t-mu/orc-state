@@ -7,12 +7,12 @@ import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readEvents } from '../lib/eventLog.ts';
 import { claimedRunStartupAnchor, latestRunActivityDetailMap } from '../lib/runActivity.ts';
-import { flag } from '../lib/args.ts';
+import { boolFlag } from '../lib/args.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import type { RunActivityDetail } from '../lib/runActivity.ts';
 import type { Claim } from '../types/claims.ts';
 
-const asJson = process.argv.includes('--json') || (flag('json') ?? '') === 'true';
+const asJson = boolFlag('json');
 const now = Date.now();
 
 const claimsState = readClaims(STATE_DIR);

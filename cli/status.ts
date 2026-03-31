@@ -8,18 +8,18 @@
  * --once        Render exactly one frame and exit (useful for testing watch mode).
  * --interval-ms Polling interval in ms (default 5000). Only relevant with --watch.
  */
-import { flag, intFlag } from '../lib/args.ts';
+import { boolFlag, flag, intFlag } from '../lib/args.ts';
 import { buildAgentStatus, buildStatus } from '../lib/statusView.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
 
-const json = process.argv.includes('--json');
-const mine = process.argv.includes('--mine');
+const json = boolFlag('json');
+const mine = boolFlag('mine');
 const agentId = flag('agent-id');
-const watch = process.argv.includes('--watch') || process.argv.includes('-w');
-const once = process.argv.includes('--once');
+const watch = boolFlag('watch') || process.argv.includes('-w');
+const once = boolFlag('once');
 const intervalMs = intFlag('interval-ms', 5000);
 
 if (mine && !agentId) {

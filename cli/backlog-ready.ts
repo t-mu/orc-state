@@ -8,8 +8,9 @@
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
 import { listDispatchReadyTasks } from '../lib/statusView.ts';
+import { boolFlag } from '../lib/args.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 
 const backlog = readBacklog(STATE_DIR);
 const ready = listDispatchReadyTasks(backlog);

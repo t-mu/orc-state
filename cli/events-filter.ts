@@ -7,11 +7,11 @@
  */
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import { flag, flagAll, intFlag } from '../lib/args.ts';
+import { boolFlag, flag, flagAll, intFlag } from '../lib/args.ts';
 import { readEvents } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 const runIdFilter = flag('run-id');
 const agentIdFilter = flag('agent-id');
 const eventTypeRaw = flagAll('event');

@@ -7,8 +7,9 @@
  */
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
+import { boolFlag } from '../lib/args.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 
 const backlog = readBacklog(STATE_DIR);
 const blocked: Array<{ ref: string; title: string; blocked_reason: string | null; feature_ref: string }> = [];

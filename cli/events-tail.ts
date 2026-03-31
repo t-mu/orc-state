@@ -5,10 +5,10 @@
  */
 import { readEvents } from '../lib/eventLog.ts';
 import { EVENTS_FILE } from '../lib/paths.ts';
-import { flag, intFlag } from '../lib/args.ts';
+import { boolFlag, flag, intFlag } from '../lib/args.ts';
 import { isRunEvent, isTaskEvent, isAgentEvent } from '../types/events.ts';
 
-const asJson = process.argv.includes('--json');
+const asJson = boolFlag('json');
 const n = intFlag('n', 40);
 const eventName = flag('event');
 

@@ -6,9 +6,10 @@
 import { getAgent, removeAgent } from '../lib/agentRegistry.ts';
 import { createAdapter } from '../adapters/index.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { boolFlag } from '../lib/args.ts';
 
 const workerId = process.argv[2];
-const keepSession = process.argv.includes('--keep-session');
+const keepSession = boolFlag('keep-session');
 
 if (!workerId) {
   console.error('Usage: orc-worker-remove <worker_id> [--keep-session]');

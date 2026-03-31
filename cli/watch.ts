@@ -6,7 +6,7 @@
  */
 import { render } from 'ink';
 import { createElement } from 'react';
-import { flag, intFlag } from '../lib/args.ts';
+import { boolFlag, intFlag } from '../lib/args.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
@@ -19,7 +19,7 @@ export interface WatchOptions {
   stateDir: string;
 }
 
-const once = process.argv.includes('--once') || (flag('once') ?? '') === 'true';
+const once = boolFlag('once');
 const intervalMs = intFlag('interval-ms', 5000);
 
 export function renderPlainSnapshot({ intervalMs, stateDir }: Pick<WatchOptions, 'intervalMs' | 'stateDir'>): boolean {

@@ -20,6 +20,14 @@ export function intFlag(name: string, defaultVal: number, argv: string[] = proce
 }
 
 /**
+ * Parse a boolean flag --name from argv.
+ * Returns true if --name is present as a bare flag, or if --name=true is set.
+ */
+export function boolFlag(name: string, argv: string[] = process.argv.slice(2)): boolean {
+  return argv.includes(`--${name}`) || flag(name, argv) === 'true';
+}
+
+/**
  * Collect all --name=value occurrences from argv.
  * Returns an array of value strings (empty array if the flag never appears).
  */
