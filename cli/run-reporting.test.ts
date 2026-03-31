@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
@@ -11,11 +11,11 @@ const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-run-reporting-test-'));
+  dir = createTempStateDir('orch-run-reporting-test-');
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 function runCli(script: string, args: string[] = []) {
@@ -632,8 +632,8 @@ describe('orc-run-fail', () => {
     ];
 
     for (const testCase of cases) {
-      rmSync(dir, { recursive: true, force: true });
-      dir = mkdtempSync(join(tmpdir(), 'orch-run-reporting-test-'));
+      cleanupTempStateDir(dir);
+      dir = createTempStateDir('orch-run-reporting-test-');
       testCase.seed();
       mkdirSync(join(dir, '.lock'));
       const result = runCli(testCase.script, testCase.args);

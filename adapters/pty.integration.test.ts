@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { detectPtySupport } from '../test-fixtures/ptySupport.ts';
 
 let stateDir: string;
@@ -23,13 +23,13 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, { timeoutMs 
 }
 
 beforeEach(() => {
-  stateDir = mkdtempSync(join(tmpdir(), 'orc-pty-int-'));
+  stateDir = createTempStateDir('orc-pty-int-');
   process.env.ORCH_STATE_DIR = stateDir;
   originalPath = process.env.PATH;
 });
 
 afterEach(() => {
-  rmSync(stateDir, { recursive: true, force: true });
+  cleanupTempStateDir(stateDir);
   delete process.env.ORCH_STATE_DIR;
   process.env.PATH = originalPath;
 });

@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { detectPtySupport } from '../test-fixtures/ptySupport.ts';
 import type { createPtyAdapter } from '../adapters/pty.ts';
@@ -29,7 +29,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, { timeoutMs 
 
 beforeEach(() => {
   vi.resetModules();
-  stateDir = mkdtempSync(join(tmpdir(), 'orc-control-worker-int-'));
+  stateDir = createTempStateDir('orc-control-worker-int-');
   process.env.ORCH_STATE_DIR = stateDir;
   originalPath = process.env.PATH ?? '';
 });
@@ -44,7 +44,7 @@ afterEach(async () => {
   }
   adapter = undefined as unknown as ReturnType<typeof createPtyAdapter>;
   sessionHandle = undefined as unknown as string;
-  rmSync(stateDir, { recursive: true, force: true });
+  cleanupTempStateDir(stateDir);
   delete process.env.ORCH_STATE_DIR;
   process.env.PATH = originalPath;
 });

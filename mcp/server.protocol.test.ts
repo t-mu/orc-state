@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -119,7 +119,7 @@ async function callTool(name: string, args: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
-  stateDir = mkdtempSync(join(tmpdir(), 'orc-mcp-protocol-test-'));
+  stateDir = createTempStateDir('orc-mcp-protocol-test-');
   seedState(stateDir);
 
   nextId = 1;
@@ -159,7 +159,7 @@ afterEach(async () => {
     });
   });
 
-  rmSync(stateDir, { recursive: true, force: true });
+  cleanupTempStateDir(stateDir);
 });
 
 describe('mcp stdio protocol', () => {

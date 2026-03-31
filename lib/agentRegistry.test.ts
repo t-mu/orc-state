@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   registerAgent,
@@ -307,7 +306,7 @@ describe('readAgentsFile error discrimination', () => {
   });
 
   it('does not log to stderr on ENOENT (missing file)', () => {
-    const freshDir = mkdtempSync(join(tmpdir(), 'orch-registry-enoent-'));
+    const freshDir = createTempStateDir('orch-registry-enoent-');
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const agents = listAgents(freshDir);
@@ -315,7 +314,7 @@ describe('readAgentsFile error discrimination', () => {
       expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
-      rmSync(freshDir, { recursive: true, force: true });
+      cleanupTempStateDir(freshDir);
     }
   });
 });

@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import {
@@ -15,18 +14,19 @@ import {
   rotateEventsLogIfNeeded,
 } from './eventLog.ts';
 import type { OrcEvent } from '../types/index.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 let logPath: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-events-test-'));
+  dir = createTempStateDir('orch-events-test-');
   logPath = join(dir, 'events.jsonl');
 });
 
 afterEach(() => {
   closeAllDatabases();
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 function validEvent(seq: number | undefined, event = 'heartbeat', extra: Record<string, unknown> = {}): OrcEvent {

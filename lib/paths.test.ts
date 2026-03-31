@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 describe('paths', () => {
   beforeEach(() => {
@@ -47,13 +47,13 @@ describe('consumeHookEvents', () => {
 
   beforeEach(() => {
     vi.resetModules();
-    stateDir = mkdtempSync(join(tmpdir(), 'hook-events-test-'));
+    stateDir = createTempStateDir('hook-events-test-');
     vi.stubEnv('ORCH_STATE_DIR', stateDir);
     mkdirSync(join(stateDir, 'pty-hook-events'), { recursive: true });
   });
 
   afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true });
+    cleanupTempStateDir(stateDir);
     vi.unstubAllEnvs();
   });
 

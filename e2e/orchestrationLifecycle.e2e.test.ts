@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
 
@@ -136,7 +136,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    dir = mkdtempSync(join(tmpdir(), 'orch-e2e-'));
+    dir = createTempStateDir('orch-e2e-');
     seedState(dir);
     process.env.ORCH_STATE_DIR = dir;
     process.env.ORC_REPO_ROOT = dir;
@@ -156,7 +156,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    cleanupTempStateDir(dir);
     delete process.env.ORCH_STATE_DIR;
     delete process.env.ORC_REPO_ROOT;
     delete process.env.ORC_MAX_WORKERS;

@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { queryEvents } from './eventLog.ts';
 import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession } from './sessionState.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orc-session-state-test-'));
+  dir = createTempStateDir('orc-session-state-test-');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 describe('resetVolatileRuntimeStateForSession', () => {

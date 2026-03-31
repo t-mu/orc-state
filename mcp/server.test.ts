@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
@@ -10,7 +10,7 @@ import { invokeTool, readResource, validateToolArguments } from './server.ts';
 let stateDir: string;
 
 beforeEach(() => {
-  stateDir = mkdtempSync(resolve(tmpdir(), 'orc-mcp-server-test-'));
+  stateDir = createTempStateDir('orc-mcp-server-test-');
   writeFileSync(joinPath('backlog.json'), JSON.stringify({
     version: '1',
     features: [{ ref: 'project', title: 'Project', tasks: [] }],
@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(stateDir, { recursive: true, force: true });
+  cleanupTempStateDir(stateDir);
 });
 
 function joinPath(file: string) {

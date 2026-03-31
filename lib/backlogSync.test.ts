@@ -1,7 +1,7 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -27,13 +27,13 @@ function readBacklog(baseDir: string): { features: Array<{ ref: string; tasks: A
 
 beforeEach(() => {
   vi.resetModules();
-  dir = mkdtempSync(join(tmpdir(), 'backlog-sync-'));
+  dir = createTempStateDir('backlog-sync-');
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   mkdirSync(join(dir, '.orc-state'), { recursive: true });
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
   delete process.env.ORCH_STATE_DIR;
   delete process.env.ORC_REPO_ROOT;
 });

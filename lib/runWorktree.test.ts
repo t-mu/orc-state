@@ -1,21 +1,21 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
-  dir = mkdtempSync(join(tmpdir(), 'orch-run-worktree-test-'));
+  dir = createTempStateDir('orch-run-worktree-test-');
   process.env.ORCH_STATE_DIR = dir;
   process.env.ORC_WORKTREES_DIR = join(dir, 'repo', '.worktrees');
   process.env.ORC_BACKLOG_DIR = join(dir, 'docs', 'backlog');
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
   delete process.env.ORCH_STATE_DIR;
   delete process.env.ORC_WORKTREES_DIR;
   delete process.env.ORC_BACKLOG_DIR;

@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import type { ColorSupportLevel } from 'chalk';
 import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from './colorStatus.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let root: string;
 let stateDir: string;
 let originalLevel: ColorSupportLevel;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'orc-color-status-'));
+  root = createTempStateDir('orc-color-status-');
   stateDir = join(root, '.orc-state');
   mkdirSync(stateDir);
   writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({
@@ -51,7 +51,7 @@ beforeEach(() => {
 
 afterEach(() => {
   chalk.level = originalLevel;
-  rmSync(root, { recursive: true, force: true });
+  cleanupTempStateDir(root);
 });
 
 describe('colorFormatStatus', () => {
