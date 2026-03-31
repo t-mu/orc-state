@@ -1,24 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { reconcileState } from './reconcile.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState, readStateFile } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-reconcile-test-'));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  dir = createTempStateDir('orch-reconcile-test-');
+  seedState(dir);
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
-
-function readJson(path: string) {
-  return JSON.parse(readFileSync(path, 'utf8'));
-}
 
 function writeState({ tasks, claims }: { tasks: unknown[]; claims: unknown[] }) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
@@ -43,8 +38,8 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readJson(join(dir, 'backlog.json'));
-    const claims = readJson(join(dir, 'claims.json'));
+    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
+    const claims = readStateFile<{ claims: Array<{ state: string }> }>(dir, 'claims.json');
     expect(backlog.features[0].tasks[0].status).toBe('claimed');
     expect(claims.claims[0].state).toBe('claimed');
   });
@@ -63,7 +58,7 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readJson(join(dir, 'backlog.json'));
+    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
     expect(backlog.features[0].tasks[0].status).toBe('in_progress');
   });
 
@@ -81,7 +76,7 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readJson(join(dir, 'backlog.json'));
+    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
     expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
@@ -92,7 +87,7 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readJson(join(dir, 'backlog.json'));
+    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
     expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
@@ -120,9 +115,9 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const claims = readJson(join(dir, 'claims.json')).claims;
-    expect(claims.find((c: Record<string, unknown>) => c.run_id === 'run-old')?.state).toBe('claimed');
-    expect(claims.find((c: Record<string, unknown>) => c.run_id === 'run-new')?.state).toBe('failed');
+    const claims = readStateFile<{ claims: Array<Record<string, unknown>> }>(dir, 'claims.json').claims;
+    expect(claims.find((c) => c['run_id'] === 'run-old')?.['state']).toBe('claimed');
+    expect(claims.find((c) => c['run_id'] === 'run-new')?.['state']).toBe('failed');
   });
 
   it('marks orphan active claim as failed', () => {
@@ -139,8 +134,8 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const claims = readJson(join(dir, 'claims.json')).claims;
-    expect(claims[0].state).toBe('failed');
+    const claims = readStateFile<{ claims: Array<Record<string, unknown>> }>(dir, 'claims.json').claims;
+    expect(claims[0]['state']).toBe('failed');
   });
 
   it('is idempotent', () => {

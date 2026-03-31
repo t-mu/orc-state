@@ -2,7 +2,7 @@
 ref: craftsmanship-foundations/74-create-shared-test-utilities
 feature: craftsmanship-foundations
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 74 — Create Shared Test Utilities in test-fixtures/

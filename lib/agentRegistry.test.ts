@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   registerAgent,
   updateAgentRuntime,
@@ -13,20 +10,17 @@ import {
   nextAvailableScoutId,
   nextAvailableWorkerId,
 } from './agentRegistry.ts';
-
-function seedDir(dir: string) {
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
-}
+import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-registry-test-'));
-  seedDir(dir);
+  dir = createTempStateDir('orch-registry-test-');
+  seedState(dir);
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  cleanupTempStateDir(dir);
 });
 
 // ── registerAgent ──────────────────────────────────────────────────────────
