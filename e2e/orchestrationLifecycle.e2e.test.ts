@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startRun, finishRun } from '../lib/claimManager.ts';
+import { createSessionHandle } from '../adapters/pty.ts';
 
 function readClaims(stateDir: string): { claims: Array<Record<string, unknown>> } {
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8'));
@@ -26,7 +27,7 @@ let dir: string;
 function makeTmuxMockAdapter(agentId = 'worker-01') {
   return {
     start: vi.fn().mockResolvedValue({
-      session_handle: `pty:${agentId}`,
+      session_handle: createSessionHandle(agentId),
       provider_ref: { provider: 'claude' },
     }),
     send: vi.fn().mockImplementation((_handle: string, text: string) => {
@@ -479,7 +480,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     const adapter = {
       start: vi.fn().mockImplementation((agentId: string) => ({
-        session_handle: `pty:${agentId}`,
+        session_handle: createSessionHandle(agentId),
         provider_ref: { provider: 'claude' },
       })),
       send: vi.fn().mockImplementation(async () => {
