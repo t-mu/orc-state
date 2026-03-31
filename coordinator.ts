@@ -921,6 +921,35 @@ async function executeRemediation(
   }
 }
 
+async function handleFinalizationRetry(
+  claim: Claim,
+  idleMs: number,
+  nowMs: number,
+  byAgent: Map<string, Agent>,
+  workerPoolConfig: WorkerPoolConfig,
+): Promise<void> {
+  if (idleMs < RUN_INACTIVE_NUDGE_MS) return;
+  const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
+  if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) return;
+
+  const agent = byAgent.get(claim.agent_id);
+  if (!agent?.session_handle || agent.status === 'offline') {
+    await markFinalizeBlocked(claim, workerPoolConfig, 'live agent session unavailable during finalization retry');
+    runInactiveNudgeAtMs.delete(claim.run_id);
+    return;
+  }
+  const adapter = getAdapter(agent.provider);
+  const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
+  if (blockingQuestion) {
+    recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
+    runInactiveNudgeAtMs.delete(claim.run_id);
+    return;
+  }
+
+  await requestFinalizeRebase(claim, workerPoolConfig, 'finalization retry timed out waiting for worker progress');
+  runInactiveNudgeAtMs.set(claim.run_id, nowMs);
+}
+
 async function enforceInProgressLifecycle(
   agents: Agent[],
   claims: Claim[],
@@ -960,26 +989,7 @@ async function enforceInProgressLifecycle(
       continue;
     }
     if (claim.finalization_state === 'finalize_rebase_requested' || claim.finalization_state === 'finalize_rebase_in_progress') {
-      if (idleMs < RUN_INACTIVE_NUDGE_MS) continue;
-      const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
-      if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) continue;
-
-      const agent = byAgent.get(claim.agent_id);
-      if (!agent?.session_handle || agent.status === 'offline') {
-        await markFinalizeBlocked(claim, workerPoolConfig, 'live agent session unavailable during finalization retry');
-        runInactiveNudgeAtMs.delete(claim.run_id);
-        continue;
-      }
-      const adapter = getAdapter(agent.provider);
-      const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
-      if (blockingQuestion) {
-        recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
-        runInactiveNudgeAtMs.delete(claim.run_id);
-        continue;
-      }
-
-      await requestFinalizeRebase(claim, workerPoolConfig, 'finalization retry timed out waiting for worker progress');
-      runInactiveNudgeAtMs.set(claim.run_id, nowMs);
+      await handleFinalizationRetry(claim, idleMs, nowMs, byAgent, workerPoolConfig);
       continue;
     }
 
@@ -1001,16 +1011,12 @@ async function enforceInProgressLifecycle(
     // (e.g. managed slot not currently provisioned) but fall through to the
     // existing time-based escalation which handles agentless claims.
     if (agent) {
-      let sessionAlive = true;
+      let sessionAlive = false;
       let blockingPrompt: string | null = null;
       if (agent.session_handle && agent.status !== 'offline') {
         const adapter = getAdapter(agent.provider);
         sessionAlive = await adapter.heartbeatProbe(agent.session_handle);
-        if (sessionAlive) {
-          blockingPrompt = detectBlockingPromptQuestion(adapter, agent.session_handle);
-        }
-      } else {
-        sessionAlive = false;
+        blockingPrompt = sessionAlive ? detectBlockingPromptQuestion(adapter, agent.session_handle) : null;
       }
 
       const signals: RemediationSignals = {

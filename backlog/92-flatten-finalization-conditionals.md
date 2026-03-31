@@ -2,7 +2,7 @@
 ref: craftsmanship-polish/92-flatten-finalization-conditionals
 feature: craftsmanship-polish
 priority: normal
-status: todo
+status: done
 depends_on:
   - craftsmanship-decomposition/88-extract-tick-dispatch-block
   - craftsmanship-decomposition/89-extract-nudge-pattern
