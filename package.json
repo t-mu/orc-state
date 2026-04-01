@@ -8,17 +8,18 @@
     "orc": "./cli/orc.ts"
   },
   "exports": {
-    ".": "./index.ts",
-    "./adapters": "./adapters/index.ts",
-    "./coordinator": "./coordinator.ts",
-    "./lib/stateValidation": "./lib/stateValidation.ts",
-    "./lib/eventValidation": "./lib/eventValidation.ts",
+    ".": { "types": "./dist/index.d.ts", "default": "./index.ts" },
+    "./adapters": { "types": "./dist/adapters/index.d.ts", "default": "./adapters/index.ts" },
+    "./coordinator": { "types": "./dist/coordinator.d.ts", "default": "./coordinator.ts" },
+    "./lib/stateValidation": { "types": "./dist/lib/stateValidation.d.ts", "default": "./lib/stateValidation.ts" },
+    "./lib/eventValidation": { "types": "./dist/lib/eventValidation.d.ts", "default": "./lib/eventValidation.ts" },
     "./schemas/*": "./schemas/*.json"
   },
   "files": [
     "adapters",
     "cli",
     "coordinator.ts",
+    "dist",
     "index.ts",
     "lib",
     "mcp",
@@ -29,8 +30,9 @@
     "contracts.md",
     "README.md"
   ],
-  "types": "./index.ts",
+  "types": "./dist/index.d.ts",
   "scripts": {
+    "build:types": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --project tsconfig.check.json --noEmit",
     "typecheck:test": "tsc --project tsconfig.test.json --noEmit",
     "lint": "eslint .",

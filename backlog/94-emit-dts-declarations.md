@@ -2,7 +2,7 @@
 ref: publish/94-emit-dts-declarations
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 94 — Emit .d.ts Declaration Files for Package Consumers
