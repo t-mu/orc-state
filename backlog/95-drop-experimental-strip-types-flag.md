@@ -2,7 +2,7 @@
 ref: publish/95-drop-experimental-strip-types-flag
 feature: publish
 priority: normal
-status: todo
+status: done
 depends_on:
   - publish/94-emit-dts-declarations
 ---
