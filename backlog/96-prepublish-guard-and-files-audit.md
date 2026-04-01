@@ -2,7 +2,7 @@
 ref: publish/96-prepublish-guard-and-files-audit
 feature: publish
 priority: normal
-status: todo
+status: done
 depends_on:
   - publish/94-emit-dts-declarations
 ---

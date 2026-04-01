@@ -27,7 +27,6 @@
     "types",
     "skills",
     "templates",
-    "contracts.md",
     "README.md"
   ],
   "types": "./dist/index.d.ts",
@@ -42,6 +41,7 @@
     "link-local-all": "bash scripts/link-local-skills.sh && bash scripts/link-local-agents.sh",
     "link-local-skills": "bash scripts/link-local-skills.sh",
     "prepare": "simple-git-hooks && chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true",
+    "prepublishOnly": "npm run build:types && npm test",
     "pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
