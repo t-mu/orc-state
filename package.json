@@ -1,36 +1,43 @@
 {
-  "name": "@t-mu/orc-state",
+  "name": "orc-state",
   "version": "0.1.0",
   "description": "Spawn, claim and fall in line. Agnostic cross-provider compatible agentic framework backed by nothing but files and empty promises.",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "orc": "./cli/orc.ts"
+    "orc": "./dist/cli/orc.js"
   },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./index.ts" },
-    "./adapters": { "types": "./dist/adapters/index.d.ts", "default": "./adapters/index.ts" },
-    "./coordinator": { "types": "./dist/coordinator.d.ts", "default": "./coordinator.ts" },
-    "./lib/stateValidation": { "types": "./dist/lib/stateValidation.d.ts", "default": "./lib/stateValidation.ts" },
-    "./lib/eventValidation": { "types": "./dist/lib/eventValidation.d.ts", "default": "./lib/eventValidation.ts" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
+      "default": "./dist/adapters/index.js"
+    },
+    "./coordinator": {
+      "types": "./dist/coordinator.d.ts",
+      "default": "./dist/coordinator.js"
+    },
+    "./lib/stateValidation": {
+      "types": "./dist/lib/stateValidation.d.ts",
+      "default": "./dist/lib/stateValidation.js"
+    },
+    "./lib/eventValidation": {
+      "types": "./dist/lib/eventValidation.d.ts",
+      "default": "./dist/lib/eventValidation.js"
+    },
     "./schemas/*": "./schemas/*.json"
   },
   "files": [
-    "adapters",
-    "cli",
-    "coordinator.ts",
     "dist",
-    "index.ts",
-    "lib",
-    "mcp",
-    "schemas",
-    "types",
     "skills",
-    "templates",
     "README.md"
   ],
   "types": "./dist/index.d.ts",
   "scripts": {
+    "build": "node scripts/build.ts",
     "build:types": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --project tsconfig.check.json --noEmit",
     "typecheck:test": "tsc --project tsconfig.test.json --noEmit",
@@ -41,7 +48,7 @@
     "link-local-all": "bash scripts/link-local-skills.sh && bash scripts/link-local-agents.sh",
     "link-local-skills": "bash scripts/link-local-skills.sh",
     "prepare": "simple-git-hooks && chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true",
-    "prepublishOnly": "npm run build:types && npm test",
+    "prepublishOnly": "npm run build && npm test",
     "pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
@@ -76,6 +83,7 @@
     "@types/figlet": "1.7.0",
     "@types/node": "25.5.0",
     "@types/react": "18.3.21",
+    "esbuild": "0.25.4",
     "eslint": "10.0.3",
     "ink-testing-library": "4.0.0",
     "lint-staged": "16.3.3",

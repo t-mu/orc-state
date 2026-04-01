@@ -1,5 +1,5 @@
 /**
- * @t-mu/orc-state — public API
+ * orc-state — public API
  *
  * Stable exports (semver-guarded):
  *   createAdapter, assertAdapterContract  — provider adapter factory + contract check

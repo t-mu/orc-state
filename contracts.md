@@ -1,6 +1,6 @@
 # Orchestrator Contracts
 
-This document defines the runtime and integration contracts for `@t-mu/orc-state`.
+This document defines the runtime and integration contracts for `orc-state`.
 
 ## Core State Files
 

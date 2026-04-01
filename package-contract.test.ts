@@ -49,6 +49,6 @@ describe('package.json contract', () => {
   it('exports package root from index.ts', () => {
     const rootExport = packageJson.exports?.['.'];
     const defaultPath = typeof rootExport === 'string' ? rootExport : rootExport?.default;
-    expect(defaultPath).toBe('./index.ts');
+    expect(defaultPath).toBe('./dist/index.js');
   });
 });
