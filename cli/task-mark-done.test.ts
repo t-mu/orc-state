@@ -205,7 +205,7 @@ describe('cli/task-mark-done.ts', () => {
 });
 
 function runCli(args: string[], { cwd = dir }: { cwd?: string } = {}) {
-  return spawnSync('node', ['--experimental-strip-types', join(repoRoot, 'cli/task-mark-done.ts'), ...args], {
+  return spawnSync('node', [join(repoRoot, 'cli/task-mark-done.ts'), ...args], {
     cwd,
     env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
     encoding: 'utf8',

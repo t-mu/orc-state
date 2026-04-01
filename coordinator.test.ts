@@ -1267,7 +1267,7 @@ describe('processTerminalRunEvents', () => {
         state: 'in_progress',
         claimed_at: new Date().toISOString(),
         started_at: new Date().toISOString(),
-        lease_expires_at: '2026-03-11T07:00:00.000Z',
+        lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
         last_heartbeat_at: null,
       }],
     });
@@ -1366,24 +1366,25 @@ describe('processTerminalRunEvents', () => {
         state: 'in_progress',
         claimed_at: new Date().toISOString(),
         started_at: new Date().toISOString(),
-        lease_expires_at: '2026-03-11T07:55:00.000Z',
+        lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
         last_heartbeat_at: null,
       }],
     });
 
     const { processTerminalRunEvents } = await import('./coordinator.ts');
+    const heartbeatTs = new Date().toISOString();
     await processTerminalRunEvents([{
       event: 'heartbeat',
       run_id: 'run-heartbeat-001',
       task_ref: 'orch/task-151',
       agent_id: 'orc-1',
-      ts: '2026-03-11T08:00:00.000Z',
+      ts: heartbeatTs,
       payload: {},
     }]);
 
     const claim = readClaims(dir).find((entry) => entry.run_id === 'run-heartbeat-001')!;
     expect(claim.last_heartbeat_at).toBeTruthy();
-    expect(claim.lease_expires_at).not.toBe('2026-03-11T07:55:00.000Z');
+    expect(new Date(claim.lease_expires_at as string).getTime()).toBeGreaterThan(new Date(heartbeatTs).getTime());
     const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.last_heartbeat_at).toBe(claim.last_heartbeat_at);
   });
@@ -2948,7 +2949,7 @@ describe('lifecycle reducer integration', () => {
         state: 'in_progress',
         claimed_at: new Date().toISOString(),
         started_at: new Date().toISOString(),
-        lease_expires_at: '2026-03-11T07:00:00.000Z',  // expired
+        lease_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
         last_heartbeat_at: null,
       }],
     });

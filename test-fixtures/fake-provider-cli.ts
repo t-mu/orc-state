@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 import readline from 'node:readline';
 
 const provider = process.argv[2] ?? 'unknown';

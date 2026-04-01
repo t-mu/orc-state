@@ -50,7 +50,7 @@ function waitForExit(child: ReturnType<typeof spawn>, timeoutMs = 2000) {
 
 describe('test-fixtures/fake-provider-cli.ts', () => {
   it('handles PING then EXIT with exact markers', async () => {
-    const child = spawn(process.execPath, ['--experimental-strip-types', fixturePath, 'claude'], {
+    const child = spawn(process.execPath, [fixturePath, 'claude'], {
       cwd: repoRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -66,7 +66,7 @@ describe('test-fixtures/fake-provider-cli.ts', () => {
   });
 
   it('exits 42 when FAKE_PROVIDER_CRASH_ON_START=1', async () => {
-    const child = spawn(process.execPath, ['--experimental-strip-types', fixturePath, 'codex'], {
+    const child = spawn(process.execPath, [fixturePath, 'codex'], {
       cwd: repoRoot,
       env: { ...process.env, FAKE_PROVIDER_CRASH_ON_START: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],

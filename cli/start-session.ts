@@ -112,7 +112,7 @@ function coordinatorStatus() {
 }
 
 async function spawnCoordinator() {
-  const child = spawn(process.execPath, ['--experimental-strip-types', COORDINATOR_SCRIPT_PATH], {
+  const child = spawn(process.execPath, [COORDINATOR_SCRIPT_PATH], {
     env:      { ...process.env, ORCH_STATE_DIR: STATE_DIR },
     detached: true,
     stdio:    'ignore',
@@ -168,7 +168,7 @@ function writeMcpConfig() {
     mcpServers: {
       orchestrator: {
         command: process.execPath,
-        args: ['--experimental-strip-types', serverPath],
+        args: [serverPath],
         env: { ORCH_STATE_DIR: STATE_DIR },
       },
     },

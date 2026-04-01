@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function runCli(args: string[] = []) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/review-read.ts', ...args], {
+  return spawnSync('node', ['cli/review-read.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

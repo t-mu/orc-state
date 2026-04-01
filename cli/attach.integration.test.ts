@@ -90,7 +90,7 @@ describe.runIf(PTY_SUPPORTED)('cli/attach.ts integration', () => {
   it('prints live PTY log marker and log path', async () => {
     await seedLiveAgentSession('worker-01');
 
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/attach.ts', 'worker-01'], {
+    const result = spawnSync(process.execPath, ['cli/attach.ts', 'worker-01'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
@@ -111,7 +111,7 @@ describe.runIf(PTY_SUPPORTED)('cli/attach.ts integration', () => {
       message: 'session did not terminate after EXIT',
     });
 
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/attach.ts', 'worker-02'], {
+    const result = spawnSync(process.execPath, ['cli/attach.ts', 'worker-02'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',

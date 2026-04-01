@@ -25,7 +25,7 @@ function probePtySupport(env = process.env) {
     "process.exit(ok ? 0 : 1)",
   ].join(';');
 
-  const result = spawnSync(process.execPath, ['--experimental-strip-types', '-e', script], {
+  const result = spawnSync(process.execPath, ['-e', script], {
     stdio: 'ignore',
     env: {
       ...env,

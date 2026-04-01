@@ -20,7 +20,7 @@ afterEach(() => {
 
 describe('cli/attach.ts', () => {
   it('fails when agent is missing', () => {
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/attach.ts', 'missing'], {
+    const result = spawnSync('node', ['cli/attach.ts', 'missing'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -35,7 +35,7 @@ describe('cli/attach.ts', () => {
       agents: [{ agent_id: 'bob', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' }],
     }));
 
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/attach.ts', 'bob'], {
+    const result = spawnSync('node', ['cli/attach.ts', 'bob'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',

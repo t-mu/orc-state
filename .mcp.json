@@ -2,7 +2,7 @@
   "mcpServers": {
     "orchestrator": {
       "command": "node",
-      "args": ["--experimental-strip-types", "mcp/server.ts"],
+      "args": ["mcp/server.ts"],
       "env": {
         "ORCH_STATE_DIR": ".orc-state"
       }

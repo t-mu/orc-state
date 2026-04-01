@@ -29,7 +29,7 @@ function readAgents() {
 }
 
 function runCli(args: string[]) {
-  return spawnSync(process.execPath, ['--experimental-strip-types', 'cli/deregister.ts', ...args], {
+  return spawnSync(process.execPath, ['cli/deregister.ts', ...args], {
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
   });

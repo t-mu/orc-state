@@ -91,7 +91,7 @@ describe.runIf(PTY_SUPPORTED)('cli/control-worker.ts integration', () => {
   it('attaches to live worker PTY and prints log marker', async () => {
     await seedLiveWorkerSession('orc-1');
 
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/control-worker.ts', 'orc-1'], {
+    const result = spawnSync(process.execPath, ['cli/control-worker.ts', 'orc-1'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
@@ -112,7 +112,7 @@ describe.runIf(PTY_SUPPORTED)('cli/control-worker.ts integration', () => {
       message: 'session did not terminate after EXIT',
     });
 
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', 'cli/control-worker.ts', 'orc-2'], {
+    const result = spawnSync(process.execPath, ['cli/control-worker.ts', 'orc-2'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',

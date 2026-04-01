@@ -51,7 +51,7 @@ function setEnv(stateDir: string) {
 }
 
 function spawnKillAll(stateDir: string, extraArgs: string[] = []) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/kill-all.ts', ...extraArgs], {
+  return spawnSync('node', ['cli/kill-all.ts', ...extraArgs], {
     cwd:      repoRoot,
     env:      { ...process.env, ORCH_STATE_DIR: stateDir },
     encoding: 'utf8',

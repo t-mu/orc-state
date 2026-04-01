@@ -81,7 +81,7 @@ describe('cli/preflight.ts', () => {
 });
 
 function runPreflight(args: string[], env = process.env) {
-  return spawnSync(process.execPath, ['--experimental-strip-types', 'cli/preflight.ts', ...args], {
+  return spawnSync(process.execPath, ['cli/preflight.ts', ...args], {
     cwd: repoRoot,
     env: { ...env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

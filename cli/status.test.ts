@@ -236,7 +236,7 @@ describe('cli/status.ts', () => {
 });
 
 function runStatus(args: string[]) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/status.ts', ...args], {
+  return spawnSync('node', ['cli/status.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

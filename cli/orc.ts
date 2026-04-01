@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 /**
  * cli/orc.ts
  * Dispatcher: orc <subcommand> [args...]
@@ -113,7 +113,7 @@ export function buildNodeArgs(subcommand: string, scriptPath: string, rest: stri
   if (subcommand === 'watch') {
     return ['--import', 'tsx/esm', scriptPath, ...rest];
   }
-  return ['--experimental-strip-types', scriptPath, ...rest];
+  return [scriptPath, ...rest];
 }
 
 export function main(argv: string[]): number {

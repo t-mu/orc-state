@@ -20,7 +20,7 @@ afterEach(() => {
 
 describe('cli/control-worker.ts', () => {
   it('fails when worker is missing', () => {
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/control-worker.ts', 'missing'], {
+    const result = spawnSync('node', ['cli/control-worker.ts', 'missing'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -36,7 +36,7 @@ describe('cli/control-worker.ts', () => {
       agents: [{ agent_id: 'master', provider: 'claude', role: 'master', status: 'running', session_handle: 'pty:master', registered_at: '2026-01-01T00:00:00Z' }],
     }));
 
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/control-worker.ts', 'master'], {
+    const result = spawnSync('node', ['cli/control-worker.ts', 'master'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',

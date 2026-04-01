@@ -128,7 +128,7 @@ describe('cli/register-worker.ts', () => {
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/register-worker.ts', ...args], {
+  return spawnSync('node', ['cli/register-worker.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

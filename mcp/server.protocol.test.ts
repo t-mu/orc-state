@@ -128,7 +128,7 @@ beforeEach(async () => {
   parseFailure = null;
 
   const serverPath = resolve(import.meta.dirname, 'server.ts');
-  child = spawn(process.execPath, ['--experimental-strip-types', serverPath], {
+  child = spawn(process.execPath, [serverPath], {
     env: { ...process.env, ORCH_STATE_DIR: stateDir },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

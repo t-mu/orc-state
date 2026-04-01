@@ -101,7 +101,7 @@ describe('cli/runs-active.ts', () => {
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/runs-active.ts', ...args], {
+  return spawnSync('node', ['cli/runs-active.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

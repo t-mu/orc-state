@@ -166,7 +166,7 @@ describe('cli/start-session.ts', () => {
     it('creates all four state files when the state dir is absent', () => {
       const freshDir = join(dir, 'fresh-state');
       // freshDir does not exist yet
-      spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts'], {
+      spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
         env:      { ...process.env, ORCH_STATE_DIR: freshDir },
         encoding: 'utf8',
@@ -183,7 +183,7 @@ describe('cli/start-session.ts', () => {
       const sentinel = { version: '1', features: [{ ref: 'sentinel', title: 'Sentinel', tasks: [] }] };
       writeFileSync(join(dir, 'backlog.json'), JSON.stringify(sentinel));
 
-      spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts'], {
+      spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
         env:      { ...process.env, ORCH_STATE_DIR: dir },
         encoding: 'utf8',
@@ -223,7 +223,7 @@ describe('cli/start-session.ts', () => {
   describe('non-interactive error handling', () => {
     it('exits 1 with an error when no master exists and no --provider flag', () => {
       seedState(); // no agents
-      const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts'], {
+      const result = spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
         env:      { ...process.env, ORCH_STATE_DIR: dir },
         encoding: 'utf8',
@@ -234,7 +234,7 @@ describe('cli/start-session.ts', () => {
 
     it('rejects deprecated worker startup flags with migration guidance', () => {
       seedState([masterAgent()]);
-      const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-session.ts', '--worker-id=orc-9', '--worker-provider=codex'], {
+      const result = spawnSync('node', ['cli/start-session.ts', '--worker-id=orc-9', '--worker-provider=codex'], {
         cwd: repoRoot,
         env: { ...process.env, ORCH_STATE_DIR: dir },
         encoding: 'utf8',
@@ -486,7 +486,7 @@ describe('cli/start-session.ts', () => {
       const coordinatorCall = spawnMock.mock.calls.find((c: unknown[]) => (c[1] as string[] ?? []).some((a: string) => String(a).endsWith('coordinator.ts'))) as [string, string[]] | undefined;
       expect(coordinatorCall).toBeTruthy();
       const [execPath, args] = coordinatorCall!;
-      expect(args[1]).toMatch(/coordinator\.ts$/);
+      expect(args[0]).toMatch(/coordinator\.ts$/);
       expect(execPath).toBe(process.execPath);
     });
 
@@ -974,7 +974,7 @@ describe('cli/start-session.ts', () => {
       const config = JSON.parse(readFileSync(configPath, 'utf8'));
       expect(config.mcpServers?.orchestrator).toBeTruthy();
       expect(config.mcpServers.orchestrator.command).toBe(process.execPath);
-      expect(config.mcpServers.orchestrator.args[1].endsWith(join('mcp', 'server.ts'))).toBe(true);
+      expect(config.mcpServers.orchestrator.args[0].endsWith(join('mcp', 'server.ts'))).toBe(true);
       expect(config.mcpServers.orchestrator.env.ORCH_STATE_DIR).toBe(dir);
     });
 

@@ -30,7 +30,7 @@ function readAgents() {
 describe('cli/start-worker-session.ts', () => {
   it('fails when no agent id is provided and stdin is not a TTY', () => {
     // spawnSync has no TTY → promptAgentId returns null → exit 1 with usage message
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-worker-session.ts'], {
+    const result = spawnSync('node', ['cli/start-worker-session.ts'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -40,7 +40,7 @@ describe('cli/start-worker-session.ts', () => {
   });
 
   it('fails when missing provider for unregistered worker', () => {
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-worker-session.ts', 'worker-01'], {
+    const result = spawnSync('node', ['cli/start-worker-session.ts', 'worker-01'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',
@@ -85,7 +85,7 @@ describe('cli/start-worker-session.ts', () => {
   });
 
   it('rejects agent id master and directs the operator to orc-start-session', () => {
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/start-worker-session.ts', 'master', '--provider=claude'], {
+    const result = spawnSync('node', ['cli/start-worker-session.ts', 'master', '--provider=claude'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
       encoding: 'utf8',

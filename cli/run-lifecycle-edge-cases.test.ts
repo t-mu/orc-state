@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function runCli(script: string, args: string[] = []) {
-  return spawnSync('node', ['--experimental-strip-types', `cli/${script}`, ...args], {
+  return spawnSync('node', [`cli/${script}`, ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',

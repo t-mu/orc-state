@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 function runCli(script: string, args: string[] = []) {
-  return spawnSync('node', ['--experimental-strip-types', `cli/${script}`, ...args], {
+  return spawnSync('node', [`cli/${script}`, ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
@@ -504,7 +504,7 @@ describe('orc-run-work-complete', () => {
     seedInProgressRun({ runId: 'run-work-mark-done', agentId: 'worker-01' });
     writeTaskSpec();
 
-    const markResult = spawnSync('node', ['--experimental-strip-types', join(repoRoot, 'cli/task-mark-done.ts'), 'docs/task-1'], {
+    const markResult = spawnSync('node', [join(repoRoot, 'cli/task-mark-done.ts'), 'docs/task-1'], {
       cwd: dir,
       env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
       encoding: 'utf8',
@@ -647,7 +647,6 @@ describe('orc-run-input-request', () => {
     seedInputRequestState();
 
     const child = spawn('node', [
-      '--experimental-strip-types',
       'cli/run-input-request.ts',
       '--run-id=run-input-001',
       '--agent-id=worker-01',
@@ -729,7 +728,6 @@ describe('orc-run-input-request', () => {
     seedInputRequestState();
 
     const child = spawn('node', [
-      '--experimental-strip-types',
       'cli/run-input-request.ts',
       '--run-id=run-input-001',
       '--agent-id=worker-01',
@@ -771,7 +769,6 @@ describe('orc-run-input-request', () => {
     seedInputRequestState();
 
     const child = spawn('node', [
-      '--experimental-strip-types',
       'cli/run-input-request.ts',
       '--run-id=run-input-001',
       '--agent-id=worker-01',

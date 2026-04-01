@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function run(args: string[] = []) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/init.ts', ...args], {
+  return spawnSync('node', ['cli/init.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state') },
     encoding: 'utf8',

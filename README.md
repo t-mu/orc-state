@@ -8,7 +8,7 @@ One master. Many headless workers. Autonomous coding, coordinated.
 
 ## Requirements
 
-- **Node 24** (`--experimental-strip-types`, zero build step)
+- **Node 24** (native TypeScript stripping, zero build step)
 - **node-pty** needs native build tools — Xcode CLT on macOS, `build-essential` + `python3` on Linux
 
 ---
@@ -91,7 +91,7 @@ Always: write spec → register → `orc backlog-sync-check`.
 ## MCP Server
 
 ```bash
-ORCH_STATE_DIR=/path/to/.orc-state node --experimental-strip-types mcp/server.ts
+ORCH_STATE_DIR=/path/to/.orc-state node mcp/server.ts
 ```
 
 Tools: `list_tasks`, `get_task`, `create_task`, `update_task`, `delegate_task`, `cancel_task`, `reset_task`, `get_run`, `get_status`, `get_recent_events`, `query_events`, `get_agent_workview`, `list_agents`, `list_active_runs`, `list_stalled_runs`, `list_waiting_input`, `list_worktrees`, `respond_input`.
@@ -109,7 +109,7 @@ orchestrator MCP with Codex once:
 
 ```bash
 codex mcp add orchestrator --env ORCH_STATE_DIR=.orc-state -- \
-  node --experimental-strip-types mcp/server.ts
+  node mcp/server.ts
 ```
 
 Run that from the repo root so the relative paths resolve correctly. After that,

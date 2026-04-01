@@ -10,7 +10,7 @@ const repoRoot = resolve(import.meta.dirname, '..');
 
 describe('cli/orc.ts', () => {
   it('groups blessed workflow, recovery/debug, inspection, and specialized commands in help output', () => {
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/orc.ts', '--help'], {
+    const result = spawnSync('node', ['cli/orc.ts', '--help'], {
       cwd: repoRoot,
       encoding: 'utf8',
     });
@@ -31,7 +31,7 @@ describe('cli/orc.ts', () => {
   });
 
   it('dispatches documented inspection commands', () => {
-    const result = spawnSync('node', ['--experimental-strip-types', 'cli/orc.ts', 'events-tail'], {
+    const result = spawnSync('node', ['cli/orc.ts', 'events-tail'], {
       cwd: repoRoot,
       encoding: 'utf8',
     });
@@ -48,9 +48,8 @@ describe('cli/orc.ts', () => {
     ]);
   });
 
-  it('keeps non-watch commands on experimental-strip-types', () => {
+  it('passes script path directly for non-watch commands', () => {
     expect(buildNodeArgs('status', '/tmp/status.ts', ['--json'])).toEqual([
-      '--experimental-strip-types',
       '/tmp/status.ts',
       '--json',
     ]);
@@ -69,7 +68,7 @@ describe('cli/orc.ts', () => {
     const symlinkPath = join(tempDir, 'orc.ts');
     symlinkSync(resolve(repoRoot, 'cli/orc.ts'), symlinkPath);
 
-    const result = spawnSync('node', ['--experimental-strip-types', symlinkPath, '--help'], {
+    const result = spawnSync('node', [symlinkPath, '--help'], {
       cwd: repoRoot,
       encoding: 'utf8',
     });

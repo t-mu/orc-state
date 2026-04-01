@@ -136,7 +136,7 @@ Recovery/debug only:
 ps aux | grep "coordinator.ts" | grep -v grep | awk '{print $2}' | xargs kill
 
 # 2. Start with explicit state dir (avoids cwd ambiguity)
-ORCH_STATE_DIR=/path/to/repo/.orc-state node --experimental-strip-types /path/to/repo/coordinator.ts \
+ORCH_STATE_DIR=/path/to/repo/.orc-state node /path/to/repo/coordinator.ts \
   >> /path/to/repo/.orc-state/coordinator.out.log 2>&1 &
 ```
 

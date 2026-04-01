@@ -167,7 +167,7 @@ describe('cli/delegate-task.ts', () => {
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['--experimental-strip-types', 'cli/delegate-task.ts', ...args], {
+  return spawnSync('node', ['cli/delegate-task.ts', ...args], {
     cwd: repoRoot,
     env: { ...process.env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
