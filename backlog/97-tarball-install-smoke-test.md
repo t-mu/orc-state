@@ -2,7 +2,7 @@
 ref: publish/97-tarball-install-smoke-test
 feature: publish
 priority: normal
-status: todo
+status: done
 depends_on:
   - publish/94-emit-dts-declarations
   - publish/95-drop-experimental-strip-types-flag
