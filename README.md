@@ -28,6 +28,7 @@ See [full documentation](./docs/) for configuration and usage.
 - [CLI reference](./docs/cli.md)
 - [Writing custom adapters](./docs/adapters.md)
 - [Contracts & invariants](./docs/contracts.md)
+- [Troubleshooting](./docs/troubleshooting.md)
 
 ## Disclaimer
 
