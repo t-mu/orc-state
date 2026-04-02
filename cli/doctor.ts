@@ -3,6 +3,7 @@
  * cli/doctor.ts
  * Usage: node cli/doctor.ts [--json]
  */
+import { execSync } from 'node:child_process';
 import { STATE_DIR } from '../lib/paths.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
@@ -20,6 +21,7 @@ const staleStartThresholdMs = intFlag('stale-start-ms', 5 * 60 * 1000);
 const staleProgressThresholdMs = intFlag('stale-progress-ms', 20 * 60 * 1000);
 const nowMs = Date.now();
 
+const gitRepo = isGitRepo();
 const stateErrors = validateStateDir(STATE_DIR);
 const backlogSync = safeRead(
   () => validateBacklogSync(process.env.ORC_BACKLOG_DIR ?? `${process.env.ORC_REPO_ROOT ?? process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
@@ -30,6 +32,7 @@ const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
 const providers = new Set(agents.map((a) => a.provider));
 
 const checks: Record<string, unknown> = {
+  gitRepo,
   providerBinaries: {} as Record<string, unknown>,
   staleLinkedWorkers: [] as unknown[],
   orphanedActiveClaims: [] as unknown[],
@@ -89,6 +92,7 @@ for (const claim of claims) {
 
 const summary = {
   ok:
+    gitRepo &&
     stateErrors.length === 0 &&
     backlogSync.ok &&
     Object.values(checks.providerBinaries as Record<string, unknown>).every((c: unknown) => (c as Record<string, unknown>).ok) &&
@@ -110,6 +114,10 @@ console.log('Orchestrator Doctor');
 console.log('-------------------');
 console.log(`registered_workers: ${summary.registered_workers}`);
 console.log(`active_claims: ${summary.active_claims}`);
+console.log(`git_repo: ${String(gitRepo)}`);
+if (!gitRepo) {
+  console.log('  Not inside a git repository. Worktree-based task isolation requires git. Run `git init` to fix.');
+}
 console.log('');
 
 console.log('provider binaries available');
@@ -178,6 +186,15 @@ if (!summary.ok) {
 
 console.log('');
 console.log('All checks passed.');
+
+function isGitRepo(): boolean {
+  try {
+    execSync('git rev-parse --git-dir', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function checkProviderBinary(provider: string) {
   const binary = (PROVIDER_BINARIES)[provider] ?? provider;

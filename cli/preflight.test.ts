@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, chmodSync } from 'node:fs';
+import { writeFileSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
@@ -77,6 +78,29 @@ describe('cli/preflight.ts', () => {
     expect(result.status).toBe(1);
     const json = JSON.parse(result.stdout);
     expect(json.details.state_errors.length).toBeGreaterThan(0);
+  });
+
+  it('warns when not inside a git repository', () => {
+    seedValidState({
+      agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+    });
+    createFakeBinary('codex');
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'orc-no-git-'));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [join(repoRoot, 'cli/preflight.ts'), '--json'],
+        {
+          cwd: tmpCwd,
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}`, ORCH_STATE_DIR: dir },
+          encoding: 'utf8',
+        },
+      );
+      const json = JSON.parse(result.stdout);
+      expect(json.warnings.some((w: string) => w.toLowerCase().includes('git'))).toBe(true);
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
   });
 });
 

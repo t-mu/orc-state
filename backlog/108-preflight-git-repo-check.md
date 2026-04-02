@@ -2,7 +2,7 @@
 ref: publish/108-preflight-git-repo-check
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 108 — Add Git Repo Validation to `orc preflight`
