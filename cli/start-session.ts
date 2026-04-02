@@ -41,7 +41,7 @@ import {
   promptMasterAction,
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
-import { checkAndInstallBinary, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
+import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
 import {
@@ -254,6 +254,14 @@ const binaryOk = await checkAndInstallBinary(master.provider);
 if (!binaryOk) {
   const binary = (PROVIDER_BINARIES)[master.provider] ?? master.provider;
   console.error(`Cannot start master session: '${binary}' binary not available.`);
+  process.exit(1);
+}
+
+// ── Auth probe ─────────────────────────────────────────────────────────────
+
+const authResult = probeProviderAuth(master.provider);
+if (!authResult.ok) {
+  console.error(authResult.message);
   process.exit(1);
 }
 

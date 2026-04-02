@@ -94,9 +94,14 @@ function setEnv(stateDir: string) {
   process.env.ORCH_STATE_DIR = stateDir;
 }
 
-function mockBinaryCheck(ok = true) {
+function mockBinaryCheck(ok = true, authOk = true) {
   vi.doMock('../lib/binaryCheck.ts', () => ({
     checkAndInstallBinary: vi.fn().mockResolvedValue(ok),
+    probeProviderAuth: vi.fn().mockReturnValue(
+      authOk
+        ? { ok: true }
+        : { ok: false, message: "Provider 'claude' is installed but not authenticated or not working. Run `claude` to verify setup." },
+    ),
     PROVIDER_BINARIES: { claude: 'claude', codex: 'codex', gemini: 'gemini' },
     PROVIDER_PROMPT_PATTERNS: { claude: />\s*$/, codex: />\s*$/, gemini: />\s*$/ },
     PROVIDER_SUBMIT_SEQUENCES: { claude: '\r', codex: '\r', gemini: '\r' },
@@ -1083,6 +1088,43 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
       expect(codexLines.join('\n')).not.toContain('MCP server: orchestrator tools available');
       expect(codexLines.join('\n')).toContain('Master bootstrap loaded via initial prompt.');
+    });
+  });
+
+  describe('provider auth probe', () => {
+    it('exits 1 with actionable error when auth probe fails before spawning PTY session', async () => {
+      seedState([masterAgent({ provider: 'claude' })]);
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true, false); // binary ok, auth fails
+      const exitSpy = mockProcessExit();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('claude'));
+      // PTY session must NOT have been spawned
+      const providerCall = spawnMock.mock.calls.find((c: unknown[]) => String(c[0]).endsWith('claude'));
+      expect(providerCall).toBeUndefined();
+    });
+
+    it('proceeds normally when auth probe succeeds', async () => {
+      seedState([masterAgent({ provider: 'claude' })]);
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true, true); // binary ok, auth ok
+
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      const providerCall = spawnMock.mock.calls.find((c: unknown[]) => String(c[0]).endsWith('claude'));
+      expect(providerCall).toBeTruthy();
     });
   });
 });
