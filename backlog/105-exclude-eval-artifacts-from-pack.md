@@ -2,7 +2,7 @@
 ref: publish/105-exclude-eval-artifacts-from-pack
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 105 — Exclude Evaluation Artifacts from npm Pack
