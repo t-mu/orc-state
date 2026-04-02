@@ -3,6 +3,7 @@
  * cli/preflight.ts
  * Usage: node cli/preflight.ts [--json]
  */
+import { execSync } from 'node:child_process';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { boolFlag } from '../lib/args.ts';
@@ -14,6 +15,7 @@ import type { Agent } from '../types/agents.ts';
 const asJson = boolFlag('json');
 
 const stateErrors = validateStateDir(STATE_DIR);
+const gitRepo = isGitRepo();
 const agentsRaw = readAgentsFromLib(STATE_DIR).agents ?? [];
 const claimsRaw = readClaimsFromLib(STATE_DIR).claims ?? [];
 const agents = agentsRaw;
@@ -43,6 +45,9 @@ const result = {
   warnings: [
     ...(checks.has_registered_workers && !checks.has_online_workers
       ? ['All registered workers are offline. Start or rebind at least one worker session before coordinator run.']
+      : []),
+    ...(!gitRepo
+      ? ['Not inside a git repository — worktree isolation will not work']
       : []),
   ],
   details: {
@@ -105,6 +110,15 @@ if (!ok) {
 console.log('');
 console.log('Preflight passed.');
 
+
+function isGitRepo(): boolean {
+  try {
+    execSync('git rev-parse --git-dir', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function getProviderBinaries(agents: Agent[]) {
   const providers = [...new Set(agents.map((a) => a.provider).filter(Boolean))];

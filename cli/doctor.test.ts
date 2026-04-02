@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
@@ -155,6 +156,27 @@ describe('cli/doctor.ts', () => {
     const json = JSON.parse(result.stdout);
     expect(result.status).toBe(1);
     expect(json.checks.stateErrors.some((error: string) => error.includes('events'))).toBe(true);
+  });
+
+  it('reports problem when not inside a git repository', () => {
+    seedState({ agents: [], claims: [] });
+    const tmpCwd = mkdtempSync(join(tmpdir(), 'orc-no-git-'));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [join(repoRoot, 'cli/doctor.ts'), '--json'],
+        {
+          cwd: tmpCwd,
+          env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+          encoding: 'utf8',
+        },
+      );
+      expect(result.status).toBe(1);
+      const json = JSON.parse(result.stdout);
+      expect(json.checks.gitRepo).toBe(false);
+    } finally {
+      rmSync(tmpCwd, { recursive: true, force: true });
+    }
   });
 });
 
