@@ -8,15 +8,15 @@ Spawn, command, and coordinate.
 - **Parallel autonomous agents** — multiple agents working in isolated worktrees simultaneously.
 - **Terminal-native** — live dashboard, full CLI control, zero context switching.
 
-<!-- TODO: screenshot or GIF of orc watch TUI -->
-
 ## Getting started
 
 Requires Node.js 24+
 
 ```bash
 npm install -g orc-state
-orc start-session --provider=claude  # or codex, gemini
+cd my-project
+orc init                              # first-time setup
+orc start-session --provider=claude   # start orchestrating
 ```
 
 See [full documentation](./docs/) for configuration and usage.

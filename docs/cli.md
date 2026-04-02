@@ -88,5 +88,6 @@ Recovery and debug commands for managing worker agents directly.
 
 | Command | Description |
 |---------|-------------|
+| `install` | Install skills, agents, and MCP config for configured providers. |
 | `install-agents` | Install agent configuration files (e.g., AGENTS.md) into a project. |
 | `install-skills` | Install skill definitions into a project. |

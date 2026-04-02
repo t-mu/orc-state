@@ -2,7 +2,7 @@
 ref: publish/112-fix-readme-and-cli-docs
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 112 — Fix README Entry Points and CLI Docs Gaps
