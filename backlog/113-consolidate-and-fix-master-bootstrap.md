@@ -2,7 +2,7 @@
 ref: publish/113-consolidate-and-fix-master-bootstrap
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 113 — Consolidate Provider Master Bootstraps and Fix Inaccuracies
