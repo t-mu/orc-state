@@ -642,6 +642,54 @@ describe('detectBlockingPromptFromText()', () => {
   it('returns null for quoted dialog text without a real [y/n] indicator', () => {
     expect(detect('The dialog asks: "Do you want to allow this extension to run?"\nInstallation complete.')).toBeNull();
   });
+
+  // -- diff/code context filtering --
+
+  it('returns null when prompt text appears in a diff removed line', () => {
+    expect(detect('- Would you like to apply these changes? [y/n]\nDone.')).toBeNull();
+  });
+
+  it('returns null when prompt text appears in a diff added line', () => {
+    expect(detect('+ Would you like to apply these changes? [y/n]\nDone.')).toBeNull();
+  });
+
+  it('returns null when prompt text appears in a diff hunk header context', () => {
+    expect(detect('@@ -135,7 +135,7 @@ tool asking "Would you like to apply these changes? [y/n]"')).toBeNull();
+  });
+
+  it('returns null when prompt text appears in a numbered diff line', () => {
+    expect(detect('135 -tool asking "Would you like to apply these changes? [y/n]"')).toBeNull();
+  });
+
+  it('still matches a real prompt even when diff lines precede it', () => {
+    const text = '- old prompt line [y/n]\n+ new prompt line [y/n]\nApply patch? [y/n]';
+    expect(detect(text)).toBe('Apply patch? [y/n]');
+  });
+
+  // -- recency window --
+
+  it('returns null when prompt is buried beyond the recency window', () => {
+    const lines = [
+      'Would you like to proceed? [y/n]',
+      'Line 2 after prompt',
+      'Line 3 after prompt',
+      'Line 4 after prompt',
+      'Line 5 after prompt',
+      'Line 6 after prompt',
+      'All done.',
+    ];
+    expect(detect(lines.join('\n'))).toBeNull();
+  });
+
+  it('matches a prompt within the recency window', () => {
+    const lines = [
+      'Some earlier output',
+      'More output',
+      'Continue? [y/n]',
+      'Line after prompt',
+    ];
+    expect(detect(lines.join('\n'))).toBe('Continue? [y/n]');
+  });
 });
 
 // ─── Factory and contract ───────────────────────────────────────────────────

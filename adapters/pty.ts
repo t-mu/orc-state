@@ -152,13 +152,32 @@ function resolveBinary(binary: string, env: Record<string, string>) {
   return binary;
 }
 
+/**
+ * Lines that look like diff output, code, or quoted text — not real interactive
+ * prompts. Matching these avoids false positives when a worker is viewing a
+ * git diff or editing documentation that *mentions* "[y/n]" prompts.
+ */
+const CONTEXT_LINE_PATTERN = /^(?:[+\-](?!\+\+|\-\-)|\s*@@\s|>\s|#\s|\d+\s*[+\-|])/;
+
+/**
+ * Maximum number of trailing non-empty lines to scan for blocking prompts.
+ * A real interactive prompt is always at the terminal cursor — nothing follows
+ * it. Scanning deeper into the log just increases false-positive risk from
+ * diff output, bootstrap text, and documentation that mentions prompts.
+ */
+const PROMPT_SCAN_RECENCY_LINES = 5;
+
 export function detectBlockingPromptFromText(text: string) {
   const lines = String(text)
     .split('\n')
     .map((line) => line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim())
     .filter(Boolean);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
+
+  const scanStart = Math.max(0, lines.length - PROMPT_SCAN_RECENCY_LINES);
+  for (let index = lines.length - 1; index >= scanStart; index -= 1) {
     const line = lines[index];
+    // Skip lines that look like diff output, code, or quoted text.
+    if (CONTEXT_LINE_PATTERN.test(line)) continue;
     if (BLOCKING_PROMPT_PATTERNS.some((pattern) => pattern.test(line))) {
       return line;
     }
