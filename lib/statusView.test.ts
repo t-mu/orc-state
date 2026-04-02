@@ -256,6 +256,58 @@ describe('buildStatus', () => {
     expect(s.claims.stalled).toBe(0);
   });
 
+  it('computes activity_seconds from last non-heartbeat event, excluding heartbeats', () => {
+    const now = new Date();
+    writeState({
+      claims: [{
+        run_id: 'run-act',
+        task_ref: 'a/1',
+        agent_id: 'agent-01',
+        state: 'in_progress',
+        claimed_at: new Date(now.getTime() - 120_000).toISOString(),
+        last_heartbeat_at: new Date(now.getTime() - 10_000).toISOString(),
+        lease_expires_at: new Date(now.getTime() + 60_000).toISOString(),
+      }],
+    });
+    writeEvents([
+      { run_id: 'run-act', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'phase_started', ts: new Date(now.getTime() - 60_000).toISOString() },
+      { run_id: 'run-act', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'heartbeat', ts: new Date(now.getTime() - 10_000).toISOString() },
+    ]);
+    const s = buildStatus(dir) as unknown as StatusResult;
+    const claim = s.claims.active[0];
+    // activity_seconds reflects last non-heartbeat event (~60s ago), not the heartbeat
+    expect((claim.activity_seconds as number)).toBeGreaterThanOrEqual(55);
+    expect((claim.activity_seconds as number)).toBeLessThan(90);
+    // heartbeat_seconds reflects last_heartbeat_at (~10s ago)
+    expect((claim.heartbeat_seconds as number)).toBeGreaterThanOrEqual(5);
+    expect((claim.heartbeat_seconds as number)).toBeLessThan(30);
+  });
+
+  it('returns null activity_seconds when no non-heartbeat event exists', () => {
+    const now = new Date();
+    writeState({
+      claims: [{
+        run_id: 'run-hb-only',
+        task_ref: 'a/1',
+        agent_id: 'agent-01',
+        state: 'in_progress',
+        claimed_at: new Date(now.getTime() - 30_000).toISOString(),
+        last_heartbeat_at: new Date(now.getTime() - 5_000).toISOString(),
+        lease_expires_at: new Date(now.getTime() + 60_000).toISOString(),
+      }],
+    });
+    writeEvents([
+      { run_id: 'run-hb-only', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'heartbeat', ts: new Date(now.getTime() - 5_000).toISOString() },
+    ]);
+    const s = buildStatus(dir) as unknown as StatusResult;
+    const claim = s.claims.active[0];
+    // No non-heartbeat activity → activity_seconds is null
+    expect(claim.activity_seconds).toBeNull();
+    // heartbeat_seconds from last_heartbeat_at
+    expect((claim.heartbeat_seconds as number)).toBeGreaterThanOrEqual(0);
+    expect((claim.heartbeat_seconds as number)).toBeLessThan(30);
+  });
+
   it('includes current_phase from phase_started events', () => {
     const now = new Date();
     writeState({
