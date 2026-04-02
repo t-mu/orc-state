@@ -19,6 +19,7 @@ import { readdirSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { isMainModule } from './orc.ts';
 
 const SKILLS_ROOT = resolve(fileURLToPath(import.meta.url), '../../skills');
 
@@ -60,45 +61,56 @@ function copyDir(src: string, dest: string, dryRun: boolean): Array<{ src: strin
   return copied;
 }
 
-const { isGlobal, isDryRun, providers } = parseArgs();
-const base = isGlobal ? homedir() : resolve('.');
-
-const unknown = providers.filter((p) => !PROVIDER_TARGETS[p]);
-if (unknown.length > 0) {
-  console.error(`Unknown provider(s): ${unknown.join(', ')}. Supported: ${Object.keys(PROVIDER_TARGETS).join(', ')}`);
-  process.exit(1);
+export interface InstallResult {
+  copied: string[];
+  count: number;
 }
 
-if (!existsSync(SKILLS_ROOT)) {
-  console.error(`Skills directory not found: ${SKILLS_ROOT}`);
-  process.exit(1);
-}
-
-if (isDryRun) console.log('Dry run — no files will be written.\n');
-
-const skillEntries = readdirSync(SKILLS_ROOT, { withFileTypes: true });
-const skills = skillEntries.filter((e) => e.isDirectory()).map((e) => e.name);
-
-if (skills.length === 0) {
-  console.log('No skills found in skills/ directory.');
-  process.exit(0);
-}
-
-let totalCopied = 0;
-
-for (const provider of providers) {
-  const destBase = PROVIDER_TARGETS[provider](base);
-  console.log(`${provider} → ${destBase}`);
-
-  for (const skill of skills) {
-    const src    = join(SKILLS_ROOT, skill);
-    const dest   = join(destBase, skill);
-    const copied = copyDir(src, dest, isDryRun);
-    for (const { dest: d } of copied) {
-      console.log(`  ${isDryRun ? '(would copy) ' : ''}${relative(base, d)}`);
-    }
-    totalCopied += copied.length;
+export function installSkills(providers: string[], base: string, dryRun: boolean): InstallResult {
+  const unknown = providers.filter((p) => !PROVIDER_TARGETS[p]);
+  if (unknown.length > 0) {
+    console.error(`Unknown provider(s): ${unknown.join(', ')}. Supported: ${Object.keys(PROVIDER_TARGETS).join(', ')}`);
+    process.exit(1);
   }
+
+  if (!existsSync(SKILLS_ROOT)) {
+    console.error(`Skills directory not found: ${SKILLS_ROOT}`);
+    process.exit(1);
+  }
+
+  if (dryRun) console.log('Dry run — no files will be written.\n');
+
+  const skillEntries = readdirSync(SKILLS_ROOT, { withFileTypes: true });
+  const skills = skillEntries.filter((e) => e.isDirectory()).map((e) => e.name);
+
+  if (skills.length === 0) {
+    console.log('No skills found in skills/ directory.');
+    return { copied: [], count: 0 };
+  }
+
+  const allCopied: string[] = [];
+
+  for (const provider of providers) {
+    const destBase = PROVIDER_TARGETS[provider](base);
+    console.log(`${provider} → ${destBase}`);
+
+    for (const skill of skills) {
+      const src    = join(SKILLS_ROOT, skill);
+      const dest   = join(destBase, skill);
+      const copied = copyDir(src, dest, dryRun);
+      for (const { dest: d } of copied) {
+        console.log(`  ${dryRun ? '(would copy) ' : ''}${relative(base, d)}`);
+        allCopied.push(d);
+      }
+    }
+  }
+
+  console.log(`\n${dryRun ? 'Would install' : 'Installed'} ${allCopied.length} file(s).`);
+  return { copied: allCopied, count: allCopied.length };
 }
 
-console.log(`\n${isDryRun ? 'Would install' : 'Installed'} ${totalCopied} file(s).`);
+if (isMainModule(process.argv[1], import.meta.url)) {
+  const { isGlobal, isDryRun, providers } = parseArgs();
+  const base = isGlobal ? homedir() : resolve('.');
+  installSkills(providers, base, isDryRun);
+}
