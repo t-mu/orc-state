@@ -2,7 +2,7 @@
 ref: publish/98-worker-bootstrap-enhancements
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 98 — Enhance Worker Bootstrap Template for Consumer Readiness
