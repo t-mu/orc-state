@@ -22,6 +22,8 @@ export interface TuiClaim {
   state: string;
   age_seconds: number | null;
   idle_seconds: number | null;
+  activity_seconds: number | null;
+  heartbeat_seconds: number | null;
   current_phase: string | null;
   finalization_state?: string | null;
 }
@@ -93,7 +95,8 @@ export interface WorkerSlotViewModel {
   run_state: string | null;
   current_phase: string | null;
   age_seconds: number | null;
-  idle_seconds: number | null;
+  activity_seconds: number | null;
+  heartbeat_seconds: number | null;
   sprite_state: SpriteState;
 }
 
@@ -172,7 +175,8 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       run_state: runState,
       current_phase: claim?.current_phase ?? null,
       age_seconds: claim?.age_seconds ?? null,
-      idle_seconds: claim?.idle_seconds ?? null,
+      activity_seconds: claim?.activity_seconds ?? null,
+      heartbeat_seconds: claim?.heartbeat_seconds ?? null,
       sprite_state: runStateToSpriteState(runState),
     });
   }
@@ -189,7 +193,8 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       run_state: scout.slot_state,
       current_phase: null,
       age_seconds: null,
-      idle_seconds: null,
+      activity_seconds: null,
+      heartbeat_seconds: null,
       sprite_state: scoutStateToSpriteState(scout.slot_state),
     });
   }

@@ -21,7 +21,7 @@ export function WorkerSlot({ slot, sprites }: { slot: WorkerSlotViewModel; sprit
       <Text>{slot.task_ref ?? slot.slot_state}</Text>
       <Text dimColor>{slot.run_state ? `${slot.run_state}${slot.current_phase ? ` (${slot.current_phase})` : ''}` : ''}</Text>
       <Text dimColor>
-        age: {formatSeconds(slot.age_seconds)} idle: {formatSeconds(slot.idle_seconds)}
+        age: {formatSeconds(slot.age_seconds)} activity: {formatSeconds(slot.activity_seconds)} heartbeat: {formatSeconds(slot.heartbeat_seconds)}
       </Text>
     </Box>
   );
