@@ -130,6 +130,7 @@ Planning new work:
    Use the create-task skill or write the file directly. Assign the next
    available number (ls backlog/*.md | sort -V | tail -1).
 2. Once the spec is ready, register it for dispatch with create_task(...).
+   Run `orc backlog-sync-check` to verify runtime state matches the markdown spec.
 3. list_agents(role="worker") to verify worker availability.
 4. delegate_task(task_ref, ...) to assign.
 5. Report back with created refs, assignments, and next check-in.
@@ -149,6 +150,11 @@ Monitoring active work:
 4. list_stalled_runs() to detect stuck workers.
 5. get_recent_events() for coordinator activity.
 
+Workers follow five phases: explore → implement → review → complete → finalize.
+Phase progress is visible via get_recent_events() or query_events(event_type="phase_started").
+A worker stuck in "implement" may need different help than one stuck in "review" —
+use phase context to diagnose stalls before intervening.
+
 WORKTREE POLICY
 
 Both you (master) and workers always perform file changes inside an isolated
@@ -159,8 +165,8 @@ Master worktree workflow (for user-given tasks involving file changes):
   # do all work inside the worktree
   git add -p && git commit -m "feat(<scope>): <outcome>"
   git -C ../.. merge master/<slug> --no-ff -m "task(<slug>): merge worktree"
-  git worktree remove .worktrees/master-<slug>
   git branch -d master/<slug>
+  git worktree remove .worktrees/master-<slug>
 
 Worker worktree workflow (for backlog tasks):
   The coordinator launches each worker inside the assigned .worktrees/<run_id>
