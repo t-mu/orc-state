@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
@@ -34,6 +35,14 @@ afterEach(() => {
 function run(args: string[] = []) {
   return spawnSync('node', ['cli/init.ts', ...args], {
     cwd: repoRoot,
+    env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state') },
+    encoding: 'utf8',
+  });
+}
+
+function runInCwd(cwd: string, args: string[] = []) {
+  return spawnSync('node', [resolve(repoRoot, 'cli/init.ts'), ...args], {
+    cwd,
     env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state') },
     encoding: 'utf8',
   });
@@ -134,5 +143,42 @@ describe('cli/init.ts', () => {
     const second = run(['--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
     expect(second.status).toBe(0);
     expect(second.stdout).toContain('already exists, skipping');
+  });
+
+  it('exits 1 with clear message when not in a git repository', () => {
+    const nonGitDir = join(tmpdir(), `orc-init-nogit-${Date.now()}`);
+    mkdirSync(nonGitDir, { recursive: true });
+    try {
+      const result = runInCwd(nonGitDir, ['--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('git repository');
+    } finally {
+      rmSync(nonGitDir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns when selected provider binary is not on PATH but still succeeds', () => {
+    const result = run(['--provider=nonexistent-provider-xyzzy', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('nonexistent-provider-xyzzy');
+    expect(result.stderr).toContain('not found on PATH');
+  });
+
+  it('succeeds without binary warning when provider binary is available', () => {
+    // Create a temp dir with a fake 'claude' binary and prepend it to PATH
+    const fakeBinDir = join(tmpdir(), `orc-init-fakebin-${Date.now()}`);
+    mkdirSync(fakeBinDir, { recursive: true });
+    writeFileSync(join(fakeBinDir, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    try {
+      const result = spawnSync('node', ['cli/init.ts', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp'], {
+        cwd: repoRoot,
+        env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state'), PATH: `${fakeBinDir}:${process.env.PATH}` },
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('not found on PATH');
+    } finally {
+      rmSync(fakeBinDir, { recursive: true, force: true });
+    }
   });
 });

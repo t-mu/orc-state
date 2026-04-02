@@ -18,6 +18,7 @@
  *   --skip-mcp               skip MCP config merge
  */
 import { existsSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
 import { boolFlag, flag } from '../lib/args.ts';
@@ -25,12 +26,21 @@ import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { runInstall } from './install.ts';
+import { cliError } from './shared.ts';
+import { isBinaryAvailable, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 
 const force = boolFlag('force');
 const featureRef = flag('feature') ?? 'project';
 const featureTitle = flag('feature-title') ?? 'Project';
 const providerFlag = flag('provider');
 const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.db'];
+
+// Validate git repo before anything else
+try {
+  execSync('git rev-parse --git-dir', { stdio: 'pipe' });
+} catch {
+  cliError('Must run inside a git repository. Run `git init` first.');
+}
 
 ensureGitignore();
 
@@ -111,6 +121,14 @@ if (providerFlag) {
   console.error('Error: --provider is required in non-TTY environments.');
   console.error('Example: orc init --provider=claude');
   process.exit(1);
+}
+
+// Validate provider binaries (warn only — do not block init)
+for (const provider of providers) {
+  const binary = PROVIDER_BINARIES[provider] ?? provider;
+  if (!isBinaryAvailable(binary)) {
+    console.warn(`⚠️  Warning: '${provider}' binary not found on PATH. Install it before running orc start-session.`);
+  }
 }
 
 // Step 3: Write orchestrator.config.json

@@ -2,7 +2,7 @@
 ref: publish/106-init-provider-binary-validation
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 106 — Add Provider Binary Validation to `orc init`
