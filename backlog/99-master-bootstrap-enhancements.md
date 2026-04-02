@@ -2,7 +2,7 @@
 ref: publish/99-master-bootstrap-enhancements
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 99 — Enhance Master Bootstrap Template
