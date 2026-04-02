@@ -33,6 +33,7 @@
   "files": [
     "dist",
     "skills",
+    "agents",
     "README.md"
   ],
   "types": "./dist/index.d.ts",
