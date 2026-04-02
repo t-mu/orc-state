@@ -16,10 +16,12 @@ Depends on Task 101 (exported install functions) and Task 102 (MCP merge utility
 
 **In scope:**
 - Create `cli/install.ts` — unified non-interactive installer
+- Export a `runInstall(options)` function for programmatic use by `cli/init.ts` (Task 104)
 - Install skills, agents, and MCP config in one command
 - Autodetect provider(s) from `orchestrator.config.json` when `--provider` not passed
 - Register `install` in the CLI dispatcher (`cli/orc.ts`)
 - Add to BLESSED commands list
+- Add `agents` to `package.json` `files` array (currently missing — install-agents would fail for published consumers)
 - Idempotent — safe to re-run (overwrites same-name files with new versions)
 - Add tests
 
@@ -59,18 +61,21 @@ Consumers currently need to run `orc install-skills`, `orc install-agents`, and 
 - `cli/install.ts` — new file
 - `cli/orc.ts` — add `install` to COMMANDS and BLESSED
 - `cli/install.test.ts` — new test file
+- `package.json` — add `agents` to `files` array
 
 ---
 
 ## Goals
 
 1. Must install skills, agents, and MCP config with a single `orc install` command.
-2. Must autodetect provider(s) from `orchestrator.config.json` when `--provider` is not passed.
-3. Must support `--skip-skills`, `--skip-agents`, `--skip-mcp` flags.
-4. Must support `--global` and `--dry-run` flags.
-5. Must be idempotent — overwrites existing files with current package versions.
-6. Must error with a helpful message when provider cannot be determined.
-7. Must be registered in the CLI dispatcher as a blessed command.
+2. Must export `runInstall(options)` for programmatic use by `cli/init.ts`.
+3. Must autodetect provider(s) from `orchestrator.config.json` when `--provider` is not passed.
+4. Must support `--skip-skills`, `--skip-agents`, `--skip-mcp` flags.
+5. Must support `--global` and `--dry-run` flags.
+6. Must be idempotent — overwrites existing files with current package versions.
+7. Must error with a helpful message when provider cannot be determined.
+8. Must be registered in the CLI dispatcher as a blessed command.
+9. Must add `agents` to `package.json` `files` array so agent specs ship in the package.
 
 ---
 
@@ -85,15 +90,27 @@ import { installSkills } from './install-skills.ts';
 import { installAgents } from './install-agents.ts';
 import { mergeMcpConfig } from '../lib/mcpConfig.ts';
 
+export interface InstallOptions {
+  providers: string[];
+  base: string;
+  dryRun: boolean;
+  skipSkills: boolean;
+  skipAgents: boolean;
+  skipMcp: boolean;
+}
+
+// Exported for programmatic use by cli/init.ts (Task 104)
+export async function runInstall(options: InstallOptions): Promise<void> {
+  // 1. If not skipSkills: installSkills(providers, base, dryRun)
+  // 2. If not skipAgents: installAgents(providers, base, dryRun)
+  // 3. If not skipMcp: mergeMcpConfig(base, serverPath, stateDir, dryRun)
+  // 4. Print summary
+}
+
+// CLI entry point:
 // 1. Parse flags: --provider, --global, --dry-run, --skip-skills, --skip-agents, --skip-mcp
-// 2. If no --provider, read orchestrator.config.json:
-//    - Collect default_provider, master.provider, worker_pool.provider
-//    - Deduplicate into provider list
-//    - Error if empty
-// 3. If not --skip-skills: installSkills(providers, base, dryRun)
-// 4. If not --skip-agents: installAgents(providers, base, dryRun)
-// 5. If not --skip-mcp: mergeMcpConfig(base, serverPath, stateDir, dryRun)
-// 6. Print summary
+// 2. If no --provider, autodetect from orchestrator.config.json
+// 3. Call runInstall(options)
 ```
 
 ### Step 2 — Provider autodetection
@@ -149,7 +166,9 @@ Add `'install'` to the BLESSED array.
 - [ ] `install` appears in `orc --help` under blessed commands.
 - [ ] All tests pass.
 - [ ] `npm test` passes.
-- [ ] No changes to files outside `cli/install.ts`, `cli/install.test.ts`, and `cli/orc.ts`.
+- [ ] `agents` is in the `package.json` `files` array.
+- [ ] `runInstall` is exported from `cli/install.ts`.
+- [ ] No changes to files outside `cli/install.ts`, `cli/install.test.ts`, `cli/orc.ts`, and `package.json`.
 
 ---
 

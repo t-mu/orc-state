@@ -30,11 +30,11 @@ Independent.
 
 ### Current state
 
-Both files parse flags, validate providers, and copy files in a single inline flow. Neither exports any functions.
+Both files parse flags, validate providers, and copy files in a single inline flow at the module top level. Neither exports any functions, and neither has an `isMainModule` guard — all code runs unconditionally on import.
 
 ### Desired state
 
-Both files export their core logic as functions. The CLI entry point (`if (isMainModule)`) calls the function. `cli/install.ts` (Task 103) can import the same functions.
+Both files export their core logic as functions. Top-level side effects are wrapped behind an `isMainModule` guard (imported from `cli/orc.ts` or duplicated). `cli/install.ts` (Task 103) can import the functions without triggering CLI execution.
 
 ### Start here
 
@@ -51,8 +51,9 @@ Both files export their core logic as functions. The CLI entry point (`if (isMai
 
 1. Must export `installSkills(providers: string[], base: string, dryRun: boolean)` from `cli/install-skills.ts`.
 2. Must export `installAgents(providers: string[], base: string, dryRun: boolean)` from `cli/install-agents.ts`.
-3. Must not change external behavior of `orc install-skills` and `orc install-agents` CLI commands.
-4. Must return a result object with count of files copied and list of paths.
+3. Must wrap top-level side effects behind an `isMainModule` guard so imports don't trigger CLI execution.
+4. Must not change external behavior of `orc install-skills` and `orc install-agents` CLI commands.
+5. Must return a result object with count of files copied and list of paths.
 
 ---
 
@@ -73,9 +74,15 @@ export interface InstallResult {
 export function installSkills(providers: string[], base: string, dryRun: boolean): InstallResult
 ```
 
-The CLI entry point becomes:
+The existing top-level code currently runs unconditionally on import. Wrap it in an
+`isMainModule` guard so the module can be imported without side effects:
+
 ```ts
-if (isMainModule(...)) {
+import { isMainModule } from './orc.ts';
+
+// ... export function installSkills(...) { ... }
+
+if (isMainModule(process.argv[1], import.meta.url)) {
   const providers = parseProviderFlag();
   const base = globalFlag ? homedir() : process.cwd();
   const result = installSkills(providers, base, boolFlag('dry-run'));

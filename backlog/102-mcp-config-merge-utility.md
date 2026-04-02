@@ -87,15 +87,20 @@ Logic:
 3. Set `mcpServers.orchestrator` to:
    ```json
    {
-     "command": "node",
+     "command": "<nodeExecutable>",
      "args": ["<serverPath>"],
      "env": { "ORCH_STATE_DIR": "<stateDir>" }
    }
    ```
+   Use `process.execPath` for the command (not hardcoded `"node"`) to match the
+   existing pattern in `cli/start-session.ts:writeMcpConfig()` and handle nvm/non-standard paths.
 4. If not dry-run, write back with `JSON.stringify(config, null, 2)`
 5. Return result
 
-The `serverPath` should be resolved to the installed package's `dist/mcp/server.js`.
+The `serverPath` should be resolved relative to the package's own location using
+`import.meta.url` (e.g. `fileURLToPath(new URL('../mcp/server.ts', import.meta.url))`).
+This works in both dev (resolves to `.ts`) and published contexts (the compiled `.js`
+in `dist/` uses the same relative path which resolves to `dist/mcp/server.js`).
 
 ### Step 2 — Add tests
 
