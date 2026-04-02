@@ -4,6 +4,20 @@
   "description": "Spawn, claim and fall in line. Agnostic cross-provider compatible agentic framework backed by nothing but files and empty promises.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/t-mu/orc-state.git"
+  },
+  "homepage": "https://github.com/t-mu/orc-state",
+  "bugs": "https://github.com/t-mu/orc-state/issues",
+  "keywords": [
+    "orchestration",
+    "multi-agent",
+    "coding-agent",
+    "autonomous",
+    "provider-agnostic",
+    "cli"
+  ],
   "bin": {
     "orc": "./dist/cli/orc.js"
   },
@@ -28,12 +42,11 @@
       "types": "./dist/lib/eventValidation.d.ts",
       "default": "./dist/lib/eventValidation.js"
     },
-    "./schemas/*": "./schemas/*.json"
+    "./schemas/*": "./dist/schemas/*.json"
   },
   "files": [
     "dist",
-    "skills",
-    "agents",
+    "docs",
     "README.md"
   ],
   "types": "./dist/index.d.ts",

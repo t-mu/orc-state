@@ -2,7 +2,7 @@
 ref: publish/111-fix-package-json-for-publish
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 111 — Fix package.json Exports, Files, and Metadata for Publish
