@@ -64,7 +64,7 @@ When a TASK_START block arrives:
   1. cd into the assigned worktree path from the payload.
   2. Call {{orc_bin}} run-start  (always second, immediately after cd).
   3. Immediately start the background heartbeat loop (keeps the lease alive during long tool calls):
-       while true; do sleep 270; {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
+       while true; do sleep 60; {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
        HEARTBEAT_PID=$!
   4. Signal explore phase and read the task markdown at `task_spec_path` for the actual task details:
        {{orc_bin}} progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id={{agent_id}}

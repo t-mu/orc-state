@@ -235,4 +235,96 @@ describe('App', () => {
     expect(app.lastFrame()).toContain('scout-1');
     expect(mockBuildStatus).toHaveBeenCalledTimes(3);
   });
+
+  it('event feed shows agent_id and task slug instead of run_id', () => {
+    mockBuildStatus.mockReturnValue({
+      worker_capacity: {
+        configured_slots: 1,
+        used_slots: 0,
+        available_slots: 1,
+        warming_slots: 0,
+        unavailable_slots: 0,
+        provider: 'codex',
+        dispatch_ready_count: 0,
+        waiting_for_capacity: 0,
+        slots: [],
+      },
+      tasks: { counts: {}, total: 0 },
+      scout_capacity: { total_slots: 0, investigating_slots: 0, idle_slots: 0, warming_slots: 0, unavailable_slots: 0, slots: [] },
+      claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
+      failures: { startup: [], lifecycle: [] },
+      recentEvents: [
+        { seq: 1, event: 'run_started', run_id: 'run-abc', agent_id: 'orc-1', task_ref: 'publish/111-fix-package-json' },
+        { seq: 2, event: 'session_started', run_id: null, agent_id: null, task_ref: null },
+      ],
+      eventReadError: '',
+    });
+
+    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const frame = app.lastFrame() ?? '';
+
+    expect(frame).toContain('orc-1 run_started 111-fix-package-json');
+    expect(frame).not.toContain('run-abc');
+    expect(frame).toContain('session_started');
+  });
+
+  it('worker slot shows activity and heartbeat separately', () => {
+    mockBuildStatus.mockReturnValue({
+      worker_capacity: {
+        configured_slots: 1,
+        used_slots: 1,
+        available_slots: 0,
+        warming_slots: 0,
+        unavailable_slots: 0,
+        provider: 'codex',
+        dispatch_ready_count: 0,
+        waiting_for_capacity: 0,
+        slots: [
+          {
+            agent_id: 'orc-1',
+            role: 'worker',
+            provider: 'codex',
+            model: null,
+            status: 'running',
+            session_handle: 'pty:1',
+            slot_state: 'busy',
+            active_run_id: 'run-1',
+            active_task_ref: 'feat/task-1',
+            last_status_change_at: null,
+            last_heartbeat_at: null,
+          },
+        ],
+      },
+      tasks: { counts: { in_progress: 1 }, total: 1 },
+      scout_capacity: { total_slots: 0, investigating_slots: 0, idle_slots: 0, warming_slots: 0, unavailable_slots: 0, slots: [] },
+      claims: {
+        active: [
+          {
+            run_id: 'run-1',
+            task_ref: 'feat/task-1',
+            agent_id: 'orc-1',
+            state: 'in_progress',
+            age_seconds: 120,
+            idle_seconds: 12,
+            activity_seconds: 12,
+            heartbeat_seconds: 48,
+          },
+        ],
+        total: 1,
+        awaiting_run_started: 0,
+        in_progress: 1,
+        stalled: 0,
+      },
+      failures: { startup: [], lifecycle: [] },
+      recentEvents: [],
+      eventReadError: '',
+    });
+
+    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const frame = app.lastFrame() ?? '';
+
+    expect(frame).toContain('activity: 12s');
+    expect(frame).toContain('heartbeat: 48s');
+    expect(frame).not.toContain('idle:');
+  });
 });

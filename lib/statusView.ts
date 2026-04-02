@@ -161,6 +161,7 @@ export function buildActiveClaimMetrics(
   runPhase: ReturnType<typeof latestRunPhaseMap>,
   runWorktreeByRunId: Map<string, RunWorktreeEntry>,
   nowMs: number,
+  nonHeartbeatRunActivity?: ReturnType<typeof latestRunActivityDetailMap>,
 ) {
   return activeClaims.map((claim) => {
     const startupAnchor = claimedRunStartupAnchor(claim);
@@ -175,10 +176,20 @@ export function buildActiveClaimMetrics(
       ?? (claim.state === 'claimed' ? startupAnchor : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null))
       ?? null;
     const idleMs = idleAnchor ? nowMs - new Date(idleAnchor).getTime() : NaN;
+
+    const nonHeartbeatActivity = nonHeartbeatRunActivity?.get(claim.run_id) ?? null;
+    const activityAnchor = nonHeartbeatActivity?.ts ?? null;
+    const activityMs = activityAnchor ? nowMs - new Date(activityAnchor).getTime() : NaN;
+
+    const heartbeatAnchor = claim.last_heartbeat_at ?? null;
+    const heartbeatMs = heartbeatAnchor ? nowMs - new Date(heartbeatAnchor).getTime() : NaN;
+
     return {
       ...claim,
       age_seconds: Number.isNaN(ageMs) ? null : Math.max(0, Math.round((nowMs - ageMs) / 1000)),
       idle_seconds: Number.isNaN(idleMs) ? null : Math.max(0, Math.round(idleMs / 1000)),
+      activity_seconds: Number.isNaN(activityMs) ? null : Math.max(0, Math.round(activityMs / 1000)),
+      heartbeat_seconds: Number.isNaN(heartbeatMs) ? null : Math.max(0, Math.round(heartbeatMs / 1000)),
       last_activity_at: activity?.ts ?? null,
       last_activity_event: activity?.event ?? null,
       last_activity_source: activity?.source ?? null,
@@ -268,11 +279,16 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
     : allEvents;
 
   const runActivity = latestRunActivityDetailMap(allEvents as Parameters<typeof latestRunActivityDetailMap>[0]);
+  const nonHeartbeatRunActivity = latestRunActivityDetailMap(
+    allEvents.filter(
+      (ev) => (ev as { event?: string }).event !== 'heartbeat',
+    ) as Parameters<typeof latestRunActivityDetailMap>[0],
+  );
   const runPhase = latestRunPhaseMap(allEvents as Parameters<typeof latestRunPhaseMap>[0]);
   const nowMs = Date.now();
 
   const activeClaimsWithMetrics = buildActiveClaimMetrics(
-    activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs,
+    activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs, nonHeartbeatRunActivity,
   );
 
   const activeClaimByAgentId = new Map(

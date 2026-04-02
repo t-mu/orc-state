@@ -11,11 +11,14 @@ export function EventFeed({ events, eventReadError }: { events: TuiRecentEvent[]
       {events.length === 0 ? (
         <Text dimColor>(none)</Text>
       ) : (
-        events.slice(-10).map((event, index) => (
-          <Text key={`${event.seq ?? index}-${event.event ?? 'unknown'}`} dimColor>
-            {event.event ?? 'unknown'} {event.run_id ?? event.task_ref ?? ''}
-          </Text>
-        ))
+        events.slice(-10).map((event, index) => {
+          const taskSlug = event.task_ref?.split('/').slice(1).join('/') ?? '';
+          return (
+            <Text key={`${event.seq ?? index}-${event.event ?? 'unknown'}`} dimColor>
+              {event.agent_id ? `${event.agent_id} ` : '  '}{event.event ?? 'unknown'}{taskSlug ? ` ${taskSlug}` : ''}
+            </Text>
+          );
+        })
       )}
     </Box>
   );

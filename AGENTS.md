@@ -72,7 +72,7 @@ Check existing patterns in those files before writing any code.
 **Gate:** Run `orc run-start --run-id=<run_id> --agent-id=<agent_id>`.
 Start the background heartbeat immediately after:
 ```bash
-while true; do sleep 270; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
+while true; do sleep 60; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
 HEARTBEAT_PID=$!
 ```
 Do NOT write code until run-start succeeds.
@@ -281,12 +281,12 @@ and requeue the task.
 **Primary mechanism — background heartbeat loop:**
 
 Immediately after `orc run-start`, start a background shell process that fires
-`orc run-heartbeat` every 270 seconds (4.5 min). This keeps the lease alive even while
+`orc run-heartbeat` every 60 seconds (1 min). This keeps the lease alive even while
 the worker is blocked inside a long-running Bash tool call (e.g. `npm test`, `git rebase`).
 
 ```bash
 # Start background heartbeat — immediately after orc run-start
-while true; do sleep 270; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
+while true; do sleep 60; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
 HEARTBEAT_PID=$!
 ```
 
