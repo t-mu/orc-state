@@ -2,7 +2,7 @@
 ref: publish/103-unified-orc-install
 feature: publish
 priority: high
-status: todo
+status: done
 depends_on:
   - publish/101-extract-install-shared-logic
   - publish/102-mcp-config-merge-utility
