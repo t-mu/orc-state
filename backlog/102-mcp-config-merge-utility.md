@@ -2,7 +2,7 @@
 ref: publish/102-mcp-config-merge-utility
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 102 — Create MCP Config Merge Utility
