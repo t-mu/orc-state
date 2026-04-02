@@ -2,7 +2,7 @@
 ref: publish/107-start-session-auth-probe
 feature: publish
 priority: high
-status: todo
+status: done
 depends_on:
   - publish/106-init-provider-binary-validation
 ---

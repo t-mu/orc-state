@@ -4,7 +4,7 @@
  * Utility for checking whether a provider CLI binary is available on $PATH
  * and optionally installing it via npm when it is missing.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { isInteractive } from './prompts.ts';
 
 let promptModulePromise: Promise<typeof import('@inquirer/prompts')> | null = null;
@@ -39,6 +39,31 @@ export const PROVIDER_PACKAGES: Record<string, string> = {
   codex: '@openai/codex',
   gemini: '@google/gemini-cli',
 };
+
+const PROVIDER_AUTH_PROBE_COMMANDS: Record<string, string[]> = {
+  claude: ['claude', '--version'],
+  codex: ['codex', '--version'],
+  gemini: ['gemini', '--version'],
+};
+
+/**
+ * Probe whether a provider CLI is functional (installed + authenticated).
+ * Returns { ok: true } on success, { ok: false, message } on failure.
+ * Unknown providers are skipped (ok: true). Never throws.
+ */
+export function probeProviderAuth(provider: string): { ok: boolean; message?: string } {
+  const cmd = PROVIDER_AUTH_PROBE_COMMANDS[provider];
+  if (!cmd) return { ok: true };
+  try {
+    execSync(cmd.join(' '), { stdio: 'pipe', timeout: 2000 });
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      message: `Provider '${provider}' is installed but not authenticated or not working. Run \`${provider}\` to verify setup.`,
+    };
+  }
+}
 
 /**
  * Returns true if binary is found on $PATH. Never throws.

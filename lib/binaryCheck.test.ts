@@ -30,6 +30,60 @@ describe('isBinaryAvailable', () => {
   });
 });
 
+describe('probeProviderAuth', () => {
+  it('returns ok:true for unknown provider without calling execSync', async () => {
+    const execSync = vi.fn();
+    const execFileSync = vi.fn();
+    vi.doMock('node:child_process', () => ({ execFileSync, execSync }));
+    vi.doMock('./prompts.ts', () => ({ isInteractive: vi.fn() }));
+    vi.doMock('@inquirer/prompts', () => ({ confirm: vi.fn() }));
+
+    const { probeProviderAuth } = await import('./binaryCheck.ts');
+    expect(probeProviderAuth('unknown-provider')).toEqual({ ok: true });
+    expect(execSync).not.toHaveBeenCalled();
+  });
+
+  it('returns ok:true when execSync succeeds for a known provider', async () => {
+    const execSync = vi.fn().mockReturnValue(Buffer.from('1.0.0'));
+    const execFileSync = vi.fn();
+    vi.doMock('node:child_process', () => ({ execFileSync, execSync }));
+    vi.doMock('./prompts.ts', () => ({ isInteractive: vi.fn() }));
+    vi.doMock('@inquirer/prompts', () => ({ confirm: vi.fn() }));
+
+    const { probeProviderAuth } = await import('./binaryCheck.ts');
+    expect(probeProviderAuth('claude')).toEqual({ ok: true });
+    expect(execSync).toHaveBeenCalledWith('claude --version', { stdio: 'pipe', timeout: 2000 });
+  });
+
+  it('returns ok:false with actionable message when execSync throws', async () => {
+    const execSync = vi.fn().mockImplementation(() => { throw new Error('auth error'); });
+    const execFileSync = vi.fn();
+    vi.doMock('node:child_process', () => ({ execFileSync, execSync }));
+    vi.doMock('./prompts.ts', () => ({ isInteractive: vi.fn() }));
+    vi.doMock('@inquirer/prompts', () => ({ confirm: vi.fn() }));
+
+    const { probeProviderAuth } = await import('./binaryCheck.ts');
+    const result = probeProviderAuth('claude');
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('claude');
+    expect(result.message).toContain('not authenticated');
+  });
+
+  it('probes each known provider (codex, gemini)', async () => {
+    const execSync = vi.fn().mockReturnValue(Buffer.from('1.0.0'));
+    const execFileSync = vi.fn();
+    vi.doMock('node:child_process', () => ({ execFileSync, execSync }));
+    vi.doMock('./prompts.ts', () => ({ isInteractive: vi.fn() }));
+    vi.doMock('@inquirer/prompts', () => ({ confirm: vi.fn() }));
+
+    const { probeProviderAuth } = await import('./binaryCheck.ts');
+    expect(probeProviderAuth('codex')).toEqual({ ok: true });
+    expect(execSync).toHaveBeenCalledWith('codex --version', { stdio: 'pipe', timeout: 2000 });
+    expect(probeProviderAuth('gemini')).toEqual({ ok: true });
+    expect(execSync).toHaveBeenCalledWith('gemini --version', { stdio: 'pipe', timeout: 2000 });
+  });
+});
+
 describe('checkAndInstallBinary', () => {
   it('returns true immediately when binary is already present', async () => {
     const execFileSync = vi.fn();
