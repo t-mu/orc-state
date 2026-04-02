@@ -61,10 +61,10 @@ console.log(`  rewrote .ts imports → .js in ${rewritten} files`);
 
 // Copy non-TS assets that are resolved via import.meta.dirname
 import { cpSync } from 'node:fs';
-for (const dir of ['schemas', 'templates']) {
+for (const dir of ['schemas', 'templates', 'skills', 'agents']) {
   cpSync(dir, `dist/${dir}`, { recursive: true });
 }
-console.log('  copied schemas/ and templates/ into dist/');
+console.log('  copied schemas/, templates/, skills/, and agents/ into dist/');
 
 console.log('tsc: emitting declarations to dist/');
 
@@ -75,7 +75,7 @@ const dtsFiles = globSync('dist/**/*.d.ts');
 let removed = 0;
 for (const f of dtsFiles) {
   const content = readFileSync(f, 'utf8').trim();
-  if (content === 'export {};' || content === '' || content.endsWith('export {};')) {
+  if (content === 'export {};' || content === '' || content === '#!/usr/bin/env node\nexport {};') {
     unlinkSync(f);
     removed++;
   }
