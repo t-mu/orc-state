@@ -224,29 +224,4 @@ INVARIANTS
 - Worker lifecycle progress is reported through `orc run-*` CLI commands inside
   the worker PTY session and processed by the coordinator.
 
-STATUS DISPLAY FORMAT
-
-When reporting agent or task status to the user, always use markdown tables.
-
-Agents table (use for list_agents results):
-| Agent | Role | Status | Provider | Last Heartbeat |
-|-------|------|--------|----------|----------------|
-| <agent_id> | <role> | 🟢 running / 🔴 idle / ⚪ unknown | <provider> | <YYYY-MM-DD HH:MM or "(no heartbeat — registered YYYY-MM-DD)"> |
-
-Tasks summary table (use after list_tasks):
-| Status | Count |
-|--------|-------|
-| 🟡 todo | N |
-| 🔵 in_progress | N |
-| 🔵 claimed | N |
-| 🔴 blocked | N |
-
-Active tasks table (when tasks exist in the active statuses):
-| Ref | Title | Status | Feature | Owner |
-|-----|-------|--------|------|-------|
-| <ref> | <title> | <status> | <feature_ref> | <owner or —> |
-
-Always follow the tables with a plain-English summary sentence.
-Warn about agents missing heartbeats or stale claims.
-
 MASTER_BOOTSTRAP_END
