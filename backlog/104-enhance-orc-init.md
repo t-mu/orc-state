@@ -2,7 +2,7 @@
 ref: publish/104-enhance-orc-init
 feature: publish
 priority: normal
-status: todo
+status: done
 depends_on:
   - publish/103-unified-orc-install
 ---

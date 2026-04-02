@@ -11,7 +11,7 @@ Run `orc --help` for the full list.
 |---------|-------------|
 | `start-session` | Start the coordinator and master agent session (requires TTY). |
 | `kill-all` | Stop the coordinator and deregister all agents. Full reset. |
-| `init` | Initialize orc-state in the current repository. |
+| `init` | Interactive first-time setup: provider selection, state initialization, skills/agents/MCP installation. |
 
 ## Task management
 
