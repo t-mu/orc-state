@@ -4,11 +4,7 @@ import { isSupportedProvider, type ProviderName } from './providers.ts';
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
 const SCOUT_BOOTSTRAP_TEMPLATE = 'scout-bootstrap-v1.txt';
 
-const MASTER_BOOTSTRAP_TEMPLATES: Record<ProviderName, string> = {
-  claude: 'master-bootstrap-v1.txt',
-  codex: 'master-bootstrap-codex-v1.txt',
-  gemini: 'master-bootstrap-gemini-v1.txt',
-};
+const MASTER_BOOTSTRAP_TEMPLATE = 'master-bootstrap-v1.txt';
 
 function assertProvider(provider: string): ProviderName {
   if (!isSupportedProvider(provider)) {
@@ -44,7 +40,7 @@ export function getMasterBootstrap(provider: string): string;
 export function getMasterBootstrap(provider: string, agentId: string): string;
 export function getMasterBootstrap(provider: string, agentId: string = 'master'): string {
   const resolvedProvider = assertProvider(provider);
-  return renderBootstrap(MASTER_BOOTSTRAP_TEMPLATES[resolvedProvider], resolvedProvider, agentId);
+  return renderBootstrap(MASTER_BOOTSTRAP_TEMPLATE, resolvedProvider, agentId);
 }
 
 /**

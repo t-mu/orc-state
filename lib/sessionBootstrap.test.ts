@@ -28,17 +28,17 @@ describe('getMasterBootstrap', () => {
     expect(rendered).toContain('agent_id: master');
   });
 
-  it('returns codex master template content', () => {
+  it('returns same master-bootstrap-v1.txt template for codex', () => {
     const rendered = getMasterBootstrap('codex');
-    expect(rendered).toBe(renderTemplate('master-bootstrap-codex-v1.txt', {
+    expect(rendered).toBe(renderTemplate('master-bootstrap-v1.txt', {
       agent_id: 'master',
       provider: 'codex',
     }));
   });
 
-  it('returns gemini master template content', () => {
+  it('returns same master-bootstrap-v1.txt template for gemini', () => {
     const rendered = getMasterBootstrap('gemini');
-    expect(rendered).toBe(renderTemplate('master-bootstrap-gemini-v1.txt', {
+    expect(rendered).toBe(renderTemplate('master-bootstrap-v1.txt', {
       agent_id: 'master',
       provider: 'gemini',
     }));
