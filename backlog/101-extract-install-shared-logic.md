@@ -2,7 +2,7 @@
 ref: publish/101-extract-install-shared-logic
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 101 — Extract Shared Logic from install-skills and install-agents
