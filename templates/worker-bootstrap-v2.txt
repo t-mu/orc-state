@@ -66,13 +66,17 @@ When a TASK_START block arrives:
   3. Immediately start the background heartbeat loop (keeps the lease alive during long tool calls):
        while true; do sleep 270; {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
        HEARTBEAT_PID=$!
-  4. Read the task markdown at `task_spec_path` for the actual task details.
-  5. Do all work, builds, and tests inside that assigned worktree.
-  6. Commit your changes:
-       Edit backlog/<N>-<slug>.md for this task.
-       Change the frontmatter line: status: todo -> status: done
+  4. Signal explore phase and read the task markdown at `task_spec_path` for the actual task details:
+       {{orc_bin}} progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id={{agent_id}}
+  5. Signal implement phase and do all work, builds, and tests inside that assigned worktree:
+       {{orc_bin}} progress --event=phase_started --phase=implement --run-id=<run_id> --agent-id={{agent_id}}
+     Gate: run `npm test`. It MUST exit 0. Do NOT proceed to the review phase with failing tests.
+  6. Signal review phase and commit your changes:
+       {{orc_bin}} progress --event=phase_started --phase=review --run-id=<run_id> --agent-id={{agent_id}}
        git add -p
        git commit -m "feat(<scope>): <outcome>"
+     Valid commit prefixes: feat(<scope>), fix(<scope>), chore(<scope>).
+     Never use --no-verify or skip pre-commit hooks.
   7. Sub-agent review round:
        a. Emit a heartbeat before spawning (mandatory):
             {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
@@ -88,6 +92,18 @@ When a TASK_START block arrives:
           Your only role is to read the diff and acceptance criteria, identify
           any issues, and return findings as text (or "approved" if none).
 
+          You MUST call before returning:
+            {{orc_bin}} review-submit --run-id=<run_id> --agent-id=<your_agent_id> \
+              --outcome=<approved|findings> --reason="<findings text>"
+          This is the ONLY orc command you may call.
+
+          Wrap your entire output in this block (no text outside it):
+            REVIEW_FINDINGS
+            verdict: approved | findings
+
+            <one finding per issue, or "No issues found.">
+            REVIEW_FINDINGS_END
+
           You MUST NOT call any of the following commands:
             orc run-start, orc run-heartbeat, orc run-work-complete,
             orc run-finish, orc run-fail, orc run-input-request,
@@ -96,20 +112,31 @@ When a TASK_START block arrives:
           You MUST NOT write to backlog.json, claims.json, or events.db.
           You MUST NOT spawn further sub-agents or delegates.
           You MUST NOT make any file edits, commits, or git operations.
-          Return ONLY a list of findings or the single word "approved".
           --- END REVIEWER CONSTRAINTS ---
-       c. Consolidate findings from both sub-agents.
-       d. Address all findings in the worktree, then amend or add a fixup commit.
-       This review happens once — address findings and proceed regardless of outcome.
-  8. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
+       c. Retrieve findings: `{{orc_bin}} review-read --run-id=<run_id>`
+          If a reviewer failed or is non-responsive, proceed with reviews that were submitted.
+          `review-read` always exits 0 — inspect its output for outcomes.
+          When reading reviewer output from an output file, grep for `REVIEW_FINDINGS_END` —
+          if absent, the reviewer did not finish and should be treated as non-responsive.
+       d. Address all findings in a fixup commit.
+       One review round only — address all findings, then proceed.
+  8. Signal complete phase and mark the task done (updates spec frontmatter + runtime state atomically):
+       {{orc_bin}} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id={{agent_id}}
+       {{orc_bin}} task-mark-done <task-ref>
+  9. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>   # heartbeat before rebase
        git rebase main
        # on conflict: resolve files → git add <file> → git rebase --continue
        # repeat until clean. Only fail the run if conflict is truly unresolvable.
-  9. Report that implementation is complete and remain alive for coordinator-owned finalization:
+  10. Before calling run-work-complete, verify:
+        - npm test passes
+        - New pure logic has tests
+        - No files modified outside the stated task scope
+        - orc doctor exits 0 if any schema or state files were changed
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>   # heartbeat immediately before work-complete
        {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id=<agent_id>
-  10. Wait for follow-up coordinator messages inside this same session when they exist:
+  11. Signal finalize phase and wait for follow-up coordinator messages inside this same session when they exist:
+       {{orc_bin}} progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id={{agent_id}}
        - Continue sending heartbeats every 5 minutes while waiting.
        - If told finalization succeeded or the session can stop, kill the background heartbeat
          and call orc run-finish:
@@ -131,21 +158,38 @@ On unresolvable failure:
 
 INTERACTIVE PROMPT RULE
 
-If you encounter an interactive confirmation prompt you cannot bypass (e.g. a
-tool asking "Would you like to apply these changes? [y/n]"), do NOT sit and wait.
-Request input from the master instead:
+Tool permission prompts (e.g. a CLI tool asking for approval to proceed) should resolve
+automatically through your local tool permission handling. Do NOT call run-input-request
+for these.
+
+Call run-input-request ONLY when blocked on:
+- Ambiguous or missing spec requirements that block implementation.
+- Merge conflicts that are genuinely unresolvable without human input.
+- External dependencies that are unavailable (service down, credential missing).
+
   {{orc_bin}} run-input-request --run-id=<run_id> --agent-id=<agent_id> \
-    --question="Blocked on interactive prompt while <action>. Prompt asked: <prompt text>. What should I answer?"
+    --question="Blocked on <specific situation>. <What you need from master>."
 
 That command records an input request, notifies the master, and waits for the
 matching input_response while keeping the run active. Only call orc run-fail if
-the prompt is truly unrecoverable even after master input.
+the blocker is truly unrecoverable even after master input.
 
 Example:
   {{orc_bin}} run-input-request --run-id=<run_id> --agent-id=<agent_id> \
-    --question="Blocked on interactive edit confirmation while updating src/foo.ts. The tool asked whether to apply these changes. Should I answer yes or no?"
+    --question="Blocked on ambiguous spec requirement: the task says to update the config schema but does not specify which fields to add. What fields should be included?"
 
 The master will be notified and can take corrective action.
+
+WHAT TO AVOID
+
+- Adding npm dependencies without asking first (use run-input-request to unblock).
+- Calling internal library functions (withLock, atomicWriteJson, appendSequencedEvent)
+  directly — use orc CLI commands instead.
+- Writing inline Node.js scripts to manipulate state files — use orc CLI commands.
+- Refactoring, renaming, or "improving" code beyond what the task requires.
+- Adding features, abstractions, or error handling for hypothetical future cases.
+- Leaving tests broken.
+- Using --no-verify or skipping pre-commit hooks.
 
 RULES
 
@@ -156,7 +200,7 @@ RULES
 - Call orc run-work-complete when implementation/review/rebase work is done and before any terminal success signal.
 - Call orc run-finish only after the run-work-complete handoff has been emitted and the run can terminate cleanly.
 - Call orc run-fail if you hit an unrecoverable blocker.
-- Call orc run-input-request when master input can unblock an interactive prompt.
+- Call orc run-input-request when master input can unblock a genuine blocker.
 - Never call orc run-finish speculatively before the work is done.
 - Treat the TASK_START payload as the source of truth for runtime handoff data, then read the markdown spec from `task_spec_path` for the actual task details.
 - This session is task-scoped; after terminal success/failure, do not assume another task will be assigned.
