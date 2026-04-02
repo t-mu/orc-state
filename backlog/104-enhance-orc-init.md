@@ -124,8 +124,8 @@ writeFileSync('orchestrator.config.json', JSON.stringify(config, null, 2));
 **File:** `cli/init.ts`
 
 Replace the current "error if exists" behavior:
-- If `.orc-state/` exists and `--force` is not passed: skip state creation, print "State directory already exists, skipping"
-- Always proceed to install step
+- If `.orc-state/` exists and `--force` is not passed: skip both `ensureStateInitialized()` AND the subsequent `backlog.json` write (the current code unconditionally writes a fresh backlog.json after state init, which would clobber an existing backlog). Print "State directory already exists, skipping initialization."
+- Always proceed to the install step regardless of state directory status.
 
 ### Step 4 — Call unified install
 
@@ -179,7 +179,7 @@ Update `init` description:
 - [ ] `orc init` in a TTY prompts for providers, skills, agents, MCP.
 - [ ] `orc init --provider=claude` works non-interactively.
 - [ ] `orchestrator.config.json` is created with selected provider(s).
-- [ ] State directory creation is skipped if it already exists (no error).
+- [ ] State directory creation AND backlog.json write are both skipped if `.orc-state/` already exists (no error, no data loss).
 - [ ] Skills, agents, and MCP are installed based on user selections.
 - [ ] Re-running `orc init` updates install artifacts without errors.
 - [ ] `docs/getting-started.md` recommends `orc init` as first-time setup.
