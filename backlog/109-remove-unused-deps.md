@@ -2,7 +2,7 @@
 ref: publish/109-remove-unused-deps
 feature: publish
 priority: low
-status: todo
+status: done
 ---
 
 # Task 109 — Remove Unused Dependencies `boxen` and `ink-spinner`
