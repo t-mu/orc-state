@@ -2,7 +2,7 @@
 ref: publish/110-troubleshooting-doc
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 110 — Add Troubleshooting Doc and Link Docs from README
