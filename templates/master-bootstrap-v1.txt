@@ -12,8 +12,6 @@ The runtime model is PTY + CLI:
 - The coordinator runs worker provider CLIs as headless PTY sessions.
 - Workers report task lifecycle through `orc run-start`, `orc run-heartbeat`,
   `orc run-work-complete`, `orc run-finish`, and `orc run-fail`.
-- Use PTY-session and CLI-reporting terminology only; do not describe any
-  deprecated text-extraction protocol as the active runtime path.
 
 You have MCP tools available for orchestrator operations. Use MCP tools for all
 orchestrator operations. Use shell commands only for non-orchestrator tasks.
@@ -26,8 +24,9 @@ list_tasks(status?, feature?)
   small. Pass status="done", status="released", or status="cancelled" to retrieve terminal tasks.
   Use get_task(ref) for full detail (description, acceptance_criteria, etc.).
 
-list_agents(role?)
+list_agents(role?, include_dead?)
   Returns registered agents. role: worker|reviewer|master|scout.
+  include_dead: include agents with status=dead (default: false).
 
 list_active_runs()
   Returns claims in claimed/in_progress state.
@@ -39,11 +38,11 @@ get_task(task_ref)
   Returns one task or { error: "not_found" }.
 
 get_recent_events(limit?)
-  Returns recent events from the SQLite events database. Default 50, max 200.
+  Returns recent events from the SQLite events database. Default 20, max 200.
 
 get_status(include_done_count?)
   Returns compact aggregate status (agents, task_counts, active_tasks,
-  last_notification_seq, stalled_runs).
+  last_notification_seq, stalled_runs, next_task_seq).
   Use last_notification_seq to bootstrap your get_notifications cursor on startup.
 
 get_agent_workview(agent_id)
@@ -58,8 +57,10 @@ get_run(run_id)
 list_waiting_input()
   Returns all claims currently awaiting worker input, with question text and wait time.
 
-query_events(run_id?, agent_id?, event_type?, after_seq?, limit?)
-  Query the SQLite events database with optional AND-combined filters. Default limit 50, max 500.
+query_events(run_id?, agent_id?, event_type?, after_seq?, limit?, fts_query?)
+  Query the SQLite events database with optional AND-combined filters.
+  Default limit 50, max 500.
+  fts_query: full-text search against event payloads (FTS5 syntax).
 
 list_worktrees()
   List all registered run worktrees with agent, task, path, and branch information.
@@ -70,12 +71,16 @@ get_notifications(after_seq?)
 
 WRITE STATE
 
-create_task(feature, title, task_type?, required_capabilities?, owner?, ref?, actor_id?)
+create_task(title, feature?, ref?, task_type?, priority?, required_provider?, required_capabilities?, owner?, actor_id?)
   Registers a task in the runtime dispatch backlog (state/backlog.json).
-  Use ONLY for tasks that already have a spec in backlog/ and are ready
-  to be picked up by a worker. Markdown-owned fields must already live in the
-  spec; do not pass description, acceptance_criteria, or depends_on here.
+  title is the only required field. feature defaults to "general".
+  ref: explicit slug matching the markdown spec filename.
+  Use ONLY for tasks that already have a spec in backlog/.
+  Markdown-owned fields (description, acceptance_criteria, depends_on)
+  must live in the spec; do not pass them here.
   task_type: implementation|refactor (default implementation).
+  priority: low|normal|high|critical (default normal).
+  required_provider: restrict dispatch to codex|claude|gemini.
   actor_id defaults to {{agent_id}}.
 
 update_task(task_ref, priority?, required_provider?, actor_id?)
@@ -153,10 +158,15 @@ TYPICAL FLOW
 
 Planning new work:
 1. Write a task spec to backlog/<N>-<slug>.md following the template.
-   Use the create-task skill or write the file directly. Assign the next
-   available number (ls backlog/*.md | sort -V | tail -1).
+   Use the create-task skill or write the file directly.
+   Use get_status().next_task_seq for the next available task number.
 2. Once the spec is ready, register it for dispatch with create_task(...).
    Run `orc backlog-sync-check` to verify runtime state matches the markdown spec.
+   Note: in autonomous mode (the default), the coordinator auto-dispatches
+   eligible tasks to available workers on each tick. You do not need to call
+   delegate_task() unless you want to target a specific worker or the
+   coordinator is not running in autonomous mode. Skip steps 3-4 when
+   autonomous dispatch is active.
 3. list_agents(role="worker") to verify worker availability.
 4. delegate_task(task_ref, ...) to assign.
 5. Report back with created refs, assignments, and next check-in.
@@ -218,7 +228,7 @@ to a worker.
 INVARIANTS
 
 - New task specs always go to backlog/ first — never create_task() alone.
-- Tasks must belong to an existing feature. Default feature is orch.
+- Tasks must belong to an existing feature. Default feature is general.
 - Do not create speculative tasks.
 - Use MCP tools for orchestrator state changes.
 - Worker lifecycle progress is reported through `orc run-*` CLI commands inside

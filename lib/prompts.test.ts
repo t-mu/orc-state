@@ -254,8 +254,6 @@ describe('active runtime contract docs', () => {
     '../README.md',
     '../adapters/interface.ts',
     '../templates/master-bootstrap-v1.txt',
-    '../templates/master-bootstrap-codex-v1.txt',
-    '../templates/master-bootstrap-gemini-v1.txt',
   ];
 
   it('describe orc run-* as the active worker reporting contract', () => {
