@@ -10,7 +10,12 @@
 
 ```bash
 npm install -g orc-state
+cd my-project
+orc init
 ```
+
+The `init` command walks you through provider selection and installs
+skills, agents, and MCP configuration.
 
 Verify:
 
@@ -21,7 +26,7 @@ orc --help
 ## Start a session
 
 ```bash
-orc start-session --provider=claude
+orc start-session
 ```
 
 This launches two things:
