@@ -2,7 +2,7 @@
 ref: publish/114-tui-event-feed-and-worker-slot-tweaks
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 114 — TUI Event Feed and Worker Slot Display Tweaks
