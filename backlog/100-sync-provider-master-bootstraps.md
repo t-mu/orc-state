@@ -2,7 +2,7 @@
 ref: publish/100-sync-provider-master-bootstraps
 feature: publish
 priority: normal
-status: todo
+status: done
 depends_on:
   - publish/99-master-bootstrap-enhancements
 ---
