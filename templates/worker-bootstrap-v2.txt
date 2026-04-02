@@ -95,6 +95,7 @@ When a TASK_START block arrives:
           You MUST call before returning:
             {{orc_bin}} review-submit --run-id=<run_id> --agent-id=<your_agent_id> \
               --outcome=<approved|findings> --reason="<findings text>"
+          This is the ONLY orc command you may call.
 
           Wrap your entire output in this block (no text outside it):
             REVIEW_FINDINGS
@@ -118,8 +119,7 @@ When a TASK_START block arrives:
           When reading reviewer output from an output file, grep for `REVIEW_FINDINGS_END` —
           if absent, the reviewer did not finish and should be treated as non-responsive.
        d. Address all findings in a fixup commit.
-       Gate: parse `review-read` output — all submitted reviewers must report `approved`.
-       This review happens once — address findings and proceed regardless of outcome.
+       One review round only — address all findings, then proceed.
   8. Signal complete phase and mark the task done (updates spec frontmatter + runtime state atomically):
        {{orc_bin}} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id={{agent_id}}
        {{orc_bin}} task-mark-done <task-ref>
@@ -132,6 +132,7 @@ When a TASK_START block arrives:
         - npm test passes
         - New pure logic has tests
         - No files modified outside the stated task scope
+        - orc doctor exits 0 if any schema or state files were changed
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>   # heartbeat immediately before work-complete
        {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id=<agent_id>
   11. Signal finalize phase and wait for follow-up coordinator messages inside this same session when they exist:
