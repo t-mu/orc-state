@@ -2,7 +2,7 @@
 ref: general/120-execution-mode-master-and-doctor
 feature: general
 priority: normal
-status: todo
+status: done
 depends_on:
   - general/117-execution-mode-config-types
 ---
