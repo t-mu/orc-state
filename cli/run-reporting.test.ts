@@ -816,7 +816,7 @@ describe('orc-run-input-request', () => {
   it('exits 1 with usage when required args are missing', () => {
     const result = runCli('run-input-request.ts', ['--run-id=run-input-003']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Usage: orc-run-input-request');
+    expect(result.stderr).toContain('Usage: orc run-input-request');
   });
 
   it('writes input_response through the dedicated response CLI', () => {

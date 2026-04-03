@@ -7,7 +7,7 @@
  * background process.
  *
  * Usage:
- *   orc-start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>]
+ *   orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>]
  *
  * All flags are optional. Missing values trigger interactive prompts in a TTY;
  * in non-TTY / CI mode they must be supplied as flags.
@@ -194,9 +194,9 @@ const deprecatedWorkerId = flag('worker-id');
 const deprecatedWorkerProvider = flag('worker-provider');
 
 if (deprecatedWorkerId || deprecatedWorkerProvider) {
-  console.error('Deprecated flags: --worker-id and --worker-provider are no longer supported by orc-start-session.');
+  console.error('Deprecated flags: --worker-id and --worker-provider are no longer supported by orc start-session.');
   console.error('Normal startup is master-only. Configure worker capacity via ORC_MAX_WORKERS / ORC_WORKER_PROVIDER or orchestrator.config.json.');
-  console.error('Use orc-worker-register or orc-worker-start-session only for debug/recovery workflows.');
+  console.error('Use orc register-worker or orc start-worker-session only for debug/recovery workflows.');
   process.exit(1);
 }
 

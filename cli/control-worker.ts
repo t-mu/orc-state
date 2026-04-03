@@ -32,15 +32,15 @@ async function chooseWorkerId(existingId: string | undefined) {
 
 const workerId = await chooseWorkerId(process.argv[2]);
 if (!workerId) {
-  console.error('Usage: orc-control-worker <worker_id>');
-  console.error('Debug command: use orc-status to list workers and statuses.');
+  console.error('Usage: orc control-worker <worker_id>');
+  console.error('Debug command: use orc status to list workers and statuses.');
   process.exit(1);
 }
 
 const worker = getAgent(STATE_DIR, workerId);
 if (!worker) {
   console.error(`Worker not found: ${workerId}`);
-  console.error('Run: orc-status  to list registered agents.');
+  console.error('Run: orc status  to list registered agents.');
   process.exit(1);
 }
 if (worker.role === 'master') {
@@ -49,7 +49,7 @@ if (worker.role === 'master') {
 }
 if (!worker.session_handle) {
   console.error(`Worker ${workerId} has no active session (status: ${worker.status})`);
-  console.error(`Debug path: run orc-worker-start-session ${workerId} to request a headless worker session.`);
+  console.error(`Debug path: run orc start-worker-session ${workerId} to request a headless worker session.`);
   process.exit(1);
 }
 
@@ -57,7 +57,7 @@ const adapter = createAdapter(worker.provider);
 const alive = await adapter.heartbeatProbe(worker.session_handle);
 if (!alive) {
   console.error(`Worker session ${worker.session_handle} is not reachable.`);
-  console.error(`Debug path: run orc-worker-start-session ${workerId} --force-rebind`);
+  console.error(`Debug path: run orc start-worker-session ${workerId} --force-rebind`);
   process.exit(1);
 }
 

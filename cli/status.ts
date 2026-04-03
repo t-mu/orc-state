@@ -24,7 +24,7 @@ const once = boolFlag('once');
 const intervalMs = intFlag('interval-ms', 5000);
 
 if (mine && !agentId) {
-  console.error('Usage: orc-status --mine --agent-id=<id> [--json]');
+  console.error('Usage: orc status --mine --agent-id=<id> [--json]');
   process.exit(1);
 }
 

@@ -16,7 +16,7 @@ if (!VALID_POLICIES.includes(policy)) {
 }
 
 if (!runId || !agentId) {
-  console.error('Usage: orc-run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--code=<code>] [--policy=requeue|block]');
+  console.error('Usage: orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--code=<code>] [--policy=requeue|block]');
   process.exit(1);
 }
 

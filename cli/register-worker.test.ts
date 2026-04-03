@@ -51,18 +51,18 @@ describe('cli/register-worker.ts', () => {
     expect(result.stderr).toContain('Unsupported role');
   });
 
-  it('rejects role=master and points to orc-start-session', () => {
+  it('rejects role=master and points to orc start-session', () => {
     const result = runCli(['worker-01', '--provider=claude', '--role=master']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('cannot use role=master');
-    expect(result.stderr).toContain('orc-start-session');
+    expect(result.stderr).toContain('orc start-session');
   });
 
-  it('rejects agent id master and points to orc-start-session', () => {
+  it('rejects agent id master and points to orc start-session', () => {
     const result = runCli(['master', '--provider=claude']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("cannot use agent id 'master'");
-    expect(result.stderr).toContain('orc-start-session');
+    expect(result.stderr).toContain('orc start-session');
   });
 
   // ── prompt-related behaviour ───────────────────────────────────────────

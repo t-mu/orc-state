@@ -36,7 +36,7 @@ describe('cli/start-worker-session.ts', () => {
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Usage: orc-worker-start-session');
+    expect(result.stderr).toContain('Usage: orc start-worker-session');
   });
 
   it('fails when missing provider for unregistered worker', () => {
@@ -49,7 +49,7 @@ describe('cli/start-worker-session.ts', () => {
     expect(result.stderr).toContain('Worker not found and no provider given');
   });
 
-  it('rejects role=master and directs the operator to orc-start-session', async () => {
+  it('rejects role=master and directs the operator to orc start-session', async () => {
     const heartbeatProbe = vi.fn().mockResolvedValue(false);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ heartbeatProbe, stop: vi.fn() }),
@@ -84,7 +84,7 @@ describe('cli/start-worker-session.ts', () => {
     expect(readAgents()).toHaveLength(0);
   });
 
-  it('rejects agent id master and directs the operator to orc-start-session', () => {
+  it('rejects agent id master and directs the operator to orc start-session', () => {
     const result = spawnSync('node', ['cli/start-worker-session.ts', 'master', '--provider=claude'], {
       cwd: repoRoot,
       env: { ...process.env, ORCH_STATE_DIR: dir },
@@ -92,7 +92,7 @@ describe('cli/start-worker-session.ts', () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("cannot use agent id 'master'");
-    expect(result.stderr).toContain('orc-start-session');
+    expect(result.stderr).toContain('orc start-session');
   });
 
   it('does not rebind live session unless --force-rebind', async () => {

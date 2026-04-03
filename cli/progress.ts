@@ -19,7 +19,7 @@ const reason = flag('reason');
 const policy = flag('policy') ?? 'requeue';
 
 if (!event || !runId || !agentId) {
-  console.error('Usage: orc-progress --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--policy=<requeue|block>]');
+  console.error('Usage: orc progress --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--policy=<requeue|block>]');
   process.exit(1);
 }
 

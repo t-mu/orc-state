@@ -10,7 +10,7 @@ import { STATE_DIR } from '../lib/paths.ts';
 const agentId = process.argv[2];
 
 if (!agentId) {
-  console.error('Usage: orc-deregister <agent_id>');
+  console.error('Usage: orc deregister <agent_id>');
   process.exit(1);
 }
 

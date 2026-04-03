@@ -9,7 +9,7 @@ const agentId = flag('agent-id');
 const sessionToken = flag('session-token');
 
 if (!agentId || !sessionToken) {
-  console.error('Usage: orc-report-for-duty --agent-id=<id> --session-token=<token>');
+  console.error('Usage: orc report-for-duty --agent-id=<id> --session-token=<token>');
   process.exit(1);
 }
 

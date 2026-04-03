@@ -9,7 +9,7 @@ const response = flag('response');
 const actorId = flag('actor-id') ?? 'master';
 
 if (!runId || !agentId || !response) {
-  console.error('Usage: orc-run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]');
+  console.error('Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]');
   process.exit(1);
 }
 
