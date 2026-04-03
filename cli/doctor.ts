@@ -13,6 +13,7 @@ import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiag
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { validateBacklogSync } from './backlog-sync-check.ts';
+import { checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -31,6 +32,8 @@ const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
 const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
 const providers = new Set(agents.map((a) => a.provider));
 
+const sandboxDeps = checkSandboxDependencies();
+
 const checks: Record<string, unknown> = {
   gitRepo,
   providerBinaries: {} as Record<string, unknown>,
@@ -40,6 +43,7 @@ const checks: Record<string, unknown> = {
   lifecycleIssues: [] as unknown[],
   stateErrors,
   backlogSync,
+  sandboxDependencies: sandboxDeps,
 };
 
 for (const provider of providers) {
@@ -99,7 +103,8 @@ const summary = {
     (checks.staleLinkedWorkers as unknown[]).length === 0 &&
     (checks.orphanedActiveClaims as unknown[]).length === 0 &&
     (checks.staleActiveClaims as unknown[]).length === 0 &&
-    (checks.lifecycleIssues as unknown[]).length === 0,
+    (checks.lifecycleIssues as unknown[]).length === 0 &&
+    sandboxDeps.ok,
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
@@ -173,6 +178,19 @@ for (const issue of lifecycleIssues) {
   if (issue.hint) console.log(`    hint: ${issue.hint}`);
 }
 
+console.log('');
+const sd = checks.sandboxDependencies as ReturnType<typeof checkSandboxDependencies>;
+if (sd.skipped) {
+  console.log(`sandbox dependencies: skipped (${sd.reason})`);
+} else {
+  console.log(`sandbox dependencies: ok=${String(sd.ok)}`);
+  for (const dep of sd.missing) {
+    console.log(`  missing: ${dep}`);
+    console.log(`    Ubuntu/Debian: sudo apt-get install bubblewrap socat`);
+    console.log(`    Fedora:        sudo dnf install bubblewrap socat`);
+  }
+}
+
 if (!summary.ok) {
   console.log('');
   console.log('Suggested fixes:');
@@ -216,3 +234,4 @@ function safeRead<T>(read: () => T, fallback: T): T {
     return fallback;
   }
 }
+

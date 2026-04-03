@@ -313,7 +313,10 @@ try {
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    spawnArgs = ['--dangerously-bypass-approvals-and-sandbox', ...masterModelArgs, bootstrap];
+    const codexModeArgs = masterConfig.execution_mode === 'sandbox'
+      ? ['--sandbox', 'workspace-write', '--ask-for-approval', 'never']
+      : ['--dangerously-bypass-approvals-and-sandbox'];
+    spawnArgs = [...codexModeArgs, ...masterModelArgs, bootstrap];
     console.log('  Master bootstrap loaded via initial prompt.');
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
     console.log('\n----- MASTER BOOTSTRAP -----');
