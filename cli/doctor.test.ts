@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
+import { checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -177,6 +178,49 @@ describe('cli/doctor.ts', () => {
     } finally {
       rmSync(tmpCwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe('doctor sandbox dependencies', () => {
+  it('checks for bwrap and socat on linux with claude sandbox', () => {
+    const result = checkSandboxDependencies({
+      platform: 'linux',
+      env: { ORC_MASTER_PROVIDER: 'claude', ORC_MASTER_EXECUTION_MODE: 'sandbox' },
+    });
+    expect(result.skipped).toBe(false);
+    // bwrap and socat may or may not be installed; just verify the shape
+    expect(Array.isArray(result.missing)).toBe(true);
+    expect(typeof result.ok).toBe('boolean');
+  });
+
+  it('skips check on macOS even when claude sandbox configured', () => {
+    const result = checkSandboxDependencies({
+      platform: 'darwin',
+      env: { ORC_MASTER_PROVIDER: 'claude', ORC_MASTER_EXECUTION_MODE: 'sandbox' },
+    });
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('Seatbelt');
+  });
+
+  it('skips check when no sandbox configured', () => {
+    const result = checkSandboxDependencies({
+      platform: 'linux',
+      env: { ORC_MASTER_PROVIDER: 'claude', ORC_MASTER_EXECUTION_MODE: 'full-access' },
+    });
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('no Claude sandbox configured');
+  });
+
+  it('skips check for codex sandbox (codex does not use bwrap)', () => {
+    const result = checkSandboxDependencies({
+      platform: 'linux',
+      env: { ORC_MASTER_PROVIDER: 'codex', ORC_MASTER_EXECUTION_MODE: 'sandbox', ORC_WORKER_PROVIDER: 'codex', ORC_WORKER_EXECUTION_MODE: 'sandbox' },
+    });
+    expect(result.skipped).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('no Claude sandbox configured');
   });
 });
 
