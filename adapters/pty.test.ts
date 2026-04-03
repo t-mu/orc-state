@@ -52,7 +52,7 @@ async function makeAdapter({ provider = 'claude', spawnReturn, spawnThrow }: { p
 describe('pty adapter start()', () => {
   it('spawns the CLI binary and returns pty session handle and provider_ref', async () => {
     const { adapter, spawnSpy, ptyProcess } = await makeAdapter({ provider: 'claude' });
-    const result = await adapter.start('bob', {});
+    const result = await adapter.start('bob', { execution_mode: 'full-access' });
 
     expect(result).toMatchObject({
       session_handle: 'pty:bob',
@@ -84,7 +84,7 @@ describe('pty adapter start()', () => {
 
   it('launches the provider inside the requested working directory when provided', async () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
-    await adapter.start('bob', { working_directory: '/tmp/orc-worktree' });
+    await adapter.start('bob', { working_directory: '/tmp/orc-worktree', execution_mode: 'full-access' });
 
     expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.arrayContaining(['--dangerously-skip-permissions']), expect.objectContaining({
       cwd: '/tmp/orc-worktree',
@@ -94,6 +94,7 @@ describe('pty adapter start()', () => {
   it('merges explicit environment overrides into the spawned provider process', async () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', {
+      execution_mode: 'full-access',
       env: {
         ORCH_STATE_DIR: '/tmp/shared-state',
         ORC_REPO_ROOT: '/tmp/repo-root',
@@ -119,7 +120,7 @@ describe('pty adapter start()', () => {
 
   it('delivers bootstrap via ptyProcess.write() when system_prompt provided', async () => {
     const { adapter, ptyProcess } = await makeAdapter();
-    await adapter.start('bob', { system_prompt: 'BOOTSTRAP TEXT' });
+    await adapter.start('bob', { execution_mode: 'full-access', system_prompt: 'BOOTSTRAP TEXT' });
 
     // Claude: auto-accepts the Bypass Permissions confirmation dialog first
     // (writes '2' + CR), then delivers the bootstrap text + CR.
@@ -131,7 +132,7 @@ describe('pty adapter start()', () => {
 
   it('auto-accepts bypass permissions dialog even when system_prompt is absent', async () => {
     const { adapter, ptyProcess } = await makeAdapter();
-    await adapter.start('bob', {});
+    await adapter.start('bob', { execution_mode: 'full-access' });
 
     // Claude always writes '2' + CR to dismiss the confirmation dialog.
     expect(ptyProcess.write).toHaveBeenCalledTimes(2);
@@ -152,18 +153,18 @@ describe('pty adapter start()', () => {
 
   it('uses provider binary mapping for codex and gemini', async () => {
     const codex = await makeAdapter({ provider: 'codex' });
-    await codex.adapter.start('c', {});
+    await codex.adapter.start('c', { execution_mode: 'full-access' });
     expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox'], expect.any(Object));
 
     vi.resetModules();
     const gemini = await makeAdapter({ provider: 'gemini' });
-    await gemini.adapter.start('g', {});
+    await gemini.adapter.start('g', { execution_mode: 'full-access' });
     expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
   });
 
   it('passes codex bootstrap as startup prompt arg instead of PTY write', async () => {
     const { adapter, spawnSpy, ptyProcess } = await makeAdapter({ provider: 'codex' });
-    await adapter.start('codex-worker', { system_prompt: 'BOOTSTRAP TEXT' });
+    await adapter.start('codex-worker', { execution_mode: 'full-access', system_prompt: 'BOOTSTRAP TEXT' });
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
@@ -190,6 +191,147 @@ describe('pty adapter start()', () => {
 
     const pidPath = join(dir, 'pty-pids', 'bob.pid');
     expect(existsSync(pidPath)).toBe(false);
+  });
+});
+
+// ─── buildStartArgs execution mode ─────────────────────────────────────────
+
+describe('buildStartArgs execution mode', () => {
+  it('claude full-access: --dangerously-skip-permissions', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'full-access' });
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('--permission-mode');
+  });
+
+  it('claude sandbox: --permission-mode auto', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox' });
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).toContain('--permission-mode');
+    expect(args).toContain('auto');
+  });
+
+  it('claude sandbox: no --dangerously-skip-permissions', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox' });
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).not.toContain('--dangerously-skip-permissions');
+  });
+
+  it('claude sandbox: settings file includes sandbox config block', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox' });
+
+    const settingsFile = join(dir, 'pty-settings', 'bob.json');
+    const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
+    expect(settings).toMatchObject({
+      sandbox: {
+        enabled: true,
+        mode: 'auto-allow',
+        allowUnsandboxedCommands: false,
+        filesystem: { allowWrite: ['.'] },
+      },
+    });
+  });
+
+  it('claude sandbox + read_only: settings file has no allowWrite', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox', read_only: true });
+
+    const settingsFile = join(dir, 'pty-settings', 'bob.json');
+    const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
+    expect(settings.sandbox).toBeDefined();
+    expect(settings.sandbox.filesystem).toBeUndefined();
+  });
+
+  it('codex full-access: --dangerously-bypass-approvals-and-sandbox', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('c', { execution_mode: 'full-access' });
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).toContain('--dangerously-bypass-approvals-and-sandbox');
+  });
+
+  it('codex sandbox: --sandbox workspace-write --ask-for-approval never', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('c', { execution_mode: 'sandbox' });
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).toContain('--sandbox');
+    expect(args).toContain('workspace-write');
+    expect(args).toContain('--ask-for-approval');
+    expect(args).toContain('never');
+    expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+  });
+
+  it('codex sandbox + read_only: --sandbox read-only --ask-for-approval never', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('c', { execution_mode: 'sandbox', read_only: true });
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).toContain('--sandbox');
+    expect(args).toContain('read-only');
+    expect(args).toContain('--ask-for-approval');
+    expect(args).toContain('never');
+  });
+
+  it('gemini: no flags in either mode', async () => {
+    const gemini1 = await makeAdapter({ provider: 'gemini' });
+    await gemini1.adapter.start('g', { execution_mode: 'full-access' });
+    expect(gemini1.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
+
+    vi.resetModules();
+    const gemini2 = await makeAdapter({ provider: 'gemini' });
+    await gemini2.adapter.start('g', { execution_mode: 'sandbox' });
+    expect(gemini2.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
+  });
+
+  it('undefined execution_mode defaults to full-access behavior (claude)', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).toContain('--dangerously-skip-permissions');
+  });
+
+  it('undefined execution_mode defaults to full-access behavior (codex)', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('c', {});
+
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    expect(args).toContain('--dangerously-bypass-approvals-and-sandbox');
+  });
+});
+
+// ─── claude auto-accept dance ───────────────────────────────────────────────
+
+describe('claude auto-accept dance', () => {
+  it('fires in full-access mode', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'full-access' });
+
+    expect(ptyProcess.write).toHaveBeenCalledWith('2');
+    expect(ptyProcess.write).toHaveBeenCalledWith('\r');
+  });
+
+  it('does not fire in sandbox mode', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox' });
+
+    expect(ptyProcess.write).not.toHaveBeenCalledWith('2');
+  });
+
+  it('fires when execution_mode is undefined (backward compat)', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
+    expect(ptyProcess.write).toHaveBeenCalledWith('2');
+    expect(ptyProcess.write).toHaveBeenCalledWith('\r');
   });
 });
 

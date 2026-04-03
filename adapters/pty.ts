@@ -96,20 +96,36 @@ function ensureDirs() {
 }
 
 function buildStartArgs(provider: string, config: Record<string, unknown>, claudeSettingsPath?: string) {
+  // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
+  // 'full-access' for backward compatibility when field is absent.
+  const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
+  const readOnly = config.read_only === true;
+
   // Codex supports an initial prompt argument; pass bootstrap at spawn time
   // instead of PTY post-start injection, which the TUI treats as pasted text.
   if (provider === 'codex') {
-    const args = [
-      '--dangerously-bypass-approvals-and-sandbox',
-    ];
+    const args: string[] = [];
+    if (executionMode === 'sandbox') {
+      // sandbox + read_only (scouts) → read-only filesystem; otherwise workspace-write.
+      const sandboxScope = readOnly ? 'read-only' : 'workspace-write';
+      args.push('--sandbox', sandboxScope, '--ask-for-approval', 'never');
+    } else {
+      args.push('--dangerously-bypass-approvals-and-sandbox');
+    }
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
   }
   if (provider === 'claude') {
-    // Skip interactive permission prompts so workers can run bash commands
-    // without blocking on "Do you want to proceed?" confirmations.
-    const args = ['--dangerously-skip-permissions'];
+    const args: string[] = [];
+    if (executionMode === 'sandbox') {
+      // Sandbox mode: use permission-mode auto instead of dangerously-skip-permissions.
+      args.push('--permission-mode', 'auto');
+    } else {
+      // Skip interactive permission prompts so workers can run bash commands
+      // without blocking on "Do you want to proceed?" confirmations.
+      args.push('--dangerously-skip-permissions');
+    }
     if (claudeSettingsPath) args.push('--settings', claudeSettingsPath);
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     return args;
@@ -234,6 +250,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
 
         // For claude: write a settings file that installs a Notification hook so
         // permission_prompt events are pushed to the hook-events file in real time.
+        // In sandbox mode, merge in a sandbox config block alongside the hook.
         let claudeSettingsFile: string | undefined;
         if (provider === 'claude') {
           claudeSettingsFile = settingsPath(agentId);
@@ -241,11 +258,25 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           // Inline node one-liner: reads stdin JSON, filters to permission_prompt
           // notifications, and appends a record to the hook-events NDJSON file.
           const hookCmd = `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const e=JSON.parse(d);if(e.notification_type!=='permission_prompt')return;require('fs').appendFileSync(${JSON.stringify(eventsFile)},JSON.stringify({type:'permission',message:e.message||'',ts:new Date().toISOString()})+'\\\\n')}catch(x){}})"`;
-          writeFileSync(claudeSettingsFile, JSON.stringify({
+          const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
+          const readOnly = config.read_only === true;
+          const settings: Record<string, unknown> = {
             hooks: {
               Notification: [{ hooks: [{ type: 'command', command: hookCmd }] }],
             },
-          }));
+          };
+          if (executionMode === 'sandbox') {
+            const sandboxConfig: Record<string, unknown> = {
+              enabled: true,
+              mode: 'auto-allow',
+              allowUnsandboxedCommands: false,
+            };
+            if (!readOnly) {
+              sandboxConfig.filesystem = { allowWrite: ['.'] };
+            }
+            settings.sandbox = sandboxConfig;
+          }
+          writeFileSync(claudeSettingsFile, JSON.stringify(settings));
         }
 
         const spawnArgs = buildStartArgs(provider, config, claudeSettingsFile);
@@ -291,7 +322,8 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         // Claude --dangerously-skip-permissions shows a "Bypass Permissions mode"
         // confirmation menu ("1. No, exit / 2. Yes, I accept") before the REPL
         // is ready. Auto-accept it so headless sessions don't stall.
-        if (provider === 'claude') {
+        // In sandbox mode (--permission-mode auto), no confirmation dialog appears.
+        if (provider === 'claude' && config.execution_mode !== 'sandbox') {
           ptyProcess.write('2');
           await new Promise((r) => setTimeout(r, 200));
           ptyProcess.write('\r');
