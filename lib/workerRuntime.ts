@@ -114,6 +114,7 @@ interface Adapter {
     model: string | null;
     working_directory: string | null | undefined;
     read_only?: boolean;
+    execution_mode?: 'full-access' | 'sandbox';
     env: Record<string, string>;
   }): Promise<{ session_handle: string; provider_ref: unknown }>;
 }

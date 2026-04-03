@@ -2,7 +2,7 @@
 ref: general/118-execution-mode-adapter-flags
 feature: general
 priority: normal
-status: todo
+status: done
 depends_on:
   - general/117-execution-mode-config-types
 ---
