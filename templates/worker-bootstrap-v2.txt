@@ -118,11 +118,14 @@ When a TASK_START block arrives:
           `review-read` always exits 0 — inspect its output for outcomes.
           When reading reviewer output from an output file, grep for `REVIEW_FINDINGS_END` —
           if absent, the reviewer did not finish and should be treated as non-responsive.
-       d. Retry for missing structured output: for each reviewer that submitted via
-          `review-submit` but whose text output lacks `REVIEW_FINDINGS_END`, send one
-          follow-up message: "Your review-submit was received but the structured
-          REVIEW_FINDINGS block is missing from your output. Emit only the block now."
-          If the retry also fails, treat as non-responsive (existing behavior).
+       d. Retry for missing structured output (conversational reviewers only): for each
+          reviewer that submitted via `review-submit` but whose text output (from
+          `orc review-read` or the agent output) lacks `REVIEW_FINDINGS_END`, and whose
+          conversation context is still active, send one follow-up message:
+          "Your review-submit was received but the structured REVIEW_FINDINGS block is
+          missing from your output. Emit only the block now."
+          PTY-based reviewers cannot receive follow-up messages — treat them as
+          non-responsive immediately. If the retry also fails, treat as non-responsive.
        e. Address all findings in a fixup commit.
        One review round only — address all findings, then proceed.
   8. Signal complete phase and mark the task done (updates spec frontmatter + runtime state atomically):

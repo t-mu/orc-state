@@ -120,10 +120,13 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
    When reading reviewer output from an output file, grep for
    `REVIEW_FINDINGS_END` — if absent, the reviewer did not finish and
    should be treated as non-responsive.
-5. Retry for missing structured output: for each reviewer that submitted
-   via `review-submit` but whose text output lacks `REVIEW_FINDINGS_END`,
-   send one follow-up message asking only for the structured block.
-   If retry fails, treat as non-responsive.
+5. Retry for missing structured output (conversational reviewers only): for each
+   reviewer that submitted via `review-submit` but whose text output lacks
+   `REVIEW_FINDINGS_END`, and whose conversation context is still active, send one
+   follow-up message: "Your review-submit was received but the structured
+   REVIEW_FINDINGS block is missing from your output. Emit only the block now."
+   PTY-based reviewers cannot receive follow-up messages — treat them as
+   non-responsive immediately. If retry fails, treat as non-responsive.
 6. Address ALL findings in a fixup commit.
 
 **Gate:** Parse `orc review-read` output — all submitted reviewers report `approved`.
