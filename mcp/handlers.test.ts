@@ -1544,6 +1544,20 @@ describe('handleUpdateTask required_provider', () => {
   });
 });
 
+describe('handleGetTask model', () => {
+  it('returns model field when set on task', () => {
+    writeSpec('project/model-get-task', 'project', 'Model get task');
+    handleCreateTask(dir, {
+      feature: 'project',
+      title: 'Model get task',
+      model: 'claude-haiku-4-5',
+      actor_id: 'master',
+    });
+    const result = handleGetTask(dir, { task_ref: 'project/model-get-task' }) as Record<string, unknown>;
+    expect(result.model).toBe('claude-haiku-4-5');
+  });
+});
+
 describe('handleCreateTask model', () => {
   it('stores model field when provided', () => {
     writeSpec('project/model-task', 'project', 'Model task');
