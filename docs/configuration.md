@@ -213,13 +213,12 @@ Gemini does not have a sandbox CLI flag. The `execution_mode` field is accepted 
 
 ### Scout Override
 
-Scouts always run in a restricted mode regardless of the configured `execution_mode`:
+Scouts are launched with `read_only: true`, which tightens their permissions when `execution_mode` is `sandbox`:
 
-- Scouts are launched with `read_only: true`.
-- When combined with `sandbox` mode (Codex), the sandbox scope is `read-only` instead of `workspace-write`.
-- When combined with `sandbox` mode (Claude), filesystem writes are blocked entirely.
+- For Codex sandbox: the sandbox scope is `read-only` instead of `workspace-write`.
+- For Claude sandbox: filesystem writes are blocked entirely (no `allowWrite` entry in the settings file).
 
-This ensures scouts cannot modify state or code even if a permissive `execution_mode` is configured at the system level.
+When `execution_mode` is `full-access`, `read_only` has no effect — a scout receives the same flags as a regular worker (`--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude). To enforce read-only scout behaviour, set `execution_mode` to `sandbox`.
 
 ### Linux Prerequisites for Claude Sandbox Mode
 
