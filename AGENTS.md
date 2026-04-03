@@ -266,6 +266,19 @@ Normal task-authoring path:
 
 Do not treat generic runtime mutation as a substitute for backlog markdown edits.
 
+### Execution Modes
+
+Each agent role (master, worker) can run in one of two execution mode presets:
+
+| Preset | Behaviour |
+|--------|-----------|
+| `full-access` | No sandbox — agent has full filesystem and network access. Default. |
+| `sandbox` | Agent is confined to the workspace; unsandboxed shell commands are disallowed. |
+
+Configure via `default_execution_mode`, `master.execution_mode`, or `worker_pool.execution_mode` in `orchestrator.config.json`, or override at runtime with `ORC_MASTER_EXECUTION_MODE` / `ORC_WORKER_EXECUTION_MODE` env vars. Scouts always run sandboxed and read-only regardless of configured mode.
+
+See `docs/configuration.md` → **Execution Modes** for full details including per-provider CLI flags and Linux prerequisites.
+
 ### Task lifecycle
 ```
 todo → claimed → in_progress → done → released
