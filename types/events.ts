@@ -209,7 +209,7 @@ export interface InputRequestedEvent extends BaseEvent {
   run_id: string;
   task_ref?: string | undefined;
   agent_id: string;
-  payload: { question: string; [key: string]: unknown };
+  payload: { question: string; request_id?: string; [key: string]: unknown };
 }
 
 export interface InputResponseEvent extends BaseEvent {
@@ -217,7 +217,7 @@ export interface InputResponseEvent extends BaseEvent {
   run_id: string;
   task_ref?: string | undefined;
   agent_id: string;
-  payload: { response: string; [key: string]: unknown };
+  payload: { response: string; request_id?: string | null; [key: string]: unknown };
 }
 
 // ── Heartbeat ─────────────────────────────────────────────────────────────────

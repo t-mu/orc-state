@@ -2,7 +2,7 @@
 /**
  * cli/install-skills.ts
  * Usage:
- *   orc install-skills [--provider=claude,codex] [--global] [--dry-run]
+ *   orc install-skills [--provider=claude,codex,gemini] [--global] [--dry-run]
  *
  * Copies skills from the package's skills/ directory into the consumer's
  * tool directories for each selected provider:
@@ -67,11 +67,14 @@ export interface InstallResult {
 }
 
 export function installSkills(providers: string[], base: string, dryRun: boolean): InstallResult {
-  const unknown = providers.filter((p) => !PROVIDER_TARGETS[p]);
+  const unknown = providers.filter((p) => p !== 'gemini' && !PROVIDER_TARGETS[p]);
   if (unknown.length > 0) {
-    console.error(`Unknown provider(s): ${unknown.join(', ')}. Supported: ${Object.keys(PROVIDER_TARGETS).join(', ')}`);
+    console.error(`Unknown provider(s): ${unknown.join(', ')}. Supported: ${[...Object.keys(PROVIDER_TARGETS), 'gemini'].join(', ')}`);
     process.exit(1);
   }
+
+  const supportedProviders = providers.filter((provider) => provider in PROVIDER_TARGETS);
+  const skippedProviders = providers.filter((provider) => provider === 'gemini');
 
   if (!existsSync(SKILLS_ROOT)) {
     console.error(`Skills directory not found: ${SKILLS_ROOT}`);
@@ -88,9 +91,13 @@ export function installSkills(providers: string[], base: string, dryRun: boolean
     return { copied: [], count: 0 };
   }
 
+  if (skippedProviders.length > 0) {
+    console.warn(`Skipping skill installation for unsupported provider target(s): ${skippedProviders.join(', ')}.`);
+  }
+
   const allCopied: string[] = [];
 
-  for (const provider of providers) {
+  for (const provider of supportedProviders) {
     const destBase = PROVIDER_TARGETS[provider](base);
     console.log(`${provider} → ${destBase}`);
 

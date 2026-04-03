@@ -677,6 +677,14 @@ describe('orc-run-input-request', () => {
         && event.task_ref === 'docs/task-1'
         && (event.payload as Record<string, unknown>)?.question === 'Continue?')).toBe(true);
     expect(readClaims().claims[0].input_state).toBeUndefined();
+    const requestEvent = eventsAfterRequest.find((event) =>
+      event.event === 'input_requested'
+      && event.run_id === 'run-input-001'
+      && event.agent_id === 'worker-01',
+    );
+    const requestId = (requestEvent?.payload as Record<string, unknown> | undefined)?.request_id;
+    expect(typeof requestId).toBe('string');
+    const matchedRequestId = requestId as string;
 
     appendSequencedEvent(dir, {
       ts: '2026-01-01T00:00:01.000Z',
@@ -686,7 +694,7 @@ describe('orc-run-input-request', () => {
       run_id: 'run-input-001',
       agent_id: 'worker-01',
       task_ref: 'docs/task-1',
-      payload: { response: 'yes' },
+      payload: { response: 'yes', request_id: matchedRequestId },
     });
 
     const [code] = await once(child, 'close');
@@ -786,10 +794,24 @@ describe('orc-run-input-request', () => {
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (readEvents().some((event) => event.event === 'input_requested')) break;
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+    let requestId: string | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const requestEvent = readEvents().find((event) =>
+        event.event === 'input_requested'
+        && event.run_id === 'run-input-001'
+        && event.agent_id === 'worker-01',
+      );
+      if (requestEvent) {
+        const candidate = (requestEvent.payload as Record<string, unknown>)?.request_id;
+        if (typeof candidate === 'string') {
+          requestId = candidate;
+        }
+        break;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
     }
+    expect(typeof requestId).toBe('string');
+    const matchedRequestId = requestId as string;
 
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
     await appendEventWithRetry({
@@ -800,7 +822,7 @@ describe('orc-run-input-request', () => {
       run_id: 'run-input-001',
       task_ref: 'docs/task-1',
       agent_id: 'worker-01',
-      payload: { response: 'yes' },
+      payload: { response: 'yes', request_id: matchedRequestId },
     });
 
     const [code] = await once(child, 'close');
@@ -816,7 +838,7 @@ describe('orc-run-input-request', () => {
   it('exits 1 with usage when required args are missing', () => {
     const result = runCli('run-input-request.ts', ['--run-id=run-input-003']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Usage: orc-run-input-request');
+    expect(result.stderr).toContain('Usage: orc run-input-request');
   });
 
   it('writes input_response through the dedicated response CLI', () => {

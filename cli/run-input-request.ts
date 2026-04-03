@@ -11,7 +11,7 @@ const timeoutMs = intFlag('timeout-ms', DEFAULT_INPUT_REQUEST_TIMEOUT_MS);
 const pollMs = intFlag('poll-ms', 1000);
 
 if (!runId || !agentId || !question) {
-  console.error('Usage: orc-run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>] [--poll-ms=<ms>]');
+  console.error('Usage: orc run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>] [--poll-ms=<ms>]');
   process.exit(1);
 }
 

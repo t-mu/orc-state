@@ -34,7 +34,7 @@ const taskType = flag('task-type') ?? 'implementation';
 const actorId = flag('actor-id') ?? 'human';
 
 if (!featureRef || !title) {
-  console.error('Usage: orc-task-create --feature=<ref> --title=<text> [options]');
+  console.error('Usage: orc task-create --feature=<ref> --title=<text> [options]');
   process.exit(1);
 }
 

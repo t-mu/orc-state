@@ -102,8 +102,8 @@ if (result.warnings.length > 0) {
 if (!ok) {
   console.log('');
   console.log('Suggested actions:');
-  console.log('  1. orc-doctor  (check provider binaries and worker state)');
-  console.log('  2. orc-worker-clearall  (remove stale workers)');
+  console.log('  1. orc doctor  (check provider binaries and worker state)');
+  console.log('  2. orc worker-clearall  (remove stale workers)');
   process.exit(1);
 }
 

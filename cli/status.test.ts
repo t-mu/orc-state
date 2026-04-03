@@ -153,7 +153,7 @@ describe('cli/status.ts', () => {
     seedValidState();
     const result = runStatus(['--mine']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Usage: orc-status --mine --agent-id=<id> [--json]');
+    expect(result.stderr).toContain('Usage: orc status --mine --agent-id=<id> [--json]');
   });
 
   it('--watch --once renders one frame with ANSI clear and update footer', () => {

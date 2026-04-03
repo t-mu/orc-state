@@ -18,15 +18,15 @@ const argv = process.argv.slice(2);
 const args = argv.filter((a) => a.startsWith('--'));
 let workerId: string | null = argv.find((a) => !a.startsWith('--')) ?? null;
 
-console.log('orc-worker-register (debug worker registration)');
+console.log('orc register-worker (debug worker registration)');
 
 workerId = await promptAgentId(workerId);
 if (!workerId) {
-  console.error('Missing agent ID. Usage: orc-worker-register <id> --provider=<codex|claude|gemini>');
+  console.error('Missing agent ID. Usage: orc register-worker <id> --provider=<codex|claude|gemini>');
   process.exit(1);
 }
 if (workerId === 'master') {
-  console.error("Worker registration cannot use agent id 'master'. Use 'orc-start-session' for the master session.");
+  console.error("Worker registration cannot use agent id 'master'. Use 'orc start-session' for the master session.");
   process.exit(1);
 }
 
@@ -45,7 +45,7 @@ if (!providersArr.includes(provider)) {
 
 const role = (await promptWorkerRole(flag('role', args) ?? null)) ?? 'worker';
 if (role === 'master') {
-  console.error("Worker registration cannot use role=master. Use 'orc-start-session' to create or replace the master session.");
+  console.error("Worker registration cannot use role=master. Use 'orc start-session' to create or replace the master session.");
   process.exit(1);
 }
 
@@ -72,7 +72,7 @@ try {
     capabilities,
   });
   console.log(`Registered ${entry.agent_id} (${entry.provider}) role=${entry.role}`);
-  console.log('This command is for debug/recovery workflows. Normal startup uses orc-start-session and coordinator-managed workers.');
+  console.log('This command is for debug/recovery workflows. Normal startup uses orc start-session and coordinator-managed workers.');
 } catch (error) {
   cliError(error);
 }

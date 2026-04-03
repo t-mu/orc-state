@@ -9,7 +9,7 @@ const runId = flag('run-id');
 const agentId = flag('agent-id');
 
 if (!runId || !agentId) {
-  console.error('Usage: orc-run-heartbeat --run-id=<id> --agent-id=<id>');
+  console.error('Usage: orc run-heartbeat --run-id=<id> --agent-id=<id>');
   process.exit(1);
 }
 

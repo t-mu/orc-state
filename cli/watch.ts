@@ -75,11 +75,17 @@ export function runFallbackWatch(options: WatchOptions): number | null {
   return null;
 }
 
+function runtimeImportPath(relativeTsPath: string, relativeJsPath: string): string {
+  return import.meta.url.endsWith('.ts') ? relativeTsPath : relativeJsPath;
+}
+
 export async function runTtyWatch(options: WatchOptions): Promise<number> {
-  const [{ App }, { preloadSprites }] = await Promise.all([
-    import('../lib/tui/App.tsx'),
-    import('../lib/tui/sprites.ts'),
+  const [appModule, spriteModule] = await Promise.all([
+    import(runtimeImportPath('../lib/tui/App.tsx', '../lib/tui/App.js')) as Promise<typeof import('../lib/tui/App.tsx')>,
+    import(runtimeImportPath('../lib/tui/sprites.ts', '../lib/tui/sprites.js')) as Promise<typeof import('../lib/tui/sprites.ts')>,
   ]);
+  const { App } = appModule;
+  const { preloadSprites } = spriteModule;
 
   let sprites;
   try {

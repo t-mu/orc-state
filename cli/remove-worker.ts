@@ -13,7 +13,7 @@ const workerId = process.argv[2];
 const keepSession = boolFlag('keep-session');
 
 if (!workerId) {
-  console.error('Usage: orc-worker-remove <worker_id> [--keep-session]');
+  console.error('Usage: orc worker-remove <worker_id> [--keep-session]');
   process.exit(1);
 }
 

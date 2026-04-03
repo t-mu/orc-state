@@ -11,7 +11,7 @@ Run `orc --help` for the full list.
 |---------|-------------|
 | `start-session` | Start the coordinator and master agent session (requires TTY). |
 | `kill-all` | Stop the coordinator and deregister all agents. Full reset. |
-| `init` | Interactive first-time setup: provider selection, state initialization, skills/agents/MCP installation. |
+| `init` | Interactive first-time setup: provider selection, state initialization, and install of supported skills/agents/MCP config. |
 
 ## Task management
 
@@ -88,6 +88,6 @@ Recovery and debug commands for managing worker agents directly.
 
 | Command | Description |
 |---------|-------------|
-| `install` | Install skills, agents, and MCP config for configured providers. |
-| `install-agents` | Install agent configuration files (e.g., AGENTS.md) into a project. |
-| `install-skills` | Install skill definitions into a project. |
+| `install` | Install skills, agents, and MCP config for configured providers. Gemini currently only affects runtime config/MCP setup; skill and agent targets are skipped with a warning. |
+| `install-agents` | Install agent configuration files for supported provider targets (currently Claude and Codex). |
+| `install-skills` | Install skill definitions for supported provider targets (currently Claude and Codex). |

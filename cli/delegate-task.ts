@@ -27,7 +27,7 @@ const actorId = flag('actor-id') ?? 'human';
 const actorType = actorId === 'human' ? 'human' : 'agent';
 
 if (!taskRef) {
-  console.error('Usage: orc-delegate --task-ref=<feature/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]');
+  console.error('Usage: orc delegate --task-ref=<feature/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]');
   process.exit(1);
 }
 

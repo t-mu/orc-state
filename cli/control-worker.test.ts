@@ -27,7 +27,7 @@ describe('cli/control-worker.ts', () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Worker not found: missing');
-    expect(result.stderr).toContain('orc-status');
+    expect(result.stderr).toContain('orc status');
   });
 
   it('fails when target is a master agent', () => {

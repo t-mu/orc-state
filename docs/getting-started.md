@@ -15,7 +15,9 @@ orc init
 ```
 
 The `init` command walks you through provider selection and installs
-skills, agents, and MCP configuration.
+skills, agents, and MCP configuration. Claude and Codex get skill/agent
+files installed automatically; Gemini remains available as a runtime
+provider, but `init` currently skips Gemini-specific skill/agent targets.
 
 Verify:
 

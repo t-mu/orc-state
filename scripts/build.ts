@@ -47,10 +47,11 @@ const outputFiles = globSync('dist/**/*.js');
 let rewritten = 0;
 for (const file of outputFiles) {
   const content = readFileSync(file, 'utf8');
-  // Rewrite import specifiers: from "./foo.ts" → from "./foo.js"
-  // Also rewrite string literal filenames: "foo.ts" → "foo.js" (for CLI command maps)
+  // Rewrite relative .ts/.tsx references in emitted JS so dynamic imports,
+  // new URL() calls, and other runtime string literals resolve inside dist/.
   const updated = content
     .replace(/(from\s+["']\..*?)\.tsx?(["'])/g, '$1.js$2')
+    .replace(/(["'])(\.\.?\/[^"']+)\.tsx?(["'])/g, '$1$2.js$3')
     .replace(/(["'])([a-z][-a-z0-9]*)\.ts(["'])/g, '$1$2.js$3');
   if (updated !== content) {
     writeFileSync(file, updated);

@@ -9,7 +9,7 @@ const response = flag('response');
 const actorId = flag('actor-id') ?? 'master';
 
 if (!runId || !agentId || !response) {
-  console.error('Usage: orc-run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]');
+  console.error('Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]');
   process.exit(1);
 }
 
@@ -30,6 +30,9 @@ function readLatestInputRequest(currentRunId: string, currentAgentId: string): R
 }
 
 const latestRequest = readLatestInputRequest(runId, agentId);
+const latestPayload = latestRequest?.payload as Record<string, unknown> | undefined;
+const latestQuestion = typeof latestPayload?.question === 'string' ? latestPayload.question : null;
+const latestRequestId = typeof latestPayload?.request_id === 'string' ? latestPayload.request_id : null;
 
 appendSequencedEvent(STATE_DIR, {
   ts: new Date().toISOString(),
@@ -41,7 +44,8 @@ appendSequencedEvent(STATE_DIR, {
   agent_id: agentId,
   payload: {
     response,
-    question: (latestRequest?.payload as Record<string, unknown> | undefined)?.question ?? null,
+    question: latestQuestion,
+    request_id: latestRequestId,
   },
 });
 
