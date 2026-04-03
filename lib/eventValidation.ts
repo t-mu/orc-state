@@ -133,6 +133,10 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
       'must be a non-empty string',
       errors,
     );
+    const payload = (e as { payload?: Record<string, unknown> } | null)?.payload;
+    if (payload?.request_id !== undefined && typeof payload.request_id !== 'string') {
+      errors.push('payload.request_id must be a string when present');
+    }
   }
 
   if (eventName === 'input_response') {
@@ -143,6 +147,10 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
       'must be a non-empty string',
       errors,
     );
+    const payload = (e as { payload?: Record<string, unknown> } | null)?.payload;
+    if (payload?.request_id !== undefined && typeof payload.request_id !== 'string' && payload.request_id !== null) {
+      errors.push('payload.request_id must be a string or null when present');
+    }
   }
 
   if (eventName && agentEvents.has(eventName)) {

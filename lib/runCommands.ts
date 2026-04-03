@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
 
 import { appendSequencedEvent, readEventsSince } from './eventLog.ts';
 import { validateProgressCommandInput } from './progressValidation.ts';
@@ -9,6 +10,8 @@ import { INPUT_REQUEST_HEARTBEAT_INTERVAL_MS } from './constants.ts';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from './inputRequestConfig.ts';
 import type { Claim } from '../types/claims.ts';
 import type { FailurePolicy } from '../types/events.ts';
+
+const INPUT_REQUEST_TIMEOUT_GRACE_MS = 250;
 
 function loadClaim(runId: string): Claim | null {
   try {
@@ -188,6 +191,7 @@ export async function executeRunInputRequest(
   const taskRef = validatedClaim.task_ref;
 
   const nowIso = new Date().toISOString();
+  const requestId = randomUUID();
   const requestSeq = appendSequencedEvent(STATE_DIR, {
     ts: nowIso,
     event: 'input_requested',
@@ -196,17 +200,29 @@ export async function executeRunInputRequest(
     run_id: runId,
     task_ref: validatedClaim.task_ref,
     agent_id: agentId,
-    payload: { question },
+    payload: { question, request_id: requestId },
   });
 
   function readLatestInputResponse() {
-    const events = readEventsSince(EVENTS_FILE, requestSeq);
-    return events.find((event) =>
-      event.event === 'input_response'
+    const events = readEventsSince(EVENTS_FILE, 0);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      const payload = event.payload as Record<string, unknown>;
+      const matchesRequestId = payload.request_id === requestId;
+      const isLegacyMatch = payload.request_id === undefined
+        && typeof event.seq === 'number'
+        && event.seq > requestSeq;
+      if (
+        event.event === 'input_response'
         && event.run_id === runId
         && event.agent_id === agentId
-        && typeof (event.payload as Record<string, unknown>)?.response === 'string',
-    );
+        && (matchesRequestId || isLegacyMatch)
+        && typeof payload.response === 'string'
+      ) {
+        return event;
+      }
+    }
+    return null;
   }
 
   const deadline = Date.now() + timeoutMs;
@@ -241,10 +257,20 @@ export async function executeRunInputRequest(
     await delay(Math.max(1, Math.min(pollMs, deadline - now)));
   }
 
-  const finalResponseEvent = readLatestInputResponse();
-  if (finalResponseEvent) {
-    process.stdout.write(`${String((finalResponseEvent.payload as Record<string, unknown>).response)}\n`);
-    process.exit(0);
+  const timeoutGraceDeadline = Date.now() + INPUT_REQUEST_TIMEOUT_GRACE_MS;
+  while (Date.now() < timeoutGraceDeadline) {
+    const finalResponseEvent = readLatestInputResponse();
+    if (finalResponseEvent) {
+      process.stdout.write(`${String((finalResponseEvent.payload as Record<string, unknown>).response)}\n`);
+      process.exit(0);
+    }
+
+    const graceClaim = loadClaim(runId);
+    if (!isActiveRunClaim(graceClaim, agentId)) {
+      break;
+    }
+
+    await delay(Math.max(5, Math.min(25, timeoutGraceDeadline - Date.now())));
   }
 
   const currentClaim = loadClaim(runId);
