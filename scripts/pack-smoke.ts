@@ -14,7 +14,9 @@ const packageDir = join(extractRoot, 'package');
 mkdirSync(cacheDir, { recursive: true });
 mkdirSync(extractRoot, { recursive: true });
 
-function run(command: string, args: string[], cwd: string, options: { encoding?: 'utf8' } = {}) {
+function run(command: string, args: string[], cwd: string): Buffer;
+function run(command: string, args: string[], cwd: string, options: { encoding: 'utf8' }): string;
+function run(command: string, args: string[], cwd: string, options: { encoding?: 'utf8' } = {}): Buffer | string {
   return execFileSync(command, args, {
     cwd,
     env: { ...process.env, npm_config_cache: cacheDir },
