@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadWorkerPoolConfig, loadMasterConfig, loadCoordinatorConfig, loadLeaseConfig, resolveWorkerModel } from './providers.ts';
+import { loadWorkerPoolConfig, loadMasterConfig, loadCoordinatorConfig, loadLeaseConfig, resolveWorkerModel, isSupportedExecutionMode } from './providers.ts';
 import type { WorkerPoolConfig } from './providers.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
@@ -31,6 +31,7 @@ describe('loadWorkerPoolConfig', () => {
       provider: 'gemini',
       model: 'gemini-2.5-pro',
       provider_models: {},
+      execution_mode: 'full-access',
     });
   });
 
@@ -56,6 +57,7 @@ describe('loadWorkerPoolConfig', () => {
       provider: 'codex',
       model: 'o4-mini',
       provider_models: {},
+      execution_mode: 'full-access',
     });
   });
 
@@ -120,6 +122,7 @@ describe('resolveWorkerModel', () => {
       provider: 'claude',
       model: 'generic-model',
       provider_models: { claude: 'claude-sonnet-4-6', codex: 'gpt-5.4' },
+      execution_mode: 'full-access',
     };
     expect(resolveWorkerModel(config)).toBe('claude-sonnet-4-6');
     expect(resolveWorkerModel(config, 'codex')).toBe('gpt-5.4');
@@ -131,6 +134,7 @@ describe('resolveWorkerModel', () => {
       provider: 'gemini',
       model: 'generic-model',
       provider_models: {},
+      execution_mode: 'full-access',
     };
     expect(resolveWorkerModel(config)).toBe('generic-model');
   });
@@ -141,6 +145,7 @@ describe('resolveWorkerModel', () => {
       provider: 'claude',
       model: null,
       provider_models: {},
+      execution_mode: 'full-access',
     };
     expect(resolveWorkerModel(config)).toBeNull();
   });
@@ -154,7 +159,7 @@ describe('loadMasterConfig', () => {
     }));
 
     const result = loadMasterConfig({ env: {}, configFile: configPath });
-    expect(result).toEqual({ provider: 'claude', model: 'claude-opus-4-6' });
+    expect(result).toEqual({ provider: 'claude', model: 'claude-opus-4-6', execution_mode: 'full-access' });
   });
 
   it('falls back to default_provider when master.provider absent', () => {
@@ -177,7 +182,7 @@ describe('loadMasterConfig', () => {
       env: { ORC_MASTER_PROVIDER: 'codex', ORC_MASTER_MODEL: 'o4-mini' },
       configFile: configPath,
     });
-    expect(result).toEqual({ provider: 'codex', model: 'o4-mini' });
+    expect(result).toEqual({ provider: 'codex', model: 'o4-mini', execution_mode: 'full-access' });
   });
 });
 
@@ -223,5 +228,149 @@ describe('loadLeaseConfig', () => {
     const result = loadLeaseConfig({ configFile: join(dir, 'nonexistent.json') });
     expect(result.default_ms).toBe(1800000);
     expect(result.finalize_ms).toBe(3600000);
+  });
+});
+
+describe('execution mode', () => {
+  it('isSupportedExecutionMode accepts valid modes', () => {
+    expect(isSupportedExecutionMode('full-access')).toBe(true);
+    expect(isSupportedExecutionMode('sandbox')).toBe(true);
+  });
+
+  it('isSupportedExecutionMode rejects invalid modes', () => {
+    expect(isSupportedExecutionMode('admin')).toBe(false);
+    expect(isSupportedExecutionMode('')).toBe(false);
+    expect(isSupportedExecutionMode('FULL-ACCESS')).toBe(false);
+  });
+});
+
+describe('loadMasterConfig execution_mode', () => {
+  it('defaults to full-access when absent', () => {
+    const result = loadMasterConfig({ env: {}, configFile: join(dir, 'nonexistent.json') });
+    expect(result.execution_mode).toBe('full-access');
+  });
+
+  it('reads from master.execution_mode in config', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      master: { provider: 'claude', execution_mode: 'sandbox' },
+    }));
+    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
+  });
+
+  it('falls back to default_execution_mode', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_execution_mode: 'sandbox',
+    }));
+    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
+  });
+
+  it('master.execution_mode takes priority over default_execution_mode', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_execution_mode: 'sandbox',
+      master: { execution_mode: 'full-access' },
+    }));
+    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('full-access');
+  });
+
+  it('env var ORC_MASTER_EXECUTION_MODE overrides config', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      master: { execution_mode: 'full-access' },
+    }));
+    const result = loadMasterConfig({ env: { ORC_MASTER_EXECUTION_MODE: 'sandbox' }, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
+  });
+
+  it('warns and defaults on invalid execution_mode', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      master: { execution_mode: 'invalid-mode' },
+    }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('full-access');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('invalid-mode'));
+    warnSpy.mockRestore();
+  });
+});
+
+describe('loadWorkerPoolConfig execution_mode', () => {
+  it('defaults to full-access when absent', () => {
+    const result = loadWorkerPoolConfig({ env: {}, configFile: join(dir, 'nonexistent.json') });
+    expect(result.execution_mode).toBe('full-access');
+  });
+
+  it('reads from worker_pool.execution_mode in config', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      worker_pool: { execution_mode: 'sandbox' },
+    }));
+    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
+  });
+
+  it('falls back to default_execution_mode', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_execution_mode: 'sandbox',
+    }));
+    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
+  });
+
+  it('worker_pool.execution_mode takes priority over default_execution_mode', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_execution_mode: 'sandbox',
+      worker_pool: { execution_mode: 'full-access' },
+    }));
+    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('full-access');
+  });
+
+  it('env var ORC_WORKER_EXECUTION_MODE overrides config', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      worker_pool: { execution_mode: 'full-access' },
+    }));
+    const result = loadWorkerPoolConfig({ env: { ORC_WORKER_EXECUTION_MODE: 'sandbox' }, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
+  });
+
+  it('warns and defaults on invalid execution_mode', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      worker_pool: { execution_mode: 'bad-value' },
+    }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('full-access');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('bad-value'));
+    warnSpy.mockRestore();
+  });
+});
+
+describe('parseRawConfigFile default_execution_mode', () => {
+  it('throws on invalid default_execution_mode in config file', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_execution_mode: 'not-a-mode',
+    }));
+    expect(() => loadMasterConfig({ env: {}, configFile: configPath })).toThrow(/invalid default_execution_mode/i);
+  });
+
+  it('accepts valid default_execution_mode in config file', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      default_execution_mode: 'sandbox',
+    }));
+    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
   });
 });

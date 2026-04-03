@@ -193,7 +193,7 @@ describe('managed worker slots', () => {
   it('reconciles missing config-backed worker slots into agents.json', () => {
     registerAgent(dir, { agent_id: 'master', provider: 'claude', role: 'master' });
 
-    reconcileManagedWorkerSlots(dir, { max_workers: 2, provider: 'codex', model: null, provider_models: {} });
+    reconcileManagedWorkerSlots(dir, { max_workers: 2, provider: 'codex', model: null, provider_models: {}, execution_mode: 'full-access' });
 
     expect(listAgents(dir).map((agent) => agent.agent_id)).toEqual(['master', 'orc-1', 'orc-2']);
     expect(getAgent(dir, 'orc-1')?.provider).toBe('codex');
@@ -206,7 +206,7 @@ describe('managed worker slots', () => {
     registerAgent(dir, { agent_id: 'legacy-worker', provider: 'gemini', role: 'worker' });
     registerAgent(dir, { agent_id: 'orc-1', provider: 'claude', role: 'worker' });
 
-    const agents = listCoordinatorAgents(dir, { max_workers: 2, provider: 'codex', model: null, provider_models: {} });
+    const agents = listCoordinatorAgents(dir, { max_workers: 2, provider: 'codex', model: null, provider_models: {}, execution_mode: 'full-access' });
 
     expect(agents.map((agent) => agent.agent_id)).toEqual(['master', 'reviewer-01', 'legacy-worker', 'orc-1', 'orc-2']);
     expect(agents.find((agent) => agent.agent_id === 'orc-1')?.provider).toBe('claude');
@@ -216,7 +216,7 @@ describe('managed worker slots', () => {
   it('refreshes provider bindings for idle managed slots from config', () => {
     registerAgent(dir, { agent_id: 'orc-1', provider: 'claude', role: 'worker' });
 
-    reconcileManagedWorkerSlots(dir, { max_workers: 1, provider: 'gemini', model: 'gemini-2.5-pro', provider_models: {} });
+    reconcileManagedWorkerSlots(dir, { max_workers: 1, provider: 'gemini', model: 'gemini-2.5-pro', provider_models: {}, execution_mode: 'full-access' });
 
     const slot = getAgent(dir, 'orc-1');
     expect(slot?.provider).toBe('gemini');
@@ -228,7 +228,7 @@ describe('managed worker slots', () => {
     registerAgent(dir, { agent_id: 'orc-2', provider: 'codex', role: 'worker' });
     registerAgent(dir, { agent_id: 'legacy-worker', provider: 'claude', role: 'worker' });
 
-    const agents = listCoordinatorAgents(dir, { max_workers: 1, provider: 'codex', model: null, provider_models: {} });
+    const agents = listCoordinatorAgents(dir, { max_workers: 1, provider: 'codex', model: null, provider_models: {}, execution_mode: 'full-access' });
 
     expect(agents.map((agent) => agent.agent_id)).toEqual(['legacy-worker', 'orc-1']);
   });
