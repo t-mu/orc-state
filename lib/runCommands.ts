@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { appendSequencedEvent, readEventsSince } from './eventLog.ts';
-import { validateProgressCommandInput, validateProgressInput } from './progressValidation.ts';
+import { validateProgressCommandInput } from './progressValidation.ts';
 import { startRun } from './claimManager.ts';
 import { STATE_DIR, EVENTS_FILE } from './paths.ts';
 import { readBacklog, findTask, readClaims } from './stateReader.ts';
@@ -16,6 +16,12 @@ function loadClaim(runId: string): Claim | null {
   } catch {
     return null;
   }
+}
+
+function isActiveRunClaim(claim: Claim | null, agentId: string): claim is Claim {
+  return claim != null
+    && claim.agent_id === agentId
+    && ['claimed', 'in_progress'].includes(claim.state);
 }
 
 export function executeRunStart(runId: string, agentId: string): void {
@@ -167,7 +173,7 @@ export async function executeRunInputRequest(
   pollMs: number = 1000,
 ): Promise<void> {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressInput({
+  const { claim: validatedClaim } = validateProgressCommandInput({
     event: 'need_input',
     runId,
     agentId,
@@ -175,6 +181,10 @@ export async function executeRunInputRequest(
     reason: 'master_input_required',
     policy: null,
   }, claim);
+  if (validatedClaim.state !== 'in_progress') {
+    console.error(`Timed out waiting for input_response for run ${runId} after ${timeoutMs}ms`);
+    process.exit(1);
+  }
   const taskRef = validatedClaim.task_ref;
 
   const nowIso = new Date().toISOString();
@@ -202,14 +212,20 @@ export async function executeRunInputRequest(
   const deadline = Date.now() + timeoutMs;
   let lastHeartbeatAt = Date.now();
 
-  while (Date.now() < deadline) {
+  while (true) {
     const responseEvent = readLatestInputResponse();
     if (responseEvent) {
       process.stdout.write(`${String((responseEvent.payload as Record<string, unknown>).response)}\n`);
       process.exit(0);
     }
 
-    if ((Date.now() - lastHeartbeatAt) >= INPUT_REQUEST_HEARTBEAT_INTERVAL_MS) {
+    const currentClaim = loadClaim(runId);
+    const now = Date.now();
+    if (!isActiveRunClaim(currentClaim, agentId) || now >= deadline) {
+      break;
+    }
+
+    if ((now - lastHeartbeatAt) >= INPUT_REQUEST_HEARTBEAT_INTERVAL_MS) {
       appendSequencedEvent(STATE_DIR, {
         ts: new Date().toISOString(),
         event: 'heartbeat',
@@ -219,10 +235,10 @@ export async function executeRunInputRequest(
         task_ref: taskRef,
         agent_id: agentId,
       }, { lockStrategy: 'none' });
-      lastHeartbeatAt = Date.now();
+      lastHeartbeatAt = now;
     }
 
-    await delay(pollMs);
+    await delay(Math.max(1, Math.min(pollMs, deadline - now)));
   }
 
   const finalResponseEvent = readLatestInputResponse();
@@ -232,9 +248,7 @@ export async function executeRunInputRequest(
   }
 
   const currentClaim = loadClaim(runId);
-  const shouldEmitTimeoutFailure = currentClaim != null
-    && currentClaim.agent_id === agentId
-    && ['claimed', 'in_progress'].includes(currentClaim.state);
+  const shouldEmitTimeoutFailure = isActiveRunClaim(currentClaim, agentId);
 
   if (shouldEmitTimeoutFailure) {
     appendSequencedEvent(STATE_DIR, {
