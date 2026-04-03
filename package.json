@@ -61,7 +61,7 @@
     "link-local-agents": "bash scripts/link-local-agents.sh",
     "link-local-all": "bash scripts/link-local-skills.sh && bash scripts/link-local-agents.sh",
     "link-local-skills": "bash scripts/link-local-skills.sh",
-    "prepare": "simple-git-hooks && chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true",
+    "prepare": "node scripts/prepare.ts",
     "prepublishOnly": "npm run build && npm test",
     "pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint .",
     "test": "vitest run",
