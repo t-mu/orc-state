@@ -119,10 +119,9 @@ immediately. Do not write any files. Report: "Cancelled — no tasks were create
 ## Step 4 — Create Tasks (delegating to create-task)
 
 **Coordinator note:** If the live coordinator is running, it may auto-claim and dispatch
-a task as soon as it is registered. To prevent a task from being dispatched before its
-dependencies are registered, write and register all task files in sequence from first to
-last before the coordinator has a chance to act. If tasks get auto-claimed or auto-dispatched,
-use `orc task-reset <ref>` after all tasks are registered to reset them to `todo`.
+a task as soon as it syncs the spec. To prevent a task from being dispatched before its
+dependencies are synced, write all task files in sequence from first to last. If tasks
+get auto-claimed or auto-dispatched prematurely, use `orc task-reset <ref>` to reset them.
 
 For each step, in order, run the **create-task workflow** (from `skills/create-task/SKILL.md`).
 Treat the step's title + body as the task description input.
@@ -132,7 +131,7 @@ Treat the step's title + body as the task description input.
 - **Step 0.5 (feature resolution):** already done above — do not re-ask.
 - **create-task Output Contract** (the final per-task report): do not emit a separate report per task — the batch report in Step 5 covers all tasks.
 
-All other create-task steps — including the "Register in backlog.json" step — apply unchanged for each task.
+All other create-task steps — including the "Verify Sync" step — apply unchanged for each task.
 
 **What differs from a normal create-task invocation:**
 
@@ -149,27 +148,24 @@ All other create-task steps — including the "Register in backlog.json" step �
    `mcp__orchestrator__create_task` — it is a markdown-authoritative field. The frontmatter
    is the authoritative source.
 
-3. **Batch mode:** write each file and register it immediately, then continue to the next.
-   Do not stop the batch on a single registration failure. On failure: emit a warning in
-   your response text (format: `⚠ REGISTRATION FAILED: <ref> — <error>`), continue writing
-   the remaining tasks, and include all failed refs in the final Step 5 report.
+3. **Batch mode:** write all task files in sequence. The coordinator auto-syncs them.
+   Run `orc backlog-sync-check` after the batch to verify.
 
 4. **`## Tests` section:** for tasks whose output is a markdown file, eval data, or
    documentation (not executable code), include the section with a single line:
    `Not applicable — task output is a markdown/data file, not executable code.`
 
-5. **Quality gate:** run create-task's quality gate for each task spec before registering it.
+5. **Quality gate:** run create-task's quality gate for each task spec before saving it.
 
 ## Step 5 — Sync Check and Final Report
 
-After all tasks are written and registered, run `orc backlog-sync-check --refs=<ref1>,<ref2>,...` scoped to the refs created in this batch.
+After all tasks are written, run `orc backlog-sync-check --refs=<ref1>,<ref2>,...` scoped to the refs created in this batch.
 
 Report:
 - Number of tasks created
 - File paths written
-- Refs registered (✓ or ✗ with error, using the `⚠` format from above)
-- Sync check result
+- Sync check result (✓ or ✗ per ref)
 
-If any newly created ref fails sync, list it explicitly and say:
-`To recover: say "register <ref>" to retry registration.`
+If sync-check fails, the coordinator may not have ticked yet. Wait a few seconds
+and retry. If it still fails, report the failing refs.
 Do not hide failures behind aggregate pass/fail messages.
