@@ -32,8 +32,8 @@ Normal workflow:
 
 1. `orc start-session`
 2. write/edit the backlog markdown spec
-3. register or sync runtime state
-4. `orc backlog-sync-check`
+3. coordinator auto-syncs specs to runtime state on each tick
+4. `orc backlog-sync-check` to verify
 5. `orc delegate`
 6. worker lifecycle via `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
 7. inspect with `orc status` / `orc doctor`

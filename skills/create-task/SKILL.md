@@ -17,14 +17,14 @@ The output target is task-spec markdown only.
 
 ## Completion Gate — Do Not Skip
 
-A task-creation turn is complete only when all three are true:
+A task-creation turn is complete only when both are true:
 
 1. The `backlog/<N>-<slug>.md` file is saved.
-2. The matching task ref is created or updated in orchestrator state.
-3. `orc backlog-sync-check --refs=<ref>` passes for the newly created ref(s).
+2. `orc backlog-sync-check --refs=<ref>` passes for the newly created ref(s).
 
-Never stop after writing markdown files. If backlog registration or sync validation fails,
-the turn is incomplete and the final response must list each failed ref explicitly.
+The coordinator auto-syncs specs to runtime state on each tick. Manual registration
+via `create_task` MCP is not required. If sync-check fails, wait for the next
+coordinator tick and retry, or report the failing refs.
 
 ## Step 0 — Orient Before Drafting
 
@@ -118,9 +118,8 @@ If a field is unknown, make a minimal reasonable assumption and mark it in `Cont
 Final response requirements for this skill:
 
 - List every task-spec file written.
-- List every task ref registered or updated in orchestrator state.
 - Report the result of `orc backlog-sync-check --refs=<ref1>,<ref2>` (scoped to refs created in this invocation).
-- If any registration or sync step fails, include a `Registration failures:` block with one line per ref and the error.
+- If sync-check fails, report the failing refs explicitly.
 
 Every task file must follow this section order exactly:
 
@@ -163,59 +162,10 @@ Use these optional sections only when they improve execution quality:
 5. Add tests and verification commands.
 6. Ensure the task can be executed independently by an LLM agent.
 
-## Step: Register in backlog.json
+## Step: Verify Sync
 
-After saving each .md file, perform MCP registration immediately:
-
-### 1. Read the ref from frontmatter
-
-The saved file begins with:
-```yaml
----
-ref: <feature>/<slug>
-feature: <feature-ref>
----
-```
-Extract the `ref` value.
-
-### 2. Check if already registered
-
-Call `mcp__orchestrator__get_task` with `task_ref: <ref>`.
-
-- If the result contains `{ "error": "not_found" }` -> **create path**
-- Otherwise -> **update path**
-
-### 3a. Create path
-
-Call `mcp__orchestrator__create_task` with runtime-owned fields only:
-- `title`: the task title from the `# Task N — Title` heading
-- `feature`: the `feature` frontmatter value
-- `ref`: the slug portion only (everything after the first `/` in the frontmatter ref)
-
-Do not send markdown-owned fields such as `description`, `acceptance_criteria`, or `depends_on` through generic create/update registration.
-
-### 3b. Update path
-
-Call `mcp__orchestrator__update_task` only for runtime-owned mutable fields.
-
-Do not use generic `update_task` to mutate markdown-owned fields.
-
-### 4. Handle failure (soft-fail)
-
-If the MCP call throws or returns an error, **do not abort**. Instead emit:
-
-```text
-⚠️  Registration warning
-Task spec saved:  backlog/<filename>.md
-Backlog sync:     FAILED — <error message>
-Ref:              <ref>
-
-To register now, say: "register <ref>"
-```
-
-Continue to the next task in a batch without interruption.
-
-### 5. Validate sync before finishing
+After saving each .md file, the coordinator auto-syncs specs to runtime state on
+its next tick. No manual MCP registration is needed.
 
 Run a targeted check scoped to the refs created in this invocation:
 
@@ -223,9 +173,12 @@ Run a targeted check scoped to the refs created in this invocation:
 orc backlog-sync-check --refs=<ref1>,<ref2>
 ```
 
-This only validates what was just written, so pre-existing backlog issues do not pollute the signal. If multiple tasks were created, include all their refs as a comma-separated list.
+This only validates what was just written, so pre-existing backlog issues do not
+pollute the signal. If multiple tasks were created, include all their refs as a
+comma-separated list.
 
-If it fails, do not treat the task-creation job as complete. Report the failing refs or files in the final response.
+If sync-check fails, the coordinator may not have ticked yet. Wait a few seconds
+and retry. If it still fails, report the failing refs in the final response.
 
 ## Batch Workflow
 
@@ -235,10 +188,8 @@ When the user asks to break work into multiple tasks:
 2. Break work into atomic units — each with an independent success condition.
 3. Assign sequential IDs and declare cross-task dependencies explicitly.
 4. Sequence foundational changes before integration and tests.
-5. Emit one complete task file per task using the same fixed section order,
-   then immediately run the "Register in backlog.json" step for that task
-   before moving to the next one.
-6. After all files in the batch are registered, run `orc backlog-sync-check --refs=<ref1>,<ref2>` scoped to the batch refs.
+5. Emit one complete task file per task using the same fixed section order.
+6. After all files are saved, run `orc backlog-sync-check --refs=<ref1>,<ref2>` scoped to the batch refs.
 7. Avoid hidden coupling — declare cross-task assumptions in `Context`.
 
 ## Quality Gate (score before saving)

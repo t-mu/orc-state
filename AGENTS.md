@@ -177,7 +177,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 
 1. Session startup: `orc start-session`
 2. Task authoring: edit `backlog/<N>-<slug>.md`
-3. Task registration/sync: create/update runtime state to match markdown, then run `orc backlog-sync-check`
+3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. Run `orc backlog-sync-check` to verify.
 4. Task completion: `orc task-mark-done <task-ref>` (updates spec + state in one action)
 5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
 6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
@@ -260,9 +260,9 @@ orc run-input-respond --run-id=<id> --agent-id=<id> \
 **For agents:** use `orc` CLI commands or MCP tools for all state changes. Never call `withLock`, `atomicWriteJson`, or other internal library functions directly — those are for code authors implementing new handlers, not for agents operating the system.
 
 Normal task-authoring path:
-- edit the markdown spec first
-- register or sync the runtime task record second
-- run `orc backlog-sync-check`
+- edit the markdown spec in `backlog/`
+- the coordinator auto-syncs specs to runtime state on each tick
+- run `orc backlog-sync-check` to verify sync
 
 Do not treat generic runtime mutation as a substitute for backlog markdown edits.
 
@@ -383,11 +383,9 @@ Follow the **Phased Workflow** above. The five phases are:
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 
 ### Task Creation Completion Gate
-- When creating or updating backlog task specs, the work is not complete after writing the markdown spec.
-- Completion requires both:
-  - the markdown spec saved under the backlog directory
-  - the matching task created or updated in orchestrator state
-- After task creation or update work, run `orc backlog-sync-check`.
+- When creating or updating backlog task specs, save the markdown spec under the backlog directory.
+- The coordinator auto-syncs specs to runtime state on each tick. Manual registration is not required.
+- After task creation or update work, run `orc backlog-sync-check` to verify the sync completed.
 - Do not report success unless the sync check passes, or you explicitly report which refs failed to sync.
 
 ---

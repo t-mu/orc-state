@@ -162,16 +162,16 @@ Planning new work:
 1. Write a task spec to backlog/<N>-<slug>.md following the template.
    Use the create-task skill or write the file directly.
    Use get_status().next_task_seq for the next available task number.
-2. Once the spec is ready, register it for dispatch with create_task(...).
-   When creating tasks, assess complexity and set an appropriate model:
+2. The coordinator auto-syncs specs to runtime state on each tick — no manual
+   registration needed. Run `orc backlog-sync-check` to verify sync completed.
+   When creating tasks, assess complexity and set an appropriate model via
+   update_task(task_ref, model=...):
    - Trivial tasks (config edits, dependency bumps, doc updates): use a fast/cheap
-     model via create_task(..., model="claude-haiku-4-5")
+     model like "claude-haiku-4-5"
    - Standard tasks (feature implementation, bug fixes): omit model to use the pool default
    - Complex tasks (architectural changes, multi-system rewrites): consider a stronger
-     model via create_task(..., model="claude-sonnet-4-6")
+     model like "claude-sonnet-4-6"
    If unsure, omit the model field and let the pool default apply.
-   You can also set or clear the model later with update_task(task_ref, model=...).
-   Run `orc backlog-sync-check` to verify runtime state matches the markdown spec.
    Note: in autonomous mode (the default), the coordinator auto-dispatches
    eligible tasks to available workers on each tick. You do not need to call
    delegate_task() unless you want to target a specific worker or the
