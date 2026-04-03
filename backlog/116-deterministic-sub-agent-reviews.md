@@ -2,7 +2,7 @@
 ref: publish/116-deterministic-sub-agent-reviews
 feature: publish
 priority: normal
-status: done
+status: todo
 ---
 
 # Task 116 — Deterministic Sub-Agent Review Output
