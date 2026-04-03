@@ -82,27 +82,20 @@ When a TASK_START block arrives:
             {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
        b. Spawn two independent sub-agents. Give each:
           - The acceptance criteria for this task
-          - The changed file list from `git diff --name-only main...HEAD`
-          - The changed hunks from `git diff --stat --patch main...HEAD -- <changed files>`
+          - The full diff output (not just file names): `git diff --stat --patch main...HEAD`
           - Scope note: review only touched code and obvious adjacent regressions
           - The following MANDATORY CONSTRAINTS block verbatim:
 
           --- REVIEWER CONSTRAINTS (read this before doing anything) ---
           You are a code reviewer sub-agent operating at MAX_DEPTH=1.
-          Your only role is to read the diff and acceptance criteria, identify
-          any issues, and return findings as text (or "approved" if none).
+          Your only role is to review the diff provided above — do not explore
+          the codebase independently. Identify any issues and return findings
+          as text (or "approved" if none).
 
           You MUST call before returning:
             {{orc_bin}} review-submit --run-id=<run_id> --agent-id=<your_agent_id> \
               --outcome=<approved|findings> --reason="<findings text>"
           This is the ONLY orc command you may call.
-
-          Wrap your entire output in this block (no text outside it):
-            REVIEW_FINDINGS
-            verdict: approved | findings
-
-            <one finding per issue, or "No issues found.">
-            REVIEW_FINDINGS_END
 
           You MUST NOT call any of the following commands:
             orc run-start, orc run-heartbeat, orc run-work-complete,
@@ -112,13 +105,25 @@ When a TASK_START block arrives:
           You MUST NOT write to backlog.json, claims.json, or events.db.
           You MUST NOT spawn further sub-agents or delegates.
           You MUST NOT make any file edits, commits, or git operations.
+
+          Wrap your entire output in this block (no text outside it):
+            REVIEW_FINDINGS
+            verdict: approved | findings
+
+            <one finding per issue, or "No issues found.">
+            REVIEW_FINDINGS_END
           --- END REVIEWER CONSTRAINTS ---
        c. Retrieve findings: `{{orc_bin}} review-read --run-id=<run_id>`
           If a reviewer failed or is non-responsive, proceed with reviews that were submitted.
           `review-read` always exits 0 — inspect its output for outcomes.
           When reading reviewer output from an output file, grep for `REVIEW_FINDINGS_END` —
           if absent, the reviewer did not finish and should be treated as non-responsive.
-       d. Address all findings in a fixup commit.
+       d. Retry for missing structured output: for each reviewer that submitted via
+          `review-submit` but whose text output lacks `REVIEW_FINDINGS_END`, send one
+          follow-up message: "Your review-submit was received but the structured
+          REVIEW_FINDINGS block is missing from your output. Emit only the block now."
+          If the retry also fails, treat as non-responsive (existing behavior).
+       e. Address all findings in a fixup commit.
        One review round only — address all findings, then proceed.
   8. Signal complete phase and mark the task done (updates spec frontmatter + runtime state atomically):
        {{orc_bin}} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id={{agent_id}}

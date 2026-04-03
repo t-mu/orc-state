@@ -92,7 +92,7 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
    `orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>`
 3. Spawn two independent sub-agent reviewers. Give each:
    - the acceptance criteria from the task spec
-   - the output of `git diff main`
+   - the full diff: `git diff --stat --patch main...HEAD` (not just file names)
    - their run_id, agent_id, and reviewer number
    IMPORTANT: instruct each reviewer to call before returning:
    ```bash
@@ -101,7 +101,8 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
    ```
    Findings written this way survive context compaction.
    Instruct all reviewers — built-in (critic, integrator) or general-purpose
-   — to wrap their entire output in this block:
+   — to wrap their entire output in this block (format must be last in
+   constraints, immediately before END marker, for recency bias):
    ```
    REVIEW_FINDINGS
    verdict: approved | findings
@@ -111,13 +112,19 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
    ```
    No text outside the block. This format is grep-able and survives context
    compaction regardless of reviewer type.
+   Reviewers are instructed to review the inlined diff only — not to explore
+   the codebase independently.
 4. Retrieve findings: `orc review-read --run-id=<run_id>`
    If a reviewer failed or is non-responsive, proceed with the reviews
    that were submitted. `orc review-read` exits 0 regardless of count.
    When reading reviewer output from an output file, grep for
    `REVIEW_FINDINGS_END` — if absent, the reviewer did not finish and
    should be treated as non-responsive.
-5. Address ALL findings in a fixup commit.
+5. Retry for missing structured output: for each reviewer that submitted
+   via `review-submit` but whose text output lacks `REVIEW_FINDINGS_END`,
+   send one follow-up message asking only for the structured block.
+   If retry fails, treat as non-responsive.
+6. Address ALL findings in a fixup commit.
 
 **Gate:** Parse `orc review-read` output — all submitted reviewers report `approved`.
 `orc review-read` always exits 0; you MUST inspect the output for outcomes.
