@@ -2,7 +2,7 @@
 ref: publish/115-per-task-model-override
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 115 — Per-Task Model Override
