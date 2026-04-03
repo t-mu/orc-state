@@ -8,6 +8,13 @@ export interface McpMergeResult {
   path: string;      // absolute path to .mcp.json
 }
 
+function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): string {
+  return fileURLToPath(new URL(
+    import.meta.url.endsWith('.ts') ? relativeTsPath : relativeJsPath,
+    import.meta.url,
+  ));
+}
+
 export function mergeMcpConfig(
   targetDir: string,
   serverPath: string,
@@ -53,5 +60,5 @@ export function mergeMcpConfig(
 }
 
 export function defaultServerPath(): string {
-  return fileURLToPath(new URL('../mcp/server.ts', import.meta.url));
+  return runtimeModulePath('../mcp/server.ts', '../mcp/server.js');
 }

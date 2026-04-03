@@ -53,6 +53,13 @@ import {
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
 
+function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): string {
+  return fileURLToPath(new URL(
+    import.meta.url.endsWith('.ts') ? relativeTsPath : relativeJsPath,
+    import.meta.url,
+  ));
+}
+
 // ── Coordinator helpers ────────────────────────────────────────────────────
 
 const COORDINATOR_PID_FILE = join(STATE_DIR, 'coordinator.pid');
@@ -163,7 +170,7 @@ async function stopCoordinator(pid: number) {
 }
 
 function writeMcpConfig() {
-  const serverPath = fileURLToPath(new URL('../mcp/server.ts', import.meta.url));
+  const serverPath = runtimeModulePath('../mcp/server.ts', '../mcp/server.js');
   const config = {
     mcpServers: {
       orchestrator: {
