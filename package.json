@@ -64,6 +64,7 @@
     "prepare": "node scripts/prepare.ts",
     "prepublishOnly": "npm run build && npm test",
     "pretest": "tsc --project tsconfig.check.json --noEmit && tsc --project tsconfig.test.json --noEmit && eslint .",
+    "pack:smoke": "node scripts/pack-smoke.ts",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
     "pack:dry": "npm pack --dry-run",
