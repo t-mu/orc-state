@@ -20,7 +20,7 @@ Review against:
 
 ## How to review
 
-1. Inspect the patch with `git diff HEAD` or `git diff`.
+1. Review the diff provided in your spawn prompt. Do not explore the codebase beyond the provided diff and task spec.
 2. Read the relevant task spec and `AGENTS.md`.
 3. Focus on integration quality rather than isolated code style.
 4. Report concrete findings with references.
