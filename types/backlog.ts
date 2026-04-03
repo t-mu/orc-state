@@ -15,6 +15,7 @@ export interface Task {
   parent_task_ref?: TaskRef | undefined;
   required_capabilities?: string[] | undefined;
   required_provider?: ProviderName | undefined;
+  model?: string | null | undefined;
   depends_on?: TaskRef[] | undefined;
   acceptance_criteria?: string[] | undefined;
   attempt_count?: number | undefined;

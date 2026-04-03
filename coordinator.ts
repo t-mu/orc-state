@@ -43,7 +43,7 @@ import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } fro
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { fileURLToPath } from 'node:url';
-import { readBacklog, readJson } from './lib/stateReader.ts';
+import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
@@ -238,6 +238,7 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
     repoRoot: REPO_ROOT,
     runId: (launchConfig.run_id ?? null) as string | null,
     taskRef: (launchConfig.task_ref ?? null) as string | null,
+    taskModel: (launchConfig.task_model ?? null) as string | null,
     retryable: launchConfig.retryable === true,
     emit,
   });
@@ -325,10 +326,12 @@ async function processClaimedSessionReadiness(
     if (!agent || agent.status === 'offline') continue;
 
     if (!agent.session_handle) {
+      const claimedTask = findTask(readBacklog(STATE_DIR), claim.task_ref);
       const ready = await ensureSessionReady(agent, {
         working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? null,
         run_id: claim.run_id,
         task_ref: claim.task_ref,
+        task_model: claimedTask?.model ?? null,
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
       });
       if (!ready.ok || !agent.session_handle) {
@@ -414,10 +417,12 @@ async function processManagedSessionStartRetries(
     }
     if (nowMs < new Date(nextRetryAt).getTime()) continue;
 
+    const retryTask = findTask(readBacklog(STATE_DIR), claim.task_ref);
     const ready = await ensureSessionReady(agent, {
       working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? null,
       run_id: claim.run_id,
       task_ref: claim.task_ref,
+      task_model: retryTask?.model ?? null,
       retryable: true,
     });
     if (ready.ok && agent.session_handle && agent.status !== 'offline') {
