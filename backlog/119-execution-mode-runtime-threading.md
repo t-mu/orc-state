@@ -57,7 +57,7 @@ For scouts, `read_only: agent.role === 'scout'` is set at line 155 of `workerRun
 
 ## Goals
 
-1. Must add `executionMode` as a named parameter to `launchWorkerSession()`.
+1. Must add `executionMode` as a named parameter to `launchWorkerSession()`, typed as `ExecutionMode` (imported from `lib/providers.ts`).
 2. Must enforce scout override: `execution_mode = 'sandbox'` when `agent.role === 'scout'`, regardless of the passed value.
 3. Must pass `execution_mode` from `launchWorkerSession` to `adapter.start()` config.
 4. Must thread `execution_mode` from `WorkerPoolConfig` through every coordinator call site that invokes `launchWorkerSession`.
@@ -71,7 +71,7 @@ For scouts, `read_only: agent.role === 'scout'` is set at line 155 of `workerRun
 
 **File:** `lib/workerRuntime.ts`
 
-Add `executionMode?: string` to the function parameters (or the options object if one exists).
+Add `executionMode?: ExecutionMode` to the function parameters (imported from `lib/providers.ts`).
 
 Inside the function, compute the effective mode:
 ```ts
@@ -94,7 +94,14 @@ Find `ensureSessionReady` and its call sites. The coordinator already loads `Wor
 
 **File:** `coordinator.ts`
 
-Grep for all invocations of `launchWorkerSession` and `ensureSessionReady`. Ensure every call site passes `executionMode`. There may be multiple paths (initial dispatch, retry, finalize rebase) — all must be updated.
+There are 4 `ensureSessionReady` call sites. Each constructs a `launchConfig` bag that flows to `launchWorkerSession`. The sites that pass a non-null `launchConfig` must include `execution_mode`:
+
+1. **Line ~330** — claimed session relaunch: passes `{ working_directory, run_id, task_ref, task_model, retryable }` → add `execution_mode`
+2. **Line ~421** — retry path: passes `{ working_directory, run_id, task_ref, task_model, retryable }` → add `execution_mode`
+3. **Line ~745** — pool health check: passes `null` launchConfig (no launch needed) → no change needed
+4. **Line ~1304** — initial dispatch: passes `{ working_directory, run_id, task_ref, retryable }` → add `execution_mode`
+
+All call sites with non-null `launchConfig` have `workerPoolConfig` in scope. Note: `launchWorkerSession` is only called from within `ensureSessionReady` (line ~235), so the real requirement is that all `ensureSessionReady` callers include `execution_mode` in their `launchConfig` objects.
 
 ---
 
@@ -103,7 +110,7 @@ Grep for all invocations of `launchWorkerSession` and `ensureSessionReady`. Ensu
 - [ ] `launchWorkerSession()` accepts `executionMode` parameter.
 - [ ] Scouts always receive `execution_mode: 'sandbox'` in adapter config, even if `'full-access'` is passed.
 - [ ] Non-scout workers receive the configured `execution_mode` in adapter config.
-- [ ] All coordinator call sites that invoke `launchWorkerSession` pass the execution mode.
+- [ ] All `ensureSessionReady` call sites with non-null `launchConfig` include `execution_mode` in the config bag (lines ~330, ~421, ~1304).
 - [ ] Missing `executionMode` parameter defaults to `'full-access'` behavior.
 - [ ] All existing tests pass.
 - [ ] No changes to files outside the stated scope.
@@ -112,7 +119,7 @@ Grep for all invocations of `launchWorkerSession` and `ensureSessionReady`. Ensu
 
 ## Tests
 
-Add to or create tests for `lib/workerRuntime.ts`:
+Create `lib/workerRuntime.test.ts` if it does not exist. Mock the adapter's `start()` method with a spy to capture the config passed to it.
 
 ```ts
 describe('launchWorkerSession execution mode', () => {
@@ -122,6 +129,8 @@ describe('launchWorkerSession execution mode', () => {
   it('non-scout workers receive configured mode', () => { ... });
 });
 ```
+
+For coordinator threading, add a grep-based verification step or integration test confirming all `ensureSessionReady` call sites with non-null launchConfig include `execution_mode`.
 
 ---
 

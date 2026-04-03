@@ -114,3 +114,15 @@ No code tests. Verify documentation reads correctly and covers all acceptance cr
 cat docs/configuration.md | grep -c "execution_mode"
 # Expected: multiple occurrences
 ```
+
+```bash
+# Confirm no accidental code changes break tests
+nvm use 24 && npm test
+```
+
+---
+
+## Risk / Rollback
+
+**Risk:** Minimal — documentation-only changes. No code or state impact.
+**Rollback:** Revert the commit.

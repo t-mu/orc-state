@@ -41,7 +41,7 @@ Depends on Task 117 (config types and loader). Blocks Task 119.
 
 The `start()` method always runs the Claude auto-accept dance (writes `'2'` + `'\r'` to dismiss the bypass confirmation dialog) regardless of mode.
 
-The `read_only` field is passed through to `adapter.start()` config but never consumed by `buildStartArgs` — it is a dead field.
+The `read_only` field is passed through to `adapter.start()` config but never consumed by `buildStartArgs` or `start()` — it is a dead field. `buildStartArgs` does not receive `read_only` in its current signature `(provider, config, claudeSettingsPath?)`, so it must be extended or `start()` must extract and pass it.
 
 ### Desired state
 
@@ -72,7 +72,7 @@ Claude settings file in sandbox mode merges the notification hook with sandbox c
 
 ## Goals
 
-1. Must extend the `Adapter.start()` options type in `lib/workerRuntime.ts` to include `execution_mode?: string`.
+1. Must extend the `Adapter.start()` options type in `lib/workerRuntime.ts` to include `execution_mode?: ExecutionMode` (imported from `lib/providers.ts`).
 2. Must update `buildStartArgs()` to produce correct flags for each provider × execution mode combination.
 3. Must update Claude settings file generation: sandbox mode merges notification hook + sandbox config block; full-access mode keeps hook-only (current behavior).
 4. Must guard the Claude auto-accept bypass dance: only fire when `execution_mode === 'full-access'`.
@@ -88,7 +88,7 @@ Claude settings file in sandbox mode merges the notification hook with sandbox c
 
 **File:** `lib/workerRuntime.ts` (lines 111-118)
 
-Add `execution_mode?: string` to the `Adapter.start()` options type alongside the existing `read_only`, `model`, `system_prompt`, etc.
+Add `execution_mode?: ExecutionMode` (imported from `lib/providers.ts`) to the `Adapter.start()` options type (lines 111-119) alongside the existing `read_only`, `model`, `system_prompt`, etc.
 
 ### Step 2 — Update buildStartArgs for Claude
 
@@ -152,7 +152,7 @@ The settings JSON written to `pty-settings/{agentId}.json`:
   }
 }
 ```
-Note: no `filesystem.allowWrite` — defaults to read-only writes (can only read, not write anywhere outside sandbox defaults).
+Note: no `filesystem.allowWrite` — defaults to read-only filesystem access (cannot write anywhere outside Claude sandbox defaults).
 
 ### Step 5 — Guard auto-accept dance
 

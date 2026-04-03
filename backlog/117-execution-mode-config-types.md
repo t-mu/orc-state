@@ -59,7 +59,7 @@ Both `MasterConfig` and `WorkerPoolConfig` include an `execution_mode` field wit
 4. Must extend `parseRawConfigFile()` to extract and validate `default_execution_mode`.
 5. Must implement 4-tier loading priority in both `loadMasterConfig()` and `loadWorkerPoolConfig()`.
 6. Must default to `'full-access'` when no execution mode is configured (backward compatible).
-7. Must reject invalid execution mode values with a descriptive error/warning (follow existing pattern for invalid provider values).
+7. Must throw on invalid `default_execution_mode` in `parseRawConfigFile()` (matches existing `default_provider` pattern). In `loadMasterConfig()` / `loadWorkerPoolConfig()`, warn and fall back to `'full-access'` on invalid per-role values (graceful degradation at the loader level).
 
 ---
 
@@ -94,7 +94,7 @@ Update `DEFAULT_MASTER_CONFIG` and `DEFAULT_WORKER_POOL_CONFIG` to include `exec
 
 Add `default_execution_mode?: string` to the `RawConfigFile` interface (alongside existing `default_provider`).
 
-In `parseRawConfigFile()`, extract `default_execution_mode` from the raw config object. If present and invalid, warn and ignore (follow existing pattern for `default_provider`).
+In `parseRawConfigFile()`, extract `default_execution_mode` from the raw config object. If present and invalid, throw an error (matches existing `default_provider` pattern).
 
 ### Step 4 — Update loadMasterConfig
 
@@ -130,7 +130,8 @@ Add `default_execution_mode` and per-role `execution_mode` fields with comments.
 - [ ] `loadMasterConfig()` reads from env var `ORC_MASTER_EXECUTION_MODE` with highest priority.
 - [ ] `loadMasterConfig()` reads from per-role config, then `default_execution_mode`, then hardcoded default.
 - [ ] `loadWorkerPoolConfig()` follows the same 4-tier priority with `ORC_WORKER_EXECUTION_MODE`.
-- [ ] Invalid `execution_mode` values are warned and fall back to default.
+- [ ] Invalid `default_execution_mode` in config file throws an error (matches `default_provider` pattern).
+- [ ] Invalid per-role `execution_mode` in loaders warns and falls back to `'full-access'`.
 - [ ] Existing tests pass without modification (backward compatible).
 - [ ] No changes to files outside the stated scope.
 

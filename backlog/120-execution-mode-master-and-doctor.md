@@ -52,7 +52,7 @@ Doctor checks for `bwrap` and `socat` on Linux when Claude provider is configure
 **Affected files:**
 - `cli/start-session.ts` — Codex master spawn arg branching
 - `cli/doctor.ts` — new sandbox dependency check
-- `cli/doctor.test.ts` — new tests (if test file exists)
+- `cli/doctor.test.ts` — new tests for sandbox dependency check
 
 ---
 
