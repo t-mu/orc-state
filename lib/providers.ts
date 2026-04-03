@@ -5,16 +5,25 @@ import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
 export const PROVIDERS = ['codex', 'claude', 'gemini'] as const;
 export type ProviderName = typeof PROVIDERS[number];
 
+export type ExecutionMode = 'full-access' | 'sandbox';
+export const EXECUTION_MODES: readonly ExecutionMode[] = ['full-access', 'sandbox'] as const;
+
+export function isSupportedExecutionMode(value: string): value is ExecutionMode {
+  return EXECUTION_MODES.includes(value as ExecutionMode);
+}
+
 export interface WorkerPoolConfig {
   max_workers: number;
   provider: ProviderName;
   model: string | null;
   provider_models: Partial<Record<ProviderName, string>>;
+  execution_mode: ExecutionMode;
 }
 
 export interface MasterConfig {
   provider: ProviderName;
   model: string | null;
+  execution_mode: ExecutionMode;
 }
 
 export interface CoordinatorConfig {
@@ -43,11 +52,13 @@ export const DEFAULT_WORKER_POOL_CONFIG: Readonly<WorkerPoolConfig> = Object.fre
   provider: 'codex' as ProviderName,
   model: null,
   provider_models: Object.freeze({}),
+  execution_mode: 'full-access' as ExecutionMode,
 });
 
 export const DEFAULT_MASTER_CONFIG: Readonly<MasterConfig> = Object.freeze({
   provider: 'claude' as ProviderName,
   model: null,
+  execution_mode: 'full-access' as ExecutionMode,
 });
 
 export const DEFAULT_COORDINATOR_CONFIG: Readonly<CoordinatorConfig> = Object.freeze({
@@ -95,6 +106,7 @@ function parsePositiveInteger(rawValue: unknown, fieldName: string): number | nu
 
 interface RawConfigFile {
   default_provider?: string | null;
+  default_execution_mode?: string | null;
   master?: Record<string, unknown> | null;
   worker_pool?: Record<string, unknown> | null;
   coordinator?: Record<string, unknown> | null;
@@ -118,7 +130,13 @@ function parseRawConfigFile(configFile: string = ORCHESTRATOR_CONFIG_FILE): RawC
     throw new Error(`Invalid default_provider in ${configFile}: ${defaultProvider}. Must be codex, claude, or gemini.`);
   }
 
-  const result: RawConfigFile = { default_provider: defaultProvider };
+  const defaultExecutionMode = typeof topLevel.default_execution_mode === 'string' ? topLevel.default_execution_mode : null;
+
+  if (defaultExecutionMode != null && !isSupportedExecutionMode(defaultExecutionMode)) {
+    throw new Error(`Invalid default_execution_mode in ${configFile}: ${defaultExecutionMode}. Must be full-access or sandbox.`);
+  }
+
+  const result: RawConfigFile = { default_provider: defaultProvider, default_execution_mode: defaultExecutionMode };
 
   if (topLevel.master != null) {
     if (typeof topLevel.master !== 'object' || Array.isArray(topLevel.master)) {
@@ -186,11 +204,22 @@ export function loadWorkerPoolConfig({
     throw new Error(`Unsupported worker pool provider: ${provider}`);
   }
 
+  const executionModeRaw = env.ORC_WORKER_EXECUTION_MODE ?? (wp.execution_mode as string | null) ?? raw.default_execution_mode ?? null;
+  let execution_mode: ExecutionMode = 'full-access';
+  if (executionModeRaw != null) {
+    if (isSupportedExecutionMode(executionModeRaw)) {
+      execution_mode = executionModeRaw;
+    } else {
+      console.warn(`Invalid execution_mode "${executionModeRaw}" for worker_pool — falling back to 'full-access'`);
+    }
+  }
+
   return {
     max_workers: maxWorkers ?? parseNonNegativeInteger(wp.max_workers, 'worker_pool.max_workers') ?? DEFAULT_WORKER_POOL_CONFIG.max_workers,
     provider,
     model: model ?? null,
     provider_models: parseProviderModels(wp.provider_models),
+    execution_mode,
   };
 }
 
@@ -210,7 +239,17 @@ export function loadMasterConfig({
     throw new Error(`Unsupported master provider: ${provider}`);
   }
 
-  return { provider, model: model ?? null };
+  const executionModeRaw = env.ORC_MASTER_EXECUTION_MODE ?? (mc.execution_mode as string | null) ?? raw.default_execution_mode ?? null;
+  let execution_mode: ExecutionMode = 'full-access';
+  if (executionModeRaw != null) {
+    if (isSupportedExecutionMode(executionModeRaw)) {
+      execution_mode = executionModeRaw;
+    } else {
+      console.warn(`Invalid execution_mode "${executionModeRaw}" for master — falling back to 'full-access'`);
+    }
+  }
+
+  return { provider, model: model ?? null, execution_mode };
 }
 
 export function loadCoordinatorConfig({

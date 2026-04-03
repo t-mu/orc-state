@@ -2,7 +2,7 @@
 ref: general/117-execution-mode-config-types
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 117 — Add Execution Mode Config Types and Loader
