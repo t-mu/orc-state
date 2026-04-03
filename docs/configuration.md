@@ -21,6 +21,7 @@ orc-state is configured through environment variables and an optional JSON confi
 | `ORC_MAX_WORKERS` | Maximum number of concurrent worker agents | `0` (set via config or CLI) |
 | `ORC_WORKER_PROVIDER` | Provider for worker agents (`claude`, `codex`, or `gemini`) | `codex` (or config `default_provider`) |
 | `ORC_WORKER_MODEL` | Model identifier for worker agents | Provider default |
+| `ORC_WORKER_EXECUTION_MODE` | Execution mode for worker agents (`full-access` or `sandbox`) | `full-access` |
 
 ### Master Agent
 
@@ -28,6 +29,7 @@ orc-state is configured through environment variables and an optional JSON confi
 |----------|-------------|---------|
 | `ORC_MASTER_PROVIDER` | Provider for the master agent | `claude` (or config `default_provider`) |
 | `ORC_MASTER_MODEL` | Model identifier for the master agent | Provider default |
+| `ORC_MASTER_EXECUTION_MODE` | Execution mode for the master agent (`full-access` or `sandbox`) | `full-access` |
 
 ### Testing
 
@@ -45,14 +47,17 @@ Location: `orchestrator.config.json` in the repository root (sibling of `.orc-st
 ```json
 {
   "default_provider": "claude",
+  "default_execution_mode": "full-access",
   "master": {
     "provider": "claude",
-    "model": "claude-sonnet-4-20250514"
+    "model": "claude-sonnet-4-20250514",
+    "execution_mode": "full-access"
   },
   "worker_pool": {
     "max_workers": 3,
     "provider": "codex",
     "model": "o4-mini",
+    "execution_mode": "full-access",
     "provider_models": {
       "claude": "claude-sonnet-4-20250514",
       "codex": "o4-mini",
@@ -87,12 +92,17 @@ All fields are optional. Omitted fields use their defaults.
 
 Sets the fallback provider for both master and worker pool when neither a section-specific provider nor an environment variable is set. Must be `claude`, `codex`, or `gemini`.
 
+### `default_execution_mode`
+
+Sets the fallback execution mode for both master and worker pool when neither a section-specific `execution_mode` nor an environment variable is set. Must be `full-access` or `sandbox`. Defaults to `full-access`.
+
 ### `master`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `provider` | string | `"claude"` | Provider for the master agent |
 | `model` | string | `null` | Model override for the master agent |
+| `execution_mode` | string | `"full-access"` | Execution mode for the master agent (`full-access` or `sandbox`) |
 
 ### `worker_pool`
 
@@ -101,6 +111,7 @@ Sets the fallback provider for both master and worker pool when neither a sectio
 | `max_workers` | integer | `0` | Maximum concurrent workers |
 | `provider` | string | `"codex"` | Default provider for workers |
 | `model` | string | `null` | Default model for all workers |
+| `execution_mode` | string | `"full-access"` | Execution mode for worker agents (`full-access` or `sandbox`) |
 | `provider_models` | object | `{}` | Per-provider model overrides (keyed by provider name) |
 
 When a worker is launched, its model is resolved as: `provider_models[provider]` first, then `model`, then provider default.
@@ -132,6 +143,136 @@ All `coordinator` fields can also be passed as CLI flags to `coordinator.ts` (e.
 | `default_ms` | integer | `1800000` (30 min) | Default claim lease duration |
 | `finalize_ms` | integer | `3600000` (60 min) | Extended lease for the finalize phase |
 
+## Execution Modes
+
+Execution modes control the trust level and sandbox behaviour of agent processes. Two presets are available.
+
+### Presets
+
+| Preset | Description |
+|--------|-------------|
+| `full-access` | Agent process runs with full filesystem and network access. No sandbox is applied. This is the default and preserves backward compatibility. |
+| `sandbox` | Agent process is confined to the workspace. File writes outside the working directory are blocked and unsandboxed shell commands are disallowed. |
+
+`full-access` is the default for all roles. Switching to `sandbox` provides defence-in-depth for untrusted or experimental agents at the cost of some operational flexibility.
+
+### Config Fields
+
+Execution mode can be set at three levels of specificity (most-specific wins):
+
+| Level | Config field / env var | Applies to |
+|-------|------------------------|------------|
+| Top-level default | `default_execution_mode` | Both master and worker pool (fallback) |
+| Master section | `master.execution_mode` | Master agent only |
+| Worker pool section | `worker_pool.execution_mode` | Worker agents only |
+
+```json
+{
+  "default_execution_mode": "sandbox",
+  "master": {
+    "execution_mode": "full-access"
+  },
+  "worker_pool": {
+    "execution_mode": "sandbox"
+  }
+}
+```
+
+### Environment Variable Overrides
+
+| Variable | Overrides | Description |
+|----------|-----------|-------------|
+| `ORC_MASTER_EXECUTION_MODE` | `master.execution_mode` | Execution mode for the master agent |
+| `ORC_WORKER_EXECUTION_MODE` | `worker_pool.execution_mode` | Execution mode for worker agents |
+
+Environment variables take precedence over all config file values (see [Resolution Order](#resolution-order)).
+
+### Per-Provider Behaviour
+
+The flags passed to each provider CLI differ by preset:
+
+#### Claude (`claude`)
+
+| Preset | Flags passed |
+|--------|-------------|
+| `full-access` | `--dangerously-skip-permissions` |
+| `sandbox` | `--permission-mode auto` |
+
+In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to the working directory.
+
+#### Codex (`codex`)
+
+| Preset | Flags passed |
+|--------|-------------|
+| `full-access` | `--dangerously-bypass-approvals-and-sandbox` |
+| `sandbox` | `--sandbox workspace-write --ask-for-approval never` |
+
+#### Gemini (`gemini`)
+
+Gemini does not have a sandbox CLI flag. The `execution_mode` field is accepted and stored, but no extra flags are passed at either preset level.
+
+### Scout Override
+
+Scouts are launched with `read_only: true`, which tightens their permissions when `execution_mode` is `sandbox`:
+
+- For Codex sandbox: the sandbox scope is `read-only` instead of `workspace-write`.
+- For Claude sandbox: filesystem writes are blocked entirely (no `allowWrite` entry in the settings file).
+
+When `execution_mode` is `full-access`, `read_only` has no effect — a scout receives the same flags as a regular worker (`--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude). To enforce read-only scout behaviour, set `execution_mode` to `sandbox`.
+
+### Linux Prerequisites for Claude Sandbox Mode
+
+On Linux, Claude sandbox mode relies on [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) and `socat`. On macOS, Seatbelt is used instead and no additional packages are needed.
+
+Install the required packages before enabling `sandbox` mode with a Claude provider on Linux:
+
+```bash
+# Ubuntu / Debian
+sudo apt-get install bubblewrap socat
+
+# Fedora
+sudo dnf install bubblewrap socat
+```
+
+Run `orc doctor` to verify the dependencies are present:
+
+```bash
+orc doctor
+# sandbox dependencies: ok=true
+```
+
+If the binaries are missing, `orc doctor` lists them and prints the install commands above.
+
+### Example Configurations
+
+**All agents sandboxed (recommended for production):**
+
+```json
+{
+  "default_execution_mode": "sandbox"
+}
+```
+
+**Master full-access, workers sandboxed (mixed trust):**
+
+```json
+{
+  "master": {
+    "execution_mode": "full-access"
+  },
+  "worker_pool": {
+    "execution_mode": "sandbox"
+  }
+}
+```
+
+**Override via environment variable (e.g. CI):**
+
+```bash
+export ORC_WORKER_EXECUTION_MODE=sandbox
+orc start-session
+```
+
 ## Resolution Order
 
 For any setting that can be specified in multiple places, the precedence is:
@@ -139,7 +280,7 @@ For any setting that can be specified in multiple places, the precedence is:
 1. CLI flag (highest)
 2. Environment variable
 3. Config file section-specific value
-4. Config file `default_provider` (for provider fields only)
+4. Config file `default_provider` / `default_execution_mode` (for provider and execution mode fields)
 5. Built-in default (lowest)
 
 ## State Directory Layout

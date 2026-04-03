@@ -2,7 +2,7 @@
 ref: general/121-execution-mode-docs
 feature: general
 priority: low
-status: todo
+status: done
 depends_on:
   - general/117-execution-mode-config-types
   - general/118-execution-mode-adapter-flags
