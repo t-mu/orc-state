@@ -304,7 +304,7 @@ try {
   if (master.provider === 'claude') {
     const mcpConfigPath = writeMcpConfig();
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap, ...masterModelArgs];
+    spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap, '--name', 'MASTER', ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
     console.log('  Master bootstrap loaded via --system-prompt.');
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
