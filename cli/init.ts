@@ -2,7 +2,7 @@
 /**
  * cli/init.ts
  * Usage:
- *   orc init [--provider=claude,codex] [--skip-skills] [--skip-agents] [--skip-mcp]
+ *   orc init [--provider=claude,codex,gemini] [--skip-skills] [--skip-agents] [--skip-mcp]
  *            [--feature=<ref>] [--feature-title=<title>] [--force]
  *
  * Interactive first-time setup: provider selection, state initialization,
@@ -12,7 +12,7 @@
  *   Prompts for provider(s), skills, agents, and MCP installation.
  *
  * Non-TTY / with --provider flag:
- *   --provider=claude,codex  required in non-TTY environments
+ *   --provider=claude,codex,gemini  required in non-TTY environments
  *   --skip-skills            skip skill installation
  *   --skip-agents            skip agent installation
  *   --skip-mcp               skip MCP config merge
@@ -101,7 +101,7 @@ if (providerFlag) {
     choices: [
       { name: 'Claude', value: 'claude', checked: true },
       { name: 'Codex', value: 'codex', checked: true },
-      { name: 'Gemini', value: 'gemini', checked: false },
+      { name: 'Gemini (skills/agents skipped)', value: 'gemini', checked: false },
     ],
   });
 

@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installSkills, type InstallResult } from './install-skills.ts';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('installSkills', () => {
   it('returns copied file list on dry-run', () => {
@@ -19,5 +23,13 @@ describe('installSkills', () => {
     const base = mkdtempSync(join(tmpdir(), 'install-skills-test-'));
     const result = installSkills(['claude', 'codex'], base, true);
     expect(result.count).toBe(result.copied.length);
+  });
+
+  it('skips unsupported gemini install targets with a warning', () => {
+    const base = mkdtempSync(join(tmpdir(), 'install-skills-test-'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = installSkills(['gemini'], base, true);
+    expect(result).toEqual({ copied: [], count: 0 });
+    expect(warn).toHaveBeenCalledWith('Skipping skill installation for unsupported provider target(s): gemini.');
   });
 });

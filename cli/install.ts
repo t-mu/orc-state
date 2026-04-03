@@ -2,7 +2,7 @@
 /**
  * cli/install.ts
  * Usage:
- *   orc install [--provider=claude,codex] [--global] [--dry-run]
+ *   orc install [--provider=claude,codex,gemini] [--global] [--dry-run]
  *               [--skip-skills] [--skip-agents] [--skip-mcp]
  *
  * Unified installer: copies skills, agents, and merges MCP config in one shot.
@@ -113,7 +113,7 @@ function parseArgs(): InstallOptions {
     if (providers.length === 0) {
       console.error(
         'Error: no --provider specified and no provider found in orchestrator.config.json.\n' +
-        'Run: orc install --provider=claude  (or codex)',
+        'Run: orc install --provider=claude  (or codex, gemini)',
       );
       process.exit(1);
     }
