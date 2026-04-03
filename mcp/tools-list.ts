@@ -163,6 +163,10 @@ export const TOOLS = [
           description: 'Restrict dispatch to agents of this provider. Omit for any provider.',
         },
         owner: { type: 'string', description: 'Pre-assign to agent_id' },
+        model: {
+          type: ['string', 'null'],
+          description: 'Model override for the worker session. Omit to use pool default.',
+        },
         actor_id: { type: 'string', description: 'Defaults to master agent_id' },
       },
       additionalProperties: false,
@@ -188,6 +192,10 @@ export const TOOLS = [
           type: ['string', 'null'],
           enum: ['codex', 'claude', 'gemini', null],
           description: 'Set or clear the provider restriction. Pass null to remove.',
+        },
+        model: {
+          type: ['string', 'null'],
+          description: 'Model override for the worker session. Pass null to clear.',
         },
         actor_id: { type: 'string', description: 'Defaults to master agent_id' },
       },

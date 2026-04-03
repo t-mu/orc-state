@@ -71,7 +71,7 @@ get_notifications(after_seq?)
 
 WRITE STATE
 
-create_task(title, feature?, ref?, task_type?, priority?, required_provider?, required_capabilities?, owner?, actor_id?)
+create_task(title, feature?, ref?, task_type?, priority?, required_provider?, required_capabilities?, model?, owner?, actor_id?)
   Registers a task in the runtime dispatch backlog (state/backlog.json).
   title is the only required field. feature defaults to "general".
   ref: explicit slug matching the markdown spec filename.
@@ -81,12 +81,14 @@ create_task(title, feature?, ref?, task_type?, priority?, required_provider?, re
   task_type: implementation|refactor (default implementation).
   priority: low|normal|high|critical (default normal).
   required_provider: restrict dispatch to codex|claude|gemini.
+  model: optional model override for the worker session (e.g. "claude-haiku-4-5").
   actor_id defaults to {{agent_id}}.
 
-update_task(task_ref, priority?, required_provider?, actor_id?)
+update_task(task_ref, priority?, required_provider?, model?, actor_id?)
   Updates runtime-owned mutable fields on an existing task.
   Markdown-authoritative fields and status transitions must go through backlog
   markdown edits or dedicated lifecycle commands.
+  model: set or clear the worker model override (pass null to clear).
   actor_id defaults to {{agent_id}}.
 
 delegate_task(task_ref, target_agent_id?, task_type?, note?, actor_id?)
@@ -161,6 +163,14 @@ Planning new work:
    Use the create-task skill or write the file directly.
    Use get_status().next_task_seq for the next available task number.
 2. Once the spec is ready, register it for dispatch with create_task(...).
+   When creating tasks, assess complexity and set an appropriate model:
+   - Trivial tasks (config edits, dependency bumps, doc updates): use a fast/cheap
+     model via create_task(..., model="claude-haiku-4-5")
+   - Standard tasks (feature implementation, bug fixes): omit model to use the pool default
+   - Complex tasks (architectural changes, multi-system rewrites): consider a stronger
+     model via create_task(..., model="claude-sonnet-4-6")
+   If unsure, omit the model field and let the pool default apply.
+   You can also set or clear the model later with update_task(task_ref, model=...).
    Run `orc backlog-sync-check` to verify runtime state matches the markdown spec.
    Note: in autonomous mode (the default), the coordinator auto-dispatches
    eligible tasks to available workers on each tick. You do not need to call

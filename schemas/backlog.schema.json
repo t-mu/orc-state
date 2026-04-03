@@ -74,6 +74,10 @@
           "$ref": "#/definitions/Provider",
           "description": "When set, only agents with a matching provider field are eligible for this task."
         },
+        "model": {
+          "type": ["string", "null"],
+          "description": "Optional model override for the worker session. When set, takes precedence over pool defaults."
+        },
         "depends_on": {
           "type": "array",
           "items": { "$ref": "#/definitions/TaskRef" },

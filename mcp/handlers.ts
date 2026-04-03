@@ -366,6 +366,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     depends_on,
     required_capabilities,
     required_provider,
+    model,
     owner,
     actor_id = defaultActorId(stateDir),
   } = args;
@@ -382,6 +383,9 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
   assertStringArray(required_capabilities, 'required_capabilities');
   if (required_provider != null && !isSupportedProvider(required_provider)) {
     throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
+  }
+  if (model != null && typeof model !== 'string') {
+    throw new Error(`Invalid model: must be a string or null.`);
   }
 
   const now = new Date().toISOString();
@@ -428,6 +432,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     }
     if (owner) newTask.owner = owner as string;
     if (required_provider != null) newTask.required_provider = required_provider as Task['required_provider'];
+    if (model != null) newTask.model = model;
 
     syncedBacklog.next_task_seq = currentNextTaskSeq + 1;
     atomicWriteJson(backlogPath, syncedBacklog);
@@ -458,6 +463,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     acceptance_criteria,
     depends_on,
     required_provider,
+    model,
     status,
     actor_id = defaultActorId(stateDir),
   } = args;
@@ -471,6 +477,9 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   }
   if (required_provider !== undefined && required_provider !== null && !isSupportedProvider(required_provider)) {
     throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
+  }
+  if (model !== undefined && model !== null && typeof model !== 'string') {
+    throw new Error(`Invalid model: must be a string or null.`);
   }
   if (status !== undefined && !['todo', 'in_progress', 'blocked', 'done', 'released', 'cancelled'].includes(status as string)) {
     throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}. Must be one of: todo, in_progress, blocked, done, released, cancelled.`);
@@ -519,6 +528,14 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
         task.required_provider = required_provider as Task['required_provider'];
       }
       changedFields.push('required_provider');
+    }
+    if (model !== undefined) {
+      if (model === null) {
+        delete task.model;
+      } else {
+        task.model = model;
+      }
+      changedFields.push('model');
     }
     if (status !== undefined) {
       task.status = status as Task['status'];

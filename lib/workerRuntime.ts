@@ -127,6 +127,7 @@ export async function launchWorkerSession(
     repoRoot = null,
     runId = null,
     taskRef = null,
+    taskModel = null,
     retryable = false,
     emit,
     sessionToken = randomUUID(),
@@ -136,6 +137,7 @@ export async function launchWorkerSession(
     repoRoot?: string | null;
     runId?: string | null;
     taskRef?: string | null;
+    taskModel?: string | null;
     retryable?: boolean;
     emit: (event: OrcEventInput) => void;
     sessionToken?: string;
@@ -148,7 +150,7 @@ export async function launchWorkerSession(
     }, repoRoot);
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
       system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc', sessionToken),
-      model: agent.model ?? null,
+      model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
       read_only: agent.role === 'scout',
       env: workerEnv,

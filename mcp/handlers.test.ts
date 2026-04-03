@@ -1544,6 +1544,75 @@ describe('handleUpdateTask required_provider', () => {
   });
 });
 
+describe('handleGetTask model', () => {
+  it('returns model field when set on task', () => {
+    writeSpec('project/model-get-task', 'project', 'Model get task');
+    handleCreateTask(dir, {
+      feature: 'project',
+      title: 'Model get task',
+      model: 'claude-haiku-4-5',
+      actor_id: 'master',
+    });
+    const result = handleGetTask(dir, { task_ref: 'project/model-get-task' }) as Record<string, unknown>;
+    expect(result.model).toBe('claude-haiku-4-5');
+  });
+});
+
+describe('handleCreateTask model', () => {
+  it('stores model field when provided', () => {
+    writeSpec('project/model-task', 'project', 'Model task');
+    const result = handleCreateTask(dir, {
+      feature: 'project',
+      title: 'Model task',
+      model: 'claude-haiku-4-5',
+      actor_id: 'master',
+    }) as Record<string, unknown>;
+    expect(result.model).toBe('claude-haiku-4-5');
+    const saved = readBacklog();
+    const task = saved.features.flatMap((e) => e.tasks).find((t) => t.ref === 'project/model-task');
+    expect(task?.model).toBe('claude-haiku-4-5');
+  });
+
+  it('omits model when not provided', () => {
+    writeSpec('project/no-model-task', 'project', 'No model task');
+    const result = handleCreateTask(dir, {
+      feature: 'project',
+      title: 'No model task',
+      actor_id: 'master',
+    }) as Record<string, unknown>;
+    expect(result.model).toBeUndefined();
+  });
+});
+
+describe('handleUpdateTask model', () => {
+  it('sets model field', () => {
+    handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      model: 'claude-haiku-4-5',
+      actor_id: 'master',
+    });
+    const saved = readBacklog();
+    const task = saved.features.flatMap((e) => e.tasks).find((t) => t.ref === 'project/todo-one');
+    expect(task?.model).toBe('claude-haiku-4-5');
+  });
+
+  it('clears model field when null is passed', () => {
+    handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      model: 'claude-haiku-4-5',
+      actor_id: 'master',
+    });
+    handleUpdateTask(dir, {
+      task_ref: 'project/todo-one',
+      model: null,
+      actor_id: 'master',
+    });
+    const saved = readBacklog();
+    const task = saved.features.flatMap((e) => e.tasks).find((t) => t.ref === 'project/todo-one');
+    expect(task?.model).toBeUndefined();
+  });
+});
+
 describe('handleGetNotifications', () => {
   it('returns empty notifications and last_seq=0 when no notification events exist', () => {
     const result = handleGetNotifications(dir);
