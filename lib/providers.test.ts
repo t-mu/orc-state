@@ -61,6 +61,40 @@ describe('loadWorkerPoolConfig', () => {
     });
   });
 
+  it('reads execution_mode from worker_pool config', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      worker_pool: { provider: 'codex', execution_mode: 'sandbox' },
+    }));
+
+    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toMatchObject({
+      execution_mode: 'sandbox',
+    });
+  });
+
+  it('ORC_WORKER_EXECUTION_MODE env var overrides config execution_mode', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      worker_pool: { provider: 'codex', execution_mode: 'sandbox' },
+    }));
+
+    expect(loadWorkerPoolConfig({
+      env: { ORC_WORKER_EXECUTION_MODE: 'full-access' },
+      configFile: configPath,
+    })).toMatchObject({
+      execution_mode: 'full-access',
+    });
+  });
+
+  it('defaults execution_mode to full-access when absent from config', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
+
+    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toMatchObject({
+      execution_mode: 'full-access',
+    });
+  });
+
   it('falls back to default_provider when worker_pool.provider is absent', () => {
     const configPath = join(dir, 'orchestrator.config.json');
     writeFileSync(configPath, JSON.stringify({

@@ -3,6 +3,7 @@ import { resolveOrcBin } from './orcBin.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
+import type { ExecutionMode } from './providers.ts';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -130,6 +131,7 @@ export async function launchWorkerSession(
     taskRef = null,
     taskModel = null,
     retryable = false,
+    executionMode,
     emit,
     sessionToken = randomUUID(),
   }: {
@@ -140,12 +142,14 @@ export async function launchWorkerSession(
     taskRef?: string | null;
     taskModel?: string | null;
     retryable?: boolean;
+    executionMode?: ExecutionMode;
     emit: (event: OrcEventInput) => void;
     sessionToken?: string;
   },
 ): Promise<{ ok: boolean; session_handle?: string; provider_ref?: unknown; reason?: string }> {
   try {
     const nowIso = new Date().toISOString();
+    const effectiveMode: ExecutionMode = agent.role === 'scout' ? 'sandbox' : (executionMode ?? 'full-access');
     const workerEnv = normalizeWorkerEnv({
       ORCH_STATE_DIR: stateDir,
     }, repoRoot);
@@ -154,6 +158,7 @@ export async function launchWorkerSession(
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
       read_only: agent.role === 'scout',
+      execution_mode: effectiveMode,
       env: workerEnv,
     });
     const updates: Partial<Agent> = {

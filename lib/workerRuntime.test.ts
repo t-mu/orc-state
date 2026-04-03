@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Agent } from '../types/agents.ts';
 
 describe('normalizeWorkerEnv', () => {
   afterEach(() => {
@@ -87,5 +88,113 @@ describe('normalizeWorkerEnv', () => {
     expect(env.ORCH_STATE_DIR).toBe('/tmp/state');
     expect(env.ORC_REPO_ROOT).toBe('/repo/root');
     expect(env.ORC_BIN).toBe('/repo/root/cli/orc.ts');
+  });
+});
+
+interface TestAdapter {
+  start(agentId: string, options: {
+    system_prompt: string;
+    model: string | null;
+    working_directory: string | null | undefined;
+    read_only?: boolean;
+    execution_mode?: 'full-access' | 'sandbox';
+    env: Record<string, string>;
+  }): Promise<{ session_handle: string; provider_ref: unknown }>;
+}
+
+describe('launchWorkerSession execution mode', () => {
+  const makeAgent = (overrides: Partial<Agent> = {}): Agent => ({
+    agent_id: 'test-worker',
+    provider: 'claude',
+    role: 'worker',
+    status: 'idle',
+    model: null,
+    session_handle: null,
+    session_token: null,
+    provider_ref: null,
+    session_started_at: null,
+    session_ready_at: null,
+    last_heartbeat_at: null,
+    last_status_change_at: null,
+    registered_at: new Date().toISOString(),
+    ...overrides,
+  });
+
+  let adapterStartSpy: ReturnType<typeof vi.fn>;
+  let adapter: TestAdapter;
+
+  beforeEach(() => {
+    adapterStartSpy = vi.fn().mockResolvedValue({ session_handle: 'handle-1', provider_ref: null });
+    adapter = { start: adapterStartSpy as unknown as TestAdapter['start'] };
+    vi.doMock('./agentRegistry.ts', () => ({ updateAgentRuntime: vi.fn() }));
+    vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
+    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: vi.fn(() => 'BOOTSTRAP') }));
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return { ...actual, existsSync: vi.fn(() => false) };
+    });
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('passes execution_mode to adapter.start', async () => {
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    const agent = makeAgent();
+    await launchWorkerSession('/tmp/state', agent, {
+      adapter,
+      workingDirectory: '/tmp/work',
+      executionMode: 'sandbox',
+      emit: vi.fn(),
+    });
+    expect(adapterStartSpy).toHaveBeenCalledWith(
+      'test-worker',
+      expect.objectContaining({ execution_mode: 'sandbox' }),
+    );
+  });
+
+  it('scout override: always sandbox regardless of input', async () => {
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    const agent = makeAgent({ role: 'scout' });
+    await launchWorkerSession('/tmp/state', agent, {
+      adapter,
+      workingDirectory: '/tmp/work',
+      executionMode: 'full-access',
+      emit: vi.fn(),
+    });
+    expect(adapterStartSpy).toHaveBeenCalledWith(
+      'test-worker',
+      expect.objectContaining({ execution_mode: 'sandbox' }),
+    );
+  });
+
+  it('defaults to full-access when executionMode omitted', async () => {
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    const agent = makeAgent();
+    await launchWorkerSession('/tmp/state', agent, {
+      adapter,
+      workingDirectory: '/tmp/work',
+      emit: vi.fn(),
+    });
+    expect(adapterStartSpy).toHaveBeenCalledWith(
+      'test-worker',
+      expect.objectContaining({ execution_mode: 'full-access' }),
+    );
+  });
+
+  it('non-scout workers receive configured mode', async () => {
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    const agent = makeAgent({ role: 'worker' });
+    await launchWorkerSession('/tmp/state', agent, {
+      adapter,
+      workingDirectory: '/tmp/work',
+      executionMode: 'full-access',
+      emit: vi.fn(),
+    });
+    expect(adapterStartSpy).toHaveBeenCalledWith(
+      'test-worker',
+      expect.objectContaining({ execution_mode: 'full-access' }),
+    );
   });
 });

@@ -2,7 +2,7 @@
 ref: general/119-execution-mode-runtime-threading
 feature: general
 priority: normal
-status: todo
+status: done
 depends_on:
   - general/118-execution-mode-adapter-flags
 ---
