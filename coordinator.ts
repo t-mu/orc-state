@@ -13,7 +13,7 @@
 import { spawnSync } from 'node:child_process';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
-import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig } from './lib/providers.ts';
+import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode } from './lib/providers.ts';
 import { isManagedSlot } from './lib/workerSlots.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
@@ -240,6 +240,7 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
     taskRef: (launchConfig.task_ref ?? null) as string | null,
     taskModel: (launchConfig.task_model ?? null) as string | null,
     retryable: launchConfig.retryable === true,
+    ...(launchConfig.execution_mode != null ? { executionMode: launchConfig.execution_mode as ExecutionMode } : {}),
     emit,
   });
   if (!result.ok) {
@@ -333,6 +334,7 @@ async function processClaimedSessionReadiness(
         task_ref: claim.task_ref,
         task_model: claimedTask?.model ?? null,
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
+        execution_mode: workerPoolConfig.execution_mode,
       });
       if (!ready.ok || !agent.session_handle) {
         if (isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
@@ -424,6 +426,7 @@ async function processManagedSessionStartRetries(
       task_ref: claim.task_ref,
       task_model: retryTask?.model ?? null,
       retryable: true,
+      execution_mode: workerPoolConfig.execution_mode,
     });
     if (ready.ok && agent.session_handle && agent.status !== 'offline') {
       setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
@@ -1306,6 +1309,7 @@ async function executeDispatchPlan(
         run_id: runId,
         task_ref: taskRef,
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
+        execution_mode: workerPoolConfig.execution_mode,
       });
       if (!ready.ok || !agent.session_handle) {
         if (isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
