@@ -31,18 +31,7 @@ function run(command: string, args: string[], cwd: string, options: { encoding?:
 }
 
 export function parsePackFilename(packOutput: string): string {
-  const multiLineStart = packOutput.indexOf('[\n  {');
-  const inlineStart = packOutput.indexOf('[{');
-  const startCandidates = [multiLineStart, inlineStart].filter((index) => index !== -1);
-  const start = startCandidates.length > 0 ? Math.min(...startCandidates) : -1;
-  if (start === -1) {
-    throw new Error(`npm pack --json did not return JSON output:\n${packOutput}`);
-  }
-  const end = packOutput.lastIndexOf(']');
-  if (end === -1 || end < start) {
-    throw new Error(`npm pack --json did not return a complete JSON array:\n${packOutput}`);
-  }
-  const parsed = JSON.parse(packOutput.slice(start, end + 1)) as Array<{ filename: string }>;
+  const parsed = JSON.parse(packOutput) as Array<{ filename: string }>;
   if (!parsed[0]?.filename) {
     throw new Error(`npm pack --json returned unexpected payload:\n${packOutput}`);
   }
@@ -82,22 +71,151 @@ function packageName(specifier: string): string {
   return specifier.split('/')[0] ?? specifier;
 }
 
+function isWhitespace(char: string): boolean {
+  return /\s/.test(char);
+}
+
+function isIdentifierBoundary(source: string, index: number): boolean {
+  const char = source[index] ?? '';
+  return char === '' || !/[A-Za-z0-9_$]/.test(char);
+}
+
+function skipWhitespace(source: string, index: number): number {
+  let cursor = index;
+  while (cursor < source.length && isWhitespace(source[cursor] ?? '')) {
+    cursor += 1;
+  }
+  return cursor;
+}
+
+function readStringLiteral(source: string, index: number): { value: string; nextIndex: number } | null {
+  const quote = source[index];
+  if (quote !== '\'' && quote !== '"') return null;
+  let value = '';
+  let cursor = index + 1;
+
+  while (cursor < source.length) {
+    const char = source[cursor] ?? '';
+    if (char === '\\') {
+      value += char;
+      cursor += 1;
+      value += source[cursor] ?? '';
+    } else if (char === quote) {
+      return { value, nextIndex: cursor + 1 };
+    } else {
+      value += char;
+    }
+    cursor += 1;
+  }
+
+  return null;
+}
+
+function findSpecifierAfterFrom(source: string, index: number): { specifier: string; nextIndex: number } | null {
+  let cursor = index;
+  while (cursor < source.length) {
+    if (source.startsWith('from', cursor) && isIdentifierBoundary(source, cursor - 1) && isIdentifierBoundary(source, cursor + 4)) {
+      const afterFrom = skipWhitespace(source, cursor + 4);
+      const literal = readStringLiteral(source, afterFrom);
+      if (literal) {
+        return { specifier: literal.value, nextIndex: literal.nextIndex };
+      }
+      return null;
+    }
+    if (source[cursor] === '\n' || source[cursor] === ';') {
+      return null;
+    }
+    cursor += 1;
+  }
+  return null;
+}
+
 export function collectBareModuleSpecifiers(source: string): string[] {
   const specifiers = new Set<string>();
-  const patterns = [
-    /\bfrom\s+['"]([^'"]+)['"]/g,
-    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
-    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
-  ];
-  for (const pattern of patterns) {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(source)) !== null) {
-      const specifier = match[1];
-      if (!specifier || specifier.startsWith('.') || specifier.startsWith('/')) continue;
-      specifiers.add(specifier);
+  let index = 0;
+  let mode: 'code' | 'single' | 'double' | 'template' | 'lineComment' | 'blockComment' = 'code';
+
+  while (index < source.length) {
+    const char = source[index] ?? '';
+    const next = source[index + 1] ?? '';
+
+    if (mode === 'code') {
+      if (char === '\'') {
+        mode = 'single';
+      } else if (char === '"') {
+        mode = 'double';
+      } else if (char === '`') {
+        mode = 'template';
+      } else if (char === '/' && next === '/') {
+        mode = 'lineComment';
+        index += 1;
+      } else if (char === '/' && next === '*') {
+        mode = 'blockComment';
+        index += 1;
+      } else if (source.startsWith('require', index) && isIdentifierBoundary(source, index - 1) && isIdentifierBoundary(source, index + 7)) {
+        let cursor = skipWhitespace(source, index + 7);
+        if (source[cursor] === '(') {
+          cursor = skipWhitespace(source, cursor + 1);
+          const literal = readStringLiteral(source, cursor);
+          if (literal) {
+            specifiers.add(literal.value);
+            index = literal.nextIndex;
+            continue;
+          }
+        }
+      } else if (source.startsWith('import', index) && isIdentifierBoundary(source, index - 1) && isIdentifierBoundary(source, index + 6)) {
+        let cursor = skipWhitespace(source, index + 6);
+        if (source[cursor] === '(') {
+          cursor = skipWhitespace(source, cursor + 1);
+          const literal = readStringLiteral(source, cursor);
+          if (literal) {
+            specifiers.add(literal.value);
+            index = literal.nextIndex;
+            continue;
+          }
+        } else {
+          const literal = readStringLiteral(source, cursor);
+          if (literal) {
+            specifiers.add(literal.value);
+            index = literal.nextIndex;
+            continue;
+          }
+          const fromSpecifier = findSpecifierAfterFrom(source, cursor);
+          if (fromSpecifier) {
+            specifiers.add(fromSpecifier.specifier);
+            index = fromSpecifier.nextIndex;
+            continue;
+          }
+        }
+      } else if (source.startsWith('export', index) && isIdentifierBoundary(source, index - 1) && isIdentifierBoundary(source, index + 6)) {
+        const fromSpecifier = findSpecifierAfterFrom(source, index + 6);
+        if (fromSpecifier) {
+          specifiers.add(fromSpecifier.specifier);
+          index = fromSpecifier.nextIndex;
+          continue;
+        }
+      }
+    } else if (mode === 'lineComment') {
+      if (char === '\n') mode = 'code';
+    } else if (mode === 'blockComment') {
+      if (char === '*' && next === '/') {
+        mode = 'code';
+        index += 1;
+      }
+    } else if (char === '\\') {
+      index += 1;
+    } else if (
+      (mode === 'single' && char === '\'')
+      || (mode === 'double' && char === '"')
+      || (mode === 'template' && char === '`')
+    ) {
+      mode = 'code';
     }
+
+    index += 1;
   }
-  return [...specifiers];
+
+  return [...specifiers].filter((specifier) => !specifier.startsWith('.') && !specifier.startsWith('/'));
 }
 
 export function findUndeclaredRuntimeDependencies(
@@ -119,7 +237,7 @@ export function findUndeclaredRuntimeDependencies(
   const distRoot = join(packageRoot, 'dist');
 
   for (const file of listFiles(distRoot)) {
-    if (!file.endsWith('.js')) continue;
+    if (!file.endsWith('.js') && !file.endsWith('.mjs') && !file.endsWith('.cjs')) continue;
     const source = readFileSync(file, 'utf8');
     for (const specifier of collectBareModuleSpecifiers(source)) {
       if (BUILTIN_MODULES.has(specifier)) continue;
