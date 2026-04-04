@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,6 +28,7 @@ import {
   handleListWorktrees,
   handleGetNotifications,
 } from './handlers.ts';
+import { assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
 
 let dir: string;
 
@@ -71,6 +73,7 @@ function writeSpec(taskRef: string, feature: string, title: string, status = 'to
 beforeEach(() => {
   dir = createTempStateDir('orc-mcp-handlers-test-');
   process.env.ORC_REPO_ROOT = dir;
+  process.env.ORC_BACKLOG_DIR = join(dir, 'backlog');
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedBacklog([
     {
@@ -205,6 +208,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanupTempStateDir(dir);
   delete process.env.ORC_REPO_ROOT;
+  delete process.env.ORC_BACKLOG_DIR;
 });
 
 describe('mcp read handlers', () => {
@@ -748,6 +752,42 @@ describe('mcp read handlers', () => {
       actor_id: 'master',
     });
     expect(created.ref).toMatch(/^project\//);
+  });
+
+  it('finds task spec in cwd backlog/ regardless of repo root', () => {
+    const worktreeDir = mkdtempSync(join(tmpdir(), 'orc-worktree-test-'));
+    const worktreeBacklog = join(worktreeDir, 'backlog');
+    mkdirSync(worktreeBacklog);
+    writeFileSync(join(worktreeBacklog, '999-worktree-task.md'), [
+      '---',
+      'ref: project/worktree-task',
+      'feature: project',
+      'status: todo',
+      '---',
+      '',
+      '# Task 999 — Worktree task',
+      '',
+    ].join('\n'));
+
+    const originalCwd = process.cwd();
+    try {
+      delete process.env.ORC_BACKLOG_DIR;
+      process.chdir(worktreeDir);
+      // ORC_REPO_ROOT still points to the main checkout dir (which has no such spec).
+      // activeBacklogDocsDir() now resolves relative to cwd, so the spec is found in
+      // the worktree's backlog/ even though ORC_REPO_ROOT points elsewhere.
+      expect(() =>
+        assertTaskSpecMatchesRegistration({
+          taskRef: 'project/worktree-task',
+          featureRef: 'project',
+          title: 'Worktree task',
+        }),
+      ).not.toThrow();
+    } finally {
+      process.chdir(originalCwd);
+      process.env.ORC_BACKLOG_DIR = join(dir, 'backlog');
+      rmSync(worktreeDir, { recursive: true });
+    }
   });
 
   it('handleUpdateTask updates runtime-owned fields and leaves others unchanged', () => {
