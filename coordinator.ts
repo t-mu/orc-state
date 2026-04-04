@@ -1164,6 +1164,7 @@ async function tick() {
 
   ({ agents, claims } = await processEventCheckpoint(agents, claims, workerPoolConfig));
   ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
+  ({ agents, claims } = await probeActiveWorkerSessions(agents, claims, workerPoolConfig));
 
   checkMasterHealth(agents);
   await processManagedSessionStartRetries(agents, claims, workerPoolConfig);
@@ -1234,6 +1235,41 @@ async function processEventCheckpoint(
     }
     latestActivityByRun = new Map();
     latestPhaseByRun = new Map();
+  }
+  return { agents, claims };
+}
+
+async function probeActiveWorkerSessions(
+  agents: Agent[],
+  claims: Claim[],
+  workerPoolConfig: WorkerPoolConfig,
+): Promise<{ agents: Agent[]; claims: Claim[] }> {
+  const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
+  let cleaned = false;
+
+  for (const claim of claims ?? []) {
+    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
+
+    const agent = byAgent.get(claim.agent_id);
+    if (!agent?.session_handle || agent.status === 'offline') continue;
+
+    const adapter = getAdapter(agent.provider);
+    const alive = await adapter.heartbeatProbe(agent.session_handle);
+    if (alive) continue;
+
+    log(`worker ${claim.agent_id} PTY PID dead — expiring claim ${claim.run_id} and requeueing ${claim.task_ref}`);
+    finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+      success: false,
+      failureReason: 'pty_pid_dead: PTY session exited unexpectedly',
+      failureCode: 'ERR_PTY_DEAD',
+      policy: 'requeue',
+    });
+    await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+    cleaned = true;
+  }
+
+  if (cleaned) {
+    ({ agents, claims } = reloadTickState(workerPoolConfig));
   }
   return { agents, claims };
 }

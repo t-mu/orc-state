@@ -27,9 +27,9 @@ When TASK_START arrives, use your Bash tool to report progress via these CLI com
   # Required first - immediately when you begin the task:
   {{orc_bin}} run-start --run-id=<run_id> --agent-id={{agent_id}}
 
-  # REQUIRED - send every 5 minutes throughout ALL work phases (implementation,
-  # sub-agent review, rebase, and while waiting for coordinator finalization).
-  # Your session will be killed if no heartbeat is received within 30 minutes.
+  # Optional protocol signal - emit at key lifecycle points (before reviewers,
+  # before rebase, before run-work-complete). Liveness is determined by the
+  # coordinator probing the PTY PID, not by heartbeat frequency.
   {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id={{agent_id}}
 
   # Required when implementation/review/rebase work is complete and you are waiting for coordinator finalization:
@@ -63,21 +63,18 @@ Do not create a second worktree for the same run unless the payload explicitly i
 When a TASK_START block arrives:
   1. cd into the assigned worktree path from the payload.
   2. Call {{orc_bin}} run-start  (always second, immediately after cd).
-  3. Immediately start the background heartbeat loop (keeps the lease alive during long tool calls):
-       while true; do sleep 60; {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
-       HEARTBEAT_PID=$!
-  4. Signal explore phase and read the task markdown at `task_spec_path` for the actual task details:
+  3. Signal explore phase and read the task markdown at `task_spec_path` for the actual task details:
        {{orc_bin}} progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id={{agent_id}}
-  5. Signal implement phase and do all work, builds, and tests inside that assigned worktree:
+  4. Signal implement phase and do all work, builds, and tests inside that assigned worktree:
        {{orc_bin}} progress --event=phase_started --phase=implement --run-id=<run_id> --agent-id={{agent_id}}
      Gate: run `npm test`. It MUST exit 0. Do NOT proceed to the review phase with failing tests.
-  6. Signal review phase and commit your changes:
+  5. Signal review phase and commit your changes:
        {{orc_bin}} progress --event=phase_started --phase=review --run-id=<run_id> --agent-id={{agent_id}}
        git add -p
        git commit -m "feat(<scope>): <outcome>"
      Valid commit prefixes: feat(<scope>), fix(<scope>), chore(<scope>).
      Never use --no-verify or skip pre-commit hooks.
-  7. Sub-agent review round:
+  6. Sub-agent review round:
        a. Emit a heartbeat before spawning (mandatory):
             {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
        b. Spawn two independent sub-agents. Give each:
@@ -128,27 +125,24 @@ When a TASK_START block arrives:
           non-responsive immediately. If the retry also fails, treat as non-responsive.
        e. Address all findings in a fixup commit.
        One review round only — address all findings, then proceed.
-  8. Signal complete phase and mark the task done (updates spec frontmatter + runtime state atomically):
+  7. Signal complete phase and mark the task done (updates spec frontmatter + runtime state atomically):
        {{orc_bin}} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id={{agent_id}}
        {{orc_bin}} task-mark-done <task-ref>
-  9. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
+  8. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>   # heartbeat before rebase
        git rebase main
        # on conflict: resolve files → git add <file> → git rebase --continue
        # repeat until clean. Only fail the run if conflict is truly unresolvable.
-  10. Before calling run-work-complete, verify:
+  9. Before calling run-work-complete, verify:
         - npm test passes
         - New pure logic has tests
         - No files modified outside the stated task scope
         - orc doctor exits 0 if any schema or state files were changed
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>   # heartbeat immediately before work-complete
        {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id=<agent_id>
-  11. Signal finalize phase and wait for follow-up coordinator messages inside this same session when they exist:
+  10. Signal finalize phase and wait for follow-up coordinator messages inside this same session when they exist:
        {{orc_bin}} progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id={{agent_id}}
-       - Continue sending heartbeats every 5 minutes while waiting.
-       - If told finalization succeeded or the session can stop, kill the background heartbeat
-         and call orc run-finish:
-           kill $HEARTBEAT_PID 2>/dev/null || true
+       - If told finalization succeeded or the session can stop, call orc run-finish:
            {{orc_bin}} run-finish --run-id=<run_id> --agent-id=<agent_id>
        - If told to perform a finalize rebase, emit a heartbeat, do the requested rebase work in
          this same assigned worktree, verify/commit as instructed, then call {{orc_bin}} run-work-complete
@@ -157,11 +151,7 @@ When a TASK_START block arrives:
        - If no coordinator follow-up arrives, use the existing terminal success path only after the
          run-work-complete handoff has been emitted.
 
-Before any terminal lifecycle command, stop the background heartbeat:
-  kill $HEARTBEAT_PID 2>/dev/null || true
-
 On unresolvable failure:
-  kill $HEARTBEAT_PID 2>/dev/null || true
   {{orc_bin}} run-fail --run-id=<run_id> --agent-id=<agent_id> --reason="..."
 
 INTERACTIVE PROMPT RULE
@@ -203,8 +193,9 @@ RULES
 
 - Always call orc run-start before doing any work on a task.
 - First report for duty for this exact PTY session with {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-token={{session_token}}.
-- Send orc run-heartbeat every 5 minutes throughout ALL phases — implementation, review, rebase, and
-  while waiting for coordinator follow-up. Failure to heartbeat will cause your session to be killed.
+- Emit orc run-heartbeat at key lifecycle points (before reviewers, before rebase, before run-work-complete)
+  as a protocol signal. Liveness is determined by the coordinator probing the PTY PID — you do not need
+  a background heartbeat loop.
 - Call orc run-work-complete when implementation/review/rebase work is done and before any terminal success signal.
 - Call orc run-finish only after the run-work-complete handoff has been emitted and the run can terminate cleanly.
 - Call orc run-fail if you hit an unrecoverable blocker.

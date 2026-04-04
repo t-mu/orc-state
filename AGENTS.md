@@ -70,11 +70,6 @@ Read the full task spec in `backlog/<N>-<slug>.md`. Identify all affected files.
 Check existing patterns in those files before writing any code.
 
 **Gate:** Run `orc run-start --run-id=<run_id> --agent-id=<agent_id>`.
-Start the background heartbeat immediately after:
-```bash
-while true; do sleep 60; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
-HEARTBEAT_PID=$!
-```
 Do NOT write code until run-start succeeds.
 
 ### Phase 2 — Implement
@@ -155,9 +150,8 @@ Wait for coordinator follow-up. If coordinator requests a finalize rebase:
 2. Perform the rebase.
 3. Emit `orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>` again.
 
-When coordinator confirms success, stop heartbeat and signal finish:
+When coordinator confirms success, signal finish:
 ```bash
-kill $HEARTBEAT_PID 2>/dev/null || true
 orc run-finish --run-id=<run_id> --agent-id=<agent_id>
 ```
 
@@ -225,7 +219,7 @@ Workers emit these from inside their PTY session via Bash tool:
 
 ```bash
 orc run-start --run-id=<id> --agent-id=<id>                        # required first — acknowledge task start
-orc run-heartbeat --run-id=<id> --agent-id=<id>                    # REQUIRED — extend lease every 5 min across ALL phases
+orc run-heartbeat --run-id=<id> --agent-id=<id>                    # protocol signal — emit at key lifecycle points
 orc run-work-complete --run-id=<id> --agent-id=<id>                # signal impl+review+rebase done; wait for coordinator
 orc run-finish --run-id=<id> --agent-id=<id>                       # terminal success (after work-complete)
 orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
@@ -298,33 +292,14 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 
 ### Heartbeat requirement
 
-The claim lease is 30 minutes; failure to heartbeat will cause the coordinator to expire
-and requeue the task.
+Liveness is determined by the coordinator: on each tick it probes the worker's PTY PID
+via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears the agent session,
+expires the claim, and requeues the task. You do not need a background heartbeat loop.
 
-**Primary mechanism — background heartbeat loop:**
-
-Immediately after `orc run-start`, start a background shell process that fires
-`orc run-heartbeat` every 60 seconds (1 min). This keeps the lease alive even while
-the worker is blocked inside a long-running Bash tool call (e.g. `npm test`, `git rebase`).
-
-```bash
-# Start background heartbeat — immediately after orc run-start
-while true; do sleep 60; orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>; done &
-HEARTBEAT_PID=$!
-```
-
-Before emitting `orc run-finish` or `orc run-fail`, kill the background process:
-
-```bash
-# Stop background heartbeat
-kill $HEARTBEAT_PID 2>/dev/null || true
-```
-
-**Fallback — manual call sites** (if the background process unexpectedly dies):
+Workers emit `orc run-heartbeat` as a **protocol signal** at key lifecycle points:
 - Before spawning sub-agent reviewers
 - Immediately before `git rebase main`
 - Immediately before `orc run-work-complete`
-- Every 5 minutes while waiting for coordinator follow-up after `run-work-complete`
 
 ---
 
