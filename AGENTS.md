@@ -293,7 +293,7 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 ### Heartbeat requirement
 
 Liveness is determined by the coordinator: on each tick it probes the worker's PTY PID
-via `process.kill(pid, 0)`. If the PID is dead, the coordinator marks the agent offline,
+via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears the agent session,
 expires the claim, and requeues the task. You do not need a background heartbeat loop.
 
 Workers emit `orc run-heartbeat` as a **protocol signal** at key lifecycle points:
