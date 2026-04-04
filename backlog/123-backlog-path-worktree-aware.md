@@ -2,7 +2,7 @@
 ref: publish/123-backlog-path-worktree-aware
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 123 — Make Backlog Spec Lookup Worktree-Aware
