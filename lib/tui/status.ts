@@ -15,6 +15,12 @@ export interface TuiSlot {
   last_heartbeat_at: string | null;
 }
 
+export interface PhaseEntry {
+  name: string;
+  state: 'done' | 'active' | 'stale' | 'error' | 'pending';
+  duration_seconds: number | null;
+}
+
 export interface TuiClaim {
   run_id: string;
   task_ref: string | null;
@@ -25,6 +31,7 @@ export interface TuiClaim {
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
   current_phase: string | null;
+  phase_history?: { phase: string; started_at: string }[];
   finalization_state?: string | null;
 }
 
@@ -94,10 +101,47 @@ export interface WorkerSlotViewModel {
   task_ref: string | null;
   run_state: string | null;
   current_phase: string | null;
+  phases: PhaseEntry[];
   age_seconds: number | null;
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
   sprite_state: SpriteState;
+}
+
+const CANONICAL_PHASES = ['explore', 'implement', 'review', 'complete', 'finalize'] as const;
+
+export function buildPhases(
+  phaseHistory: { phase: string; started_at: string }[],
+  heartbeat_seconds: number | null,
+  run_state: string | null,
+): PhaseEntry[] {
+  return CANONICAL_PHASES.map((name) => {
+    const idx = phaseHistory.findIndex((h) => h.phase === name);
+    if (idx === -1) {
+      return { name, state: 'pending' as const, duration_seconds: null };
+    }
+    // A phase is done when it is NOT the last entry in the sorted history
+    const isLastInHistory = phaseHistory[phaseHistory.length - 1]?.phase === name;
+    if (!isLastInHistory) {
+      const nextInHistory = phaseHistory[idx + 1] ?? null;
+      const duration_seconds = nextInHistory
+        ? Math.round(
+            (new Date(nextInHistory.started_at).getTime() - new Date(phaseHistory[idx].started_at).getTime()) / 1000,
+          )
+        : null;
+      return { name, state: 'done' as const, duration_seconds };
+    }
+    // Last phase in history — determine if active, stale, or error
+    let state: PhaseEntry['state'];
+    if (run_state === 'blocked' || run_state === 'failed') {
+      state = 'error';
+    } else if (heartbeat_seconds != null && heartbeat_seconds >= 300) {
+      state = 'stale';
+    } else {
+      state = 'active';
+    }
+    return { name, state, duration_seconds: null };
+  });
 }
 
 export function emptyTuiStatus(): TuiStatus {
@@ -165,6 +209,8 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
     const claim = claimByAgentId.get(slotId) ?? null;
     const runState = claim?.state ?? null;
 
+    const heartbeat_seconds = claim?.heartbeat_seconds ?? null;
+    const phaseHistory = claim?.phase_history ?? [];
     viewModels.push({
       slot_id: slotId,
       role: slot?.role ?? 'worker',
@@ -174,9 +220,10 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       task_ref: claim?.task_ref ?? slot?.active_task_ref ?? null,
       run_state: runState,
       current_phase: claim?.current_phase ?? null,
+      phases: phaseHistory.length > 0 ? buildPhases(phaseHistory, heartbeat_seconds, runState) : [],
       age_seconds: claim?.age_seconds ?? null,
       activity_seconds: claim?.activity_seconds ?? null,
-      heartbeat_seconds: claim?.heartbeat_seconds ?? null,
+      heartbeat_seconds,
       sprite_state: runStateToSpriteState(runState),
     });
   }
@@ -192,6 +239,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       task_ref: null,
       run_state: scout.slot_state,
       current_phase: null,
+      phases: [],
       age_seconds: null,
       activity_seconds: null,
       heartbeat_seconds: null,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { claimedRunStartupAnchor, latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs } from './runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs, runPhaseHistory } from './runActivity.ts';
 import type { OrcEvent } from '../types/index.ts';
 
 describe('latestRunActivityMap', () => {
@@ -118,6 +118,57 @@ describe('runIdleMs', () => {
     const claim = { started_at: '2026-01-01T00:06:00Z', claimed_at: '2026-01-01T00:05:00Z' };
     const idle = runIdleMs(claim, null, now);
     expect(idle).toBe(4 * 60 * 1000);
+  });
+});
+
+describe('runPhaseHistory', () => {
+  it('returns empty map for no events', () => {
+    expect(runPhaseHistory([]).size).toBe(0);
+    expect(runPhaseHistory(null).size).toBe(0);
+    expect(runPhaseHistory(undefined).size).toBe(0);
+  });
+
+  it('collects all phase_started events per run sorted by timestamp', () => {
+    const events = [
+      { run_id: 'run-1', event: 'phase_started', phase: 'implement', ts: '2026-01-01T00:05:00Z' },
+      { run_id: 'run-1', event: 'phase_started', phase: 'explore', ts: '2026-01-01T00:00:00Z' },
+      { run_id: 'run-1', event: 'phase_started', phase: 'review', ts: '2026-01-01T00:10:00Z' },
+    ];
+    const map = runPhaseHistory(events as OrcEvent[]);
+    const history = map.get('run-1')!;
+    expect(history).toHaveLength(3);
+    expect(history[0]).toEqual({ phase: 'explore', started_at: '2026-01-01T00:00:00Z' });
+    expect(history[1]).toEqual({ phase: 'implement', started_at: '2026-01-01T00:05:00Z' });
+    expect(history[2]).toEqual({ phase: 'review', started_at: '2026-01-01T00:10:00Z' });
+  });
+
+  it('handles multiple runs independently', () => {
+    const events = [
+      { run_id: 'run-1', event: 'phase_started', phase: 'explore', ts: '2026-01-01T00:00:00Z' },
+      { run_id: 'run-2', event: 'phase_started', phase: 'implement', ts: '2026-01-01T00:01:00Z' },
+      { run_id: 'run-1', event: 'phase_started', phase: 'implement', ts: '2026-01-01T00:05:00Z' },
+    ];
+    const map = runPhaseHistory(events as OrcEvent[]);
+    expect(map.get('run-1')).toHaveLength(2);
+    expect(map.get('run-2')).toHaveLength(1);
+    expect(map.get('run-2')![0].phase).toBe('implement');
+  });
+
+  it('ignores non-phase_started events', () => {
+    const events = [
+      { run_id: 'run-1', event: 'run_started', phase: 'explore', ts: '2026-01-01T00:00:00Z' },
+      { run_id: 'run-1', event: 'heartbeat', ts: '2026-01-01T00:01:00Z' },
+    ];
+    const map = runPhaseHistory(events as OrcEvent[]);
+    expect(map.has('run-1')).toBe(false);
+  });
+
+  it('reads phase from payload.phase when top-level phase is missing', () => {
+    const events = [
+      { run_id: 'run-1', event: 'phase_started', payload: { phase: 'complete' }, ts: '2026-01-01T00:00:00Z' },
+    ];
+    const map = runPhaseHistory(events as unknown as OrcEvent[]);
+    expect(map.get('run-1')?.[0].phase).toBe('complete');
   });
 });
 

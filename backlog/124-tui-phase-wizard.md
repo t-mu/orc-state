@@ -2,7 +2,7 @@
 ref: publish/124-tui-phase-wizard
 feature: publish
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 124 — Add Phase Wizard to TUI Worker Cards
