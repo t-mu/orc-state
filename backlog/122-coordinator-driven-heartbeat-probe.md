@@ -2,7 +2,7 @@
 ref: publish/122-coordinator-driven-heartbeat-probe
 feature: publish
 priority: high
-status: todo
+status: done
 ---
 
 # Task 122 — Coordinator-Driven Heartbeat Probe
