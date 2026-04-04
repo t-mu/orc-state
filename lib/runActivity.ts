@@ -113,6 +113,31 @@ export function latestRunPhaseMap(events: OrcEvent[] | null | undefined): Map<st
   );
 }
 
+export interface RunPhaseEntry {
+  phase: string;
+  started_at: string; // ISO timestamp
+}
+
+/**
+ * Build a map of run_id -> all phase_started events, sorted by timestamp.
+ */
+export function runPhaseHistory(events: OrcEvent[] | null | undefined): Map<string, RunPhaseEntry[]> {
+  const result = new Map<string, RunPhaseEntry[]>();
+  for (const ev of events ?? []) {
+    const e = ev as { run_id?: string; ts?: string; event?: string; phase?: string; payload?: { phase?: string } };
+    if (!e?.run_id || !e.ts) continue;
+    const phase = e.phase ?? e.payload?.phase;
+    if (e.event !== 'phase_started' || typeof phase !== 'string' || phase.length === 0) continue;
+    let list = result.get(e.run_id);
+    if (!list) { list = []; result.set(e.run_id, list); }
+    list.push({ phase, started_at: e.ts });
+  }
+  for (const list of result.values()) {
+    list.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+  }
+  return result;
+}
+
 /**
  * Return idle milliseconds for a run claim using newest known activity point.
  */

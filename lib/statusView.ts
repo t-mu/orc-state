@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import { listCoordinatorAgents } from './agentRegistry.ts';
 import { readEvents, readRecentEvents } from './eventLog.ts';
-import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap } from './runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap, runPhaseHistory } from './runActivity.ts';
+import type { RunPhaseEntry } from './runActivity.ts';
 import { loadWorkerPoolConfig } from './providers.ts';
 import { readJson } from './stateReader.ts';
 import type { Agent } from '../types/agents.ts';
@@ -162,6 +163,7 @@ export function buildActiveClaimMetrics(
   runWorktreeByRunId: Map<string, RunWorktreeEntry>,
   nowMs: number,
   nonHeartbeatRunActivity?: ReturnType<typeof latestRunActivityDetailMap>,
+  phaseHistory?: Map<string, RunPhaseEntry[]>,
 ) {
   return activeClaims.map((claim) => {
     const startupAnchor = claimedRunStartupAnchor(claim);
@@ -197,6 +199,7 @@ export function buildActiveClaimMetrics(
         && !Number.isNaN(idleMs)
         && idleMs >= (STALLED_RUN_IDLE_SECONDS * 1000),
       current_phase: runPhase.get(claim.run_id) ?? null,
+      phase_history: phaseHistory?.get(claim.run_id) ?? [],
       run_worktree_path: runWorktreeByRunId.get(claim.run_id)?.worktree_path ?? null,
       run_branch: runWorktreeByRunId.get(claim.run_id)?.branch ?? null,
     };
@@ -285,10 +288,11 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
     ) as Parameters<typeof latestRunActivityDetailMap>[0],
   );
   const runPhase = latestRunPhaseMap(allEvents as Parameters<typeof latestRunPhaseMap>[0]);
+  const runPhaseHistoryMap = runPhaseHistory(allEvents as Parameters<typeof runPhaseHistory>[0]);
   const nowMs = Date.now();
 
   const activeClaimsWithMetrics = buildActiveClaimMetrics(
-    activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs, nonHeartbeatRunActivity,
+    activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs, nonHeartbeatRunActivity, runPhaseHistoryMap,
   );
 
   const activeClaimByAgentId = new Map(

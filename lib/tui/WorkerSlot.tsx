@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import { OrcSprite } from './OrcSprite.tsx';
+import { PhaseWizard } from './PhaseWizard.tsx';
 import type { SpriteMap } from './sprites.ts';
 import type { WorkerSlotViewModel } from './status.ts';
 
@@ -19,7 +20,7 @@ export function WorkerSlot({ slot, sprites }: { slot: WorkerSlotViewModel; sprit
       <Text dimColor>{providerLabel}{modelLabel}</Text>
       <OrcSprite spriteState={slot.sprite_state} role={slot.role === 'scout' ? 'scout' : 'worker'} sprites={sprites} />
       <Text>{slot.task_ref ?? slot.slot_state}</Text>
-      <Text dimColor>{slot.run_state ? `${slot.run_state}${slot.current_phase ? ` (${slot.current_phase})` : ''}` : ''}</Text>
+      {slot.phases.length > 0 ? <PhaseWizard phases={slot.phases} /> : <Text dimColor>{slot.run_state ?? ''}</Text>}
       <Text dimColor>
         age: {formatSeconds(slot.age_seconds)} activity: {formatSeconds(slot.activity_seconds)} heartbeat: {formatSeconds(slot.heartbeat_seconds)}
       </Text>
