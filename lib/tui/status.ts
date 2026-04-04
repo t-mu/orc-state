@@ -120,18 +120,22 @@ export function buildPhases(
     if (idx === -1) {
       return { name, state: 'pending' as const, duration_seconds: null };
     }
-    const nextInHistory = phaseHistory[idx + 1] ?? null;
-    if (nextInHistory) {
-      const duration_seconds = Math.round(
-        (new Date(nextInHistory.started_at).getTime() - new Date(phaseHistory[idx].started_at).getTime()) / 1000,
-      );
+    // A phase is done when it is NOT the last entry in the sorted history
+    const isLastInHistory = phaseHistory[phaseHistory.length - 1]?.phase === name;
+    if (!isLastInHistory) {
+      const nextInHistory = phaseHistory[idx + 1] ?? null;
+      const duration_seconds = nextInHistory
+        ? Math.round(
+            (new Date(nextInHistory.started_at).getTime() - new Date(phaseHistory[idx].started_at).getTime()) / 1000,
+          )
+        : null;
       return { name, state: 'done' as const, duration_seconds };
     }
     // Last phase in history — determine if active, stale, or error
     let state: PhaseEntry['state'];
     if (run_state === 'blocked' || run_state === 'failed') {
       state = 'error';
-    } else if (heartbeat_seconds != null && heartbeat_seconds > 300) {
+    } else if (heartbeat_seconds != null && heartbeat_seconds >= 300) {
       state = 'stale';
     } else {
       state = 'active';

@@ -32,14 +32,18 @@ describe('buildPhases', () => {
     expect(implement.duration_seconds).toBeNull();
   });
 
-  it('marks latest phase as stale when heartbeat > 300s', () => {
+  it('marks latest phase as stale when heartbeat >= 300s', () => {
     const history = [
       { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
       { phase: 'implement', started_at: '2026-01-01T00:05:00Z' },
     ];
-    const phases = buildPhases(history, 301, 'in_progress');
-    const implement = phases.find((p) => p.name === 'implement')!;
-    expect(implement.state).toBe('stale');
+    const phases300 = buildPhases(history, 300, 'in_progress');
+    const implement300 = phases300.find((p) => p.name === 'implement')!;
+    expect(implement300.state).toBe('stale');
+
+    const phases301 = buildPhases(history, 301, 'in_progress');
+    const implement301 = phases301.find((p) => p.name === 'implement')!;
+    expect(implement301.state).toBe('stale');
   });
 
   it('marks active phase as error when run_state is blocked', () => {
