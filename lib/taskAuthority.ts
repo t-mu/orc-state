@@ -1,6 +1,5 @@
 import { resolve } from 'node:path';
 import { discoverActiveTaskSpecs } from './backlogSync.ts';
-import { resolveRepoRoot } from './repoRoot.ts';
 import type { Task } from '../types/backlog.ts';
 
 const SPEC_OWNED_UPDATE_FIELDS = ['title', 'description', 'acceptance_criteria', 'depends_on', 'status'] as const;
@@ -8,7 +7,7 @@ const SPEC_OWNED_REGISTRATION_FIELDS = ['description', 'acceptance_criteria', 'd
 
 function activeBacklogDocsDir(): string {
   if (process.env.ORC_BACKLOG_DIR) return resolve(process.env.ORC_BACKLOG_DIR);
-  return resolve(resolveRepoRoot(), 'backlog');
+  return resolve('backlog');
 }
 
 export function readAuthoritativeTaskSpec(taskRef: string, docsDir: string = activeBacklogDocsDir()) {
