@@ -39,11 +39,18 @@ describe('cli/orc.ts', () => {
     expect(result.status).toBe(0);
   });
 
-  it('dispatches watch with tsx/esm', () => {
+  it('dispatches watch with tsx/esm when running from source', () => {
     expect(buildNodeArgs('watch', '/tmp/watch.ts', ['--once'])).toEqual([
       '--import',
       'tsx/esm',
       '/tmp/watch.ts',
+      '--once',
+    ]);
+  });
+
+  it('dispatches watch without tsx/esm when running compiled', () => {
+    expect(buildNodeArgs('watch', '/tmp/watch.js', ['--once'])).toEqual([
+      '/tmp/watch.js',
       '--once',
     ]);
   });

@@ -88,8 +88,10 @@
     "figlet": "1.8.0",
     "ink": "5.2.1",
     "node-pty": "1.1.0",
-    "react": "18.3.1",
-    "tsx": "4.19.3"
+    "react": "18.3.1"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
@@ -101,6 +103,7 @@
     "ink-testing-library": "4.0.0",
     "lint-staged": "16.3.3",
     "simple-git-hooks": "2.13.1",
+    "tsx": "4.19.3",
     "typescript": "5.9.3",
     "typescript-eslint": "8.57.0",
     "vitest": "4.0.18"

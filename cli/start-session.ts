@@ -19,7 +19,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pty from 'node-pty';
 
@@ -63,7 +63,7 @@ function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): stri
 // ── Coordinator helpers ────────────────────────────────────────────────────
 
 const COORDINATOR_PID_FILE = join(STATE_DIR, 'coordinator.pid');
-const COORDINATOR_SCRIPT_PATH = resolve(import.meta.dirname, '..', 'coordinator.ts');
+const COORDINATOR_SCRIPT_PATH = runtimeModulePath('../coordinator.ts', '../coordinator.js');
 
 function isValidPid(pid: unknown): pid is number {
   return Number.isInteger(pid) && (pid as number) > 0;

@@ -14,6 +14,12 @@ import { realpathSync } from 'node:fs';
 import { resolve }   from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+function resolveScript(name: string): string {
+  const resolved = resolve(import.meta.dirname, name);
+  if (import.meta.url.endsWith('.ts')) return resolved;
+  return resolved.replace(/\.ts$/, '.js');
+}
+
 const COMMANDS: Record<string, string> = {
   'start-session':      'start-session.ts',
   'register-worker':    'register-worker.ts',
@@ -112,7 +118,7 @@ const INSPECTION = [
 ];
 
 export function buildNodeArgs(subcommand: string, scriptPath: string, rest: string[]): string[] {
-  if (subcommand === 'watch') {
+  if (subcommand === 'watch' && scriptPath.endsWith('.ts')) {
     return ['--import', 'tsx/esm', scriptPath, ...rest];
   }
   return [scriptPath, ...rest];
@@ -149,7 +155,7 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const scriptPath = resolve(import.meta.dirname, script);
+  const scriptPath = resolveScript(script);
   const result = spawnSync(process.execPath, buildNodeArgs(subcommand, scriptPath, rest), { stdio: 'inherit' });
   return result.status ?? 1;
 }
