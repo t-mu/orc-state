@@ -372,6 +372,100 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(agent.session_handle).toBeNull();
   });
 
+  it('expires claim when heartbeatProbe returns false for active worker with in_progress claim', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-pty-dead',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        task_envelope_sent_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockResolvedValue(false),
+      stop: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-pty-dead')!;
+    expect(claim).toBeDefined();
+    expect(claim.state).toBe('failed');
+
+    const agent = readAgents(dir).find((a) => a.agent_id === 'worker-01')!;
+    expect(agent.session_handle).toBeNull();
+  });
+
+  it('does not expire claim when heartbeatProbe returns true for active worker', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-pty-alive',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        task_envelope_sent_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockResolvedValue(true),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-pty-alive')!;
+    expect(claim).toBeDefined();
+    expect(claim.state).toBe('in_progress');
+  });
+
   it('sets status=running and records session_handle after successful launch for an assigned task', async () => {
     seedState(dir, {
       agents: [{
