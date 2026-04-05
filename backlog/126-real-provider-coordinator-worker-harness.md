@@ -2,7 +2,7 @@
 ref: general/126-real-provider-coordinator-worker-harness
 feature: general
 priority: high
-status: todo
+status: done
 depends_on:
   - general/125-real-provider-suite-skeleton-and-isolation
 ---
