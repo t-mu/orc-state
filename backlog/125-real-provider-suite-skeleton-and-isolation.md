@@ -2,7 +2,7 @@
 ref: general/125-real-provider-suite-skeleton-and-isolation
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 125 — Build Real-Provider Suite Skeleton and Isolation Boundary
