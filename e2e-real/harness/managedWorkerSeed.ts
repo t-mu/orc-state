@@ -35,7 +35,7 @@ export interface SeedOptions {
  */
 export function seedManagedWorkerBaseline(
   stateDir: string,
-  tasks: Pick<Task, 'ref' | 'title'>[],
+  tasks: (Pick<Task, 'ref' | 'title'> & { depends_on?: string[] })[],
   options: SeedOptions = {},
 ): void {
   const { provider = 'claude', featureRef = 'smoke' } = options;
@@ -65,13 +65,14 @@ export function seedManagedWorkerBaseline(
     agents: [managedWorker],
   });
 
-  // Backlog tasks: ready for dispatch
+  // Backlog tasks: ready for dispatch (preserve depends_on if provided)
   const backlogTasks = tasks.map((t) => ({
     ref: t.ref,
     title: t.title,
     status: 'todo',
     planning_state: 'ready_for_dispatch',
     task_type: 'implementation',
+    ...(t.depends_on ? { depends_on: t.depends_on } : {}),
   }));
 
   atomicWriteJson(join(stateDir, 'backlog.json'), {

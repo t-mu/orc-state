@@ -86,11 +86,12 @@ describe.skipIf(!ENABLED)('coordinator + real Claude worker smoke', () => {
     );
 
     // Seed the managed-worker dispatch baseline (no master session needed).
+    // Task 2 depends_on task 1 to enforce sequential dispatch order.
     seedManagedWorkerBaseline(
       repo.stateDir,
       [
         { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
-        { ref: BLESSED_TASK_2.ref, title: BLESSED_TASK_2.title },
+        { ref: BLESSED_TASK_2.ref, title: BLESSED_TASK_2.title, depends_on: [BLESSED_TASK_1.ref] },
       ],
       { provider: 'claude' },
     );
