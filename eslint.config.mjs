@@ -13,6 +13,7 @@ export default tseslint.config(
       'vitest.config.mjs',
       'vitest.e2e.config.mjs',
       'vitest.integration.config.mjs',
+      'vitest.real-providers.config.mjs',
     ],
   },
   ...tseslint.configs.recommendedTypeChecked,
