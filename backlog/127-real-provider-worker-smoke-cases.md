@@ -2,7 +2,7 @@
 ref: general/127-real-provider-worker-smoke-cases
 feature: general
 priority: high
-status: todo
+status: done
 depends_on:
   - general/126-real-provider-coordinator-worker-harness
 ---
