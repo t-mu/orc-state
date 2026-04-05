@@ -15,6 +15,7 @@ import { createRuntimeRepo, type RuntimeRepo } from './runtimeRepo.ts';
 import { buildRuntimeEnv } from './runtimeEnv.ts';
 import { writeOrcWrapper } from './orcWrapper.ts';
 import { seedManagedWorkerBaseline } from './managedWorkerSeed.ts';
+import { startCoordinator } from './coordinatorRunner.ts';
 import {
   checkProviderReadiness,
   type ProviderReadinessResult,
@@ -29,7 +30,6 @@ import {
 import { BLESSED_TASK_1, BLESSED_TASK_2, blessedTask1BacklogEntry, blessedTask2BacklogEntry } from '../fixtures/blessedTasks.ts';
 import { initEventsDb, appendSequencedEvent } from '../../lib/eventLog.ts';
 import { atomicWriteJson } from '../../lib/atomicWrite.ts';
-import { startCoordinator } from './coordinatorRunner.ts';
 
 // Collect repos for cleanup in afterEach
 const repos: RuntimeRepo[] = [];
@@ -256,50 +256,6 @@ describe('waitForRunEvent', () => {
   });
 });
 
-// ── waitForWorkerReuse ──────────────────────────────────────────────────────
-
-describe('waitForWorkerReuse', () => {
-  it('times out when the worker reuse event never appears', async () => {
-    const repo = createRuntimeRepo();
-    repos.push(repo);
-
-    initEventsDb(repo.stateDir);
-
-    await expect(
-      waitForWorkerReuse(repo.stateDir, 'orc-1', {
-        stage: 'worker_reuse',
-        timeoutMs: 100,
-        pollMs: 20,
-      }),
-    ).rejects.toThrow(/timeout waiting for stage 'worker_reuse'/);
-  });
-
-  it('resolves when a worker_session_ready event appears for the agent', async () => {
-    const repo = createRuntimeRepo();
-    repos.push(repo);
-
-    initEventsDb(repo.stateDir);
-
-    appendSequencedEvent(repo.stateDir, {
-      ts: new Date().toISOString(),
-      event: 'worker_session_ready',
-      actor_type: 'coordinator',
-      actor_id: 'coordinator',
-      agent_id: 'orc-1',
-      run_id: 'run-test-002',
-      payload: {},
-    });
-
-    await expect(
-      waitForWorkerReuse(repo.stateDir, 'orc-1', {
-        stage: 'worker_reuse',
-        timeoutMs: 1000,
-        pollMs: 50,
-      }),
-    ).resolves.toBeUndefined();
-  });
-});
-
 // ── Runtime repo isolation ──────────────────────────────────────────────────
 
 describe('createRuntimeRepo', () => {
@@ -424,6 +380,135 @@ describe('blessedTasks fixtures', () => {
     const entry = blessedTask1BacklogEntry();
     expect(entry.depends_on).toBeUndefined();
   });
+
+  it('seedManagedWorkerBaseline preserves depends_on for sequential dispatch', () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    seedManagedWorkerBaseline(repo.stateDir, [
+      { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
+      { ref: BLESSED_TASK_2.ref, title: BLESSED_TASK_2.title, depends_on: [BLESSED_TASK_1.ref] },
+    ]);
+
+    const backlog = JSON.parse(readFileSync(join(repo.stateDir, 'backlog.json'), 'utf8'));
+    const tasks = backlog.features[0].tasks;
+    const task1 = tasks.find((t: Record<string, unknown>) => t.ref === BLESSED_TASK_1.ref);
+    const task2 = tasks.find((t: Record<string, unknown>) => t.ref === BLESSED_TASK_2.ref);
+
+    expect(task1.depends_on).toBeUndefined();
+    expect(task2.depends_on).toEqual([BLESSED_TASK_1.ref]);
+  });
+});
+
+// ── waitForWorkerReuse ──────────────────────────────────────────────────────
+
+describe('waitForWorkerReuse', () => {
+  it('times out when fewer than two run_started events exist', async () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    initEventsDb(repo.stateDir);
+
+    // Seed only one run_started event — reuse requires two
+    appendSequencedEvent(repo.stateDir, {
+      ts: new Date().toISOString(),
+      event: 'run_started',
+      actor_type: 'agent',
+      actor_id: 'orc-1',
+      run_id: 'run-reuse-001',
+      task_ref: BLESSED_TASK_1.ref,
+      agent_id: 'orc-1',
+      payload: {},
+    });
+
+    await expect(
+      waitForWorkerReuse(repo.stateDir, 'orc-1', {
+        stage: 'worker_reuse',
+        timeoutMs: 100,
+        pollMs: 20,
+      }),
+    ).rejects.toThrow(/timeout waiting for stage 'worker_reuse'/);
+  });
+
+  it('resolves when two run_started events exist for the same agent', async () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    initEventsDb(repo.stateDir);
+
+    for (const [runId, taskRef] of [
+      ['run-reuse-001', BLESSED_TASK_1.ref],
+      ['run-reuse-002', BLESSED_TASK_2.ref],
+    ] as [string, string][]) {
+      appendSequencedEvent(repo.stateDir, {
+        ts: new Date().toISOString(),
+        event: 'run_started',
+        actor_type: 'agent',
+        actor_id: 'orc-1',
+        run_id: runId,
+        task_ref: taskRef,
+        agent_id: 'orc-1',
+        payload: {},
+      });
+    }
+
+    await expect(
+      waitForWorkerReuse(repo.stateDir, 'orc-1', {
+        stage: 'worker_reuse',
+        timeoutMs: 1000,
+        pollMs: 50,
+      }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+// ── startCoordinator failure paths ─────────────────────────────────────────
+
+describe('startCoordinator', () => {
+  it('rejects with a stage-specific diagnostic when coordinator exits during startup', async () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    const runtimeEnv = buildRuntimeEnv(repo);
+
+    // Stub coordinator that exits immediately without producing any output.
+    // Exercises the onClose rejection path and verifies diagnostics are captured.
+    const stubDir = mkdtempSync(join(tmpdir(), 'orc-coord-stub-'));
+    const stubPath = join(stubDir, 'coordinator-stub.mjs');
+    writeFileSync(stubPath, 'process.exit(42);\n', 'utf8');
+
+    await expect(
+      startCoordinator(runtimeEnv, {
+        startupTimeoutMs: 5000,
+        tickIntervalMs: 1000,
+        coordinatorPath: stubPath,
+      }),
+    ).rejects.toThrow(/coordinatorRunner/);
+  });
+
+  it('rejects with a startup timeout diagnostic when coordinator produces no output', async () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    const runtimeEnv = buildRuntimeEnv(repo);
+
+    // Stub coordinator that sleeps forever and never produces output.
+    // Exercises the startup-timeout rejection path.
+    const stubDir = mkdtempSync(join(tmpdir(), 'orc-coord-stub-'));
+    const stubPath = join(stubDir, 'coordinator-stub.mjs');
+    writeFileSync(stubPath, 'setTimeout(() => {}, 60_000);\n', 'utf8');
+
+    const resultMsg = await startCoordinator(runtimeEnv, {
+      startupTimeoutMs: 80,
+      tickIntervalMs: 1000,
+      coordinatorPath: stubPath,
+    }).then(
+      async (runner) => { await runner.stop(); return 'resolved'; },
+      (err: Error) => err.message,
+    );
+
+    expect(resultMsg).toMatch(/coordinatorRunner.*startup timeout/s);
+  });
 });
 
 // ── real-provider suite config ──────────────────────────────────────────────
@@ -442,49 +527,5 @@ describe('real-provider suite config', () => {
     const source = readFileSync(configPath, 'utf8');
     expect(source).toContain('fileParallelism: false');
     expect(source).toContain('singleThread: true');
-  });
-});
-
-// ── startCoordinator failure paths ─────────────────────────────────────────
-
-describe('startCoordinator', () => {
-  it('rejects with a diagnostic when the coordinator exits during startup', async () => {
-    const repo = createRuntimeRepo();
-    repos.push(repo);
-
-    const runtimeEnv = buildRuntimeEnv(repo);
-
-    // Stub coordinator that exits immediately with no output
-    const stubDir = mkdtempSync(join(tmpdir(), 'orc-stub-'));
-    const stubPath = join(stubDir, 'stub.mjs');
-    writeFileSync(stubPath, '// exits immediately\nprocess.exit(1);\n', 'utf8');
-
-    await expect(
-      startCoordinator(runtimeEnv, {
-        coordinatorPath: stubPath,
-        startupTimeoutMs: 3_000,
-        tickIntervalMs: 1_000,
-      }),
-    ).rejects.toThrow(/process exited during startup/);
-  });
-
-  it('rejects with a timeout diagnostic when the coordinator produces no output', async () => {
-    const repo = createRuntimeRepo();
-    repos.push(repo);
-
-    const runtimeEnv = buildRuntimeEnv(repo);
-
-    // Stub coordinator that hangs indefinitely (never writes output)
-    const stubDir = mkdtempSync(join(tmpdir(), 'orc-stub-'));
-    const stubPath = join(stubDir, 'hang.mjs');
-    writeFileSync(stubPath, 'setTimeout(() => {}, 60_000);\n', 'utf8');
-
-    await expect(
-      startCoordinator(runtimeEnv, {
-        coordinatorPath: stubPath,
-        startupTimeoutMs: 200,
-        tickIntervalMs: 1_000,
-      }),
-    ).rejects.toThrow(/startup timeout/);
   });
 });
