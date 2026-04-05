@@ -67,6 +67,7 @@
     "pack:smoke": "node scripts/pack-smoke.ts",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
+    "test:real-providers": "vitest run --config vitest.real-providers.config.mjs",
     "pack:dry": "npm pack --dry-run",
     "task:done": "node cli/task-mark-done.ts"
   },
