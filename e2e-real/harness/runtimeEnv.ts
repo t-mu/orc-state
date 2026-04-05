@@ -13,21 +13,23 @@ export interface RuntimeEnv {
  *
  * Also writes a minimal orchestrator.config.json with `worker_pool.max_workers = 1`
  * to prevent coordinator fan-out during real-provider tests.
+ *
+ * @param provider - Worker provider for the coordinator config (default: 'claude').
  */
-export function buildRuntimeEnv(repo: RuntimeRepo): RuntimeEnv {
+export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): RuntimeEnv {
   const configPath = join(repo.repoRoot, 'orchestrator.config.json');
 
   const config = {
-    default_provider: 'claude',
+    default_provider: provider,
     default_execution_mode: 'full-access',
     master: {
-      provider: 'claude',
+      provider,
       model: null,
       execution_mode: 'full-access',
     },
     worker_pool: {
       max_workers: 1,
-      provider: 'claude',
+      provider,
       model: null,
       execution_mode: 'full-access',
     },
