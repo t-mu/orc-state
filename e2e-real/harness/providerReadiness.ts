@@ -87,8 +87,9 @@ function checkSpawn(provider: string): ProviderReadinessResult {
       timeout: 5000,
       stdio: 'pipe',
     });
-    // If the process timed out, signal is 'SIGTERM' and status is null
-    if (result.signal === 'SIGTERM' || result.error?.message?.includes('TIMEDOUT')) {
+    // spawnSync timeout: sets result.error (code ETIMEDOUT or ENOBUFS) and result.status = null.
+    // result.signal is NOT set on timeout — only on kill signals from outside.
+    if (result.error != null && result.status === null) {
       return {
         ok: false,
         failedStage: 'spawn',

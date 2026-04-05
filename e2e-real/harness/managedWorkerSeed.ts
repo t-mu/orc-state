@@ -65,14 +65,14 @@ export function seedManagedWorkerBaseline(
     agents: [managedWorker],
   });
 
-  // Backlog tasks: ready for dispatch (preserve depends_on if provided)
+  // Backlog tasks: ready for dispatch, preserving depends_on for sequential dispatch
   const backlogTasks = tasks.map((t) => ({
     ref: t.ref,
     title: t.title,
     status: 'todo',
     planning_state: 'ready_for_dispatch',
     task_type: 'implementation',
-    ...(t.depends_on ? { depends_on: t.depends_on } : {}),
+    ...(t.depends_on != null && t.depends_on.length > 0 ? { depends_on: t.depends_on } : {}),
   }));
 
   atomicWriteJson(join(stateDir, 'backlog.json'), {

@@ -4,16 +4,12 @@ import { resolve } from 'node:path';
 export default defineConfig({
   test: {
     environment: 'node',
-    // Opt-in suite: only files under e2e-real/
+    // Run real-provider tests serially — provider PTYs and auth state must not
+    // be exercised concurrently.
+    fileParallelism: false,
+    singleThread: true,
     include: [resolve(import.meta.dirname, 'e2e-real/**/*.test.ts')],
     exclude: ['**/node_modules/**'],
-    // Real provider runs must never overlap — serial execution only.
-    fileParallelism: false,
-    pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    testTimeout: 300_000, // 5 min per test — real provider startup can be slow
   },
 });

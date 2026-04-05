@@ -31,6 +31,12 @@ export interface CoordinatorStartOptions {
    * transitions happen quickly. Default: 5_000.
    */
   tickIntervalMs?: number;
+  /**
+   * Override the coordinator script path. Used in tests to inject a stub
+   * that exits immediately, exercising the startup-failure diagnostic path.
+   * Default: coordinator.ts in the real repo root.
+   */
+  coordinatorPath?: string;
 }
 
 export interface CoordinatorRunner {
@@ -54,11 +60,11 @@ export async function startCoordinator(
   runtimeEnv: RuntimeEnv,
   options: CoordinatorStartOptions = {},
 ): Promise<CoordinatorRunner> {
-  const { startupTimeoutMs = 15_000, tickIntervalMs = 5_000 } = options;
+  const { startupTimeoutMs = 15_000, tickIntervalMs = 5_000, coordinatorPath = COORDINATOR_PATH } = options;
 
   const args = [
     '--experimental-strip-types',
-    COORDINATOR_PATH,
+    coordinatorPath,
     '--mode=autonomous',
     `--interval-ms=${tickIntervalMs}`,
   ];
