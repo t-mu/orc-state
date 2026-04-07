@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -80,9 +80,10 @@ export function createRuntimeRepo(): RuntimeRepo {
 
   // ── Claude Code workspace trust ────────────────────────────────────
   // Claude Code shows a workspace trust dialog for unknown directories.
-  // Pre-create the project directory in ~/.claude/projects/ so the dialog
-  // is bypassed. Also trust potential worktree paths.
-  const trustedPaths = preTrustWorkspace(repoRoot);
+  // Pre-trust the temp repo by running `claude -p` in print mode (which
+  // skips the trust dialog and creates the project entry in ~/.claude/projects/).
+  // This makes subsequent interactive sessions skip the trust dialog.
+  preTrustWorkspace(repoRoot);
 
   return {
     repoRoot,
@@ -91,46 +92,33 @@ export function createRuntimeRepo(): RuntimeRepo {
     worktreesDir,
     artifactsDir,
     cleanup() {
+      // Clean up the trust entry so ~/.claude/projects/ doesn't accumulate stale entries.
+      const encoded = repoRoot.replace(/\//g, '-');
+      const projectDir = join(homedir(), '.claude', 'projects', encoded);
+      rmSync(projectDir, { recursive: true, force: true });
       rmSync(repoRoot, { recursive: true, force: true });
-      for (const p of trustedPaths) {
-        rmSync(p, { recursive: true, force: true });
-      }
     },
   };
 }
 
 /**
- * Encode a filesystem path to the Claude Code project directory name format.
- * Slashes become dashes: /tmp/foo → -tmp-foo
+ * Pre-trust a workspace directory for Claude Code.
+ *
+ * Runs `claude -p 'ok'` in print mode, which:
+ *   1. Skips the workspace trust dialog (print mode always skips it)
+ *   2. Creates a project entry in ~/.claude/projects/ as a side effect
+ *   3. Makes subsequent interactive sessions skip the trust dialog
+ *
+ * The CLAUDECODE nesting-detection env vars are stripped so this works
+ * when called from inside a Claude Code session.
  */
-function encodeProjectPath(dirPath: string): string {
-  return dirPath.replace(/\//g, '-');
-}
-
-/**
- * Pre-trust a workspace directory so Claude Code skips the trust dialog.
- * Creates the project directory structure in ~/.claude/projects/.
- * Returns the list of created directories (for cleanup).
- */
-function preTrustWorkspace(repoRoot: string): string[] {
-  const claudeProjectsDir = join(homedir(), '.claude', 'projects');
-  if (!existsSync(claudeProjectsDir)) return [];
-
-  const created: string[] = [];
-
-  // Trust the repo root
-  const encodedRoot = encodeProjectPath(repoRoot);
-  const projectDir = join(claudeProjectsDir, encodedRoot);
-  mkdirSync(projectDir, { recursive: true });
-  created.push(projectDir);
-
-  // Trust the worktrees directory and potential worktree paths
-  // (workers are launched at repo root but cd into worktrees)
-  const worktreesBase = join(repoRoot, '.worktrees');
-  const encodedWorktrees = encodeProjectPath(worktreesBase);
-  const worktreesProjectDir = join(claudeProjectsDir, encodedWorktrees);
-  mkdirSync(worktreesProjectDir, { recursive: true });
-  created.push(worktreesProjectDir);
-
-  return created;
+function preTrustWorkspace(repoRoot: string): void {
+  const { CLAUDECODE: _1, CLAUDE_CODE_ENTRYPOINT: _2, CLAUDE_CODE_EXECPATH: _3, ...env } = process.env;
+  spawnSync('claude', ['-p', 'ok'], {
+    cwd: repoRoot,
+    env: env as NodeJS.ProcessEnv,
+    encoding: 'utf8',
+    timeout: 15_000,
+    stdio: 'ignore',
+  });
 }
