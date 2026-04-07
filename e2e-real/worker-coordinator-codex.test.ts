@@ -41,12 +41,14 @@ import {
   buildBlessedTaskSpec,
 } from './fixtures/blessedTasks.ts';
 
-const ENABLED = process.env.RUN_REAL_PROVIDERS === '1';
+// Codex can be enabled separately: RUN_REAL_PROVIDERS=1 runs both providers,
+// RUN_REAL_PROVIDERS_CODEX=1 runs only Codex. Codex takes longer than Claude
+// for the full phased workflow and may be less reliable with sub-agent reviews.
+const ENABLED = process.env.RUN_REAL_PROVIDERS === '1' || process.env.RUN_REAL_PROVIDERS_CODEX === '1';
 
-// Per-task completion timeout: 10 minutes — full phased workflow with real
-// provider sessions includes explore, implement, npm test, sub-agent reviews,
-// rebase, and all lifecycle commands.
-const TASK_TIMEOUT_MS = 600_000;
+// Per-task completion timeout: 15 minutes — Codex is slower than Claude for
+// the full phased workflow, especially sub-agent review spawning.
+const TASK_TIMEOUT_MS = 900_000;
 
 // Worker reuse check timeout: short since this is checked after both tasks done.
 const WORKER_REUSE_TIMEOUT_MS = 10_000;
@@ -58,7 +60,7 @@ const COORDINATOR_STARTUP_MS = 30_000;
 const COORDINATOR_TICK_MS = 3_000;
 
 // Overall test timeout: enough for 2 sequential tasks + startup/teardown.
-const OVERALL_TIMEOUT_MS = 1_500_000;
+const OVERALL_TIMEOUT_MS = 2_100_000;
 
 describe.skipIf(!ENABLED)('coordinator + real Codex worker smoke', () => {
   let repo: RuntimeRepo;
