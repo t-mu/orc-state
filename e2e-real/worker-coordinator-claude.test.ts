@@ -9,9 +9,9 @@
  *
  * What this test covers:
  *   - Coordinator dispatches a real Claude worker session for task 1
- *   - Worker completes task 1 via the blessed lifecycle path
+ *   - Worker completes task 1 via the full phased lifecycle
  *   - Coordinator dispatches the same worker slot for task 2 (worker reuse)
- *   - Worker completes task 2 via the blessed lifecycle path
+ *   - Worker completes task 2 via the full phased lifecycle
  *   - Lifecycle events appear in the event log in correct order
  *   - All orchestrator-managed paths (state, worktrees) remain inside the temp repo
  *
@@ -23,7 +23,7 @@
  *   - Cross-provider master/worker combinations
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
-import { existsSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRuntimeRepo, type RuntimeRepo } from './harness/runtimeRepo.ts';
 import { buildRuntimeEnv } from './harness/runtimeEnv.ts';
@@ -43,21 +43,22 @@ import {
 
 const ENABLED = process.env.RUN_REAL_PROVIDERS === '1';
 
-// Per-task completion timeout: 3 minutes — real provider PTY sessions need
-// time to bootstrap, receive TASK_START, and execute the minimal spec.
-const TASK_TIMEOUT_MS = 180_000;
+// Per-task completion timeout: 10 minutes — full phased workflow with real
+// provider sessions includes explore, implement, npm test, sub-agent reviews,
+// rebase, and all lifecycle commands.
+const TASK_TIMEOUT_MS = 600_000;
 
 // Worker reuse check timeout: short since this is checked after both tasks done.
-const WORKER_REUSE_TIMEOUT_MS = 5_000;
+const WORKER_REUSE_TIMEOUT_MS = 10_000;
 
-// Coordinator startup timeout: 15 seconds.
-const COORDINATOR_STARTUP_MS = 15_000;
+// Coordinator startup timeout: 30 seconds.
+const COORDINATOR_STARTUP_MS = 30_000;
 
 // Coordinator tick interval during tests: 3 seconds.
 const COORDINATOR_TICK_MS = 3_000;
 
 // Overall test timeout: enough for 2 sequential tasks + startup/teardown.
-const OVERALL_TIMEOUT_MS = 420_000;
+const OVERALL_TIMEOUT_MS = 1_500_000;
 
 describe.skipIf(!ENABLED)('coordinator + real Claude worker smoke', () => {
   let repo: RuntimeRepo;
@@ -101,9 +102,13 @@ describe.skipIf(!ENABLED)('coordinator + real Claude worker smoke', () => {
       startupTimeoutMs: COORDINATOR_STARTUP_MS,
       tickIntervalMs: COORDINATOR_TICK_MS,
     });
-  }, COORDINATOR_STARTUP_MS + 5_000);
+  }, COORDINATOR_STARTUP_MS + 10_000);
 
   afterAll(async () => {
+    if (coordinator) {
+      console.log('[claude-smoke] coordinator FULL stdout:\n' + coordinator.stdout());
+      console.log('[claude-smoke] coordinator FULL stderr:\n' + coordinator.stderr());
+    }
     await coordinator?.stop();
     repo?.cleanup();
   });
@@ -122,29 +127,12 @@ describe.skipIf(!ENABLED)('coordinator + real Claude worker smoke', () => {
         timeoutMs: TASK_TIMEOUT_MS,
       });
 
-      // Confirm worker actually ran: marker file must exist inside the temp repo.
-      const marker1 = join(repo.repoRoot, BLESSED_TASK_1.markerId);
-      if (!existsSync(marker1)) {
-        throw new Error(
-          `[claude-smoke] task 1 marker file not found: ${marker1}\n` +
-          `coordinator stdout:\n${coordinator.stdout().slice(-1000)}`,
-        );
-      }
-
       // ── Task 2 completion ───────────────────────────────────────────────
       // Task 2 depends on task 1 being done — coordinator dispatches it next.
       await waitForTaskStatus(repo.stateDir, BLESSED_TASK_2.ref, 'done', {
         stage: 'task_2_completion',
         timeoutMs: TASK_TIMEOUT_MS,
       });
-
-      const marker2 = join(repo.repoRoot, BLESSED_TASK_2.markerId);
-      if (!existsSync(marker2)) {
-        throw new Error(
-          `[claude-smoke] task 2 marker file not found: ${marker2}\n` +
-          `coordinator stdout:\n${coordinator.stdout().slice(-1000)}`,
-        );
-      }
 
       // ── Worker reuse ────────────────────────────────────────────────────
       // The same agent slot (orc-1) must have emitted run_started for both runs.

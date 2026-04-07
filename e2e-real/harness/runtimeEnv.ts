@@ -37,8 +37,18 @@ export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): Runtime
 
   writeFileSync(configPath, JSON.stringify(config, null, 2));
 
+  // Strip Claude Code nesting-detection env vars so the coordinator can spawn
+  // nested Claude sessions without them refusing to start. The PTY adapter
+  // strips CLAUDECODE but misses CLAUDE_CODE_ENTRYPOINT and CLAUDE_CODE_EXECPATH.
+  const {
+    CLAUDECODE: _1,
+    CLAUDE_CODE_ENTRYPOINT: _2,
+    CLAUDE_CODE_EXECPATH: _3,
+    ...baseEnv
+  } = process.env;
+
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...baseEnv,
     ORCH_STATE_DIR: repo.stateDir,
     ORC_REPO_ROOT: repo.repoRoot,
     ORC_WORKTREES_DIR: repo.worktreesDir,

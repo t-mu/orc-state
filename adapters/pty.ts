@@ -281,8 +281,8 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
 
         const spawnArgs = buildStartArgs(provider, config, claudeSettingsFile);
 
-        // Strip CLAUDECODE so nested claude sessions are not rejected.
-        const { CLAUDECODE: _cc, ...baseEnv } = process.env;
+        // Strip Claude Code nesting-detection env vars so nested sessions start cleanly.
+        const { CLAUDECODE: _cc, CLAUDE_CODE_ENTRYPOINT: _ce, CLAUDE_CODE_EXECPATH: _cx, ...baseEnv } = process.env;
         const spawnEnv = { ...baseEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>;
         const resolvedBinary = resolveBinary(binary, spawnEnv);
         ptyProcess = pty.spawn(resolvedBinary, spawnArgs, {
@@ -312,22 +312,37 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         throw error;
       }
 
-      // Providers that do not support startup prompt args still receive
-      // bootstrap via PTY write after their REPL has initialized.
-      // Two-phase write: first the text (TUI shows paste indicator),
-      // then a separate CR after a short pause to submit the paste.
-      if (provider !== 'codex') {
-        await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
+      // ── Startup dialog handling ───────────────────────────────────────
+      // Provider CLIs may show interactive dialogs before accepting input:
+      //
+      // Codex: workspace confirmation dialog ("1. Yes, continue / Press enter")
+      //   → Send Enter to dismiss.
+      //
+      // Claude: up to two dialogs:
+      //   1. Workspace trust ("❯ 1. Yes, I trust" / "2. No, exit")
+      //      → Enter accepts the default.
+      //   2. Bypass Permissions ("1. No, exit" / "❯ 2. Yes, I accept")
+      //      → Explicitly select '2' then Enter.
+      //
+      // After dialogs, non-codex providers receive bootstrap via PTY write.
+      // Codex receives bootstrap as a CLI argument at spawn time.
 
-        // Claude --dangerously-skip-permissions shows a "Bypass Permissions mode"
-        // confirmation menu ("1. No, exit / 2. Yes, I accept") before the REPL
-        // is ready. Auto-accept it so headless sessions don't stall.
-        // In sandbox mode (--permission-mode auto), no confirmation dialog appears.
+      await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
+
+      if (provider === 'codex') {
+        // Codex workspace confirmation: press Enter to dismiss.
+        ptyProcess.write('\r');
+        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+      } else {
+        // Claude (and other providers): handle trust + bypass dialogs.
         if (provider === 'claude' && config.execution_mode !== 'sandbox') {
+          // Dismiss potential workspace trust dialog (Enter accepts default)
+          ptyProcess.write('\r');
+          await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+          // Dismiss bypass-permissions confirmation dialog
           ptyProcess.write('2');
           await new Promise((r) => setTimeout(r, 200));
           ptyProcess.write('\r');
-          // Give the TUI time to dismiss the dialog and render the REPL.
           await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
         }
 

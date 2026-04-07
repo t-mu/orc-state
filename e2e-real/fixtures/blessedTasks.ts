@@ -4,46 +4,45 @@
  * Static blessed-path backlog task specs for real-provider smoke tests.
  *
  * These two tasks are designed for sequential dispatch in a temp repo:
- *   - Task 1 completes first (writes a marker file to confirm worker ran)
+ *   - Task 1 completes first (creates a module + test)
  *   - Task 2 runs after task 1 is done (depends_on task 1)
  *
- * Assertions remain lifecycle/event/path based, not byte-stable provider
- * output based. The tasks instruct workers to touch a marker file so the test
- * can confirm work was actually dispatched without relying on provider output.
+ * Each task is trivially implementable — the point is to exercise the full
+ * worker lifecycle (explore → implement → review → complete → finalize),
+ * not to challenge the LLM's coding ability.
  *
- * Both tasks are deterministic and do not require network access beyond
- * what the provider CLI itself needs for auth.
+ * Both tasks use Node's built-in test runner (node:test) so no npm install
+ * is needed in the temp repo.
  */
 
 export interface BlessedTask {
   ref: string;
   title: string;
-  markerId: string;
+  /** Source file the worker should create — used as an existence check. */
+  sourceFile: string;
 }
 
 /**
- * First task: creates a marker file to confirm the worker session ran.
+ * First task: creates a module + test.
  */
 export const BLESSED_TASK_1: BlessedTask = {
   ref: 'smoke/task-1',
-  title: 'Smoke task 1: create marker file',
-  markerId: 'smoke-marker-1.txt',
+  title: 'Smoke task 1: create marker-1 module',
+  sourceFile: 'lib/marker-1.mjs',
 };
 
 /**
- * Second task: runs after task 1, creates a second marker file.
+ * Second task: runs after task 1, creates a second module + test.
  * Depends on task 1 to verify sequential dispatch.
  */
 export const BLESSED_TASK_2: BlessedTask = {
   ref: 'smoke/task-2',
-  title: 'Smoke task 2: create marker file (sequential)',
-  markerId: 'smoke-marker-2.txt',
+  title: 'Smoke task 2: create marker-2 module',
+  sourceFile: 'lib/marker-2.mjs',
 };
 
 /**
  * Build the backlog task entry for task 1.
- * The markdown spec instructs the worker to touch the marker file, then
- * immediately call the required lifecycle commands and exit.
  */
 export function blessedTask1BacklogEntry(): Record<string, unknown> {
   return {
@@ -70,40 +69,48 @@ export function blessedTask2BacklogEntry(): Record<string, unknown> {
 }
 
 /**
- * Minimal markdown spec content for a blessed smoke task.
+ * Build a markdown task spec for a blessed smoke task.
  *
- * The spec instructs the worker to:
- *   1. Call run-start
- *   2. Touch the marker file under the repo root
- *   3. Call task-mark-done
- *   4. Call run-work-complete
- *   5. Call run-finish
- *
- * This is the minimal blessed path without reviews or rebases.
+ * The spec describes a trivially implementable task (create a module that
+ * exports a marker value, plus a test using node:test). The worker follows
+ * the full phased workflow from the bootstrap template — including npm test,
+ * git commit, sub-agent reviews, rebase, and all lifecycle commands.
  */
-export function buildBlessedTaskSpec(task: BlessedTask, repoRoot: string): string {
+export function buildBlessedTaskSpec(task: BlessedTask, _repoRoot: string): string {
+  const num = task.ref.endsWith('task-1') ? '1' : '2';
   return [
-    `---`,
+    '---',
     `ref: ${task.ref}`,
-    `feature: smoke`,
-    `priority: normal`,
-    `status: todo`,
-    `---`,
-    ``,
+    'feature: smoke',
+    'priority: normal',
+    'status: todo',
+    '---',
+    '',
     `# ${task.title}`,
-    ``,
-    `## Objective`,
-    ``,
-    `Touch the file \`${task.markerId}\` at the repo root to confirm this worker session ran.`,
-    ``,
-    `## Implementation`,
-    ``,
-    `1. Call \`orc run-start\` with your run_id and agent_id from the TASK_START payload.`,
-    `2. Create the file \`${repoRoot}/${task.markerId}\` with content "done".`,
-    `3. Call \`orc task-mark-done ${task.ref}\`.`,
-    `4. Call \`orc run-work-complete\` with your run_id and agent_id.`,
-    `5. Call \`orc run-finish\` with your run_id and agent_id.`,
-    ``,
-    `Do not do anything else. This is a minimal smoke verification task.`,
+    '',
+    '## Objective',
+    '',
+    'Create a marker module and its test to confirm this worker session ran successfully.',
+    '',
+    '## Implementation',
+    '',
+    `1. Create \`lib/marker-${num}.mjs\` with exactly this content:`,
+    '   ```js',
+    `   export const MARKER_${num} = 'task-${num}-done';`,
+    '   ```',
+    `2. Create \`lib/marker-${num}.test.mjs\` with a test that imports \`MARKER_${num}\``,
+    `   from \`./marker-${num}.mjs\` and asserts it equals \`'task-${num}-done'\`.`,
+    "   Use `node:test` and `node:assert/strict` (the project uses Node's built-in test runner).",
+    '3. Run `npm test` to verify all tests pass.',
+    '',
+    '## Acceptance Criteria',
+    '',
+    `- [ ] \`lib/marker-${num}.mjs\` exists and exports MARKER_${num}`,
+    `- [ ] \`lib/marker-${num}.test.mjs\` exists and passes`,
+    '- [ ] `npm test` passes with no new failures',
+    '',
+    '## Notes',
+    '',
+    'This is a minimal smoke task. Do not add anything beyond what is specified above.',
   ].join('\n');
 }

@@ -366,9 +366,9 @@ describe('orcWrapper', () => {
 // ── Blessed task fixtures ───────────────────────────────────────────────────
 
 describe('blessedTasks fixtures', () => {
-  it('task 1 and task 2 have distinct refs and marker IDs', () => {
+  it('task 1 and task 2 have distinct refs and source files', () => {
     expect(BLESSED_TASK_1.ref).not.toBe(BLESSED_TASK_2.ref);
-    expect(BLESSED_TASK_1.markerId).not.toBe(BLESSED_TASK_2.markerId);
+    expect(BLESSED_TASK_1.sourceFile).not.toBe(BLESSED_TASK_2.sourceFile);
   });
 
   it('task 2 backlog entry has depends_on pointing to task 1', () => {

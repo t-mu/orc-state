@@ -17,7 +17,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RuntimeEnv } from './runtimeEnv.ts';
 
-const REAL_REPO_ROOT = resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
+// 3 levels up from e2e-real/harness/coordinatorRunner.ts → repo root
+const REAL_REPO_ROOT = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const COORDINATOR_PATH = resolve(REAL_REPO_ROOT, 'coordinator.ts');
 
 export interface CoordinatorStartOptions {
