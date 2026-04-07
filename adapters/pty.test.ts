@@ -157,7 +157,7 @@ describe('pty adapter start()', () => {
   it('uses provider binary mapping for codex and gemini', async () => {
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', { execution_mode: 'full-access' });
-    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox'], expect.any(Object));
+    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'], expect.any(Object));
 
     vi.resetModules();
     const gemini = await makeAdapter({ provider: 'gemini' });
@@ -171,7 +171,7 @@ describe('pty adapter start()', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', 'BOOTSTRAP TEXT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'BOOTSTRAP TEXT'],
       expect.any(Object),
     );
     // Codex still gets one Enter press to dismiss the workspace confirmation dialog.
@@ -185,7 +185,7 @@ describe('pty adapter start()', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', 'SCOUT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'SCOUT'],
       expect.any(Object),
     );
   });

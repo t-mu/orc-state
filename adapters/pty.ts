@@ -112,6 +112,8 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     } else {
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
+    // Enable multi-agent support so Codex workers can spawn sub-agent reviewers.
+    args.push('--enable', 'multi_agent');
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
