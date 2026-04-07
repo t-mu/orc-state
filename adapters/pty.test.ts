@@ -122,22 +122,24 @@ describe('pty adapter start()', () => {
     const { adapter, ptyProcess } = await makeAdapter();
     await adapter.start('bob', { execution_mode: 'full-access', system_prompt: 'BOOTSTRAP TEXT' });
 
-    // Claude: auto-accepts the Bypass Permissions confirmation dialog first
-    // (writes '2' + CR), then delivers the bootstrap text + CR.
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '2');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '\r');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, 'BOOTSTRAP TEXT');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, '\r');
+    // Claude: Enter (trust/bypass dismiss) + '2' + Enter (bypass accept),
+    // then bootstrap text + CR.
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '2');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, '\r');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, 'BOOTSTRAP TEXT');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(5, '\r');
   });
 
-  it('auto-accepts bypass permissions dialog even when system_prompt is absent', async () => {
+  it('auto-accepts startup dialogs even when system_prompt is absent', async () => {
     const { adapter, ptyProcess } = await makeAdapter();
     await adapter.start('bob', { execution_mode: 'full-access' });
 
-    // Claude always writes '2' + CR to dismiss the confirmation dialog.
-    expect(ptyProcess.write).toHaveBeenCalledTimes(2);
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '2');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '\r');
+    // Claude writes CR (trust dismiss) + '2' + CR (bypass accept).
+    expect(ptyProcess.write).toHaveBeenCalledTimes(3);
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '2');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, '\r');
   });
 
   it('streams PTY output to STATE_DIR/pty-logs/{agentId}.log', async () => {
@@ -171,7 +173,9 @@ describe('pty adapter start()', () => {
       ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'BOOTSTRAP TEXT'],
       expect.any(Object),
     );
-    expect(ptyProcess.write).not.toHaveBeenCalled();
+    // Codex gets one Enter press to dismiss the workspace confirmation dialog.
+    expect(ptyProcess.write).toHaveBeenCalledTimes(1);
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
   });
 
   it('uses bypass mode for codex scout sessions too', async () => {
@@ -340,32 +344,41 @@ describe('claude auto-accept dance', () => {
 describe('pty adapter send()', () => {
   // All providers use the same two-phase write: text first, then CR to submit.
   // CR (0x0D) is the universal submit key in PTY raw mode (claude, codex, gemini).
-  // Codex start() pre-writes CR (workspace dialog), so send() positions shift by 1.
-  for (const provider of ['codex', 'gemini']) {
-    it(`writes text then CR as separate writes for provider=${provider}`, async () => {
-      const { adapter, ptyProcess } = await makeAdapter({ provider });
-      await adapter.start('bob', {});
-
-      const result = await adapter.send('pty:bob', 'CHECK_WORK');
-
-      expect(result).toBe('');
-      expect(ptyProcess.write).toHaveBeenNthCalledWith(1, 'CHECK_WORK');
-      expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '\r');
-    });
-  }
-
-
-  it('writes text then CR as separate writes for provider=claude (after bypass confirmation)', async () => {
-    const { adapter, ptyProcess } = await makeAdapter({ provider: 'claude' });
+  it('writes text then CR as separate writes for provider=codex (after workspace dialog)', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'codex' });
     await adapter.start('bob', {});
 
-    // start() pre-wrote '2' + '\r' to dismiss the Bypass Permissions dialog,
-    // so send() writes land at positions 3 and 4.
+    // Codex start() pre-wrote CR (workspace dialog), so send() at positions 2+3.
     const result = await adapter.send('pty:bob', 'CHECK_WORK');
 
     expect(result).toBe('');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, 'CHECK_WORK');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, '\r');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, 'CHECK_WORK');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, '\r');
+  });
+
+  it('writes text then CR as separate writes for provider=gemini', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'gemini' });
+    await adapter.start('bob', {});
+
+    const result = await adapter.send('pty:bob', 'CHECK_WORK');
+
+    expect(result).toBe('');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, 'CHECK_WORK');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, '\r');
+  });
+
+
+  it('writes text then CR as separate writes for provider=claude (after startup dialogs)', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
+    // start() pre-wrote CR + '2' + CR to dismiss startup dialogs,
+    // so send() writes land at positions 4 and 5.
+    const result = await adapter.send('pty:bob', 'CHECK_WORK');
+
+    expect(result).toBe('');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, 'CHECK_WORK');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(5, '\r');
   });
 
   it('throws when agent is not in sessions Map', async () => {

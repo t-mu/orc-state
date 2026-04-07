@@ -314,29 +314,41 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         throw error;
       }
 
-      // Providers that do not support startup prompt args still receive
-      // bootstrap via PTY write after their REPL has initialized.
-      // Two-phase write: first the text (TUI shows paste indicator),
-      // then a separate CR after a short pause to submit the paste.
-      if (provider !== 'codex') {
-        await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
+      // ── Startup dialog handling ───────────────────────────────────────
+      // Provider CLIs may show interactive startup dialogs that must be
+      // dismissed before they accept work. We send keystrokes after a
+      // startup delay to auto-accept these dialogs.
+      await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
 
-        // Claude --dangerously-skip-permissions shows a "Bypass Permissions mode"
-        // confirmation menu ("1. No, exit / 2. Yes, I accept") before the REPL
-        // is ready. Auto-accept it so headless sessions don't stall.
-        // In sandbox mode (--permission-mode auto), no confirmation dialog appears.
+      if (provider === 'codex') {
+        // Codex shows a workspace confirmation dialog for new directories:
+        //   "You are in /tmp/... 1. Yes, continue  Press enter to continue"
+        // Send Enter to dismiss it. Harmless if the dialog is absent.
+        ptyProcess.write('\r');
+        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+      } else if (provider === 'claude' && config.execution_mode !== 'sandbox') {
+        // Claude shows up to two startup dialogs:
         //
-        // NOTE: Workspace trust dialogs are handled separately — callers must
-        // pre-trust the workspace before launching (e.g. via `claude -p` in
-        // print mode). See e2e-real/harness/runtimeRepo.ts preTrustWorkspace().
-        if (provider === 'claude' && config.execution_mode !== 'sandbox') {
-          ptyProcess.write('2');
-          await new Promise((r) => setTimeout(r, 200));
-          ptyProcess.write('\r');
-          // Give the TUI time to dismiss the dialog and render the REPL.
-          await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
-        }
+        // 1. Workspace trust ("❯ 1. Yes, I trust" / "2. No, exit")
+        //    — only for new/untrusted directories. Enter accepts default.
+        //
+        // 2. Bypass Permissions ("1. No, exit" / "❯ 2. Yes, I accept")
+        //    — always with --dangerously-skip-permissions. Select '2'.
+        //
+        // We send Enter (trust dismiss or bypass accept), then '2' + Enter
+        // (explicit bypass accept). When trust is absent, the initial Enter
+        // accepts bypass directly and '2' + Enter is absorbed harmlessly.
+        ptyProcess.write('\r');
+        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+        ptyProcess.write('2');
+        await new Promise((r) => setTimeout(r, 200));
+        ptyProcess.write('\r');
+        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+      }
 
+      // Non-codex providers receive bootstrap via PTY write.
+      // Codex receives bootstrap as a CLI argument at spawn time.
+      if (provider !== 'codex') {
         if (config.system_prompt && typeof config.system_prompt === 'string') {
           ptyProcess.write(config.system_prompt);
           await new Promise((r) => setTimeout(r, 500));
