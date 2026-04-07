@@ -10,6 +10,7 @@ export default defineConfig({
     singleThread: true,
     include: [resolve(import.meta.dirname, 'e2e-real/**/*.test.ts')],
     exclude: ['**/node_modules/**'],
-    testTimeout: 300_000, // 5 min per test — real provider startup can be slow
+    testTimeout: 1_800_000, // 30 min per test — full phased workflow with real providers
+    hookTimeout: 120_000,  // 2 min for beforeAll/afterAll (coordinator startup/teardown)
   },
 });
