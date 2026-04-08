@@ -2,7 +2,7 @@
 ref: memory-access/134-mcp-tools-memory-access
 feature: memory-access
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/131-fts5-search-spatial-filtering
   - memory-foundation/132-spatial-taxonomy-queries
