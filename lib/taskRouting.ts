@@ -2,6 +2,7 @@
  * Routing helpers for task-to-agent compatibility.
  */
 import { TASK_TYPES } from './constants.ts';
+import { logger } from './logger.ts';
 
 interface AgentLike {
   agent_id?: string | undefined;
@@ -109,7 +110,7 @@ export function formatRoutingReasons(reasons: string[] | null | undefined): stri
 export function canAgentExecuteTaskType(taskType: unknown, agent: AgentLike | null | undefined): boolean {
   const result = evaluateTaskEligibility({ task_type: String(taskType) }, agent);
   if (result.reasons.some((reason) => reason.startsWith('unsupported_task_type:'))) {
-    console.warn(`[taskRouting] unknown task type encountered: ${String(taskType)}`);
+    logger.warn(`[taskRouting] unknown task type encountered: ${String(taskType)}`);
     return false;
   }
   return !result.reasons.some((reason) => reason.startsWith('role_ineligible:'));

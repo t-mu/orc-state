@@ -6,6 +6,7 @@ import { withLock, lockPath } from './lock.ts';
 import { RUN_WORKTREES_FILE, WORKTREES_DIR } from './paths.ts';
 import { resolveRepoRoot } from './repoRoot.ts';
 import type { RunWorktreesState, RunWorktreeEntry } from '../types/run-worktrees.ts';
+import { logger } from './logger.ts';
 
 function readRunWorktrees(_stateDir: string): RunWorktreesState {
   try {
@@ -64,7 +65,7 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
     const file = readRunWorktrees(stateDir);
     const entry = file.runs.find((candidate) => candidate.run_id === runId) ?? null;
     if (!entry) {
-      console.warn(`[runWorktree] cleanupRunWorktree: no entry found for run ${runId}`);
+      logger.warn(`[runWorktree] cleanupRunWorktree: no entry found for run ${runId}`);
       return false;
     }
 
@@ -79,10 +80,10 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
         if (result.status !== 0 || result.error) {
           cleanupSucceeded = false;
           const detail = result.error?.message ?? (result.stderr || result.stdout || 'unknown error').trim();
-          console.warn(`[runWorktree] worktree remove failed for ${entry.worktree_path}: ${detail}`);
+          logger.warn(`[runWorktree] worktree remove failed for ${entry.worktree_path}: ${detail}`);
         }
       } else {
-        console.warn(`[runWorktree] cleanupRunWorktree: worktree path not found, skipping remove: ${entry.worktree_path}`);
+        logger.warn(`[runWorktree] cleanupRunWorktree: worktree path not found, skipping remove: ${entry.worktree_path}`);
       }
     }
 
@@ -94,7 +95,7 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
       if (result.status !== 0 || result.error) {
         cleanupSucceeded = false;
         const detail = result.error?.message ?? (result.stderr || result.stdout || 'unknown error').trim();
-        console.warn(`[runWorktree] branch delete failed for ${entry.branch}: ${detail}`);
+        logger.warn(`[runWorktree] branch delete failed for ${entry.branch}: ${detail}`);
       }
     }
 

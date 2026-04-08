@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerDb, unregisterDb } from './eventLog.ts';
+import { logger } from './logger.ts';
 
 const MEMORY_DB_FILE = 'memory.db';
 const _memDbs = new Map<string, Database.Database>();
@@ -329,7 +330,7 @@ export function memoryWakeUp(stateDir: string, opts: {
   const charBudget = (opts.tokenBudget ?? 800) * 4;
   let db: Database.Database;
   try { db = getMemoryDb(stateDir); } catch (err) {
-    console.error(`[memoryStore] memoryWakeUp failed: ${(err as Error).message}`);
+    logger.error(`[memoryStore] memoryWakeUp failed: ${(err as Error).message}`);
     return '';
   }
 
@@ -369,7 +370,7 @@ export function pruneExpiredMemories(stateDir: string): number {
       .run(new Date().toISOString());
     return result.changes;
   } catch (err) {
-    console.error(`[memoryStore] pruneExpiredMemories failed: ${(err as Error).message}`);
+    logger.error(`[memoryStore] pruneExpiredMemories failed: ${(err as Error).message}`);
     return 0;
   }
 }
@@ -396,7 +397,7 @@ export function pruneByCapacity(stateDir: string, maxPerRoom = 200): number {
     }
     return totalDeleted;
   } catch (err) {
-    console.error(`[memoryStore] pruneByCapacity failed: ${(err as Error).message}`);
+    logger.error(`[memoryStore] pruneByCapacity failed: ${(err as Error).message}`);
     return 0;
   }
 }

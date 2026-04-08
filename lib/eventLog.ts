@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import { validateEventObject } from './eventValidation.ts';
 import type { OrcEvent, OrcEventInput } from '../types/events.ts';
+import { logger } from './logger.ts';
 
 // Module-level singleton: one DB connection per stateDir.
 const _dbs = new Map<string, Database.Database>();
@@ -270,13 +271,13 @@ function parseEventRow(row: { payload: string }, index: number, { validate = fal
     if (validate) {
       const validationErrors = validateEventObject(event);
       if (validationErrors.length > 0) {
-        console.error(`[eventLog] skipping invalid event at row ${index + 1}: ${validationErrors.join('; ')}`);
+        logger.error(`[eventLog] skipping invalid event at row ${index + 1}: ${validationErrors.join('; ')}`);
         return null;
       }
     }
     return event;
   } catch (error) {
-    console.error(`[eventLog] skipping corrupted event at row ${index + 1}: ${(error as Error).message}`);
+    logger.error(`[eventLog] skipping corrupted event at row ${index + 1}: ${(error as Error).message}`);
     return null;
   }
 }

@@ -1,6 +1,7 @@
 import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveRepoRoot } from './repoRoot.ts';
+import { logger } from './logger.ts';
 
 export const STATE_DIR = process.env.ORCH_STATE_DIR
   ? resolve(process.env.ORCH_STATE_DIR)
@@ -44,7 +45,7 @@ export function consumeHookEvents(agentId: string): Array<{ type: string; messag
     renameSync(src, processing);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[paths] unexpected error renaming hook events file:', err);
+      logger.error('[paths] unexpected error renaming hook events file:', err);
     }
     // File disappeared between existsSync and rename (consumed by another tick or stop()).
     return [];
@@ -54,7 +55,7 @@ export function consumeHookEvents(agentId: string): Array<{ type: string; messag
     lines = readFileSync(processing, 'utf8').split('\n').filter(Boolean);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[paths] unexpected error reading hook events file:', err);
+      logger.error('[paths] unexpected error reading hook events file:', err);
     }
     /* read failed — file was removed externally */
   }

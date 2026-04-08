@@ -6,6 +6,7 @@ import { isSupportedProvider, loadWorkerPoolConfig, resolveWorkerModel } from '.
 import type { Agent, AgentsState, AgentRole, Provider, DispatchMode } from '../types/agents.ts';
 import type { WorkerPoolConfig } from './providers.ts';
 import { AGENT_ID_RE, AGENT_ROLES } from './constants.ts';
+import { logger } from './logger.ts';
 
 const VALID_ROLES = new Set<AgentRole>(AGENT_ROLES as AgentRole[]);
 
@@ -14,7 +15,7 @@ function readAgentsFile(stateDir: string): AgentsState {
     return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')) as AgentsState;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[agentRegistry] unexpected error reading agents.json:', err);
+      logger.error('[agentRegistry] unexpected error reading agents.json:', err);
     }
     return { version: '1', agents: [] };
   }

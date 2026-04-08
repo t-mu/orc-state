@@ -10,6 +10,7 @@ import { INPUT_REQUEST_HEARTBEAT_INTERVAL_MS } from './constants.ts';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from './inputRequestConfig.ts';
 import type { Claim } from '../types/claims.ts';
 import type { FailurePolicy } from '../types/events.ts';
+import { logger } from './logger.ts';
 
 const INPUT_REQUEST_TIMEOUT_GRACE_MS = 250;
 
@@ -185,7 +186,7 @@ export async function executeRunInputRequest(
     policy: null,
   }, claim);
   if (validatedClaim.state !== 'in_progress') {
-    console.error(`Timed out waiting for input_response for run ${runId} after ${timeoutMs}ms`);
+    logger.error(`Timed out waiting for input_response for run ${runId} after ${timeoutMs}ms`);
     process.exit(1);
   }
   const taskRef = validatedClaim.task_ref;
@@ -292,6 +293,6 @@ export async function executeRunInputRequest(
       },
     }, { lockStrategy: 'none' });
   }
-  console.error(`Timed out waiting for input_response for run ${runId} after ${timeoutMs}ms`);
+  logger.error(`Timed out waiting for input_response for run ${runId} after ${timeoutMs}ms`);
   process.exit(1);
 }

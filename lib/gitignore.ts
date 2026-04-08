@@ -1,6 +1,7 @@
 import { readFileSync, appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
+import { logger } from './logger.ts';
 
 const ENTRY = '.orc-state/';
 const COMMENT = '# orc-state runtime data';
@@ -18,7 +19,7 @@ export function ensureGitignore(): void {
 
     if (!lines.includes(ENTRY)) {
       appendFileSync(gitignorePath, `\n${COMMENT}\n${ENTRY}\n`);
-      console.log(`Added ${ENTRY} to .gitignore`);
+      logger.info(`Added ${ENTRY} to .gitignore`);
     }
   } catch {
     return;
