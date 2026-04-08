@@ -80,11 +80,11 @@ describe.skipIf(!ENABLED)('coordinator + real Codex worker smoke', () => {
 
     // Write blessed task specs into the temp repo's backlog directory.
     writeFileSync(
-      join(repo.backlogDir, 'smoke-task-1.md'),
+      join(repo.backlogDir, BLESSED_TASK_1.specFile),
       buildBlessedTaskSpec(BLESSED_TASK_1, repo.repoRoot),
     );
     writeFileSync(
-      join(repo.backlogDir, 'smoke-task-2.md'),
+      join(repo.backlogDir, BLESSED_TASK_2.specFile),
       buildBlessedTaskSpec(BLESSED_TASK_2, repo.repoRoot),
     );
 

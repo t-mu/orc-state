@@ -20,6 +20,8 @@ export interface BlessedTask {
   title: string;
   /** Source file the worker should create — used as an existence check. */
   sourceFile: string;
+  /** Numbered backlog markdown filename used by active spec discovery. */
+  specFile: string;
 }
 
 /**
@@ -29,6 +31,7 @@ export const BLESSED_TASK_1: BlessedTask = {
   ref: 'smoke/task-1',
   title: 'Smoke task 1: create marker-1 module',
   sourceFile: 'lib/marker-1.mjs',
+  specFile: '101-smoke-task-1.md',
 };
 
 /**
@@ -39,6 +42,7 @@ export const BLESSED_TASK_2: BlessedTask = {
   ref: 'smoke/task-2',
   title: 'Smoke task 2: create marker-2 module',
   sourceFile: 'lib/marker-2.mjs',
+  specFile: '102-smoke-task-2.md',
 };
 
 /**

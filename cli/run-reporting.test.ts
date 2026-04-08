@@ -779,6 +779,69 @@ describe('orc-run-input-request', () => {
     )).toHaveLength(0);
   });
 
+  it('ignores payload-less events while waiting for the matching input_response', async () => {
+    seedInputRequestState();
+
+    const child = spawn('node', [
+      'cli/run-input-request.ts',
+      '--run-id=run-input-001',
+      '--agent-id=worker-01',
+      '--question=Continue?',
+      '--timeout-ms=5000',
+      '--poll-ms=20',
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, ORCH_STATE_DIR: dir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    let requestId: string | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const requestEvent = readEvents().find((event) =>
+        event.event === 'input_requested'
+        && event.run_id === 'run-input-001'
+        && event.agent_id === 'worker-01',
+      );
+      if (requestEvent) {
+        const candidate = (requestEvent.payload as Record<string, unknown> | undefined)?.request_id;
+        if (typeof candidate === 'string') requestId = candidate;
+        break;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+
+    expect(typeof requestId).toBe('string');
+    appendSequencedEvent(dir, {
+      ts: new Date().toISOString(),
+      event: 'heartbeat',
+      actor_type: 'agent',
+      actor_id: 'worker-01',
+      run_id: 'run-input-001',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+    });
+    appendSequencedEvent(dir, {
+      ts: new Date().toISOString(),
+      event: 'input_response',
+      actor_type: 'human',
+      actor_id: 'master',
+      run_id: 'run-input-001',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+      payload: { response: 'yes', request_id: requestId as string },
+    });
+
+    const [code] = await once(child, 'close');
+    expect(code).toBe(0);
+    expect(stdout.trim()).toBe('yes');
+    expect(stderr).toBe('');
+  });
+
   it('exits 1 with usage when required args are missing', () => {
     const result = runCli('run-input-request.ts', ['--run-id=run-input-003']);
     expect(result.status).toBe(1);

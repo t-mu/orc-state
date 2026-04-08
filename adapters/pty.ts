@@ -30,6 +30,7 @@ import {
 import { delimiter, isAbsolute, join } from 'node:path';
 import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
+import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
   claude: 'claude',
@@ -101,8 +102,6 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
   const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
   const readOnly = config.read_only === true;
 
-  // Codex supports an initial prompt argument; pass bootstrap at spawn time
-  // instead of PTY post-start injection, which the TUI treats as pasted text.
   if (provider === 'codex') {
     const args: string[] = [];
     if (executionMode === 'sandbox') {
@@ -115,7 +114,6 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     // Enable multi-agent support so Codex workers can spawn sub-agent reviewers.
     args.push('--enable', 'multi_agent');
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
-    if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
   }
   if (provider === 'claude') {
@@ -283,8 +281,10 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
 
         const spawnArgs = buildStartArgs(provider, config, claudeSettingsFile);
 
-        // Strip Claude Code nesting-detection env vars so nested sessions start cleanly.
-        const { CLAUDECODE: _cc, CLAUDE_CODE_ENTRYPOINT: _ce, CLAUDE_CODE_EXECPATH: _cx, ...baseEnv } = process.env;
+        // Strip parent provider/session control env vars so nested worker
+        // sessions start cleanly instead of inheriting the parent CLI sandbox
+        // or session metadata.
+        const baseEnv = stripNestedProviderEnv(process.env);
         const spawnEnv = { ...baseEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>;
         const resolvedBinary = resolveBinary(binary, spawnEnv);
         ptyProcess = pty.spawn(resolvedBinary, spawnArgs, {
@@ -346,12 +346,15 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
       }
 
-      // Non-codex providers receive bootstrap via PTY write.
-      // Codex receives bootstrap as a CLI argument at spawn time.
-      if (provider !== 'codex') {
-        if (config.system_prompt && typeof config.system_prompt === 'string') {
-          ptyProcess.write(config.system_prompt);
-          await new Promise((r) => setTimeout(r, 500));
+      if (config.system_prompt && typeof config.system_prompt === 'string') {
+        ptyProcess.write(config.system_prompt);
+        await new Promise((r) => setTimeout(r, provider === 'codex' ? 700 : 500));
+        ptyProcess.write('\r');
+        if (provider === 'codex') {
+          // Codex treats large PTY-written bootstraps as pasted text. A second
+          // Enter reliably dismisses the paste bar / confirms submission after
+          // the workspace dialog has already been accepted.
+          await new Promise((r) => setTimeout(r, 400));
           ptyProcess.write('\r');
         }
       }

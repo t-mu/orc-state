@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { stripNestedProviderEnv } from '../../lib/providerChildEnv.ts';
 import type { RuntimeRepo } from './runtimeRepo.ts';
 
 export interface RuntimeEnv {
@@ -37,15 +38,9 @@ export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): Runtime
 
   writeFileSync(configPath, JSON.stringify(config, null, 2));
 
-  // Strip Claude Code nesting-detection env vars so the coordinator can spawn
-  // nested Claude sessions without them refusing to start. The PTY adapter
-  // strips CLAUDECODE but misses CLAUDE_CODE_ENTRYPOINT and CLAUDE_CODE_EXECPATH.
-  const {
-    CLAUDECODE: _1,
-    CLAUDE_CODE_ENTRYPOINT: _2,
-    CLAUDE_CODE_EXECPATH: _3,
-    ...baseEnv
-  } = process.env;
+  // Strip provider session-control env vars so the coordinator and the worker
+  // sessions it launches do not inherit the parent agent's CLI sandbox/session.
+  const baseEnv = stripNestedProviderEnv(process.env);
 
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,

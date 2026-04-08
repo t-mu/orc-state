@@ -13,6 +13,7 @@
  * two gives false "auth passed" signals when only the binary is installed.
  */
 import { spawnSync } from 'node:child_process';
+import { stripNestedProviderEnv } from '../../lib/providerChildEnv.ts';
 
 export type ReadinessStage = 'binary' | 'pty' | 'spawn';
 
@@ -36,7 +37,7 @@ const PROVIDER_BINARIES: Record<string, string> = {
  */
 function checkBinary(provider: string): ProviderReadinessResult {
   const binary = PROVIDER_BINARIES[provider] ?? provider;
-  const pathEnv = process.env.PATH ?? '';
+  const pathEnv = stripNestedProviderEnv(process.env).PATH ?? '';
 
   try {
     const result = spawnSync('which', [binary], {
@@ -83,6 +84,7 @@ function checkSpawn(provider: string): ProviderReadinessResult {
   const binary = PROVIDER_BINARIES[provider] ?? provider;
   try {
     const result = spawnSync(binary, ['--version'], {
+      env: stripNestedProviderEnv(process.env),
       encoding: 'utf8',
       timeout: 5000,
       stdio: 'pipe',

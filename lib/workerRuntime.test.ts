@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types/agents.ts';
+import { stripNestedProviderEnv } from './providerChildEnv.ts';
 
 describe('normalizeWorkerEnv', () => {
   afterEach(() => {
@@ -88,6 +89,34 @@ describe('normalizeWorkerEnv', () => {
     expect(env.ORC_STATE_DIR).toBe('/tmp/state');
     expect(env.ORC_REPO_ROOT).toBe('/repo/root');
     expect(env.ORC_BIN).toBe('/repo/root/cli/orc.ts');
+  });
+});
+
+describe('stripNestedProviderEnv', () => {
+  it('removes nested Claude and Codex session-control variables', () => {
+    const env = stripNestedProviderEnv({
+      PATH: '/usr/bin',
+      CLAUDECODE: '1',
+      CLAUDE_CODE_ENTRYPOINT: '/tmp/claude',
+      CLAUDE_CODE_EXECPATH: '/tmp/claude-exec',
+      CODEX_CI: '1',
+      CODEX_MANAGED_BY_NPM: '1',
+      CODEX_SANDBOX: 'seatbelt',
+      CODEX_SANDBOX_NETWORK_DISABLED: '1',
+      CODEX_THREAD_ID: 'thread-1',
+      HOME: '/tmp/home',
+    });
+
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.HOME).toBe('/tmp/home');
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(env.CLAUDE_CODE_EXECPATH).toBeUndefined();
+    expect(env.CODEX_CI).toBeUndefined();
+    expect(env.CODEX_MANAGED_BY_NPM).toBeUndefined();
+    expect(env.CODEX_SANDBOX).toBeUndefined();
+    expect(env.CODEX_SANDBOX_NETWORK_DISABLED).toBeUndefined();
+    expect(env.CODEX_THREAD_ID).toBeUndefined();
   });
 });
 

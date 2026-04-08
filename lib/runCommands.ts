@@ -208,7 +208,7 @@ export async function executeRunInputRequest(
     const events = readEventsSince(EVENTS_FILE, 0);
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index];
-      const payload = event.payload as Record<string, unknown>;
+      const payload = (event.payload ?? {}) as Record<string, unknown>;
       const matchesRequestId = payload.request_id === requestId;
       const isLegacyMatch = payload.request_id === undefined
         && typeof event.seq === 'number'

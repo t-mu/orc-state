@@ -109,6 +109,30 @@ describe('pty adapter start()', () => {
     }));
   });
 
+  it('strips parent provider session env vars before spawning nested codex workers', async () => {
+    process.env.CODEX_SANDBOX = 'seatbelt';
+    process.env.CODEX_THREAD_ID = 'thread-123';
+    process.env.CODEX_CI = '1';
+
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('codex-worker', {
+      execution_mode: 'full-access',
+      env: { ORC_REPO_ROOT: '/tmp/repo-root' },
+    });
+
+    expect(spawnSpy).toHaveBeenCalledWith(
+      binaryMatcher('codex'),
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.not.objectContaining({
+          CODEX_SANDBOX: expect.any(String),
+          CODEX_THREAD_ID: expect.any(String),
+          CODEX_CI: expect.any(String),
+        }),
+      }),
+    );
+  });
+
   it('writes PID file to STATE_DIR/pty-pids/{agentId}.pid', async () => {
     const { adapter, ptyProcess } = await makeAdapter();
     await adapter.start('bob', {});
@@ -164,29 +188,34 @@ describe('pty adapter start()', () => {
     expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
   });
 
-  it('passes codex bootstrap as startup prompt arg instead of PTY write', async () => {
+  it('injects codex bootstrap via PTY after startup confirmation', async () => {
     const { adapter, spawnSpy, ptyProcess } = await makeAdapter({ provider: 'codex' });
     await adapter.start('codex-worker', { execution_mode: 'full-access', system_prompt: 'BOOTSTRAP TEXT' });
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'BOOTSTRAP TEXT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'],
       expect.any(Object),
     );
-    // Codex gets one Enter press to dismiss the workspace confirmation dialog.
-    expect(ptyProcess.write).toHaveBeenCalledTimes(1);
+    // Codex gets one Enter press to dismiss the workspace confirmation dialog,
+    // then the bootstrap text and a double-Enter submit.
+    expect(ptyProcess.write).toHaveBeenCalledTimes(4);
     expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, 'BOOTSTRAP TEXT');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, '\r');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, '\r');
   });
 
   it('uses bypass mode for codex scout sessions too', async () => {
-    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    const { adapter, spawnSpy, ptyProcess } = await makeAdapter({ provider: 'codex' });
     await adapter.start('scout-1', { system_prompt: 'SCOUT', read_only: true });
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'SCOUT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'],
       expect.any(Object),
     );
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, 'SCOUT');
   });
 
   it('cleans up and does not write pid file when pty.spawn throws', async () => {

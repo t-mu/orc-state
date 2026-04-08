@@ -342,6 +342,23 @@ describe('buildRuntimeEnv', () => {
     const config = JSON.parse(readFileSync(configPath, 'utf8')) as { worker_pool: { max_workers: number } };
     expect(config.worker_pool.max_workers).toBe(1);
   });
+
+  it('strips nested provider env vars from the coordinator runtime env', () => {
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_ENTRYPOINT = '/tmp/claude';
+    process.env.CODEX_SANDBOX = 'seatbelt';
+    process.env.CODEX_THREAD_ID = 'thread-123';
+
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    const { env } = buildRuntimeEnv(repo, 'codex');
+
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(env.CODEX_SANDBOX).toBeUndefined();
+    expect(env.CODEX_THREAD_ID).toBeUndefined();
+  });
 });
 
 // ── orcWrapper ──────────────────────────────────────────────────────────────
