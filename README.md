@@ -1,5 +1,7 @@
 # orc-state
 
+[![CI](https://github.com/t-mu/orc-state/actions/workflows/ci.yml/badge.svg)](https://github.com/t-mu/orc-state/actions/workflows/ci.yml)
+
 Spawn, command, and coordinate.
 
 - **Provider-agnostic** — Claude, Codex, Gemini. Same orchestration, any model.
