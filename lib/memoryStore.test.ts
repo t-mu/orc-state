@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   initMemoryDb, closeMemoryDb,
   storeDrawer, getDrawer, deleteDrawer, updateDrawerImportance, listDrawers,
+  searchMemory,
   extractKeywords,
 } from './memoryStore.ts';
 import { closeAllDatabases } from './eventLog.ts';
@@ -212,5 +213,65 @@ describe('duplicate detection and keyword tagging', () => {
     expect(parts).toContain('quick');
     expect(parts).toContain('brown');
     expect(parts).toContain('lazy');
+  });
+});
+
+describe('searchMemory', () => {
+  it('searchMemory finds drawers by FTS5 text match', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'typescript programming language' });
+    storeDrawer(dir, { hall: 'h1', room: 'r2', content: 'python programming language' });
+    const results = searchMemory(dir, { query: 'typescript' });
+    expect(results.length).toBe(1);
+    expect(results[0]?.snippet).toContain('typescript');
+  });
+
+  it('searchMemory filters by wing when provided', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'shared keyword content' });
+    storeDrawer(dir, { wing: 'beta', hall: 'h1', room: 'r1', content: 'shared keyword content beta' });
+    const results = searchMemory(dir, { query: 'shared', wing: 'alpha' });
+    expect(results.length).toBe(1);
+    expect(results[0]?.wing).toBe('alpha');
+  });
+
+  it('searchMemory returns empty array for no matches', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'some content here' });
+    const results = searchMemory(dir, { query: 'xyznonexistent' });
+    expect(results).toEqual([]);
+  });
+
+  it('searchMemory ranks higher-importance drawers above lower', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'orchestration workflow system', importance: 2 });
+    storeDrawer(dir, { hall: 'h1', room: 'r2', content: 'orchestration pipeline system', importance: 8 });
+    const results = searchMemory(dir, { query: 'orchestration' });
+    expect(results.length).toBe(2);
+    expect(results[0]?.importance).toBe(8);
+  });
+
+  it('searchMemory respects limit parameter', () => {
+    initMemoryDb(dir);
+    for (let i = 0; i < 5; i++) {
+      storeDrawer(dir, { hall: 'h1', room: `r${i}`, content: `searchable item number ${i}` });
+    }
+    const results = searchMemory(dir, { query: 'searchable', limit: 3 });
+    expect(results.length).toBe(3);
+  });
+
+  it('searchMemory returns snippets capped at 200 chars', () => {
+    initMemoryDb(dir);
+    const longContent = 'keyword ' + 'x'.repeat(300);
+    storeDrawer(dir, { hall: 'h1', room: 'r1', content: longContent });
+    const results = searchMemory(dir, { query: 'keyword' });
+    expect(results.length).toBe(1);
+    expect(results[0]?.snippet.length).toBeLessThanOrEqual(200);
+  });
+
+  it('searchMemory returns empty array when the database has no drawers', () => {
+    initMemoryDb(dir);
+    const results = searchMemory(dir, { query: 'anything' });
+    expect(results).toEqual([]);
   });
 });

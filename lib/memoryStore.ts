@@ -151,6 +151,56 @@ export function updateDrawerImportance(stateDir: string, id: number, importance:
   return result.changes > 0;
 }
 
+export interface MemorySearchResult {
+  id: number;
+  snippet: string;
+  wing: string;
+  hall: string;
+  room: string;
+  importance: number;
+  created_at: string;
+  rank: number;
+}
+
+export function searchMemory(stateDir: string, opts: {
+  query: string;
+  wing?: string;
+  hall?: string;
+  room?: string;
+  limit?: number;
+}): MemorySearchResult[] {
+  const db = getMemoryDb(stateDir);
+  const conditions = ['drawers_fts MATCH ?'];
+  const params: unknown[] = [opts.query];
+
+  if (opts.wing) { conditions.push('d.wing = ?'); params.push(opts.wing); }
+  if (opts.hall) { conditions.push('d.hall = ?'); params.push(opts.hall); }
+  if (opts.room) { conditions.push('d.room = ?'); params.push(opts.room); }
+
+  const sql = `
+    SELECT d.id, d.content, d.wing, d.hall, d.room, d.importance, d.created_at,
+           (bm25(drawers_fts) * (d.importance / 10.0)) AS rank
+    FROM drawers d
+    JOIN drawers_fts ON drawers_fts.rowid = d.id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY rank
+    LIMIT ?
+  `;
+  params.push(opts.limit ?? 10);
+
+  const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+  return rows.map(r => ({
+    id: r.id as number,
+    snippet: (r.content as string).slice(0, 200),
+    wing: r.wing as string,
+    hall: r.hall as string,
+    room: r.room as string,
+    importance: r.importance as number,
+    created_at: r.created_at as string,
+    rank: r.rank as number,
+  }));
+}
+
 export function listDrawers(stateDir: string, opts: {
   wing?: string;
   hall?: string;
