@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerDb, unregisterDb } from './eventLog.ts';
 
@@ -238,4 +239,52 @@ export function listDrawers(stateDir: string, opts: {
 
   const sql = ['SELECT * FROM drawers', where, limitClause, offsetClause].filter(Boolean).join(' ');
   return db.prepare(sql).all(...params) as Drawer[];
+}
+
+export function listWings(stateDir: string): Array<{ wing: string; count: number }> {
+  const db = getMemoryDb(stateDir);
+  return db.prepare('SELECT wing, COUNT(*) as count FROM drawers GROUP BY wing ORDER BY count DESC').all() as Array<{ wing: string; count: number }>;
+}
+
+export function listRooms(stateDir: string, wing: string): Array<{ room: string; hall: string; count: number }> {
+  const db = getMemoryDb(stateDir);
+  return db.prepare('SELECT room, hall, COUNT(*) as count FROM drawers WHERE wing = ? GROUP BY room, hall ORDER BY count DESC').all(wing) as Array<{ room: string; hall: string; count: number }>;
+}
+
+export interface MemoryStats {
+  totalDrawers: number;
+  distinctWings: number;
+  distinctRooms: number;
+  oldestMemory: string | null;
+  newestMemory: string | null;
+  dbSizeBytes: number;
+}
+
+interface StatsRow {
+  total: number;
+  wings: number;
+  rooms: number;
+  oldest: string | null;
+  newest: string | null;
+}
+
+export function getMemoryStats(stateDir: string): MemoryStats {
+  const db = getMemoryDb(stateDir);
+  const row = db.prepare(`
+    SELECT COUNT(*) as total,
+           COUNT(DISTINCT wing) as wings,
+           COUNT(DISTINCT wing || '/' || room) as rooms,
+           MIN(created_at) as oldest,
+           MAX(created_at) as newest
+    FROM drawers
+  `).get() as StatsRow;
+  const { size } = statSync(join(stateDir, 'memory.db'));
+  return {
+    totalDrawers: row.total,
+    distinctWings: row.wings,
+    distinctRooms: row.rooms,
+    oldestMemory: row.oldest,
+    newestMemory: row.newest,
+    dbSizeBytes: size,
+  };
 }
