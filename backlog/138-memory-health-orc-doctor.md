@@ -2,7 +2,7 @@
 ref: memory-quality/138-memory-health-orc-doctor
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/128-memory-db-schema-and-init
 ---
