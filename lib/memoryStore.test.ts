@@ -369,12 +369,14 @@ describe('memoryWakeUp', () => {
 
   it('respects token budget — output does not exceed tokenBudget * 4 characters', () => {
     initMemoryDb(dir);
-    // Insert many drawers with long content
-    for (let i = 0; i < 10; i++) {
-      storeDrawer(dir, { wing: 'w', hall: 'h', room: `r${i}`, content: `memory entry number ${i} with some extra text to pad things out`, importance: 5 });
+    // Each row produces ~23 chars: header "\n## w / rN\n\n" (13) + "- entry-N\n" (10).
+    // tokenBudget=8 → charBudget=32: fits the first entry (~23 chars) but not the second (~46 total).
+    for (let i = 0; i < 5; i++) {
+      storeDrawer(dir, { wing: 'w', hall: 'h', room: `r${i}`, content: `entry-${i}`, importance: 5 });
     }
-    const tokenBudget = 10; // very small: 40 chars
+    const tokenBudget = 8; // charBudget = 32
     const result = memoryWakeUp(dir, { tokenBudget });
+    expect(result.length).toBeGreaterThan(0);
     expect(result.length).toBeLessThanOrEqual(tokenBudget * 4);
   });
 

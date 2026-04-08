@@ -303,7 +303,7 @@ export function memoryWakeUp(stateDir: string, opts: {
   const sql = `SELECT wing, hall, room, content, importance FROM drawers
     ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
     ORDER BY importance DESC, created_at DESC`;
-  const rows = db.prepare(sql).all(...params) as Drawer[];
+  const rows = db.prepare(sql).all(...params) as Array<Pick<Drawer, 'wing' | 'hall' | 'room' | 'content' | 'importance'>>;
 
   let output = '';
   let charCount = 0;
