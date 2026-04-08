@@ -8,6 +8,7 @@ import {
   extractKeywords,
   listWings, listRooms, getMemoryStats,
   memoryWakeUp,
+  wingFromTaskRef,
 } from './memoryStore.ts';
 import { closeAllDatabases } from './eventLog.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -398,5 +399,22 @@ describe('memoryWakeUp', () => {
     // Use a non-existent directory so getMemoryDb/initMemoryDb throws
     const result = memoryWakeUp('/nonexistent/path/that/does/not/exist');
     expect(result).toBe('');
+  });
+});
+
+describe('wingFromTaskRef', () => {
+  it('extracts feature prefix before first slash', () => {
+    expect(wingFromTaskRef('e2e-real/127-some-task')).toBe('e2e-real');
+    expect(wingFromTaskRef('memory-access/137-ingestion')).toBe('memory-access');
+    expect(wingFromTaskRef('proj/fix-bug')).toBe('proj');
+  });
+
+  it('falls back to general for refs without a slash', () => {
+    expect(wingFromTaskRef('no-slash-here')).toBe('general');
+    expect(wingFromTaskRef('')).toBe('general');
+  });
+
+  it('falls back to general when slash is the first character', () => {
+    expect(wingFromTaskRef('/leading-slash')).toBe('general');
   });
 });

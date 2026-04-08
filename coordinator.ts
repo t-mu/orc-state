@@ -42,6 +42,7 @@ import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
+import { storeDrawer, wingFromTaskRef } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
@@ -1629,6 +1630,32 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         await cleanupRunCapacity(agentId, workerPoolConfig);
       }
       deleteRunWorktree(STATE_DIR, runId!);
+
+      const taskRef = claim?.task_ref ?? (event as { task_ref?: string }).task_ref ?? '';
+      if (event.event === 'run_finished') {
+        try {
+          storeDrawer(STATE_DIR, {
+            wing: wingFromTaskRef(taskRef),
+            hall: 'outcomes', room: 'task-completions',
+            content: `Task ${taskRef} completed by ${agentId} (run ${runId})`,
+            importance: 5, sourceType: 'event',
+            ...(runId ? { sourceRef: runId } : {}),
+          });
+        } catch { /* memory system not initialized — silently skip */ }
+      } else {
+        const reason = typeof (event as { payload?: { reason?: unknown } }).payload?.reason === 'string'
+          ? (event as { payload: { reason: string } }).payload.reason
+          : 'unknown';
+        try {
+          storeDrawer(STATE_DIR, {
+            wing: wingFromTaskRef(taskRef),
+            hall: 'errors', room: 'run-failures',
+            content: `Task ${taskRef} failed (run ${runId}): ${reason}`,
+            importance: 8, sourceType: 'event',
+            ...(runId ? { sourceRef: runId } : {}),
+          });
+        } catch { /* memory system not initialized — silently skip */ }
+      }
     }
 
     // ── Unconditional finalization trigger for work/merge events ──────────

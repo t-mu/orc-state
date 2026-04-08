@@ -3,6 +3,8 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
 import { cliError } from './shared.ts';
+import { storeDrawer, wingFromTaskRef } from '../lib/memoryStore.ts';
+import { readClaims } from '../lib/stateReader.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -39,4 +41,16 @@ try {
   console.log(`review_submitted: run=${runId} agent=${agentId} outcome=${outcome}`);
 } catch (error) {
   cliError(error);
+}
+
+if (outcome === 'findings' && reason) {
+  try {
+    const claim = readClaims(STATE_DIR).claims.find((c) => c.run_id === runId);
+    storeDrawer(STATE_DIR, {
+      wing: wingFromTaskRef(claim?.task_ref ?? ''),
+      hall: 'reviews', room: 'review-findings',
+      content: reason,
+      importance: 6, sourceType: 'review', sourceRef: runId,
+    });
+  } catch { /* memory system not initialized — silently skip */ }
 }

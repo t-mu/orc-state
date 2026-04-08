@@ -2,6 +2,7 @@
 import { flag } from '../lib/args.ts';
 import { appendSequencedEvent, queryEvents } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { storeDrawer, wingFromTaskRef } from '../lib/memoryStore.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -50,3 +51,13 @@ appendSequencedEvent(STATE_DIR, {
 });
 
 console.log(`input_response: ${runId} (${agentId})`);
+
+const taskRef = latestRequest?.task_ref as string | undefined;
+try {
+  storeDrawer(STATE_DIR, {
+    wing: wingFromTaskRef(taskRef ?? ''),
+    hall: 'decisions', room: 'master-input',
+    content: `Q: ${latestQuestion ?? '(unknown)'}\nA: ${response}`,
+    importance: 7, sourceType: 'event', sourceRef: runId,
+  });
+} catch { /* memory system not initialized — silently skip */ }
