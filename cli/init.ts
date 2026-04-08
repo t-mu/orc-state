@@ -17,10 +17,10 @@
  *   --skip-agents            skip agent installation
  *   --skip-mcp               skip MCP config merge
  */
-import { existsSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
-import { STATE_DIR } from '../lib/paths.ts';
+import { STATE_DIR, BACKLOG_DOCS_DIR } from '../lib/paths.ts';
 import { boolFlag, flag } from '../lib/args.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
@@ -43,6 +43,7 @@ try {
 }
 
 ensureGitignore();
+mkdirSync(BACKLOG_DOCS_DIR, { recursive: true });
 
 // Step 1: State initialization (idempotent)
 const existing = stateFiles.filter((name) => existsSync(join(STATE_DIR, name)));
