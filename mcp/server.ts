@@ -116,6 +116,16 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleListWorktrees(stateDir);
     case 'get_notifications':
       return handlers.handleGetNotifications(stateDir, args);
+    case 'memory_wake_up':
+      return handlers.handleMemoryWakeUp(stateDir, args);
+    case 'memory_recall':
+      return handlers.handleMemoryRecall(stateDir, args);
+    case 'memory_search':
+      return handlers.handleMemorySearch(stateDir, args);
+    case 'memory_store':
+      return handlers.handleMemoryStore(stateDir, args);
+    case 'memory_status':
+      return handlers.handleMemoryStatus(stateDir, args);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

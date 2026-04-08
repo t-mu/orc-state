@@ -425,4 +425,120 @@ export const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'memory_wake_up',
+    description: 'Load essential memories for context. Returns formatted wake-up text grouped by wing/room.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        wing: {
+          type: 'string',
+          description: 'Filter to a specific wing (default: all wings)',
+        },
+        tokenBudget: {
+          type: 'number',
+          description: 'Approximate token budget for output (default: 800)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'memory_recall',
+    description: 'List drawers from a specific wing with optional room/limit filters.',
+    inputSchema: {
+      type: 'object',
+      required: ['wing'],
+      properties: {
+        wing: {
+          type: 'string',
+          description: 'Wing to recall from',
+        },
+        room: {
+          type: 'string',
+          description: 'Filter to a specific room',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of drawers to return',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'memory_search',
+    description: 'Full-text search (FTS5) across memory drawers. Returns ranked snippets.',
+    inputSchema: {
+      type: 'object',
+      required: ['query'],
+      properties: {
+        query: {
+          type: 'string',
+          description: 'FTS5 search query',
+        },
+        wing: {
+          type: 'string',
+          description: 'Filter results to a specific wing',
+        },
+        room: {
+          type: 'string',
+          description: 'Filter results to a specific room',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results to return (default: 10)',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'memory_store',
+    description: 'Store a memory in a drawer and return its ID. Duplicate content (by hash) returns the existing ID.',
+    inputSchema: {
+      type: 'object',
+      required: ['content'],
+      properties: {
+        content: {
+          type: 'string',
+          description: 'Content to store',
+        },
+        wing: {
+          type: 'string',
+          description: 'Wing to store in (default: general)',
+        },
+        hall: {
+          type: 'string',
+          description: 'Hall to store in (default: default)',
+        },
+        room: {
+          type: 'string',
+          description: 'Room to store in (default: default)',
+        },
+        importance: {
+          type: 'number',
+          description: 'Importance score 1-10 (default: 5)',
+        },
+        sourceType: {
+          type: 'string',
+          description: 'Source type (e.g. agent, human)',
+        },
+        sourceRef: {
+          type: 'string',
+          description: 'Source reference identifier',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'memory_status',
+    description: 'Return memory statistics: total drawers, distinct wings/rooms, oldest/newest memory, and DB size.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
 ];

@@ -27,6 +27,12 @@ import {
   handleResetTask,
   handleListWorktrees,
   handleGetNotifications,
+  handleMemoryWakeUp,
+  handleMemoryRecall,
+  handleMemorySearch,
+  handleMemoryStore,
+  handleMemoryStatus,
+  closeMemoryDb,
 } from './handlers.ts';
 import { assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
 
@@ -1712,5 +1718,96 @@ describe('handleGetNotifications', () => {
     expect(result.notifications).toHaveLength(1);
     expect(result.notifications[0].event).toBe('run_cancelled');
     expect(result.last_seq).toBe(3);
+  });
+});
+
+describe('memory handlers', () => {
+  afterEach(() => {
+    closeMemoryDb();
+  });
+
+  it('handleMemoryStore creates a drawer and returns ID', () => {
+    const result = handleMemoryStore(dir, { content: 'test memory content' });
+    expect(result).toHaveProperty('id');
+    expect(typeof (result as { id: number }).id).toBe('number');
+  });
+
+  it('handleMemoryStore uses default wing/hall/room when omitted', () => {
+    const result = handleMemoryStore(dir, { content: 'default location test' });
+    expect(result).toHaveProperty('id');
+    const id = (result as { id: number }).id;
+    expect(id).toBeGreaterThan(0);
+  });
+
+  it('handleMemoryStore returns same ID for duplicate content', () => {
+    const r1 = handleMemoryStore(dir, { content: 'duplicate content' }) as { id: number };
+    closeMemoryDb();
+    const r2 = handleMemoryStore(dir, { content: 'duplicate content' }) as { id: number };
+    expect(r2.id).toBe(r1.id);
+  });
+
+  it('handleMemorySearch returns FTS5 results', () => {
+    handleMemoryStore(dir, { content: 'the quick brown fox jumps', wing: 'search-test', room: 'animals' });
+    closeMemoryDb();
+    const result = handleMemorySearch(dir, { query: 'fox' }) as { results: unknown[] };
+    expect(result).toHaveProperty('results');
+    expect(result.results.length).toBeGreaterThan(0);
+  });
+
+  it('handleMemorySearch filters by wing', () => {
+    handleMemoryStore(dir, { content: 'elephant in savanna', wing: 'africa', room: 'animals' });
+    handleMemoryStore(dir, { content: 'elephant memory test', wing: 'other', room: 'animals' });
+    closeMemoryDb();
+    const result = handleMemorySearch(dir, { query: 'elephant', wing: 'africa' }) as { results: Array<{ wing: string }> };
+    expect(result.results.every((r) => r.wing === 'africa')).toBe(true);
+  });
+
+  it('handleMemoryRecall returns spatially-filtered drawers', () => {
+    handleMemoryStore(dir, { content: 'recall content one', wing: 'recall-wing', room: 'recall-room' });
+    handleMemoryStore(dir, { content: 'recall content two', wing: 'recall-wing', room: 'other-room' });
+    closeMemoryDb();
+    const result = handleMemoryRecall(dir, { wing: 'recall-wing', room: 'recall-room' }) as { drawers: unknown[] };
+    expect(result).toHaveProperty('drawers');
+    expect(result.drawers).toHaveLength(1);
+  });
+
+  it('handleMemoryRecall throws when wing is missing', () => {
+    expect(() => handleMemoryRecall(dir, {})).toThrow('wing is required');
+  });
+
+  it('handleMemoryWakeUp returns formatted text', () => {
+    handleMemoryStore(dir, { content: 'wake up memory content', wing: 'general', room: 'notes', importance: 8 });
+    closeMemoryDb();
+    const result = handleMemoryWakeUp(dir, {}) as { text: string };
+    expect(result).toHaveProperty('text');
+    expect(typeof result.text).toBe('string');
+    expect(result.text).toContain('wake up memory content');
+  });
+
+  it('handleMemoryWakeUp returns empty text when no memories exist', () => {
+    const result = handleMemoryWakeUp(dir, {}) as { text: string };
+    expect(result).toHaveProperty('text');
+    expect(result.text).toBe('');
+  });
+
+  it('handleMemoryStatus returns stats', () => {
+    handleMemoryStore(dir, { content: 'status test content', wing: 'status-wing', room: 'room1' });
+    closeMemoryDb();
+    const result = handleMemoryStatus(dir) as { stats: { totalDrawers: number; distinctWings: number; dbSizeBytes: number } };
+    expect(result).toHaveProperty('stats');
+    expect(result.stats.totalDrawers).toBe(1);
+    expect(result.stats.distinctWings).toBe(1);
+    expect(result.stats.dbSizeBytes).toBeGreaterThan(0);
+  });
+
+  it('memory tools return graceful response when memory DB cannot be initialized', () => {
+    const badDir = join(dir, 'nonexistent', 'subdir');
+    // These four throw internally and return a structured error object
+    expect(handleMemoryStore(badDir, { content: 'test' })).toEqual({ error: 'memory system not initialized' });
+    expect(handleMemorySearch(badDir, { query: 'test' })).toEqual({ error: 'memory system not initialized' });
+    expect(handleMemoryRecall(badDir, { wing: 'general' })).toEqual({ error: 'memory system not initialized' });
+    expect(handleMemoryStatus(badDir)).toEqual({ error: 'memory system not initialized' });
+    // memoryWakeUp handles DB failure internally and returns empty text, so handleMemoryWakeUp returns { text: '' }
+    expect(handleMemoryWakeUp(badDir, {})).toEqual({ text: '' });
   });
 });

@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory, storeDrawer } from '../lib/memoryStore.ts';
+
 import { createAdapter } from '../adapters/index.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
@@ -1136,3 +1138,77 @@ export function handleGetNotifications(stateDir: string, { after_seq }: { after_
     : afterSeq;
   return { notifications, last_seq: lastSeq };
 }
+
+export function handleMemoryWakeUp(stateDir: string, args: Record<string, unknown> = {}) {
+  const { wing, tokenBudget } = args;
+  try {
+    const text = memoryWakeUp(stateDir, {
+      ...(typeof wing === 'string' ? { wing } : {}),
+      ...(typeof tokenBudget === 'number' ? { tokenBudget } : {}),
+    });
+    return { text };
+  } catch {
+    return { error: 'memory system not initialized' };
+  }
+}
+
+export function handleMemoryRecall(stateDir: string, args: Record<string, unknown> = {}) {
+  const { wing, room, limit } = args;
+  if (typeof wing !== 'string') throw new Error('wing is required');
+  try {
+    const drawers = listDrawers(stateDir, {
+      wing,
+      ...(typeof room === 'string' ? { room } : {}),
+      ...(typeof limit === 'number' ? { limit } : {}),
+    });
+    return { drawers };
+  } catch {
+    return { error: 'memory system not initialized' };
+  }
+}
+
+export function handleMemorySearch(stateDir: string, args: Record<string, unknown> = {}) {
+  const { query, wing, room, limit } = args;
+  if (typeof query !== 'string') throw new Error('query is required');
+  try {
+    const results = searchMemory(stateDir, {
+      query,
+      ...(typeof wing === 'string' ? { wing } : {}),
+      ...(typeof room === 'string' ? { room } : {}),
+      ...(typeof limit === 'number' ? { limit } : {}),
+    });
+    return { results };
+  } catch {
+    return { error: 'memory system not initialized' };
+  }
+}
+
+export function handleMemoryStore(stateDir: string, args: Record<string, unknown> = {}) {
+  const { content, wing, hall, room, importance, sourceType, sourceRef } = args;
+  if (typeof content !== 'string') throw new Error('content is required');
+  try {
+    const id = storeDrawer(stateDir, {
+      content,
+      wing: typeof wing === 'string' ? wing : 'general',
+      hall: typeof hall === 'string' ? hall : 'default',
+      room: typeof room === 'string' ? room : 'default',
+      ...(typeof importance === 'number' ? { importance } : {}),
+      ...(typeof sourceType === 'string' ? { sourceType } : {}),
+      ...(typeof sourceRef === 'string' ? { sourceRef } : {}),
+    });
+    return { id };
+  } catch {
+    return { error: 'memory system not initialized' };
+  }
+}
+
+export function handleMemoryStatus(stateDir: string, _args: Record<string, unknown> = {}) {
+  try {
+    const stats = getMemoryStats(stateDir);
+    return { stats };
+  } catch {
+    return { error: 'memory system not initialized' };
+  }
+}
+
+export { closeMemoryDb };
