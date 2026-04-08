@@ -2,7 +2,7 @@
 ref: memory-foundation/130-duplicate-detection-keyword-tags
 feature: memory-foundation
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/129-drawer-crud-spatial-coordinates
 ---
