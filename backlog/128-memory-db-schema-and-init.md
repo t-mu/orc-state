@@ -2,7 +2,7 @@
 ref: memory-foundation/128-memory-db-schema-and-init
 feature: memory-foundation
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 128 — Create Memory Database Schema and Initialization
