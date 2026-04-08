@@ -65,3 +65,86 @@ export function closeMemoryDb(): void {
     _memDb = null;
   }
 }
+
+export interface DrawerInput {
+  wing?: string;
+  hall: string;
+  room: string;
+  content: string;
+  importance?: number;
+  sourceType?: string;
+  sourceRef?: string;
+  agentId?: string;
+  tags?: string;
+  expiresAt?: string;
+}
+
+export interface Drawer {
+  id: number;
+  wing: string;
+  hall: string;
+  room: string;
+  content: string;
+  content_hash: string | null;
+  importance: number;
+  source_type: string | null;
+  source_ref: string | null;
+  agent_id: string | null;
+  tags: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export function storeDrawer(stateDir: string, input: DrawerInput): number {
+  const db = getMemoryDb(stateDir);
+  const result = db.prepare(`
+    INSERT INTO drawers (wing, hall, room, content, importance, source_type, source_ref, agent_id, tags, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.wing ?? 'general', input.hall, input.room, input.content,
+    input.importance ?? 5, input.sourceType ?? null, input.sourceRef ?? null,
+    input.agentId ?? null, input.tags ?? null, new Date().toISOString(),
+    input.expiresAt ?? null,
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export function getDrawer(stateDir: string, id: number): Drawer | null {
+  const db = getMemoryDb(stateDir);
+  const row = db.prepare('SELECT * FROM drawers WHERE id = ?').get(id) as Drawer | undefined;
+  return row ?? null;
+}
+
+export function deleteDrawer(stateDir: string, id: number): boolean {
+  const db = getMemoryDb(stateDir);
+  const result = db.prepare('DELETE FROM drawers WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+export function updateDrawerImportance(stateDir: string, id: number, importance: number): boolean {
+  const db = getMemoryDb(stateDir);
+  const result = db.prepare('UPDATE drawers SET importance = ? WHERE id = ?').run(importance, id);
+  return result.changes > 0;
+}
+
+export function listDrawers(stateDir: string, opts: {
+  wing?: string;
+  hall?: string;
+  room?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Drawer[] {
+  const db = getMemoryDb(stateDir);
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (opts.wing !== undefined) { conditions.push('wing = ?'); params.push(opts.wing); }
+  if (opts.hall !== undefined) { conditions.push('hall = ?'); params.push(opts.hall); }
+  if (opts.room !== undefined) { conditions.push('room = ?'); params.push(opts.room); }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = opts.limit !== undefined ? `LIMIT ${opts.limit}` : '';
+  const offset = opts.offset !== undefined ? `OFFSET ${opts.offset}` : '';
+
+  return db.prepare(`SELECT * FROM drawers ${where} ${limit} ${offset}`.trim()).all(...params) as Drawer[];
+}
