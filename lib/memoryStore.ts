@@ -48,6 +48,9 @@ export function initMemoryDb(stateDir: string): Database.Database {
     -- No UPDATE trigger: no current task updates FTS-indexed columns (content, tags,
     -- wing, hall, room). Task 129 only updates importance (non-FTS field). If a future
     -- task adds content/tag updates, an UPDATE trigger must be added at that time.
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_drawers_content_hash
+      ON drawers (content_hash) WHERE content_hash IS NOT NULL;
   `);
 
   registerDb('memory', db);
@@ -117,7 +120,7 @@ export function storeDrawer(stateDir: string, input: DrawerInput): number {
   const contentHash = createHash('sha256').update(input.content.trim().toLowerCase()).digest('hex');
   const existing = db.prepare('SELECT id FROM drawers WHERE content_hash = ?').get(contentHash) as { id: number } | undefined;
   if (existing) return existing.id;
-  const tags = input.tags !== undefined ? input.tags : extractKeywords(input.content);
+  const tags = input.tags !== undefined ? input.tags : (extractKeywords(input.content) || null);
   const result = db.prepare(`
     INSERT INTO drawers (wing, hall, room, content, content_hash, importance, source_type, source_ref, agent_id, tags, created_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
