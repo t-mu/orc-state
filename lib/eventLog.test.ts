@@ -12,6 +12,8 @@ import {
   readRecentEvents,
   nextSeq,
   rotateEventsLogIfNeeded,
+  registerDb,
+  unregisterDb,
 } from './eventLog.ts';
 import type { OrcEvent } from '../types/index.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -487,5 +489,24 @@ describe('closeAllDatabases', () => {
     appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
     closeAllDatabases();
     closeAllDatabases(); // second call should be a no-op
+  });
+});
+
+describe('registerDb / unregisterDb', () => {
+  it('registerDb makes a connection visible to closeAllDatabases', () => {
+    const tmpDb = new Database(':memory:');
+    registerDb('test-external', tmpDb);
+    // closeAllDatabases must close the registered DB without error
+    expect(() => closeAllDatabases()).not.toThrow();
+  });
+
+  it('unregisterDb removes a connection from the shutdown path', () => {
+    const tmpDb = new Database(':memory:');
+    registerDb('test-external-2', tmpDb);
+    unregisterDb('test-external-2');
+    // After unregister, closing it manually is fine (not double-closed by shutdown)
+    expect(() => tmpDb.close()).not.toThrow();
+    // closeAllDatabases should not touch this DB (already removed)
+    expect(() => closeAllDatabases()).not.toThrow();
   });
 });

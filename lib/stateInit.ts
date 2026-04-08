@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { initEventsDb } from './eventLog.ts';
+import { initMemoryDb } from './memoryStore.ts';
 
 /**
  * Idempotently initialise the orchestrator state directory.
@@ -23,4 +24,5 @@ export function ensureStateInitialized(stateDir: string): void {
     atomicWriteJson(join(stateDir, 'claims.json'), { version: '1', claims: [] });
   }
   initEventsDb(stateDir);
+  initMemoryDb(stateDir);
 }

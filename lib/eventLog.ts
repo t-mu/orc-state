@@ -93,6 +93,21 @@ export function initEventsDb(stateDir: string): void {
 }
 
 /**
+ * Register an external DB connection so it is covered by `closeAllDatabases()`.
+ * Use a caller-chosen key (e.g. `stateDir + ':memory'`) to avoid collision.
+ */
+export function registerDb(key: string, db: Database.Database): void {
+  _dbs.set(key, db);
+}
+
+/**
+ * Unregister an external DB connection from the shutdown path.
+ */
+export function unregisterDb(key: string): void {
+  _dbs.delete(key);
+}
+
+/**
  * Close all open SQLite database connections. Call during graceful shutdown
  * to ensure WAL checkpointing and file handle release.
  * Idempotent — safe to call multiple times.

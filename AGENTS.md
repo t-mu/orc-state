@@ -249,6 +249,7 @@ orc run-input-respond --run-id=<id> --agent-id=<id> \
 | `.orc-state/agents.json` | Registered agents |
 | `.orc-state/claims.json` | Active and recent claims |
 | `.orc-state/events.db` | SQLite event store |
+| `.orc-state/memory.db` | SQLite memory store (drawers, FTS5 index) |
 
 ### Write rules
 **For agents:** use `orc` CLI commands or MCP tools for all state changes. Never call `withLock`, `atomicWriteJson`, or other internal library functions directly — those are for code authors implementing new handlers, not for agents operating the system.
