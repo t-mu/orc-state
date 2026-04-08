@@ -108,7 +108,7 @@ Sets the fallback execution mode for both master and worker pool when neither a 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `max_workers` | integer | `0` | Maximum concurrent workers |
+| `max_workers` | integer | `0` | Maximum concurrent workers. Default: `0`. `orc init` generates a config with `max_workers: 1` for immediate usability. |
 | `provider` | string | `"codex"` | Default provider for workers |
 | `model` | string | `null` | Default model for all workers |
 | `execution_mode` | string | `"full-access"` | Execution mode for worker agents (`full-access` or `sandbox`) |

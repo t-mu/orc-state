@@ -107,6 +107,7 @@ describe('cli/init.ts', () => {
     expect(existsSync(orcConfigPath)).toBe(true);
     const config = JSON.parse(readFileSync(orcConfigPath, 'utf8'));
     expect(config.default_provider).toBe('claude');
+    expect(config.worker_pool).toEqual({ max_workers: 1 });
   });
 
   it('creates orchestrator.config.json with two providers', () => {
@@ -114,7 +115,7 @@ describe('cli/init.ts', () => {
     expect(result.status).toBe(0);
     const config = JSON.parse(readFileSync(orcConfigPath, 'utf8'));
     expect(config.default_provider).toBe('claude');
-    expect(config.worker_pool).toEqual({ provider: 'codex' });
+    expect(config.worker_pool).toEqual({ provider: 'codex', max_workers: 1 });
   });
 
   it('works non-interactively with --provider flag', () => {

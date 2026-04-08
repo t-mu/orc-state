@@ -139,6 +139,8 @@ if (providers.length === 1) {
   config.default_provider = providers[0];
   config.worker_pool = { provider: providers[1] };
 }
+// Always ensure worker_pool.max_workers is set so fresh installs dispatch work
+config.worker_pool = { ...(config.worker_pool as object ?? {}), max_workers: 1 };
 writeFileSync('orchestrator.config.json', JSON.stringify(config, null, 2) + '\n', 'utf8');
 
 // Step 4: Run install
