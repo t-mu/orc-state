@@ -2,7 +2,7 @@
 ref: general/146-github-actions-ci
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 146 — Add GitHub Actions CI Workflow
