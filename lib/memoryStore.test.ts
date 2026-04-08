@@ -453,7 +453,14 @@ describe('pruneExpiredMemories', () => {
   });
 
   it('returns 0 when memory.db does not exist', () => {
-    expect(pruneExpiredMemories('/nonexistent/path/that/does/not/exist')).toBe(0);
+    // Use a real temp dir that exists, but without calling initMemoryDb — so memory.db is absent.
+    const emptyDir = createTempStateDir();
+    try {
+      expect(pruneExpiredMemories(emptyDir)).toBe(0);
+      expect(existsSync(join(emptyDir, 'memory.db'))).toBe(false);
+    } finally {
+      cleanupTempStateDir(emptyDir);
+    }
   });
 });
 
@@ -497,6 +504,13 @@ describe('pruneByCapacity', () => {
   });
 
   it('returns 0 when memory.db does not exist', () => {
-    expect(pruneByCapacity('/nonexistent/path/that/does/not/exist')).toBe(0);
+    // Use a real temp dir that exists, but without calling initMemoryDb — so memory.db is absent.
+    const emptyDir = createTempStateDir();
+    try {
+      expect(pruneByCapacity(emptyDir, 200)).toBe(0);
+      expect(existsSync(join(emptyDir, 'memory.db'))).toBe(false);
+    } finally {
+      cleanupTempStateDir(emptyDir);
+    }
   });
 });
