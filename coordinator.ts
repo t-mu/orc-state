@@ -85,6 +85,7 @@ const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms',
 const CONCURRENCY_LIMIT = COORD_CONFIG.concurrency_limit;
 const MANAGED_SESSION_START_MAX_ATTEMPTS = COORD_CONFIG.session_start_max_attempts;
 const MANAGED_SESSION_START_RETRY_DELAY_MS = COORD_CONFIG.session_start_retry_delay_ms;
+const MEMORY_PRUNE_INTERVAL_MS = intFlag('memory-prune-interval-ms', COORD_CONFIG.memory_prune_interval_ms);
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 const REPO_ROOT = resolveRepoRoot();
@@ -104,6 +105,7 @@ const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
 const runNudgeCount = new Map<string, number>();
 const runLastPhase = new Map<string, string>();
+let lastMemoryPruneAt = Date.now(); // startup prune counts as first
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function log(msg: string) { console.log(`[coordinator] ${new Date().toISOString()} ${msg}`); }
@@ -1183,6 +1185,15 @@ async function tick() {
   // sending them a new task envelope in the same tick as an in-flight nudge.
   const nudgedThisTick = new Set([...nudgedByRunStart, ...nudgedByInProgress]);
   await executeDispatchPlan(agents, claims, workerPoolConfig, tickBacklog, nudgedThisTick);
+
+  if (MEMORY_PRUNE_INTERVAL_MS > 0 && Date.now() - lastMemoryPruneAt > MEMORY_PRUNE_INTERVAL_MS) {
+    try {
+      const expired = pruneExpiredMemories(STATE_DIR);
+      const capped = pruneByCapacity(STATE_DIR);
+      if (expired + capped > 0) log(`memory pruning: removed ${expired} expired, ${capped} over-capacity`);
+      lastMemoryPruneAt = Date.now();
+    } catch { /* memory system not initialized */ }
+  }
 }
 
 function initializeTickState(): {

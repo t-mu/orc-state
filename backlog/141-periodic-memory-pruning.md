@@ -2,7 +2,7 @@
 ref: memory-quality/141-periodic-memory-pruning
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-quality/139-memory-expiry-and-pruning
 ---
