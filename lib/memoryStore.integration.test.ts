@@ -171,6 +171,36 @@ describe('memory system integration', () => {
     expect(importances).toEqual([10, 9, 8, 7, 6]);
   });
 
+  it('operations across two stateDirs do not interfere', () => {
+    const dir2 = createTempStateDir('orch-memory-isolation-');
+    try {
+      initMemoryDb(dir);
+      initMemoryDb(dir2);
+
+      storeDrawer(dir, { hall: 'h', room: 'r', content: 'dir1 specific content searchable' });
+      storeDrawer(dir2, { hall: 'h', room: 'r', content: 'dir2 specific content searchable' });
+
+      const results1 = searchMemory(dir, { query: 'searchable' });
+      const results2 = searchMemory(dir2, { query: 'searchable' });
+
+      expect(results1.length).toBe(1);
+      expect(results1[0]?.snippet).toContain('dir1');
+      expect(results2.length).toBe(1);
+      expect(results2[0]?.snippet).toContain('dir2');
+
+      // Wake-up isolation
+      const wake1 = memoryWakeUp(dir);
+      const wake2 = memoryWakeUp(dir2);
+      expect(wake1).toContain('dir1');
+      expect(wake1).not.toContain('dir2');
+      expect(wake2).toContain('dir2');
+      expect(wake2).not.toContain('dir1');
+    } finally {
+      closeMemoryDb(dir2);
+      cleanupTempStateDir(dir2);
+    }
+  });
+
   it('full lifecycle: ingest → search → wake-up → expire → prune', () => {
     initMemoryDb(dir);
 
