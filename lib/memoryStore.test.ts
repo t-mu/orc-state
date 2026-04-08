@@ -6,6 +6,7 @@ import {
   storeDrawer, getDrawer, deleteDrawer, updateDrawerImportance, listDrawers,
   searchMemory,
   extractKeywords,
+  listWings, listRooms, getMemoryStats,
 } from './memoryStore.ts';
 import { closeAllDatabases } from './eventLog.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -274,5 +275,71 @@ describe('searchMemory', () => {
     initMemoryDb(dir);
     const results = searchMemory(dir, { query: 'anything' });
     expect(results).toEqual([]);
+  });
+});
+
+describe('spatial taxonomy queries', () => {
+  it('listWings returns distinct wings with counts', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'alpha one' });
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r2', content: 'alpha two' });
+    storeDrawer(dir, { wing: 'beta', hall: 'h2', room: 'r1', content: 'beta one' });
+    const wings = listWings(dir);
+    expect(wings.length).toBe(2);
+    const alpha = wings.find(w => w.wing === 'alpha');
+    const beta = wings.find(w => w.wing === 'beta');
+    expect(alpha?.count).toBe(2);
+    expect(beta?.count).toBe(1);
+    // ordered by count desc
+    expect(wings[0]?.wing).toBe('alpha');
+  });
+
+  it('listWings returns empty array on empty DB', () => {
+    initMemoryDb(dir);
+    expect(listWings(dir)).toEqual([]);
+  });
+
+  it('listRooms filters by wing', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'alpha r1 entry one' });
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'alpha r1 entry two' });
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r2', content: 'alpha r2 entry' });
+    storeDrawer(dir, { wing: 'beta', hall: 'h2', room: 'r1', content: 'beta r1 entry' });
+    const rooms = listRooms(dir, 'alpha');
+    expect(rooms.length).toBe(2);
+    const r1 = rooms.find(r => r.room === 'r1');
+    expect(r1?.count).toBe(2);
+    expect(r1?.hall).toBe('h1');
+  });
+
+  it('listRooms returns empty array for nonexistent wing', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'something here' });
+    expect(listRooms(dir, 'nonexistent')).toEqual([]);
+  });
+
+  it('getMemoryStats returns correct aggregates', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'first entry' });
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r2', content: 'second entry' });
+    storeDrawer(dir, { wing: 'beta', hall: 'h2', room: 'r1', content: 'third entry' });
+    const stats = getMemoryStats(dir);
+    expect(stats.totalDrawers).toBe(3);
+    expect(stats.distinctWings).toBe(2);
+    expect(stats.distinctRooms).toBe(3);
+    expect(stats.oldestMemory).toBeTruthy();
+    expect(stats.newestMemory).toBeTruthy();
+    expect(stats.dbSizeBytes).toBeGreaterThan(0);
+  });
+
+  it('getMemoryStats returns zeroes and nulls on empty DB', () => {
+    initMemoryDb(dir);
+    const stats = getMemoryStats(dir);
+    expect(stats.totalDrawers).toBe(0);
+    expect(stats.distinctWings).toBe(0);
+    expect(stats.distinctRooms).toBe(0);
+    expect(stats.oldestMemory).toBeNull();
+    expect(stats.newestMemory).toBeNull();
+    expect(stats.dbSizeBytes).toBeGreaterThan(0);
   });
 });
