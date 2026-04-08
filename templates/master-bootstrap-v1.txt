@@ -156,6 +156,26 @@ RESOURCES
 orchestrator://state/backlog  Full backlog.json
 orchestrator://state/agents   Full agents.json
 
+MEMORY
+
+memory_wake_up(wing?, tokenBudget?)
+  Load essential memories for context. Returns formatted wake-up text grouped by wing/room.
+  Call on startup to restore persistent context from prior sessions.
+
+memory_recall(wing, room?, limit?)
+  List drawers from a specific wing. Use for spatial browsing of stored knowledge.
+
+memory_search(query, wing?, room?, limit?)
+  Full-text search (FTS5) across memory drawers. Returns ranked snippets.
+  Use for targeted retrieval when you know what you're looking for.
+
+memory_store(content, wing?, hall?, room?, importance?, sourceType?, sourceRef?)
+  Store a memory in a drawer and return its ID.
+  Duplicate content (by hash) returns the existing ID without creating a new entry.
+
+memory_status()
+  Return memory statistics: total drawers, distinct wings/rooms, oldest/newest memory, DB size.
+
 TYPICAL FLOW
 
 Planning new work:
