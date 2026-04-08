@@ -177,6 +177,11 @@ export function searchMemory(stateDir: string, opts: {
   if (opts.hall) { conditions.push('d.hall = ?'); params.push(opts.hall); }
   if (opts.room) { conditions.push('d.room = ?'); params.push(opts.room); }
 
+  // bm25() returns negative values; more negative = better match.
+  // rank = bm25 * (importance/10.0) is also negative. ORDER BY rank ASC puts the
+  // most-negative (= most relevant, highest importance) rows first.
+  // Spatial filters on d.* alongside drawers_fts MATCH in the same WHERE is the
+  // established pattern used by queryEvents in eventLog.ts.
   const sql = `
     SELECT d.id, d.content, d.wing, d.hall, d.room, d.importance, d.created_at,
            (bm25(drawers_fts) * (d.importance / 10.0)) AS rank

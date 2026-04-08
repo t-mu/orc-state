@@ -249,6 +249,7 @@ describe('searchMemory', () => {
     const results = searchMemory(dir, { query: 'orchestration' });
     expect(results.length).toBe(2);
     expect(results[0]?.importance).toBe(8);
+    expect(results[1]?.importance).toBe(2);
   });
 
   it('searchMemory respects limit parameter', () => {
