@@ -2,7 +2,7 @@
 ref: general/148-init-max-workers-default
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 148 — Set max_workers: 1 in orc init Generated Config
