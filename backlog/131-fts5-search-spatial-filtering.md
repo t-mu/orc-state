@@ -2,7 +2,7 @@
 ref: memory-foundation/131-fts5-search-spatial-filtering
 feature: memory-foundation
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/128-memory-db-schema-and-init
   - memory-foundation/129-drawer-crud-spatial-coordinates
