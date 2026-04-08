@@ -94,7 +94,7 @@ export function reconcileState(stateDir: string): void {
     if (repairCount === 0) {
       logger.info('[reconcile] state consistent - no repairs needed');
     } else {
-      logger.info(`[reconcile] wrote ${repairCount} repaired file(s)`);
+      logger.warn(`[reconcile] wrote ${repairCount} repaired file(s)`);
     }
   });
 }

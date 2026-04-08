@@ -22,7 +22,7 @@ export function isInteractive(): boolean {
 
 /** Ctrl-C in any inquirer prompt throws ExitPromptError — exit cleanly. */
 function onCancel(e: Error): never {
-  if (e.name === 'ExitPromptError') { logger.info('Cancelled.'); process.exit(0); }
+  if (e.name === 'ExitPromptError') { logger.warn('Cancelled.'); process.exit(0); }
   throw e;
 }
 
@@ -107,7 +107,7 @@ export async function promptCapabilities(existing: string | null): Promise<strin
 
 export async function promptCoordinatorAction(coordinatorPid: number | null): Promise<string> {
   if (coordinatorPid) {
-    logger.info(`\nCoordinator is already running (PID ${coordinatorPid}).`);
+    logger.warn(`\nCoordinator is already running (PID ${coordinatorPid}).`);
     if (!isInteractive()) return 'reuse';
     const { select } = await getPromptModule();
     return select({
@@ -132,7 +132,7 @@ export async function promptCoordinatorAction(coordinatorPid: number | null): Pr
     }).catch(onCancel);
   }
 
-  logger.info('\nCoordinator is not running.');
+  logger.warn('\nCoordinator is not running.');
   if (!isInteractive()) return 'start';
   const { select } = await getPromptModule();
   return select({
@@ -154,10 +154,10 @@ export async function promptCoordinatorAction(coordinatorPid: number | null): Pr
 
 export async function promptMasterAction(existingMaster: { agent_id: string; provider: string; status?: string } | null): Promise<string> {
   if (!existingMaster) {
-    logger.info('\n=== MASTER SESSION ===');
-    logger.info('This terminal is reserved for the master session.');
-    logger.info('The master plans and delegates. It is not a worker.');
-    logger.info('Master is not registered.');
+    logger.warn('\n=== MASTER SESSION ===');
+    logger.warn('This terminal is reserved for the master session.');
+    logger.warn('The master plans and delegates. It is not a worker.');
+    logger.warn('Master is not registered.');
     if (!isInteractive()) return 'register';
     const { select } = await getPromptModule();
     return select({
@@ -177,7 +177,7 @@ export async function promptMasterAction(existingMaster: { agent_id: string; pro
     }).catch(onCancel);
   }
 
-  logger.info(
+  logger.warn(
     `\n=== MASTER SESSION ===\nThis terminal is reserved for the master session.\nThe master plans and delegates. It is not a worker.\nMaster registration found: '${existingMaster.agent_id}' (${existingMaster.provider}) status=${existingMaster.status}.`,
   );
   if (!isInteractive()) return 'reuse';

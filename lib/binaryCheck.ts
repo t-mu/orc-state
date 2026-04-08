@@ -102,9 +102,9 @@ export async function checkAndInstallBinary(provider: string): Promise<boolean> 
     return false;
   }
 
-  logger.info('\nInstalling via npm will run:');
-  logger.info(`  npm install -g ${packageName}`);
-  logger.info('(Cancel now with Ctrl-C if you prefer Homebrew or another package manager.)\n');
+  logger.warn('\nInstalling via npm will run:');
+  logger.warn(`  npm install -g ${packageName}`);
+  logger.warn('(Cancel now with Ctrl-C if you prefer Homebrew or another package manager.)\n');
 
   const { confirm } = await getPromptModule();
   const proceed = await confirm({
@@ -113,12 +113,12 @@ export async function checkAndInstallBinary(provider: string): Promise<boolean> 
   }).catch(() => false);
 
   if (!proceed) {
-    logger.info('Skipped. Install manually and re-run.');
+    logger.warn('Skipped. Install manually and re-run.');
     return false;
   }
 
   try {
-    logger.info(`\nRunning: npm install -g ${packageName}\n`);
+    logger.warn(`\nRunning: npm install -g ${packageName}\n`);
     execFileSync('npm', ['install', '-g', packageName], { stdio: 'inherit' });
   } catch {
     logger.error(`\nInstall failed. Try manually: npm install -g ${packageName}`);
@@ -126,7 +126,7 @@ export async function checkAndInstallBinary(provider: string): Promise<boolean> 
   }
 
   if (isBinaryAvailable(binary)) {
-    logger.info(`\n✓ '${binary}' is now available.`);
+    logger.warn(`\n✓ '${binary}' is now available.`);
     return true;
   }
 
