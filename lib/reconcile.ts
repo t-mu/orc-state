@@ -5,6 +5,7 @@ import { readJson } from './stateReader.ts';
 import { selectDuplicateClaimWinner } from './lifecycleDiagnostics.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
+import { logger } from './logger.ts';
 
 const ACTIVE_CLAIM_STATES = new Set(['claimed', 'in_progress']);
 
@@ -32,7 +33,7 @@ export function reconcileState(stateDir: string): void {
       if (!ACTIVE_CLAIM_STATES.has(claim.state)) continue;
 
       if (!knownTaskRefs.has(claim.task_ref)) {
-        console.log(`[reconcile] orphan claim ${claim.run_id} for unknown task_ref ${claim.task_ref} -> failed`);
+        logger.info(`[reconcile] orphan claim ${claim.run_id} for unknown task_ref ${claim.task_ref} -> failed`);
         claim.state = 'failed';
         claimsModified = true;
         continue;
@@ -48,7 +49,7 @@ export function reconcileState(stateDir: string): void {
         const keepClaim = selectDuplicateClaimWinner(activeClaims);
         const staleClaims = activeClaims.filter((claim) => claim.run_id !== keepClaim.run_id);
         for (const staleClaim of staleClaims) {
-          console.log(`[reconcile] duplicate active claim ${staleClaim.run_id} for task ${taskRef} -> failed (kept ${keepClaim.run_id})`);
+          logger.info(`[reconcile] duplicate active claim ${staleClaim.run_id} for task ${taskRef} -> failed (kept ${keepClaim.run_id})`);
           staleClaim.state = 'failed';
           claimsModified = true;
         }
@@ -67,7 +68,7 @@ export function reconcileState(stateDir: string): void {
         if (activeClaim) {
           const expectedStatus = activeClaim.state === 'in_progress' ? 'in_progress' : 'claimed';
           if (task.status !== expectedStatus) {
-            console.log(`[reconcile] repaired task ${taskRef}: status ${task.status} -> ${expectedStatus} (active claim ${activeClaim.run_id} state=${activeClaim.state})`);
+            logger.info(`[reconcile] repaired task ${taskRef}: status ${task.status} -> ${expectedStatus} (active claim ${activeClaim.run_id} state=${activeClaim.state})`);
             task.status = expectedStatus;
             backlogModified = true;
           }
@@ -75,7 +76,7 @@ export function reconcileState(stateDir: string): void {
         }
 
         if (task.status === 'claimed' || task.status === 'in_progress') {
-          console.log(`[reconcile] repaired task ${taskRef}: status ${task.status} -> todo (no active claim found)`);
+          logger.info(`[reconcile] repaired task ${taskRef}: status ${task.status} -> todo (no active claim found)`);
           task.status = 'todo';
           backlogModified = true;
         }
@@ -91,9 +92,9 @@ export function reconcileState(stateDir: string): void {
 
     const repairCount = (backlogModified ? 1 : 0) + (claimsModified ? 1 : 0);
     if (repairCount === 0) {
-      console.log('[reconcile] state consistent - no repairs needed');
+      logger.info('[reconcile] state consistent - no repairs needed');
     } else {
-      console.log(`[reconcile] wrote ${repairCount} repaired file(s)`);
+      logger.info(`[reconcile] wrote ${repairCount} repaired file(s)`);
     }
   });
 }

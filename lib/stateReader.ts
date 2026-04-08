@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState } from '../types/agents.ts';
 import type { ClaimsState } from '../types/claims.ts';
+import { logger } from './logger.ts';
 
 const TASK_SEQ_RE = /(?:^|\/)task-(\d+)(?:-|$)/;
 
@@ -25,7 +26,7 @@ export function readAgents(stateDir: string): AgentsState {
     return readJson(stateDir, 'agents.json') as AgentsState;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[stateReader] unexpected error reading agents.json:', err);
+      logger.error('[stateReader] unexpected error reading agents.json:', err);
     }
     return { version: '1', agents: [] };
   }
@@ -36,7 +37,7 @@ export function readClaims(stateDir: string): ClaimsState {
     return readJson(stateDir, 'claims.json') as ClaimsState;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[stateReader] unexpected error reading claims.json:', err);
+      logger.error('[stateReader] unexpected error reading claims.json:', err);
     }
     return { version: '1', claims: [] };
   }

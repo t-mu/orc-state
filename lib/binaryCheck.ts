@@ -6,6 +6,7 @@
  */
 import { execFileSync, execSync } from 'node:child_process';
 import { isInteractive } from './prompts.ts';
+import { logger } from './logger.ts';
 
 let promptModulePromise: Promise<typeof import('@inquirer/prompts')> | null = null;
 
@@ -86,24 +87,24 @@ export async function checkAndInstallBinary(provider: string): Promise<boolean> 
 
   if (isBinaryAvailable(binary)) return true;
 
-  console.error(`\nBinary '${binary}' is not installed or not on $PATH.`);
+  logger.error(`\nBinary '${binary}' is not installed or not on $PATH.`);
 
   if (!isInteractive()) {
     if (packageName) {
-      console.error(`To install it, run:  npm install -g ${packageName}`);
+      logger.error(`To install it, run:  npm install -g ${packageName}`);
     }
-    console.error('(or use Homebrew / your preferred package manager)');
+    logger.error('(or use Homebrew / your preferred package manager)');
     return false;
   }
 
   if (!packageName) {
-    console.error(`No install package mapping found for provider '${provider}'.`);
+    logger.error(`No install package mapping found for provider '${provider}'.`);
     return false;
   }
 
-  console.log('\nInstalling via npm will run:');
-  console.log(`  npm install -g ${packageName}`);
-  console.log('(Cancel now with Ctrl-C if you prefer Homebrew or another package manager.)\n');
+  logger.info('\nInstalling via npm will run:');
+  logger.info(`  npm install -g ${packageName}`);
+  logger.info('(Cancel now with Ctrl-C if you prefer Homebrew or another package manager.)\n');
 
   const { confirm } = await getPromptModule();
   const proceed = await confirm({
@@ -112,24 +113,24 @@ export async function checkAndInstallBinary(provider: string): Promise<boolean> 
   }).catch(() => false);
 
   if (!proceed) {
-    console.log('Skipped. Install manually and re-run.');
+    logger.info('Skipped. Install manually and re-run.');
     return false;
   }
 
   try {
-    console.log(`\nRunning: npm install -g ${packageName}\n`);
+    logger.info(`\nRunning: npm install -g ${packageName}\n`);
     execFileSync('npm', ['install', '-g', packageName], { stdio: 'inherit' });
   } catch {
-    console.error(`\nInstall failed. Try manually: npm install -g ${packageName}`);
+    logger.error(`\nInstall failed. Try manually: npm install -g ${packageName}`);
     return false;
   }
 
   if (isBinaryAvailable(binary)) {
-    console.log(`\n✓ '${binary}' is now available.`);
+    logger.info(`\n✓ '${binary}' is now available.`);
     return true;
   }
 
-  console.error(`\nInstall appeared to succeed but '${binary}' is still not found on $PATH.`);
-  console.error('You may need to start a new shell session for the PATH update to take effect.');
+  logger.error(`\nInstall appeared to succeed but '${binary}' is still not found on $PATH.`);
+  logger.error('You may need to start a new shell session for the PATH update to take effect.');
   return false;
 }

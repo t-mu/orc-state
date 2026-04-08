@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { ORCHESTRATOR_CONFIG_FILE } from './paths.ts';
+import { logger } from './logger.ts';
 import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
 
 export const PROVIDERS = ['codex', 'claude', 'gemini'] as const;
@@ -212,7 +213,7 @@ export function loadWorkerPoolConfig({
     if (isSupportedExecutionMode(executionModeRaw)) {
       execution_mode = executionModeRaw;
     } else {
-      console.warn(`Invalid execution_mode "${executionModeRaw}" for worker_pool — falling back to 'full-access'`);
+      logger.warn(`Invalid execution_mode "${executionModeRaw}" for worker_pool — falling back to 'full-access'`);
     }
   }
 
@@ -247,7 +248,7 @@ export function loadMasterConfig({
     if (isSupportedExecutionMode(executionModeRaw)) {
       execution_mode = executionModeRaw;
     } else {
-      console.warn(`Invalid execution_mode "${executionModeRaw}" for master — falling back to 'full-access'`);
+      logger.warn(`Invalid execution_mode "${executionModeRaw}" for master — falling back to 'full-access'`);
     }
   }
 

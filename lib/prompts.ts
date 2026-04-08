@@ -4,6 +4,8 @@
  * Uses @inquirer/prompts for arrow-key-navigable TTY prompts.
  * All functions short-circuit when the value is already provided (flag bypass).
  */
+import { logger } from './logger.ts';
+
 let promptModulePromise: Promise<typeof import('@inquirer/prompts')> | null = null;
 
 async function getPromptModule(): Promise<typeof import('@inquirer/prompts')> {
@@ -20,7 +22,7 @@ export function isInteractive(): boolean {
 
 /** Ctrl-C in any inquirer prompt throws ExitPromptError — exit cleanly. */
 function onCancel(e: Error): never {
-  if (e.name === 'ExitPromptError') { console.log('Cancelled.'); process.exit(0); }
+  if (e.name === 'ExitPromptError') { logger.info('Cancelled.'); process.exit(0); }
   throw e;
 }
 
@@ -105,7 +107,7 @@ export async function promptCapabilities(existing: string | null): Promise<strin
 
 export async function promptCoordinatorAction(coordinatorPid: number | null): Promise<string> {
   if (coordinatorPid) {
-    console.log(`\nCoordinator is already running (PID ${coordinatorPid}).`);
+    logger.info(`\nCoordinator is already running (PID ${coordinatorPid}).`);
     if (!isInteractive()) return 'reuse';
     const { select } = await getPromptModule();
     return select({
@@ -130,7 +132,7 @@ export async function promptCoordinatorAction(coordinatorPid: number | null): Pr
     }).catch(onCancel);
   }
 
-  console.log('\nCoordinator is not running.');
+  logger.info('\nCoordinator is not running.');
   if (!isInteractive()) return 'start';
   const { select } = await getPromptModule();
   return select({
@@ -152,10 +154,10 @@ export async function promptCoordinatorAction(coordinatorPid: number | null): Pr
 
 export async function promptMasterAction(existingMaster: { agent_id: string; provider: string; status?: string } | null): Promise<string> {
   if (!existingMaster) {
-    console.log('\n=== MASTER SESSION ===');
-    console.log('This terminal is reserved for the master session.');
-    console.log('The master plans and delegates. It is not a worker.');
-    console.log('Master is not registered.');
+    logger.info('\n=== MASTER SESSION ===');
+    logger.info('This terminal is reserved for the master session.');
+    logger.info('The master plans and delegates. It is not a worker.');
+    logger.info('Master is not registered.');
     if (!isInteractive()) return 'register';
     const { select } = await getPromptModule();
     return select({
@@ -175,7 +177,7 @@ export async function promptMasterAction(existingMaster: { agent_id: string; pro
     }).catch(onCancel);
   }
 
-  console.log(
+  logger.info(
     `\n=== MASTER SESSION ===\nThis terminal is reserved for the master session.\nThe master plans and delegates. It is not a worker.\nMaster registration found: '${existingMaster.agent_id}' (${existingMaster.provider}) status=${existingMaster.status}.`,
   );
   if (!isInteractive()) return 'reuse';
