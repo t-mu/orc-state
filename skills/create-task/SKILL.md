@@ -1,10 +1,10 @@
 ---
 name: create-task
 description: >
-  Creates backlog task spec files in backlog/. Use when the user says anything like
-  "create a task", "add to backlog", "write a task for", "plan this as a task", "draft a
-  task spec", "create tasks to backlog", or asks to break work into numbered task files.
-  Also handles batch planning (multiple dependent tasks from a single request).
+  Creates a single backlog task spec file in backlog/. Use when the user says
+  "create a task", "add to backlog", "write a task for", "plan this as a task",
+  or "draft a task spec". For multiple tasks from an approved plan, use
+  plan-to-tasks instead.
 argument-hint: "[task title or description]"
 ---
 
@@ -12,7 +12,8 @@ argument-hint: "[task title or description]"
 
 $ARGUMENTS
 
-Use this skill when the user asks to create or refine backlog task `.md` files.
+Use this skill when the user asks to create or refine a single backlog task `.md` file.
+For creating multiple tasks from an approved numbered plan, use `plan-to-tasks` instead.
 The output target is task-spec markdown only.
 
 ## Completion Gate — Do Not Skip
@@ -179,18 +180,6 @@ comma-separated list.
 
 If sync-check fails, the coordinator may not have ticked yet. Wait a few seconds
 and retry. If it still fails, report the failing refs in the final response.
-
-## Batch Workflow
-
-When the user asks to break work into multiple tasks:
-
-1. Determine the starting task number (from Step 0).
-2. Break work into atomic units — each with an independent success condition.
-3. Assign sequential IDs and declare cross-task dependencies explicitly.
-4. Sequence foundational changes before integration and tests.
-5. Emit one complete task file per task using the same fixed section order.
-6. After all files are saved, run `orc backlog-sync-check --refs=<ref1>,<ref2>` scoped to the batch refs.
-7. Avoid hidden coupling — declare cross-task assumptions in `Context`.
 
 ## Quality Gate (score before saving)
 
