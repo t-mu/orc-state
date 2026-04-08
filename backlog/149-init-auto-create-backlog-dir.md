@@ -2,7 +2,7 @@
 ref: general/149-init-auto-create-backlog-dir
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 149 — Auto-Create Backlog Directory on orc init

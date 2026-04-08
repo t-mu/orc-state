@@ -35,7 +35,7 @@ afterEach(() => {
 function run(args: string[] = []) {
   return spawnSync('node', ['cli/init.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state') },
+    env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state'), ORC_BACKLOG_DIR: join(dir, 'backlog') },
     encoding: 'utf8',
   });
 }
@@ -173,7 +173,7 @@ describe('cli/init.ts', () => {
     try {
       const result = spawnSync('node', ['cli/init.ts', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp'], {
         cwd: repoRoot,
-        env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state'), PATH: `${fakeBinDir}:${process.env.PATH}` },
+        env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state'), ORC_BACKLOG_DIR: join(dir, 'backlog'), PATH: `${fakeBinDir}:${process.env.PATH}` },
         encoding: 'utf8',
       });
       expect(result.status).toBe(0);
@@ -181,5 +181,18 @@ describe('cli/init.ts', () => {
     } finally {
       rmSync(fakeBinDir, { recursive: true, force: true });
     }
+  });
+
+  it('creates the backlog directory during init', () => {
+    const result = run(['--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    expect(result.status).toBe(0);
+    expect(existsSync(join(dir, 'backlog'))).toBe(true);
+  });
+
+  it('does not fail if backlog directory already exists', () => {
+    mkdirSync(join(dir, 'backlog'), { recursive: true });
+    const result = run(['--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    expect(result.status).toBe(0);
+    expect(existsSync(join(dir, 'backlog'))).toBe(true);
   });
 });
