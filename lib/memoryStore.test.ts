@@ -7,6 +7,7 @@ import {
   searchMemory,
   extractKeywords,
   listWings, listRooms, getMemoryStats,
+  memoryWakeUp,
 } from './memoryStore.ts';
 import { closeAllDatabases } from './eventLog.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -341,5 +342,61 @@ describe('spatial taxonomy queries', () => {
     expect(stats.oldestMemory).toBeNull();
     expect(stats.newestMemory).toBeNull();
     expect(stats.dbSizeBytes).toBeGreaterThan(0);
+  });
+});
+
+describe('memoryWakeUp', () => {
+  it('returns formatted text with wing/room headers', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'first memory', importance: 7 });
+    storeDrawer(dir, { wing: 'beta', hall: 'h2', room: 'r2', content: 'second memory', importance: 5 });
+    const result = memoryWakeUp(dir);
+    expect(result).toContain('## alpha / r1');
+    expect(result).toContain('- first memory');
+    expect(result).toContain('## beta / r2');
+    expect(result).toContain('- second memory');
+  });
+
+  it('returns highest-importance memories first', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'w', hall: 'h', room: 'r1', content: 'low importance', importance: 2 });
+    storeDrawer(dir, { wing: 'w', hall: 'h', room: 'r2', content: 'high importance', importance: 9 });
+    const result = memoryWakeUp(dir);
+    const highIdx = result.indexOf('high importance');
+    const lowIdx = result.indexOf('low importance');
+    expect(highIdx).toBeLessThan(lowIdx);
+  });
+
+  it('respects token budget — output does not exceed tokenBudget * 4 characters', () => {
+    initMemoryDb(dir);
+    // Each row produces ~23 chars: header "\n## w / rN\n\n" (13) + "- entry-N\n" (10).
+    // tokenBudget=8 → charBudget=32: fits the first entry (~23 chars) but not the second (~46 total).
+    for (let i = 0; i < 5; i++) {
+      storeDrawer(dir, { wing: 'w', hall: 'h', room: `r${i}`, content: `entry-${i}`, importance: 5 });
+    }
+    const tokenBudget = 8; // charBudget = 32
+    const result = memoryWakeUp(dir, { tokenBudget });
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.length).toBeLessThanOrEqual(tokenBudget * 4);
+  });
+
+  it('filters by wing when provided', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'alpha', hall: 'h1', room: 'r1', content: 'alpha content', importance: 7 });
+    storeDrawer(dir, { wing: 'beta', hall: 'h2', room: 'r2', content: 'beta content', importance: 7 });
+    const result = memoryWakeUp(dir, { wing: 'alpha' });
+    expect(result).toContain('alpha content');
+    expect(result).not.toContain('beta content');
+  });
+
+  it('returns empty string on empty DB', () => {
+    initMemoryDb(dir);
+    expect(memoryWakeUp(dir)).toBe('');
+  });
+
+  it('returns empty string when memory.db does not exist (graceful degradation)', () => {
+    // Use a non-existent directory so getMemoryDb/initMemoryDb throws
+    const result = memoryWakeUp('/nonexistent/path/that/does/not/exist');
+    expect(result).toBe('');
   });
 });

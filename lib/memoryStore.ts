@@ -288,3 +288,39 @@ export function getMemoryStats(stateDir: string): MemoryStats {
     dbSizeBytes: size,
   };
 }
+
+export function memoryWakeUp(stateDir: string, opts: {
+  wing?: string;
+  tokenBudget?: number;
+} = {}): string {
+  const charBudget = (opts.tokenBudget ?? 800) * 4;
+  let db: Database.Database;
+  try { db = getMemoryDb(stateDir); } catch { return ''; }
+
+  const conditions = opts.wing ? ['wing = ?'] : [];
+  const params: unknown[] = opts.wing ? [opts.wing] : [];
+
+  const sql = `SELECT wing, hall, room, content, importance FROM drawers
+    ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
+    ORDER BY importance DESC, created_at DESC`;
+  const rows = db.prepare(sql).all(...params) as Array<Pick<Drawer, 'wing' | 'hall' | 'room' | 'content' | 'importance'>>;
+
+  let output = '';
+  let charCount = 0;
+  let currentWing = '';
+  let currentRoom = '';
+
+  for (const row of rows) {
+    const header = (row.wing !== currentWing || row.room !== currentRoom)
+      ? `\n## ${row.wing} / ${row.room}\n\n` : '';
+    const entry = `- ${row.content}\n`;
+    const addition = header + entry;
+    if (charCount + addition.length > charBudget) break;
+    output += addition;
+    charCount += addition.length;
+    currentWing = row.wing;
+    currentRoom = row.room;
+  }
+
+  return output.trim();
+}
