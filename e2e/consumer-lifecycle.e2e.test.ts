@@ -9,7 +9,10 @@ import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
 
 // Minimal task spec simulating a consumer-authored backlog markdown.
-// Uses fake-provider-cli.ts fixture pattern — no real provider binary needed.
+// The mock adapter below implements the same lifecycle behaviour as
+// test-fixtures/fake-provider-cli.ts would produce in a real PTY session:
+// the fake provider emits reported_for_duty on session start, then acknowledges
+// TASK_START with orc run-start. No real provider binary is required.
 const TASK_SPEC = `---
 ref: project/first-task
 feature: project
