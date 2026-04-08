@@ -175,6 +175,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 4. Task completion: `orc task-mark-done <task-ref>` (updates spec + state in one action)
 5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
 6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
+7. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
 
 Outside the blessed workflow, commands are for observability, setup, or recovery only — not the default path.
 
@@ -190,6 +191,8 @@ orc preflight                                     # lightweight environment heal
 orc watch                                         # live-refresh status
 orc events-tail                                   # tail the event stream
 orc runs-active                                   # list in-progress/claimed runs
+orc memory-status                                 # memory store stats
+orc memory-search <query> [--wing=X] [--room=Y]  # search memories (FTS5)
 
 # Session management
 orc start-session                                 # start coordinator + master session (requires TTY)
@@ -236,6 +239,11 @@ orc run-input-request --run-id=<id> --agent-id=<id> \
 # Input response (master → worker — master use only)
 orc run-input-respond --run-id=<id> --agent-id=<id> \
   --response=<text> [--actor-id=<id>]                              # master answers a worker's input request
+
+# Memory (worker)
+orc memory-wake-up [--wing=X] [--budget=N]                        # recall essential memories at session start
+orc memory-record --content="..." [--wing=X] [--hall=Y] \
+  [--room=Z] [--importance=N]                                      # store a memory
 ```
 
 ---
