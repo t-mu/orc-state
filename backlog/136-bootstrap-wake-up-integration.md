@@ -2,7 +2,7 @@
 ref: memory-access/136-bootstrap-wake-up-integration
 feature: memory-access
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-access/134-mcp-tools-memory-access
   - memory-access/135-cli-commands-memory
