@@ -69,6 +69,10 @@ const COMMANDS: Record<string, string> = {
   'worker-status':      'worker-status.ts',
   'backlog-ready':      'backlog-ready.ts',
   'backlog-blocked':    'backlog-blocked.ts',
+  'memory-status':      'memory-status.ts',
+  'memory-search':      'memory-search.ts',
+  'memory-wake-up':     'memory-wake-up.ts',
+  'memory-record':      'memory-record.ts',
 };
 
 const BLESSED = [
@@ -88,6 +92,8 @@ const BLESSED = [
   'run-work-complete',
   'run-finish',
   'run-fail',
+  'memory-wake-up',
+  'memory-record',
 ];
 
 const RECOVERY_DEBUG = [
@@ -115,6 +121,8 @@ const INSPECTION = [
   'events-filter',
   'backlog-ready',
   'backlog-blocked',
+  'memory-status',
+  'memory-search',
 ];
 
 export function buildNodeArgs(subcommand: string, scriptPath: string, rest: string[]): string[] {
