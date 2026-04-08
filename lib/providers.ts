@@ -40,6 +40,7 @@ export interface CoordinatorConfig {
   run_inactive_nudge_interval_ms: number;
   session_start_max_attempts: number;
   session_start_retry_delay_ms: number;
+  memory_prune_interval_ms: number;
 }
 
 export interface LeaseConfig {
@@ -75,6 +76,7 @@ export const DEFAULT_COORDINATOR_CONFIG: Readonly<CoordinatorConfig> = Object.fr
   run_inactive_nudge_interval_ms: 300_000,
   session_start_max_attempts: 3,
   session_start_retry_delay_ms: 30_000,
+  memory_prune_interval_ms: 3_600_000,
 });
 
 export const DEFAULT_LEASE_CONFIG: Readonly<LeaseConfig> = Object.freeze({
@@ -276,6 +278,7 @@ export function loadCoordinatorConfig({
     run_inactive_nudge_interval_ms: parsePositiveInteger(cc.run_inactive_nudge_interval_ms, 'coordinator.run_inactive_nudge_interval_ms') ?? DEFAULT_COORDINATOR_CONFIG.run_inactive_nudge_interval_ms,
     session_start_max_attempts: parsePositiveInteger(cc.session_start_max_attempts, 'coordinator.session_start_max_attempts') ?? DEFAULT_COORDINATOR_CONFIG.session_start_max_attempts,
     session_start_retry_delay_ms: parsePositiveInteger(cc.session_start_retry_delay_ms, 'coordinator.session_start_retry_delay_ms') ?? DEFAULT_COORDINATOR_CONFIG.session_start_retry_delay_ms,
+    memory_prune_interval_ms: parseNonNegativeInteger(cc.memory_prune_interval_ms, 'coordinator.memory_prune_interval_ms') ?? DEFAULT_COORDINATOR_CONFIG.memory_prune_interval_ms,
   };
 }
 

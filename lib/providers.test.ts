@@ -245,6 +245,25 @@ describe('loadCoordinatorConfig', () => {
     expect(result.tick_interval_ms).toBe(30000);
     expect(result.concurrency_limit).toBe(8);
   });
+
+  it('parses memory_prune_interval_ms from config', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({ coordinator: { memory_prune_interval_ms: 7200000 } }));
+    const result = loadCoordinatorConfig({ configFile: configPath });
+    expect(result.memory_prune_interval_ms).toBe(7200000);
+  });
+
+  it('parses memory_prune_interval_ms of 0 (disable periodic pruning)', () => {
+    const configPath = join(dir, 'orchestrator.config.json');
+    writeFileSync(configPath, JSON.stringify({ coordinator: { memory_prune_interval_ms: 0 } }));
+    const result = loadCoordinatorConfig({ configFile: configPath });
+    expect(result.memory_prune_interval_ms).toBe(0);
+  });
+
+  it('defaults memory_prune_interval_ms to 3600000', () => {
+    const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
+    expect(result.memory_prune_interval_ms).toBe(3600000);
+  });
 });
 
 describe('loadLeaseConfig', () => {
