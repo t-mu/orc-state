@@ -97,6 +97,22 @@ describe('buildSessionBootstrap', () => {
     expect(content).toContain('MAX_DEPTH=1');
   });
 
+  it('rendered bootstrap contains memory-wake-up call', () => {
+    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'tok');
+    expect(rendered).toContain('memory-wake-up');
+  });
+
+  it('memory-wake-up call includes wing variable derived from task_ref', () => {
+    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'tok');
+    expect(rendered).toContain('WING=$(echo "<task_ref>" | cut -d\'/\' -f1)');
+    expect(rendered).toContain('memory-wake-up --wing="$WING"');
+  });
+
+  it('memory-wake-up call is non-fatal (wrapped with || true)', () => {
+    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'tok');
+    expect(rendered).toMatch(/memory-wake-up.*\|\| true/);
+  });
+
   it('uses worker-bootstrap-v2.txt when role is undefined', () => {
     const rendered = buildSessionBootstrap('dave', 'claude', undefined as unknown as string, 'orc');
     expect(rendered).toContain('agent_id: dave');

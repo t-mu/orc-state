@@ -65,9 +65,20 @@ When a TASK_START block arrives:
   2. Call {{orc_bin}} run-start  (always second, immediately after cd).
   3. Signal explore phase and read the task markdown at `task_spec_path` for the actual task details:
        {{orc_bin}} progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id={{agent_id}}
+     If working in an unfamiliar code area, check for relevant memories:
+       Use the memory_recall MCP tool with the wing matching the task's feature.
+  3.5. Load relevant memories for this task's domain (non-fatal — skip if unavailable):
+       WING=$(echo "<task_ref>" | cut -d'/' -f1)
+       {{orc_bin}} memory-wake-up --wing="$WING" 2>/dev/null || true
+       # If the above returned content, it contains past discoveries, errors, and
+       # decisions relevant to this domain. Use it to avoid re-discovering known issues.
   4. Signal implement phase and do all work, builds, and tests inside that assigned worktree:
        {{orc_bin}} progress --event=phase_started --phase=implement --run-id=<run_id> --agent-id={{agent_id}}
      Gate: run `npm test`. It MUST exit 0. Do NOT proceed to the review phase with failing tests.
+     When you discover a significant pattern, error, or decision during implementation,
+     record it for future sessions:
+       {{orc_bin}} memory-record --content="<description>" --wing="$WING" --hall=<category> --room=<topic>
+     Categories: errors, decisions, patterns, observations. This is optional but valuable.
   5. Signal review phase and commit your changes:
        {{orc_bin}} progress --event=phase_started --phase=review --run-id=<run_id> --agent-id={{agent_id}}
        git add -p
