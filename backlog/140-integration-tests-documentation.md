@@ -2,7 +2,7 @@
 ref: memory-quality/140-integration-tests-documentation
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/128-memory-db-schema-and-init
   - memory-foundation/129-drawer-crud-spatial-coordinates
