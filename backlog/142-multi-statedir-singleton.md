@@ -2,7 +2,7 @@
 ref: memory-quality/142-multi-statedir-singleton
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 142 — Support Multiple stateDirs in memoryStore

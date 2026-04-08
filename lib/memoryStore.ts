@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import { registerDb, unregisterDb } from './eventLog.ts';
 
 const MEMORY_DB_FILE = 'memory.db';
-let _memDb: Database.Database | null = null;
+const _memDbs = new Map<string, Database.Database>();
 
 export function initMemoryDb(stateDir: string): Database.Database {
-  if (_memDb) return _memDb;
+  const existing = _memDbs.get(stateDir);
+  if (existing?.open) return existing;
+  if (existing) _memDbs.delete(stateDir); // stale closed handle
   const dbPath = join(stateDir, MEMORY_DB_FILE);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
@@ -54,21 +56,34 @@ export function initMemoryDb(stateDir: string): Database.Database {
       ON drawers (content_hash) WHERE content_hash IS NOT NULL;
   `);
 
-  registerDb('memory', db);
-  _memDb = db;
+  registerDb('memory:' + stateDir, db);
+  _memDbs.set(stateDir, db);
   return db;
 }
 
 export function getMemoryDb(stateDir: string): Database.Database {
-  return _memDb ?? initMemoryDb(stateDir);
+  const existing = _memDbs.get(stateDir);
+  if (existing?.open) return existing;
+  if (existing) _memDbs.delete(stateDir); // stale closed handle
+  return initMemoryDb(stateDir);
 }
 
-export function closeMemoryDb(): void {
-  if (_memDb) {
-    unregisterDb('memory');
-    _memDb.close();
-    _memDb = null;
+export function closeMemoryDb(stateDir?: string): void {
+  if (stateDir) {
+    const db = _memDbs.get(stateDir);
+    if (db) {
+      unregisterDb('memory:' + stateDir);
+      if (db.open) db.close();
+      _memDbs.delete(stateDir);
+    }
+    return;
   }
+  // No-arg: close all (backward compat)
+  for (const [key, db] of _memDbs) {
+    unregisterDb('memory:' + key);
+    if (db.open) db.close();
+  }
+  _memDbs.clear();
 }
 
 export interface DrawerInput {
