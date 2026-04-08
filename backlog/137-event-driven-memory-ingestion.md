@@ -2,7 +2,7 @@
 ref: memory-access/137-event-driven-memory-ingestion
 feature: memory-access
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/129-drawer-crud-spatial-coordinates
   - memory-foundation/130-duplicate-detection-keyword-tags
