@@ -255,28 +255,42 @@ Returns `{ text: "## wing / room\n\n- content\n..." }` or `{ text: "" }` when em
 
 ### `memory_recall`
 
-Targeted semantic search. Equivalent to `orc memory-search` but returns structured JSON.
+List drawers from a specific wing, optionally filtered by room. Returns structured JSON.
+Use this when you know the spatial location and want to browse its contents.
 
 ```json
 {
   "name": "memory_recall",
   "arguments": {
-    "query": "sqlite busy_timeout",
-    "wing": "memory-foundation",  // optional
-    "hall": "errors",             // optional
+    "wing": "memory-foundation",  // required
     "room": "database",           // optional
-    "limit": 5                    // optional, default 10
+    "limit": 10                   // optional
   }
 }
 ```
 
-Returns `{ results: [{ id, snippet, wing, hall, room, importance, created_at, rank }] }`.
+Returns `{ drawers: [{ id, wing, hall, room, content, content_hash, importance, source_type, source_ref, agent_id, tags, created_at, expires_at }] }`.
 
 ---
 
 ### `memory_search`
 
-Alias for `memory_recall`. Identical interface and return shape.
+Full-text search across memories using FTS5. Equivalent to `orc memory-search` but returns
+structured JSON. Use this when you want to find memories by keyword.
+
+```json
+{
+  "name": "memory_search",
+  "arguments": {
+    "query": "sqlite busy_timeout",  // required
+    "wing": "memory-foundation",     // optional
+    "room": "database",              // optional
+    "limit": 5                       // optional, default 10
+  }
+}
+```
+
+Returns `{ results: [{ id, snippet, wing, hall, room, importance, created_at, rank }] }`.
 
 ---
 
@@ -288,13 +302,13 @@ Store a new memory. Equivalent to `orc memory-record`.
 {
   "name": "memory_store",
   "arguments": {
-    "content": "The memory text to store",
-    "wing": "memory-quality",     // optional, default: general
-    "hall": "decisions",          // optional, default: default
-    "room": "schema",             // optional, default: default
-    "importance": 7,              // optional, default: 5
-    "tags": "sqlite,schema",      // optional; auto-extracted if omitted
-    "expires_at": "2026-12-31T00:00:00Z"  // optional; omit for permanent
+    "content": "The memory text to store",  // required
+    "wing": "memory-quality",               // optional, default: general
+    "hall": "decisions",                    // optional, default: default
+    "room": "schema",                       // optional, default: default
+    "importance": 7,                        // optional, default: 5
+    "sourceType": "event",                  // optional
+    "sourceRef": "run-20260408130451-aa73"  // optional
   }
 }
 ```
@@ -314,7 +328,7 @@ Returns memory store statistics. Equivalent to `orc memory-status`.
 }
 ```
 
-Returns `{ totalDrawers, distinctWings, distinctRooms, oldestMemory, newestMemory, dbSizeBytes }`.
+Returns `{ stats: { totalDrawers, distinctWings, distinctRooms, oldestMemory, newestMemory, dbSizeBytes } }`.
 
 ---
 
@@ -336,8 +350,11 @@ exits 0 with no output and the worker continues normally.
 For targeted queries during exploration of unfamiliar code:
 
 ```bash
-# via MCP (master or worker with MCP access):
-memory_recall({ query: "sqlite schema", wing: "memory-foundation" })
+# via MCP — search by keyword (master or worker with MCP access):
+memory_search({ query: "sqlite schema", wing: "memory-foundation" })
+
+# via MCP — list all drawers in a wing/room:
+memory_recall({ wing: "memory-foundation", room: "database" })
 ```
 
 ### During Implementation — Recording Memories
