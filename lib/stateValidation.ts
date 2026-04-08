@@ -192,6 +192,16 @@ export function validateMemoryDb(stateDir: string): { ok: boolean; messages: str
 
   const messages: string[] = [];
   let ok = true;
+
+  // WAL size check before opening the DB (opening may trigger a checkpoint that shrinks it)
+  const walPath = `${dbPath}-wal`;
+  if (existsSync(walPath)) {
+    const walSize = statSync(walPath).size;
+    if (walSize > MEMORY_WAL_WARN_BYTES) {
+      messages.push(`warning: WAL file is ${Math.round(walSize / 1024 / 1024)}MB (threshold: 50MB) — consider running PRAGMA wal_checkpoint`);
+    }
+  }
+
   let db: InstanceType<typeof Database> | null = null;
 
   try {
@@ -224,16 +234,6 @@ export function validateMemoryDb(stateDir: string): { ok: boolean; messages: str
     ok = false;
     messages.push(`error: failed to open memory.db — ${(err as Error).message}`);
     if (db) { try { db.close(); } catch { /* ignore */ } }
-    return { ok, messages };
-  }
-
-  // WAL size check (non-fatal warning)
-  const walPath = `${dbPath}-wal`;
-  if (existsSync(walPath)) {
-    const walSize = statSync(walPath).size;
-    if (walSize > MEMORY_WAL_WARN_BYTES) {
-      messages.push(`warning: WAL file is ${Math.round(walSize / 1024 / 1024)}MB (threshold: 50MB) — consider running PRAGMA wal_checkpoint`);
-    }
   }
 
   return { ok, messages };

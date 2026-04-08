@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, openSync, ftruncateSync, closeSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
@@ -209,6 +209,20 @@ describe('doctor memory health', () => {
     expect(json.checks.memoryHealth.ok).toBe(false);
     expect(json.checks.memoryHealth.messages.some((m: string) => m.includes('FTS5 integrity check failed'))).toBe(true);
     expect(result.status).toBe(1);
+  });
+
+  it('warns when WAL file exceeds 50MB threshold', () => {
+    seedCleanState();
+    seedMemoryDb(dir);
+    // Create a sparse WAL file > 50MB without writing actual data
+    const walPath = join(dir, 'memory.db-wal');
+    const fd = openSync(walPath, 'w');
+    ftruncateSync(fd, 50 * 1024 * 1024 + 1);
+    closeSync(fd);
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(json.checks.memoryHealth.ok).toBe(true);
+    expect(json.checks.memoryHealth.messages.some((m: string) => m.includes('WAL file'))).toBe(true);
   });
 });
 
