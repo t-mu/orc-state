@@ -2,7 +2,7 @@
 ref: memory-quality/144-error-logging-fts5-trigger-idx
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 144 — Add Error Logging, FTS5 UPDATE Trigger, and Composite Index
