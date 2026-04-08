@@ -147,7 +147,7 @@ Sections:
 
 ## Tests
 
-Not applicable — this task IS the integration test task. Tests are defined in the Implementation section.
+All tests for this task are defined in Step 1 above. Test file path: `lib/memoryStore.integration.test.ts`.
 
 ---
 

@@ -72,7 +72,11 @@ lifecycle integrates with the existing `closeAllDatabases()` shutdown path.
 **File:** `lib/eventLog.ts`
 
 Add two exported functions that allow external modules to register their DB connections
-in the existing `_dbs` Map:
+in the existing `_dbs` Map.
+
+Note: the existing `_dbs` Map uses `stateDir` (a path string) as keys for event DBs.
+The `registerDb` function uses a caller-chosen key. To stay consistent, memory callers
+should use `stateDir + ':memory'` as the key (path-scoped, avoids collision):
 
 ```ts
 export function registerDb(key: string, db: Database): void {
@@ -138,6 +142,10 @@ export function initMemoryDb(stateDir: string): Database {
       INSERT INTO drawers_fts(drawers_fts, rowid, content, tags, wing, hall, room)
       VALUES ('delete', old.id, old.content, old.tags, old.wing, old.hall, old.room);
     END;
+
+    -- No UPDATE trigger: no current task updates FTS-indexed columns (content, tags,
+    -- wing, hall, room). Task 129 only updates importance (non-FTS field). If a future
+    -- task adds content/tag updates, an UPDATE trigger must be added at that time.
   `);
 
   registerDb('memory', db);

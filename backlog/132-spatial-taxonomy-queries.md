@@ -77,6 +77,7 @@ export interface MemoryStats {
   dbSizeBytes: number;
 }
 
+// Requires: import { statSync } from 'node:fs'; (add to memoryStore.ts imports)
 export function getMemoryStats(stateDir: string): MemoryStats {
   const db = getMemoryDb(stateDir);
   const row = db.prepare(`

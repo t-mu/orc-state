@@ -76,7 +76,7 @@ Add 5 entries to the TOOLS array:
 - `memory_wake_up`: optional `wing` (string), optional `tokenBudget` (number)
 - `memory_recall`: required `wing` (string), optional `room` (string), optional `limit` (number)
 - `memory_search`: required `query` (string), optional `wing`/`room`/`limit`
-- `memory_store`: required `content` (string), optional `wing`/`hall`/`room`/`importance`/`sourceType`/`sourceRef`
+- `memory_store`: required `content` (string), optional `wing`/`hall`/`room`/`importance`/`sourceType`/`sourceRef` (Note: duplicate detection from Task 130 enhances `storeDrawer()` — if 130 hasn't landed yet, `memory_store` will insert duplicates. This is acceptable; dedup is an enhancement, not a prerequisite.)
 - `memory_status`: no parameters
 
 ### Step 2 — Implement handlers in handlers.ts

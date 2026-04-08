@@ -113,7 +113,10 @@ export function searchMemory(stateDir: string, opts: {
 }
 ```
 
-Note: `bm25()` returns negative values (lower = better match), so `ORDER BY rank` is ascending. The importance multiplier amplifies the signal for high-importance drawers.
+Note: `bm25()` returns negative values (lower = better match). Multiplying by
+`(importance / 10.0)` makes high-importance results more negative (lower rank value =
+better), so `ORDER BY rank ASC` is correct. Example: bm25=-2.0 with importance=8 →
+rank=-1.6; bm25=-2.0 with importance=3 → rank=-0.6. The importance=8 drawer ranks first.
 
 ---
 

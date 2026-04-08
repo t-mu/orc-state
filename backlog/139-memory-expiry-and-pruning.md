@@ -42,11 +42,11 @@ Pruning runs once at coordinator startup.
 ### Start here
 
 - `lib/memoryStore.ts` — add pruning functions
-- `coordinator.ts` — `initializeTickState()` for startup hook
+- `coordinator.ts` — startup section near line 1745 (after stale .tmp cleanup, before the tick loop begins)
 
 **Affected files:**
 - `lib/memoryStore.ts` — add `pruneExpiredMemories()` and `pruneByCapacity()`
-- `coordinator.ts` — call pruning at startup
+- `coordinator.ts` — add pruning call in the startup section (after line ~1745, after stale temp cleanup and before the first `setInterval` tick)
 
 ---
 
