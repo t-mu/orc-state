@@ -2,7 +2,7 @@
 ref: memory-quality/143-importance-bounds-validation
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 143 — Validate Importance Bounds in storeDrawer and updateDrawerImportance

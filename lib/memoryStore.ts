@@ -136,6 +136,12 @@ export function wingFromTaskRef(taskRef: string): string {
   return slash > 0 ? taskRef.slice(0, slash) : 'general';
 }
 
+function clampImportance(value: number | undefined): number {
+  if (value === undefined) return 5;
+  if (!Number.isFinite(value)) return 5;
+  return Math.max(1, Math.min(10, Math.round(value)));
+}
+
 export function storeDrawer(stateDir: string, input: DrawerInput): number {
   const db = getMemoryDb(stateDir);
   const contentHash = createHash('sha256').update(input.content.trim().toLowerCase()).digest('hex');
@@ -147,7 +153,7 @@ export function storeDrawer(stateDir: string, input: DrawerInput): number {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.wing ?? 'general', input.hall, input.room, input.content, contentHash,
-    input.importance ?? 5, input.sourceType ?? null, input.sourceRef ?? null,
+    clampImportance(input.importance), input.sourceType ?? null, input.sourceRef ?? null,
     input.agentId ?? null, tags, new Date().toISOString(),
     input.expiresAt ?? null,
   );
@@ -168,7 +174,8 @@ export function deleteDrawer(stateDir: string, id: number): boolean {
 
 export function updateDrawerImportance(stateDir: string, id: number, importance: number): boolean {
   const db = getMemoryDb(stateDir);
-  const result = db.prepare('UPDATE drawers SET importance = ? WHERE id = ?').run(importance, id);
+  const clamped = clampImportance(importance);
+  const result = db.prepare('UPDATE drawers SET importance = ? WHERE id = ?').run(clamped, id);
   return result.changes > 0;
 }
 

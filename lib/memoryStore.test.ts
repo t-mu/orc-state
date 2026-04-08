@@ -166,6 +166,52 @@ describe('drawer CRUD', () => {
   });
 });
 
+describe('importance validation', () => {
+  it('storeDrawer clamps importance > 10 to 10', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'over-limit importance', importance: 15 });
+    expect(getDrawer(dir, id)?.importance).toBe(10);
+  });
+
+  it('storeDrawer clamps negative importance to 1', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'negative importance', importance: -3 });
+    expect(getDrawer(dir, id)?.importance).toBe(1);
+  });
+
+  it('storeDrawer defaults NaN importance to 5', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'nan importance', importance: NaN });
+    expect(getDrawer(dir, id)?.importance).toBe(5);
+  });
+
+  it('storeDrawer defaults Infinity importance to 5', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'infinity importance', importance: Infinity });
+    expect(getDrawer(dir, id)?.importance).toBe(5);
+  });
+
+  it('storeDrawer rounds fractional importance', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'fractional importance', importance: 7.6 });
+    expect(getDrawer(dir, id)?.importance).toBe(8);
+  });
+
+  it('updateDrawerImportance clamps value > 10 to 10', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'clamp update high', importance: 5 });
+    expect(updateDrawerImportance(dir, id, 20)).toBe(true);
+    expect(getDrawer(dir, id)?.importance).toBe(10);
+  });
+
+  it('updateDrawerImportance clamps negative value to 1', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'clamp update low', importance: 5 });
+    expect(updateDrawerImportance(dir, id, -5)).toBe(true);
+    expect(getDrawer(dir, id)?.importance).toBe(1);
+  });
+});
+
 describe('duplicate detection and keyword tagging', () => {
   it('populates content_hash on insert', () => {
     initMemoryDb(dir);
