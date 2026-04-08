@@ -113,6 +113,11 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toMatch(/memory-wake-up.*\|\| true/);
   });
 
+  it('rendered bootstrap instructs workers to use memory-record during implementation', () => {
+    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'tok');
+    expect(rendered).toContain('memory-record');
+  });
+
   it('uses worker-bootstrap-v2.txt when role is undefined', () => {
     const rendered = buildSessionBootstrap('dave', 'claude', undefined as unknown as string, 'orc');
     expect(rendered).toContain('agent_id: dave');
