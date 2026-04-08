@@ -2,7 +2,7 @@
 ref: general/150-untested-cli-command-tests
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 150 — Add Tests for Untested Worker Lifecycle CLI Commands
