@@ -130,24 +130,6 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
-function writeTaskSpec({ taskRef = 'docs/task-1', feature = 'docs', title = 'Task 1', status = 'todo' } = {}) {
-  mkdirSync(join(dir, 'backlog'), { recursive: true });
-  const slug = taskRef.split('/')[1];
-  writeFileSync(
-    join(dir, 'backlog', `999-${slug}.md`),
-    [
-      '---',
-      `ref: ${taskRef}`,
-      `feature: ${feature}`,
-      `status: ${status}`,
-      '---',
-      '',
-      `# Task 999 — ${title}`,
-      '',
-    ].join('\n'),
-  );
-}
-
 function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
@@ -338,21 +320,9 @@ describe('orc-run-heartbeat (deprecated no-op)', () => {
   });
 });
 
-// run-work-complete requires task status=done (gate enforced by task-mark-done).
-// Override the backlog after seeding to set task status to 'done'.
-function markTaskDone(taskRef = 'docs/task-1') {
-  const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-  for (const feature of backlog.features) {
-    const task = feature.tasks.find((t: { ref: string }) => t.ref === taskRef);
-    if (task) task.status = 'done';
-  }
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog));
-}
-
 describe('orc-run-work-complete', () => {
   it('emits a non-terminal work_complete event without mutating finalization state', () => {
     seedInProgressRun({ runId: 'run-work-001', agentId: 'worker-01' });
-    markTaskDone();
     const before = claimSnapshot('run-work-001');
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-work-001', '--agent-id=worker-01']);
@@ -399,7 +369,6 @@ describe('orc-run-work-complete', () => {
 
   it('emits ready_to_merge when run-work-complete is called after a finalize rebase', () => {
     seedInProgressRun({ runId: 'run-work-003', agentId: 'worker-01' });
-    markTaskDone();
     const claims = readClaims();
     claims.claims[0].finalization_state = 'finalize_rebase_in_progress';
     claims.claims[0].finalization_retry_count = 2;
@@ -422,7 +391,6 @@ describe('orc-run-work-complete', () => {
   });
   it('still appends work_complete when the claim is still claimed', () => {
     seedClaimedRun({ runId: 'run-work-claimed', agentId: 'worker-01' });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-work-claimed', '--agent-id=worker-01']);
 
@@ -433,27 +401,17 @@ describe('orc-run-work-complete', () => {
     expect(events.some((e) => e.event === 'work_complete' && e.run_id === 'run-work-claimed')).toBe(true);
   });
 
-  it('rejects run-work-complete when task is not marked done', () => {
+  it('accepts run-work-complete even when runtime task status is not done yet', () => {
     seedInProgressRun({ runId: 'run-work-gate', agentId: 'worker-01' });
-    // Do NOT call markTaskDone() — task stays in_progress
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-work-gate', '--agent-id=worker-01']);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('task not marked done');
-    expect(result.stderr).toContain('orc task-mark-done');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('work_complete');
   });
 
-  it('accepts run-work-complete after task-mark-done transitions an active task to done', () => {
+  it('does not require task-mark-done before run-work-complete', () => {
     seedInProgressRun({ runId: 'run-work-mark-done', agentId: 'worker-01' });
-    writeTaskSpec();
-
-    const markResult = spawnSync('node', [join(repoRoot, 'cli/task-mark-done.ts'), 'docs/task-1'], {
-      cwd: dir,
-      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
-      encoding: 'utf8',
-    });
-    expect(markResult.status).toBe(0);
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-work-mark-done', '--agent-id=worker-01']);
 
@@ -572,7 +530,7 @@ describe('orc-run-fail', () => {
       { script: 'run-heartbeat.ts', args: ['--run-id=run-lock-heartbeat', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-heartbeat', agentId: 'worker-01' }) },
       { script: 'run-finish.ts', args: ['--run-id=run-lock-finish', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-finish', agentId: 'worker-01' }) },
       { script: 'run-fail.ts', args: ['--run-id=run-lock-fail', '--agent-id=worker-01', '--reason=boom'], seed: () => seedInProgressRun({ runId: 'run-lock-fail', agentId: 'worker-01' }) },
-      { script: 'run-work-complete.ts', args: ['--run-id=run-lock-complete', '--agent-id=worker-01'], seed: () => { seedInProgressRun({ runId: 'run-lock-complete', agentId: 'worker-01' }); markTaskDone(); } },
+      { script: 'run-work-complete.ts', args: ['--run-id=run-lock-complete', '--agent-id=worker-01'], seed: () => { seedInProgressRun({ runId: 'run-lock-complete', agentId: 'worker-01' }); } },
     ];
 
     for (const testCase of cases) {

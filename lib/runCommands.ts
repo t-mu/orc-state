@@ -5,7 +5,7 @@ import { appendSequencedEvent, readEventsSince } from './eventLog.ts';
 import { validateProgressCommandInput } from './progressValidation.ts';
 import { startRun } from './claimManager.ts';
 import { STATE_DIR, EVENTS_FILE } from './paths.ts';
-import { readBacklog, findTask, readClaims } from './stateReader.ts';
+import { readClaims } from './stateReader.ts';
 import { INPUT_REQUEST_HEARTBEAT_INTERVAL_MS } from './constants.ts';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from './inputRequestConfig.ts';
 import type { Claim } from '../types/claims.ts';
@@ -142,16 +142,6 @@ export function executeRunWorkComplete(runId: string, agentId: string): void {
     reason: null,
     policy: null,
   }, claim);
-
-  // Gate: reject if task not marked done
-  const taskRef = validatedClaim.task_ref;
-  if (taskRef) {
-    const backlog = readBacklog(STATE_DIR);
-    const task = findTask(backlog, taskRef);
-    if (task && task.status !== 'done') {
-      throw new Error(`task not marked done — call orc task-mark-done ${taskRef} first`);
-    }
-  }
 
   const transition = nextFinalizationTransition(validatedClaim);
   appendSequencedEvent(STATE_DIR, {

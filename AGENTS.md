@@ -133,16 +133,15 @@ One review round only.
 ### Phase 4 — Complete
 
 Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=<agent_id>`
-1. Mark the task done (updates spec + state in one action):
-   `orc task-mark-done <task-ref>`
+1. Update the task markdown in your assigned worktree to `status: done`.
 2. Rebase onto main: `git rebase main`
    If conflicts arise: resolve each conflicted file, then `git add <file> && git rebase --continue`.
    Only call `orc run-fail` if a conflict is genuinely unresolvable.
 3. Verify `npm test` passes, then signal the coordinator:
    `orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>`
 
-**Gate:** `run-work-complete` MUST exit 0. It rejects if task-mark-done was not called.
-Do NOT call run-work-complete without calling task-mark-done first.
+**Gate:** `run-work-complete` MUST exit 0 after the task markdown in the assigned worktree has been updated to `status: done`.
+Do NOT call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge.
 
 ### Phase 5 — Finalize
 
@@ -174,8 +173,8 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 1. Session startup: `orc start-session`
 2. Task authoring: edit `backlog/<N>-<slug>.md`
 3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. Run `orc backlog-sync-check` to verify.
-4. Task completion: `orc task-mark-done <task-ref>` (updates spec + state in one action)
-5. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
+4. Task completion: worker updates task markdown in its worktree; coordinator calls `orc task-mark-done <task-ref>` after merge to update shared runtime state
+5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
 6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
 7. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
 
@@ -202,7 +201,7 @@ orc kill-all                                      # ⚠️ stop coordinator + cl
 
 # Task management
 orc task-create                                   # register a task that already has a matching markdown spec
-orc task-mark-done <task-ref>                     # mark done: updates spec frontmatter + syncs state
+orc task-mark-done <task-ref>                     # coordinator-only: mark shared runtime state done after merge
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
 orc delegate                                      # assign/dispatch a task to an agent
@@ -295,7 +294,7 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 |------------|-------------|
 | `todo → claimed` | Coordinator (on delegate) |
 | `claimed → in_progress` | Worker (`orc run-start`) |
-| `in_progress → done` | Worker (`orc task-mark-done <ref>`) |
+| `in_progress → done` | Coordinator (`orc task-mark-done <ref>` after merge) |
 | `done → released` | Coordinator (after merge) |
 | `any → blocked` | Worker (`orc run-fail --policy=block`) |
 | `blocked/claimed/in_progress → todo` | Operator (`orc task-reset <ref>`) |
@@ -371,7 +370,7 @@ Follow the **Phased Workflow** above. The five phases are:
 1. **Explore** — read spec, identify files (gate: `orc run-start`)
 2. **Implement** — code + tests (gate: `npm test`)
 3. **Review** — commit, sub-agent review, fix findings (gate: reviewers accept)
-4. **Complete** — `orc task-mark-done`, rebase, `orc run-work-complete` (gate: run-work-complete exits 0)
+4. **Complete** — update task markdown to done, rebase, `orc run-work-complete` (gate: run-work-complete exits 0)
 5. **Finalize** — coordinator follow-up, `orc run-finish` (gate: terminal success)
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.

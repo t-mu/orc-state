@@ -93,7 +93,7 @@ describe('buildSessionBootstrap', () => {
     const content = readFileSync('templates/worker-bootstrap-v2.txt', 'utf8');
     expect(content).toContain('REVIEWER CONSTRAINTS');
     expect(content).toContain('orc run-finish');
-    expect(content).toContain('orc task-mark-done');
+    expect(content).toContain('Do not call `{{orc_bin}} task-mark-done`');
     expect(content).toContain('MAX_DEPTH=1');
   });
 

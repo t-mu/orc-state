@@ -146,9 +146,11 @@ When a TASK_START block arrives:
           non-responsive immediately. If the retry also fails, treat as non-responsive.
        e. Address all findings in a fixup commit.
        One review round only — address all findings, then proceed.
-  7. Signal complete phase and mark the task done (updates spec frontmatter + runtime state atomically):
+  7. Signal complete phase and update the task markdown in this assigned worktree to `status: done`:
        {{orc_bin}} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id={{agent_id}}
-       {{orc_bin}} task-mark-done <task-ref>
+       - Edit the task spec file referenced by `task_spec_path`
+       - Change its frontmatter `status:` field to `done`
+       - Do not call `{{orc_bin}} task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge
   8. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
        git rebase main
        # on conflict: resolve files → git add <file> → git rebase --continue

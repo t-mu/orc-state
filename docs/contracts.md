@@ -124,7 +124,7 @@ the CLI and MCP handlers manage this.
 |------------|---------|-----|
 | `todo` -> `claimed` | `orc delegate` | Coordinator |
 | `claimed` -> `in_progress` | `orc run-start` | Worker |
-| `in_progress` -> `done` | `orc task-mark-done <ref>` | Worker |
+| `in_progress` -> `done` | Post-merge runtime completion (`orc task-mark-done <ref>`) | Coordinator |
 | `done` -> `released` | Post-merge release | Coordinator |
 | `any` -> `blocked` | `orc run-fail --policy=block` | Worker |
 | `blocked/claimed/in_progress` -> `todo` | `orc task-reset <ref>` | Operator |
@@ -307,13 +307,16 @@ during task execution. These commands mutate claim state and emit events.
   [implement + test + review]
          |
          v
-  orc task-mark-done <ref>       task status -> done
+  worker updates task markdown in worktree to status: done
          |
          v
   orc run-work-complete          finalization_state -> awaiting_finalize
          |
          v
   [coordinator merge + optional finalize rebase]
+         |
+         v
+  orc task-mark-done <ref>       runtime task status -> done
          |
          v
   orc run-finish                 claim state -> done (terminal)

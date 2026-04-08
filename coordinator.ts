@@ -40,6 +40,7 @@ import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
+import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
@@ -632,6 +633,12 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     mergeTaskBranch(runWorktree.branch, claim.task_ref);
   } catch (error) {
     return requestFinalizeRebase(claim, workerPoolConfig, (error as Error).message);
+  }
+
+  try {
+    markTaskDoneRuntimeOnly(claim.task_ref, 'coordinator', STATE_DIR);
+  } catch (error) {
+    return markFinalizeBlocked(claim, workerPoolConfig, `failed to mark runtime task done after merge: ${(error as Error).message}`);
   }
 
   try {
