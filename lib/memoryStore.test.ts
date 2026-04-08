@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  initMemoryDb, closeMemoryDb,
+  initMemoryDb, getMemoryDb, closeMemoryDb,
   storeDrawer, getDrawer, deleteDrawer, updateDrawerImportance, listDrawers,
   searchMemory,
   extractKeywords,
@@ -512,5 +512,60 @@ describe('pruneByCapacity', () => {
     } finally {
       cleanupTempStateDir(emptyDir);
     }
+  });
+});
+
+describe('multi-stateDir', () => {
+  it('initMemoryDb supports multiple stateDirs simultaneously', () => {
+    const dir2 = createTempStateDir('orch-memory-test2-');
+    try {
+      const db1 = initMemoryDb(dir);
+      const db2 = initMemoryDb(dir2);
+      expect(db1).not.toBe(db2);
+      // Insert in dir only — dir2 should remain empty
+      storeDrawer(dir, { hall: 'h', room: 'r', content: 'only in dir1' });
+      expect(listDrawers(dir2)).toHaveLength(0);
+      expect(listDrawers(dir)).toHaveLength(1);
+    } finally {
+      closeMemoryDb(dir2);
+      cleanupTempStateDir(dir2);
+    }
+  });
+
+  it('closeMemoryDb(stateDir) closes only that stateDir', () => {
+    const dir2 = createTempStateDir('orch-memory-test2-');
+    try {
+      initMemoryDb(dir);
+      initMemoryDb(dir2);
+      closeMemoryDb(dir);
+      // dir2 DB is still open and usable
+      expect(() => storeDrawer(dir2, { hall: 'h', room: 'r', content: 'still works' })).not.toThrow();
+      expect(listDrawers(dir2)).toHaveLength(1);
+    } finally {
+      closeMemoryDb(dir2);
+      cleanupTempStateDir(dir2);
+    }
+  });
+
+  it('getMemoryDb returns distinct DBs for different stateDirs', () => {
+    const dir2 = createTempStateDir('orch-memory-test2-');
+    try {
+      const db1 = getMemoryDb(dir);
+      const db2 = getMemoryDb(dir2);
+      expect(db1).not.toBe(db2);
+    } finally {
+      closeMemoryDb(dir2);
+      cleanupTempStateDir(dir2);
+    }
+  });
+
+  it('getMemoryDb re-initializes after closeAllDatabases()', () => {
+    initMemoryDb(dir);
+    closeAllDatabases();
+    // _memDbs still has a stale closed handle — getMemoryDb must detect and re-initialize
+    const db = getMemoryDb(dir);
+    expect(db.open).toBe(true);
+    // Verify it's fully functional
+    expect(() => storeDrawer(dir, { hall: 'h', room: 'r', content: 'after reopen' })).not.toThrow();
   });
 });
