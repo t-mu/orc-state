@@ -91,7 +91,14 @@ export function handleMemoryStore(stateDir: string, args: Record<string, unknown
 export function handleMemoryStatus(stateDir: string, _args: Record<string, unknown>) { ... }
 ```
 
-Each handler wraps the corresponding `lib/memoryStore.ts` function with try/catch that returns `{ error: "memory system not initialized" }` when memory.db doesn't exist.
+Handler → function mapping:
+- `handleMemoryWakeUp` → `memoryWakeUp()` (Task 133)
+- `handleMemoryRecall` → `listDrawers()` with wing/room/limit filters (Task 129)
+- `handleMemorySearch` → `searchMemory()` (Task 131)
+- `handleMemoryStore` → `storeDrawer()` (Task 129)
+- `handleMemoryStatus` → `getMemoryStats()` (Task 132)
+
+Each handler wraps its function with try/catch that returns `{ error: "memory system not initialized" }` when memory.db doesn't exist.
 
 ### Step 3 — Wire dispatch in server.ts
 
@@ -122,6 +129,7 @@ Add to `mcp/handlers.test.ts`:
 ```ts
 it('handleMemoryStore creates a drawer and returns ID', () => { ... });
 it('handleMemorySearch returns FTS5 results', () => { ... });
+it('handleMemoryRecall returns spatially-filtered drawers', () => { ... });
 it('handleMemoryWakeUp returns formatted text', () => { ... });
 it('handleMemoryStatus returns stats', () => { ... });
 it('memory tools return graceful error when DB not initialized', () => { ... });

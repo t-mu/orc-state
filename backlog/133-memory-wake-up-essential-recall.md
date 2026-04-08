@@ -12,7 +12,7 @@ depends_on:
 
 # Task 133 — Add Memory Wake-Up Essential Recall
 
-Depends on Tasks 128, 129, 131, and 132. Blocks Tasks 134, 135, 136.
+Depends on Tasks 128, 129, 131, and 132. Blocks Tasks 134 and 135.
 
 ## Scope
 

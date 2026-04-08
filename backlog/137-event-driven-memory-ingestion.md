@@ -45,13 +45,16 @@ Key lifecycle events automatically create memory drawers:
 
 ### Start here
 
-- `coordinator.ts` — sites that emit `run_finished`, `run_failed`, `input_response` events
+- `coordinator.ts` — sites that emit `run_finished` and `run_failed` events
+- `cli/run-input-respond.ts` — where `input_response` event is emitted (NOT coordinator.ts)
 - `cli/review-submit.ts` — where review findings are recorded
 - `lib/memoryStore.ts` — `storeDrawer()` function
 
 **Affected files:**
-- `coordinator.ts` — add `storeDrawer()` calls at 3 event emission sites
+- `coordinator.ts` — add `storeDrawer()` calls at `run_finished` and `run_failed` emission sites
+- `cli/run-input-respond.ts` — add `storeDrawer()` call after `input_response` event emission
 - `cli/review-submit.ts` — add `storeDrawer()` call for review findings
+- `lib/memoryStore.ts` — add `wingFromTaskRef()` helper
 
 ---
 
@@ -96,10 +99,26 @@ try {
 } catch { /* memory system not initialized — silently skip */ }
 ```
 
-Similar patterns for `run_failed` (hall=`errors`, room=`run-failures`, importance=8)
-and `input_response` (hall=`decisions`, room=`master-input`, importance=7, content includes question+answer).
+Similar pattern for `run_failed` (hall=`errors`, room=`run-failures`, importance=8).
 
-### Step 3 — Add memory ingestion in review-submit.ts
+### Step 3 — Add memory ingestion in run-input-respond.ts
+
+**File:** `cli/run-input-respond.ts`
+
+After the `input_response` event is emitted (this is where input responses are recorded,
+NOT in coordinator.ts):
+```ts
+try {
+  storeDrawer(stateDir, {
+    wing: wingFromTaskRef(taskRef),
+    hall: 'decisions', room: 'master-input',
+    content: `Q: ${question}\nA: ${response}`,
+    importance: 7, sourceType: 'event', sourceRef: runId,
+  });
+} catch { /* memory system not initialized — silently skip */ }
+```
+
+### Step 4 — Add memory ingestion in review-submit.ts
 
 **File:** `cli/review-submit.ts`
 

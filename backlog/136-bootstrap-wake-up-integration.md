@@ -115,7 +115,7 @@ Add a note in the explore phase:
 
 ## Tests
 
-Add to `lib/templateRender.test.ts` or `lib/sessionBootstrap.test.ts`:
+Add to `lib/sessionBootstrap.test.ts`:
 
 ```ts
 it('rendered bootstrap contains memory-wake-up call', () => { ... });
