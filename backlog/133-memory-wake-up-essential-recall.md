@@ -2,7 +2,7 @@
 ref: memory-access/133-memory-wake-up-essential-recall
 feature: memory-access
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/128-memory-db-schema-and-init
   - memory-foundation/129-drawer-crud-spatial-coordinates
