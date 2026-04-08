@@ -1800,11 +1800,14 @@ describe('memory handlers', () => {
     expect(result.stats.dbSizeBytes).toBeGreaterThan(0);
   });
 
-  it('memory tools return graceful error when memory DB cannot be initialized', () => {
+  it('memory tools return graceful response when memory DB cannot be initialized', () => {
     const badDir = join(dir, 'nonexistent', 'subdir');
+    // These four throw internally and return a structured error object
     expect(handleMemoryStore(badDir, { content: 'test' })).toEqual({ error: 'memory system not initialized' });
     expect(handleMemorySearch(badDir, { query: 'test' })).toEqual({ error: 'memory system not initialized' });
     expect(handleMemoryRecall(badDir, { wing: 'general' })).toEqual({ error: 'memory system not initialized' });
     expect(handleMemoryStatus(badDir)).toEqual({ error: 'memory system not initialized' });
+    // memoryWakeUp handles DB failure internally and returns empty text, so handleMemoryWakeUp returns { text: '' }
+    expect(handleMemoryWakeUp(badDir, {})).toEqual({ text: '' });
   });
 });
