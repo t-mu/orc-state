@@ -42,7 +42,7 @@ import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
-import { storeDrawer, wingFromTaskRef } from './lib/memoryStore.ts';
+import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
@@ -1770,6 +1770,12 @@ export async function main() {
       catch { /* already gone — fine */ }
     }
   } catch { /* STATE_DIR not readable — file-existence check above would have caught this */ }
+
+  try {
+    const expired = pruneExpiredMemories(STATE_DIR);
+    const capped = pruneByCapacity(STATE_DIR);
+    if (expired + capped > 0) log(`memory pruning: removed ${expired} expired, ${capped} over-capacity`);
+  } catch { /* memory system not initialized */ }
 
   try {
     syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);

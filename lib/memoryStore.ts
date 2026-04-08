@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerDb, unregisterDb } from './eventLog.ts';
 
@@ -328,4 +328,38 @@ export function memoryWakeUp(stateDir: string, opts: {
   }
 
   return output.trim();
+}
+
+export function pruneExpiredMemories(stateDir: string): number {
+  if (!existsSync(join(stateDir, MEMORY_DB_FILE))) return 0;
+  try {
+    const db = getMemoryDb(stateDir);
+    const result = db.prepare(`DELETE FROM drawers WHERE expires_at IS NOT NULL AND expires_at < ?`)
+      .run(new Date().toISOString());
+    return result.changes;
+  } catch { return 0; }
+}
+
+export function pruneByCapacity(stateDir: string, maxPerRoom = 200): number {
+  if (!existsSync(join(stateDir, MEMORY_DB_FILE))) return 0;
+  try {
+    const db = getMemoryDb(stateDir);
+    const overCapacity = db.prepare(`
+      SELECT wing, room, COUNT(*) as cnt FROM drawers
+      GROUP BY wing, room HAVING cnt > ?
+    `).all(maxPerRoom) as Array<{ wing: string; room: string; cnt: number }>;
+
+    let totalDeleted = 0;
+    for (const { wing, room } of overCapacity) {
+      const result = db.prepare(`
+        DELETE FROM drawers WHERE id IN (
+          SELECT id FROM drawers WHERE wing = ? AND room = ?
+          ORDER BY importance DESC, created_at DESC
+          LIMIT -1 OFFSET ?
+        )
+      `).run(wing, room, maxPerRoom);
+      totalDeleted += result.changes;
+    }
+    return totalDeleted;
+  } catch { return 0; }
 }

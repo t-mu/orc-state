@@ -9,6 +9,7 @@ import {
   listWings, listRooms, getMemoryStats,
   memoryWakeUp,
   wingFromTaskRef,
+  pruneExpiredMemories, pruneByCapacity,
 } from './memoryStore.ts';
 import { closeAllDatabases } from './eventLog.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -416,5 +417,100 @@ describe('wingFromTaskRef', () => {
 
   it('falls back to general when slash is the first character', () => {
     expect(wingFromTaskRef('/leading-slash')).toBe('general');
+  });
+});
+
+describe('pruneExpiredMemories', () => {
+  it('deletes drawers past their expires_at', () => {
+    initMemoryDb(dir);
+    const past = new Date(Date.now() - 1000).toISOString();
+    storeDrawer(dir, { hall: 'h', room: 'r', content: 'expired entry', expiresAt: past });
+    const count = pruneExpiredMemories(dir);
+    expect(count).toBe(1);
+    expect(listDrawers(dir, {})).toHaveLength(0);
+  });
+
+  it('leaves non-expired drawers intact', () => {
+    initMemoryDb(dir);
+    const future = new Date(Date.now() + 60_000).toISOString();
+    storeDrawer(dir, { hall: 'h', room: 'r', content: 'still valid', expiresAt: future });
+    const count = pruneExpiredMemories(dir);
+    expect(count).toBe(0);
+    expect(listDrawers(dir, {})).toHaveLength(1);
+  });
+
+  it('leaves drawers without expires_at intact', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { hall: 'h', room: 'r', content: 'no expiry' });
+    const count = pruneExpiredMemories(dir);
+    expect(count).toBe(0);
+    expect(listDrawers(dir, {})).toHaveLength(1);
+  });
+
+  it('returns 0 on empty DB', () => {
+    initMemoryDb(dir);
+    expect(pruneExpiredMemories(dir)).toBe(0);
+  });
+
+  it('returns 0 when memory.db does not exist', () => {
+    // Use a real temp dir that exists, but without calling initMemoryDb — so memory.db is absent.
+    const emptyDir = createTempStateDir();
+    try {
+      expect(pruneExpiredMemories(emptyDir)).toBe(0);
+      expect(existsSync(join(emptyDir, 'memory.db'))).toBe(false);
+    } finally {
+      cleanupTempStateDir(emptyDir);
+    }
+  });
+});
+
+describe('pruneByCapacity', () => {
+  it('keeps top-N drawers per room by importance, deletes the rest', () => {
+    initMemoryDb(dir);
+    for (let i = 1; i <= 5; i++) {
+      storeDrawer(dir, { wing: 'w', hall: 'h', room: 'r', content: `entry-${i}`, importance: i });
+    }
+    const deleted = pruneByCapacity(dir, 3);
+    expect(deleted).toBe(2);
+    const remaining = listDrawers(dir, { wing: 'w', room: 'r' });
+    expect(remaining).toHaveLength(3);
+    // Highest importance entries (5, 4, 3) should be kept
+    const importances = remaining.map(d => d.importance).sort((a, b) => b - a);
+    expect(importances).toEqual([5, 4, 3]);
+  });
+
+  it('preserves highest-importance drawers', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'w', hall: 'h', room: 'r', content: 'low-imp', importance: 1 });
+    storeDrawer(dir, { wing: 'w', hall: 'h', room: 'r', content: 'high-imp', importance: 9 });
+    const deleted = pruneByCapacity(dir, 1);
+    expect(deleted).toBe(1);
+    const remaining = listDrawers(dir, { wing: 'w', room: 'r' });
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.importance).toBe(9);
+  });
+
+  it('is a no-op when all rooms are under the limit', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { hall: 'h', room: 'r', content: 'solo entry' });
+    const deleted = pruneByCapacity(dir, 200);
+    expect(deleted).toBe(0);
+    expect(listDrawers(dir, {})).toHaveLength(1);
+  });
+
+  it('returns 0 on empty DB', () => {
+    initMemoryDb(dir);
+    expect(pruneByCapacity(dir, 200)).toBe(0);
+  });
+
+  it('returns 0 when memory.db does not exist', () => {
+    // Use a real temp dir that exists, but without calling initMemoryDb — so memory.db is absent.
+    const emptyDir = createTempStateDir();
+    try {
+      expect(pruneByCapacity(emptyDir, 200)).toBe(0);
+      expect(existsSync(join(emptyDir, 'memory.db'))).toBe(false);
+    } finally {
+      cleanupTempStateDir(emptyDir);
+    }
   });
 });

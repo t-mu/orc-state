@@ -2,7 +2,7 @@
 ref: memory-quality/139-memory-expiry-and-pruning
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-foundation/129-drawer-crud-spatial-coordinates
   - memory-foundation/132-spatial-taxonomy-queries
