@@ -2,7 +2,7 @@
 ref: general/147-changelog-initial
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 147 — Add CHANGELOG.md with 0.1.0 Release Entry
