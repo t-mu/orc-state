@@ -143,8 +143,20 @@ export function listDrawers(stateDir: string, opts: {
   if (opts.room !== undefined) { conditions.push('room = ?'); params.push(opts.room); }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const limit = opts.limit !== undefined ? `LIMIT ${opts.limit}` : '';
-  const offset = opts.offset !== undefined ? `OFFSET ${opts.offset}` : '';
 
-  return db.prepare(`SELECT * FROM drawers ${where} ${limit} ${offset}`.trim()).all(...params) as Drawer[];
+  let limitClause = '';
+  if (opts.limit !== undefined) {
+    limitClause = 'LIMIT ?';
+    params.push(opts.limit);
+  } else if (opts.offset !== undefined) {
+    limitClause = 'LIMIT -1';
+  }
+  let offsetClause = '';
+  if (opts.offset !== undefined) {
+    offsetClause = 'OFFSET ?';
+    params.push(opts.offset);
+  }
+
+  const sql = ['SELECT * FROM drawers', where, limitClause, offsetClause].filter(Boolean).join(' ');
+  return db.prepare(sql).all(...params) as Drawer[];
 }

@@ -124,6 +124,24 @@ describe('drawer CRUD', () => {
     expect(rows[0]?.wing).toBe('alpha');
   });
 
+  it('listDrawers filters by hall', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { hall: 'hallA', room: 'r1', content: 'a' });
+    storeDrawer(dir, { hall: 'hallB', room: 'r2', content: 'b' });
+    const rows = listDrawers(dir, { hall: 'hallA' });
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.hall).toBe('hallA');
+  });
+
+  it('listDrawers filters by room', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { hall: 'h1', room: 'roomX', content: 'a' });
+    storeDrawer(dir, { hall: 'h1', room: 'roomY', content: 'b' });
+    const rows = listDrawers(dir, { room: 'roomX' });
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.room).toBe('roomX');
+  });
+
   it('listDrawers returns empty array on empty DB', () => {
     initMemoryDb(dir);
     expect(listDrawers(dir)).toEqual([]);
