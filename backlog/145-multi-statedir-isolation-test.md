@@ -2,7 +2,7 @@
 ref: memory-quality/145-multi-statedir-isolation-test
 feature: memory-quality
 priority: normal
-status: todo
+status: done
 depends_on:
   - memory-quality/142-multi-statedir-singleton
 ---
