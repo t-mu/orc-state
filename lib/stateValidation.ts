@@ -1,5 +1,6 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { readEvents } from './eventLog.ts';
 import { createOrchestratorAjv } from './ajvFactory.ts';
 import { type AjvError, formatAjvErrors } from './ajvUtils.ts';
@@ -179,6 +180,63 @@ export function validateStateDir(stateDir: string): string[] {
   allErrors.push(...summarizeLifecycleIssues(detectLifecycleIssues(stateDir)));
 
   return allErrors;
+}
+
+const MEMORY_WAL_WARN_BYTES = 50 * 1024 * 1024; // 50MB
+
+export function validateMemoryDb(stateDir: string): { ok: boolean; messages: string[] } {
+  const dbPath = join(stateDir, 'memory.db');
+  if (!existsSync(dbPath)) {
+    return { ok: true, messages: ['info: memory system not initialized (memory.db not found)'] };
+  }
+
+  const messages: string[] = [];
+  let ok = true;
+  let db: InstanceType<typeof Database> | null = null;
+
+  try {
+    db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
+
+    // Check expected tables exist
+    const tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('drawers', 'drawers_fts')`).all() as Array<{ name: string }>).map(r => r.name);
+    const missingTables = ['drawers', 'drawers_fts'].filter(t => !tables.includes(t));
+    if (missingTables.length > 0) {
+      ok = false;
+      messages.push(`error: missing tables: ${missingTables.join(', ')}`);
+    }
+
+    // FTS5 integrity check (only if drawers_fts exists)
+    if (tables.includes('drawers_fts')) {
+      try {
+        db.exec(`INSERT INTO drawers_fts(drawers_fts) VALUES('integrity-check')`);
+        messages.push('ok: FTS5 integrity check passed');
+      } catch (err) {
+        ok = false;
+        messages.push(`error: FTS5 integrity check failed — ${(err as Error).message}`);
+      }
+    }
+
+    db.close();
+    db = null;
+  } catch (err) {
+    ok = false;
+    messages.push(`error: failed to open memory.db — ${(err as Error).message}`);
+    if (db) { try { db.close(); } catch { /* ignore */ } }
+    return { ok, messages };
+  }
+
+  // WAL size check (non-fatal warning)
+  const walPath = `${dbPath}-wal`;
+  if (existsSync(walPath)) {
+    const walSize = statSync(walPath).size;
+    if (walSize > MEMORY_WAL_WARN_BYTES) {
+      messages.push(`warning: WAL file is ${Math.round(walSize / 1024 / 1024)}MB (threshold: 50MB) — consider running PRAGMA wal_checkpoint`);
+    }
+  }
+
+  return { ok, messages };
 }
 
 export function partitionValidationErrors(errors: string[]): { fatal: string[]; warnings: string[] } {

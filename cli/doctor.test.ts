@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
@@ -181,6 +182,36 @@ describe('cli/doctor.ts', () => {
   });
 });
 
+describe('doctor memory health', () => {
+  it('reports memory not initialized when memory.db missing', () => {
+    seedCleanState();
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(json.checks.memoryHealth.ok).toBe(true);
+    expect(json.checks.memoryHealth.messages.some((m: string) => m.includes('not initialized'))).toBe(true);
+    expect(result.status).toBe(0);
+  });
+
+  it('validates memory.db schema when present', () => {
+    seedCleanState();
+    seedMemoryDb(dir);
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(json.checks.memoryHealth.ok).toBe(true);
+    expect(json.checks.memoryHealth.messages.some((m: string) => m.includes('FTS5 integrity check passed'))).toBe(true);
+  });
+
+  it('detects FTS5 integrity issues', () => {
+    seedCleanState();
+    seedMemoryDb(dir, { corruptFts: true });
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(json.checks.memoryHealth.ok).toBe(false);
+    expect(json.checks.memoryHealth.messages.some((m: string) => m.includes('FTS5 integrity check failed'))).toBe(true);
+    expect(result.status).toBe(1);
+  });
+});
+
 describe('doctor sandbox dependencies', () => {
   it('checks for bwrap and socat on linux with claude sandbox', () => {
     const result = checkSandboxDependencies({
@@ -230,6 +261,47 @@ function runCli(args: string[], env = process.env) {
     env: { ...env, ORCH_STATE_DIR: dir },
     encoding: 'utf8',
   });
+}
+
+function seedCleanState() {
+  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
+  writeFileSync(join(dir, 'events.jsonl'), '');
+}
+
+function seedMemoryDb(stateDir: string, opts: { corruptFts?: boolean } = {}) {
+  const dbPath = join(stateDir, 'memory.db');
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS drawers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wing TEXT NOT NULL,
+      hall TEXT NOT NULL,
+      room TEXT NOT NULL,
+      content TEXT NOT NULL,
+      content_hash TEXT,
+      importance INTEGER NOT NULL DEFAULT 5,
+      source_type TEXT,
+      source_ref TEXT,
+      agent_id TEXT,
+      tags TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS drawers_fts USING fts5(
+      content, tags, wing, hall, room,
+      content='drawers', content_rowid='id'
+    );
+  `);
+  if (opts.corruptFts) {
+    // Drop the FTS table to simulate corruption by removing it entirely,
+    // then recreate it as a plain (non-virtual) table to break FTS5 integrity
+    db.exec(`DROP TABLE drawers_fts`);
+    db.exec(`CREATE TABLE drawers_fts (content TEXT)`);
+  }
+  db.close();
 }
 
 function seedState({ agents = [] as unknown[], claims = [] as unknown[] } = {}) {

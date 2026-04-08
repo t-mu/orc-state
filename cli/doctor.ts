@@ -8,7 +8,7 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
-import { validateStateDir } from '../lib/stateValidation.ts';
+import { validateStateDir, validateMemoryDb } from '../lib/stateValidation.ts';
 import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
@@ -33,6 +33,7 @@ const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
 const providers = new Set(agents.map((a) => a.provider));
 
 const sandboxDeps = checkSandboxDependencies();
+const memoryHealth = validateMemoryDb(STATE_DIR);
 
 const checks: Record<string, unknown> = {
   gitRepo,
@@ -44,6 +45,7 @@ const checks: Record<string, unknown> = {
   stateErrors,
   backlogSync,
   sandboxDependencies: sandboxDeps,
+  memoryHealth,
 };
 
 for (const provider of providers) {
@@ -104,7 +106,8 @@ const summary = {
     (checks.orphanedActiveClaims as unknown[]).length === 0 &&
     (checks.staleActiveClaims as unknown[]).length === 0 &&
     (checks.lifecycleIssues as unknown[]).length === 0 &&
-    sandboxDeps.ok,
+    sandboxDeps.ok &&
+    memoryHealth.ok,
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
@@ -189,6 +192,13 @@ if (sd.skipped) {
     console.log(`    Ubuntu/Debian: sudo apt-get install bubblewrap socat`);
     console.log(`    Fedora:        sudo dnf install bubblewrap socat`);
   }
+}
+
+console.log('');
+const mh = checks.memoryHealth as ReturnType<typeof validateMemoryDb>;
+console.log(`memory health: ok=${String(mh.ok)}`);
+for (const msg of mh.messages) {
+  console.log(`  ${msg}`);
 }
 
 if (!summary.ok) {
