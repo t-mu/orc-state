@@ -48,12 +48,18 @@ export function initMemoryDb(stateDir: string): Database.Database {
       VALUES ('delete', old.id, old.content, old.tags, old.wing, old.hall, old.room);
     END;
 
-    -- No UPDATE trigger: no current task updates FTS-indexed columns (content, tags,
-    -- wing, hall, room). Task 129 only updates importance (non-FTS field). If a future
-    -- task adds content/tag updates, an UPDATE trigger must be added at that time.
+    CREATE TRIGGER IF NOT EXISTS drawers_au
+      AFTER UPDATE OF content, tags, wing, hall, room ON drawers BEGIN
+      INSERT INTO drawers_fts(drawers_fts, rowid, content, tags, wing, hall, room)
+      VALUES ('delete', old.id, old.content, old.tags, old.wing, old.hall, old.room);
+      INSERT INTO drawers_fts(rowid, content, tags, wing, hall, room)
+      VALUES (new.id, new.content, new.tags, new.wing, new.hall, new.room);
+    END;
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_drawers_content_hash
       ON drawers (content_hash) WHERE content_hash IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_drawers_wing_room ON drawers(wing, room);
   `);
 
   registerDb('memory:' + stateDir, db);
@@ -322,7 +328,10 @@ export function memoryWakeUp(stateDir: string, opts: {
 } = {}): string {
   const charBudget = (opts.tokenBudget ?? 800) * 4;
   let db: Database.Database;
-  try { db = getMemoryDb(stateDir); } catch { return ''; }
+  try { db = getMemoryDb(stateDir); } catch (err) {
+    console.error(`[memoryStore] memoryWakeUp failed: ${(err as Error).message}`);
+    return '';
+  }
 
   const conditions = opts.wing ? ['wing = ?'] : [];
   const params: unknown[] = opts.wing ? [opts.wing] : [];
@@ -359,7 +368,10 @@ export function pruneExpiredMemories(stateDir: string): number {
     const result = db.prepare(`DELETE FROM drawers WHERE expires_at IS NOT NULL AND expires_at < ?`)
       .run(new Date().toISOString());
     return result.changes;
-  } catch { return 0; }
+  } catch (err) {
+    console.error(`[memoryStore] pruneExpiredMemories failed: ${(err as Error).message}`);
+    return 0;
+  }
 }
 
 export function pruneByCapacity(stateDir: string, maxPerRoom = 200): number {
@@ -383,5 +395,8 @@ export function pruneByCapacity(stateDir: string, maxPerRoom = 200): number {
       totalDeleted += result.changes;
     }
     return totalDeleted;
-  } catch { return 0; }
+  } catch (err) {
+    console.error(`[memoryStore] pruneByCapacity failed: ${(err as Error).message}`);
+    return 0;
+  }
 }
