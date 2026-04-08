@@ -2,7 +2,7 @@
 ref: general/151-consumer-lifecycle-e2e-test
 feature: general
 priority: normal
-status: todo
+status: done
 depends_on:
   - general/148-init-max-workers-default
   - general/149-init-auto-create-backlog-dir
