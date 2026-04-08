@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { queryEvents } from './lib/eventLog.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
+import { initMemoryDb, listDrawers, closeMemoryDb } from './lib/memoryStore.ts';
 import {
   createTempStateDir,
   cleanupTempStateDir,
@@ -29,6 +30,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  closeMemoryDb();
   cleanupTempStateDir(dir);
   delete process.env.ORCH_STATE_DIR;
   delete process.env.ORC_REPO_ROOT;
@@ -3430,5 +3432,127 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
     expect(task.status).toBe('todo');
     const claim = readClaims(dir).find((c) => c.run_id === 'run-late-fail')!;
     expect(claim.state).toBe('failed');
+  });
+
+  it('stores memory drawer on run_finished event', async () => {
+    initMemoryDb(dir);
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'memory-access/137-mem-finish', status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-mem-finish',
+        task_ref: 'memory-access/137-mem-finish',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined) }));
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+
+    await processTerminalRunEvents([{
+      event: 'run_finished',
+      run_id: 'run-mem-finish',
+      task_ref: 'memory-access/137-mem-finish',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+    }]);
+
+    const drawers = listDrawers(dir, { hall: 'outcomes', room: 'task-completions' });
+    expect(drawers.length).toBe(1);
+    expect(drawers[0]?.wing).toBe('memory-access');
+    expect(drawers[0]?.importance).toBe(5);
+    expect(drawers[0]?.content).toContain('memory-access/137-mem-finish');
+    expect(drawers[0]?.source_type).toBe('event');
+    expect(drawers[0]?.source_ref).toBe('run-mem-finish');
+  });
+
+  it('stores memory drawer on run_failed event with importance 8', async () => {
+    initMemoryDb(dir);
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'memory-access/137-mem-fail', status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-mem-fail',
+        task_ref: 'memory-access/137-mem-fail',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined) }));
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+
+    await processTerminalRunEvents([{
+      event: 'run_failed',
+      run_id: 'run-mem-fail',
+      task_ref: 'memory-access/137-mem-fail',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: { policy: 'requeue', reason: 'build timeout' },
+    }]);
+
+    const drawers = listDrawers(dir, { hall: 'errors', room: 'run-failures' });
+    expect(drawers.length).toBe(1);
+    expect(drawers[0]?.wing).toBe('memory-access');
+    expect(drawers[0]?.importance).toBe(8);
+    expect(drawers[0]?.content).toContain('build timeout');
+    expect(drawers[0]?.source_type).toBe('event');
+  });
+
+  it('silently skips memory storage when memory.db not initialized', async () => {
+    // No initMemoryDb call — memory.db is absent
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1',
+        provider: 'codex',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:orc-1',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'proj/skip-mem-task', status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-skip-mem',
+        task_ref: 'proj/skip-mem-task',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined) }));
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+
+    // Must not throw even though memory.db is absent
+    await expect(processTerminalRunEvents([{
+      event: 'run_finished',
+      run_id: 'run-skip-mem',
+      task_ref: 'proj/skip-mem-task',
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+    }])).resolves.not.toThrow();
   });
 });

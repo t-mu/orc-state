@@ -116,6 +116,11 @@ export function extractKeywords(text: string, maxCount = 20): string {
   return [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, maxCount).map(e => e[0]).join(',');
 }
 
+export function wingFromTaskRef(taskRef: string): string {
+  const slash = taskRef.indexOf('/');
+  return slash > 0 ? taskRef.slice(0, slash) : 'general';
+}
+
 export function storeDrawer(stateDir: string, input: DrawerInput): number {
   const db = getMemoryDb(stateDir);
   const contentHash = createHash('sha256').update(input.content.trim().toLowerCase()).digest('hex');
