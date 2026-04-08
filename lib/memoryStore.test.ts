@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   initMemoryDb, getMemoryDb, closeMemoryDb,
@@ -613,5 +613,80 @@ describe('multi-stateDir', () => {
     expect(db.open).toBe(true);
     // Verify it's fully functional
     expect(() => storeDrawer(dir, { hall: 'h', room: 'r', content: 'after reopen' })).not.toThrow();
+  });
+});
+
+describe('error logging', () => {
+  it('memoryWakeUp logs warning on failure', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = memoryWakeUp('/nonexistent/path/that/does/not/exist');
+      expect(result).toBe('');
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining('[memoryStore]'));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('pruneExpiredMemories logs warning on failure', () => {
+    const tempDir = createTempStateDir('orch-memory-corrupt-');
+    writeFileSync(join(tempDir, 'memory.db'), 'this is not a sqlite database');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = pruneExpiredMemories(tempDir);
+      expect(result).toBe(0);
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining('[memoryStore]'));
+    } finally {
+      spy.mockRestore();
+      cleanupTempStateDir(tempDir);
+    }
+  });
+
+  it('pruneByCapacity logs warning on failure', () => {
+    const tempDir = createTempStateDir('orch-memory-corrupt-');
+    writeFileSync(join(tempDir, 'memory.db'), 'this is not a sqlite database');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = pruneByCapacity(tempDir, 200);
+      expect(result).toBe(0);
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining('[memoryStore]'));
+    } finally {
+      spy.mockRestore();
+      cleanupTempStateDir(tempDir);
+    }
+  });
+});
+
+describe('FTS5 UPDATE trigger', () => {
+  it('FTS index stays consistent after content column update', () => {
+    initMemoryDb(dir);
+    // Use explicit tags to control what the FTS index contains for 'alpha'
+    storeDrawer(dir, { wing: 'w', hall: 'h', room: 'r', content: 'alpha keywords', tags: 'alpha' });
+    const db = getMemoryDb(dir);
+    // Update both content and tags so neither references 'alpha' after the update
+    db.prepare('UPDATE drawers SET content = ?, tags = ? WHERE content = ?').run('beta keywords', 'beta', 'alpha keywords');
+    const betaResults = searchMemory(dir, { query: 'beta' });
+    expect(betaResults.length).toBeGreaterThan(0);
+    const alphaResults = searchMemory(dir, { query: 'alpha' });
+    expect(alphaResults.length).toBe(0);
+  });
+
+  it('FTS UPDATE trigger does NOT fire on importance-only updates', () => {
+    initMemoryDb(dir);
+    storeDrawer(dir, { wing: 'w', hall: 'h', room: 'r', content: 'gamma keywords', importance: 5 });
+    const db = getMemoryDb(dir);
+    // Update only importance (non-FTS column) — trigger must not fire and corrupt FTS index
+    db.prepare('UPDATE drawers SET importance = ? WHERE content = ?').run(9, 'gamma keywords');
+    const results = searchMemory(dir, { query: 'gamma' });
+    expect(results.length).toBe(1);
+  });
+});
+
+describe('composite index', () => {
+  it('creates wing_room composite index', () => {
+    const db = initMemoryDb(dir);
+    const indexes = db.prepare("PRAGMA index_list('drawers')").all() as Array<{ name: string }>;
+    const names = indexes.map(i => i.name);
+    expect(names).toContain('idx_drawers_wing_room');
   });
 });
