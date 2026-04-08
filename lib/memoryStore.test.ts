@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   initMemoryDb, closeMemoryDb,
   storeDrawer, getDrawer, deleteDrawer, updateDrawerImportance, listDrawers,
+  extractKeywords,
 } from './memoryStore.ts';
 import { closeAllDatabases } from './eventLog.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -157,5 +158,59 @@ describe('drawer CRUD', () => {
     expect(page1.length).toBe(2);
     expect(page2.length).toBe(2);
     expect(page1[0]?.id).not.toBe(page2[0]?.id);
+  });
+});
+
+describe('duplicate detection and keyword tagging', () => {
+  it('populates content_hash on insert', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'hello world' });
+    const row = getDrawer(dir, id);
+    expect(row?.content_hash).toBeTruthy();
+    expect(typeof row?.content_hash).toBe('string');
+    expect(row?.content_hash).toHaveLength(64); // SHA-256 hex
+  });
+
+  it('returns existing ID for duplicate content', () => {
+    initMemoryDb(dir);
+    const id1 = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'duplicate content' });
+    const id2 = storeDrawer(dir, { hall: 'h2', room: 'r2', content: 'duplicate content' });
+    expect(id1).toBe(id2);
+    expect(listDrawers(dir).length).toBe(1);
+  });
+
+  it('stores different content as separate drawers', () => {
+    initMemoryDb(dir);
+    const id1 = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'content alpha' });
+    const id2 = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'content beta' });
+    expect(id1).not.toBe(id2);
+    expect(listDrawers(dir).length).toBe(2);
+  });
+
+  it('auto-extracts keywords when tags not provided', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'javascript typescript programming language' });
+    const row = getDrawer(dir, id);
+    expect(row?.tags).toBeTruthy();
+    expect(row?.tags).toContain('javascript');
+    expect(row?.tags).toContain('typescript');
+  });
+
+  it('preserves explicit tags without overwriting', () => {
+    initMemoryDb(dir);
+    const id = storeDrawer(dir, { hall: 'h1', room: 'r1', content: 'some content here', tags: 'mytag,custom' });
+    const row = getDrawer(dir, id);
+    expect(row?.tags).toBe('mytag,custom');
+  });
+
+  it('filters stopwords from extracted keywords', () => {
+    initMemoryDb(dir);
+    const keywords = extractKeywords('the quick brown fox and the lazy dog');
+    const parts = keywords.split(',');
+    expect(parts).not.toContain('the');
+    expect(parts).not.toContain('and');
+    expect(parts).toContain('quick');
+    expect(parts).toContain('brown');
+    expect(parts).toContain('lazy');
   });
 });

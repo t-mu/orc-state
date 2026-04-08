@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { registerDb, unregisterDb } from './eventLog.ts';
 
@@ -95,15 +96,35 @@ export interface Drawer {
   expires_at: string | null;
 }
 
+const STOPWORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+  'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+  'may', 'might', 'shall', 'can', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
+  'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+  'between', 'out', 'off', 'over', 'under', 'again', 'further', 'then', 'once',
+  'and', 'but', 'or', 'nor', 'not', 'so', 'yet', 'both', 'either', 'neither',
+  'this', 'that', 'these', 'those', 'it', 'its', 'he', 'she', 'they', 'them',
+  'we', 'you', 'i', 'me', 'my', 'our', 'your', 'his', 'her', 'their']);
+
+export function extractKeywords(text: string, maxCount = 20): string {
+  const words = text.toLowerCase().split(/[^a-z0-9_-]+/).filter(w => w.length > 2 && !STOPWORDS.has(w));
+  const freq = new Map<string, number>();
+  for (const w of words) freq.set(w, (freq.get(w) ?? 0) + 1);
+  return [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, maxCount).map(e => e[0]).join(',');
+}
+
 export function storeDrawer(stateDir: string, input: DrawerInput): number {
   const db = getMemoryDb(stateDir);
+  const contentHash = createHash('sha256').update(input.content.trim().toLowerCase()).digest('hex');
+  const existing = db.prepare('SELECT id FROM drawers WHERE content_hash = ?').get(contentHash) as { id: number } | undefined;
+  if (existing) return existing.id;
+  const tags = input.tags !== undefined ? input.tags : extractKeywords(input.content);
   const result = db.prepare(`
-    INSERT INTO drawers (wing, hall, room, content, importance, source_type, source_ref, agent_id, tags, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO drawers (wing, hall, room, content, content_hash, importance, source_type, source_ref, agent_id, tags, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    input.wing ?? 'general', input.hall, input.room, input.content,
+    input.wing ?? 'general', input.hall, input.room, input.content, contentHash,
     input.importance ?? 5, input.sourceType ?? null, input.sourceRef ?? null,
-    input.agentId ?? null, input.tags ?? null, new Date().toISOString(),
+    input.agentId ?? null, tags, new Date().toISOString(),
     input.expiresAt ?? null,
   );
   return Number(result.lastInsertRowid);
