@@ -2,7 +2,7 @@
 ref: general/152-lib-logger-abstraction
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 152 — Replace console.* with Zero-Dep Logger in lib Modules
