@@ -133,7 +133,7 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `run_inactive_nudge_interval_ms` | integer | `300000` | Interval between inactivity nudges (ms) |
 | `session_start_max_attempts` | integer | `3` | Max retry attempts for starting a worker session |
 | `session_start_retry_delay_ms` | integer | `30000` | Delay between session start retries (ms) |
-| `memory_prune_interval_ms` | integer | `3600000` | Interval between periodic memory pruning runs (ms). Set to `0` to disable periodic pruning (startup prune still runs). |
+| `memory_prune_interval_ms` | integer | `3600000` | Interval between periodic memory pruning runs (ms). Set to `0` to disable periodic pruning (startup prune still runs). Note: `0` can only be set via config file — the CLI flag does not accept zero. |
 
 All `coordinator` fields can also be passed as CLI flags to `coordinator.ts` (e.g., `--tick-interval-ms=10000`). CLI flags override config file values.
 
