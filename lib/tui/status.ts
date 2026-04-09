@@ -19,6 +19,7 @@ export interface PhaseEntry {
   name: string;
   state: 'done' | 'active' | 'stale' | 'error' | 'pending';
   duration_seconds: number | null;
+  started_at: string | null;
 }
 
 export interface TuiClaim {
@@ -118,7 +119,7 @@ export function buildPhases(
   return CANONICAL_PHASES.map((name) => {
     const idx = phaseHistory.findIndex((h) => h.phase === name);
     if (idx === -1) {
-      return { name, state: 'pending' as const, duration_seconds: null };
+      return { name, state: 'pending' as const, duration_seconds: null, started_at: null };
     }
     // A phase is done when it is NOT the last entry in the sorted history
     const isLastInHistory = phaseHistory[phaseHistory.length - 1]?.phase === name;
@@ -129,7 +130,7 @@ export function buildPhases(
             (new Date(nextInHistory.started_at).getTime() - new Date(phaseHistory[idx].started_at).getTime()) / 1000,
           )
         : null;
-      return { name, state: 'done' as const, duration_seconds };
+      return { name, state: 'done' as const, duration_seconds, started_at: null };
     }
     // Last phase in history — determine if active, stale, or error
     let state: PhaseEntry['state'];
@@ -140,7 +141,7 @@ export function buildPhases(
     } else {
       state = 'active';
     }
-    return { name, state, duration_seconds: null };
+    return { name, state, duration_seconds: null, started_at: phaseHistory[idx].started_at };
   });
 }
 
