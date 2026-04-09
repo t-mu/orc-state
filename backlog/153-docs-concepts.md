@@ -2,7 +2,7 @@
 ref: general/153-docs-concepts
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 153 — Create docs/concepts.md Terminology Reference
