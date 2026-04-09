@@ -9,7 +9,7 @@
   },
 
   "worker_pool": {
-    "max_workers": 1,
+    "max_workers": 2,
     "provider": "claude",
     "model": null,
     "execution_mode": "full-access",
