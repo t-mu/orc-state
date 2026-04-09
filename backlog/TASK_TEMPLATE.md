@@ -1,6 +1,7 @@
 ---
 ref: <feature>/<slug>
 feature: <feature-ref>
+review_level: full
 priority: normal
 status: todo
 ---

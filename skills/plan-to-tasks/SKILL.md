@@ -91,6 +91,32 @@ Steps 1, 2, and 3 all modify configuration in independent files — none consume
 output of another. Only step 4 has a real dependency (it needs 1, 2, 3 to exist to test).
 Default all of 1, 2, 3 to Independent; only 4 depends on them.
 
+## Step 2.5 — Optimize Task Grouping
+
+After inferring dependencies, optimize the task set for LLM execution cost.
+Each task incurs ~17K tokens of fixed overhead (bootstrap, AGENTS.md, explore).
+Fewer, well-scoped tasks save more than micro-optimizing per-task overhead.
+
+**Merge** sequential tasks when:
+- They touch the same files (no parallelism benefit from splitting)
+- Combined scope is ≤500 lines of changes
+- They form a logical unit ("would this be one PR?")
+
+**Merge** trivial-scope tasks (config edits, doc tweaks, dependency bumps)
+into a single housekeeping task with numbered subtasks in Implementation.
+
+**Keep separate** when:
+- Tasks touch different files and can run on parallel workers
+- Different expertise is needed (implementation vs testing vs docs)
+- Combined scope exceeds ~500 lines (context window risk)
+
+**Assign `review_level`** per task in frontmatter:
+- `none` — documentation, config, changelog, .gitignore changes
+- `light` — standard implementation touching ≤3 files, no state mutations
+- `full` — complex refactors, schema changes, state file mutations, multi-file architectural changes
+
+Default to `full` if unsure.
+
 ## Step 3 — Show Preview and Confirm
 
 Before writing any files, show a confirmation table. Use the **full `ref` slug**
