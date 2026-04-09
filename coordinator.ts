@@ -22,7 +22,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
@@ -1269,7 +1269,19 @@ async function probeActiveWorkerSessions(
 
     const adapter = getAdapter(agent.provider);
     const alive = await adapter.heartbeatProbe(agent.session_handle);
-    if (alive) continue;
+    if (alive) {
+      // Extend lease_expires_at for in_progress runs — PID is confirmed alive,
+      // prevent lease expiry during long phases (e.g. >30min implementation)
+      // where no phase events fire. Do NOT update last_heartbeat_at — that
+      // tracks real worker activity for staleness detection.
+      // Skip claimed runs (still in dispatch handshake).
+      if (claim.state === 'in_progress') {
+        try {
+          renewLeaseOnly(STATE_DIR, claim.run_id);
+        } catch { /* claim may have transitioned — safe to ignore */ }
+      }
+      continue;
+    }
 
     log(`worker ${claim.agent_id} PTY PID dead — expiring claim ${claim.run_id} and requeueing ${claim.task_ref}`);
     finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
