@@ -267,32 +267,27 @@ Every claim has a `lease_expires_at` timestamp. The lease duration is **30 minut
 
 - **Creation**: `lease_expires_at` is set to `now + 30m` when the claim is created.
 - **Renewal**: Each `orc run-heartbeat` call resets `lease_expires_at` to `now + 30m`.
+  Note: liveness is primarily determined by PID probing — heartbeat extends the lease
+  as a secondary observability signal, not as the main keep-alive mechanism.
 - **Expiry**: The coordinator periodically checks for claims where
   `lease_expires_at < now`. Expired claims are released, and the task is
   requeued (`status` -> `todo`) or blocked depending on policy.
 
 ### Heartbeat contract
 
-Workers MUST keep the lease alive by calling `orc run-heartbeat` at least
-once every 30 minutes. The recommended pattern is a background loop at
-270-second (4.5 min) intervals, started immediately after `orc run-start`:
+Liveness is determined by the coordinator: on each tick it probes the worker's
+PTY PID via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears
+the agent session, expires the claim, and requeues the task.
 
-```bash
-while true; do sleep 270; orc run-heartbeat --run-id=<id> --agent-id=<id>; done &
-HEARTBEAT_PID=$!
-```
+Workers emit `orc run-heartbeat` as a **protocol signal** at key lifecycle
+points, not as a periodic timer:
 
-The background loop must be killed before `orc run-finish` or `orc run-fail`:
-
-```bash
-kill $HEARTBEAT_PID 2>/dev/null || true
-```
-
-Fallback manual heartbeat sites (if the background process dies):
 - Before spawning sub-agent reviewers
 - Before `git rebase main`
 - Before `orc run-work-complete`
-- Every 5 minutes while waiting for coordinator follow-up
+
+The heartbeat updates `last_heartbeat_at` on the claim, providing an
+additional observability signal, but is not the primary liveness mechanism.
 
 ### Invariants
 
@@ -316,7 +311,7 @@ during task execution. These commands mutate claim state and emit events.
          v
   orc run-start                  claimed -> in_progress
          |
-         +---> orc run-heartbeat (repeating, extends lease)
+         +---> orc run-heartbeat (protocol signal at lifecycle points)
          |
          v
   [implement + test + review]
@@ -379,8 +374,7 @@ When a worker is blocked on ambiguous requirements or external dependencies:
 ```
 
 The `run-input-request` command blocks until a matching `run-input-respond`
-is received. The claim lease continues to be extended by the background
-heartbeat loop during the wait.
+is received. The claim lease remains active while the worker process is alive.
 
 ---
 
@@ -560,3 +554,9 @@ These invariants hold across all state files and must never be violated:
 
 7. **Write exclusivity**: State files are modified only through `orc` CLI
    commands or MCP tool handlers. Direct file writes by agents are forbidden.
+
+## See also
+
+- [Getting started](./getting-started.md)
+- [Architecture overview](./architecture.md)
+- [Configuration](./configuration.md)

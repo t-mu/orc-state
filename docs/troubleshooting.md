@@ -215,3 +215,9 @@ orc kill-all
 git checkout HEAD -- .orc-state/
 orc start-session --provider=claude
 ```
+
+## See also
+
+- [Recovery guide](./recovery.md)
+- [Contracts & invariants](./contracts.md)
+- [CLI reference](./cli.md)

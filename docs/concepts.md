@@ -125,3 +125,9 @@ _You'll encounter this when integrating a new AI provider or a non-standard tran
 like an HTTP API or remote SSH session._
 
 ---
+
+## See also
+
+- [Getting started](./getting-started.md)
+- [Architecture overview](./architecture.md)
+- [Contracts & invariants](./contracts.md)

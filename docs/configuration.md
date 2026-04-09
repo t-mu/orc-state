@@ -88,9 +88,17 @@ Location: `orchestrator.config.json` in the repository root (sibling of `.orc-st
 
 All fields are optional. Omitted fields use their defaults.
 
+> **Note:** Model names in examples (e.g., `claude-sonnet-4-20250514`) reflect
+> models available at time of writing and may change. Check your provider's
+> documentation for current model identifiers.
+
 ### `default_provider`
 
 Sets the fallback provider for both master and worker pool when neither a section-specific provider nor an environment variable is set. Must be `claude`, `codex`, or `gemini`.
+
+> The master defaults to `claude` (optimized for interactive conversation)
+> while workers default to `codex` (optimized for autonomous coding). Override
+> both via config file or environment variables.
 
 ### `default_execution_mode`
 
@@ -320,3 +328,9 @@ Or equivalently with a config file:
   }
 }
 ```
+
+## See also
+
+- [Getting started](./getting-started.md)
+- [CLI reference](./cli.md)
+- [Contracts & invariants](./contracts.md)

@@ -126,3 +126,9 @@ Each task run gets its own git worktree at `.worktrees/<run-id>/`. This means:
 
 The coordinator creates the worktree before dispatching the worker and removes it after
 a successful merge. Workers must not remove their own worktree or merge to main.
+
+## See also
+
+- [Concepts & terminology](./concepts.md)
+- [Writing custom adapters](./adapters.md)
+- [Contracts & invariants](./contracts.md)

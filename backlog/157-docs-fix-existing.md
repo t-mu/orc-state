@@ -2,7 +2,7 @@
 ref: general/157-docs-fix-existing
 feature: general
 priority: normal
-status: todo
+status: done
 depends_on:
   - general/153-docs-concepts
   - general/154-docs-architecture

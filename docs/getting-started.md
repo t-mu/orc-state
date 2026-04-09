@@ -155,7 +155,7 @@ orc doctor
 4. **Completion** — the worker marks the task done, rebases onto main, and signals `run-work-complete`
 5. **Merge** — the coordinator merges the worktree branch and cleans up
 
-Workers heartbeat every 4.5 minutes. If a worker goes silent, the coordinator expires the claim and requeues the task.
+The coordinator monitors worker health by probing the worker process. If a worker dies, the coordinator expires the claim and requeues the task.
 
 ## Next steps
 
@@ -163,3 +163,9 @@ Workers heartbeat every 4.5 minutes. If a worker goes silent, the coordinator ex
 - [CLI reference](./cli.md) — full command documentation
 - [Writing custom adapters](./adapters.md) — add support for new agent providers
 - [Contracts & invariants](./contracts.md) — system guarantees and state machine rules
+
+## See also
+
+- [Concepts & terminology](./concepts.md)
+- [Configuration](./configuration.md)
+- [CLI reference](./cli.md)
