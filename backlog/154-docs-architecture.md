@@ -33,6 +33,8 @@ through usage, but doesn't explain the system architecture. contracts.md covers
 invariants at depth but isn't a beginner-friendly overview. This doc fills the
 gap: the 30-second "how does this system work?" answer.
 
+**Start here:** `docs/concepts.md` (for terminology this doc will reference)
+
 **Affected files:**
 - `docs/architecture.md` — new file
 

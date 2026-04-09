@@ -43,8 +43,10 @@ Independent.
 3. **No flags or arguments documented.** Every command row has only a one-line
    description. No flags, arguments, or usage examples.
 
-All 52 command names in `cli/orc.ts` match the names in `docs/cli.md` — no
-name corrections needed.
+All 52 command names in `cli/orc.ts` are correctly named — no renaming is
+needed. Only the 4 missing memory commands need to be added.
+
+**Start here:** `docs/cli.md`
 
 **Affected files:**
 - `docs/cli.md` — existing file, add content

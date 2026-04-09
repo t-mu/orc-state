@@ -26,11 +26,11 @@ Independent.
 
 ## Context
 
-`docs/recovery.md` (66 lines) covers 3 scenarios: finalization failure, hung
-input request, and session start failure. These are well-written but the doc
-is incomplete for common operational situations.
+`docs/recovery.md` covers 3 scenarios: finalization failure, hung input
+request, and session start failure. These are well-written but the doc is
+incomplete for common operational situations.
 
-`docs/troubleshooting.md` (216 lines) covers overlapping ground with a mix
+`docs/troubleshooting.md` covers overlapping ground with a mix
 of single-symptom Q&A items and multi-step procedural fixes. The boundary
 between the two docs is unclear.
 
@@ -38,6 +38,8 @@ between the two docs is unclear.
 - `troubleshooting.md` = single-symptom Q&A: "I see X error → do Y"
 - `recovery.md` = multi-step operational procedures requiring judgment and
   multiple commands
+
+**Start here:** `docs/recovery.md`
 
 **Affected files:**
 - `docs/recovery.md` — add scenarios and boundary header

@@ -34,6 +34,8 @@ canonical glossary that other docs can link to.
 claims task, worker starts, sub-agent reviewers). `docs/contracts.md` defines terms
 in a system-contract context (lines 220+). Neither is a clean human-friendly glossary.
 
+**Start here:** `docs/getting-started.md` (to see how terms are currently used inline)
+
 **Affected files:**
 - `docs/concepts.md` — new file
 

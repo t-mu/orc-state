@@ -26,8 +26,6 @@ Depends on Tasks 153, 154, 155, 156 (needs new docs and corrected cli.md to exis
 - All human docs — add "See also" footer with cross-links
 
 **Out of scope:**
-- `docs/cli.md` (owned by Task 155)
-- `docs/recovery.md` and `docs/troubleshooting.md` (owned by Task 156)
 - `docs/concepts.md` and `docs/architecture.md` (created by Tasks 153-154)
 - AGENTS.md or any agent-facing documentation
 - Code changes
@@ -47,9 +45,11 @@ The documentation audit found several issues in existing human-facing docs:
    probing the worker's PTY PID. Heartbeat is a protocol signal, not a timer.
 
 3. **contracts.md** lines 274-295 prescribe a background heartbeat loop at
-   4.5-min intervals with "Workers MUST keep the lease alive." This
-   contradicts AGENTS.md which says liveness is PID-based and heartbeat is
-   a protocol signal at key lifecycle points. This section must be updated.
+   4.5-min intervals with "Workers MUST keep the lease alive." Line 319
+   shows "orc run-heartbeat (repeating, extends lease)" in the lifecycle
+   diagram. Line 382 references "background heartbeat loop during the wait."
+   All three contradict AGENTS.md which says liveness is PID-based and
+   heartbeat is a protocol signal at key lifecycle points.
 
 4. **configuration.md** hardcodes model names that will go stale. The
    master-defaults-to-claude / worker-defaults-to-codex asymmetry is
@@ -60,10 +60,12 @@ The documentation audit found several issues in existing human-facing docs:
 
 6. No doc links to any other doc via "See also" footers.
 
+**Start here:** `README.md` (primary entry point for consumers)
+
 **Affected files:**
 - `README.md` — add doc links
 - `docs/getting-started.md` — fix line 158, add concept links
-- `docs/contracts.md` — rewrite heartbeat section (lines 274-295)
+- `docs/contracts.md` — rewrite heartbeat section (lines 274-295, 319, 382)
 - `docs/configuration.md` — add notes
 - `docs/memory.md` — add parity note
 - `docs/adapters.md` — add architecture link
@@ -147,6 +149,10 @@ additional observability signal, but is not the primary liveness mechanism.
 
 Remove the background loop code example and "Workers MUST keep the lease alive" phrasing.
 
+Also fix:
+- Line 319: change "orc run-heartbeat (repeating, extends lease)" to "(protocol signal at lifecycle points)" in the Worker Lifecycle diagram.
+- Line 382: remove or rewrite the "background heartbeat loop during the wait" reference to match PID-based liveness model.
+
 ### Step 4 — Add notes to configuration.md
 
 **File:** `docs/configuration.md`
@@ -213,9 +219,10 @@ Add a `## See also` section at the bottom of each human-facing doc linking to
 - [ ] configuration.md has model-name caveat and default-asymmetry explanation.
 - [ ] memory.md has CLI/MCP parity note.
 - [ ] adapters.md links to architecture.md.
-- [ ] All human-facing docs have "See also" footers.
-- [ ] cli.md is NOT modified (owned by Task 155).
-- [ ] recovery.md and troubleshooting.md are NOT modified (owned by Task 156).
+- [ ] All human-facing docs have "See also" footers (including cli.md, recovery.md, troubleshooting.md).
+- [ ] cli.md changes are limited to adding a "See also" footer only (content owned by Task 155).
+- [ ] recovery.md and troubleshooting.md changes are limited to adding "See also" footers only (content owned by Task 156).
+- [ ] contracts.md lines 319 and 382 also updated to match PID-based liveness model.
 - [ ] No changes to files outside the stated scope.
 
 ---
