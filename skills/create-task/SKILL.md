@@ -13,7 +13,6 @@ argument-hint: "[task title or description]"
 $ARGUMENTS
 
 Use this skill when the user asks to create or refine a single backlog task `.md` file.
-For creating multiple tasks from an approved numbered plan, use `plan-to-tasks` instead.
 
 **Scope check:** Before writing, assess whether this task should be merged with
 related planned work. If the user has a multi-task plan in progress, suggest
