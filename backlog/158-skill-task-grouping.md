@@ -2,7 +2,7 @@
 ref: general/158-skill-task-grouping
 feature: general
 priority: high
-status: todo
+status: done
 review_level: none
 ---
 
