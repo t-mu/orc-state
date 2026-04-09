@@ -115,6 +115,11 @@
         "session_start_last_error": {
           "type": ["string", "null"],
           "description": "Most recent managed-slot session start failure reason for this claimed run."
+        },
+        "escalation_notified_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp when coordinator last emitted a worker_needs_attention notification for this run."
         }
       }
     }
