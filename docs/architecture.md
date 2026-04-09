@@ -64,7 +64,7 @@ implement tasks directly.
 ### Worker
 
 A worker is a headless agent session spawned by the coordinator for a single task run.
-It operates entirely inside an isolated git worktree (`./worktrees/<run-id>/`), follows
+It operates entirely inside an isolated git worktree (`.worktrees/<run-id>/`), follows
 a five-phase lifecycle (explore, implement, review, complete, finalize), and signals
 progress through `orc` CLI commands. When work is done, it signals the coordinator and
 waits for the merge.
