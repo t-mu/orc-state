@@ -1,5 +1,7 @@
 # Troubleshooting
 
+For multi-step recovery procedures, see [Recovery guide](./recovery.md).
+
 Common issues and recovery paths for `orc-state`.
 
 ---
