@@ -210,5 +210,5 @@ worktrees remain on disk and must be cleaned up manually if needed (see
 After `kill-all` completes, start a fresh session:
 
 ```bash
-orc start-session --provider=<provider>
+orc start-session
 ```
