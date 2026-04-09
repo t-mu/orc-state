@@ -2,7 +2,7 @@
 ref: general/155-docs-cli-complete
 feature: general
 priority: high
-status: todo
+status: done
 ---
 
 # Task 155 — Complete docs/cli.md CLI Reference
