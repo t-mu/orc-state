@@ -94,6 +94,8 @@ When a TASK_START block arrives:
      review_level: none
        Self-review: read your own diff against the acceptance criteria.
        If all criteria are met, proceed to step 7. No sub-agents spawned.
+       If criteria are not met, fix the issues in a fixup commit and repeat the self-review.
+       If the issue is unresolvable, call run-fail with --reason.
 
      review_level: light
        Spawn ONE reviewer (agents/reviewer.md) with:

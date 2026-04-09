@@ -460,6 +460,63 @@ describe('syncBacklogFromSpecs', () => {
     expect(readBacklog(dir).features[0].tasks[0].review_level).toBeUndefined();
   });
 
+  it('updates review_level on an existing task when spec changes it', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'Review Level Task',
+      review_level: 'light',
+    });
+    writeBacklog(dir, {
+      version: '1',
+      features: [{
+        ref: 'orch',
+        title: 'Orch',
+        tasks: [{
+          ref: 'orch/task-155-example',
+          title: 'Review Level Task',
+          status: 'todo',
+          task_type: 'implementation',
+          review_level: 'full',
+        }],
+      }],
+    });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].review_level).toBe('light');
+  });
+
+  it('clears review_level on an existing task when spec removes it', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'Review Level Task',
+    });
+    writeBacklog(dir, {
+      version: '1',
+      features: [{
+        ref: 'orch',
+        title: 'Orch',
+        tasks: [{
+          ref: 'orch/task-155-example',
+          title: 'Review Level Task',
+          status: 'todo',
+          task_type: 'implementation',
+          review_level: 'full',
+        }],
+      }],
+    });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].review_level).toBeUndefined();
+  });
+
   it('treats a missing backlog directory as an empty authoritative set', async () => {
     rmSync(join(dir, 'backlog'), { recursive: true, force: true });
     writeBacklog(dir, { version: '1', features: [] });

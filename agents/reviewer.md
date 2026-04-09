@@ -26,6 +26,11 @@ Check:
 
 Do NOT explore the codebase independently — review the provided diff only.
 
+You MUST call before returning (run_id and agent_id are in your prompt):
+  /home/node/.npm-global/bin/orc review-submit --run-id=<run_id> --agent-id=<your_agent_id> \
+    --outcome=<approved|findings> --reason="<findings text>"
+This is the ONLY orc command you may call.
+
 Output format — wrap your entire response in this block:
 
 REVIEW_FINDINGS
