@@ -77,8 +77,7 @@ dispatches a task, it creates a claim; the claim expires if the worker goes sile
 or fails. For the full claim schema and lifecycle rules, see
 [Contracts & invariants](./contracts.md).
 
-_You'll encounter this when reading `.orc-state/claims.json` or troubleshooting a
-stuck task._
+_You'll encounter this when troubleshooting a stuck task or reading `orc status` output._
 
 ---
 
@@ -94,10 +93,10 @@ _You'll encounter this in task refs, `orc status` output, and backlog file paths
 
 ### Worktree
 
-An isolated git checkout created for each worker, kept in `.worktrees/<run_id>/`. Each
-worker makes all its file changes inside its own worktree, so parallel workers never
-step on each other's changes. The coordinator merges the branch and deletes the worktree
-after the run completes.
+An isolated git checkout created for each worker in a dedicated directory. Each worker
+makes all its file changes inside its own worktree, so parallel workers never step on
+each other's changes. The coordinator merges the branch and deletes the worktree after
+the run completes.
 
 _You'll encounter this in `.worktrees/` directory listings and in error messages about
 git state._
@@ -118,20 +117,11 @@ runs your workers._
 ### Adapter
 
 The software layer that connects the orchestrator to a specific provider's CLI. An
-adapter implements a standard interface (`start`, `send`, `stop`, and others) so the
-coordinator never needs to know provider-specific details. For how to write a custom
-adapter, see [Writing custom provider adapters](./adapters.md).
+adapter implements a standard interface so the coordinator never needs to know
+provider-specific details. For how to write a custom adapter, see
+[Writing custom provider adapters](./adapters.md).
 
 _You'll encounter this when integrating a new AI provider or a non-standard transport
 like an HTTP API or remote SSH session._
 
 ---
-
-<!-- Task 157 cross-linking note:
-The following lines in docs/getting-started.md define terms inline and should link here instead:
-- Line 152: "Coordinator claims the task" (coordinator, claim)
-- Line 153: "Worker starts" / "in an isolated worktree" (worker, worktree, run)
-- Line 154: "sub-agent reviewers" (implicitly: worker spawning sub-agents for review)
-- Line 155: "the worker marks the task done" (task, run-work-complete flow)
-- Line 158: "Workers heartbeat every 4.5 minutes" (worker liveness — now coordinator-probed, may need update)
--->
