@@ -468,6 +468,54 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(claim.state).toBe('in_progress');
   });
 
+  it('renews lease when heartbeatProbe confirms PID is alive', async () => {
+    const nearExpiry = new Date(Date.now() + 5_000).toISOString(); // 5s from now
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-lease-renew',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        task_envelope_sent_at: new Date().toISOString(),
+        lease_expires_at: nearExpiry,
+        last_heartbeat_at: new Date(Date.now() - 1_500_000).toISOString(), // 25 min ago
+        started_at: new Date().toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockResolvedValue(true),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-lease-renew')!;
+    expect(claim).toBeDefined();
+    expect(claim.state).toBe('in_progress');
+    // Lease should have been extended well beyond the original 5s-from-now expiry
+    expect(new Date(claim.lease_expires_at).getTime()).toBeGreaterThan(Date.now() + 60_000);
+  });
+
   it('sets status=running and records session_handle after successful launch for an assigned task', async () => {
     seedState(dir, {
       agents: [{

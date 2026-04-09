@@ -190,6 +190,28 @@ export function heartbeat(
 }
 
 /**
+ * Extend lease_expires_at without updating last_heartbeat_at.
+ * Used by the coordinator PID probe to prevent lease expiry for alive workers
+ * during long phases, without resetting the activity timestamp that drives
+ * staleness detection.
+ */
+export function renewLeaseOnly(
+  stateDir: string,
+  runId: string,
+  { leaseDurationMs = DEFAULT_LEASE_MS }: { leaseDurationMs?: number } = {},
+): void {
+  withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim  = claims.claims.find((c) => c.run_id === runId);
+    if (!claim || !['claimed', 'in_progress'].includes(claim.state)) return;
+    const now = new Date();
+    if (claim.lease_expires_at && new Date(claim.lease_expires_at) < now) return; // already expired
+    claim.lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+  });
+}
+
+/**
  * Finish a run. success=true → task 'done'; false → requeue or block.
  */
 export function finishRun(
