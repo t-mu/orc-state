@@ -167,6 +167,16 @@ describe('applies lifecycle transitions through the reducer boundary', () => {
     }
   });
 
+  it('renews lease on review_submitted event', () => {
+    const claim = makeClaim({ state: 'in_progress', last_heartbeat_at: null });
+    const action = reduceLifecycleEvent(makeEvent({ event: 'review_submitted', ts: '2026-03-11T07:59:00.000Z' }), claim, NOW);
+    expect(action.type).toBe('heartbeat');
+    if (action.type === 'heartbeat') {
+      expect(action.leaseDurationMs).toBe(DEFAULT_LEASE_MS);
+      expect(action.at).toBe('2026-03-11T07:59:00.000Z');
+    }
+  });
+
   it('returns noop for phase events when claim is not in_progress', () => {
     const claim = makeClaim({ state: 'claimed' });
     const action = reduceLifecycleEvent(makeEvent({ event: 'phase_started' }), claim, NOW);

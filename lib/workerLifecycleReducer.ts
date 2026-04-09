@@ -57,6 +57,7 @@ const PHASE_EVENTS = new Set([
   'need_input',
   'input_provided',
   'unblocked',
+  'review_submitted',
 ]);
 
 // ── Timestamp helpers ──────────────────────────────────────────────────────

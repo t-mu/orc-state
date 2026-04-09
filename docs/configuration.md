@@ -77,7 +77,10 @@ Location: `orchestrator.config.json` in the repository root (sibling of `.orc-st
     "run_inactive_escalate_ms": 900000,
     "run_inactive_nudge_interval_ms": 300000,
     "session_start_max_attempts": 3,
-    "session_start_retry_delay_ms": 30000
+    "session_start_retry_delay_ms": 30000,
+    "worker_stale_soft_ms": 1800000,
+    "worker_stale_nudge_ms": 3600000,
+    "worker_stale_force_fail_ms": 7200000
   },
   "leases": {
     "default_ms": 1800000,
@@ -142,6 +145,9 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `session_start_max_attempts` | integer | `3` | Max retry attempts for starting a worker session |
 | `session_start_retry_delay_ms` | integer | `30000` | Delay between session start retries (ms) |
 | `memory_prune_interval_ms` | integer | `3600000` | Interval between periodic memory pruning runs (ms). Set to `0` to disable periodic pruning (startup prune still runs). Note: `0` can only be set via config file — the CLI flag does not accept zero. |
+| `worker_stale_soft_ms` | integer | `1800000` | Inactivity before soft alert — emits `worker_needs_attention` notification (30 min). |
+| `worker_stale_nudge_ms` | integer | `3600000` | Inactivity before PTY nudge message (60 min). |
+| `worker_stale_force_fail_ms` | integer | `7200000` | Inactivity before force-fail with `policy: requeue` (2 hours). |
 
 All `coordinator` fields can also be passed as CLI flags to `coordinator.ts` (e.g., `--tick-interval-ms=10000`). CLI flags override config file values.
 

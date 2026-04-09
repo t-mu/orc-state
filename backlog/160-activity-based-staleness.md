@@ -2,7 +2,7 @@
 ref: general/160-activity-based-staleness
 feature: general
 priority: high
-status: todo
+status: done
 review_level: full
 ---
 
