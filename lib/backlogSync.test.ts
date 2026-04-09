@@ -5,12 +5,13 @@ import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateH
 
 let dir: string;
 
-function writeSpec(baseDir: string, name: string, { ref, feature, status, title = 'Example Title' }: { ref?: string; feature?: string; status?: string; title?: string } = {}) {
+function writeSpec(baseDir: string, name: string, { ref, feature, status, title = 'Example Title', review_level }: { ref?: string; feature?: string; status?: string; title?: string; review_level?: string } = {}) {
   const frontmatter = [
     '---',
     ...(ref ? [`ref: ${ref}`] : []),
     ...(feature ? [`feature: ${feature}`] : []),
     ...(status ? [`status: ${status}`] : []),
+    ...(review_level !== undefined ? [`review_level: ${review_level}`] : []),
     '---',
     '',
   ].join('\n');
@@ -426,6 +427,37 @@ describe('syncBacklogFromSpecs', () => {
         task_type: 'implementation',
       },
     ]);
+  });
+
+  it('syncs review_level from task spec frontmatter', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'Review Level Task',
+      review_level: 'light',
+    });
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].review_level).toBe('light');
+  });
+
+  it('defaults review_level to undefined when absent from frontmatter', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'No Review Level',
+    });
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].review_level).toBeUndefined();
   });
 
   it('treats a missing backlog directory as an empty authoritative set', async () => {
