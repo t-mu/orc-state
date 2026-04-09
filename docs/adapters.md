@@ -1,5 +1,7 @@
 # Writing Custom Provider Adapters
 
+For how adapters fit into the overall system, see [Architecture overview](./architecture.md).
+
 An adapter bridges orc-state to a specific AI provider's CLI. The orchestrator
 core never talks to provider binaries directly -- it calls adapter methods
 (`start`, `send`, `stop`, etc.) and the adapter handles the provider-specific
@@ -201,3 +203,9 @@ Key points:
   output locally and print from the buffer.
 - Call `assertAdapterContract` at the end of your factory to catch mistakes
   early.
+
+## See also
+
+- [Architecture overview](./architecture.md)
+- [Contracts & invariants](./contracts.md)
+- [Getting started](./getting-started.md)

@@ -230,6 +230,10 @@ Exits 0 with an informative message if `memory.db` does not exist.
 
 ---
 
+> **Note:** The CLI commands and MCP tools are equivalent interfaces to the
+> same underlying memory store. Use CLI from the terminal, MCP from agent
+> tool calls — the results are identical.
+
 ## MCP Tools
 
 The memory system is also accessible to master agents through MCP tools. All tools are
@@ -473,3 +477,9 @@ orc doctor
 # Expected output includes:
 #   memory: ok (N drawers, X.X KB)
 ```
+
+## See also
+
+- [Contracts & invariants](./contracts.md)
+- [CLI reference](./cli.md)
+- [Architecture overview](./architecture.md)

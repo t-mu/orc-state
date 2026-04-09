@@ -25,12 +25,17 @@ See [full documentation](./docs/) for configuration and usage.
 
 ## Documentation
 
+- [Concepts & terminology](./docs/concepts.md)
+- [Architecture overview](./docs/architecture.md)
 - [Getting started](./docs/getting-started.md)
 - [Configuration](./docs/configuration.md)
 - [CLI reference](./docs/cli.md)
+- [Memory system](./docs/memory.md)
 - [Writing custom adapters](./docs/adapters.md)
+- [Testing](./docs/testing.md)
 - [Contracts & invariants](./docs/contracts.md)
 - [Troubleshooting](./docs/troubleshooting.md)
+- [Recovery guide](./docs/recovery.md)
 
 ## Disclaimer
 

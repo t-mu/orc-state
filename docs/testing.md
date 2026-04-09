@@ -153,3 +153,9 @@ boundary test. Path containment is verified at the filesystem level via
 - Real-provider smoke tests: add files under `e2e-real/` and use the shared
   harness in `e2e-real/harness/`. Gate new tests with `describe.skipIf(!ENABLED)`
   where `ENABLED = process.env.RUN_REAL_PROVIDERS === '1'`.
+
+## See also
+
+- [Getting started](./getting-started.md)
+- [Contracts & invariants](./contracts.md)
+- [CLI reference](./cli.md)
