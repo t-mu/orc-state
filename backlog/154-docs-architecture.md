@@ -2,7 +2,7 @@
 ref: general/154-docs-architecture
 feature: general
 priority: high
-status: todo
+status: done
 depends_on:
   - general/153-docs-concepts
 ---
