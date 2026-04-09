@@ -202,9 +202,9 @@ deleted -- completed and failed claims remain in the array as historical records
 | `agent_id` | string | yes | The agent executing this run |
 | `state` | ClaimState | yes | Current claim state |
 | `claimed_at` | ISO 8601 | yes | When the claim was created |
-| `lease_expires_at` | ISO 8601 | yes | When the lease expires without heartbeat |
+| `lease_expires_at` | ISO 8601 | yes | When the lease expires without activity |
 | `task_envelope_sent_at` | ISO 8601 | no | When the TASK_START envelope was sent |
-| `last_heartbeat_at` | ISO 8601 | no | Last heartbeat from worker |
+| `last_heartbeat_at` | ISO 8601 | no | Last activity timestamp from worker |
 | `started_at` | ISO 8601 | no | When `run-start` was called |
 | `finished_at` | ISO 8601 | no | When the run reached a terminal state |
 | `failure_reason` | string | no | Reason for failure (on `run-fail`) |
@@ -263,31 +263,23 @@ null                -- not waiting for input
 
 ### Lease mechanism
 
-Every claim has a `lease_expires_at` timestamp. The lease duration is **30 minutes**.
+Every claim has a `lease_expires_at` timestamp. The lease duration is **30 minutes** by default.
 
 - **Creation**: `lease_expires_at` is set to `now + 30m` when the claim is created.
-- **Renewal**: Each `orc run-heartbeat` call resets `lease_expires_at` to `now + 30m`.
-  Note: liveness is primarily determined by PID probing — heartbeat extends the lease
-  as a secondary observability signal, not as the main keep-alive mechanism.
+- **Renewal**: The coordinator automatically extends the lease whenever phase events
+  (`phase_started`, `phase_finished`, `review_submitted`, etc.) are processed.
 - **Expiry**: The coordinator periodically checks for claims where
   `lease_expires_at < now`. Expired claims are released, and the task is
   requeued (`status` -> `todo`) or blocked depending on policy.
 
-### Heartbeat contract
+### Worker liveness
 
 Liveness is determined by the coordinator: on each tick it probes the worker's
 PTY PID via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears
 the agent session, expires the claim, and requeues the task.
 
-Workers emit `orc run-heartbeat` as a **protocol signal** at key lifecycle
-points, not as a periodic timer:
-
-- Before spawning sub-agent reviewers
-- Before `git rebase main`
-- Before `orc run-work-complete`
-
-The heartbeat updates `last_heartbeat_at` on the claim, providing an
-additional observability signal, but is not the primary liveness mechanism.
+Lease renewal is automatic — the coordinator extends the lease whenever phase events
+are processed. Workers do not need to emit periodic heartbeats.
 
 ### Invariants
 
@@ -310,8 +302,6 @@ during task execution. These commands mutate claim state and emit events.
          |
          v
   orc run-start                  claimed -> in_progress
-         |
-         +---> orc run-heartbeat (protocol signal at lifecycle points)
          |
          v
   [implement + test + review]
@@ -339,7 +329,6 @@ during task execution. These commands mutate claim state and emit events.
 | Command | Precondition |
 |---------|-------------|
 | `run-start` | Claim exists with `state == "claimed"`, agent matches |
-| `run-heartbeat` | Claim exists with `state == "claimed"` or `"in_progress"` |
 | `run-work-complete` | Claim `state == "in_progress"`, task status is `done` |
 | `run-finish` | Claim `state == "in_progress"` or `"done"`, work-complete was called |
 | `run-fail` | Claim `state == "claimed"` or `"in_progress"` |
@@ -425,7 +414,7 @@ free-text queries across event, agent_id, run_id, task_ref, and payload.
 | Event | Emitted by | When |
 |-------|-----------|------|
 | `run_started` | Worker | `orc run-start` acknowledged |
-| `heartbeat` | Worker | Each `orc run-heartbeat` call |
+| `heartbeat` | Worker/Coordinator | Phase event processed (lease renewal) |
 | `work_complete` | Worker | `orc run-work-complete` |
 | `run_finished` | Worker | `orc run-finish` (terminal success) |
 | `run_failed` | Worker | `orc run-fail` (terminal failure) |
@@ -436,8 +425,8 @@ free-text queries across event, agent_id, run_id, task_ref, and payload.
 | Event | Emitted by | When |
 |-------|-----------|------|
 | `claim_created` | Coordinator | Task claimed for a worker |
-| `claim_renewed` | Worker | Heartbeat extended the lease |
-| `claim_expired` | Coordinator | Lease expired without heartbeat |
+| `claim_renewed` | Coordinator | Phase event extended the lease |
+| `claim_expired` | Coordinator | Lease expired (no recent activity) |
 | `claim_released` | Coordinator | Claim released after completion |
 
 #### Task events

@@ -76,16 +76,17 @@ const RUN_START_TIMEOUT_MS = intFlag('run-start-timeout-ms', COORD_CONFIG.run_st
 const SESSION_READY_TIMEOUT_MS = intFlag('session-ready-timeout-ms', COORD_CONFIG.session_ready_timeout_ms);
 const SESSION_READY_NUDGE_MS = intFlag('session-ready-nudge-ms', COORD_CONFIG.session_ready_nudge_ms);
 const SESSION_READY_NUDGE_INTERVAL_MS = intFlag('session-ready-nudge-interval-ms', COORD_CONFIG.session_ready_nudge_interval_ms);
-const RUN_INACTIVE_TIMEOUT_MS = intFlag('run-inactive-timeout-ms', COORD_CONFIG.run_inactive_timeout_ms);
 const RUN_START_NUDGE_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.1);
 const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
 const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', COORD_CONFIG.run_inactive_nudge_ms);
-const RUN_INACTIVE_ESCALATE_MS = intFlag('run-inactive-escalate-ms', COORD_CONFIG.run_inactive_escalate_ms);
 const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', COORD_CONFIG.run_inactive_nudge_interval_ms);
 const CONCURRENCY_LIMIT = COORD_CONFIG.concurrency_limit;
 const MANAGED_SESSION_START_MAX_ATTEMPTS = COORD_CONFIG.session_start_max_attempts;
 const MANAGED_SESSION_START_RETRY_DELAY_MS = COORD_CONFIG.session_start_retry_delay_ms;
 const MEMORY_PRUNE_INTERVAL_MS = intFlag('memory-prune-interval-ms', COORD_CONFIG.memory_prune_interval_ms);
+const WORKER_STALE_SOFT_MS = intFlag('worker-stale-soft-ms', COORD_CONFIG.worker_stale_soft_ms);
+const WORKER_STALE_NUDGE_MS = intFlag('worker-stale-nudge-ms', COORD_CONFIG.worker_stale_nudge_ms);
+const WORKER_STALE_FORCE_FAIL_MS = intFlag('worker-stale-force-fail-ms', COORD_CONFIG.worker_stale_force_fail_ms);
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 const REPO_ROOT = resolveRepoRoot();
@@ -1051,24 +1052,40 @@ async function enforceInProgressLifecycle(
     }
     // ── End remediation policy evaluation ─────────────────────────────────
 
-    // ── Existing time-based escalation cascade (default fallback) ─────────
-
-    if (idleMs >= RUN_INACTIVE_TIMEOUT_MS) {
+    // ── Activity-based staleness cascade (tiered inactivity response) ────────
+    // Tier 3: Force-fail after WORKER_STALE_FORCE_FAIL_MS of inactivity (2hr default)
+    if (idleMs >= WORKER_STALE_FORCE_FAIL_MS) {
       finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
         success: false,
-        failureReason: `run inactivity timeout: no progress for ${Math.round(idleMs / 1000)}s`,
-        failureCode: 'ERR_RUN_INACTIVITY_TIMEOUT',
+        failureReason: `force-failed after ${Math.round(idleMs / 60000)}min of inactivity`,
+        failureCode: 'ERR_STALE_WORKER',
         policy: 'requeue',
       });
       await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
       runInactiveNudgeAtMs.delete(claim.run_id);
       runNudgeCount.delete(claim.run_id);
       runLastPhase.delete(claim.run_id);
-      log(`run ${claim.run_id} timed out for inactivity; requeued ${claim.task_ref}`);
+      log(`run ${claim.run_id} force-failed after ${Math.round(idleMs / 60000)}min of inactivity; requeued ${claim.task_ref}`);
       continue;
     }
 
-    if (idleMs < RUN_INACTIVE_NUDGE_MS) continue;
+    // Tier 1: Soft alert at WORKER_STALE_SOFT_MS (30min default)
+    if (!claim.escalation_notified_at && idleMs >= WORKER_STALE_SOFT_MS) {
+      emit({
+        event: 'worker_needs_attention',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claim.run_id,
+        task_ref: claim.task_ref,
+        agent_id: claim.agent_id,
+        payload: { reason: 'stale', idle_ms: idleMs },
+      });
+      setEscalationNotified(STATE_DIR, claim.run_id);
+      log(`escalated stale worker ${claim.agent_id} for run ${claim.run_id}`);
+    }
+
+    // Tier 2: Nudge at WORKER_STALE_NUDGE_MS (60min default)
+    if (idleMs < WORKER_STALE_NUDGE_MS) continue;
     const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id);
     if (lastNudgeAt == null) {
       if (!agent?.session_handle || agent.status === 'offline') continue;
@@ -1093,21 +1110,6 @@ async function enforceInProgressLifecycle(
         log(`nudged ${claimSnapshot.agent_id} for stale in_progress run ${claimSnapshot.run_id} (phase: ${currentPhase ?? 'unknown'})`);
         return claimSnapshot.agent_id; // returned to caller for same-tick exclusion
       });
-      continue;
-    }
-
-    if (!claim.escalation_notified_at && idleMs >= RUN_INACTIVE_ESCALATE_MS) {
-      emit({
-        event: 'worker_needs_attention',
-        actor_type: 'coordinator',
-        actor_id: 'coordinator',
-        run_id: claim.run_id,
-        task_ref: claim.task_ref,
-        agent_id: claim.agent_id,
-        payload: { reason: 'stale', idle_ms: idleMs },
-      });
-      setEscalationNotified(STATE_DIR, claim.run_id);
-      log(`escalated stale worker ${claim.agent_id} for run ${claim.run_id}`);
       continue;
     }
 
@@ -1464,7 +1466,6 @@ const PHASE_NUDGE_MESSAGES: Record<string, string> = {
 };
 
 function buildInProgressNudge(claim: Claim, phase: string | null = null) {
-  const orcBin = resolveOrcBinSh(REPO_ROOT);
   const phaseHint = phase && PHASE_NUDGE_MESSAGES[phase]
     ? `Current phase: ${phase}. ${PHASE_NUDGE_MESSAGES[phase]}`
     : 'No phase signal received. Have you started exploring the task spec?';
@@ -1474,8 +1475,7 @@ function buildInProgressNudge(claim: Claim, phase: string | null = null) {
     `task_ref: ${claim.task_ref}`,
     `No recent activity detected.`,
     phaseHint,
-    `Call this command via your Bash tool to keep the run active:`,
-    `${orcBin} run-heartbeat --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `Emit the next phase signal via your Bash tool to continue the run.`,
     `RUN_NUDGE_END`,
   ].join('\n');
 }
@@ -1766,7 +1766,7 @@ export async function main() {
     } catch { /* best-effort */ }
     doShutdown().catch(() => { /* already shutting down */ });
   });
-  log(`starting — mode=${MODE} interval=${INTERVAL_MS}ms run_start_timeout=${RUN_START_TIMEOUT_MS}ms run_inactive_timeout=${RUN_INACTIVE_TIMEOUT_MS}ms run_inactive_nudge=${RUN_INACTIVE_NUDGE_MS}ms run_inactive_nudge_interval=${RUN_INACTIVE_NUDGE_INTERVAL_MS}ms`);
+  log(`starting — mode=${MODE} interval=${INTERVAL_MS}ms run_start_timeout=${RUN_START_TIMEOUT_MS}ms worker_stale_soft=${WORKER_STALE_SOFT_MS}ms worker_stale_nudge=${WORKER_STALE_NUDGE_MS}ms worker_stale_force_fail=${WORKER_STALE_FORCE_FAIL_MS}ms run_inactive_nudge=${RUN_INACTIVE_NUDGE_MS}ms run_inactive_nudge_interval=${RUN_INACTIVE_NUDGE_INTERVAL_MS}ms`);
   for (const file of ['backlog.json', 'agents.json', 'claims.json', 'events.db']) {
     if (!existsSync(join(STATE_DIR, file))) {
       console.error(`[coordinator] ERROR: required state file missing: ${file}`);

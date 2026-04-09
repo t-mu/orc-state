@@ -1173,7 +1173,7 @@ describe('agent ttl dead marking', () => {
 });
 
 describe('in-progress stale escalation', () => {
-  it('nudges first, then emits worker_needs_attention once after the escalation threshold', async () => {
+  it('emits worker_needs_attention at soft threshold and nudges at nudge threshold', async () => {
     seedState(dir, {
       agents: [{
         agent_id: 'worker-01',
@@ -1210,7 +1210,8 @@ describe('in-progress stale escalation', () => {
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const originalArgv = process.argv;
-    process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
+    // Both soft and nudge thresholds set to 1ms so they both fire
+    process.argv = [...process.argv.slice(0, 2), '--worker-stale-soft-ms=1', '--worker-stale-nudge-ms=1', '--run-inactive-nudge-interval-ms=60000'];
 
     const { tick } = await import('./coordinator.ts');
     await tick();
@@ -1221,8 +1222,9 @@ describe('in-progress stale escalation', () => {
     process.argv = originalArgv;
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(String(send.mock.calls[0]?.[1] ?? '')).toContain('run-heartbeat --run-id=run-stale-escalate --agent-id=worker-01');
-    expect(String(send.mock.calls[0]?.[1] ?? '')).not.toContain('\norc run-heartbeat');
+    // Nudge message should NOT contain deprecated run-heartbeat command
+    expect(String(send.mock.calls[0]?.[1] ?? '')).not.toContain('run-heartbeat');
+    expect(String(send.mock.calls[0]?.[1] ?? '')).toContain('RUN_NUDGE');
     const events = readEvents(dir);
     expect(events.filter((event) => event.event === 'need_input' && event.run_id === 'run-stale-escalate')).toHaveLength(1);
 
@@ -1235,7 +1237,7 @@ describe('in-progress stale escalation', () => {
     expect(claim.escalation_notified_at).toBeTruthy();
   });
 
-  it('does not emit worker_needs_attention before the initial nudge has fired', async () => {
+  it('emits worker_needs_attention at soft threshold without nudge when nudge threshold not reached', async () => {
     seedState(dir, {
       agents: [{
         agent_id: 'worker-01',
@@ -1251,7 +1253,7 @@ describe('in-progress stale escalation', () => {
         status: 'in_progress',
       }],
       claims: [{
-        run_id: 'run-stale-no-escalate-yet',
+        run_id: 'run-stale-soft-only',
         task_ref: 'proj/fix-bug',
         agent_id: 'worker-01',
         state: 'in_progress',
@@ -1272,16 +1274,21 @@ describe('in-progress stale escalation', () => {
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const originalArgv = process.argv;
-    process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
+    // Soft threshold fires but nudge threshold is very high (won't fire)
+    process.argv = [...process.argv.slice(0, 2), '--worker-stale-soft-ms=1', '--worker-stale-nudge-ms=99999999'];
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
     process.argv = originalArgv;
 
-    expect(send).toHaveBeenCalledTimes(1);
+    // No nudge sent since nudge threshold not reached
+    expect(send).toHaveBeenCalledTimes(0);
     const events = readEvents(dir);
-    expect(events.some((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-no-escalate-yet')).toBe(false);
+    // Soft alert still fires
+    expect(events.some((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-soft-only')).toBe(true);
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-stale-soft-only')!;
+    expect(claim.escalation_notified_at).toBeTruthy();
   });
 
   it('does not re-fire worker_needs_attention when the claim already has escalation_notified_at', async () => {
@@ -1321,7 +1328,7 @@ describe('in-progress stale escalation', () => {
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
 
     const originalArgv = process.argv;
-    process.argv = [...process.argv.slice(0, 2), '--run-inactive-nudge-ms=1', '--run-inactive-escalate-ms=1', '--run-inactive-nudge-interval-ms=60000'];
+    process.argv = [...process.argv.slice(0, 2), '--worker-stale-soft-ms=1', '--worker-stale-nudge-ms=1', '--run-inactive-nudge-interval-ms=60000'];
 
     const { tick } = await import('./coordinator.ts');
     await tick();
@@ -1336,6 +1343,108 @@ describe('in-progress stale escalation', () => {
     const events = readEvents(dir);
     expect(events.some((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-already-escalated')).toBe(false);
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('force-fails run after worker_stale_force_fail_ms inactivity', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-stale-force-fail',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        started_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        lease_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        last_heartbeat_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        escalation_notified_at: null,
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2), '--worker-stale-force-fail-ms=1'];
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    process.argv = originalArgv;
+
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-stale-force-fail')!;
+    expect(claim.state).toBe('failed');
+    expect(claim.failure_reason).toContain('inactivity');
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'proj/fix-bug')!;
+    expect(task.status).toBe('todo');
+  });
+
+  it('does not trigger staleness for workers below the soft threshold', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01',
+        provider: 'claude',
+        role: 'worker',
+        status: 'running',
+        session_handle: 'pty:worker-01',
+        provider_ref: null,
+        registered_at: new Date().toISOString(),
+      }],
+      tasks: [{
+        ...DISPATCHABLE_TASK,
+        status: 'in_progress',
+      }],
+      claims: [{
+        run_id: 'run-stale-not-yet',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        last_heartbeat_at: new Date().toISOString(),
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        escalation_notified_at: null,
+      }],
+    });
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+
+    const originalArgv = process.argv;
+    // Very high thresholds so nothing fires
+    process.argv = [...process.argv.slice(0, 2), '--worker-stale-soft-ms=99999999', '--worker-stale-nudge-ms=99999999', '--worker-stale-force-fail-ms=99999999'];
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    process.argv = originalArgv;
+
+    expect(send).not.toHaveBeenCalled();
+    const events = readEvents(dir);
+    expect(events.some((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-not-yet')).toBe(false);
+    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-stale-not-yet')!;
+    expect(claim.state).toBe('in_progress');
   });
 });
 

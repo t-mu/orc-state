@@ -42,6 +42,10 @@ export interface CoordinatorConfig {
   session_start_max_attempts: number;
   session_start_retry_delay_ms: number;
   memory_prune_interval_ms: number;
+  // Staleness detection thresholds (ms)
+  worker_stale_soft_ms: number;
+  worker_stale_nudge_ms: number;
+  worker_stale_force_fail_ms: number;
 }
 
 export interface LeaseConfig {
@@ -78,6 +82,9 @@ export const DEFAULT_COORDINATOR_CONFIG: Readonly<CoordinatorConfig> = Object.fr
   session_start_max_attempts: 3,
   session_start_retry_delay_ms: 30_000,
   memory_prune_interval_ms: 3_600_000,
+  worker_stale_soft_ms: 1_800_000,
+  worker_stale_nudge_ms: 3_600_000,
+  worker_stale_force_fail_ms: 7_200_000,
 });
 
 export const DEFAULT_LEASE_CONFIG: Readonly<LeaseConfig> = Object.freeze({
@@ -280,6 +287,9 @@ export function loadCoordinatorConfig({
     session_start_max_attempts: parsePositiveInteger(cc.session_start_max_attempts, 'coordinator.session_start_max_attempts') ?? DEFAULT_COORDINATOR_CONFIG.session_start_max_attempts,
     session_start_retry_delay_ms: parsePositiveInteger(cc.session_start_retry_delay_ms, 'coordinator.session_start_retry_delay_ms') ?? DEFAULT_COORDINATOR_CONFIG.session_start_retry_delay_ms,
     memory_prune_interval_ms: parseNonNegativeInteger(cc.memory_prune_interval_ms, 'coordinator.memory_prune_interval_ms') ?? DEFAULT_COORDINATOR_CONFIG.memory_prune_interval_ms,
+    worker_stale_soft_ms: parsePositiveInteger(cc.worker_stale_soft_ms, 'coordinator.worker_stale_soft_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_soft_ms,
+    worker_stale_nudge_ms: parsePositiveInteger(cc.worker_stale_nudge_ms, 'coordinator.worker_stale_nudge_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_nudge_ms,
+    worker_stale_force_fail_ms: parsePositiveInteger(cc.worker_stale_force_fail_ms, 'coordinator.worker_stale_force_fail_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_force_fail_ms,
   };
 }
 

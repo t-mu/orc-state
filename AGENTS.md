@@ -83,9 +83,7 @@ Write code changes. Write tests for all new logic. Run `npm test`.
 
 Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_id> --agent-id=<agent_id>`
 1. Commit your changes: `git commit -m "feat(<scope>): <outcome>"`
-2. Emit a heartbeat before spawning sub-agents:
-   `orc run-heartbeat --run-id=<run_id> --agent-id=<agent_id>`
-3. Spawn two independent sub-agent reviewers. Give each:
+2. Spawn two independent sub-agent reviewers. Give each:
    - the acceptance criteria from the task spec
    - the full diff: `git diff --stat --patch main...HEAD` (not just file names)
    - their run_id, agent_id, and reviewer number
@@ -109,20 +107,20 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
    compaction regardless of reviewer type.
    Reviewers are instructed to review the inlined diff only — not to explore
    the codebase independently.
-4. Retrieve findings: `orc review-read --run-id=<run_id>`
+3. Retrieve findings: `orc review-read --run-id=<run_id>`
    If a reviewer failed or is non-responsive, proceed with the reviews
    that were submitted. `orc review-read` exits 0 regardless of count.
    When reading reviewer output from an output file, grep for
    `REVIEW_FINDINGS_END` — if absent, the reviewer did not finish and
    should be treated as non-responsive.
-5. Retry for missing structured output (conversational reviewers only): for each
+4. Retry for missing structured output (conversational reviewers only): for each
    reviewer that submitted via `review-submit` but whose text output lacks
    `REVIEW_FINDINGS_END`, and whose conversation context is still active, send one
    follow-up message: "Your review-submit was received but the structured
    REVIEW_FINDINGS block is missing from your output. Emit only the block now."
    PTY-based reviewers cannot receive follow-up messages — treat them as
    non-responsive immediately. If retry fails, treat as non-responsive.
-6. Address ALL findings in a fixup commit.
+5. Address ALL findings in a fixup commit.
 
 **Gate:** Parse `orc review-read` output — all submitted reviewers report `approved`.
 `orc review-read` always exits 0; you MUST inspect the output for outcomes.
@@ -136,7 +134,7 @@ Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run
 2. Rebase onto main: `git rebase main`
    If conflicts arise: resolve each conflicted file, then `git add <file> && git rebase --continue`.
    Only call `orc run-fail` if a conflict is genuinely unresolvable.
-3. Signal the coordinator:
+3. Verify `npm test` passes, then signal the coordinator:
    `orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>`
 
 **Gate:** `run-work-complete` MUST exit 0. It rejects if task-mark-done was not called.
@@ -173,7 +171,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 2. Task authoring: edit `backlog/<N>-<slug>.md`
 3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. Run `orc backlog-sync-check` to verify.
 4. Task completion: `orc task-mark-done <task-ref>` (updates spec + state in one action)
-5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
+5. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
 6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
 7. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
 
@@ -222,7 +220,6 @@ Workers emit these from inside their PTY session via Bash tool:
 
 ```bash
 orc run-start --run-id=<id> --agent-id=<id>                        # required first — acknowledge task start
-orc run-heartbeat --run-id=<id> --agent-id=<id>                    # protocol signal — emit at key lifecycle points
 orc run-work-complete --run-id=<id> --agent-id=<id>                # signal impl+review+rebase done; wait for coordinator
 orc run-finish --run-id=<id> --agent-id=<id>                       # terminal success (after work-complete)
 orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
@@ -299,16 +296,12 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 | `any → blocked` | Worker (`orc run-fail --policy=block`) |
 | `blocked/claimed/in_progress → todo` | Operator (`orc task-reset <ref>`) |
 
-### Heartbeat requirement
+### Worker liveness
 
-Liveness is determined by the coordinator: on each tick it probes the worker's PTY PID
+Liveness is determined by the coordinator probing the worker's PTY PID
 via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears the agent session,
-expires the claim, and requeues the task. You do not need a background heartbeat loop.
-
-Workers emit `orc run-heartbeat` as a **protocol signal** at key lifecycle points:
-- Before spawning sub-agent reviewers
-- Immediately before `git rebase main`
-- Immediately before `orc run-work-complete`
+expires the claim, and requeues the task. Lease renewal is automatic —
+the coordinator extends the lease whenever phase events are processed.
 
 ---
 
