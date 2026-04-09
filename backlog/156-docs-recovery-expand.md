@@ -2,7 +2,7 @@
 ref: general/156-docs-recovery-expand
 feature: general
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 156 — Expand docs/recovery.md Operational Recovery Guide
