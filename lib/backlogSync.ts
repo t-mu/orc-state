@@ -21,6 +21,7 @@ interface SpecFrontmatter {
   ref: string | null;
   feature: string | null;
   status: string | null;
+  review_level: string | null;
 }
 
 function parseSpecFrontmatter(text: string): SpecFrontmatter {
@@ -29,6 +30,7 @@ function parseSpecFrontmatter(text: string): SpecFrontmatter {
     ref: block.match(/^ref:\s+(.+)$/m)?.[1]?.trim() ?? null,
     feature: (block.match(/^feature:\s+(.+)$/m)?.[1] ?? block.match(/^epic:\s+(.+)$/m)?.[1])?.trim() ?? null,
     status: block.match(/^status:\s+(.+)$/m)?.[1]?.trim() ?? null,
+    review_level: block.match(/^review_level:\s+(.+)$/m)?.[1]?.trim() ?? null,
   };
 }
 
@@ -44,6 +46,7 @@ export interface SpecEntry {
   feature: string;
   status: string;
   title: string;
+  review_level?: string;
 }
 
 export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
@@ -55,7 +58,7 @@ export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
     .sort((a, b) => basename(a).localeCompare(basename(b), 'en', { numeric: true }))
     .flatMap((rel) => {
       const text = readFileSync(join(docsDir, rel), 'utf8');
-      const { ref, feature, status } = parseSpecFrontmatter(text);
+      const { ref, feature, status, review_level } = parseSpecFrontmatter(text);
       if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return [];
       return [{
         file: rel,
@@ -63,6 +66,7 @@ export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
         feature,
         status,
         title: parseSpecTitle(text, ref),
+        ...(review_level !== null ? { review_level } : {}),
       }];
     });
 }
@@ -121,6 +125,7 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
           title: spec.title,
           status: spec.status as TaskStatus,
           task_type: 'implementation',
+          ...(spec.review_level !== undefined ? { review_level: spec.review_level as 'none' | 'light' | 'full' } : {}),
         },
       ];
       changed = true;
@@ -144,6 +149,13 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
 
     if (!ACTIVE_STATUSES.has(existingEntry.task.status) && existingEntry.task.status !== spec.status) {
       existingEntry.task.status = spec.status as TaskStatus;
+      changed = true;
+      taskUpdated = true;
+    }
+
+    const specReviewLevel = (spec.review_level as 'none' | 'light' | 'full' | undefined) ?? undefined;
+    if (existingEntry.task.review_level !== specReviewLevel) {
+      existingEntry.task.review_level = specReviewLevel;
       changed = true;
       taskUpdated = true;
     }

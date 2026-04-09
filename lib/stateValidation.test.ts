@@ -60,6 +60,19 @@ describe('validateBacklog', () => {
     expect(errors.length).toBeGreaterThan(0);
   });
 
+  it('accepts review_level values: none, light, full', () => {
+    for (const review_level of ['none', 'light', 'full']) {
+      const data = { version: '1', features: [validFeature({ tasks: [validTask({ review_level })] })] };
+      expect(validateBacklog(data)).toEqual([]);
+    }
+  });
+
+  it('rejects invalid review_level values', () => {
+    const data = { version: '1', features: [validFeature({ tasks: [validTask({ review_level: 'heavy' })] })] };
+    const errors = validateBacklog(data);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
   it('accepts all valid task statuses', () => {
     for (const status of ['todo', 'claimed', 'in_progress', 'blocked', 'done', 'released']) {
       const data = { version: '1', features: [validFeature({ tasks: [validTask({ status })] })] };

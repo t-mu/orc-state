@@ -88,6 +88,11 @@
           "items": { "type": "string" },
           "description": "Checklist items used in the task envelope sent to agents."
         },
+        "review_level": {
+          "type": "string",
+          "enum": ["none", "light", "full"],
+          "description": "Review intensity. none=self-review only, light=1 combined reviewer, full=2 reviewers (critic+integrator). Default: full."
+        },
         "attempt_count": {
           "type": "integer",
           "minimum": 0,

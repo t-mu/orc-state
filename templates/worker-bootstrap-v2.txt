@@ -86,14 +86,28 @@ When a TASK_START block arrives:
        git commit -m "feat(<scope>): <outcome>"
      Valid commit prefixes: feat(<scope>), fix(<scope>), chore(<scope>).
      Never use --no-verify or skip pre-commit hooks.
-  6. Sub-agent review round:
-       a. Emit a heartbeat before spawning (mandatory):
+  6. Sub-agent review round (depends on review_level from task spec frontmatter):
+       a. Emit a heartbeat before spawning sub-agents (mandatory):
             {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id=<agent_id>
-       b. Spawn two independent sub-agents. Give each:
-          - The acceptance criteria for this task
-          - The full diff output (not just file names): `git diff --stat --patch main...HEAD`
-          - Scope note: review only touched code and obvious adjacent regressions
-          - The following MANDATORY CONSTRAINTS block verbatim:
+       b. Branch on review_level:
+
+     review_level: none
+       Self-review: read your own diff against the acceptance criteria.
+       If all criteria are met, proceed to step 7. No sub-agents spawned.
+       If criteria are not met, fix the issues in a fixup commit and repeat the self-review.
+       If the issue is unresolvable, call run-fail with --reason.
+
+     review_level: light
+       Spawn ONE reviewer (agents/reviewer.md) with:
+       - The acceptance criteria for this task
+       - The full diff output (not just file names): `git diff --stat --patch main...HEAD`
+       - The REVIEWER CONSTRAINTS block below
+
+     review_level: full  (default when review_level is absent from frontmatter)
+       Spawn TWO independent reviewers (critic + integrator) with:
+       - The acceptance criteria for this task
+       - The full diff output (not just file names): `git diff --stat --patch main...HEAD`
+       - The REVIEWER CONSTRAINTS block below
 
           --- REVIEWER CONSTRAINTS (read this before doing anything) ---
           You are a code reviewer sub-agent operating at MAX_DEPTH=1.

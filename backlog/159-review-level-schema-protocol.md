@@ -2,7 +2,7 @@
 ref: general/159-review-level-schema-protocol
 feature: general
 priority: high
-status: todo
+status: done
 review_level: full
 ---
 
