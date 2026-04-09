@@ -267,6 +267,8 @@ Every claim has a `lease_expires_at` timestamp. The lease duration is **30 minut
 
 - **Creation**: `lease_expires_at` is set to `now + 30m` when the claim is created.
 - **Renewal**: Each `orc run-heartbeat` call resets `lease_expires_at` to `now + 30m`.
+  Note: liveness is primarily determined by PID probing — heartbeat extends the lease
+  as a secondary observability signal, not as the main keep-alive mechanism.
 - **Expiry**: The coordinator periodically checks for claims where
   `lease_expires_at < now`. Expired claims are released, and the task is
   requeued (`status` -> `todo`) or blocked depending on policy.
