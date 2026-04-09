@@ -15,10 +15,13 @@ describe('buildPhases', () => {
     const review = phases.find((p) => p.name === 'review')!;
     expect(explore.state).toBe('done');
     expect(explore.duration_seconds).toBe(72); // 1m12s
+    expect(explore.started_at).toBeNull();
     expect(implement.state).toBe('done');
     expect(implement.duration_seconds).toBe(545); // 9m5s
+    expect(implement.started_at).toBeNull();
     expect(review.state).toBe('active');
     expect(review.duration_seconds).toBeNull();
+    expect(review.started_at).toBe('2026-01-01T00:10:17Z');
   });
 
   it('marks latest phase as active when heartbeat fresh', () => {
@@ -30,6 +33,7 @@ describe('buildPhases', () => {
     const implement = phases.find((p) => p.name === 'implement')!;
     expect(implement.state).toBe('active');
     expect(implement.duration_seconds).toBeNull();
+    expect(implement.started_at).toBe('2026-01-01T00:05:00Z');
   });
 
   it('marks latest phase as stale when heartbeat >= 300s', () => {
@@ -65,7 +69,7 @@ describe('buildPhases', () => {
     expect(explore.state).toBe('error');
   });
 
-  it('marks unstarted phases as pending', () => {
+  it('marks unstarted phases as pending with null started_at', () => {
     const history = [
       { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
     ];
@@ -79,6 +83,7 @@ describe('buildPhases', () => {
     expect(complete.state).toBe('pending');
     expect(finalize.state).toBe('pending');
     expect(implement.duration_seconds).toBeNull();
+    expect(implement.started_at).toBeNull();
   });
 
   it('returns all 5 canonical phases', () => {
