@@ -10,11 +10,13 @@ beforeEach(() => {
   vi.resetModules();
   dir = createTempStateDir('pty-test-');
   process.env.ORC_STATE_DIR = dir;
+  process.env.ORC_CODEX_PROMPT_WAIT_MS = '10';
 });
 
 afterEach(() => {
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
+  delete process.env.ORC_CODEX_PROMPT_WAIT_MS;
 });
 
 function makeMockPty(pid = 12345) {
@@ -188,22 +190,17 @@ describe('pty adapter start()', () => {
     expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
   });
 
-  it('injects codex bootstrap via PTY after startup confirmation', async () => {
+  it('passes codex bootstrap as a CLI prompt argument', async () => {
     const { adapter, spawnSpy, ptyProcess } = await makeAdapter({ provider: 'codex' });
     await adapter.start('codex-worker', { execution_mode: 'full-access', system_prompt: 'BOOTSTRAP TEXT' });
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'BOOTSTRAP TEXT'],
       expect.any(Object),
     );
-    // Codex gets one Enter press to dismiss the workspace confirmation dialog,
-    // then the bootstrap text and a double-Enter submit.
-    expect(ptyProcess.write).toHaveBeenCalledTimes(4);
     expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, 'BOOTSTRAP TEXT');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(3, '\r');
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(4, '\r');
+    expect(ptyProcess.write).not.toHaveBeenCalledWith('BOOTSTRAP TEXT');
   });
 
   it('uses bypass mode for codex scout sessions too', async () => {
@@ -212,10 +209,29 @@ describe('pty adapter start()', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'SCOUT'],
       expect.any(Object),
     );
-    expect(ptyProcess.write).toHaveBeenNthCalledWith(2, 'SCOUT');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
+    expect(ptyProcess.write).not.toHaveBeenCalledWith('SCOUT');
+  });
+
+  it('preserves the normal Codex startup Enter outside the smoke harness', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('codex-worker', { execution_mode: 'full-access', system_prompt: 'BOOTSTRAP TEXT' });
+
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
+  });
+
+  it('does not send a blind Codex startup Enter in smoke mode when no workspace prompt is present', async () => {
+    const { adapter, ptyProcess } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('codex-worker', {
+      execution_mode: 'full-access',
+      system_prompt: 'BOOTSTRAP TEXT',
+      startup_profile: 'real-provider-smoke',
+    });
+
+    expect(ptyProcess.write).not.toHaveBeenCalled();
   });
 
   it('cleans up and does not write pid file when pty.spawn throws', async () => {
@@ -377,10 +393,12 @@ describe('pty adapter send()', () => {
     const { adapter, ptyProcess } = await makeAdapter({ provider: 'codex' });
     await adapter.start('bob', {});
 
-    // Codex start() pre-wrote CR (workspace dialog), so send() at positions 2+3.
+    // Normal Codex startup still sends one Enter to dismiss the workspace
+    // dialog if present, so send() writes land after that initial keypress.
     const result = await adapter.send('pty:bob', 'CHECK_WORK');
 
     expect(result).toBe('');
+    expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
     expect(ptyProcess.write).toHaveBeenNthCalledWith(2, 'CHECK_WORK');
     expect(ptyProcess.write).toHaveBeenNthCalledWith(3, '\r');
   });
@@ -750,16 +768,26 @@ describe('pty adapter getOutputTail()', () => {
 
 describe('detectBlockingPromptFromText()', () => {
   let detect: (text: string) => string | null;
+  let detectWorkspace: (text: string) => string | null;
 
   beforeEach(async () => {
     const mod = await import('./pty.ts');
     detect = mod.detectBlockingPromptFromText;
+    detectWorkspace = mod.detectCodexWorkspacePromptFromText;
   });
 
   // -- bracket/paren forms --
 
   it('matches [y/n] square-bracket form', () => {
     expect(detect('Apply these changes? [y/n]')).toBe('Apply these changes? [y/n]');
+  });
+
+  it('detects the Codex workspace confirmation prompt text', () => {
+    expect(detectWorkspace('You are in /tmp/test\n1. Yes, continue\nPress enter to continue\n')).toBe('Press enter to continue');
+  });
+
+  it('does not detect a Codex workspace prompt from unrelated text', () => {
+    expect(detectWorkspace('Codex ready.\nWaiting for input.\n')).toBeNull();
   });
 
   it('matches (y/n) parenthesis form', () => {

@@ -9,6 +9,7 @@ export interface RuntimeRepo {
   backlogDir: string;
   worktreesDir: string;
   artifactsDir: string;
+  commitAll(message: string): void;
   cleanup(): void;
 }
 
@@ -91,6 +92,10 @@ export function createRuntimeRepo(): RuntimeRepo {
     backlogDir,
     worktreesDir,
     artifactsDir,
+    commitAll(message: string) {
+      git(['add', '.'], repoRoot);
+      git(['commit', '-m', message], repoRoot);
+    },
     cleanup() {
       // Clean up the trust entry so ~/.claude/projects/ doesn't accumulate stale entries.
       const encoded = repoRoot.replace(/\//g, '-');

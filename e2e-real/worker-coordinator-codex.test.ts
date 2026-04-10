@@ -87,6 +87,7 @@ describe.skipIf(!ENABLED)('coordinator + real Codex worker smoke', () => {
       join(repo.backlogDir, BLESSED_TASK_2.specFile),
       buildBlessedTaskSpec(BLESSED_TASK_2, repo.repoRoot),
     );
+    repo.commitAll('chore: add smoke backlog specs');
 
     // Seed the managed-worker dispatch baseline (no master session needed).
     // Task 2 depends_on task 1 to enforce sequential dispatch order.

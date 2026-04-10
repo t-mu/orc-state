@@ -2839,7 +2839,7 @@ describe('buildTaskEnvelope', () => {
     expect(rendered).toContain('TASK_START v4');
     expect(rendered).toContain('task_ref: proj/fix-bug');
     expect(rendered).toContain('run_id: run-envelope-1');
-    expect(rendered).toContain('task_spec_path: docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
+    expect(rendered).toContain('task_spec_path: /tmp/orc-worktrees/run-envelope-1/docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-envelope-1');
     expect(rendered).toContain('TASK_END');
     expect(rendered).not.toContain('current_state:');

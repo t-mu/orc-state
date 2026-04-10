@@ -76,12 +76,78 @@ async function checkPty(): Promise<ProviderReadinessResult> {
 }
 
 /**
- * Check stage 3: CLI is spawnable noninteractively.
- * We call `<binary> --version` with a strict timeout. The process must exit
- * without hanging — we do not care about exit code or output content.
+ * Check stage 3: CLI is spawnable in the way the real-provider suite uses it.
+ *
+ * For Codex, that means a short interactive PTY launch. `codex --version` is
+ * too weak because the real failure mode happens on interactive startup.
+ *
+ * For other providers, `<binary> --version` remains sufficient as a cheap
+ * smoke check until they need a stronger probe.
  */
-function checkSpawn(provider: string): ProviderReadinessResult {
+async function checkSpawn(provider: string): Promise<ProviderReadinessResult> {
   const binary = PROVIDER_BINARIES[provider] ?? provider;
+  if (provider === 'codex') {
+    try {
+      const { default: pty } = await import('node-pty');
+      const env = stripNestedProviderEnv(process.env) as Record<string, string>;
+      const args = ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'];
+
+      return await new Promise<ProviderReadinessResult>((resolve) => {
+        let settled = false;
+        let output = '';
+
+        const finish = (result: ProviderReadinessResult) => {
+          if (settled) return;
+          settled = true;
+          resolve(result);
+        };
+
+        try {
+          const proc = pty.spawn(binary, args, {
+            name: 'xterm-256color',
+            cols: 120,
+            rows: 30,
+            cwd: process.cwd(),
+            env,
+          });
+
+          proc.onData((chunk) => {
+            output += chunk;
+            if (output.length > 4000) output = output.slice(-4000);
+          });
+
+          proc.onExit(({ exitCode, signal }) => {
+            finish({
+              ok: false,
+              failedStage: 'spawn',
+              message:
+                `Provider '${provider}': interactive PTY launch exited immediately ` +
+                `(exitCode=${exitCode}${signal != null ? `, signal=${signal}` : ''}). ` +
+                `Output tail: ${(output || '(empty)').trim()}`,
+            });
+          });
+
+          setTimeout(() => {
+            try { proc.kill(); } catch { /* ignore */ }
+            finish({ ok: true, failedStage: null, message: '' });
+          }, 3000);
+        } catch (err) {
+          finish({
+            ok: false,
+            failedStage: 'spawn',
+            message: `Provider '${provider}': failed to start interactive PTY probe: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        failedStage: 'spawn',
+        message: `Provider '${provider}': failed to initialize PTY readiness probe: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   try {
     const result = spawnSync(binary, ['--version'], {
       env: stripNestedProviderEnv(process.env),
@@ -120,7 +186,7 @@ export async function checkProviderReadiness(provider: string): Promise<Provider
   const ptyResult = await checkPty();
   if (!ptyResult.ok) return ptyResult;
 
-  const spawnResult = checkSpawn(provider);
+  const spawnResult = await checkSpawn(provider);
   if (!spawnResult.ok) return spawnResult;
 
   return { ok: true, failedStage: null, message: '' };

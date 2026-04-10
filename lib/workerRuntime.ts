@@ -7,6 +7,7 @@ import type { ExecutionMode } from './providers.ts';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import type { WorkerBootstrapProfile } from './sessionBootstrap.ts';
 
 function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
   Object.assign(agent, updates);
@@ -116,8 +117,24 @@ interface Adapter {
     working_directory: string | null | undefined;
     read_only?: boolean;
     execution_mode?: 'full-access' | 'sandbox';
+    startup_profile?: 'default' | 'real-provider-smoke';
     env: Record<string, string>;
   }): Promise<{ session_handle: string; provider_ref: unknown }>;
+}
+
+function resolveWorkerBootstrapProfile(env: NodeJS.ProcessEnv = process.env): WorkerBootstrapProfile {
+  return env.ORC_WORKER_BOOTSTRAP_PROFILE === 'smoke' ? 'smoke' : 'default';
+}
+
+function resolveWorkerStartupProfile(env: NodeJS.ProcessEnv = process.env): 'default' | 'real-provider-smoke' {
+  return env.ORC_WORKER_STARTUP_PROFILE === 'real-provider-smoke' ? 'real-provider-smoke' : 'default';
+}
+
+function stripWorkerProfileControlEnv(env: Record<string, string>): Record<string, string> {
+  const next = { ...env };
+  delete next.ORC_WORKER_BOOTSTRAP_PROFILE;
+  delete next.ORC_WORKER_STARTUP_PROFILE;
+  return next;
 }
 
 export async function launchWorkerSession(
@@ -150,15 +167,25 @@ export async function launchWorkerSession(
   try {
     const nowIso = new Date().toISOString();
     const effectiveMode: ExecutionMode = agent.role === 'scout' ? 'sandbox' : (executionMode ?? 'full-access');
-    const workerEnv = normalizeWorkerEnv({
+    const workerEnv = stripWorkerProfileControlEnv(normalizeWorkerEnv({
       ORC_STATE_DIR: stateDir,
-    }, repoRoot);
+    }, repoRoot));
+    const workerBootstrapProfile = resolveWorkerBootstrapProfile();
+    const workerStartupProfile = resolveWorkerStartupProfile();
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
-      system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc', sessionToken),
+      system_prompt: buildSessionBootstrap(
+        agent.agent_id,
+        agent.provider,
+        agent.role ?? 'worker',
+        workerEnv.ORC_BIN ?? 'orc',
+        sessionToken,
+        { workerBootstrapProfile },
+      ),
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
       read_only: agent.role === 'scout',
       execution_mode: effectiveMode,
+      startup_profile: workerStartupProfile,
       env: workerEnv,
     });
     const updates: Partial<Agent> = {

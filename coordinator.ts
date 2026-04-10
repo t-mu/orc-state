@@ -47,7 +47,7 @@ import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } f
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
@@ -1454,11 +1454,19 @@ async function executeDispatchPlan(
 export function buildTaskEnvelope(taskRef: string, runId: string, agentId: string) {
   const taskSpec = readTaskSpecSections(taskRef);
   const runWorktree = getRunWorktree(STATE_DIR, runId);
+  const taskSpecPath = (() => {
+    if (!taskSpec.source_path) return '(task spec not found)';
+    if (!runWorktree?.worktree_path) return taskSpec.source_path;
+    const repoRelativePath = isAbsolute(taskSpec.source_path)
+      ? relative(REPO_ROOT, taskSpec.source_path)
+      : taskSpec.source_path;
+    return join(runWorktree.worktree_path, repoRelativePath);
+  })();
   return renderTemplate('task-envelope-v2.txt', {
     task_ref: taskRef,
     run_id: runId,
     agent_id: agentId,
-    task_spec_path: taskSpec.source_path ?? '(task spec not found)',
+    task_spec_path: taskSpecPath,
     assigned_worktree: runWorktree?.worktree_path ?? join(WORKTREES_DIR, runId),
     orc_bin: resolveOrcBinSh(REPO_ROOT),
   });

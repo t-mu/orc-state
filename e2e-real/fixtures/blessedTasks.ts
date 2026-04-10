@@ -9,7 +9,7 @@
  *
  * Each task is trivially implementable — the point is to exercise the full
  * worker lifecycle (explore → implement → review → complete → finalize),
- * not to challenge the LLM's coding ability.
+ * using the smoke bootstrap profile used by the real-provider suite.
  *
  * Both tasks use Node's built-in test runner (node:test) so no npm install
  * is needed in the temp repo.
@@ -77,8 +77,9 @@ export function blessedTask2BacklogEntry(): Record<string, unknown> {
  *
  * The spec describes a trivially implementable task (create a module that
  * exports a marker value, plus a test using node:test). The worker follows
- * the full phased workflow from the bootstrap template — including npm test,
- * git commit, sub-agent reviews, rebase, and all lifecycle commands.
+ * the smoke phased workflow from the real-provider bootstrap profile —
+ * including npm test, git commit, rebase, and lifecycle commands, but
+ * intentionally skipping the reviewer sub-agent round.
  */
 export function buildBlessedTaskSpec(task: BlessedTask, _repoRoot: string): string {
   const num = task.ref.endsWith('task-1') ? '1' : '2';

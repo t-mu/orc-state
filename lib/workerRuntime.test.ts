@@ -127,6 +127,7 @@ interface TestAdapter {
     working_directory: string | null | undefined;
     read_only?: boolean;
     execution_mode?: 'full-access' | 'sandbox';
+    startup_profile?: 'default' | 'real-provider-smoke';
     env: Record<string, string>;
   }): Promise<{ session_handle: string; provider_ref: unknown }>;
 }
@@ -165,6 +166,7 @@ describe('launchWorkerSession execution mode', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.resetModules();
   });
 
@@ -224,6 +226,66 @@ describe('launchWorkerSession execution mode', () => {
     expect(adapterStartSpy).toHaveBeenCalledWith(
       'test-worker',
       expect.objectContaining({ execution_mode: 'full-access' }),
+    );
+  });
+
+  it('defaults worker startup/bootstrap profiles to default', async () => {
+    vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
+    const buildSessionBootstrapSpy = vi.fn(() => 'BOOTSTRAP');
+    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    const agent = makeAgent({ provider: 'codex' });
+    await launchWorkerSession('/tmp/state', agent, {
+      adapter,
+      workingDirectory: '/tmp/work',
+      emit: vi.fn(),
+      repoRoot: null,
+    });
+    expect(adapterStartSpy).toHaveBeenCalledWith(
+      'test-worker',
+      expect.objectContaining({ startup_profile: 'default' }),
+    );
+    expect(buildSessionBootstrapSpy).toHaveBeenCalledWith(
+      'test-worker',
+      'codex',
+      'worker',
+      'orc',
+      expect.any(String),
+      expect.objectContaining({ workerBootstrapProfile: 'default' }),
+    );
+  });
+
+  it('passes smoke worker startup/bootstrap profiles explicitly from coordinator env', async () => {
+    vi.stubEnv('ORC_WORKER_BOOTSTRAP_PROFILE', 'smoke');
+    vi.stubEnv('ORC_WORKER_STARTUP_PROFILE', 'real-provider-smoke');
+    vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
+    const buildSessionBootstrapSpy = vi.fn(() => 'BOOTSTRAP');
+    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    const agent = makeAgent({ provider: 'codex' });
+    await launchWorkerSession('/tmp/state', agent, {
+      adapter,
+      workingDirectory: '/tmp/work',
+      emit: vi.fn(),
+      repoRoot: null,
+    });
+    expect(adapterStartSpy).toHaveBeenCalledWith(
+      'test-worker',
+      expect.objectContaining({
+        startup_profile: 'real-provider-smoke',
+        env: expect.not.objectContaining({
+          ORC_WORKER_BOOTSTRAP_PROFILE: expect.any(String),
+          ORC_WORKER_STARTUP_PROFILE: expect.any(String),
+        }),
+      }),
+    );
+    expect(buildSessionBootstrapSpy).toHaveBeenCalledWith(
+      'test-worker',
+      'codex',
+      'worker',
+      'orc',
+      expect.any(String),
+      expect.objectContaining({ workerBootstrapProfile: 'smoke' }),
     );
   });
 });

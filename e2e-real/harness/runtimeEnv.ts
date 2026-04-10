@@ -1,7 +1,8 @@
 import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { stripNestedProviderEnv } from '../../lib/providerChildEnv.ts';
 import type { RuntimeRepo } from './runtimeRepo.ts';
+import { writeOrcWrapper } from './orcWrapper.ts';
 
 export interface RuntimeEnv {
   env: NodeJS.ProcessEnv;
@@ -18,7 +19,9 @@ export interface RuntimeEnv {
  * @param provider - Worker provider for the coordinator config (default: 'claude').
  */
 export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): RuntimeEnv {
-  const configPath = join(repo.repoRoot, 'orc-state.config.json');
+  const configPath = join(repo.repoRoot, 'orchestrator.config.json');
+  const orcWrapperPath = writeOrcWrapper(repo.repoRoot);
+  const wrapperBinDir = join(repo.repoRoot, 'bin');
 
   const config = {
     default_provider: provider,
@@ -45,10 +48,15 @@ export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): Runtime
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
     ORC_STATE_DIR: repo.stateDir,
+    PATH: [wrapperBinDir, baseEnv.PATH ?? process.env.PATH ?? ''].filter(Boolean).join(delimiter),
+    ORC_STATE_DIR: repo.stateDir,
     ORC_REPO_ROOT: repo.repoRoot,
     ORC_WORKTREES_DIR: repo.worktreesDir,
     ORC_BACKLOG_DIR: repo.backlogDir,
     ORC_CONFIG_FILE: configPath,
+    ORC_WORKER_BOOTSTRAP_PROFILE: 'smoke',
+    ORC_WORKER_STARTUP_PROFILE: 'real-provider-smoke',
+    ORC_BIN: orcWrapperPath,
   };
 
   return { env, cwd: repo.repoRoot };

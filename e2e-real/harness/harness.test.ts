@@ -27,7 +27,7 @@ import {
   assertPathsInside,
   assertRuntimePathsInside,
 } from './assertions.ts';
-import { BLESSED_TASK_1, BLESSED_TASK_2, blessedTask1BacklogEntry, blessedTask2BacklogEntry } from '../fixtures/blessedTasks.ts';
+import { BLESSED_TASK_1, BLESSED_TASK_2, blessedTask1BacklogEntry, blessedTask2BacklogEntry, buildBlessedTaskSpec } from '../fixtures/blessedTasks.ts';
 import { initEventsDb, appendSequencedEvent } from '../../lib/eventLog.ts';
 import { atomicWriteJson } from '../../lib/atomicWrite.ts';
 
@@ -43,6 +43,18 @@ afterEach(() => {
 // ── Managed worker seed ─────────────────────────────────────────────────────
 
 describe('seedManagedWorkerBaseline', () => {
+  it('can commit smoke backlog specs into the temp repo before dispatch', () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    writeFileSync(join(repo.backlogDir, BLESSED_TASK_1.specFile), buildBlessedTaskSpec(BLESSED_TASK_1, repo.repoRoot));
+    repo.commitAll('chore: add smoke backlog specs');
+
+    const log = spawnSync('git', ['log', '--oneline', '-n', '1'], { cwd: repo.repoRoot, encoding: 'utf8' });
+    expect(log.status).toBe(0);
+    expect(log.stdout).toContain('chore: add smoke backlog specs');
+  });
+
   it('seeds the managed-worker dispatch baseline without a master session', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
@@ -112,6 +124,17 @@ describe('checkProviderReadiness', () => {
     expect(result.failedStage).toBe('binary');
     // Message must be diagnosable — include provider and binary name
     expect(result.message.length).toBeGreaterThan(20);
+  });
+
+  it('pins the smoke worker bootstrap profile into the real-provider runtime env', () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    const runtimeEnv = buildRuntimeEnv(repo, 'codex');
+    expect(runtimeEnv.env.ORC_WORKER_BOOTSTRAP_PROFILE).toBe('smoke');
+    expect(runtimeEnv.env.ORC_WORKER_STARTUP_PROFILE).toBe('real-provider-smoke');
+    expect(runtimeEnv.env.ORC_BIN).toBe(join(repo.repoRoot, 'bin', 'orc'));
+    expect(runtimeEnv.env.PATH?.split(':')[0]).toBe(join(repo.repoRoot, 'bin'));
   });
 });
 

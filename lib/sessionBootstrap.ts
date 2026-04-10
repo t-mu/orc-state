@@ -2,6 +2,7 @@ import { renderTemplate } from './templateRender.ts';
 import { isSupportedProvider, type ProviderName } from './providers.ts';
 
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
+const WORKER_BOOTSTRAP_SMOKE_TEMPLATE = 'worker-bootstrap-smoke-v1.txt';
 const SCOUT_BOOTSTRAP_TEMPLATE = 'scout-bootstrap-v1.txt';
 
 const MASTER_BOOTSTRAP_TEMPLATE = 'master-bootstrap-v1.txt';
@@ -20,6 +21,15 @@ function renderBootstrap(template: string, provider: string, agentId: string): s
     provider,
     session_token: 'session-token-unset',
   });
+}
+
+export type WorkerBootstrapProfile = 'default' | 'smoke';
+
+function resolveWorkerTemplate(role: string, workerBootstrapProfile: WorkerBootstrapProfile = 'default'): string {
+  if (role === 'worker' && workerBootstrapProfile === 'smoke') {
+    return WORKER_BOOTSTRAP_SMOKE_TEMPLATE;
+  }
+  return WORKER_BOOTSTRAP_TEMPLATE;
 }
 
 export function getWorkerBootstrap(provider: string): string;
@@ -51,7 +61,15 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string): string;
-export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string = 'orc', sessionToken: string = 'session-token-unset'): string {
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile }): string;
+export function buildSessionBootstrap(
+  agentId: string,
+  provider: string,
+  role: string,
+  orcBin: string = 'orc',
+  sessionToken: string = 'session-token-unset',
+  options: { workerBootstrapProfile?: WorkerBootstrapProfile } = {},
+): string {
   if (role === 'master') return getMasterBootstrap(provider, agentId);
   if (role === 'scout') {
     return renderTemplate(SCOUT_BOOTSTRAP_TEMPLATE, {
@@ -61,7 +79,7 @@ export function buildSessionBootstrap(agentId: string, provider: string, role: s
       session_token: sessionToken,
     });
   }
-  return renderTemplate(WORKER_BOOTSTRAP_TEMPLATE, {
+  return renderTemplate(resolveWorkerTemplate(role, options.workerBootstrapProfile ?? 'default'), {
     agent_id: agentId,
     orc_bin: orcBin,
     provider,

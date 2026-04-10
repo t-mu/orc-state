@@ -80,6 +80,21 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toContain('session_token: token-456');
   });
 
+  it('uses smoke worker bootstrap when requested explicitly', () => {
+    const rendered = buildSessionBootstrap('smoke-worker', 'codex', 'worker', '/usr/local/bin/orc', 'token-smoke', {
+      workerBootstrapProfile: 'smoke',
+    });
+    expect(rendered).toContain('WORKER_BOOTSTRAP_SMOKE');
+    expect(rendered).toContain('Do NOT spawn sub-agents in this smoke profile.');
+    expect(rendered).not.toContain('REVIEWER CONSTRAINTS');
+  });
+
+  it('uses the default worker bootstrap when no smoke profile is requested', () => {
+    const rendered = buildSessionBootstrap('worker-1', 'codex', 'worker', '/usr/local/bin/orc', 'token-default');
+    expect(rendered).not.toContain('WORKER_BOOTSTRAP_SMOKE');
+    expect(rendered).toContain('WORKER_BOOTSTRAP');
+  });
+
   it('uses scout-bootstrap-v1.txt for scout role', () => {
     const rendered = buildSessionBootstrap('scout-1', 'codex', 'scout', 'orc', 'scout-token');
     expect(rendered).toContain('SCOUT_BOOTSTRAP');

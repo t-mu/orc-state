@@ -39,8 +39,11 @@ const PROVIDER_BINARIES: Record<string, string> = {
 };
 
 const OUTPUT_TAIL_BYTES  = 8 * 1024; // 8 KB
+const RECENT_OUTPUT_BYTES = 16 * 1024;
 const STARTUP_DELAY_MS   = 1500;     // wait for CLI to initialise before sending bootstrap
 const BYPASS_SETTLE_MS   = 800;      // wait after bypass-accept for dialog to dismiss
+const CODEX_PROMPT_WAIT_MS = Number.parseInt(process.env.ORC_CODEX_PROMPT_WAIT_MS ?? '10000', 10);  // smoke harness override for Codex trust/workspace prompt polling
+const CODEX_PROMPT_POLL_MS = 250;
 // PTY-scan patterns must be narrow to avoid false positives from diagnostic text,
 // echoed instructions, or tool output that merely mentions permission concepts.
 // Only match lines that look like actual interactive confirmation prompts.
@@ -114,6 +117,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     // Enable multi-agent support so Codex workers can spawn sub-agent reviewers.
     args.push('--enable', 'multi_agent');
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
+    if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
   }
   if (provider === 'claude') {
@@ -182,6 +186,11 @@ const CONTEXT_LINE_PATTERN = /^(?:[+\-](?!\+\+|\-\-)|\s*@@\s|>\s|#\s|\d+\s*[+\-|
  * diff output, bootstrap text, and documentation that mentions prompts.
  */
 const PROMPT_SCAN_RECENCY_LINES = 5;
+const CODEX_WORKSPACE_PROMPT_PATTERNS = [
+  /press enter to continue/i,
+  /\byou are in\b/i,
+  /\byes,\s*continue\b/i,
+];
 
 export function detectBlockingPromptFromText(text: string) {
   const lines = String(text)
@@ -211,6 +220,40 @@ export function detectBlockingPromptFromText(text: string) {
   return null;
 }
 
+export function detectCodexWorkspacePromptFromText(text: string) {
+  const lines = String(text)
+    .split('\n')
+    .map((line) => line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim())
+    .filter(Boolean);
+
+  const scanStart = Math.max(0, lines.length - PROMPT_SCAN_RECENCY_LINES);
+  for (let index = lines.length - 1; index >= scanStart; index -= 1) {
+    const line = lines[index];
+    if (CODEX_WORKSPACE_PROMPT_PATTERNS.some((pattern) => pattern.test(line))) {
+      return line;
+    }
+  }
+  return null;
+}
+
+async function waitForCodexWorkspacePrompt(
+  getRecentOutput: (agentId: string) => string,
+  agentId: string,
+  timeoutMs = CODEX_PROMPT_WAIT_MS,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const prompt = detectCodexWorkspacePromptFromText(getRecentOutput(agentId));
+    if (prompt != null) return prompt;
+    await new Promise((r) => setTimeout(r, CODEX_PROMPT_POLL_MS));
+  }
+  return null;
+}
+
+function shouldUseExtendedCodexPromptWait(config: Record<string, unknown>) {
+  return config.startup_profile === 'real-provider-smoke';
+}
+
 /**
  * Create a pty adapter for the given provider.
  *
@@ -223,6 +266,11 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
   // In-process state. Only valid in the coordinator process that called start().
   const sessions      = new Map<string, ReturnType<typeof pty.spawn>>(); // agentId → IPty
   const outputStreams  = new Map<string, ReturnType<typeof createWriteStream>>(); // agentId → WriteStream
+  const recentOutput = new Map<string, string>(); // agentId → recent sanitized PTY output
+
+  function getRecentOutput(agentId: string) {
+    return recentOutput.get(agentId) ?? readLogTail(agentId);
+  }
 
   return {
     /**
@@ -237,6 +285,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         try { outputStreams.get(agentId)!.end(); } catch { /* ignore */ }
         sessions.delete(agentId);
         outputStreams.delete(agentId);
+        recentOutput.delete(agentId);
       }
 
       ensureDirs();
@@ -300,7 +349,12 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           env: spawnEnv,
         });
 
-        ptyProcess.onData((data) => stream!.write(sanitizePtyChunk(data)));
+        ptyProcess.onData((data) => {
+          const sanitized = sanitizePtyChunk(data);
+          stream!.write(sanitized);
+          const next = (recentOutput.get(agentId) ?? '') + sanitized;
+          recentOutput.set(agentId, next.slice(-RECENT_OUTPUT_BYTES));
+        });
 
         // Write PID file for cross-process heartbeat.
         writeFileSync(pidPath(agentId), String(ptyProcess.pid));
@@ -321,11 +375,23 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
 
       if (provider === 'codex') {
-        // Codex shows a workspace confirmation dialog for new directories:
+        // Codex may show a workspace confirmation dialog for new directories:
         //   "You are in /tmp/... 1. Yes, continue  Press enter to continue"
-        // Send Enter to dismiss it. Harmless if the dialog is absent.
-        ptyProcess.write('\r');
-        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+        // The smoke harness uses a prompt-aware path because it launches Codex
+        // inside disposable repos where trust/workspace dialogs can appear late.
+        // Outside that test-only profile we preserve the existing runtime
+        // behavior: send a single Enter after startup delay to dismiss the
+        // workspace prompt if present.
+        if (shouldUseExtendedCodexPromptWait(config)) {
+          const prompt = await waitForCodexWorkspacePrompt(getRecentOutput, agentId);
+          if (prompt != null) {
+            ptyProcess.write('\r');
+            await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+          }
+        } else {
+          ptyProcess.write('\r');
+          await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+        }
       } else if (provider === 'claude' && config.execution_mode !== 'sandbox') {
         // Claude shows up to two startup dialogs:
         //
@@ -346,17 +412,10 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
       }
 
-      if (config.system_prompt && typeof config.system_prompt === 'string') {
+      if (config.system_prompt && typeof config.system_prompt === 'string' && provider !== 'codex') {
         ptyProcess.write(config.system_prompt);
         await new Promise((r) => setTimeout(r, provider === 'codex' ? 700 : 500));
         ptyProcess.write('\r');
-        if (provider === 'codex') {
-          // Codex treats large PTY-written bootstraps as pasted text. A second
-          // Enter reliably dismisses the paste bar / confirms submission after
-          // the workspace dialog has already been accepted.
-          await new Promise((r) => setTimeout(r, 400));
-          ptyProcess.write('\r');
-        }
       }
 
       return {
@@ -410,7 +469,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           return events[0].message || 'permission prompt detected';
         }
         // Universal fallback: scan recent PTY output for blocking prompt patterns.
-        const text = readLogTail(agentId);
+        const text = getRecentOutput(agentId);
         return detectBlockingPromptFromText(text);
       } catch {
         return null;
@@ -496,6 +555,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           try { outputStreams.get(agentId)!.end(); } catch { /* ignore */ }
           sessions.delete(agentId);
           outputStreams.delete(agentId);
+          recentOutput.delete(agentId);
         }
         const pidFile = pidPath(agentId);
         if (existsSync(pidFile)) {
