@@ -134,6 +134,7 @@ describe('worker control flow e2e', () => {
     }));
     vi.doMock('../lib/binaryCheck.ts', () => ({
       checkAndInstallBinary: vi.fn().mockResolvedValue(true),
+      probeProviderAuth: vi.fn().mockReturnValue({ ok: true }),
       PROVIDER_BINARIES: { claude: 'claude', codex: 'codex', gemini: 'gemini' },
       PROVIDER_PROMPT_PATTERNS: { claude: />\s*$/, codex: /›\s*$/, gemini: />\s*$/ },
       PROVIDER_SUBMIT_SEQUENCES: { claude: '\r', codex: '\r', gemini: '\r' },

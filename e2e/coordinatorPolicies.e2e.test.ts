@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
+import { createSessionHandle } from '../adapters/pty.ts';
 
 let dir: string;
 
@@ -43,13 +45,23 @@ describe('coordinator policy e2e', () => {
         agent_id: 'worker-01',
         state: 'claimed',
         claimed_at: isoAgoMs(10 * 60 * 1000),
+        task_envelope_sent_at: isoAgoMs(10 * 60 * 1000),
         lease_expires_at: isoFromNowMs(10 * 60 * 1000),
       },
     });
+    const adapter = {
+      start: vi.fn(),
+      send: vi.fn().mockResolvedValue(''),
+      heartbeatProbe: vi.fn().mockResolvedValue(true),
+      detectInputBlock: vi.fn().mockReturnValue(null),
+      attach: vi.fn(),
+      stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
+    };
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
-      '--run-inactive-nudge-ms=100',
-      '--run-inactive-nudge-interval-ms=200',
+      '--run-start-timeout-ms=100',
     ]);
     await coordinator.tick();
 
@@ -73,6 +85,7 @@ describe('coordinator policy e2e', () => {
         agent_id: 'worker-01',
         state: 'claimed',
         claimed_at: isoAgoMs(60 * 1000),
+        task_envelope_sent_at: isoAgoMs(60 * 1000),
         lease_expires_at: isoFromNowMs(10 * 60 * 1000),
       },
     });
@@ -88,8 +101,7 @@ describe('coordinator policy e2e', () => {
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
-      '--run-inactive-nudge-ms=100',
-      '--run-inactive-nudge-interval-ms=200',
+      '--run-start-timeout-ms=600000',
     ]);
     await coordinator.tick();
 
@@ -100,10 +112,10 @@ describe('coordinator policy e2e', () => {
     expect((needInput!.payload as Record<string, unknown>).reason).toBe('run_start_ack_missing');
   });
 
-  it('fails and requeues in_progress runs that exceed inactivity timeout', async () => {
+  it('fails and requeues in_progress runs when worker session is dead', async () => {
     seedState({
       taskStatus: 'in_progress',
-      agentStatus: 'offline',
+      agentStatus: 'running',
       claim: {
         run_id: 'run-inactive-timeout',
         task_ref: 'docs/task-1',
@@ -114,22 +126,27 @@ describe('coordinator policy e2e', () => {
         lease_expires_at: isoFromNowMs(10 * 60 * 1000),
       },
     });
+    const adapter = {
+      start: vi.fn(),
+      send: vi.fn().mockResolvedValue(''),
+      heartbeatProbe: vi.fn().mockResolvedValue(false),
+      detectInputBlock: vi.fn().mockReturnValue(null),
+      attach: vi.fn(),
+      stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
+    };
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await importCoordinatorWithArgs([
-      '--run-inactive-nudge-ms=100',
-      '--run-inactive-nudge-interval-ms=200',
-    ]);
+    const coordinator = await importCoordinatorWithArgs([]);
     await coordinator.tick();
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
     expect(readBacklog().features[0].tasks[0].status).toBe('todo');
     const agent = readAgents().agents[0];
-    expect(agent.status).toBe('offline');
     expect(agent.session_handle).toBe(null);
     const runFailed = readEvents().find((e) => e.event === 'run_failed' && e.run_id === 'run-inactive-timeout');
     expect(runFailed).toBeTruthy();
-    expect((runFailed!.payload as Record<string, unknown>).code).toBe('ERR_RUN_INACTIVITY_TIMEOUT');
   });
 
   it('sends in_progress nudge and emits need_input for stale active run', async () => {
@@ -157,8 +174,9 @@ describe('coordinator policy e2e', () => {
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
-      '--run-inactive-nudge-ms=100',
-      '--run-inactive-nudge-interval-ms=200',
+      '--worker-stale-soft-ms=50',
+      '--worker-stale-nudge-ms=100',
+      '--worker-stale-force-fail-ms=9999999',
     ]);
     await coordinator.tick();
 
@@ -174,13 +192,33 @@ describe('coordinator policy e2e', () => {
       taskStatus: 'todo',
       claim: null,
     });
-    const heartbeatProbe = vi.fn()
-      .mockResolvedValueOnce(true)   // ensureSessionReady
-      .mockResolvedValueOnce(false); // after dispatch send failure
+    let heartbeatCallCount = 0;
     const adapter = {
-      start: vi.fn().mockResolvedValue({ session_handle: 'claude:session:worker-01', provider_ref: { id: 'abc' } }),
+      start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
+        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        if (sessionToken) {
+          appendSequencedEvent(dir, {
+            ts: new Date().toISOString(),
+            event: 'reported_for_duty',
+            actor_type: 'agent',
+            actor_id: _agentId,
+            agent_id: _agentId,
+            payload: { session_token: sessionToken },
+          });
+        }
+        return Promise.resolve({
+          session_handle: createSessionHandle(_agentId),
+          provider_ref: { id: 'abc' },
+        });
+      }),
       send: vi.fn().mockRejectedValue(new Error('dispatch boom')),
-      heartbeatProbe,
+      heartbeatProbe: vi.fn().mockImplementation(() => {
+        heartbeatCallCount++;
+        // Count 1: ensureSessionPoolReady on tick 1 → true
+        // Count 2: PID probe on tick 2 (claim is claimed) → true
+        // Count 3: post-dispatch-error check in sendTaskEnvelope → false (session unreachable)
+        return Promise.resolve(heartbeatCallCount <= 2);
+      }),
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn(),
@@ -189,6 +227,9 @@ describe('coordinator policy e2e', () => {
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: claim task, start session (reported_for_duty emitted)
+    await coordinator.tick();
+    // Tick 2: process reported_for_duty, send envelope → send fails, session unreachable
     await coordinator.tick();
 
     const claim = readClaims().claims[0];
@@ -216,6 +257,7 @@ describe('coordinator policy e2e', () => {
         agent_id: 'worker-01',
         state: 'claimed',
         claimed_at: isoAgoMs(150),
+        task_envelope_sent_at: isoAgoMs(150),
         lease_expires_at: isoFromNowMs(10 * 60 * 1000),
       },
     });
@@ -232,7 +274,6 @@ describe('coordinator policy e2e', () => {
 
     const coordinator = await importCoordinatorWithArgs([
       '--run-start-timeout-ms=1000',
-      '--run-inactive-timeout-ms=5000',
     ]);
     await coordinator.tick(); // should nudge
     await coordinator.tick(); // interval gate: no nudge
@@ -269,14 +310,14 @@ describe('coordinator policy e2e', () => {
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await importCoordinatorWithArgs([
-      '--run-start-timeout-ms=5000',
-      '--run-inactive-timeout-ms=1000',
-      '--run-inactive-nudge-ms=100',
+      '--worker-stale-soft-ms=50',
+      '--worker-stale-nudge-ms=100',
+      '--worker-stale-force-fail-ms=9999999',
       '--run-inactive-nudge-interval-ms=200',
     ]);
     await coordinator.tick(); // should nudge
     await coordinator.tick(); // interval gate: no nudge
-    await sleep(250);         // > floor(1000 * 0.2) = 200ms
+    await sleep(250);         // > 200ms interval
     await coordinator.tick(); // should nudge again
 
     expect(adapter.send).toHaveBeenCalledTimes(2);
@@ -332,7 +373,7 @@ describe('coordinator policy e2e', () => {
     expect(readBacklog().features[0].tasks[0].status).toBe('in_progress');
   });
 
-  it('expires a stale lease only once across multiple ticks in manual mode', async () => {
+  it('expires a stale lease only once across multiple ticks', async () => {
     seedState({
       taskStatus: 'claimed',
       claim: {
@@ -344,8 +385,18 @@ describe('coordinator policy e2e', () => {
         lease_expires_at: isoAgoMs(5 * 1000),
       },
     });
+    const adapter = {
+      start: vi.fn(),
+      send: vi.fn().mockResolvedValue(''),
+      heartbeatProbe: vi.fn().mockResolvedValue(true),
+      detectInputBlock: vi.fn().mockReturnValue(null),
+      attach: vi.fn(),
+      stop: vi.fn(),
+      getOutputTail: vi.fn().mockReturnValue(null),
+    };
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
-    const coordinator = await importCoordinatorWithArgs(['--mode=manual']);
+    const coordinator = await importCoordinatorWithArgs([]);
     await coordinator.tick();
     await coordinator.tick();
 
@@ -434,6 +485,9 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
       capabilities: [],
       status: agentStatus,
       session_handle: agentStatus === 'offline' ? null : 'claude:session:worker-01',
+      session_token: agentStatus === 'offline' ? null : 'tok-worker-01',
+      session_started_at: agentStatus === 'offline' ? null : '2026-01-01T00:00:00Z',
+      session_ready_at: agentStatus === 'offline' ? null : '2026-01-01T00:00:01Z',
       provider_ref: { id: 'abc' },
       registered_at: '2026-01-01T00:00:00Z',
       last_heartbeat_at: null,
@@ -443,7 +497,6 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
     version: '1',
     claims: claim ? [claim] : [],
   }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
 function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
@@ -459,9 +512,7 @@ function readAgents(): { agents: Array<Record<string, unknown>> } {
 }
 
 function readEvents(): Array<Record<string, unknown>> {
-  const raw = readFileSync(join(dir, 'events.jsonl'), 'utf8').trim();
-  if (!raw) return [];
-  return raw.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  return readEventsFromDb(join(dir, 'events.db')) as unknown as Array<Record<string, unknown>>;
 }
 
 function isoAgoMs(ms: number) {
