@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+early_access: true
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary_instructions: >-
+    General high level verbal summary of the changes. In addition a bullet point list of the most
+    notable changes.
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  suggested_labels: false
+  auto_apply_labels: true
+  in_progress_fortune: false
+  poem: false
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+chat:
+  art: false
