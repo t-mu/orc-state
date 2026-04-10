@@ -42,7 +42,11 @@ config.merge_strategy ?? 'direct'`.
 The PR finalization path introduces new claim states beyond the existing direct-mode
 states (`awaiting_finalize`, `finalize_rebase_requested`, `finalize_rebase_in_progress`,
 `ready_to_merge`, `blocked_finalize`). The new states are: `pr_created`,
-`pr_review_in_progress`, `pr_ci_pending`, `pr_merged`, `pr_failed`.
+`pr_review_in_progress`, `pr_merged`, `pr_failed`.
+
+The reviewer worker owns the entire PR lifecycle — review, fix, rebase, CI, merge.
+The coordinator spawns the reviewer, monitors its completion, and cleans up after.
+No `pr_ci_pending` state — the coordinator doesn't poll CI separately.
 
 **Start here:** `lib/providers.ts` line 40 (`CoordinatorConfig` interface)
 
@@ -61,11 +65,11 @@ states (`awaiting_finalize`, `finalize_rebase_requested`, `finalize_rebase_in_pr
 
 ## Goals
 
-1. Must add `merge_strategy`, `pr_provider`, `pr_push_remote`, `pr_poll_interval_ms`, `pr_finalize_lease_ms` to `CoordinatorConfig`.
+1. Must add `merge_strategy`, `pr_provider`, `pr_push_remote`, `pr_finalize_lease_ms` to `CoordinatorConfig`.
 2. Must default `merge_strategy` to `'direct'` — no behavior change for existing users.
 3. Must add `merge_strategy` as optional field on Task (schema + type).
-4. Must add PR finalization states to FinalizationState enum.
-5. Must add `pr_ref`, `pr_created_at`, `pr_last_checked_at` to Claim (schema + type).
+4. Must add PR finalization states (`pr_created`, `pr_review_in_progress`, `pr_merged`, `pr_failed`) to FinalizationState enum.
+5. Must add `pr_ref`, `pr_created_at`, `pr_reviewer_agent_id` to Claim (schema + type).
 6. Must parse `merge_strategy` from task spec frontmatter following the `review_level` pattern.
 7. Must pass `orc doctor` after all schema changes.
 
@@ -83,7 +87,6 @@ Add to `CoordinatorConfig` interface (after line 48, `worker_stale_force_fail_ms
 merge_strategy: 'direct' | 'pr';
 pr_provider: 'github' | null;
 pr_push_remote: string;
-pr_poll_interval_ms: number;
 pr_finalize_lease_ms: number;
 ```
 
@@ -93,7 +96,6 @@ Add to `DEFAULT_COORDINATOR_CONFIG`:
 merge_strategy: 'direct' as const,
 pr_provider: null,
 pr_push_remote: 'origin',
-pr_poll_interval_ms: 120_000,
 pr_finalize_lease_ms: 86_400_000,
 ```
 
@@ -126,7 +128,7 @@ Extend FinalizationState enum (line 32):
 ```json
 "enum": ["awaiting_finalize", "finalize_rebase_requested", "finalize_rebase_in_progress",
          "ready_to_merge", "blocked_finalize",
-         "pr_created", "pr_review_in_progress", "pr_ci_pending", "pr_merged", "pr_failed"]
+         "pr_created", "pr_review_in_progress", "pr_merged", "pr_failed"]
 ```
 
 Add to Claim properties:
@@ -134,12 +136,12 @@ Add to Claim properties:
 ```json
 "pr_ref": { "type": ["string", "null"], "description": "PR URL or reference." },
 "pr_created_at": { "type": ["string", "null"], "format": "date-time" },
-"pr_last_checked_at": { "type": ["string", "null"], "format": "date-time" }
+"pr_reviewer_agent_id": { "type": ["string", "null"], "description": "Agent ID of the PR reviewer worker." }
 ```
 
 **File:** `types/claims.ts`
 
-Add to Claim: `pr_ref?: string | null`, `pr_created_at?: string | null`, `pr_last_checked_at?: string | null`.
+Add to Claim: `pr_ref?: string | null`, `pr_created_at?: string | null`, `pr_reviewer_agent_id?: string | null`.
 
 ### Step 4 — Parse merge_strategy in backlog sync
 
@@ -158,7 +160,6 @@ Add to coordinator config table:
 | `merge_strategy` | string | `"direct"` | `"direct"` for worktree merge, `"pr"` for pull request. |
 | `pr_provider` | string\|null | `null` | Git host provider (`"github"`). Required when `merge_strategy` is `"pr"`. |
 | `pr_push_remote` | string | `"origin"` | Git remote to push PR branches to. |
-| `pr_poll_interval_ms` | integer | `120000` | Interval between PR status checks (ms). |
 | `pr_finalize_lease_ms` | integer | `86400000` | Claim lease duration for PR finalization (24h). |
 
 ### Step 6 — Update task template
@@ -176,7 +177,7 @@ Add to frontmatter (commented out): `# merge_strategy: direct`
 - [ ] `schemas/backlog.schema.json` Task has optional `merge_strategy` enum.
 - [ ] `types/backlog.ts` Task type has `merge_strategy?`.
 - [ ] FinalizationState enum includes all 5 new PR states.
-- [ ] Claim schema and type include `pr_ref`, `pr_created_at`, `pr_last_checked_at`.
+- [ ] Claim schema and type include `pr_ref`, `pr_created_at`, `pr_reviewer_agent_id`.
 - [ ] Backlog sync propagates `merge_strategy` from frontmatter to `backlog.json`.
 - [ ] Existing tasks without `merge_strategy` continue to work (backward compatible).
 - [ ] `orc doctor` exits 0 after schema changes.
@@ -193,7 +194,7 @@ Add to `lib/providers.test.ts`:
 ```typescript
 it('parses merge_strategy from config', () => { ... });
 it('defaults merge_strategy to direct', () => { ... });
-it('parses pr_provider, pr_push_remote, pr_poll_interval_ms, pr_finalize_lease_ms', () => { ... });
+it('parses pr_provider, pr_push_remote, pr_finalize_lease_ms', () => { ... });
 ```
 
 Add to backlog sync tests:
@@ -207,7 +208,7 @@ Add to schema validation tests:
 
 ```typescript
 it('accepts pr finalization states', () => { ... });
-it('accepts pr_ref, pr_created_at, pr_last_checked_at on claims', () => { ... });
+it('accepts pr_ref, pr_created_at, pr_reviewer_agent_id on claims', () => { ... });
 ```
 
 ---

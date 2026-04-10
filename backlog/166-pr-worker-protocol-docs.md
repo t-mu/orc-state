@@ -45,7 +45,7 @@ session may end without a finalize rebase request.
 
 ## Goals
 
-1. Must explain PR mode behavior in Phase 4 (rebase is skipped — reviewer handles it).
+1. Must explain PR mode behavior in Phase 4 (rebase step is skipped — the PR reviewer handles rebasing; task-mark-done and run-work-complete still apply).
 2. Must explain PR mode behavior in Phase 5 (session ends after run-work-complete).
 3. Must note in worktree cleanup section that direct merge flow applies to direct mode only.
 4. Must update run-work-complete description to not assume rebase happened.

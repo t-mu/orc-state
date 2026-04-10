@@ -51,7 +51,7 @@ Each command is ~20 lines: read config, get adapter, call method, print result.
 1. Must provide `orc pr-diff <pr_ref>` that prints diff to stdout.
 2. Must provide `orc pr-review <pr_ref> --approve|--request-changes --body="..."`.
 3. Must provide `orc pr-merge <pr_ref>` that merges the PR.
-4. Must provide `orc pr-status <pr_ref>` that prints PR status and CI state.
+4. Must provide `orc pr-status <pr_ref>` that prints PR status, and `orc pr-status <pr_ref> --wait` that blocks until CI resolves.
 5. Must read `pr_provider` from config — never reference `gh`/`glab` directly.
 6. Must exit 1 with descriptive error if `pr_provider` is not configured.
 
@@ -103,7 +103,8 @@ Add to COMMANDS dict:
 - [ ] `orc pr-review <pr_ref> --approve --body="..."` submits approval.
 - [ ] `orc pr-review <pr_ref> --request-changes --body="..."` submits findings.
 - [ ] `orc pr-merge <pr_ref>` merges the PR.
-- [ ] `orc pr-status <pr_ref>` prints PR state and CI state.
+- [ ] `orc pr-status <pr_ref>` prints PR state.
+- [ ] `orc pr-status <pr_ref> --wait` blocks until CI resolves, prints `passing` or `failing`.
 - [ ] All commands exit 1 with error if `pr_provider` not configured.
 - [ ] All commands exit 1 with usage if `pr_ref` missing.
 - [ ] No direct references to `gh`, `glab`, or any platform CLI.

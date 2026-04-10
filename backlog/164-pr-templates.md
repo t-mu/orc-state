@@ -126,12 +126,12 @@ PR_REVIEW_END
 
 **Step 6** — CI loop (max 3 iterations):
 - `git push --force-with-lease`
-- Poll: `{{orc_bin}} pr-status <pr_ref>` every 30s until not pending
-- If green: exit loop
-- If red: diagnose, fix, commit `fix(<scope>): resolve CI failure (iteration N)`, loop
+- Wait for CI: `{{orc_bin}} pr-status <pr_ref> --wait` (blocks until CI resolves)
+- If passing: exit loop
+- If failing: diagnose, fix, commit `fix(<scope>): resolve CI failure (iteration N)`, loop
 - If iteration > 3: `run-fail --reason="ci-fix loop exceeded 3 iterations" --policy=requeue`
 
-**Step 7** — Merge: `{{orc_bin}} pr-review <pr_ref> --approve --body="..."`, `{{orc_bin}} pr-merge <pr_ref>`, `{{orc_bin}} run-finish`.
+**Step 7** — Hand off to coordinator: `{{orc_bin}} run-work-complete --run-id=<run_id> --agent-id={{agent_id}}`. Wait for coordinator to merge the PR and signal `run-finish`.
 
 Include: failure protocol, rules section, `PR_REVIEWER_BOOTSTRAP_END` marker.
 
@@ -147,7 +147,7 @@ Include: failure protocol, rules section, `PR_REVIEWER_BOOTSTRAP_END` marker.
 - [ ] Step 4 includes verbatim REVIEWER CONSTRAINTS block.
 - [ ] Step 5 includes `npm test` after rebase.
 - [ ] Step 6 uses `git push --force-with-lease` (not `--force`).
-- [ ] Step 6 polls `orc pr-status` (not `gh pr checks`).
+- [ ] Step 6 uses `orc pr-status --wait` (not `gh pr checks` or polling).
 - [ ] All iteration limits are 3 with explicit `run-fail` on exceeded.
 - [ ] No references to `gh`, `glab`, or any platform CLI in any template.
 - [ ] No changes to files outside the stated scope.

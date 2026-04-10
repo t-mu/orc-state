@@ -39,7 +39,7 @@ adapter in `adapters/index.ts`.
 All operations use `spawnSync` with argument arrays — no shell templates, no `exec()`,
 no arbitrary command execution from config.
 
-**Start here:** `adapters/interface.ts` (existing AI adapter pattern to follow)
+**Start here:** `adapters/interface.ts` (AI adapter pattern to follow for interface design). New files go under `lib/gitHosts/`, not `adapters/`.
 
 **Affected files:**
 - `lib/gitHosts/interface.ts` — new
@@ -51,7 +51,7 @@ no arbitrary command execution from config.
 
 ## Goals
 
-1. Must define a `GitHostAdapter` interface with 8 methods covering push, PR creation, status, CI, merge, review, diff, and body retrieval.
+1. Must define a `GitHostAdapter` interface with 9 methods covering push, PR creation, status, CI wait, merge, review, diff, and body retrieval.
 2. Must implement GitHub adapter using `spawnSync('gh', [...args])` — argument arrays only.
 3. Must throw descriptive errors on non-zero exit codes.
 4. Must provide a factory function `getGitHostAdapter(provider)`.
@@ -70,7 +70,7 @@ export interface GitHostAdapter {
   pushBranch(remote: string, branch: string): void;
   createPr(title: string, branch: string, body: string): string;  // returns PR ref (URL or number)
   checkPrStatus(prRef: string): 'open' | 'merged' | 'closed';
-  checkPrCi(prRef: string): 'pending' | 'passing' | 'failing';
+  waitForCi(prRef: string): 'passing' | 'failing';               // blocks until CI resolves
   mergePr(prRef: string): void;
   submitReview(prRef: string, body: string, approve: boolean): void;
   getPrBody(prRef: string): string;
@@ -100,7 +100,7 @@ export class GitHubAdapter implements GitHostAdapter {
 ```
 
 Map `checkPrStatus` output: `gh pr view <ref> --json state --jq '.state'` → map `MERGED`/`CLOSED`/`OPEN`.
-Map `checkPrCi` output: `gh pr checks <ref> --json state` → aggregate to `pending`/`passing`/`failing`.
+`waitForCi`: `gh pr checks <ref> --watch` — blocks until all checks resolve. Exit 0 = passing, non-zero = failing.
 `submitReview`: `gh pr review <ref> --body <body> --approve` or `--request-changes`.
 `getPrDiff`: `gh pr diff <ref>`.
 
@@ -124,7 +124,7 @@ export type { GitHostAdapter } from './interface.ts';
 
 ## Acceptance criteria
 
-- [ ] `GitHostAdapter` interface defines all 8 methods with correct signatures.
+- [ ] `GitHostAdapter` interface defines all 9 methods with correct signatures (including `waitForCi`).
 - [ ] `GitHubAdapter` implements all 8 methods using `spawnSync('gh', [...])`.
 - [ ] No use of `exec()`, `execSync()`, or shell template strings.
 - [ ] Descriptive errors thrown on non-zero exit codes with stderr content.
@@ -143,7 +143,7 @@ Add `lib/gitHosts/github.test.ts`:
 it('createPr calls gh with correct arguments and returns URL', () => { ... });
 it('createPr throws on non-zero exit', () => { ... });
 it('checkPrStatus maps MERGED/CLOSED/OPEN correctly', () => { ... });
-it('checkPrCi aggregates check states to pending/passing/failing', () => { ... });
+it('waitForCi calls gh pr checks --watch and maps exit code', () => { ... });
 it('mergePr calls gh pr merge with --squash', () => { ... });
 it('submitReview passes --approve or --request-changes', () => { ... });
 it('getPrDiff returns diff output', () => { ... });

@@ -7,7 +7,6 @@ review_level: full
 depends_on:
   - general/161-pr-merge-config-schema
   - general/162-git-host-adapter
-  - general/163-pr-cli-commands
   - general/164-pr-templates
 ---
 
@@ -20,16 +19,17 @@ Depends on Tasks 161, 162, 163, 164.
 **In scope:**
 - Add `resolveMergeStrategy()` helper to `coordinator.ts`
 - Branch finalization handler on resolved strategy after `work_complete`
-- Implement PR path: push branch → create PR → spawn reviewer → track state
-- Add tick handlers for `pr_review_in_progress` and `pr_ci_pending` states
+- Implement PR path: push branch → create PR → spawn reviewer worker
+- Add tick handler for `pr_review_in_progress` (monitor reviewer completion)
 - Add PR lease handling (`pr_finalize_lease_ms`)
+- Reviewer owns entire PR lifecycle (review, fix, rebase, CI, merge) — coordinator only spawns and monitors
 - Add `buildPrReviewerBootstrap()` to `lib/sessionBootstrap.ts`
 - Add claim setters for PR fields in `lib/claimStateManager.ts`
 
 **Out of scope:**
 - Schema/config changes (Task 161 — already done)
 - Git host adapter (Task 162 — already done)
-- PR CLI commands (Task 163 — already done)
+- PR CLI commands (Task 163 — not needed by coordinator; used by reviewer at runtime)
 - Templates (Task 164 — already done)
 - Worker protocol/docs updates (Task 166)
 - Direct finalization path — must remain unchanged
@@ -64,11 +64,13 @@ its completion via events.
 3. Must push the worktree branch to remote before creating the PR.
 4. Must create PR with rendered `pr-template-v1.txt` body.
 5. Must spawn PR reviewer worker with `pr-reviewer-bootstrap-v1.txt` and `pr-review-envelope-v1.txt`.
-6. Must track `pr_review_in_progress` → check reviewer completion each tick.
-7. Must track `pr_ci_pending` → poll PR status respecting `pr_poll_interval_ms`.
-8. Must handle `pr_merged` (cleanup + release) and `pr_failed` (notify + requeue).
-9. Must use `pr_finalize_lease_ms` for PR claim leases.
-10. Must not change the direct finalization path.
+6. Must track `pr_review_in_progress` → check reviewer events each tick.
+7. Must handle reviewer `work_complete` → merge PR via adapter → cleanup + release.
+8. Must handle reviewer `run_failed` → set `pr_failed` → notify + requeue.
+9. Must signal reviewer `run-finish` after successful merge.
+10. Must use `pr_finalize_lease_ms` for PR claim leases.
+11. Must cleanup reviewer agent registration after terminal event.
+12. Must not change the direct finalization path.
 
 ---
 
@@ -130,42 +132,31 @@ async function spawnPrReviewer(claim, prRef, task) {
 
 **File:** `coordinator.ts`
 
-In the tick's finalization processing loop:
+The reviewer owns review, fixes, rebase, and CI. It signals `run-work-complete`
+when CI is green — meaning "this PR is ready to merge." The coordinator then
+merges (same authority model as direct mode).
 
 ```typescript
 if (claim.finalization_state === 'pr_review_in_progress') {
-  // Check if reviewer agent emitted run_finished or run_failed
-  const reviewerAgent = agents.find(a => a.agent_id === `pr-reviewer-${claim.run_id}`);
-  // If run_finished: transition to pr_ci_pending
-  // If run_failed: transition to pr_failed, notify master, optionally requeue
+  const reviewerAgentId = claim.pr_reviewer_agent_id;
+
+  // If reviewer emitted work_complete (via events):
+  //   CI is green, PR is ready. Coordinator merges:
+  //   adapter.mergePr(claim.pr_ref)
+  //   Set pr_merged, cleanup worktree + branch, mark task released.
+  //   Signal reviewer to run-finish.
+  //   Cleanup reviewer agent registration.
+
+  // If reviewer emitted run_failed:
+  //   Set pr_failed, notify master, requeue task.
+  //   Cleanup reviewer agent registration.
 }
 ```
 
-### Step 5 — Tick handler for pr_ci_pending
+No `pr_ci_pending` state. The coordinator merges immediately after the
+reviewer's `work_complete` — the reviewer already confirmed CI is green.
 
-**File:** `coordinator.ts`
-
-```typescript
-if (claim.finalization_state === 'pr_ci_pending') {
-  // Respect pr_poll_interval_ms
-  if (claim.pr_last_checked_at && (now - new Date(claim.pr_last_checked_at).getTime()) < PR_POLL_INTERVAL_MS) continue;
-  
-  const adapter = getGitHostAdapter(COORD_CONFIG.pr_provider!);
-  const status = adapter.checkPrStatus(claim.pr_ref!);
-  setPrLastCheckedAt(STATE_DIR, claim.run_id, nowIso);
-  
-  if (status === 'merged') {
-    setRunFinalizationState(STATE_DIR, claim.run_id, 'pr_merged');
-    // Cleanup worktree + branch, mark task released
-  } else if (status === 'closed') {
-    setRunFinalizationState(STATE_DIR, claim.run_id, 'pr_failed');
-    // Notify master, requeue
-  }
-  // 'open' → wait for next poll
-}
-```
-
-### Step 6 — Lease handling
+### Step 5 — Lease handling
 
 **File:** `coordinator.ts`
 
@@ -175,7 +166,7 @@ When creating claims for PR-mode tasks, or when transitioning to PR finalization
 
 **File:** `lib/claimStateManager.ts`
 
-Add: `setPrRef()`, `setPrCreatedAt()`, `setPrLastCheckedAt()`. Same pattern as existing setters (`setRunFinalizationState`, `setEscalationNotified`).
+Add: `setPrRef()`, `setPrCreatedAt()`, `setPrReviewerAgentId()`. Same pattern as existing setters (`setRunFinalizationState`, `setEscalationNotified`).
 
 ### Step 8 — PR reviewer bootstrap builder
 
@@ -190,11 +181,10 @@ Add `buildPrReviewerBootstrap()` that renders `pr-reviewer-bootstrap-v1.txt` wit
 - [ ] `resolveMergeStrategy()` returns task override, config fallback, or `'direct'` default.
 - [ ] PR path: pushes branch, creates PR, stores `pr_ref` and `pr_created_at` on claim.
 - [ ] PR path: spawns reviewer worker with correct bootstrap and envelope.
-- [ ] Tick handler transitions `pr_review_in_progress` → `pr_ci_pending` on reviewer `run_finished`.
-- [ ] Tick handler transitions `pr_review_in_progress` → `pr_failed` on reviewer `run_failed`.
-- [ ] Tick handler polls PR status for `pr_ci_pending` claims respecting `pr_poll_interval_ms`.
-- [ ] `pr_merged` triggers worktree cleanup and task release.
-- [ ] `pr_closed` (not merged) triggers `pr_failed`, master notification, requeue.
+- [ ] Tick handler detects reviewer `work_complete` → merges PR via `adapter.mergePr()` → sets `pr_merged` → cleanup + release.
+- [ ] Tick handler signals reviewer `run-finish` after successful merge.
+- [ ] Tick handler detects reviewer `run_failed` → sets `pr_failed` → notifies master → requeue.
+- [ ] Reviewer agent registration cleaned up after terminal event.
 - [ ] PR claims use `pr_finalize_lease_ms` for lease.
 - [ ] Direct finalization path is completely unchanged.
 - [ ] `npm test` passes.
@@ -212,11 +202,11 @@ describe('PR finalization', () => {
   it('resolveMergeStrategy: falls back to config, then direct', () => { ... });
   it('pushes branch and creates PR after work_complete when strategy=pr', () => { ... });
   it('spawns PR reviewer worker after PR creation', () => { ... });
-  it('transitions pr_review_in_progress to pr_ci_pending on reviewer run_finished', () => { ... });
-  it('transitions pr_review_in_progress to pr_failed on reviewer run_failed', () => { ... });
-  it('polls PR status respecting pr_poll_interval_ms', () => { ... });
-  it('cleans up and releases task when PR is merged', () => { ... });
-  it('sets pr_failed and requeues when PR is closed without merge', () => { ... });
+  it('merges PR via adapter on reviewer work_complete and sets pr_merged', () => { ... });
+  it('signals reviewer run-finish after successful merge', () => { ... });
+  it('transitions to pr_failed on reviewer run_failed', () => { ... });
+  it('cleans up worktree, branch, and releases task after pr_merged', () => { ... });
+  it('cleans up reviewer agent registration after terminal event', () => { ... });
   it('uses pr_finalize_lease_ms for PR claim leases', () => { ... });
   it('direct path unchanged when merge_strategy=direct', () => { ... });
 });

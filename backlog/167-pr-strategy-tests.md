@@ -64,8 +64,7 @@ describe('PR merge strategy e2e', () => {
     // Mock adapter: checkPrStatus returns 'merged' after reviewer finishes
     // Tick 1: work_complete → PR created, reviewer spawned
     // Simulate reviewer run_finished event
-    // Tick 2: pr_review_in_progress → pr_ci_pending
-    // Tick 3: pr_ci_pending → poll → merged → task released
+    // Tick 2: pr_review_in_progress → reviewer work_complete → coordinator merges → pr_merged → task released
     // Assert: task status released, worktree cleaned up, no stale claims
   });
 
@@ -95,11 +94,11 @@ Add to existing coordinator test suite:
 ```typescript
 describe('PR finalization state machine', () => {
   it('transitions pr_created → pr_review_in_progress when reviewer spawned', () => { ... });
-  it('transitions pr_review_in_progress → pr_ci_pending on reviewer run_finished', () => { ... });
-  it('transitions pr_ci_pending → pr_merged on checkPrStatus=merged', () => { ... });
-  it('transitions pr_ci_pending → pr_failed on checkPrStatus=closed', () => { ... });
-  it('respects pr_poll_interval_ms between status checks', () => { ... });
+  it('merges PR via adapter on reviewer work_complete', () => { ... });
+  it('signals reviewer run-finish after merge', () => { ... });
+  it('transitions to pr_failed on reviewer run_failed', () => { ... });
   it('uses pr_finalize_lease_ms for PR claim leases', () => { ... });
+  it('cleans up reviewer agent after terminal event', () => { ... });
 });
 ```
 
