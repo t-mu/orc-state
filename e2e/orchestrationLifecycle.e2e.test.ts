@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
+import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
 
 function readClaims(stateDir: string): { claims: Array<Record<string, unknown>> } {
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8'));
@@ -19,22 +20,39 @@ function readAgents(stateDir: string): { agents: Array<Record<string, unknown>> 
 let dir: string;
 
 /**
- * Creates a mock adapter that simulates agent behaviour: on send(), it extracts
- * the run_id from the task envelope text and calls startRun/finishRun directly,
- * exactly as an agent would via `orc-run-start` / `orc-run-finish` Bash calls.
+ * Creates a mock adapter that simulates agent behaviour: on start(), it emits
+ * a reported_for_duty event (simulating the bootstrap handshake); on send(), it
+ * extracts the run_id from the task envelope text and calls startRun. finishRun
+ * is deferred so markTaskEnvelopeSent can record envelope delivery first.
+ * Callers must call finishRun manually after the tick.
  * send() returns '' (fire-and-forget, matching the real pty adapter).
  */
 function makeTmuxMockAdapter(agentId = 'worker-01') {
+  const dispatchedRunIds: string[] = [];
   return {
-    start: vi.fn().mockResolvedValue({
-      session_handle: createSessionHandle(agentId),
-      provider_ref: { provider: 'claude' },
+    dispatchedRunIds,
+    start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
+      const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+      const sessionHandle = createSessionHandle(_agentId);
+      if (sessionToken) {
+        appendSequencedEvent(dir, {
+          ts: new Date().toISOString(),
+          event: 'reported_for_duty',
+          actor_type: 'agent',
+          actor_id: _agentId,
+          agent_id: _agentId,
+          payload: { session_token: sessionToken },
+        });
+      }
+      return Promise.resolve({ session_handle: sessionHandle, provider_ref: { provider: 'claude' } });
     }),
     send: vi.fn().mockImplementation((_handle: string, text: string) => {
       const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
       if (runId) {
+        dispatchedRunIds.push(runId);
         startRun(dir, runId, agentId);
-        finishRun(dir, runId, agentId, { success: true });
+        // finishRun deferred — callers must call it after the tick so
+        // markTaskEnvelopeSent can record envelope delivery first.
       }
       return '';
     }),
@@ -77,6 +95,9 @@ function seedState(stateDir: string) {
         dispatch_mode: null,
         status: 'running',
         session_handle: 'pty:worker-01',
+        session_token: 'tok-worker-01',
+        session_started_at: '2026-01-01T00:00:00.000Z',
+        session_ready_at: '2026-01-01T00:00:01.000Z',
         provider_ref: null,
         last_heartbeat_at: null,
         registered_at: '2026-01-01T00:00:00.000Z',
@@ -85,7 +106,6 @@ function seedState(stateDir: string) {
   }));
 
   writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-  writeFileSync(join(stateDir, 'events.jsonl'), '');
 }
 
 function seedManagedPoolState(stateDir: string, tasks: unknown[]) {
@@ -120,16 +140,10 @@ function seedManagedPoolState(stateDir: string, tasks: unknown[]) {
   }));
 
   writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-  writeFileSync(join(stateDir, 'events.jsonl'), '');
 }
 
 function readEvents(stateDir: string): Array<Record<string, unknown>> {
-  const raw = readFileSync(join(stateDir, 'events.jsonl'), 'utf8').trim();
-  if (!raw) return [];
-  return raw
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  return readEventsFromDb(join(stateDir, 'events.db')) as unknown as Array<Record<string, unknown>>;
 }
 
 describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', () => {
@@ -171,10 +185,19 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: claim + start session (reported_for_duty emitted in adapter.start mock)
     await coordinator.tick();
+    // Tick 2: process reported_for_duty, send task envelope (startRun in send mock)
     await coordinator.tick();
 
     expect(adapter.send).toHaveBeenCalled();
+    expect(adapter.dispatchedRunIds).toHaveLength(1);
+
+    // Complete the run (deferred from send mock to avoid markTaskEnvelopeSent race)
+    finishRun(dir, adapter.dispatchedRunIds[0], 'worker-01', { success: true });
+
+    // Tick 3: process terminal run events (run_started + run_finished)
+    await coordinator.tick();
 
     const events = readEvents(dir);
     expect(events.some((e) => e.event === 'run_started')).toBe(true);
@@ -281,7 +304,13 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: claim + start session
     await coordinator.tick();
+    // Tick 2: process reported_for_duty, dispatch task envelope (startRun in mock)
+    await coordinator.tick();
+
+    expect(adapter.dispatchedRunIds).toHaveLength(1);
+    finishRun(dir, adapter.dispatchedRunIds[0], 'worker-01', { success: true });
 
     const claims = readClaims(dir);
     const claim = claims.claims.find((c) => c.task_ref === 'docs/task-1')!;
@@ -324,20 +353,30 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('handles agent calling run_fail — claim moves to failed and task is requeued', async () => {
+    const dispatchedRunIds: string[] = [];
     const adapter = {
-      start: vi.fn().mockResolvedValue({
-        session_handle: 'pty:worker-01',
-        provider_ref: { provider: 'claude' },
+      start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
+        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        if (sessionToken) {
+          appendSequencedEvent(dir, {
+            ts: new Date().toISOString(),
+            event: 'reported_for_duty',
+            actor_type: 'agent',
+            actor_id: _agentId,
+            agent_id: _agentId,
+            payload: { session_token: sessionToken },
+          });
+        }
+        return Promise.resolve({
+          session_handle: createSessionHandle(_agentId),
+          provider_ref: { provider: 'claude' },
+        });
       }),
       send: vi.fn().mockImplementation((_handle: string, text: string) => {
         const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
         if (runId) {
+          dispatchedRunIds.push(runId);
           startRun(dir, runId, 'worker-01');
-          finishRun(dir, runId, 'worker-01', {
-            success: false,
-            failureReason: 'build error',
-            policy: 'requeue',
-          });
         }
         return '';
       }),
@@ -349,7 +388,17 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: claim + start session
     await coordinator.tick();
+    // Tick 2: process reported_for_duty, dispatch task envelope (startRun in mock)
+    await coordinator.tick();
+
+    expect(dispatchedRunIds).toHaveLength(1);
+    finishRun(dir, dispatchedRunIds[0], 'worker-01', {
+      success: false,
+      failureReason: 'build error',
+      policy: 'requeue',
+    });
 
     const claims = readClaims(dir);
     const claim = claims.claims.find((c) => c.task_ref === 'docs/task-1')!;
@@ -471,18 +520,31 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [
-        { agent_id: 'worker-01', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-01', registered_at: '2026-01-01T00:00:00.000Z' },
-        { agent_id: 'worker-02', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-02', registered_at: '2026-01-01T00:00:00.000Z' },
+        { agent_id: 'worker-01', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-01', session_token: 'tok-w1', session_started_at: '2026-01-01T00:00:00.000Z', session_ready_at: '2026-01-01T00:00:01.000Z', registered_at: '2026-01-01T00:00:00.000Z' },
+        { agent_id: 'worker-02', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-02', session_token: 'tok-w2', session_started_at: '2026-01-01T00:00:00.000Z', session_ready_at: '2026-01-01T00:00:01.000Z', registered_at: '2026-01-01T00:00:00.000Z' },
       ],
     }));
     writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-    writeFileSync(join(dir, 'events.jsonl'), '');
 
     const adapter = {
-      start: vi.fn().mockImplementation((agentId: string) => ({
-        session_handle: createSessionHandle(agentId),
-        provider_ref: { provider: 'claude' },
-      })),
+      start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
+        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        const sessionHandle = createSessionHandle(_agentId);
+        if (sessionToken) {
+          appendSequencedEvent(dir, {
+            ts: new Date().toISOString(),
+            event: 'reported_for_duty',
+            actor_type: 'agent',
+            actor_id: _agentId,
+            agent_id: _agentId,
+            payload: { session_token: sessionToken },
+          });
+        }
+        return Promise.resolve({
+          session_handle: sessionHandle,
+          provider_ref: { provider: 'claude' },
+        });
+      }),
       send: vi.fn().mockImplementation(async () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
         return '';
@@ -495,6 +557,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: claim both tasks, start sessions (reported_for_duty emitted in adapter.start)
+    await coordinator.tick();
+    // Tick 2: process reported_for_duty, dispatch both envelopes concurrently
     const startedAt = Date.now();
     await coordinator.tick();
     const elapsedMs = Date.now() - startedAt;
@@ -625,9 +690,22 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     const startedRuns: string[] = [];
     const adapter = {
-      start: vi.fn().mockResolvedValue({
-        session_handle: 'pty:orc-1',
-        provider_ref: { provider: 'codex' },
+      start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
+        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        if (sessionToken) {
+          appendSequencedEvent(dir, {
+            ts: new Date().toISOString(),
+            event: 'reported_for_duty',
+            actor_type: 'agent',
+            actor_id: _agentId,
+            agent_id: _agentId,
+            payload: { session_token: sessionToken },
+          });
+        }
+        return Promise.resolve({
+          session_handle: createSessionHandle(_agentId),
+          provider_ref: { provider: 'codex' },
+        });
       }),
       send: vi.fn().mockImplementation((_handle: string, text: string) => {
         const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
@@ -645,6 +723,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: claim task-1, start session (reported_for_duty emitted in adapter.start)
+    await coordinator.tick();
+    // Tick 2: process reported_for_duty, send task envelope
     await coordinator.tick();
 
     expect(adapter.start).toHaveBeenCalledOnce();
@@ -659,6 +740,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(agentsAfterFirstTick.map((agent) => agent.agent_id)).toEqual(['master', 'orc-1']);
 
     finishRun(dir, startedRuns[0], 'orc-1', { success: true });
+    // Tick 3: process run_finished for task-1, claim task-2, start new session
+    await coordinator.tick();
+    // Tick 4: process reported_for_duty for task-2, send task envelope
     await coordinator.tick();
 
     expect(adapter.start).toHaveBeenCalledTimes(2);
@@ -681,15 +765,28 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     const adapter = {
       start: vi.fn()
         .mockRejectedValueOnce(new Error('spawn failed once'))
-        .mockResolvedValueOnce({
-          session_handle: 'pty:orc-1',
-          provider_ref: { provider: 'codex' },
+        .mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
+          const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+          if (sessionToken) {
+            appendSequencedEvent(dir, {
+              ts: new Date().toISOString(),
+              event: 'reported_for_duty',
+              actor_type: 'agent',
+              actor_id: _agentId,
+              agent_id: _agentId,
+              payload: { session_token: sessionToken },
+            });
+          }
+          return Promise.resolve({
+            session_handle: createSessionHandle(_agentId),
+            provider_ref: { provider: 'codex' },
+          });
         }),
       send: vi.fn().mockImplementation((_handle: string, text: string) => {
         const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
         if (runId) {
+          dispatchedRunIds.push(runId);
           startRun(dir, runId, 'orc-1');
-          finishRun(dir, runId, 'orc-1', { success: true });
         }
         return '';
       }),
@@ -698,17 +795,32 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       stop: vi.fn().mockResolvedValue(undefined),
       getOutputTail: vi.fn().mockReturnValue(null),
     };
+    const dispatchedRunIds: string[] = [];
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: claim task, adapter.start fails → retry state set, task stays claimed
     await coordinator.tick();
 
     let backlog = readBacklog(dir);
-    expect(backlog.features[0].tasks[0].status).toBe('todo');
+    // Task stays claimed (managed slot retries instead of failing immediately)
+    expect(backlog.features[0].tasks[0].status).toBe('claimed');
     let claims = readClaims(dir).claims;
-    expect(claims[0]?.state).toBe('failed');
+    expect(claims[0]?.state).toBe('claimed');
+    expect(claims[0]?.session_start_retry_count).toBe(1);
 
+    // Fast-forward the retry timer so the next tick can retry
+    const claimsData = JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8'));
+    claimsData.claims[0].session_start_retry_next_at = new Date(Date.now() - 1000).toISOString();
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify(claimsData));
+
+    // Tick 2: retry session start (succeeds this time), reported_for_duty emitted
     await coordinator.tick();
+    // Tick 3: process reported_for_duty, send task envelope (startRun in mock)
+    await coordinator.tick();
+
+    expect(dispatchedRunIds).toHaveLength(1);
+    finishRun(dir, dispatchedRunIds[0], 'orc-1', { success: true });
 
     backlog = readBacklog(dir);
     claims = readClaims(dir).claims;
@@ -716,7 +828,6 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     expect(claims.some((claim) => claim.state === 'done')).toBe(true);
 
     const events = readEvents(dir);
-    expect(events.some((event) => event.event === 'session_start_failed' && event.agent_id === 'orc-1')).toBe(true);
     expect(events.some((event) => event.event === 'run_finished' && event.agent_id === 'orc-1')).toBe(true);
     expect(adapter.start).toHaveBeenCalledTimes(2);
   });
