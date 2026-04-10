@@ -12,6 +12,7 @@
     "**/*.test.tsx",
     "**/*.e2e.test.ts",
     "test-fixtures/**",
+    "e2e-real/**",
     "dist",
     "scripts"
   ]

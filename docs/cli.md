@@ -7,187 +7,119 @@ Run `orc --help` for the full list.
 
 ## Session management
 
-| Command | Description |
-|---------|-------------|
-| `start-session` | Start the coordinator and master agent session (requires TTY). |
-| `kill-all` | Stop the coordinator and deregister all agents. Full reset. |
-| `init` | Interactive first-time setup: provider selection, state initialization, and install of supported skills/agents/MCP config. |
+These are the commands you'll use to start and stop the orchestrator.
 
-**Flags**
+### `orc init`
 
-| Command | Flags |
-|---------|-------|
-| `start-session` | `[--provider=claude\|codex\|gemini]` `[--agent-id=<id>]` |
-| `kill-all` | `[--keep-sessions]` |
-| `init` | `[--provider=<providers>]` `[--feature=<ref>]` `[--feature-title=<title>]` `[--skip-skills]` `[--skip-agents]` `[--skip-mcp]` `[--force]` |
+Interactive first-time setup. Walks you through provider selection, initializes
+state files, and installs skills, agents, and MCP configuration for your chosen
+providers.
 
-## Task management
+```bash
+orc init                           # interactive (TTY)
+orc init --provider=claude         # non-interactive
+orc init --provider=claude,codex   # multiple providers
+orc init --force                   # reinitialize (backs up existing state)
+```
 
-| Command | Description |
-|---------|-------------|
-| `task-create` | Register a task whose markdown spec already exists in `backlog/`. |
-| `task-mark-done <task-ref>` | Mark a task done, updating its spec frontmatter and runtime state. |
-| `task-reset <task-ref>` | Reset a task back to `todo`, cancelling any active claims. |
-| `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
-| `delegate` | Assign and dispatch a task to a worker agent. |
-| `feature-create <ref>` | Create a new feature grouping in the backlog. |
-| `backlog-sync` | Sync all backlog markdown specs into runtime state. |
-| `backlog-sync-check` | Verify that runtime state matches the backlog markdown specs. |
+**Flags:** `[--provider=<providers>]` `[--feature=<ref>]` `[--feature-title=<title>]` `[--skip-skills]` `[--skip-agents]` `[--skip-mcp]` `[--force]`
 
-**Flags**
+### `orc start-session`
 
-| Command | Flags |
-|---------|-------|
-| `task-create` | `--feature=<ref>` `--title=<text>` `[--ref=<slug>]` `[--task-type=implementation\|refactor]` `[--description=<text>]` `[--ac=<criterion>]` `[--depends-on=<task-ref>]` `[--owner=<agent_id>]` `[--required-capabilities=<cap>]` `[--required-provider=<provider>]` `[--actor-id=<id>]` |
-| `task-mark-done` | `<task-ref>` `[--actor-id=<id>]` |
-| `task-reset` | `<task-ref>` `[--actor-id=<id>]` |
-| `task-unblock` | `<task-ref>` `[--reason=<text>]` |
-| `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` `[--actor-id=<id>]` |
-| `feature-create` | `<ref>` `[--title=<text>]` |
-| `backlog-sync-check` | `[--refs=<ref1,ref2,...>]` |
+Start the coordinator (background process) and master agent session (foreground).
+The coordinator manages the task lifecycle — dispatching work to workers, monitoring
+health, and merging completed tasks. The master is your interactive session.
 
-## Worker lifecycle
+```bash
+orc start-session                          # uses default provider from config
+orc start-session --provider=claude        # explicit provider
+```
 
-> **Note:** These commands are called by worker agents from inside their PTY sessions, not by human operators. They are documented here for completeness and debugging.
+**Flags:** `[--provider=claude|codex|gemini]` `[--agent-id=<id>]`
 
-| Command | Description |
-|---------|-------------|
-| `run-start` | Acknowledge task start; transitions claim to `in_progress`. |
-| `report-for-duty` | Worker announces readiness and requests its first task. |
-| `run-heartbeat` | Protocol signal emitted at key lifecycle points (before reviewers, rebase, work-complete). |
-| `run-work-complete` | Signal that implementation, review, and rebase are done. |
-| `run-finish` | Terminal success signal. Ends the run. |
-| `run-fail` | Terminal failure signal. Optionally requeues or blocks the task. |
-| `progress` | Emit a lifecycle event (phase started/finished, custom events). |
-| `run-input-request` | Worker asks the master a blocking question. |
-| `run-input-respond` | Master answers a worker's pending input request. |
+### `orc kill-all`
 
-**Flags**
+Full reset. Stops the coordinator, terminates all worker sessions, clears the
+agent registry, and requeues any in-flight tasks. Use when the system is in a
+bad state and you want a clean slate.
 
-| Command | Flags |
-|---------|-------|
-| `run-start` | `--run-id=<id>` `--agent-id=<id>` |
-| `report-for-duty` | `--agent-id=<id>` `--session-token=<token>` |
-| `run-heartbeat` | `--run-id=<id>` `--agent-id=<id>` |
-| `run-work-complete` | `--run-id=<id>` `--agent-id=<id>` |
-| `run-finish` | `--run-id=<id>` `--agent-id=<id>` |
-| `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=requeue\|block]` |
-| `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` `[--policy=requeue\|block]` |
-| `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` `[--poll-ms=<ms>]` |
-| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` |
+```bash
+orc kill-all
+```
 
-### Review commands
+**Flags:** `[--keep-sessions]`
 
-> **Note:** These commands are used by sub-agent reviewers and the worker that spawns them, not by human operators.
-
-| Command | Description |
-|---------|-------------|
-| `review-submit` | Reviewer submits review findings for a run. |
-| `review-read` | Read all submitted review findings for a run. |
-
-**Flags**
-
-| Command | Flags |
-|---------|-------|
-| `review-submit` | `--run-id=<id>` `--agent-id=<id>` `--outcome=approved\|findings` `--reason=<text>` |
-| `review-read` | `--run-id=<id>` `[--json]` |
+---
 
 ## Monitoring
 
-| Command | Description |
-|---------|-------------|
-| `status` | Print the agent, task, and claim summary table. |
-| `watch` | Live-refresh status dashboard (TUI). |
-| `runs-active` | List all in-progress and claimed runs. |
-| `events-tail` | Tail the event stream. |
-| `events-filter` | Query the event stream with filters. |
-| `doctor` | Validate state files and check provider keys/binaries. |
-| `preflight` | Lightweight environment health check. |
-| `run-info <run_id>` | Show details for a specific run. |
-| `worker-status [agent_id]` | Show the current status of a specific worker. |
-| `waiting-input` | List runs that are blocked waiting for master input. |
-| `backlog-ready` | List tasks that are ready to be claimed (all deps satisfied). |
-| `backlog-blocked` | List tasks that are currently blocked. |
-| `backlog-orient` | Summarize backlog state for planning. |
+Commands for checking what the orchestrator is doing.
 
-**Flags**
+### `orc status`
 
-| Command | Flags |
-|---------|-------|
-| `status` | `[--json]` `[--mine --agent-id=<id>]` `[--watch\|-w]` `[--interval-ms=<ms>]` `[--once]` |
-| `watch` | `[--interval-ms=<ms>]` `[--once]` |
-| `runs-active` | `[--json]` |
-| `events-tail` | `[--n=<N>]` `[--event=<name>]` `[--json]` |
-| `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--json]` |
-| `doctor` | `[--json]` |
-| `preflight` | `[--json]` |
-| `run-info` | `<run_id>` `[--json]` |
-| `worker-status` | `[<agent_id>]` `[--json]` |
-| `waiting-input` | `[--json]` |
-| `backlog-ready` | `[--json]` |
-| `backlog-blocked` | `[--json]` |
+Print a summary of agents, tasks, claims, and worker capacity. This is the
+first command to run when you want to know what's going on.
 
-## Memory
+```bash
+orc status                # one-shot summary
+orc status --watch        # auto-refresh
+orc status --json         # machine-readable
+```
 
-| Command | Description |
-|---------|-------------|
-| `memory-status` | Show memory store statistics (drawer count, DB size, FTS5 health). |
-| `memory-search <query>` | Full-text search across memory drawers. |
-| `memory-wake-up` | Recall essential memories for session context. |
-| `memory-record` | Store a new memory in the spatial taxonomy. |
+**Flags:** `[--json]` `[--mine --agent-id=<id>]` `[--watch|-w]` `[--interval-ms=<ms>]` `[--once]`
 
-**Flags**
+### `orc watch`
 
-| Command | Flags |
-|---------|-------|
-| `memory-search` | `<query>` `[--wing=<wing>]` `[--room=<room>]` |
-| `memory-wake-up` | `[--wing=<wing>]` `[--budget=<N>]` |
-| `memory-record` | `--content=<text>` `[--wing=<wing>]` `[--hall=<category>]` `[--room=<topic>]` `[--importance=<N>]` |
+Live-updating TUI dashboard. Shows agents, active runs, task progress, and
+worker capacity in real time. Falls back to plain text refresh if no TTY.
 
-## Worker management
+```bash
+orc watch
+```
 
-Recovery and debug commands for managing worker agents directly.
+**Flags:** `[--interval-ms=<ms>]` `[--once]`
 
-> **Note:** These commands are for operator recovery and debugging. They are not part of the normal blessed workflow.
+### `orc doctor`
 
-| Command | Description |
-|---------|-------------|
-| `register-worker <id>` | Register a new worker agent with a given provider. |
-| `start-worker-session <id>` | Launch a headless PTY session and bootstrap a worker. |
-| `attach <id>` | Print the tail of a worker's PTY output log (read-only). |
-| `control-worker <id>` | Inspect a running worker session. |
-| `deregister <id>` | Remove a specific agent registration. |
-| `worker-remove <id>` | Stop a worker's session and deregister it. |
-| `worker-gc` | Mark stale workers as offline. |
-| `worker-clearall` | Remove all offline and stale workers. |
-| `run-expire <run_id>` | Expire a run whose heartbeat lease has lapsed. |
+Comprehensive health check. Validates state files, checks provider binaries
+are installed, detects stale workers, orphaned claims, lifecycle invariant
+violations, sandbox dependencies, and memory store integrity.
 
-**Flags**
+```bash
+orc doctor
+orc doctor --json
+```
 
-| Command | Flags |
-|---------|-------|
-| `register-worker` | `<id>` `--provider=codex\|claude\|gemini` `[--dispatch-mode=<mode>]` `[--role=worker\|reviewer\|scout]` `[--capabilities=<a,b>]` |
-| `start-worker-session` | `<id>` `[--provider=codex\|claude\|gemini]` `[--role=worker\|reviewer\|scout]` `[--force-rebind]` |
-| `worker-remove` | `<worker_id>` `[--keep-session]` |
-| `worker-gc` | `[--deregister]` |
+If doctor reports issues, follow its suggested fixes.
 
-## MCP server
+**Flags:** `[--json]`
 
-> **Note:** This command starts the Model Context Protocol server used by agent tool integrations, not for direct human use.
+### `orc preflight`
 
-| Command | Description |
-|---------|-------------|
-| `mcp-server` | Start the Model Context Protocol server for tool-based access. |
+Lightweight environment validation. Checks that the repo is set up correctly,
+state files exist, and provider CLIs are available. Faster than `doctor` — use
+before `start-session` to catch obvious problems.
+
+```bash
+orc preflight
+```
+
+**Flags:** `[--json]`
+
+---
 
 ## Setup
 
+These commands are called by `orc init` automatically. You typically don't need
+to run them directly unless you're updating an existing installation.
+
 | Command | Description |
 |---------|-------------|
-| `install` | Install skills, agents, and MCP config for configured providers. Gemini currently only affects runtime config/MCP setup; skill and agent targets are skipped with a warning. |
-| `install-agents` | Install agent configuration files for supported provider targets (currently Claude and Codex). |
-| `install-skills` | Install skill definitions for supported provider targets (currently Claude and Codex). |
+| `install` | Install skills, agents, and MCP config for configured providers. |
+| `install-skills` | Install skill definitions for supported provider targets. |
+| `install-agents` | Install agent configuration files for supported provider targets. |
 
-**Flags**
+**Flags:**
 
 | Command | Flags |
 |---------|-------|
@@ -197,96 +129,190 @@ Recovery and debug commands for managing worker agents directly.
 
 ---
 
-## Examples
+## Worker management
 
-### First-time setup
+Recovery and debug commands for managing worker agents directly. In normal
+operation, the coordinator spawns and manages workers automatically — these
+commands are for when you need to intervene manually.
 
-```bash
-orc init --provider=claude
-```
+| Command | Description |
+|---------|-------------|
+| `register-worker <id>` | Manually create a worker agent record. |
+| `start-worker-session <id>` | Launch a headless PTY session for an existing worker. |
+| `attach <id>` | Print the tail of a worker's PTY output log (read-only). |
+| `control-worker <id>` | Interactive PTY control of a running worker session. |
+| `deregister <id>` | Remove an agent registration. Blocks if active claims exist. |
+| `worker-remove <id>` | Stop a worker's session and remove it. |
+| `worker-gc` | Mark workers with dead PIDs as offline. |
+| `worker-clearall` | Remove all offline and stale workers. |
+| `worker-status [agent_id]` | Show worker state, active task, and session info. |
 
-### Start a session
+**Flags:**
 
-```bash
-orc start-session
-# or with explicit provider and master agent ID:
-orc start-session --provider=claude --agent-id=master
-```
+| Command | Flags |
+|---------|-------|
+| `register-worker` | `<id>` `--provider=codex\|claude\|gemini` `[--role=worker\|reviewer\|scout]` `[--capabilities=<a,b>]` |
+| `start-worker-session` | `<id>` `[--provider=codex\|claude\|gemini]` `[--force-rebind]` |
+| `worker-remove` | `<id>` `[--keep-session]` |
+| `worker-gc` | `[--deregister]` |
+| `worker-status` | `[<agent_id>]` `[--json]` |
 
-### Check system health
+---
 
-```bash
-orc status
-orc doctor
-orc preflight
-```
+## Task management
 
-### Delegate a task to a worker
+Commands for creating, completing, and managing tasks. In normal operation,
+the master agent handles task creation and the coordinator handles dispatch.
+These are available for manual intervention and debugging.
 
-```bash
-orc delegate --task-ref=general/42-my-task
-# or target a specific agent:
-orc delegate --task-ref=general/42-my-task --target-agent-id=worker-1
-```
+| Command | Description |
+|---------|-------------|
+| `task-create` | Register a task from an existing markdown spec in `backlog/`. |
+| `task-mark-done <task-ref>` | Mark a task done. Updates spec frontmatter and runtime state. |
+| `task-reset <task-ref>` | Reset a task to `todo`, cancelling any active claims. |
+| `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
+| `delegate` | Dispatch a task to an available worker agent. |
+| `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
-### Reset a stuck task
+**Flags:**
 
-```bash
-orc task-reset general/42-my-task
-```
+| Command | Flags |
+|---------|-------|
+| `task-create` | `--feature=<ref>` `--title=<text>` `[--ref=<slug>]` `[--task-type=implementation\|refactor]` `[--description=<text>]` `[--ac=<criterion>]` `[--depends-on=<task-ref>]` `[--owner=<agent_id>]` `[--required-capabilities=<cap>]` `[--required-provider=<provider>]` |
+| `task-mark-done` | `<task-ref>` `[--actor-id=<id>]` |
+| `task-reset` | `<task-ref>` `[--actor-id=<id>]` |
+| `task-unblock` | `<task-ref>` `[--reason=<text>]` |
+| `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` |
+| `feature-create` | `<ref>` `[--title=<text>]` |
 
-### Inspect active runs and events
+---
 
-```bash
-orc runs-active
-orc events-tail --n=50
-orc events-filter --run-id=run-20260101120000-abcd
-```
+## Backlog
 
-### Debug a worker
+Commands for inspecting and repairing the backlog — the set of markdown task
+specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
 
-```bash
-orc attach worker-1
-orc worker-status worker-1
-orc control-worker worker-1
-```
+| Command | Description |
+|---------|-------------|
+| `backlog-sync` | Repair runtime state from markdown specs. |
+| `backlog-sync-check` | Validate specs match runtime state. Exits 1 on mismatch. |
+| `backlog-ready` | List tasks eligible for dispatch (todo + deps satisfied). |
+| `backlog-blocked` | List blocked tasks with reasons. |
+| `backlog-orient` | Print backlog summary: next task seq, features, task counts. |
 
-### Create a feature and task
+**Flags:**
 
-```bash
-orc feature-create my-feature --title="My Feature"
-# edit backlog/my-feature-001-do-the-thing.md, then:
-orc backlog-sync-check
-```
+| Command | Flags |
+|---------|-------|
+| `backlog-sync-check` | `[--refs=<ref1,ref2,...>]` |
+| `backlog-ready` | `[--json]` |
+| `backlog-blocked` | `[--json]` |
 
-### Search memory
+---
 
-```bash
-orc memory-search "database migration"
-orc memory-search "auth" --wing=general --room=decisions
-orc memory-status
-```
+## Inspection
 
-### Worker run lifecycle (quick reference)
+Commands for digging into active runs and the event stream.
 
-```bash
-orc run-start --run-id=<id> --agent-id=<id>
-# ... do work ...
-orc run-heartbeat --run-id=<id> --agent-id=<id>
-orc run-work-complete --run-id=<id> --agent-id=<id>
-orc run-finish --run-id=<id> --agent-id=<id>
-```
+| Command | Description |
+|---------|-------------|
+| `runs-active` | List in-progress and claimed runs with idle/age metrics. |
+| `run-info <run_id>` | Show claim state, task, worktree path, and idle time for a run. |
+| `run-expire <run_id>` | Force-expire a claim and requeue the task. |
+| `waiting-input` | List runs blocked waiting for master input. |
+| `events-tail` | Print the last N events. |
+| `events-filter` | Query events by run, agent, or event type. |
 
-### Fail a run and block retry
+**Flags:**
 
-```bash
-orc run-fail --run-id=<id> --agent-id=<id> \
-  --reason="Cannot resolve merge conflict in config.ts" \
-  --policy=block
-```
+| Command | Flags |
+|---------|-------|
+| `runs-active` | `[--json]` |
+| `run-info` | `<run_id>` `[--json]` |
+| `events-tail` | `[--n=<N>]` `[--event=<name>]` `[--json]` |
+| `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--json]` |
+| `waiting-input` | `[--json]` |
 
-## See also
+---
 
-- [Getting started](./getting-started.md)
-- [Configuration](./configuration.md)
-- [Contracts & invariants](./contracts.md)
+## Memory
+
+The memory system stores persistent knowledge across sessions. Agents use
+`memory-wake-up` and `memory-record` during task execution. These commands
+are also available for manual inspection.
+
+| Command | Description |
+|---------|-------------|
+| `memory-status` | Show store statistics: drawer count, wings, rooms, DB size. |
+| `memory-search <query>` | Full-text search across memory drawers. |
+| `memory-wake-up` | Recall essential memories for session context (agent use). |
+| `memory-record` | Store a memory manually (agent use). |
+
+**Flags:**
+
+| Command | Flags |
+|---------|-------|
+| `memory-search` | `<query>` `[--wing=<wing>]` `[--room=<room>]` |
+| `memory-wake-up` | `[--wing=<wing>]` `[--budget=<N>]` |
+| `memory-record` | `--content=<text>` `[--wing=<wing>]` `[--hall=<category>]` `[--room=<topic>]` `[--importance=<N>]` |
+
+---
+
+## Run lifecycle
+
+Worker agents call these commands from inside their PTY sessions to report
+progress through the task lifecycle. Not for human use.
+
+| Command | Description |
+|---------|-------------|
+| `report-for-duty` | Worker announces session is ready after bootstrap. |
+| `run-start` | Acknowledge task start; transitions claim to `in_progress`. |
+| `run-work-complete` | Signal implementation, review, and rebase are done. |
+| `run-finish` | Terminal success. Ends the run. |
+| `run-fail` | Terminal failure. Requeues or blocks the task. |
+| `progress` | Emit a phase lifecycle event (phase_started, phase_finished). |
+| `run-input-request` | Worker asks the master a blocking question. |
+| `run-input-respond` | Master answers a worker's pending input request. |
+
+**Flags:**
+
+| Command | Flags |
+|---------|-------|
+| `report-for-duty` | `--agent-id=<id>` `--session-token=<token>` |
+| `run-start` | `--run-id=<id>` `--agent-id=<id>` |
+| `run-work-complete` | `--run-id=<id>` `--agent-id=<id>` |
+| `run-finish` | `--run-id=<id>` `--agent-id=<id>` |
+| `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=requeue\|block]` |
+| `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` |
+| `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` |
+| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` |
+
+---
+
+## Review
+
+Sub-agent reviewers use these to submit findings. The worker that spawns
+them uses `review-read` to collect results. Not for human use.
+
+| Command | Description |
+|---------|-------------|
+| `review-submit` | Submit review outcome (approved or findings) for a run. |
+| `review-read` | Retrieve all submitted review findings for a run. |
+
+**Flags:**
+
+| Command | Flags |
+|---------|-------|
+| `review-submit` | `--run-id=<id>` `--agent-id=<id>` `--outcome=approved\|findings` `--reason=<text>` |
+| `review-read` | `--run-id=<id>` `[--json]` |
+
+---
+
+## MCP server
+
+Starts the Model Context Protocol server for tool-based orchestrator access.
+Used internally by agent integrations.
+
+| Command | Description |
+|---------|-------------|
+| `mcp-server` | Start the MCP server. |
