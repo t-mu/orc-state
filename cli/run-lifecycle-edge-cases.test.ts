@@ -133,13 +133,13 @@ describe('agent-id mismatch', () => {
     expect(claimSnapshot('run-mismatch-start')?.state).toBe('claimed');
   });
 
-  it('run-heartbeat rejects and emits no event when agent-id does not own the claim', () => {
+  it('run-heartbeat is a deprecated no-op regardless of agent-id', () => {
     seedInProgressRun({ runId: 'run-mismatch-hb', agentId: 'worker-01' });
 
     const result = runCli('run-heartbeat.ts', ['--run-id=run-mismatch-hb', '--agent-id=worker-99']);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('worker-01');
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('deprecated');
     expect(readEvents().some((e) => e.event === 'heartbeat')).toBe(false);
   });
 
@@ -175,83 +175,25 @@ describe('agent-id mismatch', () => {
   });
 });
 
-// ── run-heartbeat: expired lease (Task 61 rejection behavior) ────────────────
+// ── run-heartbeat: deprecated no-op (was: expired lease rejection, Task 61) ──
 //
-// Heartbeat must be rejected when the lease has expired, regardless of the
-// claim state. The worker-coordinator protocol relies on this to ensure stale
-// workers do not extend leases for tasks already requeued by the coordinator.
+// run-heartbeat is deprecated. The command exits 0 with a deprecation warning
+// regardless of claim state, lease expiry, or arguments. Lease renewal is now
+// handled automatically by the coordinator via PID probing and phase events.
 
-describe('run-heartbeat expired lease', () => {
-  it('rejects heartbeat when the claim is in_progress but lease has expired and run was requeued', () => {
-    // Simulates a worker that missed heartbeats: claim is in_progress but expired.
-    // The coordinator would have requeued the task; the worker still tries to heartbeat.
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }] }],
-    }));
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-      version: '1',
-      agents: [{ agent_id: 'worker-01', provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
-    }));
-    writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-      version: '1',
-      claims: [{
-        run_id: 'run-expired-requeued',
-        task_ref: 'docs/task-1',
-        agent_id: 'worker-01',
-        state: 'in_progress',
-        claimed_at: '2020-01-01T00:00:00.000Z',
-        started_at: '2020-01-01T00:01:00.000Z',
-        lease_expires_at: '2020-01-01T00:31:00.000Z',
-        last_heartbeat_at: null,
-        finished_at: null,
-        finalization_state: null,
-        finalization_retry_count: 0,
-        finalization_blocked_reason: null,
-      }],
-    }));
-    writeFileSync(join(dir, 'events.jsonl'), '');
-
+describe('run-heartbeat deprecated no-op', () => {
+  it('exits 0 with deprecation warning even when lease has expired', () => {
     const result = runCli('run-heartbeat.ts', ['--run-id=run-expired-requeued', '--agent-id=worker-01']);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('expired');
-    expect(readEvents().some((e) => e.event === 'heartbeat' && e.run_id === 'run-expired-requeued')).toBe(false);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('deprecated');
   });
 
-  it('rejects heartbeat when the claim state is done (run already completed)', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'done' }] }],
-    }));
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-      version: '1',
-      agents: [{ agent_id: 'worker-01', provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
-    }));
-    writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-      version: '1',
-      claims: [{
-        run_id: 'run-done-hb',
-        task_ref: 'docs/task-1',
-        agent_id: 'worker-01',
-        state: 'done',
-        claimed_at: '2026-01-01T00:00:00.000Z',
-        started_at: '2026-01-01T00:01:00.000Z',
-        finished_at: '2026-01-01T00:10:00.000Z',
-        lease_expires_at: '2099-01-01T00:00:00.000Z',
-        last_heartbeat_at: null,
-        finalization_state: null,
-        finalization_retry_count: 0,
-        finalization_blocked_reason: null,
-      }],
-    }));
-    writeFileSync(join(dir, 'events.jsonl'), '');
-
+  it('exits 0 with deprecation warning even when claim is done', () => {
     const result = runCli('run-heartbeat.ts', ['--run-id=run-done-hb', '--agent-id=worker-01']);
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('run_started first');
-    expect(readEvents().some((e) => e.event === 'heartbeat' && e.run_id === 'run-done-hb')).toBe(false);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('deprecated');
   });
 });
 

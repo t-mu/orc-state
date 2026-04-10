@@ -185,7 +185,7 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
-function seedFailedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
+function _seedFailedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
     version: '1',
     features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'todo' }] }],
@@ -309,88 +309,32 @@ describe('orc-report-for-duty', () => {
   });
 });
 
-describe('orc-run-heartbeat', () => {
-  it('appends a heartbeat event without mutating claims or agents', () => {
+describe('orc-run-heartbeat (deprecated no-op)', () => {
+  it('exits 0 with deprecation warning regardless of state', () => {
     seedInProgressRun({ runId: 'run-hb-001', agentId: 'worker-01' });
-    const before = claimSnapshot('run-hb-001');
 
     const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('heartbeat');
-
-    assertClaimUnchanged('run-hb-001', before);
-
-    const agents = readAgents();
-    expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
-
-    const events = readEvents();
-    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-hb-001')).toBe(true);
+    expect(result.stderr).toContain('deprecated');
   });
 
-  it('rejects heartbeat before run_started when the claim is still claimed', () => {
-    seedClaimedRun({ runId: 'run-claimed-hb', agentId: 'worker-01' });
+  it('exits 0 with deprecation warning even without arguments', () => {
+    const result = runCli('run-heartbeat.ts', []);
 
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-claimed-hb', '--agent-id=worker-01']);
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("heartbeat requires run_started first");
-    const events = readEvents();
-    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-claimed-hb')).toBe(false);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('deprecated');
   });
 
-  it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Usage');
-  });
+  it('does not emit events or mutate state', () => {
+    seedInProgressRun({ runId: 'run-hb-noop', agentId: 'worker-01' });
+    const before = claimSnapshot('run-hb-noop');
 
-  it('rejects heartbeat for a terminated run', () => {
-    seedFailedRun({ runId: 'run-stale-hb', agentId: 'worker-01' });
+    runCli('run-heartbeat.ts', ['--run-id=run-hb-noop', '--agent-id=worker-01']);
 
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-stale-hb', '--agent-id=worker-01']);
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("heartbeat requires run_started first");
-    expect(claimSnapshot('run-stale-hb')?.state).toBe('failed');
+    assertClaimUnchanged('run-hb-noop', before);
     const events = readEvents();
-    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-stale-hb')).toBe(false);
-  });
-
-  it('rejects heartbeat when lease has already expired', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }] }],
-    }));
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-      version: '1',
-      agents: [{ agent_id: 'worker-01', provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
-    }));
-    writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-      version: '1',
-      claims: [{
-        run_id: 'run-expired-hb',
-        task_ref: 'docs/task-1',
-        agent_id: 'worker-01',
-        state: 'in_progress',
-        claimed_at: '2020-01-01T00:00:00.000Z',
-        started_at: '2020-01-01T00:01:00.000Z',
-        lease_expires_at: '2020-01-01T00:31:00.000Z',
-        last_heartbeat_at: null,
-        finished_at: null,
-        finalization_state: null,
-        finalization_retry_count: 0,
-        finalization_blocked_reason: null,
-      }],
-    }));
-    writeFileSync(join(dir, 'events.jsonl'), '');
-
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-expired-hb', '--agent-id=worker-01']);
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('expired');
-    const events = readEvents();
-    expect(events.some((e) => e.event === 'heartbeat' && e.run_id === 'run-expired-hb')).toBe(false);
+    expect(events.some((e) => e.event === 'heartbeat')).toBe(false);
   });
 });
 
