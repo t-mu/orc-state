@@ -23,7 +23,7 @@ Depends on Tasks 161, 162, 163, 164.
 - Implement PR path: push branch → create PR → spawn reviewer worker
 - Add tick handler for `pr_review_in_progress` (monitor reviewer completion)
 - Add PR lease handling (`pr_finalize_lease_ms`)
-- Reviewer owns entire PR lifecycle (review, fix, rebase, CI, merge) — coordinator only spawns and monitors
+- Reviewer owns PR review, fixes, rebase, and CI — coordinator merges via adapter after reviewer signals work_complete
 - Add `buildPrReviewerBootstrap()` to `lib/sessionBootstrap.ts`
 - Add claim setters for PR fields in `lib/claimStateManager.ts`
 
