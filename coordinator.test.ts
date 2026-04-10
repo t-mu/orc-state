@@ -513,7 +513,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(claim).toBeDefined();
     expect(claim.state).toBe('in_progress');
     // Lease should have been extended well beyond the original 5s-from-now expiry
-    expect(new Date(claim.lease_expires_at).getTime()).toBeGreaterThan(Date.now() + 60_000);
+    expect(new Date(claim.lease_expires_at as string).getTime()).toBeGreaterThan(Date.now() + 60_000);
   });
 
   it('sets status=running and records session_handle after successful launch for an assigned task', async () => {
