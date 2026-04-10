@@ -51,7 +51,7 @@ no arbitrary command execution from config.
 
 ## Goals
 
-1. Must define a `GitHostAdapter` interface with 9 methods covering push, PR creation, status, CI wait, merge, review, diff, and body retrieval.
+1. Must define a `GitHostAdapter` interface with 8 methods: pushBranch, createPr, checkPrStatus, waitForCi, mergePr, submitReview, getPrBody, getPrDiff.
 2. Must implement GitHub adapter using `spawnSync('gh', [...args])` — argument arrays only.
 3. Must throw descriptive errors on non-zero exit codes.
 4. Must provide a factory function `getGitHostAdapter(provider)`.
@@ -124,7 +124,7 @@ export type { GitHostAdapter } from './interface.ts';
 
 ## Acceptance criteria
 
-- [ ] `GitHostAdapter` interface defines all 9 methods with correct signatures (including `waitForCi`).
+- [ ] `GitHostAdapter` interface defines all 8 methods with correct signatures.
 - [ ] `GitHubAdapter` implements all 8 methods using `spawnSync('gh', [...])`.
 - [ ] No use of `exec()`, `execSync()`, or shell template strings.
 - [ ] Descriptive errors thrown on non-zero exit codes with stderr content.

@@ -111,7 +111,7 @@ describe('PR finalization state machine', () => {
 - [ ] E2E test covers PR closed without merge path.
 - [ ] E2E test verifies direct path is unaffected.
 - [ ] Integration tests cover all PR finalization state transitions.
-- [ ] PR poll interval is verified.
+- [ ] Coordinator merges PR after reviewer work_complete.
 - [ ] PR lease duration is verified.
 - [ ] `npm test` passes.
 - [ ] `npm run test:e2e` passes.

@@ -7,6 +7,7 @@ review_level: full
 depends_on:
   - general/161-pr-merge-config-schema
   - general/162-git-host-adapter
+  - general/163-pr-cli-commands
   - general/164-pr-templates
 ---
 
@@ -162,13 +163,13 @@ reviewer's `work_complete` — the reviewer already confirmed CI is green.
 
 When creating claims for PR-mode tasks, or when transitioning to PR finalization states, use `pr_finalize_lease_ms` instead of the standard `finalize_ms`.
 
-### Step 7 — Claim state setters
+### Step 6 — Claim state setters
 
 **File:** `lib/claimStateManager.ts`
 
 Add: `setPrRef()`, `setPrCreatedAt()`, `setPrReviewerAgentId()`. Same pattern as existing setters (`setRunFinalizationState`, `setEscalationNotified`).
 
-### Step 8 — PR reviewer bootstrap builder
+### Step 7 — PR reviewer bootstrap builder
 
 **File:** `lib/sessionBootstrap.ts`
 

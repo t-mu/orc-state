@@ -172,11 +172,11 @@ Add to frontmatter (commented out): `# merge_strategy: direct`
 
 ## Acceptance criteria
 
-- [ ] `CoordinatorConfig` includes all 5 new fields with correct types and defaults.
+- [ ] `CoordinatorConfig` includes all 4 new fields with correct types and defaults.
 - [ ] `loadCoordinatorConfig()` parses all fields from config file.
 - [ ] `schemas/backlog.schema.json` Task has optional `merge_strategy` enum.
 - [ ] `types/backlog.ts` Task type has `merge_strategy?`.
-- [ ] FinalizationState enum includes all 5 new PR states.
+- [ ] FinalizationState enum includes all 4 new PR states (`pr_created`, `pr_review_in_progress`, `pr_merged`, `pr_failed`).
 - [ ] Claim schema and type include `pr_ref`, `pr_created_at`, `pr_reviewer_agent_id`.
 - [ ] Backlog sync propagates `merge_strategy` from frontmatter to `backlog.json`.
 - [ ] Existing tasks without `merge_strategy` continue to work (backward compatible).
