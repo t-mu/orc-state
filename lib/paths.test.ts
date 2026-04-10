@@ -21,12 +21,12 @@ describe('paths', () => {
     const { STATE_DIR, EVENTS_FILE, ORCHESTRATOR_CONFIG_FILE, RUN_WORKTREES_FILE } = await import('./paths.ts');
     expect(STATE_DIR).toBe('/tmp/repo-root/.orc-state');
     expect(EVENTS_FILE).toBe('/tmp/repo-root/.orc-state/events.db');
-    expect(ORCHESTRATOR_CONFIG_FILE).toBe('/tmp/repo-root/orchestrator.config.json');
+    expect(ORCHESTRATOR_CONFIG_FILE).toBe('/tmp/repo-root/orc-state.config.json');
     expect(RUN_WORKTREES_FILE).toBe('/tmp/repo-root/.orc-state/run-worktrees.json');
   });
 
-  it('still honors ORCH_STATE_DIR overrides explicitly', async () => {
-    vi.stubEnv('ORCH_STATE_DIR', '/tmp/override-state');
+  it('still honors ORC_STATE_DIR overrides explicitly', async () => {
+    vi.stubEnv('ORC_STATE_DIR', '/tmp/override-state');
     const { STATE_DIR } = await import('./paths.ts');
     expect(STATE_DIR).toBe('/tmp/override-state');
   });
@@ -48,7 +48,7 @@ describe('consumeHookEvents', () => {
   beforeEach(() => {
     vi.resetModules();
     stateDir = createTempStateDir('hook-events-test-');
-    vi.stubEnv('ORCH_STATE_DIR', stateDir);
+    vi.stubEnv('ORC_STATE_DIR', stateDir);
     mkdirSync(join(stateDir, 'pty-hook-events'), { recursive: true });
   });
 

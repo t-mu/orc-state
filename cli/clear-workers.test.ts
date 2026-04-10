@@ -16,8 +16,8 @@ afterEach(() => {
 });
 
 function setStateDirEnv(value: string | undefined) {
-  if (value == null) delete process.env.ORCH_STATE_DIR;
-  else process.env.ORCH_STATE_DIR = value;
+  if (value == null) delete process.env.ORC_STATE_DIR;
+  else process.env.ORC_STATE_DIR = value;
 }
 
 function writeAgents(agents: unknown[]) {
@@ -39,7 +39,7 @@ describe('cli/clear-workers.ts', () => {
     }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/clear-workers.ts'];
     setStateDirEnv(dir);
     try {
@@ -65,7 +65,7 @@ describe('cli/clear-workers.ts', () => {
     }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/clear-workers.ts'];
     setStateDirEnv(dir);
     try {
@@ -91,7 +91,7 @@ describe('cli/clear-workers.ts', () => {
 
     const before = readAgents();
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/clear-workers.ts'];
     setStateDirEnv(dir);
     try {

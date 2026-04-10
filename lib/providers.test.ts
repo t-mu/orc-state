@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe('loadWorkerPoolConfig', () => {
   it('reads worker pool settings from orchestrator config file', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: {
         max_workers: 3,
@@ -36,7 +36,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('lets env overrides win over config file values', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: {
         max_workers: 1,
@@ -62,7 +62,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('reads execution_mode from worker_pool config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: { provider: 'codex', execution_mode: 'sandbox' },
     }));
@@ -73,7 +73,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('ORC_WORKER_EXECUTION_MODE env var overrides config execution_mode', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: { provider: 'codex', execution_mode: 'sandbox' },
     }));
@@ -87,7 +87,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('defaults execution_mode to full-access when absent from config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
 
     expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toMatchObject({
@@ -96,7 +96,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('falls back to default_provider when worker_pool.provider is absent', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_provider: 'claude',
       worker_pool: {
@@ -109,7 +109,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('throws on invalid default_provider', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_provider: 'notaprovider',
     }));
@@ -118,7 +118,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('prefers worker_pool.provider over default_provider', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_provider: 'gemini',
       worker_pool: {
@@ -131,7 +131,7 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('parses provider_models from config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: {
         provider: 'claude',
@@ -187,7 +187,7 @@ describe('resolveWorkerModel', () => {
 
 describe('loadMasterConfig', () => {
   it('reads master section from config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       master: { provider: 'claude', model: 'claude-opus-4-6' },
     }));
@@ -197,7 +197,7 @@ describe('loadMasterConfig', () => {
   });
 
   it('falls back to default_provider when master.provider absent', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_provider: 'gemini',
     }));
@@ -207,7 +207,7 @@ describe('loadMasterConfig', () => {
   });
 
   it('env vars override config file', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       master: { provider: 'claude', model: 'claude-opus-4-6' },
     }));
@@ -222,7 +222,7 @@ describe('loadMasterConfig', () => {
 
 describe('loadCoordinatorConfig', () => {
   it('reads coordinator section from config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       coordinator: {
         mode: 'monitor',
@@ -247,14 +247,14 @@ describe('loadCoordinatorConfig', () => {
   });
 
   it('parses memory_prune_interval_ms from config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({ coordinator: { memory_prune_interval_ms: 7200000 } }));
     const result = loadCoordinatorConfig({ configFile: configPath });
     expect(result.memory_prune_interval_ms).toBe(7200000);
   });
 
   it('parses memory_prune_interval_ms of 0 (disable periodic pruning)', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({ coordinator: { memory_prune_interval_ms: 0 } }));
     const result = loadCoordinatorConfig({ configFile: configPath });
     expect(result.memory_prune_interval_ms).toBe(0);
@@ -268,7 +268,7 @@ describe('loadCoordinatorConfig', () => {
 
 describe('loadLeaseConfig', () => {
   it('reads lease section from config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       leases: { default_ms: 900000, finalize_ms: 1800000 },
     }));
@@ -304,7 +304,7 @@ describe('loadMasterConfig execution_mode', () => {
   });
 
   it('reads from master.execution_mode in config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       master: { provider: 'claude', execution_mode: 'sandbox' },
     }));
@@ -313,7 +313,7 @@ describe('loadMasterConfig execution_mode', () => {
   });
 
   it('falls back to default_execution_mode', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_execution_mode: 'sandbox',
     }));
@@ -322,7 +322,7 @@ describe('loadMasterConfig execution_mode', () => {
   });
 
   it('master.execution_mode takes priority over default_execution_mode', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_execution_mode: 'sandbox',
       master: { execution_mode: 'full-access' },
@@ -332,7 +332,7 @@ describe('loadMasterConfig execution_mode', () => {
   });
 
   it('env var ORC_MASTER_EXECUTION_MODE overrides config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       master: { execution_mode: 'full-access' },
     }));
@@ -341,7 +341,7 @@ describe('loadMasterConfig execution_mode', () => {
   });
 
   it('warns and defaults on invalid execution_mode', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       master: { execution_mode: 'invalid-mode' },
     }));
@@ -360,7 +360,7 @@ describe('loadWorkerPoolConfig execution_mode', () => {
   });
 
   it('reads from worker_pool.execution_mode in config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: { execution_mode: 'sandbox' },
     }));
@@ -369,7 +369,7 @@ describe('loadWorkerPoolConfig execution_mode', () => {
   });
 
   it('falls back to default_execution_mode', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_execution_mode: 'sandbox',
     }));
@@ -378,7 +378,7 @@ describe('loadWorkerPoolConfig execution_mode', () => {
   });
 
   it('worker_pool.execution_mode takes priority over default_execution_mode', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_execution_mode: 'sandbox',
       worker_pool: { execution_mode: 'full-access' },
@@ -388,7 +388,7 @@ describe('loadWorkerPoolConfig execution_mode', () => {
   });
 
   it('env var ORC_WORKER_EXECUTION_MODE overrides config', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: { execution_mode: 'full-access' },
     }));
@@ -397,7 +397,7 @@ describe('loadWorkerPoolConfig execution_mode', () => {
   });
 
   it('warns and defaults on invalid execution_mode', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       worker_pool: { execution_mode: 'bad-value' },
     }));
@@ -411,7 +411,7 @@ describe('loadWorkerPoolConfig execution_mode', () => {
 
 describe('parseRawConfigFile default_execution_mode', () => {
   it('throws on invalid default_execution_mode in config file', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_execution_mode: 'not-a-mode',
     }));
@@ -419,7 +419,7 @@ describe('parseRawConfigFile default_execution_mode', () => {
   });
 
   it('accepts valid default_execution_mode in config file', () => {
-    const configPath = join(dir, 'orchestrator.config.json');
+    const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({
       default_execution_mode: 'sandbox',
     }));

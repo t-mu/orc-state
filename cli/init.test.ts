@@ -6,7 +6,7 @@ import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateH
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
-const orcConfigPath = join(repoRoot, 'orchestrator.config.json');
+const orcConfigPath = join(repoRoot, 'orc-state.config.json');
 const mcpJsonPath = join(repoRoot, '.mcp.json');
 let dir: string;
 let savedOrcConfig: string | null;
@@ -35,7 +35,7 @@ afterEach(() => {
 function run(args: string[] = []) {
   return spawnSync('node', ['cli/init.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state'), ORC_BACKLOG_DIR: join(dir, 'backlog') },
+    env: { ...process.env, ORC_STATE_DIR: join(dir, 'state'), ORC_BACKLOG_DIR: join(dir, 'backlog') },
     encoding: 'utf8',
   });
 }
@@ -43,7 +43,7 @@ function run(args: string[] = []) {
 function runInCwd(cwd: string, args: string[] = []) {
   return spawnSync('node', [resolve(repoRoot, 'cli/init.ts'), ...args], {
     cwd,
-    env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state') },
+    env: { ...process.env, ORC_STATE_DIR: join(dir, 'state') },
     encoding: 'utf8',
   });
 }
@@ -101,7 +101,7 @@ describe('cli/init.ts', () => {
     expect(existsSync(join(stateDir, 'events.db.bak'))).toBe(true);
   });
 
-  it('creates orchestrator.config.json with selected provider', () => {
+  it('creates orc-state.config.json with selected provider', () => {
     const result = run(['--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
     expect(result.status).toBe(0);
     expect(existsSync(orcConfigPath)).toBe(true);
@@ -110,7 +110,7 @@ describe('cli/init.ts', () => {
     expect(config.worker_pool).toEqual({ max_workers: 1 });
   });
 
-  it('creates orchestrator.config.json with two providers', () => {
+  it('creates orc-state.config.json with two providers', () => {
     const result = run(['--provider=claude,codex', '--skip-skills', '--skip-agents', '--skip-mcp']);
     expect(result.status).toBe(0);
     const config = JSON.parse(readFileSync(orcConfigPath, 'utf8'));
@@ -173,7 +173,7 @@ describe('cli/init.ts', () => {
     try {
       const result = spawnSync('node', ['cli/init.ts', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp'], {
         cwd: repoRoot,
-        env: { ...process.env, ORCH_STATE_DIR: join(dir, 'state'), ORC_BACKLOG_DIR: join(dir, 'backlog'), PATH: `${fakeBinDir}:${process.env.PATH}` },
+        env: { ...process.env, ORC_STATE_DIR: join(dir, 'state'), ORC_BACKLOG_DIR: join(dir, 'backlog'), PATH: `${fakeBinDir}:${process.env.PATH}` },
         encoding: 'utf8',
       });
       expect(result.status).toBe(0);

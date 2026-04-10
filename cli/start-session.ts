@@ -120,7 +120,7 @@ function coordinatorStatus() {
 
 async function spawnCoordinator() {
   const child = spawn(process.execPath, [COORDINATOR_SCRIPT_PATH], {
-    env:      { ...process.env, ORCH_STATE_DIR: STATE_DIR },
+    env:      { ...process.env, ORC_STATE_DIR: STATE_DIR },
     detached: true,
     stdio:    'ignore',
   });
@@ -176,7 +176,7 @@ function writeMcpConfig() {
       orchestrator: {
         command: process.execPath,
         args: [serverPath],
-        env: { ORCH_STATE_DIR: STATE_DIR },
+        env: { ORC_STATE_DIR: STATE_DIR },
       },
     },
   };
@@ -195,7 +195,7 @@ const deprecatedWorkerProvider = flag('worker-provider');
 
 if (deprecatedWorkerId || deprecatedWorkerProvider) {
   console.error('Deprecated flags: --worker-id and --worker-provider are no longer supported by orc start-session.');
-  console.error('Normal startup is master-only. Configure worker capacity via ORC_MAX_WORKERS / ORC_WORKER_PROVIDER or orchestrator.config.json.');
+  console.error('Normal startup is master-only. Configure worker capacity via ORC_MAX_WORKERS / ORC_WORKER_PROVIDER or orc-state.config.json.');
   console.error('Use orc register-worker or orc start-worker-session only for debug/recovery workflows.');
   process.exit(1);
 }

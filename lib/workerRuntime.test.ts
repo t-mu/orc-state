@@ -83,9 +83,9 @@ describe('normalizeWorkerEnv', () => {
     });
 
     const { normalizeWorkerEnv } = await import('./workerRuntime.ts');
-    const env = normalizeWorkerEnv({ ORCH_STATE_DIR: '/tmp/state' }, '/repo/root');
+    const env = normalizeWorkerEnv({ ORC_STATE_DIR: '/tmp/state' }, '/repo/root');
 
-    expect(env.ORCH_STATE_DIR).toBe('/tmp/state');
+    expect(env.ORC_STATE_DIR).toBe('/tmp/state');
     expect(env.ORC_REPO_ROOT).toBe('/repo/root');
     expect(env.ORC_BIN).toBe('/repo/root/cli/orc.ts');
   });

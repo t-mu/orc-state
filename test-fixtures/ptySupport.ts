@@ -10,7 +10,7 @@ function probePtySupport(env = process.env) {
     "import { join } from 'node:path'",
     `const { createPtyAdapter } = await import(${JSON.stringify(adapterPath)})`,
     "const stateDir = mkdtempSync(join(tmpdir(), 'orc-pty-probe-'))",
-    "process.env.ORCH_STATE_DIR = stateDir",
+    "process.env.ORC_STATE_DIR = stateDir",
     "const adapter = createPtyAdapter({ provider: 'claude' })",
     "let ok = false",
     "try {",

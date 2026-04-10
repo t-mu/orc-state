@@ -32,7 +32,7 @@ describe('mergeMcpConfig', () => {
     expect(written.mcpServers.orchestrator).toMatchObject({
       command: process.execPath,
       args: ['/path/to/server.ts'],
-      env: { ORCH_STATE_DIR: '/state' },
+      env: { ORC_STATE_DIR: '/state' },
     });
   });
 
@@ -55,7 +55,7 @@ describe('mergeMcpConfig', () => {
     expect(written.mcpServers.orchestrator).toMatchObject({
       command: process.execPath,
       args: ['/path/to/server.ts'],
-      env: { ORCH_STATE_DIR: '/state' },
+      env: { ORC_STATE_DIR: '/state' },
     });
   });
 
@@ -65,7 +65,7 @@ describe('mergeMcpConfig', () => {
       configPath,
       JSON.stringify({
         mcpServers: {
-          orchestrator: { command: 'old-node', args: ['/old/server.ts'], env: { ORCH_STATE_DIR: '/old' } },
+          orchestrator: { command: 'old-node', args: ['/old/server.ts'], env: { ORC_STATE_DIR: '/old' } },
         },
       }),
     );
@@ -77,7 +77,7 @@ describe('mergeMcpConfig', () => {
     expect(written.mcpServers.orchestrator).toMatchObject({
       command: process.execPath,
       args: ['/new/server.ts'],
-      env: { ORCH_STATE_DIR: '/new-state' },
+      env: { ORC_STATE_DIR: '/new-state' },
     });
   });
 

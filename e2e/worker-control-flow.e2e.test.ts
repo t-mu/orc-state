@@ -63,12 +63,12 @@ describe('worker control flow e2e', () => {
     vi.clearAllMocks();
     dir = createTempStateDir('orch-worker-control-e2e-');
     seedState(dir);
-    process.env.ORCH_STATE_DIR = dir;
+    process.env.ORC_STATE_DIR = dir;
   });
 
   afterEach(() => {
     cleanupTempStateDir(dir);
-    delete process.env.ORCH_STATE_DIR;
+    delete process.env.ORC_STATE_DIR;
     vi.unmock('../lib/prompts.ts');
     vi.unmock('../lib/binaryCheck.ts');
     vi.unmock('node-pty');

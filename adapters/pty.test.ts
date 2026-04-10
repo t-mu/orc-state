@@ -9,12 +9,12 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
   dir = createTempStateDir('pty-test-');
-  process.env.ORCH_STATE_DIR = dir;
+  process.env.ORC_STATE_DIR = dir;
 });
 
 afterEach(() => {
   cleanupTempStateDir(dir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
 });
 
 function makeMockPty(pid = 12345) {
@@ -96,14 +96,14 @@ describe('pty adapter start()', () => {
     await adapter.start('bob', {
       execution_mode: 'full-access',
       env: {
-        ORCH_STATE_DIR: '/tmp/shared-state',
+        ORC_STATE_DIR: '/tmp/shared-state',
         ORC_REPO_ROOT: '/tmp/repo-root',
       },
     });
 
     expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.arrayContaining(['--dangerously-skip-permissions']), expect.objectContaining({
       env: expect.objectContaining({
-        ORCH_STATE_DIR: '/tmp/shared-state',
+        ORC_STATE_DIR: '/tmp/shared-state',
         ORC_REPO_ROOT: '/tmp/repo-root',
       }),
     }));

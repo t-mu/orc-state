@@ -151,7 +151,7 @@ export async function launchWorkerSession(
     const nowIso = new Date().toISOString();
     const effectiveMode: ExecutionMode = agent.role === 'scout' ? 'sandbox' : (executionMode ?? 'full-access');
     const workerEnv = normalizeWorkerEnv({
-      ORCH_STATE_DIR: stateDir,
+      ORC_STATE_DIR: stateDir,
     }, repoRoot);
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
       system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc', sessionToken),

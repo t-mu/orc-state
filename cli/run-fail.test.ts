@@ -73,7 +73,7 @@ describe('cli/run-fail.ts', () => {
 function runCli(args: string[]) {
   return spawnSync('node', ['cli/run-fail.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORCH_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }

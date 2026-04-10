@@ -35,7 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanupTempStateDir(dir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_REPO_ROOT;
 });
 
@@ -533,7 +533,7 @@ describe('syncBacklogFromSpecs', () => {
   });
 
   it('runs backlog sync during coordinator startup before the first tick loop', async () => {
-    process.env.ORCH_STATE_DIR = join(dir, '.orc-state');
+    process.env.ORC_STATE_DIR = join(dir, '.orc-state');
     process.env.ORC_REPO_ROOT = dir;
 
     writeBacklog(dir, { version: '1', features: [] });

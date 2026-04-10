@@ -169,7 +169,7 @@ describe('cli/doctor.ts', () => {
         [join(repoRoot, 'cli/doctor.ts'), '--json'],
         {
           cwd: tmpCwd,
-          env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+          env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
           encoding: 'utf8',
         },
       );
@@ -272,7 +272,7 @@ describe('doctor sandbox dependencies', () => {
 function runCli(args: string[], env = process.env) {
   return spawnSync(process.execPath, ['cli/doctor.ts', ...args], {
     cwd: repoRoot,
-    env: { ...env, ORCH_STATE_DIR: dir },
+    env: { ...env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }

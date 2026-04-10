@@ -30,7 +30,7 @@ function readAgents() {
 
 function runCli(args: string[]) {
   return spawnSync(process.execPath, ['cli/deregister.ts', ...args], {
-    env: { ...process.env, ORCH_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }

@@ -8,9 +8,9 @@ orc-state is configured through environment variables and an optional JSON confi
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORCH_STATE_DIR` | Root directory for all state files (backlog.json, agents.json, claims.json, events.db) | `<repo-root>/.orc-state` |
+| `ORC_STATE_DIR` | Root directory for all state files (backlog.json, agents.json, claims.json, events.db) | `<repo-root>/.orc-state` |
 | `ORC_REPO_ROOT` | Force the repository root path instead of auto-detecting via `git rev-parse` | Auto-detected from cwd |
-| `ORC_CONFIG_FILE` | Path to the config file | `<repo-root>/orchestrator.config.json` |
+| `ORC_CONFIG_FILE` | Path to the config file | `<repo-root>/orc-state.config.json` |
 | `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<repo-root>/.worktrees` |
 | `ORC_BACKLOG_DIR` | Directory containing backlog task spec markdown files | `<repo-root>/backlog` |
 
@@ -40,7 +40,7 @@ orc-state is configured through environment variables and an optional JSON confi
 
 ## Config File
 
-Location: `orchestrator.config.json` in the repository root (sibling of `.orc-state/`). Override the path with `ORC_CONFIG_FILE`.
+Location: `orc-state.config.json` in the repository root (sibling of `.orc-state/`). Override the path with `ORC_CONFIG_FILE`.
 
 ### Full Schema
 

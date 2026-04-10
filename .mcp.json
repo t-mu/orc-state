@@ -4,7 +4,7 @@
       "command": "node",
       "args": ["mcp/server.ts"],
       "env": {
-        "ORCH_STATE_DIR": ".orc-state"
+        "ORC_STATE_DIR": ".orc-state"
       }
     }
   }

@@ -9,14 +9,14 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
   dir = createTempStateDir('orch-run-worktree-test-');
-  process.env.ORCH_STATE_DIR = dir;
+  process.env.ORC_STATE_DIR = dir;
   process.env.ORC_WORKTREES_DIR = join(dir, 'repo', '.worktrees');
   process.env.ORC_BACKLOG_DIR = join(dir, 'docs', 'backlog');
 });
 
 afterEach(() => {
   cleanupTempStateDir(dir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_WORKTREES_DIR;
   delete process.env.ORC_BACKLOG_DIR;
 });

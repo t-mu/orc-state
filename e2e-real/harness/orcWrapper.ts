@@ -14,7 +14,7 @@ const REAL_ORC_ENTRYPOINT = join(REAL_CHECKOUT_ROOT, 'cli', 'orc.ts');
  * file can be run directly without a prebuilt dist artifact.
  *
  * The wrapper forwards all env vars set by the caller so ORC_REPO_ROOT,
- * ORCH_STATE_DIR, and related overrides remain pinned to the temp repo.
+ * ORC_STATE_DIR, and related overrides remain pinned to the temp repo.
  *
  * Returns the absolute path to the wrapper script. Set ORC_BIN to this
  * value or add the bin dir to PATH so worker PTYs resolve `orc` correctly.

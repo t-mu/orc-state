@@ -24,13 +24,13 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, { timeoutMs 
 
 beforeEach(() => {
   stateDir = createTempStateDir('orc-pty-int-');
-  process.env.ORCH_STATE_DIR = stateDir;
+  process.env.ORC_STATE_DIR = stateDir;
   originalPath = process.env.PATH;
 });
 
 afterEach(() => {
   cleanupTempStateDir(stateDir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   process.env.PATH = originalPath;
 });
 

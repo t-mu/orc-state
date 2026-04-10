@@ -8,7 +8,7 @@ or debugging the system.
 
 ## State Directory
 
-All runtime state lives under `ORCH_STATE_DIR` (default: `<repo-root>/.orc-state/`).
+All runtime state lives under `ORC_STATE_DIR` (default: `<repo-root>/.orc-state/`).
 State files are never written directly by agents or external tools -- all mutations
 go through `orc` CLI commands or MCP tool handlers, which hold appropriate locks.
 

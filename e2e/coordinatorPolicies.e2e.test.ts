@@ -10,7 +10,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unmock('../adapters/index.ts');
   dir = createTempStateDir('orch-coordinator-policy-e2e-');
-  process.env.ORCH_STATE_DIR = dir;
+  process.env.ORC_STATE_DIR = dir;
   vi.doMock('../lib/runWorktree.ts', () => ({
     ensureRunWorktree: vi.fn((_stateDir, { runId }) => ({
       run_id: runId,
@@ -28,7 +28,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanupTempStateDir(dir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   vi.unmock('../adapters/index.ts');
   vi.unmock('../lib/runWorktree.ts');
 });

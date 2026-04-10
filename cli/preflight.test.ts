@@ -92,7 +92,7 @@ describe('cli/preflight.ts', () => {
         [join(repoRoot, 'cli/preflight.ts'), '--json'],
         {
           cwd: tmpCwd,
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}`, ORCH_STATE_DIR: dir },
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}`, ORC_STATE_DIR: dir },
           encoding: 'utf8',
         },
       );
@@ -107,7 +107,7 @@ describe('cli/preflight.ts', () => {
 function runPreflight(args: string[], env = process.env) {
   return spawnSync(process.execPath, ['cli/preflight.ts', ...args], {
     cwd: repoRoot,
-    env: { ...env, ORCH_STATE_DIR: dir },
+    env: { ...env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }

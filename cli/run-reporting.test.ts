@@ -21,7 +21,7 @@ afterEach(() => {
 function runCli(script: string, args: string[] = []) {
   return spawnSync('node', [`cli/${script}`, ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORCH_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }
@@ -450,7 +450,7 @@ describe('orc-run-work-complete', () => {
 
     const markResult = spawnSync('node', [join(repoRoot, 'cli/task-mark-done.ts'), 'docs/task-1'], {
       cwd: dir,
-      env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
       encoding: 'utf8',
     });
     expect(markResult.status).toBe(0);
@@ -599,7 +599,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=20',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -688,7 +688,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=10',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -729,7 +729,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=40',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
