@@ -30,7 +30,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, { timeoutMs 
 beforeEach(() => {
   vi.resetModules();
   stateDir = createTempStateDir('orc-control-worker-int-');
-  process.env.ORCH_STATE_DIR = stateDir;
+  process.env.ORC_STATE_DIR = stateDir;
   originalPath = process.env.PATH ?? '';
 });
 
@@ -45,7 +45,7 @@ afterEach(async () => {
   adapter = undefined as unknown as ReturnType<typeof createPtyAdapter>;
   sessionHandle = undefined as unknown as string;
   cleanupTempStateDir(stateDir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   process.env.PATH = originalPath;
 });
 
@@ -93,7 +93,7 @@ describe.runIf(PTY_SUPPORTED)('cli/control-worker.ts integration', () => {
 
     const result = spawnSync(process.execPath, ['cli/control-worker.ts', 'orc-1'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
+      env: { ...process.env, ORC_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
     });
 
@@ -114,7 +114,7 @@ describe.runIf(PTY_SUPPORTED)('cli/control-worker.ts integration', () => {
 
     const result = spawnSync(process.execPath, ['cli/control-worker.ts', 'orc-2'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
+      env: { ...process.env, ORC_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
     });
 

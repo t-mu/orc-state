@@ -37,7 +37,7 @@ export function mergeMcpConfig(
   const newEntry = {
     command: process.execPath,
     args: [serverPath],
-    env: { ORCH_STATE_DIR: stateDir },
+    env: { ORC_STATE_DIR: stateDir },
   };
 
   const existingEntry = mcpServers['orchestrator'];

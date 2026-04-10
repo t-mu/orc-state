@@ -29,7 +29,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, { timeoutMs 
 beforeEach(() => {
   vi.resetModules();
   stateDir = createTempStateDir('orc-attach-int-');
-  process.env.ORCH_STATE_DIR = stateDir;
+  process.env.ORC_STATE_DIR = stateDir;
   originalPath = process.env.PATH;
 });
 
@@ -44,7 +44,7 @@ afterEach(async () => {
   adapter = undefined;
   sessionHandle = undefined;
   cleanupTempStateDir(stateDir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   process.env.PATH = originalPath ?? '';
 });
 
@@ -92,7 +92,7 @@ describe.runIf(PTY_SUPPORTED)('cli/attach.ts integration', () => {
 
     const result = spawnSync(process.execPath, ['cli/attach.ts', 'worker-01'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
+      env: { ...process.env, ORC_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
     });
 
@@ -113,7 +113,7 @@ describe.runIf(PTY_SUPPORTED)('cli/attach.ts integration', () => {
 
     const result = spawnSync(process.execPath, ['cli/attach.ts', 'worker-02'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
+      env: { ...process.env, ORC_STATE_DIR: stateDir, PATH: `${fixtureBinPath}:${process.env.PATH ?? ''}` },
       encoding: 'utf8',
     });
 

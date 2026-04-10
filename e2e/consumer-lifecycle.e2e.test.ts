@@ -43,7 +43,7 @@ describe('consumer lifecycle e2e', () => {
     vi.resetModules();
     vi.clearAllMocks();
     dir = createTempStateDir('consumer-lifecycle-e2e-');
-    process.env.ORCH_STATE_DIR = dir;
+    process.env.ORC_STATE_DIR = dir;
     process.env.ORC_REPO_ROOT = dir;
     vi.doMock('../lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn((_stateDir: string, { runId }: { runId: string }) => ({
@@ -62,7 +62,7 @@ describe('consumer lifecycle e2e', () => {
 
   afterEach(() => {
     cleanupTempStateDir(dir);
-    delete process.env.ORCH_STATE_DIR;
+    delete process.env.ORC_STATE_DIR;
     delete process.env.ORC_REPO_ROOT;
     delete process.env.ORC_MAX_WORKERS;
     delete process.env.ORC_WORKER_PROVIDER;
@@ -110,7 +110,7 @@ describe('consumer lifecycle e2e', () => {
       ],
     }));
 
-    // Phase 4: configure managed worker pool (simulates orchestrator.config.json from `orc init`)
+    // Phase 4: configure managed worker pool (simulates orc-state.config.json from `orc init`)
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'claude';
 

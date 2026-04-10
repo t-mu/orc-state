@@ -24,7 +24,7 @@ beforeEach(() => {
   // a fresh coordinator.ts (and fresh paths.ts / adapterInstances Map).
   vi.resetModules();
   dir = createTempStateDir('orc-coord-test-');
-  process.env.ORCH_STATE_DIR = dir;
+  process.env.ORC_STATE_DIR = dir;
   process.env.ORC_REPO_ROOT = dir;
 });
 
@@ -32,7 +32,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   closeMemoryDb();
   cleanupTempStateDir(dir);
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_REPO_ROOT;
   delete process.env.ORC_MAX_WORKERS;
   delete process.env.ORC_WORKER_PROVIDER;
@@ -113,7 +113,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       model: 'gemini-2.5-pro',
       working_directory: '/tmp/orc-worktrees/run-allocated',
       env: expect.objectContaining({
-        ORCH_STATE_DIR: dir,
+        ORC_STATE_DIR: dir,
       }),
     }));
     expect(mockSend).not.toHaveBeenCalled();
@@ -646,7 +646,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(mockStart).toHaveBeenCalledWith('worker-01', expect.objectContaining({
       working_directory: '/tmp/orc-worktrees/run-allocated',
       env: expect.objectContaining({
-        ORCH_STATE_DIR: dir,
+        ORC_STATE_DIR: dir,
       }),
     }));
   });
@@ -3232,7 +3232,7 @@ describe('main startup validation', () => {
     writeFileSync(join(stateDir, 'events.jsonl'), '');
 
     const result = spawnSync(process.execPath, [COORDINATOR_PATH, '--mode=monitor'], {
-      env: { ...process.env, ORCH_STATE_DIR: stateDir },
+      env: { ...process.env, ORC_STATE_DIR: stateDir },
       encoding: 'utf8',
     });
 

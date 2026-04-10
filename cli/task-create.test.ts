@@ -128,7 +128,7 @@ describe('cli/task-create.ts', () => {
 function runCli(args: string[]) {
   return spawnSync('node', ['cli/task-create.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORCH_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_BACKLOG_DIR: join(dir, 'backlog') },
+    env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_BACKLOG_DIR: join(dir, 'backlog') },
     encoding: 'utf8',
   });
 }

@@ -42,7 +42,7 @@ beforeEach(() => {
     runs: [],
   }));
   writeFileSync(join(stateDir, 'events.jsonl'), '');
-  writeFileSync(join(root, 'orchestrator.config.json'), JSON.stringify({
+  writeFileSync(join(root, 'orc-state.config.json'), JSON.stringify({
     worker_pool: { max_workers: 1, provider: 'codex' },
   }));
   originalLevel = chalk.level;

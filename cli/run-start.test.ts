@@ -81,7 +81,7 @@ describe('cli/run-start.ts', () => {
 function runCli(args: string[]) {
   return spawnSync('node', ['cli/run-start.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORCH_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }

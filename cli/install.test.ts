@@ -68,10 +68,10 @@ describe('runInstall', () => {
 });
 
 describe('detectProviders', () => {
-  it('autodetects provider from orchestrator.config.json', () => {
+  it('autodetects provider from orc-state.config.json', () => {
     const base = mkdtempSync(join(tmpdir(), 'detect-test-'));
     writeFileSync(
-      join(base, 'orchestrator.config.json'),
+      join(base, 'orc-state.config.json'),
       JSON.stringify({ default_provider: 'claude' }),
     );
     expect(detectProviders(base)).toEqual(['claude']);
@@ -80,7 +80,7 @@ describe('detectProviders', () => {
   it('returns deduplicated providers from all config fields', () => {
     const base = mkdtempSync(join(tmpdir(), 'detect-test-'));
     writeFileSync(
-      join(base, 'orchestrator.config.json'),
+      join(base, 'orc-state.config.json'),
       JSON.stringify({ default_provider: 'claude', master: { provider: 'claude' }, worker_pool: { provider: 'codex' } }),
     );
     const providers = detectProviders(base);
@@ -96,7 +96,7 @@ describe('detectProviders', () => {
 
   it('returns empty array when config has no provider fields', () => {
     const base = mkdtempSync(join(tmpdir(), 'detect-test-'));
-    writeFileSync(join(base, 'orchestrator.config.json'), JSON.stringify({ other: 'field' }));
+    writeFileSync(join(base, 'orc-state.config.json'), JSON.stringify({ other: 'field' }));
     expect(detectProviders(base)).toEqual([]);
   });
 });

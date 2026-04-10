@@ -27,7 +27,7 @@ afterEach(() => {
   vi.doUnmock('../lib/agentRegistry.ts');
   vi.doUnmock('node-pty');
   vi.doUnmock('node:child_process');
-  delete process.env.ORCH_STATE_DIR;
+  delete process.env.ORC_STATE_DIR;
   cleanupTempStateDir(dir);
 });
 
@@ -91,7 +91,7 @@ function seedActiveRuntimeState() {
 }
 
 function setEnv(stateDir: string) {
-  process.env.ORCH_STATE_DIR = stateDir;
+  process.env.ORC_STATE_DIR = stateDir;
 }
 
 function mockBinaryCheck(ok = true, authOk = true) {
@@ -173,7 +173,7 @@ describe('cli/start-session.ts', () => {
       // freshDir does not exist yet
       spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
-        env:      { ...process.env, ORCH_STATE_DIR: freshDir },
+        env:      { ...process.env, ORC_STATE_DIR: freshDir },
         encoding: 'utf8',
       });
       expect(existsSync(join(freshDir, 'backlog.json'))).toBe(true);
@@ -190,7 +190,7 @@ describe('cli/start-session.ts', () => {
 
       spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
-        env:      { ...process.env, ORCH_STATE_DIR: dir },
+        env:      { ...process.env, ORC_STATE_DIR: dir },
         encoding: 'utf8',
       });
 
@@ -230,7 +230,7 @@ describe('cli/start-session.ts', () => {
       seedState(); // no agents
       const result = spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
-        env:      { ...process.env, ORCH_STATE_DIR: dir },
+        env:      { ...process.env, ORC_STATE_DIR: dir },
         encoding: 'utf8',
       });
       expect(result.status).toBe(1);
@@ -241,7 +241,7 @@ describe('cli/start-session.ts', () => {
       seedState([masterAgent()]);
       const result = spawnSync('node', ['cli/start-session.ts', '--worker-id=orc-9', '--worker-provider=codex'], {
         cwd: repoRoot,
-        env: { ...process.env, ORCH_STATE_DIR: dir },
+        env: { ...process.env, ORC_STATE_DIR: dir },
         encoding: 'utf8',
       });
       expect(result.status).toBe(1);
@@ -980,7 +980,7 @@ describe('cli/start-session.ts', () => {
       expect(config.mcpServers?.orchestrator).toBeTruthy();
       expect(config.mcpServers.orchestrator.command).toBe(process.execPath);
       expect(config.mcpServers.orchestrator.args[0].endsWith(join('mcp', 'server.ts'))).toBe(true);
-      expect(config.mcpServers.orchestrator.env.ORCH_STATE_DIR).toBe(dir);
+      expect(config.mcpServers.orchestrator.env.ORC_STATE_DIR).toBe(dir);
     });
 
     it('does not write mcp-config.json and passes codex bootstrap as the initial prompt', async () => {

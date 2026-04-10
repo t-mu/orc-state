@@ -25,7 +25,7 @@ type StatusResult = {
 };
 
 // root = test-controlled repo root; dir = root/.orc-state (the stateDir).
-// This mirrors real layout so config at root/orchestrator.config.json is found.
+// This mirrors real layout so config at root/orc-state.config.json is found.
 let root: string;
 let dir: string;
 beforeEach(() => {
@@ -49,7 +49,7 @@ function writeState({ agents = [] as Agent[], claims = [] as Claim[], tasks = []
 }
 
 function writeConfig(config: unknown) {
-  writeFileSync(join(root, 'orchestrator.config.json'), JSON.stringify(config));
+  writeFileSync(join(root, 'orc-state.config.json'), JSON.stringify(config));
 }
 
 function writeEvents(events: Record<string, unknown>[]) {

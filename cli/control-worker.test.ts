@@ -22,7 +22,7 @@ describe('cli/control-worker.ts', () => {
   it('fails when worker is missing', () => {
     const result = spawnSync('node', ['cli/control-worker.ts', 'missing'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
@@ -38,7 +38,7 @@ describe('cli/control-worker.ts', () => {
 
     const result = spawnSync('node', ['cli/control-worker.ts', 'master'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
@@ -58,15 +58,15 @@ describe('cli/control-worker.ts', () => {
     }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/control-worker.ts', 'bob'];
-    process.env.ORCH_STATE_DIR = dir;
+    process.env.ORC_STATE_DIR = dir;
 
     try {
       await import('./control-worker.ts');
     } finally {
       process.argv = oldArgv;
-      process.env.ORCH_STATE_DIR = oldStateDir;
+      process.env.ORC_STATE_DIR = oldStateDir;
     }
 
     expect(heartbeatProbe).toHaveBeenCalledWith('pty:bob');
@@ -91,19 +91,19 @@ describe('cli/control-worker.ts', () => {
     vi.doMock('@inquirer/prompts', () => ({ select }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     const stdinTTY = process.stdin.isTTY;
     const stdoutTTY = process.stdout.isTTY;
     Object.defineProperty(process.stdin, 'isTTY', { value: true, writable: true, configurable: true });
     Object.defineProperty(process.stdout, 'isTTY', { value: true, writable: true, configurable: true });
     process.argv = ['node', 'cli/control-worker.ts'];
-    process.env.ORCH_STATE_DIR = dir;
+    process.env.ORC_STATE_DIR = dir;
 
     try {
       await import('./control-worker.ts');
     } finally {
       process.argv = oldArgv;
-      process.env.ORCH_STATE_DIR = oldStateDir;
+      process.env.ORC_STATE_DIR = oldStateDir;
       Object.defineProperty(process.stdin, 'isTTY', { value: stdinTTY, writable: true, configurable: true });
       Object.defineProperty(process.stdout, 'isTTY', { value: stdoutTTY, writable: true, configurable: true });
     }

@@ -6,7 +6,7 @@
  *               [--skip-skills] [--skip-agents] [--skip-mcp]
  *
  * Unified installer: copies skills, agents, and merges MCP config in one shot.
- * If --provider is not passed, autodetects from orchestrator.config.json.
+ * If --provider is not passed, autodetects from orc-state.config.json.
  *
  * --global       installs to ~/  instead of cwd
  * --dry-run      prints what would happen without writing anything
@@ -32,7 +32,7 @@ export interface InstallOptions {
 }
 
 export function detectProviders(base: string): string[] {
-  const configPath = join(base, 'orchestrator.config.json');
+  const configPath = join(base, 'orc-state.config.json');
   if (!existsSync(configPath)) return [];
   let config: Record<string, unknown>;
   try {
@@ -112,7 +112,7 @@ function parseArgs(): InstallOptions {
     providers = detectProviders(base);
     if (providers.length === 0) {
       console.error(
-        'Error: no --provider specified and no provider found in orchestrator.config.json.\n' +
+        'Error: no --provider specified and no provider found in orc-state.config.json.\n' +
         'Run: orc install --provider=claude  (or codex, gemini)',
       );
       process.exit(1);

@@ -22,7 +22,7 @@ describe('cli/attach.ts', () => {
   it('fails when agent is missing', () => {
     const result = spawnSync('node', ['cli/attach.ts', 'missing'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
@@ -37,7 +37,7 @@ describe('cli/attach.ts', () => {
 
     const result = spawnSync('node', ['cli/attach.ts', 'bob'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
@@ -58,15 +58,15 @@ describe('cli/attach.ts', () => {
     }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/attach.ts', 'bob'];
-    process.env.ORCH_STATE_DIR = dir;
+    process.env.ORC_STATE_DIR = dir;
 
     try {
       await import('./attach.ts');
     } finally {
       process.argv = oldArgv;
-      process.env.ORCH_STATE_DIR = oldStateDir;
+      process.env.ORC_STATE_DIR = oldStateDir;
     }
 
     expect(attach).toHaveBeenCalledWith('claude:session:bob');

@@ -129,7 +129,7 @@ beforeEach(async () => {
 
   const serverPath = resolve(import.meta.dirname, 'server.ts');
   child = spawn(process.execPath, [serverPath], {
-    env: { ...process.env, ORCH_STATE_DIR: stateDir },
+    env: { ...process.env, ORC_STATE_DIR: stateDir },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   child.stdout!.on('data', onStdoutData);

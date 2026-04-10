@@ -47,13 +47,13 @@ function readAgents() {
 }
 
 function setEnv(stateDir: string) {
-  process.env.ORCH_STATE_DIR = stateDir;
+  process.env.ORC_STATE_DIR = stateDir;
 }
 
 function spawnKillAll(stateDir: string, extraArgs: string[] = []) {
   return spawnSync('node', ['cli/kill-all.ts', ...extraArgs], {
     cwd:      repoRoot,
-    env:      { ...process.env, ORCH_STATE_DIR: stateDir },
+    env:      { ...process.env, ORC_STATE_DIR: stateDir },
     encoding: 'utf8',
   });
 }

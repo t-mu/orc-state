@@ -109,7 +109,7 @@ The AI backend that powers an agent session — for example, Claude, Codex, or G
 The orchestrator is provider-agnostic: the same coordination logic works with any
 supported provider, selected via configuration.
 
-_You'll encounter this in `orchestrator.config.json` when choosing which AI model
+_You'll encounter this in `orc-state.config.json` when choosing which AI model
 runs your workers._
 
 ---

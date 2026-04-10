@@ -317,11 +317,11 @@ describe('buildRuntimeEnv', () => {
 
     const { env, cwd } = buildRuntimeEnv(repo);
 
-    expect(env.ORCH_STATE_DIR).toBe(repo.stateDir);
+    expect(env.ORC_STATE_DIR).toBe(repo.stateDir);
     expect(env.ORC_REPO_ROOT).toBe(repo.repoRoot);
     expect(env.ORC_WORKTREES_DIR).toBe(repo.worktreesDir);
     expect(env.ORC_BACKLOG_DIR).toBe(repo.backlogDir);
-    expect(env.ORC_CONFIG_FILE).toBe(join(repo.repoRoot, 'orchestrator.config.json'));
+    expect(env.ORC_CONFIG_FILE).toBe(join(repo.repoRoot, 'orc-state.config.json'));
     expect(cwd).toBe(repo.repoRoot);
 
     // Config file must be inside the temp repo.
@@ -330,13 +330,13 @@ describe('buildRuntimeEnv', () => {
     });
   });
 
-  it('writes a temp orchestrator.config.json with max_workers = 1', () => {
+  it('writes a temp orc-state.config.json with max_workers = 1', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
     buildRuntimeEnv(repo);
 
-    const configPath = join(repo.repoRoot, 'orchestrator.config.json');
+    const configPath = join(repo.repoRoot, 'orc-state.config.json');
     expect(existsSync(configPath)).toBe(true);
 
     const config = JSON.parse(readFileSync(configPath, 'utf8')) as { worker_pool: { max_workers: number } };

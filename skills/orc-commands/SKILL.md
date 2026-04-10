@@ -15,7 +15,7 @@ All orc commands resolve state from `process.cwd()/.orc-state` unless overridden
 **Always run from the repo root**, or prefix with the env var:
 
 ```bash
-ORCH_STATE_DIR=<your-project>/.orc-state orc <cmd>
+ORC_STATE_DIR=<your-project>/.orc-state orc <cmd>
 ```
 
 Commands that forget this will hit `ENOENT` errors or read wrong state. The `kill-all`
@@ -136,7 +136,7 @@ Recovery/debug only:
 ps aux | grep "coordinator.ts" | grep -v grep | awk '{print $2}' | xargs kill
 
 # 2. Start with explicit state dir (avoids cwd ambiguity)
-ORCH_STATE_DIR=/path/to/repo/.orc-state node /path/to/repo/coordinator.ts \
+ORC_STATE_DIR=/path/to/repo/.orc-state node /path/to/repo/coordinator.ts \
   >> /path/to/repo/.orc-state/coordinator.out.log 2>&1 &
 ```
 

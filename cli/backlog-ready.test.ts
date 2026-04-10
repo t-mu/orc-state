@@ -69,7 +69,7 @@ describe('cli/backlog-ready.ts', () => {
 function runCli(args: string[]) {
   return spawnSync('node', ['cli/backlog-ready.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORCH_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }

@@ -19,8 +19,8 @@ afterEach(() => {
 });
 
 function setStateDirEnv(value: string | null | undefined) {
-  if (value == null) delete process.env.ORCH_STATE_DIR;
-  else process.env.ORCH_STATE_DIR = value;
+  if (value == null) delete process.env.ORC_STATE_DIR;
+  else process.env.ORC_STATE_DIR = value;
 }
 
 function readAgents() {
@@ -32,7 +32,7 @@ describe('cli/start-worker-session.ts', () => {
     // spawnSync has no TTY → promptAgentId returns null → exit 1 with usage message
     const result = spawnSync('node', ['cli/start-worker-session.ts'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
@@ -42,7 +42,7 @@ describe('cli/start-worker-session.ts', () => {
   it('fails when missing provider for unregistered worker', () => {
     const result = spawnSync('node', ['cli/start-worker-session.ts', 'worker-01'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
@@ -59,7 +59,7 @@ describe('cli/start-worker-session.ts', () => {
     }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = [
       'node',
       'cli/start-worker-session.ts',
@@ -87,7 +87,7 @@ describe('cli/start-worker-session.ts', () => {
   it('rejects agent id master and directs the operator to orc start-session', () => {
     const result = spawnSync('node', ['cli/start-worker-session.ts', 'master', '--provider=claude'], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);
@@ -119,7 +119,7 @@ describe('cli/start-worker-session.ts', () => {
     }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/start-worker-session.ts', 'bob'];
     setStateDirEnv(dir);
     try {
@@ -145,7 +145,7 @@ describe('cli/start-worker-session.ts', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/start-worker-session.ts', 'worker-01', '--provider=claude'];
     setStateDirEnv(dir);
     try {
@@ -185,7 +185,7 @@ describe('cli/start-worker-session.ts', () => {
     }));
 
     const oldArgv = process.argv;
-    const oldStateDir = process.env.ORCH_STATE_DIR;
+    const oldStateDir = process.env.ORC_STATE_DIR;
     process.argv = ['node', 'cli/start-worker-session.ts', 'bob', '--force-rebind'];
     setStateDirEnv(dir);
     try {
@@ -212,7 +212,7 @@ describe('cli/start-worker-session.ts', () => {
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as () => never);
 
       const oldArgv = process.argv;
-      const oldStateDir = process.env.ORCH_STATE_DIR;
+      const oldStateDir = process.env.ORC_STATE_DIR;
       process.argv = ['node', 'cli/start-worker-session.ts', 'alice', '--provider=claude'];
       setStateDirEnv(dir);
       try {
@@ -235,7 +235,7 @@ describe('cli/start-worker-session.ts', () => {
       }));
 
       const oldArgv = process.argv;
-      const oldStateDir = process.env.ORCH_STATE_DIR;
+      const oldStateDir = process.env.ORC_STATE_DIR;
       process.argv = ['node', 'cli/start-worker-session.ts', 'alice', '--provider=claude'];
       setStateDirEnv(dir);
       try {
