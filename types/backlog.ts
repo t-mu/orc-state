@@ -19,6 +19,7 @@ export interface Task {
   depends_on?: TaskRef[] | undefined;
   acceptance_criteria?: string[] | undefined;
   review_level?: 'none' | 'light' | 'full' | undefined;
+  merge_strategy?: 'direct' | 'pr' | undefined;
   attempt_count?: number | undefined;
   requeue_eligible_after?: string | undefined;
   blocked_reason?: string | undefined;

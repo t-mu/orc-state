@@ -93,6 +93,11 @@
           "enum": ["none", "light", "full"],
           "description": "Review intensity. none=self-review only, light=1 combined reviewer, full=2 reviewers (critic+integrator). Default: full."
         },
+        "merge_strategy": {
+          "type": "string",
+          "enum": ["direct", "pr"],
+          "description": "Merge strategy. direct=worktree merge, pr=pull request. Overrides coordinator config."
+        },
         "attempt_count": {
           "type": "integer",
           "minimum": 0,

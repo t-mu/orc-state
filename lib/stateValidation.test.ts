@@ -79,6 +79,19 @@ describe('validateBacklog', () => {
       expect(validateBacklog(data)).toEqual([]);
     }
   });
+
+  it('accepts merge_strategy values: direct, pr', () => {
+    for (const merge_strategy of ['direct', 'pr']) {
+      const data = { version: '1', features: [validFeature({ tasks: [validTask({ merge_strategy })] })] };
+      expect(validateBacklog(data)).toEqual([]);
+    }
+  });
+
+  it('rejects invalid merge_strategy values', () => {
+    const data = { version: '1', features: [validFeature({ tasks: [validTask({ merge_strategy: 'squash' })] })] };
+    const errors = validateBacklog(data);
+    expect(errors.length).toBeGreaterThan(0);
+  });
 });
 
 // ── validateAgents ─────────────────────────────────────────────────────────
@@ -167,6 +180,23 @@ describe('validateClaims', () => {
     const claim = { run_id: 'run-x', agent_id: 'agent-01', state: 'claimed', claimed_at: '2024-01-01T00:00:00Z', lease_expires_at: '2024-01-01T01:00:00Z' };
     const errors = validateClaims({ version: '1', claims: [claim] });
     expect(errors).toEqual(expect.arrayContaining([expect.stringContaining('task_ref')]));
+  });
+
+  it('accepts pr finalization states', () => {
+    for (const finalization_state of ['pr_created', 'pr_review_in_progress', 'pr_merged', 'pr_failed']) {
+      expect(validateClaims({ version: '1', claims: [validClaim({ state: 'in_progress', finalization_state })] })).toEqual([]);
+    }
+  });
+
+  it('accepts pr_ref, pr_created_at, pr_reviewer_agent_id on claims', () => {
+    const claim = validClaim({
+      state: 'in_progress',
+      finalization_state: 'pr_created',
+      pr_ref: 'https://github.com/owner/repo/pull/1',
+      pr_created_at: '2024-01-01T00:00:00Z',
+      pr_reviewer_agent_id: 'orc-2',
+    });
+    expect(validateClaims({ version: '1', claims: [claim] })).toEqual([]);
   });
 });
 

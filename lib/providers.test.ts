@@ -264,6 +264,47 @@ describe('loadCoordinatorConfig', () => {
     const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
     expect(result.memory_prune_interval_ms).toBe(3600000);
   });
+
+  it('defaults merge_strategy to direct', () => {
+    const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
+    expect(result.merge_strategy).toBe('direct');
+  });
+
+  it('parses merge_strategy from config', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({ coordinator: { merge_strategy: 'pr' } }));
+    const result = loadCoordinatorConfig({ configFile: configPath });
+    expect(result.merge_strategy).toBe('pr');
+  });
+
+  it('defaults merge_strategy to direct for unknown value', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({ coordinator: { merge_strategy: 'squash' } }));
+    const result = loadCoordinatorConfig({ configFile: configPath });
+    expect(result.merge_strategy).toBe('direct');
+  });
+
+  it('parses pr_provider, pr_push_remote, pr_finalize_lease_ms', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      coordinator: {
+        pr_provider: 'github',
+        pr_push_remote: 'upstream',
+        pr_finalize_lease_ms: 3600000,
+      },
+    }));
+    const result = loadCoordinatorConfig({ configFile: configPath });
+    expect(result.pr_provider).toBe('github');
+    expect(result.pr_push_remote).toBe('upstream');
+    expect(result.pr_finalize_lease_ms).toBe(3600000);
+  });
+
+  it('defaults pr_provider to null, pr_push_remote to origin, pr_finalize_lease_ms to 86400000', () => {
+    const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
+    expect(result.pr_provider).toBeNull();
+    expect(result.pr_push_remote).toBe('origin');
+    expect(result.pr_finalize_lease_ms).toBe(86400000);
+  });
 });
 
 describe('loadLeaseConfig', () => {

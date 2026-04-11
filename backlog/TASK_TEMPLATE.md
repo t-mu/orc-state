@@ -4,6 +4,7 @@ feature: <feature-ref>
 review_level: full
 priority: normal
 status: todo
+# merge_strategy: direct
 ---
 
 # Task <N> — <Imperative Title>
