@@ -2,7 +2,7 @@
 ref: general/163-pr-cli-commands
 feature: general
 priority: high
-status: todo
+status: done
 review_level: light
 depends_on:
   - general/162-git-host-adapter

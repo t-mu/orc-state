@@ -73,6 +73,10 @@ const COMMANDS: Record<string, string> = {
   'memory-search':      'memory-search.ts',
   'memory-wake-up':     'memory-wake-up.ts',
   'memory-record':      'memory-record.ts',
+  'pr-diff':            'pr-diff.ts',
+  'pr-review':          'pr-review.ts',
+  'pr-merge':           'pr-merge.ts',
+  'pr-status':          'pr-status.ts',
 };
 
 const BLESSED = [
