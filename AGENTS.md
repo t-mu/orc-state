@@ -86,12 +86,16 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
 2. Spawn two independent sub-agent reviewers. Give each:
    - the acceptance criteria from the task spec
    - the full diff: `git diff --stat --patch main...HEAD` (not just file names)
-   - their run_id, agent_id, and reviewer number
+   - their run_id, the **worker's** agent_id (the claim owner, not a
+     made-up reviewer name), and reviewer number
    IMPORTANT: instruct each reviewer to call before returning:
    ```bash
-   orc review-submit --run-id=<run_id> --agent-id=<their_agent_id> \
+   orc review-submit --run-id=<run_id> --agent-id=<agent_id> \
      --outcome=<approved|findings> --reason="<findings text>"
    ```
+   `--agent-id` MUST be the worker's own agent_id (e.g. `orc-1`), NOT a
+   reviewer label like `reviewer-1`. The coordinator uses this field to
+   match events to claims — a mismatched agent_id blocks event processing.
    Findings written this way survive context compaction.
    Instruct all reviewers — built-in (critic, integrator) or general-purpose
    — to wrap their entire output in this block (format must be last in

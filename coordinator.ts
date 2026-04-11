@@ -1596,8 +1596,14 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     }
 
     if (action.type === 'heartbeat') {
-      heartbeat(STATE_DIR, runId!, agentId, { emitEvent: false, at: action.at, leaseDurationMs: action.leaseDurationMs });
-      recordAgentActivity(STATE_DIR, agentId, { at: action.at });
+      try {
+        heartbeat(STATE_DIR, runId!, agentId, { emitEvent: false, at: action.at, leaseDurationMs: action.leaseDurationMs });
+        recordAgentActivity(STATE_DIR, agentId, { at: action.at });
+      } catch {
+        // Ignore agent_id mismatches (e.g. review_submitted from a reviewer
+        // sub-agent whose agent_id doesn't match the claim owner) and races
+        // with terminal events or expired leases.
+      }
     }
 
     if (action.type === 'advance_finalization') {
