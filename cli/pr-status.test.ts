@@ -60,4 +60,9 @@ describe('cli/pr-status.ts', () => {
     expect(() => run(['42'], configFile)).toThrow('process.exit');
     expect(mockExit).toHaveBeenCalledWith(1);
   });
+
+  it('exits 1 when config file does not exist', () => {
+    expect(() => run(['42'], join(tempDir, 'nonexistent.json'))).toThrow('process.exit');
+    expect(mockExit).toHaveBeenCalledWith(1);
+  });
 });

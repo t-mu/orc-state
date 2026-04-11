@@ -66,4 +66,9 @@ describe('cli/pr-review.ts', () => {
     expect(() => run(['42', '--body=something'], configFile)).toThrow('process.exit');
     expect(mockExit).toHaveBeenCalledWith(1);
   });
+
+  it('exits 1 when config file does not exist', () => {
+    expect(() => run(['42', '--approve'], join(tempDir, 'nonexistent.json'))).toThrow('process.exit');
+    expect(mockExit).toHaveBeenCalledWith(1);
+  });
 });

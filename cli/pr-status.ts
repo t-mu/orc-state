@@ -13,7 +13,7 @@ import { getGitHostAdapter } from '../lib/gitHosts/index.ts';
 import { boolFlag } from '../lib/args.ts';
 
 export function run(argv: string[] = process.argv.slice(2), configFile: string = ORC_CONFIG_FILE): void {
-  const prRef = argv[0];
+  const prRef = argv.find((a) => !a.startsWith('--'));
   if (!prRef) {
     console.error('Usage: orc pr-status <pr_ref> [--wait]');
     process.exit(1);

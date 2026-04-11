@@ -12,7 +12,7 @@ import { ORC_CONFIG_FILE } from '../lib/paths.ts';
 import { getGitHostAdapter } from '../lib/gitHosts/index.ts';
 
 export function run(argv: string[] = process.argv.slice(2), configFile: string = ORC_CONFIG_FILE): void {
-  const prRef = argv[0];
+  const prRef = argv.find((a) => !a.startsWith('--'));
   if (!prRef) {
     console.error('Usage: orc pr-merge <pr_ref>');
     process.exit(1);
