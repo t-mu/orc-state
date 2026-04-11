@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe('cli/run-work-complete.ts', () => {
-  it('emits work_complete event when task is marked done', () => {
+  it('emits work_complete event for an in-progress claim before runtime task completion', () => {
     const result = runCli(['--run-id=run-1', '--agent-id=worker-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete: run-1 (worker-1)');
@@ -40,7 +40,7 @@ describe('cli/run-work-complete.ts', () => {
     expect(result.stderr).toContain('Usage: orc run-work-complete');
   });
 
-  it('exits 1 when task is not marked done', () => {
+  it('does not require runtime task status to already be done', () => {
     writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
       version: '1',
       features: [{
@@ -50,8 +50,8 @@ describe('cli/run-work-complete.ts', () => {
       }],
     }));
     const result = runCli(['--run-id=run-1', '--agent-id=worker-1']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('task not marked done');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('work_complete: run-1 (worker-1)');
   });
 
   it('exits 1 when run-id does not exist in claims', () => {

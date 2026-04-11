@@ -10,7 +10,7 @@ export const STATE_DIR = process.env.ORC_STATE_DIR
 export const EVENTS_FILE = resolve(STATE_DIR, 'events.db');
 // Config lives at repo root (parent of .orc-state/), not inside the state dir.
 // Use ORC_CONFIG_FILE to override the path explicitly.
-export const ORCHESTRATOR_CONFIG_FILE = process.env.ORC_CONFIG_FILE
+export const ORC_CONFIG_FILE = process.env.ORC_CONFIG_FILE
   ? resolve(process.env.ORC_CONFIG_FILE)
   : resolve(STATE_DIR, '..', 'orc-state.config.json');
 export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');

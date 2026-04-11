@@ -749,7 +749,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=20',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORCH_STATE_DIR: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

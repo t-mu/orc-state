@@ -18,10 +18,10 @@ describe('paths', () => {
       resolveRepoRoot: vi.fn().mockReturnValue('/tmp/repo-root'),
     }));
 
-    const { STATE_DIR, EVENTS_FILE, ORCHESTRATOR_CONFIG_FILE, RUN_WORKTREES_FILE } = await import('./paths.ts');
+    const { STATE_DIR, EVENTS_FILE, ORC_CONFIG_FILE, RUN_WORKTREES_FILE } = await import('./paths.ts');
     expect(STATE_DIR).toBe('/tmp/repo-root/.orc-state');
     expect(EVENTS_FILE).toBe('/tmp/repo-root/.orc-state/events.db');
-    expect(ORCHESTRATOR_CONFIG_FILE).toBe('/tmp/repo-root/orc-state.config.json');
+    expect(ORC_CONFIG_FILE).toBe('/tmp/repo-root/orc-state.config.json');
     expect(RUN_WORKTREES_FILE).toBe('/tmp/repo-root/.orc-state/run-worktrees.json');
   });
 

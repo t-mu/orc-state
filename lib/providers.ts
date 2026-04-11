@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { ORCHESTRATOR_CONFIG_FILE } from './paths.ts';
+import { ORC_CONFIG_FILE } from './paths.ts';
 import { logger } from './logger.ts';
 import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
 
@@ -123,7 +123,7 @@ interface RawConfigFile {
   leases?: Record<string, unknown> | null;
 }
 
-function parseRawConfigFile(configFile: string = ORCHESTRATOR_CONFIG_FILE): RawConfigFile {
+function parseRawConfigFile(configFile: string = ORC_CONFIG_FILE): RawConfigFile {
   if (!existsSync(configFile)) return {};
 
   let parsed: unknown;
@@ -199,7 +199,7 @@ export function resolveWorkerModel(config: WorkerPoolConfig, provider?: Provider
 
 export function loadWorkerPoolConfig({
   env = process.env,
-  configFile = ORCHESTRATOR_CONFIG_FILE,
+  configFile = ORC_CONFIG_FILE,
 }: {
   env?: NodeJS.ProcessEnv;
   configFile?: string;
@@ -235,7 +235,7 @@ export function loadWorkerPoolConfig({
 
 export function loadMasterConfig({
   env = process.env,
-  configFile = ORCHESTRATOR_CONFIG_FILE,
+  configFile = ORC_CONFIG_FILE,
 }: {
   env?: NodeJS.ProcessEnv;
   configFile?: string;
@@ -263,7 +263,7 @@ export function loadMasterConfig({
 }
 
 export function loadCoordinatorConfig({
-  configFile = ORCHESTRATOR_CONFIG_FILE,
+  configFile = ORC_CONFIG_FILE,
 }: {
   configFile?: string;
 } = {}): CoordinatorConfig {
@@ -294,7 +294,7 @@ export function loadCoordinatorConfig({
 }
 
 export function loadLeaseConfig({
-  configFile = ORCHESTRATOR_CONFIG_FILE,
+  configFile = ORC_CONFIG_FILE,
 }: {
   configFile?: string;
 } = {}): LeaseConfig {
