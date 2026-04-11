@@ -517,6 +517,88 @@ describe('syncBacklogFromSpecs', () => {
     expect(readBacklog(dir).features[0].tasks[0].review_level).toBeUndefined();
   });
 
+  it('syncs merge_strategy from task spec frontmatter', async () => {
+    writeFileSync(
+      join(dir, 'backlog', '155-example.md'),
+      '---\nref: orch/task-155-example\nfeature: orch\nstatus: todo\nmerge_strategy: pr\n---\n\n# Task 999 — Merge Strategy Task\n',
+    );
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].merge_strategy).toBe('pr');
+  });
+
+  it('defaults merge_strategy to undefined when absent from frontmatter', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'No Merge Strategy',
+    });
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].merge_strategy).toBeUndefined();
+  });
+
+  it('updates merge_strategy on an existing task when spec changes it', async () => {
+    writeFileSync(
+      join(dir, 'backlog', '155-example.md'),
+      '---\nref: orch/task-155-example\nfeature: orch\nstatus: todo\nmerge_strategy: pr\n---\n\n# Task 999 — Merge Strategy Task\n',
+    );
+    writeBacklog(dir, {
+      version: '1',
+      features: [{
+        ref: 'orch',
+        title: 'Orch',
+        tasks: [{
+          ref: 'orch/task-155-example',
+          title: 'Merge Strategy Task',
+          status: 'todo',
+          task_type: 'implementation',
+          merge_strategy: 'direct',
+        }],
+      }],
+    });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].merge_strategy).toBe('pr');
+  });
+
+  it('clears merge_strategy on an existing task when spec removes it', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'Merge Strategy Task',
+    });
+    writeBacklog(dir, {
+      version: '1',
+      features: [{
+        ref: 'orch',
+        title: 'Orch',
+        tasks: [{
+          ref: 'orch/task-155-example',
+          title: 'Merge Strategy Task',
+          status: 'todo',
+          task_type: 'implementation',
+          merge_strategy: 'pr',
+        }],
+      }],
+    });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(readBacklog(dir).features[0].tasks[0].merge_strategy).toBeUndefined();
+  });
+
   it('treats a missing backlog directory as an empty authoritative set', async () => {
     rmSync(join(dir, 'backlog'), { recursive: true, force: true });
     writeBacklog(dir, { version: '1', features: [] });

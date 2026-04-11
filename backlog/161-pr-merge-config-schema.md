@@ -2,7 +2,7 @@
 ref: general/161-pr-merge-config-schema
 feature: general
 priority: high
-status: todo
+status: done
 review_level: full
 ---
 

@@ -22,6 +22,7 @@ interface SpecFrontmatter {
   feature: string | null;
   status: string | null;
   review_level: string | null;
+  merge_strategy: string | null;
 }
 
 function parseSpecFrontmatter(text: string): SpecFrontmatter {
@@ -31,6 +32,7 @@ function parseSpecFrontmatter(text: string): SpecFrontmatter {
     feature: (block.match(/^feature:\s+(.+)$/m)?.[1] ?? block.match(/^epic:\s+(.+)$/m)?.[1])?.trim() ?? null,
     status: block.match(/^status:\s+(.+)$/m)?.[1]?.trim() ?? null,
     review_level: block.match(/^review_level:\s+(.+)$/m)?.[1]?.trim() ?? null,
+    merge_strategy: block.match(/^merge_strategy:\s+(.+)$/m)?.[1]?.trim() ?? null,
   };
 }
 
@@ -47,6 +49,7 @@ export interface SpecEntry {
   status: string;
   title: string;
   review_level?: string;
+  merge_strategy?: string;
 }
 
 export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
@@ -58,7 +61,7 @@ export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
     .sort((a, b) => basename(a).localeCompare(basename(b), 'en', { numeric: true }))
     .flatMap((rel) => {
       const text = readFileSync(join(docsDir, rel), 'utf8');
-      const { ref, feature, status, review_level } = parseSpecFrontmatter(text);
+      const { ref, feature, status, review_level, merge_strategy } = parseSpecFrontmatter(text);
       if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return [];
       return [{
         file: rel,
@@ -67,6 +70,7 @@ export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
         status,
         title: parseSpecTitle(text, ref),
         ...(review_level !== null ? { review_level } : {}),
+        ...(merge_strategy !== null ? { merge_strategy } : {}),
       }];
     });
 }
@@ -126,6 +130,7 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
           status: spec.status as TaskStatus,
           task_type: 'implementation',
           ...(spec.review_level !== undefined ? { review_level: spec.review_level as 'none' | 'light' | 'full' } : {}),
+          ...(spec.merge_strategy !== undefined ? { merge_strategy: spec.merge_strategy as 'direct' | 'pr' } : {}),
         },
       ];
       changed = true;
@@ -156,6 +161,13 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
     const specReviewLevel = (spec.review_level as 'none' | 'light' | 'full' | undefined) ?? undefined;
     if (existingEntry.task.review_level !== specReviewLevel) {
       existingEntry.task.review_level = specReviewLevel;
+      changed = true;
+      taskUpdated = true;
+    }
+
+    const specMergeStrategy = (spec.merge_strategy as 'direct' | 'pr' | undefined) ?? undefined;
+    if (existingEntry.task.merge_strategy !== specMergeStrategy) {
+      existingEntry.task.merge_strategy = specMergeStrategy;
       changed = true;
       taskUpdated = true;
     }

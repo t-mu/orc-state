@@ -29,7 +29,7 @@
     },
     "FinalizationState": {
       "type": "string",
-      "enum": ["awaiting_finalize", "finalize_rebase_requested", "finalize_rebase_in_progress", "ready_to_merge", "blocked_finalize"],
+      "enum": ["awaiting_finalize", "finalize_rebase_requested", "finalize_rebase_in_progress", "ready_to_merge", "blocked_finalize", "pr_created", "pr_review_in_progress", "pr_merged", "pr_failed"],
       "description": "Coordinator-owned finalization phase after implementation work is complete."
     },
     "Claim": {
@@ -80,7 +80,7 @@
         },
         "finalization_state": {
           "type": ["string", "null"],
-          "enum": ["awaiting_finalize", "finalize_rebase_requested", "finalize_rebase_in_progress", "ready_to_merge", "blocked_finalize", null],
+          "enum": ["awaiting_finalize", "finalize_rebase_requested", "finalize_rebase_in_progress", "ready_to_merge", "blocked_finalize", "pr_created", "pr_review_in_progress", "pr_merged", "pr_failed", null],
           "description": "Non-terminal finalization phase once implementation work is complete."
         },
         "finalization_retry_count": {
@@ -120,6 +120,18 @@
           "type": ["string", "null"],
           "format": "date-time",
           "description": "Timestamp when coordinator last emitted a worker_needs_attention notification for this run."
+        },
+        "pr_ref": {
+          "type": ["string", "null"],
+          "description": "PR URL or reference."
+        },
+        "pr_created_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "pr_reviewer_agent_id": {
+          "type": ["string", "null"],
+          "description": "Agent ID of the PR reviewer worker."
         }
       }
     }

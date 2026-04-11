@@ -6,6 +6,10 @@ export type FinalizationState =
   | 'finalize_rebase_in_progress'
   | 'ready_to_merge'
   | 'blocked_finalize'
+  | 'pr_created'
+  | 'pr_review_in_progress'
+  | 'pr_merged'
+  | 'pr_failed'
   | null;
 export type InputState = 'awaiting_input' | null;
 
@@ -30,6 +34,9 @@ export interface Claim {
   session_start_retry_next_at?: string | null;
   session_start_last_error?: string | null;
   escalation_notified_at?: string | null;
+  pr_ref?: string | null;
+  pr_created_at?: string | null;
+  pr_reviewer_agent_id?: string | null;
 }
 
 export interface ClaimsState {

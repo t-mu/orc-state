@@ -46,6 +46,11 @@ export interface CoordinatorConfig {
   worker_stale_soft_ms: number;
   worker_stale_nudge_ms: number;
   worker_stale_force_fail_ms: number;
+  // PR merge strategy
+  merge_strategy: 'direct' | 'pr';
+  pr_provider: 'github' | null;
+  pr_push_remote: string;
+  pr_finalize_lease_ms: number;
 }
 
 export interface LeaseConfig {
@@ -85,6 +90,10 @@ export const DEFAULT_COORDINATOR_CONFIG: Readonly<CoordinatorConfig> = Object.fr
   worker_stale_soft_ms: 1_800_000,
   worker_stale_nudge_ms: 3_600_000,
   worker_stale_force_fail_ms: 7_200_000,
+  merge_strategy: 'direct' as const,
+  pr_provider: null,
+  pr_push_remote: 'origin',
+  pr_finalize_lease_ms: 86_400_000,
 });
 
 export const DEFAULT_LEASE_CONFIG: Readonly<LeaseConfig> = Object.freeze({
@@ -290,6 +299,10 @@ export function loadCoordinatorConfig({
     worker_stale_soft_ms: parsePositiveInteger(cc.worker_stale_soft_ms, 'coordinator.worker_stale_soft_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_soft_ms,
     worker_stale_nudge_ms: parsePositiveInteger(cc.worker_stale_nudge_ms, 'coordinator.worker_stale_nudge_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_nudge_ms,
     worker_stale_force_fail_ms: parsePositiveInteger(cc.worker_stale_force_fail_ms, 'coordinator.worker_stale_force_fail_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_force_fail_ms,
+    merge_strategy: (cc.merge_strategy === 'pr' ? 'pr' : DEFAULT_COORDINATOR_CONFIG.merge_strategy),
+    pr_provider: (cc.pr_provider === 'github' ? 'github' : DEFAULT_COORDINATOR_CONFIG.pr_provider),
+    pr_push_remote: (typeof cc.pr_push_remote === 'string' && cc.pr_push_remote ? cc.pr_push_remote : DEFAULT_COORDINATOR_CONFIG.pr_push_remote),
+    pr_finalize_lease_ms: parsePositiveInteger(cc.pr_finalize_lease_ms, 'coordinator.pr_finalize_lease_ms') ?? DEFAULT_COORDINATOR_CONFIG.pr_finalize_lease_ms,
   };
 }
 
