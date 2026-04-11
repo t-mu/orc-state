@@ -2,7 +2,7 @@
 ref: general/162-git-host-adapter
 feature: general
 priority: high
-status: todo
+status: done
 review_level: full
 ---
 
