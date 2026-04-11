@@ -2,7 +2,7 @@
 ref: general/167-pr-strategy-tests
 feature: general
 priority: normal
-status: todo
+status: done
 review_level: full
 depends_on:
   - general/165-coordinator-pr-finalization
