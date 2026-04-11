@@ -2,7 +2,7 @@
 ref: general/166-pr-worker-protocol-docs
 feature: general
 priority: normal
-status: todo
+status: done
 review_level: none
 depends_on:
   - general/165-coordinator-pr-finalization
