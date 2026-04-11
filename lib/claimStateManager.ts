@@ -12,6 +12,10 @@ const FINALIZATION_STATES = new Set<FinalizationState | null>([
   'finalize_rebase_in_progress',
   'ready_to_merge',
   'blocked_finalize',
+  'pr_created',
+  'pr_review_in_progress',
+  'pr_merged',
+  'pr_failed',
   null,
 ]);
 
@@ -201,6 +205,73 @@ export function setEscalationNotified(
     if (!claim) throw new Error(`Claim not found: ${runId}`);
 
     claim.escalation_notified_at = new Date().toISOString();
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+
+    return claim;
+  });
+}
+
+export function setPrRef(
+  stateDir: string,
+  runId: string,
+  prRef: string,
+): Claim {
+  return withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
+    if (!claim) throw new Error(`Claim not found: ${runId}`);
+    if (claim.state !== 'in_progress') {
+      throw new Error(`PR ref update requires in_progress claim state (got: ${claim.state})`);
+    }
+    if (typeof prRef !== 'string' || !prRef) {
+      throw new Error('prRef must be a non-empty string');
+    }
+
+    claim.pr_ref = prRef;
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+
+    return claim;
+  });
+}
+
+export function setPrCreatedAt(
+  stateDir: string,
+  runId: string,
+  createdAt: string,
+): Claim {
+  return withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
+    if (!claim) throw new Error(`Claim not found: ${runId}`);
+    if (claim.state !== 'in_progress') {
+      throw new Error(`PR created_at update requires in_progress claim state (got: ${claim.state})`);
+    }
+    assertValidTimestamp(createdAt, 'pr_created_at');
+
+    claim.pr_created_at = createdAt;
+    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+
+    return claim;
+  });
+}
+
+export function setPrReviewerAgentId(
+  stateDir: string,
+  runId: string,
+  reviewerAgentId: string,
+): Claim {
+  return withLock(lockPath(stateDir), () => {
+    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
+    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
+    if (!claim) throw new Error(`Claim not found: ${runId}`);
+    if (claim.state !== 'in_progress') {
+      throw new Error(`PR reviewer agent_id update requires in_progress claim state (got: ${claim.state})`);
+    }
+    if (typeof reviewerAgentId !== 'string' || !reviewerAgentId) {
+      throw new Error('reviewerAgentId must be a non-empty string');
+    }
+
+    claim.pr_reviewer_agent_id = reviewerAgentId;
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 
     return claim;

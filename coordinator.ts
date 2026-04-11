@@ -22,8 +22,10 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun } from './lib/claimManager.ts';
-import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun, setPrRef, setPrCreatedAt, setPrReviewerAgentId } from './lib/claimManager.ts';
+import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime, registerAgent } from './lib/agentRegistry.ts';
+import { getGitHostAdapter } from './lib/gitHosts/index.ts';
+import { buildPrReviewerBootstrap } from './lib/sessionBootstrap.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
@@ -39,12 +41,13 @@ import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktre
 import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
-import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
+import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, normalizeWorkerEnv } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
@@ -610,25 +613,80 @@ async function requestFinalizeRebase(claim: Claim, workerPoolConfig: WorkerPoolC
   return sent;
 }
 
-async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
-  const runWorktree = getRunWorktree(STATE_DIR, claim.run_id);
-  if (!runWorktree?.branch) {
-    return markFinalizeBlocked(claim, workerPoolConfig, 'missing run worktree metadata for finalization');
-  }
+function resolveMergeStrategy(
+  task: { merge_strategy?: string | undefined } | null,
+  config: CoordinatorConfig,
+): 'direct' | 'pr' {
+  return ((task?.merge_strategy) ?? config.merge_strategy ?? 'direct') as 'direct' | 'pr';
+}
 
-  await sendCoordinatorMessage(claim.agent_id, buildFinalizeWaitNotice(claim));
+async function spawnPrReviewer(claim: Claim, prRef: string, task: { review_level?: string | undefined } | null, workerPoolConfig: WorkerPoolConfig): Promise<string | null> {
+  const reviewerAgentId = `pr-reviewer-${claim.run_id}`;
+  const provider = workerPoolConfig.provider;
+  const orcBin = resolveOrcBinSh(REPO_ROOT);
 
-  let mainIncluded = false;
   try {
-    mainIncluded = branchContainsMain(runWorktree.branch);
-  } catch (error) {
-    return markFinalizeBlocked(claim, workerPoolConfig, (error as Error).message);
+    registerAgent(STATE_DIR, { agent_id: reviewerAgentId, provider, role: 'worker' });
+  } catch (err) {
+    log(`warning: failed to register PR reviewer agent ${reviewerAgentId}: ${(err as Error).message}`);
+    return null;
   }
 
-  if (!mainIncluded) {
-    return requestFinalizeRebase(claim, workerPoolConfig, 'branch is not rebased onto latest main');
+  const reviewerAgent = getAgent(STATE_DIR, reviewerAgentId);
+  if (!reviewerAgent) {
+    log(`warning: PR reviewer agent ${reviewerAgentId} not found after registration`);
+    return null;
   }
 
+  const sessionToken = randomUUID();
+  const bootstrap = buildPrReviewerBootstrap(reviewerAgentId, provider, orcBin, sessionToken);
+  const adapter = getAdapter(provider);
+
+  try {
+    const runWorktree = getRunWorktree(STATE_DIR, claim.run_id);
+    const { session_handle, provider_ref } = await adapter.start(reviewerAgentId, {
+      system_prompt: bootstrap,
+      working_directory: runWorktree?.worktree_path,
+      execution_mode: workerPoolConfig.execution_mode,
+      env: normalizeWorkerEnv({ ORC_STATE_DIR: STATE_DIR }, REPO_ROOT),
+    });
+    updateAgentRuntime(STATE_DIR, reviewerAgentId, {
+      status: 'running',
+      session_handle,
+      session_token: sessionToken,
+      session_started_at: new Date().toISOString(),
+      session_ready_at: null,
+      provider_ref: provider_ref as Agent['provider_ref'],
+      last_heartbeat_at: new Date().toISOString(),
+      last_status_change_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    log(`warning: failed to start PR reviewer session for ${reviewerAgentId}: ${(err as Error).message}`);
+    return null;
+  }
+
+  // Send the PR_REVIEW envelope
+  const reviewerAgent2 = getAgent(STATE_DIR, reviewerAgentId);
+  if (reviewerAgent2?.session_handle) {
+    const envelope = renderTemplate('pr-review-envelope-v1.txt', {
+      pr_ref: prRef,
+      run_id: claim.run_id,
+      task_ref: claim.task_ref,
+      review_level: task?.review_level ?? 'full',
+      worktree_path: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? '',
+      orc_bin: orcBin,
+    });
+    try {
+      await adapter.send(reviewerAgent2.session_handle, envelope);
+    } catch (err) {
+      log(`warning: failed to send PR_REVIEW envelope to ${reviewerAgentId}: ${(err as Error).message}`);
+    }
+  }
+
+  return reviewerAgentId;
+}
+
+async function mergeAndFinishDirectRun(claim: Claim, runWorktree: { branch: string; worktree_path?: string }, workerPoolConfig: WorkerPoolConfig) {
   try {
     mergeTaskBranch(runWorktree.branch, claim.task_ref);
   } catch (error) {
@@ -663,6 +721,149 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
   }
   log(`finalized and merged ${claim.task_ref} from ${runWorktree.branch}`);
   return true;
+}
+
+async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
+  const runWorktree = getRunWorktree(STATE_DIR, claim.run_id);
+  if (!runWorktree?.branch) {
+    return markFinalizeBlocked(claim, workerPoolConfig, 'missing run worktree metadata for finalization');
+  }
+
+  // ── PR reviewer work_complete → merge PR and release ─────────────────────
+  if (claim.finalization_state === 'pr_review_in_progress') {
+    const prRef = claim.pr_ref;
+    if (!prRef || !COORD_CONFIG.pr_provider) {
+      return markFinalizeBlocked(claim, workerPoolConfig, 'pr_review_in_progress but pr_ref or pr_provider is missing');
+    }
+    const adapter = getGitHostAdapter(COORD_CONFIG.pr_provider);
+    try {
+      adapter.mergePr(prRef);
+    } catch (error) {
+      return markFinalizeBlocked(claim, workerPoolConfig, `PR merge failed: ${(error as Error).message}`);
+    }
+
+    try {
+      setRunFinalizationState(STATE_DIR, claim.run_id, claim.agent_id, { finalizationState: 'pr_merged' });
+    } catch { /* ignore races */ }
+
+    try {
+      markTaskDoneRuntimeOnly(claim.task_ref, 'coordinator', STATE_DIR);
+    } catch (error) {
+      return markFinalizeBlocked(claim, workerPoolConfig, `failed to mark runtime task done after PR merge: ${(error as Error).message}`);
+    }
+
+    // Signal reviewer to finish and release its session
+    if (claim.pr_reviewer_agent_id) {
+      await sendCoordinatorMessage(claim.pr_reviewer_agent_id, buildFinalizeSuccessNotice(claim, runWorktree.branch));
+      await cleanupRunCapacity(claim.pr_reviewer_agent_id, workerPoolConfig);
+    }
+
+    finishRun(STATE_DIR, claim.run_id, claim.agent_id, { success: true });
+    await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+    try {
+      const cleaned = cleanupRunWorktree(STATE_DIR, claim.run_id);
+      if (!cleaned) {
+        log(`PR merged ${claim.task_ref} (${prRef}); cleanup pending`);
+        return true;
+      }
+    } catch (error) {
+      log(`warning: cleanupRunWorktree failed after PR merge for ${claim.run_id}: ${(error as Error).message}`);
+      log(`PR merged ${claim.task_ref} (${prRef}); cleanup pending`);
+      return true;
+    }
+    log(`PR merged and finalized ${claim.task_ref} (${prRef})`);
+    return true;
+  }
+
+  // ── awaiting_finalize: branch on merge strategy ───────────────────────────
+  await sendCoordinatorMessage(claim.agent_id, buildFinalizeWaitNotice(claim));
+
+  const task = findTask(readBacklog(STATE_DIR), claim.task_ref);
+  const strategy = resolveMergeStrategy(task, COORD_CONFIG);
+
+  if (strategy === 'pr') {
+    if (!COORD_CONFIG.pr_provider) {
+      return markFinalizeBlocked(claim, workerPoolConfig, 'merge_strategy=pr but pr_provider is not configured');
+    }
+    const gitAdapter = getGitHostAdapter(COORD_CONFIG.pr_provider);
+
+    // Push the branch
+    try {
+      gitAdapter.pushBranch(COORD_CONFIG.pr_push_remote, runWorktree.branch);
+    } catch (error) {
+      return markFinalizeBlocked(claim, workerPoolConfig, `failed to push branch for PR: ${(error as Error).message}`);
+    }
+
+    // Create the PR
+    const prTitle = task?.title ?? claim.task_ref;
+    const prBody = renderTemplate('pr-template-v1.txt', {
+      task_ref: claim.task_ref,
+      run_id: claim.run_id,
+      agent_id: claim.agent_id,
+      branch: runWorktree.branch,
+    });
+    let prRef: string;
+    try {
+      prRef = gitAdapter.createPr(prTitle, runWorktree.branch, prBody);
+    } catch (error) {
+      return markFinalizeBlocked(claim, workerPoolConfig, `failed to create PR: ${(error as Error).message}`);
+    }
+
+    const nowIso = new Date().toISOString();
+    try {
+      setPrRef(STATE_DIR, claim.run_id, prRef);
+      setPrCreatedAt(STATE_DIR, claim.run_id, nowIso);
+    } catch (error) {
+      log(`warning: failed to store PR fields for ${claim.run_id}: ${(error as Error).message}`);
+    }
+
+    try {
+      setRunFinalizationState(STATE_DIR, claim.run_id, claim.agent_id, { finalizationState: 'pr_created' });
+    } catch (error) {
+      log(`warning: failed to set pr_created state for ${claim.run_id}: ${(error as Error).message}`);
+    }
+
+    // Extend lease for the PR review duration
+    try {
+      renewLeaseOnly(STATE_DIR, claim.run_id, { leaseDurationMs: COORD_CONFIG.pr_finalize_lease_ms });
+    } catch (error) {
+      log(`warning: failed to extend lease for PR finalization on ${claim.run_id}: ${(error as Error).message}`);
+    }
+
+    // Spawn the PR reviewer
+    const latestClaim = getClaim(claim.run_id) ?? claim;
+    const reviewerAgentId = await spawnPrReviewer(latestClaim, prRef, task, workerPoolConfig);
+    if (reviewerAgentId) {
+      try {
+        setPrReviewerAgentId(STATE_DIR, claim.run_id, reviewerAgentId);
+      } catch (error) {
+        log(`warning: failed to store PR reviewer agent_id for ${claim.run_id}: ${(error as Error).message}`);
+      }
+    }
+
+    try {
+      setRunFinalizationState(STATE_DIR, claim.run_id, claim.agent_id, { finalizationState: 'pr_review_in_progress' });
+    } catch (error) {
+      log(`warning: failed to set pr_review_in_progress state for ${claim.run_id}: ${(error as Error).message}`);
+    }
+
+    log(`PR created for ${claim.task_ref}: ${prRef}; reviewer: ${reviewerAgentId ?? 'none'}`);
+    return true;
+  }
+
+  // ── Direct finalization path (unchanged) ──────────────────────────────────
+  let mainIncluded = false;
+  try {
+    mainIncluded = branchContainsMain(runWorktree.branch);
+  } catch (error) {
+    return markFinalizeBlocked(claim, workerPoolConfig, (error as Error).message);
+  }
+
+  if (!mainIncluded) {
+    return requestFinalizeRebase(claim, workerPoolConfig, 'branch is not rebased onto latest main');
+  }
+
+  return mergeAndFinishDirectRun(claim, runWorktree, workerPoolConfig);
 }
 
 function recordCoordinatorInputRequest(claim: Claim, question: string, reason: string) {
@@ -1004,6 +1205,15 @@ async function enforceInProgressLifecycle(
       continue;
     }
     if (claim.finalization_state === 'awaiting_finalize' || claim.finalization_state === 'ready_to_merge') {
+      runInactiveNudgeAtMs.delete(claim.run_id);
+      continue;
+    }
+    if (
+      claim.finalization_state === 'pr_created'
+      || claim.finalization_state === 'pr_review_in_progress'
+      || claim.finalization_state === 'pr_merged'
+    ) {
+      // PR reviewer is doing the work — skip nudging the original worker.
       runInactiveNudgeAtMs.delete(claim.run_id);
       continue;
     }
@@ -1656,14 +1866,41 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     }
 
     if (action.type === 'finish_run') {
-      finishRun(STATE_DIR, runId!, agentId, {
-        success: action.success,
-        failureReason: action.failureReason,
-        failureCode: action.failureCode,
-        policy: action.policy,
-        emitEvent: false,
-        at: action.at,
-      });
+      // ── PR reviewer run_failed: set pr_failed and requeue using original agent ──
+      const latestClaimForFinish = runId ? getClaim(runId) : null;
+      if (
+        !action.success
+        && latestClaimForFinish?.finalization_state === 'pr_review_in_progress'
+        && latestClaimForFinish.pr_reviewer_agent_id === agentId
+      ) {
+        try {
+          setRunFinalizationState(STATE_DIR, runId!, latestClaimForFinish.agent_id, { finalizationState: 'pr_failed' });
+        } catch { /* ignore races */ }
+        try {
+          await sendCoordinatorMessage(
+            'master',
+            `PR review failed for ${latestClaimForFinish.task_ref} (run ${runId}): ${action.failureReason ?? 'reviewer failed'}`,
+          );
+        } catch { /* best-effort notification */ }
+        finishRun(STATE_DIR, runId!, latestClaimForFinish.agent_id, {
+          success: false,
+          failureReason: `pr_reviewer_failed: ${action.failureReason ?? 'unknown'}`,
+          failureCode: action.failureCode,
+          policy: 'requeue',
+          emitEvent: false,
+          at: action.at,
+        });
+        // Cleanup reviewer capacity (handled by run_failed side effects below using agentId = reviewer)
+      } else {
+        finishRun(STATE_DIR, runId!, agentId, {
+          success: action.success,
+          failureReason: action.failureReason,
+          failureCode: action.failureCode,
+          policy: action.policy,
+          emitEvent: false,
+          at: action.at,
+        });
+      }
     }
 
     // ── Unconditional side effects for terminal run events ────────────────
