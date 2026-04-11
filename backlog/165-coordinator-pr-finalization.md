@@ -2,7 +2,7 @@
 ref: general/165-coordinator-pr-finalization
 feature: general
 priority: high
-status: todo
+status: done
 review_level: full
 depends_on:
   - general/161-pr-merge-config-schema
