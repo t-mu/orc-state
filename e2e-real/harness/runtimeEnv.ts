@@ -19,7 +19,7 @@ export interface RuntimeEnv {
  * @param provider - Worker provider for the coordinator config (default: 'claude').
  */
 export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): RuntimeEnv {
-  const configPath = join(repo.repoRoot, 'orchestrator.config.json');
+  const configPath = join(repo.repoRoot, 'orc-state.config.json');
   const orcWrapperPath = writeOrcWrapper(repo.repoRoot);
   const wrapperBinDir = join(repo.repoRoot, 'bin');
 
@@ -47,7 +47,6 @@ export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): Runtime
 
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
-    ORC_STATE_DIR: repo.stateDir,
     PATH: [wrapperBinDir, baseEnv.PATH ?? process.env.PATH ?? ''].filter(Boolean).join(delimiter),
     ORC_STATE_DIR: repo.stateDir,
     ORC_REPO_ROOT: repo.repoRoot,
