@@ -308,6 +308,29 @@ them uses `review-read` to collect results. Not for human use.
 
 ---
 
+## Pull Request
+
+Commands for interacting with pull requests. Used by PR reviewer workers —
+not for direct human use. Require `pr_provider` in config.
+
+| Command | Description |
+|---------|-------------|
+| `pr-diff <pr_ref>` | Print PR diff to stdout. |
+| `pr-review <pr_ref>` | Submit PR review (approve or request changes). |
+| `pr-merge <pr_ref>` | Merge the PR. |
+| `pr-status <pr_ref>` | Show PR status and CI state. |
+
+**Flags:**
+
+| Command | Flags |
+|---------|-------|
+| `pr-diff` | `<pr_ref>` |
+| `pr-review` | `<pr_ref>` `--approve\|--request-changes` `[--body=<text>]` |
+| `pr-merge` | `<pr_ref>` |
+| `pr-status` | `<pr_ref>` |
+
+---
+
 ## MCP server
 
 Starts the Model Context Protocol server for tool-based orchestrator access.

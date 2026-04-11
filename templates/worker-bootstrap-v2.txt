@@ -29,7 +29,7 @@ When TASK_START arrives, use your Bash tool to report progress via these CLI com
 
   # Lease renewal is automatic — the coordinator extends your lease on every phase signal.
 
-  # Required when implementation/review/rebase work is complete and you are waiting for coordinator finalization:
+  # Required when implementation and review work is complete and you are waiting for coordinator finalization:
   {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id={{agent_id}}
 
   # Required terminal success signal - emit after the work-complete handoff once the run can terminate cleanly:
@@ -151,10 +151,11 @@ When a TASK_START block arrives:
        - Edit the task spec file referenced by `task_spec_path`
        - Change its frontmatter `status:` field to `done`
        - Do not call `{{orc_bin}} task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge
-  8. Rebase onto main inside the assigned worktree — resolve conflicts iteratively, never abort:
+  8. Rebase onto main (direct mode only) — resolve conflicts iteratively, never abort:
        git rebase main
        # on conflict: resolve files → git add <file> → git rebase --continue
        # repeat until clean. Only fail the run if conflict is truly unresolvable.
+       # In PR mode, skip this step — the PR reviewer handles rebasing.
   9. Before calling run-work-complete, verify:
         - npm test passes
         - New pure logic has tests
@@ -163,11 +164,14 @@ When a TASK_START block arrives:
        {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id=<agent_id>
   10. Signal finalize phase and wait for follow-up coordinator messages inside this same session when they exist:
        {{orc_bin}} progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id={{agent_id}}
-       - If told finalization succeeded or the session can stop, call orc run-finish:
-           {{orc_bin}} run-finish --run-id=<run_id> --agent-id=<agent_id>
-       - If told to perform a finalize rebase, do the requested rebase work in
-         this same assigned worktree, verify/commit as instructed, then call {{orc_bin}} run-work-complete
-         again and continue waiting.
+       - In PR mode: your session ends after run-work-complete. A separate PR reviewer worker
+         takes ownership of the branch — no further action required from you.
+       - In direct mode:
+         - If told finalization succeeded or the session can stop, call orc run-finish:
+             {{orc_bin}} run-finish --run-id=<run_id> --agent-id=<agent_id>
+         - If told to perform a finalize rebase, do the requested rebase work in
+           this same assigned worktree, verify/commit as instructed, then call {{orc_bin}} run-work-complete
+           again and continue waiting.
        - Do not merge to main, delete the worktree, or delete the branch yourself.
        - If no coordinator follow-up arrives, use the existing terminal success path only after the
          run-work-complete handoff has been emitted.
@@ -215,7 +219,7 @@ RULES
 - Always call orc run-start before doing any work on a task.
 - First report for duty for this exact PTY session with {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-token={{session_token}}.
 - Lease renewal is automatic via phase signals. You do not need to call orc run-heartbeat.
-- Call orc run-work-complete when implementation/review/rebase work is done and before any terminal success signal.
+- Call orc run-work-complete when implementation and review work is done and before any terminal success signal.
 - Call orc run-finish only after the run-work-complete handoff has been emitted and the run can terminate cleanly.
 - Call orc run-fail if you hit an unrecoverable blocker.
 - Call orc run-input-request when master input can unblock a genuine blocker.

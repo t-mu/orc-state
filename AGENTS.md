@@ -44,7 +44,10 @@ Worktree lifecycle commands are pre-authorized — do not stop to ask for permis
 
 Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). After calling `orc run-start`, `cd` into that path. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
 
-### Worktree cleanup ordering
+### Worktree cleanup ordering (direct mode)
+
+This ordering applies to direct mode only. In PR mode the coordinator delegates
+merge and cleanup to the PR reviewer worker.
 
 When merging and cleaning up a worktree, **always delete the branch before removing the worktree**. Removing the worktree destroys the shell's working directory, which makes all subsequent Bash commands fail. The correct order is:
 
@@ -134,7 +137,8 @@ One review round only.
 
 Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=<agent_id>`
 1. Update the task markdown in your assigned worktree to `status: done`.
-2. Rebase onto main: `git rebase main`
+2. Rebase onto main (direct mode only): `git rebase main`
+   In PR mode, skip the rebase — the PR reviewer handles rebasing.
    If conflicts arise: resolve each conflicted file, then `git add <file> && git rebase --continue`.
    Only call `orc run-fail` if a conflict is genuinely unresolvable.
 3. Verify `npm test` passes, then signal the coordinator:
@@ -146,10 +150,15 @@ Do NOT call `orc task-mark-done` from the worker session; the coordinator marks 
 ### Phase 5 — Finalize
 
 Signal phase: `orc progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id=<agent_id>`
-Wait for coordinator follow-up. If coordinator requests a finalize rebase:
+
+**Direct mode:** Wait for coordinator follow-up. If coordinator requests a finalize rebase:
 1. Emit `orc progress --event=finalize_rebase_started --run-id=<run_id> --agent-id=<agent_id>`
 2. Perform the rebase.
 3. Emit `orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>` again.
+
+**PR mode:** Your session ends after `run-work-complete`. A separate PR reviewer worker
+takes ownership of the branch — it reviews, fixes, rebases, and merges the PR.
+No further action required from you.
 
 When coordinator confirms success, signal finish:
 ```bash
@@ -223,7 +232,7 @@ Workers emit these from inside their PTY session via Bash tool:
 
 ```bash
 orc run-start --run-id=<id> --agent-id=<id>                        # required first — acknowledge task start
-orc run-work-complete --run-id=<id> --agent-id=<id>                # signal impl+review+rebase done; wait for coordinator
+orc run-work-complete --run-id=<id> --agent-id=<id>                # signal implementation and review done; wait for coordinator
 orc run-finish --run-id=<id> --agent-id=<id>                       # terminal success (after work-complete)
 orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
   [--policy=requeue|block]                                          # terminal failure; default policy=requeue
@@ -370,8 +379,8 @@ Follow the **Phased Workflow** above. The five phases are:
 1. **Explore** — read spec, identify files (gate: `orc run-start`)
 2. **Implement** — code + tests (gate: `npm test`)
 3. **Review** — commit, sub-agent review, fix findings (gate: reviewers accept)
-4. **Complete** — update task markdown to done, rebase, `orc run-work-complete` (gate: run-work-complete exits 0)
-5. **Finalize** — coordinator follow-up, `orc run-finish` (gate: terminal success)
+4. **Complete** — update task markdown to done, rebase (direct mode) or skip rebase (PR mode), `orc run-work-complete` (gate: run-work-complete exits 0)
+5. **Finalize** — direct mode: coordinator follow-up + `orc run-finish`; PR mode: session ends after run-work-complete (gate: terminal success)
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 
