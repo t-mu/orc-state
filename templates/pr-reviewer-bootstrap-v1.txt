@@ -49,7 +49,7 @@ Signal review phase:
 For each iteration (N = 1, 2, 3):
 
   a. Generate diff:
-       git diff main...HEAD
+       git diff --stat --patch origin/main...HEAD
 
   b. Branch on review_level and spawn sub-agent reviewers with the diff and the
      REVIEWER CONSTRAINTS block below:
@@ -63,13 +63,13 @@ For each iteration (N = 1, 2, 3):
      review_level: light
        Spawn ONE reviewer (agents/reviewer.md) with:
        - The acceptance criteria for this task
-       - The full diff: `git diff --stat --patch main...HEAD`
+       - The full diff: `git diff --stat --patch origin/main...HEAD`
        - The REVIEWER CONSTRAINTS block
 
      review_level: full
        Spawn TWO independent reviewers (critic + integrator) with:
        - The acceptance criteria for this task
-       - The full diff: `git diff --stat --patch main...HEAD`
+       - The full diff: `git diff --stat --patch origin/main...HEAD`
        - The REVIEWER CONSTRAINTS block
 
           --- REVIEWER CONSTRAINTS (read this before doing anything) ---
@@ -79,8 +79,9 @@ For each iteration (N = 1, 2, 3):
           as text (or "approved" if none).
 
           You MUST call before returning:
-            {{orc_bin}} review-submit --run-id=<run_id> --agent-id=<your_agent_id> \
+            {{orc_bin}} review-submit --run-id=<run_id> --agent-id=<worker_agent_id> \
               --outcome=<approved|findings> --reason="<findings text>"
+          (pass the PR reviewer worker's agent_id, not your own sub-agent id)
           This is the ONLY orc command you may call.
 
           You MUST NOT call any of the following commands:
@@ -107,14 +108,14 @@ For each iteration (N = 1, 2, 3):
 
   d. If all submitted reviewers report approved: exit loop (go to Step 5).
 
-  e. If any findings: address ALL findings, then commit:
+  e. If any findings:
+     If N == 3 (iteration limit reached):
+       {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} \
+         --reason="review-fix loop exceeded 3 iterations" --policy=requeue
+     Address ALL findings, then commit:
        git commit -m "fix(<scope>): address review findings (iteration N)"
      Never use --no-verify or skip pre-commit hooks.
      Increment N and repeat from (a).
-
-  f. If N > 3:
-       {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} \
-         --reason="review-fix loop exceeded 3 iterations" --policy=requeue
 
 STEP 5 — PRE-PUSH REBASE
 
@@ -143,13 +144,13 @@ For each iteration (M = 1, 2, 3):
 
   c. If CI passes: exit loop (go to Step 7).
 
-  d. If CI fails: diagnose the failure, apply fixes, then commit:
-       git commit -m "fix(<scope>): resolve CI failure (iteration M)"
-     Rebase before next push (Step 5 rebase — same procedure). Increment M and repeat from (a).
-
-  e. If M > 3:
+  d. If CI fails:
+     If M == 3 (CI-fix limit reached):
        {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} \
          --reason="ci-fix loop exceeded 3 iterations" --policy=requeue
+     Diagnose the failure, apply fixes, then commit:
+       git commit -m "fix(<scope>): resolve CI failure (iteration M)"
+     Rebase before next push (Step 5 rebase — same procedure). Increment M and repeat from (a).
 
 STEP 7 — HAND OFF TO COORDINATOR
 
