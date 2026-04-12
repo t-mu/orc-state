@@ -2,10 +2,10 @@
 ref: general/170-align-pr-runtime-contracts-and-coverage
 feature: general
 priority: normal
-status: todo
+status: cancelled
 review_level: full
 depends_on:
-  - general/169-harden-pr-finalization-state-machine
+  - general/169-fix-pr-cli-body-upstream
 ---
 
 # Task 170 — Align PR Runtime Contracts and Coverage
