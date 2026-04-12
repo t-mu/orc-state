@@ -36,7 +36,6 @@ export interface Claim {
   escalation_notified_at?: string | null;
   pr_ref?: string | null;
   pr_created_at?: string | null;
-  pr_reviewer_agent_id?: string | null;
 }
 
 export interface ClaimsState {

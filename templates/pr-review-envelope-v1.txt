@@ -3,6 +3,7 @@ pr_ref: {{pr_ref}}
 run_id: {{run_id}}
 task_ref: {{task_ref}}
 review_level: {{review_level}}
+acceptance_criteria: {{acceptance_criteria}}
 assigned_worktree: {{worktree_path}}
 orc_bin: {{orc_bin}}
 PR_REVIEW_END

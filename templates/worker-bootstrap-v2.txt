@@ -164,8 +164,31 @@ When a TASK_START block arrives:
        {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id=<agent_id>
   10. Signal finalize phase and wait for follow-up coordinator messages inside this same session when they exist:
        {{orc_bin}} progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id={{agent_id}}
-       - In PR mode: your session ends after run-work-complete. A separate PR reviewer worker
-         takes ownership of the branch — no further action required from you.
+       - In PR mode: after run-work-complete, wait for a PR_REVIEW message in this same session.
+         When PR_REVIEW arrives, extract: pr_ref, run_id, task_ref, review_level, acceptance_criteria,
+         assigned_worktree, orc_bin. Then follow these steps in order:
+         STEP A — Rebase onto main:
+           git fetch origin main && git rebase origin/main
+           Resolve conflicts iteratively (resolve → git add <file> → git rebase --continue).
+           If unresolvable: {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} --reason="unresolvable rebase conflict" --policy=requeue
+         STEP B — Review-fix loop (max 3 iterations):
+           Generate diff: git diff --stat --patch origin/main...HEAD
+           Spawn sub-agents per review_level (none=self-review, light=one reviewer, full=critic+integrator).
+           Collect findings: {{orc_bin}} review-read --run-id=<run_id>
+           If all approved: exit loop. If findings: fix, commit, loop.
+           If iteration > 3: {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} --reason="review-fix loop exceeded 3 iterations" --policy=requeue
+         STEP C — Pre-push rebase:
+           git fetch origin main && git rebase origin/main
+           npm test — if fails, back to Step B (counts against limit).
+         STEP D — CI loop (max 3 iterations):
+           git push --force-with-lease
+           {{orc_bin}} pr-status <pr_ref> --wait
+           If passing: exit loop. If failing: diagnose, fix, commit, loop.
+           If iteration > 3: {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} --reason="ci-fix loop exceeded 3 iterations" --policy=requeue
+         STEP E — Signal ready:
+           {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id={{agent_id}}
+           Wait for coordinator to merge PR and send run-finish signal.
+           When run-finish arrives: {{orc_bin}} run-finish --run-id=<run_id> --agent-id={{agent_id}}
        - In direct mode:
          - If told finalization succeeded or the session can stop, call orc run-finish:
              {{orc_bin}} run-finish --run-id=<run_id> --agent-id=<agent_id>

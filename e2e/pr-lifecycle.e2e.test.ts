@@ -54,11 +54,9 @@ function writePrConfig(stateDir: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('PR merge strategy e2e', () => {
-  it('completes full PR lifecycle: work_complete → PR created → reviewer spawned → merge → task done', async () => {
+  it('single worker handles entire PR lifecycle: work_complete → PR created → PR_REVIEW sent to worker → merge → task done', async () => {
     const mainRunId = 'run-pr-e2e-full';
     const taskRef = 'pr-e2e/task-full';
-    // Reviewer agent ID matches what coordinator assigns: pr-reviewer-<mainRunId>
-    const reviewerAgentId = `pr-reviewer-${mainRunId}`;
 
     seedState(dir, {
       agents: [{
@@ -94,10 +92,9 @@ describe('PR merge strategy e2e', () => {
       }),
     }));
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: `pty:${reviewerAgentId}`, provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('../adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend, stop: mockStop }));
+    vi.doMock('../adapters/index.ts', () => makeAdapterMock({ send: mockSend, stop: mockStop }));
     vi.doMock('../lib/runWorktree.ts', () => makeRunWorktreeMock({
       getRunWorktree: vi.fn().mockReturnValue({
         branch: `task/${mainRunId}`,
@@ -108,7 +105,7 @@ describe('PR merge strategy e2e', () => {
 
     const { processTerminalRunEvents } = await import('../coordinator.ts');
 
-    // Phase 1: main worker signals work_complete → PR created, reviewer spawned
+    // Phase 1: worker signals work_complete → PR created, PR_REVIEW sent to same worker
     await processTerminalRunEvents([{
       event: 'work_complete',
       run_id: mainRunId,
@@ -120,46 +117,50 @@ describe('PR merge strategy e2e', () => {
 
     expect(mockPushBranch).toHaveBeenCalledWith('origin', `task/${mainRunId}`);
     expect(mockCreatePr).toHaveBeenCalledWith(PR_TASK_BASE.title, `task/${mainRunId}`, expect.any(String));
-    expect(mockStart).toHaveBeenCalledOnce(); // reviewer session launched
 
-    const mainClaimAfterInit = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
-    expect((mainClaimAfterInit as { finalization_state: unknown }).finalization_state).toBe('pr_review_in_progress');
-    expect((mainClaimAfterInit as { pr_ref: unknown }).pr_ref).toBe('https://github.com/test/repo/pull/1');
-    expect((mainClaimAfterInit as { pr_reviewer_agent_id: unknown }).pr_reviewer_agent_id).toBe(reviewerAgentId);
+    // No new reviewer agent started
+    const agentsAfterInit = readAgents(dir);
+    const reviewerAgent = agentsAfterInit.find((a) => (a as { agent_id: unknown }).agent_id !== 'orc-1');
+    expect(reviewerAgent).toBeUndefined();
 
-    // Phase 2: reviewer signals work_complete using MAIN run_id → coordinator merges PR → task done
-    // In upstream architecture, reviewer uses the main claim's run_id
+    // PR_REVIEW sent to the existing worker (pty:orc-1)
+    const prReviewSend = mockSend.mock.calls.find(
+      ([handle, msg]) => handle === 'pty:orc-1' && typeof msg === 'string' && String(msg).includes('PR_REVIEW'),
+    );
+    expect(prReviewSend).toBeTruthy();
+
+    const claimAfterInit = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
+    expect((claimAfterInit as { finalization_state: unknown }).finalization_state).toBe('pr_review_in_progress');
+    expect((claimAfterInit as { pr_ref: unknown }).pr_ref).toBe('https://github.com/test/repo/pull/1');
+    expect((claimAfterInit as { pr_reviewer_agent_id?: unknown }).pr_reviewer_agent_id).toBeUndefined();
+
+    // Phase 2: same worker signals work_complete again (after PR review done) → coordinator merges PR
     await processTerminalRunEvents([{
       event: 'work_complete',
       run_id: mainRunId,
       task_ref: taskRef,
-      agent_id: reviewerAgentId,
+      agent_id: 'orc-1',
       ts: new Date().toISOString(),
       payload: { status: 'awaiting_finalize' },
     }]);
 
     expect(mockMergePr).toHaveBeenCalledWith('https://github.com/test/repo/pull/1');
 
-    const mainClaimAfterMerge = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
-    expect((mainClaimAfterMerge as { state: unknown }).state).toBe('done');
+    const claimAfterMerge = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
+    expect((claimAfterMerge as { state: unknown }).state).toBe('done');
 
     const task = readBacklog(dir).features[0].tasks.find((t) => (t as { ref: unknown }).ref === taskRef)!;
     expect((task as { status: unknown }).status).toBe('done');
 
-    // Reviewer session must have received a FINALIZE_SUCCESS signal
+    // Worker session received FINALIZE_SUCCESS signal
     const successNotice = mockSend.mock.calls.find(
       (args) => typeof args[1] === 'string' && args[1].includes('FINALIZE_SUCCESS'),
     );
     expect(successNotice).toBeTruthy();
-
-    // Reviewer agent session should be cleaned up
-    const reviewerAgent = readAgents(dir).find((a) => (a as { agent_id: unknown }).agent_id === reviewerAgentId);
-    expect((reviewerAgent as { session_handle?: unknown } | undefined)?.session_handle).toBeNull();
   });
 
-  it('handles reviewer failure: sets claim failed and requeues main task', async () => {
+  it('handles worker failure during PR review: sets claim failed and requeues main task', async () => {
     const mainRunId = 'run-pr-e2e-fail';
-    const reviewerAgentId = `pr-reviewer-${mainRunId}`;
     const taskRef = 'pr-e2e/task-fail';
 
     seedState(dir, {
@@ -167,11 +168,6 @@ describe('PR merge strategy e2e', () => {
         {
           agent_id: 'orc-1', provider: 'claude', role: 'worker',
           status: 'running', session_handle: 'pty:orc-1',
-          registered_at: new Date().toISOString(),
-        },
-        {
-          agent_id: reviewerAgentId, provider: 'claude', role: 'worker',
-          status: 'running', session_handle: `pty:${reviewerAgentId}`,
           registered_at: new Date().toISOString(),
         },
       ],
@@ -188,39 +184,34 @@ describe('PR merge strategy e2e', () => {
         finalization_retry_count: 0,
         finalization_blocked_reason: null,
         pr_ref: 'https://github.com/test/repo/pull/7',
-        pr_reviewer_agent_id: reviewerAgentId,
       }],
     });
 
     writePrConfig(dir);
-    vi.doMock('../adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('../adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined), send: vi.fn() }));
     vi.doMock('../lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { processTerminalRunEvents } = await import('../coordinator.ts');
 
-    // Reviewer signals run_failed using MAIN run_id (upstream architecture)
+    // Worker signals run_failed during PR review
     await processTerminalRunEvents([{
       event: 'run_failed',
       run_id: mainRunId,
       task_ref: taskRef,
-      agent_id: reviewerAgentId,
+      agent_id: 'orc-1',
       ts: new Date().toISOString(),
-      payload: { reason: 'reviewer crashed', policy: 'requeue' },
+      payload: { reason: 'ci-fix loop exceeded 3 iterations', policy: 'requeue' },
     }]);
 
-    const mainClaim = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
-    expect((mainClaim as { state: unknown }).state).toBe('failed');
+    const claim = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
+    expect((claim as { state: unknown }).state).toBe('failed');
 
     const task = readBacklog(dir).features[0].tasks.find((t) => (t as { ref: unknown }).ref === taskRef)!;
     expect((task as { status: unknown }).status).toBe('todo'); // requeued
-
-    const reviewerAgent = readAgents(dir).find((a) => (a as { agent_id: unknown }).agent_id === reviewerAgentId);
-    expect((reviewerAgent as { session_handle?: unknown } | undefined)?.session_handle).toBeNull();
   });
 
-  it('handles PR closed without merge: requeues when reviewer signals run_failed', async () => {
+  it('handles PR closed without merge: requeues when worker signals run_failed', async () => {
     const mainRunId = 'run-pr-e2e-closed';
-    const reviewerAgentId = `pr-reviewer-${mainRunId}`;
     const taskRef = 'pr-e2e/task-closed';
 
     seedState(dir, {
@@ -228,11 +219,6 @@ describe('PR merge strategy e2e', () => {
         {
           agent_id: 'orc-1', provider: 'claude', role: 'worker',
           status: 'running', session_handle: 'pty:orc-1',
-          registered_at: new Date().toISOString(),
-        },
-        {
-          agent_id: reviewerAgentId, provider: 'claude', role: 'worker',
-          status: 'running', session_handle: `pty:${reviewerAgentId}`,
           registered_at: new Date().toISOString(),
         },
       ],
@@ -249,28 +235,27 @@ describe('PR merge strategy e2e', () => {
         finalization_retry_count: 0,
         finalization_blocked_reason: null,
         pr_ref: 'https://github.com/test/repo/pull/8',
-        pr_reviewer_agent_id: reviewerAgentId,
       }],
     });
 
     writePrConfig(dir);
-    vi.doMock('../adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('../adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined), send: vi.fn() }));
     vi.doMock('../lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { processTerminalRunEvents } = await import('../coordinator.ts');
 
-    // Reviewer signals run_failed because PR was closed without merge
+    // Worker signals run_failed because PR was closed without merge
     await processTerminalRunEvents([{
       event: 'run_failed',
       run_id: mainRunId,
       task_ref: taskRef,
-      agent_id: reviewerAgentId,
+      agent_id: 'orc-1',
       ts: new Date().toISOString(),
       payload: { reason: 'PR closed without merge', policy: 'requeue' },
     }]);
 
-    const mainClaim = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
-    expect((mainClaim as { state: unknown }).state).toBe('failed');
+    const claim = readClaims(dir).find((c) => (c as { run_id: string }).run_id === mainRunId)!;
+    expect((claim as { state: unknown }).state).toBe('failed');
 
     const task = readBacklog(dir).features[0].tasks.find((t) => (t as { ref: unknown }).ref === taskRef)!;
     expect((task as { status: unknown }).status).toBe('todo'); // requeued for retry

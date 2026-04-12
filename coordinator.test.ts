@@ -3748,11 +3748,10 @@ describe('PR finalization', () => {
     writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github', merge_strategy: 'direct' } }));
     process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     const mockPushBranch = vi.fn();
     const mockCreatePr = vi.fn().mockReturnValue('https://github.com/org/repo/pull/1');
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend, stop: vi.fn() }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: mockSend, stop: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({
       getGitHostAdapter: () => ({
         pushBranch: mockPushBranch,
@@ -3837,11 +3836,10 @@ describe('PR finalization', () => {
     writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
     process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     const mockPushBranch = vi.fn();
     const mockCreatePr = vi.fn().mockReturnValue('https://github.com/org/repo/pull/42');
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend, stop: vi.fn() }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: mockSend, stop: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({
       getGitHostAdapter: () => ({
         pushBranch: mockPushBranch,
@@ -3892,14 +3890,13 @@ describe('PR finalization', () => {
     writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
     process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     let capturedBody = '';
     const mockCreatePr = vi.fn().mockImplementation((_title: string, _branch: string, body: string) => {
       capturedBody = body;
       return 'https://github.com/org/repo/pull/99';
     });
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend, stop: vi.fn() }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: mockSend, stop: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({
       getGitHostAdapter: () => ({ pushBranch: vi.fn(), createPr: mockCreatePr, mergePr: vi.fn() }),
     }));
@@ -3923,7 +3920,7 @@ describe('PR finalization', () => {
     expect(capturedBody).toContain('- criterion two');
   });
 
-  it('spawns PR reviewer worker after PR creation', async () => {
+  it('sends PR_REVIEW to existing worker instead of spawning reviewer', async () => {
     seedState(dir, {
       agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
       tasks: [PR_TASK],
@@ -3932,7 +3929,6 @@ describe('PR finalization', () => {
 
     writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
     process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
-    process.env.ORC_WORKER_PROVIDER = 'claude';
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
@@ -3958,29 +3954,29 @@ describe('PR finalization', () => {
       payload: { status: 'awaiting_finalize' },
     }]);
 
-    // Reviewer agent registered
+    // No new reviewer agent registered
     const agents = readAgents(dir);
     const reviewer = agents.find((a) => a.agent_id === 'pr-reviewer-run-pr-test');
-    expect(reviewer).toBeTruthy();
-    expect(reviewer?.provider).toBe('claude');
+    expect(reviewer).toBeUndefined();
 
-    // Reviewer session started (mockStart called once — the reviewer; original agent already has session_handle)
-    expect(mockStart).toHaveBeenCalledOnce();
+    // No new session started (original agent already has session_handle)
+    expect(mockStart).not.toHaveBeenCalled();
 
-    // PR_REVIEW envelope sent to reviewer
-    const envelopeCalls = mockSend.mock.calls.filter(([, msg]) => typeof msg === 'string' && String(msg).includes('PR_REVIEW'));
+    // PR_REVIEW envelope sent to original worker (pty:orc-1)
+    const envelopeCalls = mockSend.mock.calls.filter(
+      ([handle, msg]) => handle === 'pty:orc-1' && typeof msg === 'string' && String(msg).includes('PR_REVIEW'),
+    );
     expect(envelopeCalls.length).toBeGreaterThan(0);
 
     const claim = readClaims(dir).find((c) => c.run_id === 'run-pr-test')!;
-    expect(claim.pr_reviewer_agent_id).toBe('pr-reviewer-run-pr-test');
+    expect(claim.finalization_state).toBe('pr_review_in_progress');
+    expect((claim as { pr_reviewer_agent_id?: unknown }).pr_reviewer_agent_id).toBeUndefined();
   });
 
-  it('merges PR via adapter on reviewer work_complete and sets pr_merged transition', async () => {
-    const reviewerAgentId = 'pr-reviewer-run-pr-merge';
+  it('merges PR on worker work_complete during pr_review_in_progress', async () => {
     seedState(dir, {
       agents: [
         { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
-        { agent_id: reviewerAgentId, role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:pr-reviewer' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-merge-task', status: 'in_progress' }],
       claims: [{
@@ -3995,7 +3991,6 @@ describe('PR finalization', () => {
         finalization_retry_count: 0,
         finalization_blocked_reason: null,
         pr_ref: 'https://github.com/org/repo/pull/10',
-        pr_reviewer_agent_id: reviewerAgentId,
       }],
     });
 
@@ -4023,7 +4018,7 @@ describe('PR finalization', () => {
       event: 'work_complete',
       run_id: 'run-pr-merge',
       task_ref: 'orch/pr-merge-task',
-      agent_id: reviewerAgentId,
+      agent_id: 'orc-1',
       ts: new Date().toISOString(),
       payload: { status: 'awaiting_finalize' },
     }]);
@@ -4039,12 +4034,10 @@ describe('PR finalization', () => {
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-pr-merge');
   });
 
-  it('signals reviewer run-finish after successful PR merge', async () => {
-    const reviewerAgentId = 'pr-reviewer-run-pr-signal';
+  it('signals worker run-finish after successful PR merge', async () => {
     seedState(dir, {
       agents: [
         { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
-        { agent_id: reviewerAgentId, role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:pr-reviewer-signal' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-signal-task', status: 'in_progress' }],
       claims: [{
@@ -4059,7 +4052,6 @@ describe('PR finalization', () => {
         finalization_retry_count: 0,
         finalization_blocked_reason: null,
         pr_ref: 'https://github.com/org/repo/pull/11',
-        pr_reviewer_agent_id: reviewerAgentId,
       }],
     });
 
@@ -4085,24 +4077,22 @@ describe('PR finalization', () => {
       event: 'work_complete',
       run_id: 'run-pr-signal',
       task_ref: 'orch/pr-signal-task',
-      agent_id: reviewerAgentId,
+      agent_id: 'orc-1',
       ts: new Date().toISOString(),
       payload: { status: 'awaiting_finalize' },
     }]);
 
-    // Coordinator must signal reviewer with FINALIZE_SUCCESS
+    // Coordinator must signal worker with FINALIZE_SUCCESS
     const successNotice = mockSend.mock.calls.find(
-      ([handle, msg]) => handle === 'pty:pr-reviewer-signal' && typeof msg === 'string' && String(msg).includes('FINALIZE_SUCCESS'),
+      ([handle, msg]) => handle === 'pty:orc-1' && typeof msg === 'string' && String(msg).includes('FINALIZE_SUCCESS'),
     );
     expect(successNotice).toBeTruthy();
   });
 
-  it('transitions to pr_failed on reviewer run_failed and requeues task', async () => {
-    const reviewerAgentId = 'pr-reviewer-run-pr-fail';
+  it('sets pr_failed on worker run_fail during pr_review_in_progress and requeues task', async () => {
     seedState(dir, {
       agents: [
         { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
-        { agent_id: reviewerAgentId, role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:pr-reviewer-fail' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-fail-task', status: 'in_progress' }],
       claims: [{
@@ -4117,7 +4107,6 @@ describe('PR finalization', () => {
         finalization_retry_count: 0,
         finalization_blocked_reason: null,
         pr_ref: 'https://github.com/org/repo/pull/99',
-        pr_reviewer_agent_id: reviewerAgentId,
       }],
     });
 
@@ -4137,7 +4126,7 @@ describe('PR finalization', () => {
       event: 'run_failed',
       run_id: 'run-pr-fail',
       task_ref: 'orch/pr-fail-task',
-      agent_id: reviewerAgentId,
+      agent_id: 'orc-1',
       ts: new Date().toISOString(),
       payload: { reason: 'ci-fix loop exceeded 3 iterations', policy: 'requeue' },
     }]);
@@ -4146,17 +4135,15 @@ describe('PR finalization', () => {
     const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'orch/pr-fail-task')!;
     expect(task.status).toBe('todo');
 
-    // Original claim finished as failed
+    // Claim finished as failed
     const claim = readClaims(dir).find((c) => c.run_id === 'run-pr-fail')!;
     expect(claim.state).toBe('failed');
   });
 
-  it('cleans up reviewer agent registration after terminal event', async () => {
-    const reviewerAgentId = 'pr-reviewer-run-pr-cleanup';
+  it('no reviewer agent registered during PR path', async () => {
     seedState(dir, {
       agents: [
         { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
-        { agent_id: reviewerAgentId, role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:pr-reviewer-cleanup' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-cleanup-task', status: 'in_progress' }],
       claims: [{
@@ -4167,21 +4154,23 @@ describe('PR finalization', () => {
         claimed_at: new Date().toISOString(),
         started_at: new Date().toISOString(),
         lease_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        finalization_state: 'pr_review_in_progress',
+        finalization_state: 'awaiting_finalize',
         finalization_retry_count: 0,
         finalization_blocked_reason: null,
-        pr_ref: 'https://github.com/org/repo/pull/20',
-        pr_reviewer_agent_id: reviewerAgentId,
       }],
     });
 
     writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
     process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
 
-    const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop: mockStop, send: vi.fn() }));
+    const mockStart = vi.fn();
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: vi.fn(), stop: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({
-      getGitHostAdapter: () => ({ pushBranch: vi.fn(), createPr: vi.fn(), mergePr: vi.fn() }),
+      getGitHostAdapter: () => ({
+        pushBranch: vi.fn(),
+        createPr: vi.fn().mockReturnValue('https://github.com/org/repo/pull/20'),
+        mergePr: vi.fn(),
+      }),
     }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       getRunWorktree: vi.fn().mockReturnValue({ branch: 'task/run-pr-cleanup', worktree_path: '/tmp/wt/run-pr-cleanup' }),
@@ -4189,28 +4178,20 @@ describe('PR finalization', () => {
     }));
 
     const { processTerminalRunEvents } = await import('./coordinator.ts');
-    // Reviewer run_finished arrives after coordinator already merged
-    // Simulate: coordinator already merged → claim is done; reviewer now sends run_finished
-    // We simulate this by setting claim to done first and then sending run_finished
-    // Since the claim would be done after merge, run_finished is a noop for finish_run
-    // but it should still clean up the reviewer's session
     await processTerminalRunEvents([{
       event: 'work_complete',
       run_id: 'run-pr-cleanup',
       task_ref: 'orch/pr-cleanup-task',
-      agent_id: reviewerAgentId,
+      agent_id: 'orc-1',
       ts: new Date().toISOString(),
       payload: { status: 'awaiting_finalize' },
     }]);
 
-    // stop() called for orc-1 (original) capacity release + reviewer after run_finished
-    // The reviewer session stop should be called
-    expect(mockStop).toHaveBeenCalled();
-    // Reviewer agent should have its session cleared (status idle or session_handle null)
+    // No new reviewer agent should be registered
+    expect(mockStart).not.toHaveBeenCalled();
     const agents = readAgents(dir);
-    const reviewer = agents.find((a) => a.agent_id === reviewerAgentId);
-    // After cleanupRunCapacity, session_handle is null
-    expect(reviewer?.session_handle).toBeNull();
+    const reviewer = agents.find((a) => (a as { agent_id: unknown }).agent_id !== 'orc-1');
+    expect(reviewer).toBeUndefined();
   });
 
   it('uses pr_finalize_lease_ms for PR claim leases', async () => {
@@ -4236,8 +4217,7 @@ describe('PR finalization', () => {
     }));
     process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: vi.fn(), stop: vi.fn() }));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn(), stop: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({
       getGitHostAdapter: () => ({
         pushBranch: vi.fn(),
