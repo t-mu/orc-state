@@ -128,10 +128,6 @@
         "pr_created_at": {
           "type": ["string", "null"],
           "format": "date-time"
-        },
-        "pr_reviewer_agent_id": {
-          "type": ["string", "null"],
-          "description": "Agent ID of the PR reviewer worker."
         }
       }
     }

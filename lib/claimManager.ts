@@ -13,7 +13,7 @@ const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycle
 
 export { requeueBackoffMs } from './claimLeaseManager.ts';
 export { expireStaleLeases, expireStaleLeasesDetailed } from './claimLeaseManager.ts';
-export { markTaskEnvelopeSent, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, setEscalationNotified, setPrRef, setPrCreatedAt, setPrReviewerAgentId } from './claimStateManager.ts';
+export { markTaskEnvelopeSent, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, setEscalationNotified, setPrRef, setPrCreatedAt } from './claimStateManager.ts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

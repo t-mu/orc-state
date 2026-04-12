@@ -4,7 +4,6 @@ import { isSupportedProvider, type ProviderName } from './providers.ts';
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
 const WORKER_BOOTSTRAP_SMOKE_TEMPLATE = 'worker-bootstrap-smoke-v1.txt';
 const SCOUT_BOOTSTRAP_TEMPLATE = 'scout-bootstrap-v1.txt';
-const PR_REVIEWER_BOOTSTRAP_TEMPLATE = 'pr-reviewer-bootstrap-v1.txt';
 
 const MASTER_BOOTSTRAP_TEMPLATE = 'master-bootstrap-v1.txt';
 
@@ -52,21 +51,6 @@ export function getMasterBootstrap(provider: string, agentId: string): string;
 export function getMasterBootstrap(provider: string, agentId: string = 'master'): string {
   const resolvedProvider = assertProvider(provider);
   return renderBootstrap(MASTER_BOOTSTRAP_TEMPLATE, resolvedProvider, agentId);
-}
-
-export function buildPrReviewerBootstrap(
-  agentId: string,
-  provider: string,
-  orcBin: string = 'orc',
-  sessionToken: string = 'session-token-unset',
-): string {
-  const resolvedProvider = assertProvider(provider);
-  return renderTemplate(PR_REVIEWER_BOOTSTRAP_TEMPLATE, {
-    agent_id: agentId,
-    orc_bin: orcBin,
-    provider: resolvedProvider,
-    session_token: sessionToken,
-  });
 }
 
 /**

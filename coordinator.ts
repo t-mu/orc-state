@@ -22,10 +22,9 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun, setPrRef, setPrCreatedAt, setPrReviewerAgentId } from './lib/claimManager.ts';
-import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime, registerAgent } from './lib/agentRegistry.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
+import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
-import { buildPrReviewerBootstrap } from './lib/sessionBootstrap.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
@@ -41,13 +40,12 @@ import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktre
 import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
-import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, normalizeWorkerEnv } from './lib/workerRuntime.ts';
+import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
@@ -620,71 +618,6 @@ function resolveMergeStrategy(
   return ((task?.merge_strategy) ?? config.merge_strategy ?? 'direct') as 'direct' | 'pr';
 }
 
-async function spawnPrReviewer(claim: Claim, prRef: string, task: { review_level?: string | undefined } | null, workerPoolConfig: WorkerPoolConfig): Promise<string | null> {
-  const reviewerAgentId = `pr-reviewer-${claim.run_id}`;
-  const provider = workerPoolConfig.provider;
-  const orcBin = resolveOrcBinSh(REPO_ROOT);
-
-  try {
-    registerAgent(STATE_DIR, { agent_id: reviewerAgentId, provider, role: 'worker' });
-  } catch (err) {
-    log(`warning: failed to register PR reviewer agent ${reviewerAgentId}: ${(err as Error).message}`);
-    return null;
-  }
-
-  const reviewerAgent = getAgent(STATE_DIR, reviewerAgentId);
-  if (!reviewerAgent) {
-    log(`warning: PR reviewer agent ${reviewerAgentId} not found after registration`);
-    return null;
-  }
-
-  const sessionToken = randomUUID();
-  const bootstrap = buildPrReviewerBootstrap(reviewerAgentId, provider, orcBin, sessionToken);
-  const adapter = getAdapter(provider);
-
-  try {
-    const runWorktree = getRunWorktree(STATE_DIR, claim.run_id);
-    const { session_handle, provider_ref } = await adapter.start(reviewerAgentId, {
-      system_prompt: bootstrap,
-      working_directory: runWorktree?.worktree_path,
-      execution_mode: workerPoolConfig.execution_mode,
-      env: normalizeWorkerEnv({ ORC_STATE_DIR: STATE_DIR }, REPO_ROOT),
-    });
-    updateAgentRuntime(STATE_DIR, reviewerAgentId, {
-      status: 'running',
-      session_handle,
-      session_token: sessionToken,
-      session_started_at: new Date().toISOString(),
-      session_ready_at: null,
-      provider_ref: provider_ref as Agent['provider_ref'],
-      last_heartbeat_at: new Date().toISOString(),
-      last_status_change_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    log(`warning: failed to start PR reviewer session for ${reviewerAgentId}: ${(err as Error).message}`);
-    return null;
-  }
-
-  // Send the PR_REVIEW envelope
-  const reviewerAgent2 = getAgent(STATE_DIR, reviewerAgentId);
-  if (reviewerAgent2?.session_handle) {
-    const envelope = renderTemplate('pr-review-envelope-v1.txt', {
-      pr_ref: prRef,
-      run_id: claim.run_id,
-      task_ref: claim.task_ref,
-      review_level: task?.review_level ?? 'full',
-      worktree_path: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? '',
-      orc_bin: orcBin,
-    });
-    try {
-      await adapter.send(reviewerAgent2.session_handle, envelope);
-    } catch (err) {
-      log(`warning: failed to send PR_REVIEW envelope to ${reviewerAgentId}: ${(err as Error).message}`);
-    }
-  }
-
-  return reviewerAgentId;
-}
 
 async function mergeAndFinishDirectRun(claim: Claim, runWorktree: { branch: string; worktree_path?: string }, workerPoolConfig: WorkerPoolConfig) {
   try {
@@ -752,13 +685,8 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
       return markFinalizeBlocked(claim, workerPoolConfig, `failed to mark runtime task done after PR merge: ${(error as Error).message}`);
     }
 
-    // Signal reviewer to finish and release its session
-    if (claim.pr_reviewer_agent_id) {
-      await sendCoordinatorMessage(claim.pr_reviewer_agent_id, buildFinalizeSuccessNotice(claim, runWorktree.branch));
-      await cleanupRunCapacity(claim.pr_reviewer_agent_id, workerPoolConfig);
-    }
-
     finishRun(STATE_DIR, claim.run_id, claim.agent_id, { success: true });
+    await sendCoordinatorMessage(claim.agent_id, buildFinalizeSuccessNotice(claim, runWorktree.branch));
     await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
     try {
       const cleaned = cleanupRunWorktree(STATE_DIR, claim.run_id);
@@ -832,15 +760,24 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
       log(`warning: failed to extend lease for PR finalization on ${claim.run_id}: ${(error as Error).message}`);
     }
 
-    // Spawn the PR reviewer
-    const latestClaim = getClaim(claim.run_id) ?? claim;
-    const reviewerAgentId = await spawnPrReviewer(latestClaim, prRef, task, workerPoolConfig);
-    if (reviewerAgentId) {
-      try {
-        setPrReviewerAgentId(STATE_DIR, claim.run_id, reviewerAgentId);
-      } catch (error) {
-        log(`warning: failed to store PR reviewer agent_id for ${claim.run_id}: ${(error as Error).message}`);
-      }
+    // Send PR_REVIEW into the existing worker's PTY session
+    const workerAgent = getAgent(STATE_DIR, claim.agent_id);
+    if (!workerAgent?.session_handle) {
+      return markFinalizeBlocked(claim, workerPoolConfig, 'worker session_handle missing at PR_REVIEW send time');
+    }
+    const prReviewMessage = renderTemplate('pr-review-envelope-v1.txt', {
+      pr_ref: prRef,
+      run_id: claim.run_id,
+      task_ref: claim.task_ref,
+      review_level: task?.review_level ?? 'full',
+      acceptance_criteria: task?.acceptance_criteria?.join('\n') ?? '',
+      worktree_path: runWorktree.worktree_path ?? '',
+      orc_bin: resolveOrcBinSh(REPO_ROOT),
+    });
+    try {
+      await getAdapter(workerAgent.provider).send(workerAgent.session_handle, prReviewMessage);
+    } catch (error) {
+      return markFinalizeBlocked(claim, workerPoolConfig, `failed to send PR_REVIEW to worker ${claim.agent_id}: ${(error as Error).message}`);
     }
 
     try {
@@ -849,7 +786,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
       log(`warning: failed to set pr_review_in_progress state for ${claim.run_id}: ${(error as Error).message}`);
     }
 
-    log(`PR created for ${claim.task_ref}: ${prRef}; reviewer: ${reviewerAgentId ?? 'none'}`);
+    log(`PR created for ${claim.task_ref}: ${prRef}; sent PR_REVIEW to worker ${claim.agent_id}`);
     return true;
   }
 
@@ -1868,12 +1805,12 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     }
 
     if (action.type === 'finish_run') {
-      // ── PR reviewer run_failed: set pr_failed and requeue using original agent ──
+      // ── Worker run_failed during PR review: set pr_failed and requeue ──
       const latestClaimForFinish = runId ? getClaim(runId) : null;
       if (
         !action.success
         && latestClaimForFinish?.finalization_state === 'pr_review_in_progress'
-        && latestClaimForFinish.pr_reviewer_agent_id === agentId
+        && latestClaimForFinish.agent_id === agentId
       ) {
         try {
           setRunFinalizationState(STATE_DIR, runId!, latestClaimForFinish.agent_id, { finalizationState: 'pr_failed' });
@@ -1881,18 +1818,17 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         try {
           await sendCoordinatorMessage(
             'master',
-            `PR review failed for ${latestClaimForFinish.task_ref} (run ${runId}): ${action.failureReason ?? 'reviewer failed'}`,
+            `PR review failed for ${latestClaimForFinish.task_ref} (run ${runId}): ${action.failureReason ?? 'worker failed'}`,
           );
         } catch { /* best-effort notification */ }
         finishRun(STATE_DIR, runId!, latestClaimForFinish.agent_id, {
           success: false,
-          failureReason: `pr_reviewer_failed: ${action.failureReason ?? 'unknown'}`,
+          failureReason: `pr_review_failed: ${action.failureReason ?? 'unknown'}`,
           failureCode: action.failureCode,
           policy: 'requeue',
           emitEvent: false,
           at: action.at,
         });
-        // Cleanup reviewer capacity (handled by run_failed side effects below using agentId = reviewer)
       } else {
         finishRun(STATE_DIR, runId!, agentId, {
           success: action.success,

@@ -188,13 +188,12 @@ describe('validateClaims', () => {
     }
   });
 
-  it('accepts pr_ref, pr_created_at, pr_reviewer_agent_id on claims', () => {
+  it('accepts pr_ref, pr_created_at on claims', () => {
     const claim = validClaim({
       state: 'in_progress',
       finalization_state: 'pr_created',
       pr_ref: 'https://github.com/owner/repo/pull/1',
       pr_created_at: '2024-01-01T00:00:00Z',
-      pr_reviewer_agent_id: 'orc-2',
     });
     expect(validateClaims({ version: '1', claims: [claim] })).toEqual([]);
   });

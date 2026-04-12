@@ -255,25 +255,3 @@ export function setPrCreatedAt(
   });
 }
 
-export function setPrReviewerAgentId(
-  stateDir: string,
-  runId: string,
-  reviewerAgentId: string,
-): Claim {
-  return withLock(lockPath(stateDir), () => {
-    const claims = readJson(stateDir, 'claims.json') as ClaimsState;
-    const claim = claims.claims.find((candidate) => candidate.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.state !== 'in_progress') {
-      throw new Error(`PR reviewer agent_id update requires in_progress claim state (got: ${claim.state})`);
-    }
-    if (typeof reviewerAgentId !== 'string' || !reviewerAgentId) {
-      throw new Error('reviewerAgentId must be a non-empty string');
-    }
-
-    claim.pr_reviewer_agent_id = reviewerAgentId;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    return claim;
-  });
-}

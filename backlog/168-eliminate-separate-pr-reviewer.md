@@ -2,7 +2,7 @@
 ref: general/168-eliminate-separate-pr-reviewer
 feature: general
 priority: high
-status: todo
+status: done
 review_level: full
 ---
 
