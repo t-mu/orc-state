@@ -1,11 +1,11 @@
 ---
-ref: general/169-harden-pr-finalization-state-machine
+ref: general/169-fix-pr-cli-body-upstream
 feature: general
 priority: high
 status: todo
 review_level: full
 depends_on:
-  - general/168-fix-pr-cli-config-and-doc-contract
+  - general/168-eliminate-separate-pr-reviewer
 ---
 
 # Task 169 — Fix PR CLI Config, PR Body Rendering, and Upstream Tracking
@@ -22,7 +22,8 @@ Depends on Task 168 (needs simplified single-worker PR flow).
 - Update git host adapter test for push args
 
 **Out of scope:**
-- Separate PR reviewer elimination (Task 168 — already done)
+- Separate PR reviewer elimination (`general/168-eliminate-separate-pr-reviewer` — already done)
+- Do not modify `spawnPrReviewer`, finalization branching, or `run_failed` handling in `coordinator.ts` — those are Task 168's scope
 - Direct finalization path changes
 - New git host adapter implementations
 - Non-PR documentation updates
@@ -169,3 +170,10 @@ it('pushBranch uses --set-upstream flag', () => { ... });
 ```bash
 nvm use 24 && npm test
 ```
+
+---
+
+## Risk / Rollback
+
+**Risk:** Changing push semantics or config loading could break if only one side is updated. Mitigated by: CLI config and coordinator rendering are independent fixes that don't interact.
+**Rollback:** `git restore cli/pr-diff.ts cli/pr-review.ts cli/pr-merge.ts cli/pr-status.ts coordinator.ts lib/gitHosts/github.ts && npm test`

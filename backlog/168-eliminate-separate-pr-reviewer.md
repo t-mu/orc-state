@@ -1,5 +1,5 @@
 ---
-ref: general/168-fix-pr-cli-config-and-doc-contract
+ref: general/168-eliminate-separate-pr-reviewer
 feature: general
 priority: high
 status: todo
@@ -24,9 +24,10 @@ Independent.
 - Update all PR-related tests to single-worker flow
 
 **Out of scope:**
-- Git host adapter changes (Task 169)
-- PR CLI config path fix (Task 169)
-- PR body rendering fix (Task 169)
+- Git host adapter changes (`general/169-fix-pr-cli-body-upstream`)
+- PR CLI config path fix (`general/169-fix-pr-cli-body-upstream`)
+- PR body rendering fix (`general/169-fix-pr-cli-body-upstream`)
+- Do not modify the `renderTemplate('pr-template-v1.txt', ...)` call — that's Task 169's scope
 - Direct finalization path — must remain unchanged
 
 ---

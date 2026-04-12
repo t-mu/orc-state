@@ -5,7 +5,7 @@ priority: normal
 status: cancelled
 review_level: full
 depends_on:
-  - general/169-harden-pr-finalization-state-machine
+  - general/169-fix-pr-cli-body-upstream
 ---
 
 # Task 170 — Align PR Runtime Contracts and Coverage
