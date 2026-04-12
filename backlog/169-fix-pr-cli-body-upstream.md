@@ -87,7 +87,7 @@ Replace the top-level config lookup:
 const prProvider = typeof rawConfig.pr_provider === 'string' ? rawConfig.pr_provider : null;
 
 // After:
-const coordinator = (rawConfig.coordinator ?? rawConfig) as Record<string, unknown>;
+const coordinator = (rawConfig.coordinator ?? {}) as Record<string, unknown>;
 const prProvider = typeof coordinator.pr_provider === 'string' ? coordinator.pr_provider : null;
 ```
 

@@ -39,9 +39,14 @@ This causes 5 bugs: premature merge from wrong agent's `work_complete`, stuck cl
 on reviewer spawn failure, leaked reviewer agents in `agents.json`, the original worker's
 session staying alive after reviewer spawn, and external PR closure not detected.
 
-All 5 bugs are eliminated by reusing the existing worker. The worker is already alive,
-has context, has the worktree. The coordinator sends a `PR_REVIEW` message into the
-worker's existing PTY session — the same pattern as `FINALIZE_REBASE_REQUEST` in direct mode.
+Four of these bugs (premature merge, stuck claims, leaked agents, stale session) are
+eliminated by reusing the existing worker. External PR closure detection remains a
+separate contract choice — not automatically solved by same-worker reuse, but mitigated
+by the worker's own CI polling which will fail if the PR is closed.
+
+The worker is already alive, has context, has the worktree. The coordinator sends a
+`PR_REVIEW` message into the worker's existing PTY session — the same pattern as
+`FINALIZE_REBASE_REQUEST` in direct mode.
 
 The worker's Phase 5 becomes:
 - **Direct mode:** Receive finalize rebase request → rebase → `run-work-complete` → coordinator merges → `run-finish`
@@ -96,19 +101,22 @@ In the PR finalization path (after pushing branch and creating PR, around line 8
 
 ```typescript
 const agent = getAgent(STATE_DIR, claim.agent_id);
-if (agent?.session_handle) {
-  const prReviewMessage = renderTemplate('pr-review-envelope-v1.txt', {
-    pr_ref: prRef,
-    run_id: claim.run_id,
-    task_ref: claim.task_ref,
-    review_level: task?.review_level ?? 'full',
-    acceptance_criteria: task?.acceptance_criteria?.join('\n') ?? '',
-    assigned_worktree: runWorktree.worktree_path,
-    orc_bin: resolveOrcBinSh(REPO_ROOT),
-  });
-  const adapter = getAdapter(agent.provider);
-  await adapter.send(agent.session_handle, prReviewMessage);
+if (!agent?.session_handle) {
+  // Worker session is gone — cannot deliver PR_REVIEW. Block finalization.
+  return markFinalizeBlocked(claim, workerPoolConfig,
+    'worker session_handle missing at PR_REVIEW send time');
 }
+const prReviewMessage = renderTemplate('pr-review-envelope-v1.txt', {
+  pr_ref: prRef,
+  run_id: claim.run_id,
+  task_ref: claim.task_ref,
+  review_level: task?.review_level ?? 'full',
+  acceptance_criteria: task?.acceptance_criteria?.join('\n') ?? '',
+  assigned_worktree: runWorktree.worktree_path,
+  orc_bin: resolveOrcBinSh(REPO_ROOT),
+});
+const adapter = getAdapter(agent.provider);
+await adapter.send(agent.session_handle, prReviewMessage);
 setRunFinalizationState(STATE_DIR, claim.run_id, claim.agent_id,
   { finalizationState: 'pr_review_in_progress' });
 ```
