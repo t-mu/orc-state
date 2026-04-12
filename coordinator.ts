@@ -777,7 +777,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     try {
       await getAdapter(workerAgent.provider).send(workerAgent.session_handle, prReviewMessage);
     } catch (error) {
-      log(`warning: failed to send PR_REVIEW to worker ${claim.agent_id}: ${(error as Error).message}`);
+      return markFinalizeBlocked(claim, workerPoolConfig, `failed to send PR_REVIEW to worker ${claim.agent_id}: ${(error as Error).message}`);
     }
 
     try {

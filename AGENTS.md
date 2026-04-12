@@ -388,7 +388,7 @@ Follow the **Phased Workflow** above. The five phases are:
 2. **Implement** — code + tests (gate: `npm test`)
 3. **Review** — commit, sub-agent review, fix findings (gate: reviewers accept)
 4. **Complete** — update task markdown to done, rebase (direct mode) or skip rebase (PR mode), `orc run-work-complete` (gate: run-work-complete exits 0)
-5. **Finalize** — direct mode: coordinator follow-up + `orc run-finish`; PR mode: session ends after run-work-complete (gate: terminal success)
+5. **Finalize** — direct mode: coordinator follow-up + `orc run-finish`; PR mode: remain in session, handle PR_REVIEW, then run-work-complete + run-finish (gate: terminal success)
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 
