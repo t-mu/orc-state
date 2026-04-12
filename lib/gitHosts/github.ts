@@ -11,7 +11,7 @@ function run(args: string[]): string {
 
 export class GitHubAdapter implements GitHostAdapter {
   pushBranch(remote: string, branch: string): void {
-    const result = spawnSync('git', ['push', remote, branch], {
+    const result = spawnSync('git', ['push', '--set-upstream', remote, branch], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });

@@ -799,6 +799,8 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     const prBody = renderTemplate('pr-template-v1.txt', {
       task_ref: claim.task_ref,
       run_id: claim.run_id,
+      review_level: task?.review_level ?? 'full',
+      acceptance_criteria: task?.acceptance_criteria ? '- ' + task.acceptance_criteria.join('\n- ') : 'No criteria specified',
       agent_id: claim.agent_id,
       branch: runWorktree.branch,
     });

@@ -2,7 +2,7 @@
 ref: general/169-fix-pr-cli-body-upstream
 feature: general
 priority: high
-status: todo
+status: done
 review_level: full
 depends_on:
   - general/168-eliminate-separate-pr-reviewer

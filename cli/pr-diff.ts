@@ -19,7 +19,8 @@ export function run(argv: string[] = process.argv.slice(2), configFile: string =
   }
 
   const rawConfig = existsSync(configFile) ? JSON.parse(readFileSync(configFile, 'utf8')) as Record<string, unknown> : {};
-  const prProvider = typeof rawConfig.pr_provider === 'string' ? rawConfig.pr_provider : null;
+  const coordinator = (rawConfig.coordinator ?? {}) as Record<string, unknown>;
+  const prProvider = typeof coordinator.pr_provider === 'string' ? coordinator.pr_provider : null;
   if (!prProvider) {
     console.error('pr_provider not configured');
     process.exit(1);

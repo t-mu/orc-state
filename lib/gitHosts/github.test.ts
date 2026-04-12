@@ -162,12 +162,12 @@ describe('getPrBody', () => {
 });
 
 describe('pushBranch', () => {
-  it('calls git push with remote and branch', () => {
+  it('calls git push with --set-upstream, remote, and branch', () => {
     mockedSpawnSync.mockReturnValue(makeResult(''));
     adapter.pushBranch('origin', 'feature-branch');
     expect(mockedSpawnSync).toHaveBeenCalledWith(
       'git',
-      ['push', 'origin', 'feature-branch'],
+      ['push', '--set-upstream', 'origin', 'feature-branch'],
       expect.objectContaining({ encoding: 'utf8' }),
     );
   });

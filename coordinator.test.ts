@@ -3876,6 +3876,53 @@ describe('PR finalization', () => {
     expect(claim.finalization_state).toBe('pr_review_in_progress');
   });
 
+  it('renders PR body with review_level and acceptance_criteria populated', async () => {
+    const taskWithCriteria = {
+      ...PR_TASK,
+      review_level: 'light' as const,
+      acceptance_criteria: ['criterion one', 'criterion two'],
+    };
+    const claimForCriteria = { ...PR_CLAIM, run_id: 'run-pr-body-test', task_ref: taskWithCriteria.ref };
+    seedState(dir, {
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      tasks: [taskWithCriteria],
+      claims: [claimForCriteria],
+    });
+
+    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
+    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
+    const mockSend = vi.fn().mockResolvedValue('');
+    let capturedBody = '';
+    const mockCreatePr = vi.fn().mockImplementation((_title: string, _branch: string, body: string) => {
+      capturedBody = body;
+      return 'https://github.com/org/repo/pull/99';
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend, stop: vi.fn() }));
+    vi.doMock('./lib/gitHosts/index.ts', () => ({
+      getGitHostAdapter: () => ({ pushBranch: vi.fn(), createPr: mockCreatePr, mergePr: vi.fn() }),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      getRunWorktree: vi.fn().mockReturnValue({ branch: 'task/run-pr-body-test', worktree_path: '/tmp/wt/run-pr-body-test' }),
+    }));
+
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      event: 'work_complete',
+      run_id: 'run-pr-body-test',
+      task_ref: taskWithCriteria.ref,
+      agent_id: 'orc-1',
+      ts: new Date().toISOString(),
+      payload: { status: 'awaiting_finalize' },
+    }]);
+
+    expect(mockCreatePr).toHaveBeenCalled();
+    expect(capturedBody).toContain('light');
+    expect(capturedBody).toContain('- criterion one');
+    expect(capturedBody).toContain('- criterion two');
+  });
+
   it('spawns PR reviewer worker after PR creation', async () => {
     seedState(dir, {
       agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
