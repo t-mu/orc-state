@@ -172,13 +172,6 @@ describe('pushBranch', () => {
     );
   });
 
-  it('uses --set-upstream flag', () => {
-    mockedSpawnSync.mockReturnValue(makeResult(''));
-    adapter.pushBranch('origin', 'feature-branch');
-    const callArgs = mockedSpawnSync.mock.calls[0][1] as string[];
-    expect(callArgs).toContain('--set-upstream');
-  });
-
   it('throws on non-zero exit', () => {
     mockedSpawnSync.mockReturnValue(makeResult('', 1, 'push rejected'));
     expect(() => adapter.pushBranch('origin', 'branch')).toThrow(

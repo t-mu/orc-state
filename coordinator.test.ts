@@ -3919,8 +3919,8 @@ describe('PR finalization', () => {
 
     expect(mockCreatePr).toHaveBeenCalled();
     expect(capturedBody).toContain('light');
-    expect(capturedBody).toContain('criterion one');
-    expect(capturedBody).toContain('criterion two');
+    expect(capturedBody).toContain('- criterion one');
+    expect(capturedBody).toContain('- criterion two');
   });
 
   it('spawns PR reviewer worker after PR creation', async () => {
