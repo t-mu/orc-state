@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('cli/pr-review.ts', () => {
   it('calls adapter.submitReview with --approve', () => {
-    writeFileSync(configFile, JSON.stringify({ pr_provider: 'github' }));
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
     const mockAdapter = { submitReview: vi.fn() };
     vi.mocked(getGitHostAdapter).mockReturnValue(mockAdapter as never);
 
@@ -37,7 +37,7 @@ describe('cli/pr-review.ts', () => {
   });
 
   it('calls adapter.submitReview with --request-changes', () => {
-    writeFileSync(configFile, JSON.stringify({ pr_provider: 'github' }));
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
     const mockAdapter = { submitReview: vi.fn() };
     vi.mocked(getGitHostAdapter).mockReturnValue(mockAdapter as never);
 
@@ -46,8 +46,25 @@ describe('cli/pr-review.ts', () => {
     expect(mockAdapter.submitReview).toHaveBeenCalledWith('42', 'Needs work', false);
   });
 
+  it('reads pr_provider from coordinator config section', () => {
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
+    const mockAdapter = { submitReview: vi.fn() };
+    vi.mocked(getGitHostAdapter).mockReturnValue(mockAdapter as never);
+
+    run(['42', '--approve'], configFile);
+
+    expect(getGitHostAdapter).toHaveBeenCalledWith('github');
+  });
+
+  it('exits 1 when coordinator.pr_provider is missing', () => {
+    writeFileSync(configFile, JSON.stringify({ coordinator: {} }));
+
+    expect(() => run(['42', '--approve'], configFile)).toThrow('process.exit');
+    expect(mockExit).toHaveBeenCalledWith(1);
+  });
+
   it('exits 1 when pr_ref is missing', () => {
-    writeFileSync(configFile, JSON.stringify({ pr_provider: 'github' }));
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
 
     expect(() => run([], configFile)).toThrow('process.exit');
     expect(mockExit).toHaveBeenCalledWith(1);
@@ -61,7 +78,7 @@ describe('cli/pr-review.ts', () => {
   });
 
   it('exits 1 when neither --approve nor --request-changes is provided', () => {
-    writeFileSync(configFile, JSON.stringify({ pr_provider: 'github' }));
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
 
     expect(() => run(['42', '--body=something'], configFile)).toThrow('process.exit');
     expect(mockExit).toHaveBeenCalledWith(1);

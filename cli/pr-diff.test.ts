@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('cli/pr-diff.ts', () => {
   it('calls adapter.getPrDiff with the pr_ref argument', () => {
-    writeFileSync(configFile, JSON.stringify({ pr_provider: 'github' }));
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
     const mockAdapter = { getPrDiff: vi.fn().mockReturnValue('diff output') };
     vi.mocked(getGitHostAdapter).mockReturnValue(mockAdapter as never);
 
@@ -36,8 +36,25 @@ describe('cli/pr-diff.ts', () => {
     expect(mockAdapter.getPrDiff).toHaveBeenCalledWith('42');
   });
 
+  it('reads pr_provider from coordinator config section', () => {
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
+    const mockAdapter = { getPrDiff: vi.fn().mockReturnValue('') };
+    vi.mocked(getGitHostAdapter).mockReturnValue(mockAdapter as never);
+
+    run(['42'], configFile);
+
+    expect(getGitHostAdapter).toHaveBeenCalledWith('github');
+  });
+
+  it('exits 1 when coordinator.pr_provider is missing', () => {
+    writeFileSync(configFile, JSON.stringify({ coordinator: {} }));
+
+    expect(() => run(['42'], configFile)).toThrow('process.exit');
+    expect(mockExit).toHaveBeenCalledWith(1);
+  });
+
   it('exits 1 when pr_ref is missing', () => {
-    writeFileSync(configFile, JSON.stringify({ pr_provider: 'github' }));
+    writeFileSync(configFile, JSON.stringify({ coordinator: { pr_provider: 'github' } }));
 
     expect(() => run([], configFile)).toThrow('process.exit');
     expect(mockExit).toHaveBeenCalledWith(1);
