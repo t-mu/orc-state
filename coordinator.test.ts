@@ -71,66 +71,33 @@ const DISPATCHABLE_TASK = {
 const COORDINATOR_PATH = fileURLToPath(new URL('./coordinator.ts', import.meta.url));
 
 describe('ensureSessionReady: status invariant on session loss', () => {
-  it('starts managed worker slots on dispatch inside the assigned worktree', async () => {
-    seedState(dir, {
-      agents: [{
-        agent_id: 'master',
-        provider: 'claude',
-        role: 'master',
-        status: 'running',
-        session_handle: 'pty:master',
-        provider_ref: null,
-        registered_at: new Date().toISOString(),
-      }],
-      tasks: [DISPATCHABLE_TASK],
-    });
-    process.env.ORC_MAX_WORKERS = '2';
-    process.env.ORC_WORKER_PROVIDER = 'gemini';
-    process.env.ORC_WORKER_MODEL = 'gemini-2.5-pro';
-
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:orc-slot', provider_ref: null });
-    const mockSend = vi.fn().mockResolvedValue('');
-    const ensureRunWorktreeMock = vi.fn().mockReturnValue({
-      run_id: 'run-allocated',
-      branch: 'task/run-allocated',
-      worktree_path: '/tmp/orc-worktrees/run-allocated',
-    });
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
-    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
-      ensureRunWorktree: ensureRunWorktreeMock,
-      getRunWorktree: vi.fn().mockReturnValue({ worktree_path: '/tmp/orc-worktrees/run-allocated' }),
-    }));
-
-    const { tick } = await import('./coordinator.ts');
-    await tick();
-
-    const agents = readAgents(dir);
-    expect(agents.map((agent) => agent.agent_id)).toEqual(['master', 'orc-1', 'orc-2']);
-    expect(agents.find((agent) => agent.agent_id === 'orc-1')?.provider).toBe('gemini');
-    expect(agents.find((agent) => agent.agent_id === 'orc-2')?.provider).toBe('gemini');
-    expect(ensureRunWorktreeMock).toHaveBeenCalledOnce();
-    expect(mockStart).toHaveBeenCalledOnce();
-    expect(mockStart).toHaveBeenCalledWith('orc-1', expect.objectContaining({
-      model: 'gemini-2.5-pro',
-      working_directory: '/tmp/orc-worktrees/run-allocated',
-      env: expect.objectContaining({
-        ORC_STATE_DIR: dir,
-      }),
-    }));
-    expect(mockSend).not.toHaveBeenCalled();
-  });
-
   it('requeues a managed slot after a transient start failure instead of leaving it offline', async () => {
+    // In the ephemeral worker model, workers are pre-registered externally.
+    // This test verifies the coordinator's managed-slot retry path (isManagedSlot=true
+    // for orc-N format) by seeding orc-1 directly instead of relying on the
+    // removed reconcileManagedWorkerSlots auto-creation.
     seedState(dir, {
-      agents: [{
-        agent_id: 'master',
-        provider: 'claude',
-        role: 'master',
-        status: 'running',
-        session_handle: 'pty:master',
-        provider_ref: null,
-        registered_at: new Date().toISOString(),
-      }],
+      agents: [
+        {
+          agent_id: 'master',
+          provider: 'claude',
+          role: 'master',
+          status: 'running',
+          session_handle: 'pty:master',
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+        },
+        {
+          agent_id: 'orc-1',
+          provider: 'codex',
+          role: 'worker',
+          status: 'idle',
+          session_handle: null,
+          provider_ref: null,
+          last_heartbeat_at: null,
+          registered_at: new Date().toISOString(),
+        },
+      ],
       tasks: [DISPATCHABLE_TASK],
     });
     process.env.ORC_MAX_WORKERS = '1';
@@ -173,15 +140,27 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
   it('keeps the claim active when a retryable managed-slot start succeeds after transient failures', async () => {
     seedState(dir, {
-      agents: [{
-        agent_id: 'master',
-        provider: 'claude',
-        role: 'master',
-        status: 'running',
-        session_handle: 'pty:master',
-        provider_ref: null,
-        registered_at: new Date().toISOString(),
-      }],
+      agents: [
+        {
+          agent_id: 'master',
+          provider: 'claude',
+          role: 'master',
+          status: 'running',
+          session_handle: 'pty:master',
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+        },
+        {
+          agent_id: 'orc-1',
+          provider: 'codex',
+          role: 'worker',
+          status: 'idle',
+          session_handle: null,
+          provider_ref: null,
+          last_heartbeat_at: null,
+          registered_at: new Date().toISOString(),
+        },
+      ],
       tasks: [DISPATCHABLE_TASK],
     });
     process.env.ORC_MAX_WORKERS = '1';
@@ -228,15 +207,27 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
   it('resumes managed-slot start retries after coordinator restart', async () => {
     seedState(dir, {
-      agents: [{
-        agent_id: 'master',
-        provider: 'claude',
-        role: 'master',
-        status: 'running',
-        session_handle: 'pty:master',
-        provider_ref: null,
-        registered_at: new Date().toISOString(),
-      }],
+      agents: [
+        {
+          agent_id: 'master',
+          provider: 'claude',
+          role: 'master',
+          status: 'running',
+          session_handle: 'pty:master',
+          provider_ref: null,
+          registered_at: new Date().toISOString(),
+        },
+        {
+          agent_id: 'orc-1',
+          provider: 'codex',
+          role: 'worker',
+          status: 'idle',
+          session_handle: null,
+          provider_ref: null,
+          last_heartbeat_at: null,
+          registered_at: new Date().toISOString(),
+        },
+      ],
       tasks: [DISPATCHABLE_TASK],
     });
     process.env.ORC_MAX_WORKERS = '1';

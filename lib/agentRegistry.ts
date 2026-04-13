@@ -159,6 +159,11 @@ export function removeAgent(stateDir: string, agentId: string): void {
  *
  * Names are unique only among agents currently in the registry. Removing a
  * worker frees its name for reuse.
+ *
+ * Note: there is a small race window between this read and the subsequent
+ * `registerAgent` call. Callers that need atomicity must use a single
+ * `withLock` block, or tolerate the duplicate-registration error thrown by
+ * `registerAgent` and retry with a fresh name.
  */
 export function nextAvailableWorkerName(stateDir: string): string {
   return withLock(lockPath(stateDir), () => {

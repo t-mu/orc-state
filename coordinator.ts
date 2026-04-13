@@ -339,6 +339,9 @@ async function processClaimedSessionReadiness(
         run_id: claim.run_id,
         task_ref: claim.task_ref,
         task_model: claimedTask?.model ?? null,
+        // Legacy: only orc-N format agents get retried; ephemeral workers with
+        // two-word names return false here and take the fail-and-requeue path,
+        // which is correct — their sessions are managed externally.
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
         execution_mode: workerPoolConfig.execution_mode,
       });
