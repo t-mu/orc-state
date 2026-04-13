@@ -3,7 +3,7 @@ ref: dynamic-workers/172-dynamic-worker-spawn-and-provider-routing
 feature: dynamic-workers
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - dynamic-workers/171-ephemeral-worker-naming-and-capacity
 ---

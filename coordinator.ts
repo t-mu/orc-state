@@ -13,7 +13,8 @@
 import { spawnSync } from 'node:child_process';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
-import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode } from './lib/providers.ts';
+import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode, ProviderName } from './lib/providers.ts';
+import { resolveWorkerProvider } from './lib/providers.ts';
 import { isManagedSlot } from './lib/workerSlots.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
@@ -23,15 +24,13 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
 import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
-import { getAgent, listCoordinatorAgents, updateAgentRuntime } from './lib/agentRegistry.ts';
+import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
 import { latestRunActivityMap, latestRunPhaseMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
-import { selectDispatchableAgents, buildDispatchPlan } from './lib/dispatchPlanner.ts';
-import { nextEligibleTask } from './lib/taskScheduler.ts';
 import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
@@ -40,7 +39,7 @@ import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktre
 import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
-import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline } from './lib/workerRuntime.ts';
+import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
@@ -53,7 +52,8 @@ import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
-import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS } from './lib/constants.ts';
+import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
+import type { Backlog } from './types/backlog.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -855,16 +855,19 @@ async function stopAgentSession(agent: Agent | null | undefined) {
   }
 }
 
-async function releaseAgentCapacity(agent: Agent | null | undefined) {
-  if (!agent) return;
-  await stopAgentSession(agent);
-  clearWorkerSessionRuntime(STATE_DIR, agent, { status: 'idle' });
-}
 
 async function cleanupRunCapacity(agentId: string, workerPoolConfig: WorkerPoolConfig, { offlineReason = null as string | null } = {}) {
   const agent = getAgent(STATE_DIR, agentId);
   if (!agent) return;
   await stopAgentSession(agent);
+  // Coordinator-spawned ephemeral workers are removed entirely on cleanup.
+  // They exist only for the duration of one task-scoped run.
+  if (agent.ephemeral === true) {
+    removeAgent(STATE_DIR, agentId);
+    return;
+  }
+  // Legacy managed slots (orc-N) and operator-registered workers retain their
+  // registry entry; only their session runtime state is cleared.
   if (offlineReason && !isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
     markWorkerOffline(STATE_DIR, agent, { emit, reason: offlineReason });
     return;
@@ -1488,76 +1491,146 @@ function buildAttemptCountLookup(): Map<string, number> {
   return attemptsByTask;
 }
 
+const KNOWN_TASK_TYPES_SET = new Set(TASK_TYPES);
+const TASK_PRIORITY_RANK: Record<string, number> = { low: 0, normal: 1, high: 2, critical: 3 };
+
+/**
+ * Find the next task eligible for dynamic worker spawning.
+ *
+ * Unlike agent-bound task selection, this scan does NOT filter on provider —
+ * the provider is resolved from the task itself at spawn time. Owner-reserved
+ * tasks are excluded since they require a specific pre-known agent identity.
+ *
+ * Returns `{ ref, required_provider }` for the highest-priority eligible task,
+ * or null when no task is ready.
+ */
+function nextSpawnableTask(
+  backlog: unknown,
+  { excludeTaskRefs = new Set<string>() }: { excludeTaskRefs?: ReadonlySet<string> } = {},
+): { ref: string; required_provider: ProviderName | null } | null {
+  const b = backlog as Backlog | null;
+  const doneSet = new Set<string>();
+  for (const feature of (b?.features ?? [])) {
+    for (const task of (feature.tasks ?? [])) {
+      if (task.status === 'done' || task.status === 'released') doneSet.add(task.ref);
+    }
+  }
+  const now = new Date();
+  const eligible: Array<{ ref: string; required_provider: ProviderName | null; rank: number; index: number }> = [];
+  let index = 0;
+  for (const feature of (b?.features ?? [])) {
+    for (const task of (feature.tasks ?? [])) {
+      if (task.status !== 'todo') continue;
+      if (task.requeue_eligible_after && new Date(task.requeue_eligible_after) > now) continue;
+      if (excludeTaskRefs.has(task.ref)) continue;
+      if (task.planning_state && task.planning_state !== 'ready_for_dispatch') continue;
+      if (task.task_type && !KNOWN_TASK_TYPES_SET.has(task.task_type)) continue;
+      // Owner-reserved tasks require a specific agent identity — skip for generic spawning
+      if (task.owner) continue;
+      const deps = task.depends_on ?? [];
+      if (!deps.every((d) => doneSet.has(d))) continue;
+      eligible.push({
+        ref: task.ref,
+        required_provider: task.required_provider ?? null,
+        rank: TASK_PRIORITY_RANK[task.priority ?? ''] ?? TASK_PRIORITY_RANK['normal'],
+        index,
+      });
+      index += 1;
+    }
+  }
+  if (eligible.length === 0) return null;
+  eligible.sort((a, b) => b.rank - a.rank || a.index - b.index);
+  return { ref: eligible[0].ref, required_provider: eligible[0].required_provider };
+}
+
 async function executeDispatchPlan(
-  agents: Agent[],
+  _agents: Agent[],
   claims: Claim[],
   workerPoolConfig: WorkerPoolConfig,
   tickBacklog: unknown,
-  nudgedThisTick: Set<string>,
+  _nudgedThisTick: Set<string>,
 ): Promise<void> {
-  const busyAgents = activeClaimAgents(claims);
-  const availableAgents = selectDispatchableAgents(agents, { busyAgents });
-  const dispatchableAgents = availableAgents.filter((a) => !nudgedThisTick.has(a.agent_id));
-  const dispatchPlan = buildDispatchPlan(dispatchableAgents, (agent, reservedTaskRefs) =>
-    nextEligibleTask(STATE_DIR, agent.agent_id, {
-      backlog: tickBacklog,
-      agents: { version: '1', agents },
-      excludeTaskRefs: reservedTaskRefs,
-    }),
+  // Capacity = configured max minus current active runs
+  const activeClaimCount = activeClaimAgents(claims).size;
+  const availableCapacity = workerPoolConfig.max_workers - activeClaimCount;
+  if (availableCapacity <= 0) return;
+
+  // Find tasks eligible for spawning (up to available capacity slots)
+  const reservedTaskRefs = new Set<string>(
+    (claims ?? [])
+      .filter((c) => ['claimed', 'in_progress'].includes(c.state))
+      .map((c) => c.task_ref),
   );
-  const dispatchResults = await runBounded(dispatchPlan.map((item) => async () => {
-    const agent = item.agent;
-    const taskRef = item.task_ref;
-    let runId = null;
+  const dispatchItems: Array<{ ref: string; required_provider: ProviderName | null }> = [];
+  for (let i = 0; i < availableCapacity; i++) {
+    const next = nextSpawnableTask(tickBacklog, {
+      excludeTaskRefs: new Set([
+        ...reservedTaskRefs,
+        ...dispatchItems.map((d) => d.ref),
+      ]),
+    });
+    if (!next) break;
+    dispatchItems.push(next);
+  }
+
+  if (dispatchItems.length === 0) return;
+
+  const dispatchResults = await runBounded(dispatchItems.map((item) => async () => {
+    const taskRef = item.ref;
+    let runId: string | null = null;
+    let spawnedAgentId: string | null = null;
 
     try {
-      if (agent.status === 'dead') return;
+      // Resolve provider from task; fall back to pool default
+      const provider = resolveWorkerProvider(item.required_provider, workerPoolConfig);
 
-      const claimed = claimTask(STATE_DIR, taskRef, agent.agent_id, { leaseDurationMs: LEASE_CONFIG.default_ms });
+      // Generate a fresh task-scoped worker name and register + launch it
+      const agentId = nextAvailableWorkerName(STATE_DIR);
+      spawnedAgentId = agentId;
+      const adapter = getAdapter(provider);
+
+      // Claim the task before session work so capacity is held
+      const claimed = claimTask(STATE_DIR, taskRef, agentId, { leaseDurationMs: LEASE_CONFIG.default_ms });
       runId = claimed.run_id;
-      log(`claimed ${taskRef} for ${agent.agent_id} (${runId})`);
-      const runWorktree = ensureRunWorktree(STATE_DIR, {
+      log(`claimed ${taskRef} for ${agentId} (${runId})`);
+
+      const runWorktree = ensureRunWorktree(STATE_DIR, { runId, taskRef, agentId });
+
+      const task = findTask(readBacklog(STATE_DIR), taskRef);
+      const spawnResult = await spawnEphemeralWorker(STATE_DIR, {
+        agentId,
+        provider,
+        adapter,
+        workingDirectory: runWorktree.worktree_path,
+        repoRoot: REPO_ROOT,
         runId,
         taskRef,
-        agentId: agent.agent_id,
+        taskModel: task?.model ?? null,
+        executionMode: workerPoolConfig.execution_mode,
+        emit,
       });
-      if (agent.session_handle) {
-        await releaseAgentCapacity(agent);
-      }
-      const ready = await ensureSessionReady(agent, {
-        working_directory: runWorktree.worktree_path,
-        run_id: runId,
-        task_ref: taskRef,
-        retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
-        execution_mode: workerPoolConfig.execution_mode,
-      });
-      if (!ready.ok || !agent.session_handle) {
-        if (isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
-          setRunSessionStartRetryState(STATE_DIR, runId, agent.agent_id, {
-            retryCount: 1,
-            nextRetryAt: new Date(Date.now() + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
-            lastError: ready.reason ?? 'worker session could not be launched in assigned worktree',
-          });
-          return;
-        }
-        const failReason = ready.reason ?? 'worker session could not be launched in assigned worktree';
-        finishRun(STATE_DIR, runId, agent.agent_id, {
+
+      if (!spawnResult.ok) {
+        // Session launch failed; agent was cleaned up inside spawnEphemeralWorker
+        spawnedAgentId = null;
+        const failReason = spawnResult.reason ?? 'worker session could not be launched in assigned worktree';
+        finishRun(STATE_DIR, runId, agentId, {
           success: false,
           failureReason: `session_start_failed: ${failReason}`,
           failureCode: 'ERR_SESSION_START_FAILED',
           policy: 'requeue',
         });
-        if (agent.status !== 'offline') {
-          await cleanupRunCapacity(agent.agent_id, workerPoolConfig);
-        }
         return;
       }
 
+      const agent = spawnResult.agent!;
       if (isAgentSessionReady(agent)) {
         try {
           await sendTaskEnvelope(agent, taskRef, runId, workerPoolConfig);
         } catch (err) {
-          // InjectionScanError: finishRun not yet called — preserve runId for outer catch
+          // sendTaskEnvelope called finishRun + cleanupRunCapacity internally on failure.
+          // cleanupRunCapacity will remove the ephemeral agent.
+          spawnedAgentId = null;
           if (!(err instanceof InjectionScanError)) {
             runId = null;
           }
@@ -1573,25 +1646,32 @@ async function executeDispatchPlan(
           task_ref: taskRef,
           payload: { reason: 'injection_scan', findings: err.findings },
         });
-        if (runId) {
-          finishRun(STATE_DIR, runId, agent.agent_id, {
+        if (runId && spawnedAgentId) {
+          finishRun(STATE_DIR, runId, spawnedAgentId, {
             success: false,
             failureReason: 'injection_scan_blocked',
             failureCode: 'ERR_INJECTION_SCAN',
             policy: 'block',
           });
+          await cleanupRunCapacity(spawnedAgentId, workerPoolConfig);
+        } else if (spawnedAgentId) {
+          // Claim failed before runId was set — remove the agent directly
+          removeAgent(STATE_DIR, spawnedAgentId);
         }
         return;
       }
-      if (runId) {
-        finishRun(STATE_DIR, runId, agent.agent_id, {
+      if (runId && spawnedAgentId) {
+        finishRun(STATE_DIR, runId, spawnedAgentId, {
           success: false,
           failureReason: `dispatch_error: ${(err as Error).message}`,
           failureCode: 'ERR_DISPATCH_FAILURE',
           policy: 'requeue',
         });
+        await cleanupRunCapacity(spawnedAgentId, workerPoolConfig);
+      } else if (spawnedAgentId) {
+        removeAgent(STATE_DIR, spawnedAgentId);
       }
-      throw new Error(`dispatching ${taskRef} to ${agent.agent_id}: ${(err as Error).message}`);
+      throw new Error(`dispatching ${taskRef}: ${(err as Error).message}`);
     }
   }));
 

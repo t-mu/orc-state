@@ -200,6 +200,19 @@ function parseProviderModels(raw: unknown): Partial<Record<ProviderName, string>
   return result;
 }
 
+/**
+ * Resolve the provider for a task-scoped worker at dispatch time.
+ * Uses the task's required_provider when set; falls back to the pool default.
+ * This is a per-task decision — it does not imply a homogeneous pool of
+ * pre-registered workers.
+ */
+export function resolveWorkerProvider(
+  requiredProvider: ProviderName | null | undefined,
+  defaults: Pick<WorkerPoolConfig, 'provider'>,
+): ProviderName {
+  return requiredProvider ?? defaults.provider;
+}
+
 /** Resolve the effective model for a worker given pool config and provider. */
 export function resolveWorkerModel(config: WorkerPoolConfig, provider?: ProviderName): string | null {
   const p = provider ?? config.provider;

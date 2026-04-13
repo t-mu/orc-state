@@ -1,9 +1,9 @@
-import { updateAgentRuntime } from './agentRegistry.ts';
+import { updateAgentRuntime, registerAgent, removeAgent } from './agentRegistry.ts';
 import { resolveOrcBin } from './orcBin.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
-import type { ExecutionMode } from './providers.ts';
+import type { ExecutionMode, ProviderName } from './providers.ts';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -233,4 +233,77 @@ export async function launchWorkerSession(
     });
     return { ok: false, reason };
   }
+}
+
+/**
+ * Register a fresh ephemeral worker agent and launch its PTY session.
+ *
+ * Ephemeral workers are task-scoped: they are registered with ephemeral=true
+ * and exist only for the duration of one run. The coordinator removes their
+ * registry entry on terminal cleanup (success or failure).
+ *
+ * On registration failure, returns `{ ok: false }`.
+ * On session launch failure, the partially-registered agent is removed before
+ * returning so no stranded registry entry is left behind.
+ */
+export async function spawnEphemeralWorker(
+  stateDir: string,
+  {
+    agentId,
+    provider,
+    adapter,
+    workingDirectory,
+    repoRoot = null,
+    runId = null,
+    taskRef = null,
+    taskModel = null,
+    executionMode,
+    emit,
+    sessionToken = randomUUID(),
+  }: {
+    agentId: string;
+    provider: ProviderName;
+    adapter: Adapter;
+    workingDirectory: string | null | undefined;
+    repoRoot?: string | null;
+    runId?: string | null;
+    taskRef?: string | null;
+    taskModel?: string | null;
+    executionMode?: ExecutionMode;
+    emit: (event: OrcEventInput) => void;
+    sessionToken?: string;
+  },
+): Promise<{ ok: boolean; agent?: Agent; session_handle?: string; provider_ref?: unknown; reason?: string }> {
+  let agent: Agent;
+  try {
+    agent = registerAgent(stateDir, { agent_id: agentId, provider, role: 'worker', ephemeral: true });
+  } catch (error) {
+    return { ok: false, reason: `agent registration failed: ${(error as Error).message}` };
+  }
+
+  const result = await launchWorkerSession(stateDir, agent, {
+    adapter,
+    workingDirectory,
+    repoRoot,
+    runId,
+    taskRef,
+    taskModel,
+    retryable: false, // ephemeral workers fail-and-requeue on launch failure, no retries
+    ...(executionMode !== undefined ? { executionMode } : {}),
+    emit,
+    sessionToken,
+  });
+
+  if (!result.ok) {
+    // Remove the agent we just registered — no stranded registry entries
+    try { removeAgent(stateDir, agentId); } catch { /* ignore */ }
+    return { ok: false, ...(result.reason !== undefined ? { reason: result.reason } : {}) };
+  }
+
+  return {
+    ok: true,
+    agent,
+    ...(result.session_handle !== undefined ? { session_handle: result.session_handle } : {}),
+    provider_ref: result.provider_ref,
+  };
 }
