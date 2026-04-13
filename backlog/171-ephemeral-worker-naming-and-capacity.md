@@ -3,7 +3,7 @@ ref: dynamic-workers/171-ephemeral-worker-naming-and-capacity
 feature: dynamic-workers
 review_level: full
 priority: high
-status: todo
+status: done
 ---
 
 # Task 171 — Introduce Deterministic Ephemeral Worker Naming and Shared Capacity
