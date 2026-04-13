@@ -42,7 +42,7 @@ describe('cli/attach.ts', () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('has no active session');
-    expect(result.stderr).toContain('orc start-worker-session bob');
+    expect(result.stderr).toContain('Worker sessions are task-scoped');
   });
 
   it('calls adapter.attach for agent with active session', async () => {

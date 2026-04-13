@@ -195,7 +195,6 @@ export function loadTuiStatus(stateDir: string): TuiStatus {
 }
 
 export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewModel[] {
-  const slotById = new Map(status.worker_capacity.slots.map(slot => [slot.agent_id, slot]));
   const claimByAgentId = new Map(
     status.claims.active
       .filter((claim): claim is TuiClaim & { agent_id: string } => typeof claim.agent_id === 'string' && claim.agent_id.length > 0)
@@ -204,21 +203,20 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
 
   const viewModels: WorkerSlotViewModel[] = [];
 
-  for (let slotNumber = 1; slotNumber <= status.worker_capacity.configured_slots; slotNumber += 1) {
-    const slotId = `orc-${slotNumber}`;
-    const slot = slotById.get(slotId) ?? null;
-    const claim = claimByAgentId.get(slotId) ?? null;
+  // Iterate over live registered workers only — no synthetic orc-N placeholder slots.
+  // Workers are task-scoped and disappear from this list when their session ends.
+  for (const slot of status.worker_capacity.slots) {
+    const claim = claimByAgentId.get(slot.agent_id) ?? null;
     const runState = claim?.state ?? null;
-
     const heartbeat_seconds = claim?.heartbeat_seconds ?? null;
     const phaseHistory = claim?.phase_history ?? [];
     viewModels.push({
-      slot_id: slotId,
-      role: slot?.role ?? 'worker',
-      provider: slot?.provider ?? null,
-      model: slot?.model ?? null,
-      slot_state: slot?.slot_state ?? 'available',
-      task_ref: claim?.task_ref ?? slot?.active_task_ref ?? null,
+      slot_id: slot.agent_id,
+      role: slot.role,
+      provider: slot.provider ?? null,
+      model: slot.model ?? null,
+      slot_state: slot.slot_state,
+      task_ref: claim?.task_ref ?? slot.active_task_ref ?? null,
       run_state: runState,
       current_phase: claim?.current_phase ?? null,
       phases: phaseHistory.length > 0 ? buildPhases(phaseHistory, heartbeat_seconds, runState) : [],
@@ -230,9 +228,8 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
   }
 
   for (const scout of status.scout_capacity.slots) {
-    const agentId = scout.agent_id;
     viewModels.push({
-      slot_id: agentId,
+      slot_id: scout.agent_id,
       role: scout.role,
       provider: scout.provider ?? null,
       model: scout.model ?? null,

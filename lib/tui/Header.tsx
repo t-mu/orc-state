@@ -9,7 +9,7 @@ export function Header({ status }: { status: TuiStatus }) {
     <Box flexDirection="column" marginBottom={1}>
       <Text>{renderBanner()}</Text>
       <Text dimColor>
-        slots: {status.worker_capacity.used_slots}/{status.worker_capacity.configured_slots}
+        capacity: {status.worker_capacity.used_slots}/{status.worker_capacity.configured_slots}
         {' | '}todo: {taskCounts.todo ?? 0}
         {' | '}active: {status.claims.in_progress}
         {' | '}updated: {new Date().toISOString()}

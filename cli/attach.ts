@@ -28,7 +28,8 @@ if (!agent) {
 
 if (!agent.session_handle) {
   console.error(`Agent ${agentId} has no active session (status: ${agent.status})`);
-  console.error(`Run: orc start-worker-session ${agentId}  to request a headless worker session.`);
+  console.error(`Worker sessions are task-scoped and are created automatically when a task is dispatched.`);
+  console.error(`Use "orc status" to see currently live worker sessions.`);
   process.exit(1);
 }
 

@@ -49,7 +49,8 @@ if (worker.role === 'master') {
 }
 if (!worker.session_handle) {
   console.error(`Worker ${workerId} has no active session (status: ${worker.status})`);
-  console.error(`Debug path: run orc start-worker-session ${workerId} to request a headless worker session.`);
+  console.error(`Worker sessions are task-scoped and exist only while a task is running.`);
+  console.error(`Use "orc status" to see currently live worker sessions.`);
   process.exit(1);
 }
 
@@ -57,7 +58,7 @@ const adapter = createAdapter(worker.provider);
 const alive = await adapter.heartbeatProbe(worker.session_handle);
 if (!alive) {
   console.error(`Worker session ${worker.session_handle} is not reachable.`);
-  console.error(`Debug path: run orc start-worker-session ${workerId} --force-rebind`);
+  console.error(`The task-scoped session may have ended. Check "orc status" for currently live workers.`);
   process.exit(1);
 }
 

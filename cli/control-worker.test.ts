@@ -45,6 +45,23 @@ describe('cli/control-worker.ts', () => {
     expect(result.stderr).toContain('cannot be controlled as a worker');
   });
 
+  it('fails with ephemeral-aware message when worker has no session', () => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+      version: '1',
+      agents: [{ agent_id: 'amber-anchor', provider: 'claude', role: 'worker', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' }],
+    }));
+
+    const result = spawnSync('node', ['cli/control-worker.ts', 'amber-anchor'], {
+      cwd: repoRoot,
+      env: { ...process.env, ORC_STATE_DIR: dir },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('has no active session');
+    expect(result.stderr).toContain('Worker sessions are task-scoped');
+    expect(result.stderr).toContain('orc status');
+  });
+
   it('attaches for worker with live session', async () => {
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
