@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Agent } from '../types/agents.ts';
 import { stripNestedProviderEnv } from './providerChildEnv.ts';
 
@@ -287,5 +290,75 @@ describe('launchWorkerSession execution mode', () => {
       expect.any(String),
       expect.objectContaining({ workerBootstrapProfile: 'smoke' }),
     );
+  });
+});
+
+describe('spawnEphemeralWorker', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'orc-worker-test-'));
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
+    // Override the agentRegistry mock from the outer describe block so that
+    // registerAgent and removeAgent remain real (using vi.importActual).
+    vi.doMock('./agentRegistry.ts', async () => {
+      const actual = await vi.importActual<typeof import('./agentRegistry.ts')>('./agentRegistry.ts');
+      return { ...actual, updateAgentRuntime: vi.fn() };
+    });
+    vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
+    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: vi.fn(() => 'BOOTSTRAP') }));
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return { ...actual, existsSync: vi.fn(() => false) };
+    });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('launches a worker session using the provider resolved at dispatch time', async () => {
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:amber-anchor', provider_ref: null });
+    const adapter = {
+      start: mockStart,
+      send: vi.fn(),
+      stop: vi.fn(),
+      heartbeatProbe: vi.fn().mockResolvedValue(true),
+    };
+    const { spawnEphemeralWorker } = await import('./workerRuntime.ts');
+    const result = await spawnEphemeralWorker(dir, {
+      agentId: 'amber-anchor',
+      provider: 'claude',
+      adapter,
+      workingDirectory: '/tmp/work',
+      emit: vi.fn(),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.agent?.provider).toBe('claude');
+    expect(result.agent?.ephemeral).toBe(true);
+    expect(mockStart).toHaveBeenCalledOnce();
+  });
+
+  it('treats dead worker cleanup as terminal session cleanup rather than slot repair', async () => {
+    const mockStart = vi.fn().mockRejectedValue(new Error('launch failed'));
+    const adapter = {
+      start: mockStart,
+      send: vi.fn(),
+      stop: vi.fn(),
+      heartbeatProbe: vi.fn().mockResolvedValue(true),
+    };
+    const { spawnEphemeralWorker } = await import('./workerRuntime.ts');
+    const result = await spawnEphemeralWorker(dir, {
+      agentId: 'amber-anchor',
+      provider: 'claude',
+      adapter,
+      workingDirectory: '/tmp/work',
+      emit: vi.fn(),
+    });
+    expect(result.ok).toBe(false);
+    const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents as unknown[];
+    expect(agents).toHaveLength(0);
   });
 });

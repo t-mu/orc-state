@@ -28,6 +28,9 @@ export interface AgentDefinition {
   dispatch_mode?: string | null;
   capabilities?: string[];
   provider_ref?: Record<string, unknown> | null;
+  /** Mark this agent as coordinator-spawned ephemeral. Ephemeral workers are
+   * removed from the registry when their task-scoped session is cleaned up. */
+  ephemeral?: boolean;
 }
 
 /**
@@ -74,6 +77,7 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
       provider_ref:     agentDef.provider_ref ?? null,
       last_heartbeat_at: null,
       registered_at:    new Date().toISOString(),
+      ...(agentDef.ephemeral ? { ephemeral: true } : {}),
     };
 
     file.agents.push(entry);

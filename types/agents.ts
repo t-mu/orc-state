@@ -20,6 +20,9 @@ export interface Agent {
   registered_at: string;
   last_heartbeat_at?: string | null | undefined;
   last_status_change_at?: string | null | undefined;
+  /** True when this agent was spawned by the coordinator for a specific task run.
+   * Ephemeral workers are removed from the registry on terminal cleanup. */
+  ephemeral?: boolean | undefined;
 }
 
 export interface AgentsState {

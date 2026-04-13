@@ -71,58 +71,25 @@ const DISPATCHABLE_TASK = {
 const COORDINATOR_PATH = fileURLToPath(new URL('./coordinator.ts', import.meta.url));
 
 describe('ensureSessionReady: status invariant on session loss', () => {
-  it('requeues a managed slot after a transient start failure instead of leaving it offline', async () => {
-    // In the ephemeral worker model, workers are pre-registered externally.
-    // This test verifies the coordinator's managed-slot retry path (isManagedSlot=true
-    // for orc-N format) by seeding orc-1 directly instead of relying on the
-    // removed reconcileManagedWorkerSlots auto-creation.
+  it('requeues the task when ephemeral worker session launch fails', async () => {
     seedState(dir, {
-      agents: [
-        {
-          agent_id: 'master',
-          provider: 'claude',
-          role: 'master',
-          status: 'running',
-          session_handle: 'pty:master',
-          provider_ref: null,
-          registered_at: new Date().toISOString(),
-        },
-        {
-          agent_id: 'orc-1',
-          provider: 'codex',
-          role: 'worker',
-          status: 'idle',
-          session_handle: null,
-          provider_ref: null,
-          last_heartbeat_at: null,
-          registered_at: new Date().toISOString(),
-        },
-      ],
       tasks: [DISPATCHABLE_TASK],
     });
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
     const mockStart = vi.fn().mockRejectedValue(new Error('spawn failed'));
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
-    try {
-      const { tick } = await import('./coordinator.ts');
-      await tick();
-      vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'));
-      await tick();
-      vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
-      await tick();
-    } finally {
-      vi.useRealTimers();
-    }
+    const { tick } = await import('./coordinator.ts');
+    await tick();
 
-    const slot = readAgents(dir).find((agent) => agent.agent_id === 'orc-1');
-    expect(slot?.status).toBe('idle');
-    expect(slot?.session_handle).toBeNull();
+    expect(mockStart).toHaveBeenCalledOnce();
+
+    // Ephemeral worker removed after failure — no workers remain
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(0);
 
     const claims = readClaims(dir);
     expect(claims[0]?.state).toBe('failed');
@@ -130,157 +97,78 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
 
     const events = readEvents(dir);
-    const launchFailure = events.find((event) => event.event === 'session_start_failed' && event.agent_id === 'orc-1')!;
+    const launchFailure = events.find((e) => e.event === 'session_start_failed')!;
     expect(launchFailure).toBeDefined();
     expect(launchFailure.run_id).toMatch(/^run-/);
     expect(launchFailure.task_ref).toBe('proj/fix-bug');
     expect((launchFailure.payload as Record<string, unknown>).code).toBe('ERR_SESSION_START_FAILED');
-    expect(mockStart).toHaveBeenCalledTimes(3);
   });
 
-  it('keeps the claim active when a retryable managed-slot start succeeds after transient failures', async () => {
+  it('creates an ephemeral worker and marks the task claimed when session launches successfully', async () => {
     seedState(dir, {
-      agents: [
-        {
-          agent_id: 'master',
-          provider: 'claude',
-          role: 'master',
-          status: 'running',
-          session_handle: 'pty:master',
-          provider_ref: null,
-          registered_at: new Date().toISOString(),
-        },
-        {
-          agent_id: 'orc-1',
-          provider: 'codex',
-          role: 'worker',
-          status: 'idle',
-          session_handle: null,
-          provider_ref: null,
-          last_heartbeat_at: null,
-          registered_at: new Date().toISOString(),
-        },
-      ],
       tasks: [DISPATCHABLE_TASK],
     });
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const mockStart = vi.fn()
-      .mockRejectedValueOnce(new Error('spawn failed once'))
-      .mockRejectedValueOnce(new Error('spawn failed twice'))
-      .mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:new-worker', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
-    try {
-      const { tick } = await import('./coordinator.ts');
-      await tick();
-      vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'));
-      await tick();
-      vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
-      await tick();
-    } finally {
-      vi.useRealTimers();
-    }
+    const { tick } = await import('./coordinator.ts');
+    await tick();
 
-    const slot = readAgents(dir).find((agent) => agent.agent_id === 'orc-1');
-    expect(slot?.status).toBe('running');
-    expect(slot?.session_handle).toBe('pty:orc-1');
+    expect(mockStart).toHaveBeenCalledOnce();
+
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(1);
+    expect(workers[0].status).toBe('running');
+    expect(workers[0].session_handle).toBe('pty:new-worker');
+    expect(workers[0].ephemeral).toBe(true);
+    expect(workers[0].provider).toBe('codex');
 
     const claims = readClaims(dir);
     expect(claims[0]?.state).toBe('claimed');
     expect(claims[0]?.task_envelope_sent_at).toBeNull();
-    expect(claims[0]?.session_start_retry_count).toBe(0);
-    expect(claims[0]?.session_start_retry_next_at).toBeNull();
-    expect(claims[0]?.session_start_last_error).toBeNull();
 
     expect(readBacklog(dir).features[0].tasks[0].status).toBe('claimed');
-
-    expect(readEvents(dir).some((event) => event.event === 'session_start_failed')).toBe(false);
-    expect(mockStart).toHaveBeenCalledTimes(3);
+    expect(readEvents(dir).some((e) => e.event === 'session_start_failed')).toBe(false);
+    // Envelope not yet sent — worker must report for duty first
     expect(mockSend.mock.calls.some(([, payload]) => String(payload).includes('TASK_START'))).toBe(false);
   });
 
-  it('resumes managed-slot start retries after coordinator restart', async () => {
+  it('dispatches the same task on the next tick after a failed ephemeral session (no retry delay for infra failures)', async () => {
     seedState(dir, {
-      agents: [
-        {
-          agent_id: 'master',
-          provider: 'claude',
-          role: 'master',
-          status: 'running',
-          session_handle: 'pty:master',
-          provider_ref: null,
-          registered_at: new Date().toISOString(),
-        },
-        {
-          agent_id: 'orc-1',
-          provider: 'codex',
-          role: 'worker',
-          status: 'idle',
-          session_handle: null,
-          provider_ref: null,
-          last_heartbeat_at: null,
-          registered_at: new Date().toISOString(),
-        },
-      ],
       tasks: [DISPATCHABLE_TASK],
     });
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
     const mockStart = vi.fn()
-      .mockRejectedValueOnce(new Error('spawn failed once'))
-      .mockRejectedValueOnce(new Error('spawn failed twice'))
-      .mockResolvedValue({ session_handle: 'pty:orc-1', provider_ref: null });
-    const mockSend = vi.fn().mockResolvedValue('');
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
-    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
-      getRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-allocated',
-        branch: 'task/run-allocated',
-        worktree_path: '/tmp/orc-worktrees/run-allocated',
-      }),
-    }));
+      .mockRejectedValueOnce(new Error('spawn failed'))
+      .mockResolvedValue({ session_handle: 'pty:new-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
-    try {
-      const firstCoordinator = await import('./coordinator.ts');
-      await firstCoordinator.tick();
+    const { tick } = await import('./coordinator.ts');
+    await tick();
 
-      let claims = readClaims(dir);
-      expect(claims[0]?.session_start_retry_count).toBe(1);
-      expect(claims[0]?.session_start_last_error).toBe('spawn failed once');
+    // First tick: spawn fails, task requeued immediately (infra failures have no backoff)
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+    const failedClaims = readClaims(dir).filter((c) => c.state === 'failed');
+    expect(failedClaims).toHaveLength(1);
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(0); // ephemeral worker removed
 
-      vi.resetModules();
-      vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'));
-      const secondCoordinator = await import('./coordinator.ts');
-      await secondCoordinator.tick();
+    await tick();
 
-      claims = readClaims(dir);
-      expect(claims[0]?.session_start_retry_count).toBe(2);
-      expect(claims[0]?.session_start_last_error).toBe('spawn failed twice');
-
-      vi.resetModules();
-      vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
-      const thirdCoordinator = await import('./coordinator.ts');
-      await thirdCoordinator.tick();
-
-      claims = readClaims(dir);
-      expect(claims[0]?.state).toBe('claimed');
-      expect(claims[0]?.task_envelope_sent_at).toBeNull();
-      expect(claims[0]?.session_start_retry_count).toBe(0);
-      expect(claims[0]?.session_start_last_error).toBeNull();
-      expect(mockStart).toHaveBeenCalledTimes(3);
-      expect(mockSend.mock.calls.some(([, payload]) => String(payload).includes('TASK_START'))).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
+    // Second tick: task re-dispatched to a new ephemeral worker
+    expect(mockStart).toHaveBeenCalledTimes(2);
+    const newWorkers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(newWorkers).toHaveLength(1);
+    expect(newWorkers[0].status).toBe('running');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('claimed');
   });
 
   it('does not provision a registered idle worker when no task is ready yet', async () => {
@@ -510,80 +398,47 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
   it('sets status=running and records session_handle after successful launch for an assigned task', async () => {
     seedState(dir, {
-      agents: [{
-        agent_id: 'worker-01',
-        provider: 'claude',
-        role: 'worker',
-        status: 'idle',
-        session_handle: null,
-        provider_ref: null,
-        registered_at: new Date().toISOString(),
-      }],
       tasks: [DISPATCHABLE_TASK],
     });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:spawned-worker', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    // Confirm start() was actually invoked (would be silent if task routing
-    // filtered out the agent and dispatch was skipped).
     expect(mockStart).toHaveBeenCalledOnce();
 
-    const agent = readAgents(dir).find((a) => a.agent_id === 'worker-01')!;
-
-    expect(agent.status).toBe('running');
-    expect(agent.session_handle).toBe('pty:worker-01');
-    expect(agent.last_heartbeat_at).toBeTruthy();
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(1);
+    const [worker] = workers;
+    expect(worker.status).toBe('running');
+    expect(worker.session_handle).toBe('pty:spawned-worker');
+    expect(worker.last_heartbeat_at).toBeTruthy();
+    expect(worker.ephemeral).toBe(true);
 
     const events = readEvents(dir);
-    const onlineEvent = events.find((event) => event.event === 'agent_online' && event.agent_id === 'worker-01')!;
+    const onlineEvent = events.find((event) => event.event === 'agent_online' && event.agent_id === worker.agent_id)!;
     expect(onlineEvent).toBeDefined();
     expect(onlineEvent.task_ref).toBe('proj/fix-bug');
   });
 
   it('assigns distinct tasks to different workers within the same dispatch tick', async () => {
     seedState(dir, {
-      agents: [
-        {
-          agent_id: 'worker-01',
-          provider: 'claude',
-          role: 'worker',
-          status: 'idle',
-          session_handle: null,
-          provider_ref: null,
-          registered_at: new Date().toISOString(),
-        },
-        {
-          agent_id: 'worker-02',
-          provider: 'claude',
-          role: 'worker',
-          status: 'idle',
-          session_handle: null,
-          provider_ref: null,
-          registered_at: new Date().toISOString(),
-        },
-      ],
       tasks: [
-        {
-          ...DISPATCHABLE_TASK,
-          ref: 'proj/task-a',
-          title: 'Task A',
-        },
-        {
-          ...DISPATCHABLE_TASK,
-          ref: 'proj/task-b',
-          title: 'Task B',
-        },
+        { ...DISPATCHABLE_TASK, ref: 'proj/task-a', title: 'Task A' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/task-b', title: 'Task B' },
       ],
     });
+    process.env.ORC_MAX_WORKERS = '2';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
 
     const mockStart = vi.fn()
-      .mockResolvedValueOnce({ session_handle: 'pty:worker-01', provider_ref: null })
-      .mockResolvedValueOnce({ session_handle: 'pty:worker-02', provider_ref: null });
+      .mockResolvedValueOnce({ session_handle: 'pty:worker-1', provider_ref: null })
+      .mockResolvedValueOnce({ session_handle: 'pty:worker-2', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
@@ -602,93 +457,110 @@ describe('ensureSessionReady: status invariant on session loss', () => {
 
     const claims = readClaims(dir);
     expect(claims).toHaveLength(2);
-    expect(claims.map((claim) => claim.task_ref)).toEqual(['proj/task-a', 'proj/task-b']);
+    expect(claims.map((c) => c.task_ref).sort()).toEqual(['proj/task-a', 'proj/task-b']);
 
-    expect(readBacklog(dir).features[0].tasks.map((task) => `${task.ref}:${task.status}`)).toEqual([
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(2);
+    expect(workers.every((w) => w.status === 'running')).toBe(true);
+    expect(workers.every((w) => w.ephemeral === true)).toBe(true);
+
+    expect(readBacklog(dir).features[0].tasks.map((t) => `${t.ref}:${t.status}`).sort()).toEqual([
       'proj/task-a:claimed',
       'proj/task-b:claimed',
     ]);
-
-    expect(claims.every((claim) => claim.task_envelope_sent_at == null)).toBe(true);
+    expect(claims.every((c) => c.task_envelope_sent_at == null)).toBe(true);
   });
 
-  it('restarts an existing worker session in the assigned run worktree before dispatch', async () => {
+  it('spawns the ephemeral worker in the task-assigned run worktree', async () => {
     seedState(dir, {
-      agents: [{
-        agent_id: 'worker-01',
-        provider: 'claude',
-        role: 'worker',
-        status: 'running',
-        session_handle: 'pty:worker-01',
-        provider_ref: null,
-        registered_at: new Date().toISOString(),
-      }],
       tasks: [DISPATCHABLE_TASK],
     });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null });
-    const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, stop: mockStop }));
-    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
-
-    const { tick } = await import('./coordinator.ts');
-    await tick();
-
-    expect(mockStop).toHaveBeenCalledWith('pty:worker-01');
-    expect(mockStart).toHaveBeenCalledWith('worker-01', expect.objectContaining({
-      working_directory: '/tmp/orc-worktrees/run-allocated',
-      env: expect.objectContaining({
-        ORC_STATE_DIR: dir,
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:new-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      ensureRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-worktree',
+        branch: 'task/run-worktree',
+        worktree_path: '/tmp/orc-worktrees/run-worktree',
       }),
     }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(mockStart).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        working_directory: '/tmp/orc-worktrees/run-worktree',
+        env: expect.objectContaining({ ORC_STATE_DIR: dir }),
+      }),
+    );
   });
 
-  it('recreates a live worker session when the PTY is not owned by this coordinator process', async () => {
+  it('does not dispatch when max_workers capacity is exhausted by active claims', async () => {
+    const now = new Date().toISOString();
     seedState(dir, {
       agents: [{
-        agent_id: 'worker-01',
-        provider: 'claude',
+        agent_id: 'active-worker',
+        provider: 'codex',
         role: 'worker',
+        ephemeral: true,
         status: 'running',
-        session_handle: 'pty:worker-01',
-        provider_ref: { pid: 1234 },
-        registered_at: new Date().toISOString(),
+        session_handle: 'pty:active-worker',
+        session_token: 'token-active',
+        session_started_at: now,
+        session_ready_at: null,
+        provider_ref: null,
+        registered_at: now,
       }],
-      tasks: [DISPATCHABLE_TASK],
+      tasks: [
+        { ...DISPATCHABLE_TASK, status: 'claimed' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/waiting-task', title: 'Waiting task' },
+      ],
+      claims: [{
+        run_id: 'run-active',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'active-worker',
+        state: 'claimed',
+        claimed_at: now,
+        task_envelope_sent_at: null,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
     });
+    process.env.ORC_MAX_WORKERS = '1'; // capacity = 1 - 1 active = 0
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: null });
-    const mockStop = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
-      ownsSession: vi.fn().mockReturnValue(false),
-      start: mockStart,
-      stop: mockStop,
-    }));
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:new', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    expect(mockStop).toHaveBeenCalledWith('pty:worker-01');
-    expect(mockStart).toHaveBeenCalledOnce();
-
-    const agent = readAgents(dir).find((entry) => entry.agent_id === 'worker-01')!;
-    expect(agent.session_handle).toBe('pty:worker-01-new');
+    // No new worker spawned — capacity is 0
+    expect(mockStart).not.toHaveBeenCalled();
+    const waitingTask = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'proj/waiting-task');
+    expect(waitingTask?.status).toBe('todo');
   });
 
   it('records TASK_START delivery without auto-acking run_started once the worker is ready', async () => {
     seedState(dir, {
-      agents: [{
-        agent_id: 'worker-01',
-        provider: 'claude',
-        role: 'worker',
-        status: 'idle',
-        session_handle: null,
-        provider_ref: null,
-        registered_at: new Date().toISOString(),
-      }],
       tasks: [DISPATCHABLE_TASK],
     });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
 
     vi.doMock('./adapters/index.ts', () => makeAdapterMock());
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
@@ -696,14 +568,18 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const { tick, processTerminalRunEvents } = await import('./coordinator.ts');
     await tick();
 
-    const agent = readAgents(dir).find((entry) => entry.agent_id === 'worker-01')!;
+    // Find the spawned ephemeral worker
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(1);
+    const worker = workers[0];
+
     await processTerminalRunEvents([{
       event: 'reported_for_duty',
       ts: new Date().toISOString(),
       actor_type: 'agent',
-      actor_id: 'worker-01',
-      agent_id: 'worker-01',
-      payload: { session_token: String(agent.session_token) },
+      actor_id: String(worker.agent_id),
+      agent_id: String(worker.agent_id),
+      payload: { session_token: String(worker.session_token) },
     }]);
     await tick();
 
@@ -719,7 +595,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(envelopeSent).toBeTruthy();
     expect(envelopeSent!.actor_type).toBe('coordinator');
     expect(envelopeSent!.actor_id).toBe('coordinator');
-    expect(envelopeSent!.agent_id).toBe('worker-01');
+    expect(envelopeSent!.agent_id).toBe(worker.agent_id);
     expect(events.find((e) => e.event === 'run_started')).toBeFalsy();
   });
 
@@ -1138,6 +1014,274 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const claim = readClaims(dir).find((entry) => entry.run_id === 'run-awaiting-input')!;
     expect(claim.state).toBe('in_progress');
     expect(claim.input_state).toBe('awaiting_input');
+  });
+
+  it('spawns a claude worker when task.required_provider is claude', async () => {
+    seedState(dir, {
+      tasks: [{ ...DISPATCHABLE_TASK, required_provider: 'claude' }],
+    });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex'; // pool default is codex
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:claude-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(mockStart).toHaveBeenCalledOnce();
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(1);
+    expect(workers[0].provider).toBe('claude');
+    expect(workers[0].ephemeral).toBe(true);
+    expect(workers[0].status).toBe('running');
+  });
+
+  it('spawns a default-provider worker when task.required_provider is absent', async () => {
+    seedState(dir, {
+      tasks: [DISPATCHABLE_TASK], // no required_provider
+    });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'gemini'; // pool default
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:gemini-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(mockStart).toHaveBeenCalledOnce();
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(1);
+    expect(workers[0].provider).toBe('gemini');
+    expect(workers[0].ephemeral).toBe(true);
+  });
+
+  it('runs codex and claude workers in parallel when separate tasks require different providers', async () => {
+    seedState(dir, {
+      tasks: [
+        { ...DISPATCHABLE_TASK, ref: 'proj/codex-task', title: 'Codex task', required_provider: 'codex' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/claude-task', title: 'Claude task', required_provider: 'claude' },
+      ],
+    });
+    process.env.ORC_MAX_WORKERS = '2';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      ensureRunWorktree: vi.fn().mockImplementation((_: string, { runId }: { runId: string }) => ({
+        run_id: runId,
+        branch: `task/${runId}`,
+        worktree_path: `/tmp/orc-worktrees/${runId}`,
+      })),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(mockStart).toHaveBeenCalledTimes(2);
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(2);
+    const providers = workers.map((w) => w.provider as string).sort();
+    expect(providers).toEqual(['claude', 'codex']);
+    expect(workers.every((w) => w.ephemeral === true)).toBe(true);
+    expect(workers.every((w) => w.status === 'running')).toBe(true);
+  });
+
+  it('removes a task-scoped worker record after terminal cleanup', async () => {
+    const now = new Date().toISOString();
+    seedState(dir, {
+      agents: [{
+        agent_id: 'amber-anchor',
+        provider: 'codex',
+        role: 'worker',
+        ephemeral: true,
+        status: 'running',
+        session_handle: 'pty:amber-anchor',
+        session_token: 'token-xyz',
+        session_started_at: now,
+        session_ready_at: now,
+        provider_ref: null,
+        registered_at: now,
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-cleanup-test',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'amber-anchor',
+        state: 'in_progress',
+        claimed_at: now,
+        task_envelope_sent_at: now,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: now,
+        started_at: now,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockResolvedValue(false), // session is dead
+      stop: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    // Ephemeral worker removed entirely — not just reset to idle
+    const workers = readAgents(dir).filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(0);
+
+    const c = readClaims(dir).find((x) => x.run_id === 'run-cleanup-test');
+    expect(c!.state).toBe('failed');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+  });
+
+  it('cleans up worker state and requeues when session launch fails after claim creation', async () => {
+    seedState(dir, {
+      tasks: [DISPATCHABLE_TASK],
+    });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
+
+    const mockStart = vi.fn().mockRejectedValue(new Error('session launch failed'));
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    // Claim exists but is failed
+    const claims = readClaims(dir);
+    expect(claims).toHaveLength(1);
+    expect(claims[0].state).toBe('failed');
+    expect(claims[0].task_ref).toBe('proj/fix-bug');
+
+    // No lingering worker agent in registry
+    expect(readAgents(dir).filter((a) => a.role === 'worker')).toHaveLength(0);
+
+    // Task is back to todo (requeued)
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+
+    // session_start_failed event emitted
+    const events = readEvents(dir);
+    expect(events.some((e) => e.event === 'session_start_failed')).toBe(true);
+  });
+
+  it('cleans up worker state and requeues when task envelope delivery fails after launch', async () => {
+    const now = new Date().toISOString();
+    seedState(dir, {
+      agents: [{
+        agent_id: 'amber-anchor',
+        provider: 'codex',
+        role: 'worker',
+        ephemeral: true,
+        status: 'running',
+        session_handle: 'pty:amber-anchor',
+        session_token: 'token-abc',
+        session_started_at: now,
+        session_ready_at: now,
+        provider_ref: null,
+        registered_at: now,
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'claimed' }],
+      claims: [{
+        run_id: 'run-envelope-fail',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'amber-anchor',
+        state: 'claimed',
+        claimed_at: now,
+        task_envelope_sent_at: null,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    const mockSend = vi.fn().mockRejectedValue(new Error('send failed'));
+    const mockStop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: mockSend, stop: mockStop }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(mockSend).toHaveBeenCalled();
+
+    // Ephemeral agent removed after envelope failure
+    expect(readAgents(dir).filter((a) => a.role === 'worker')).toHaveLength(0);
+
+    // Claim failed and task requeued
+    const c = readClaims(dir).find((x) => x.run_id === 'run-envelope-fail');
+    expect(c!.state).toBe('failed');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+  });
+
+  it('stops a launched PTY session when post-claim dispatch fails', async () => {
+    const now = new Date().toISOString();
+    seedState(dir, {
+      agents: [{
+        agent_id: 'amber-anchor',
+        provider: 'codex',
+        role: 'worker',
+        ephemeral: true,
+        status: 'running',
+        session_handle: 'pty:amber-anchor',
+        session_token: 'token-abc',
+        session_started_at: now,
+        session_ready_at: now,
+        provider_ref: null,
+        registered_at: now,
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'claimed' }],
+      claims: [{
+        run_id: 'run-stop-on-fail',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'amber-anchor',
+        state: 'claimed',
+        claimed_at: now,
+        task_envelope_sent_at: null,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+
+    const mockSend = vi.fn().mockRejectedValue(new Error('send failed'));
+    const mockStop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: mockSend, stop: mockStop }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    // Session was stopped when dispatch failed
+    expect(mockStop).toHaveBeenCalledWith('pty:amber-anchor');
+    // Ephemeral agent removed
+    expect(readAgents(dir).filter((a) => a.role === 'worker')).toHaveLength(0);
   });
 });
 
