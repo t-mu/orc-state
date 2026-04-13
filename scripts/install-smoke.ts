@@ -5,9 +5,12 @@
  * Fresh-install smoke test — proves the published tarball actually works
  * when installed into a clean consumer project.
  *
+ * Uses an isolated npm cache so release validation is resilient to broken
+ * ~/.npm state and reflects package health, not local machine hygiene.
+ *
  * Steps:
  *   1. npm pack (produce the tarball that would be published)
- *   2. mkdtemp — create a fresh throwaway project
+ *   2. mkdtemp — create a fresh throwaway project and isolated npm cache
  *   3. npm init -y
  *   4. npm install <tarball>
  *   5. ./node_modules/.bin/orc --help   — verify binary resolves and runs
@@ -25,8 +28,13 @@ import { tmpdir } from 'node:os';
 
 const repoRoot = join(import.meta.dirname, '..');
 
-function run(cmd: string, args: string[], cwd: string, extra: Record<string, unknown> = {}): string {
-  const result = spawnSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...extra });
+function runWithEnv(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): string {
+  const result = spawnSync(cmd, args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env,
+  });
   if (result.status !== 0) {
     throw new Error(`${cmd} ${args.join(' ')} failed (exit ${result.status}): ${result.stderr || result.stdout}`);
   }
@@ -43,27 +51,35 @@ function findTarball(dir: string): string {
 function main(): void {
   let tarballPath = '';
   let tmpProject = '';
+  let tmpCache = '';
   try {
+    tmpCache = mkdtempSync(join(tmpdir(), 'orc-install-smoke-cache-'));
+    const env: NodeJS.ProcessEnv = { ...process.env, npm_config_cache: tmpCache };
+
     console.log('1. packing tarball...');
-    run('npm', ['pack'], repoRoot);
+    runWithEnv('npm', ['pack'], repoRoot, env);
     tarballPath = findTarball(repoRoot);
     console.log(`   → ${tarballPath}`);
 
     console.log('2. creating fresh project...');
     tmpProject = mkdtempSync(join(tmpdir(), 'orc-install-smoke-'));
-    run('npm', ['init', '-y'], tmpProject);
+    runWithEnv('npm', ['init', '-y'], tmpProject, env);
 
     console.log('3. installing tarball...');
-    run('npm', ['install', tarballPath], tmpProject);
+    runWithEnv('npm', ['install', tarballPath], tmpProject, env);
 
     console.log('4. testing orc --help...');
-    const help = run('./node_modules/.bin/orc', ['--help'], tmpProject);
+    const help = runWithEnv('./node_modules/.bin/orc', ['--help'], tmpProject, env);
     if (!help.includes('Usage: orc')) throw new Error(`orc --help did not print expected usage: ${help}`);
 
     console.log('5. testing orc doctor...');
     // doctor exits 1 if provider binaries missing — that's expected in a fresh temp project.
     // Accept any exit; just verify it runs without crashing.
-    const result = spawnSync('./node_modules/.bin/orc', ['doctor'], { cwd: tmpProject, encoding: 'utf8' });
+    const result = spawnSync('./node_modules/.bin/orc', ['doctor'], {
+      cwd: tmpProject,
+      encoding: 'utf8',
+      env,
+    });
     if (result.stdout.length === 0 && result.stderr.length === 0) {
       throw new Error('orc doctor produced no output');
     }
@@ -75,6 +91,7 @@ function main(): void {
   } finally {
     if (tarballPath) rmSync(tarballPath, { force: true });
     if (tmpProject) rmSync(tmpProject, { recursive: true, force: true });
+    if (tmpCache) rmSync(tmpCache, { recursive: true, force: true });
   }
 }
 
