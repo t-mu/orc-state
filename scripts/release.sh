@@ -26,6 +26,18 @@ PACKAGE_JSON="${REPO_ROOT}/package.json"
 
 cd "$REPO_ROOT"
 
+# ── Isolated npm cache (resilient to broken ~/.npm state) ──────────────────
+# Matches the pattern used by pack-smoke.ts and install-smoke.ts so the entire
+# release pipeline is consistent and immune to local cache hygiene issues.
+TMP_CACHE=$(mktemp -d -t orc-release-cache.XXXXXX)
+NOTES_FILE=""
+cleanup() {
+  rm -rf "$TMP_CACHE"
+  [ -n "$NOTES_FILE" ] && rm -f "$NOTES_FILE"
+}
+trap cleanup EXIT
+export npm_config_cache="$TMP_CACHE"
+
 # ── Argument validation ────────────────────────────────────────────────────
 if [ $# -ne 1 ]; then
   echo "usage: $0 <patch|minor|major>" >&2
@@ -65,9 +77,14 @@ if [ "$LOCAL" != "$REMOTE" ]; then
   exit 1
 fi
 
-# ── Step 2: Run tests ──────────────────────────────────────────────────────
-echo "→ Running tests..."
+# ── Step 2: Run full publish-readiness gate ────────────────────────────────
+# Run all the same checks that prepublishOnly will run, BEFORE we commit/tag/push.
+# This ensures we never push a release tag for a version that can't actually publish.
+echo "→ Running publish-readiness gate (build + test + pack:smoke + install:smoke)..."
+npm run build
 npm test
+npm run pack:smoke
+npm run install:smoke
 
 # ── Step 3: Bump version (no commit, no tag yet) ──────────────────────────
 echo "→ Bumping version ($BUMP)..."
@@ -184,9 +201,9 @@ else
   mv "$TMP_CHANGELOG" "$CHANGELOG"
 fi
 
-# Write release notes to a temp file for the host adapter
+# Write release notes to a temp file for the host adapter.
+# Cleanup is handled by the EXIT trap registered at the top of the script.
 NOTES_FILE=$(mktemp -t orc-release-notes.XXXXXX)
-trap 'rm -f "$NOTES_FILE"' EXIT
 printf '%s' "$NEW_SECTION" > "$NOTES_FILE"
 
 # ── Step 6 & 7: Commit and tag ────────────────────────────────────────────
