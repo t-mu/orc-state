@@ -44,11 +44,11 @@ describe('App', () => {
     const app = render(<App stateDir="/tmp/nonexistent-orc" sprites={sprites} intervalMs={1000} />);
 
     expect(app.lastFrame()).toContain('ORC-STATE');
-    expect(app.lastFrame()).toContain('Worker Slots');
+    expect(app.lastFrame()).toContain('Live Workers');
     expect(app.lastFrame()).toContain('Recent Events');
   });
 
-  it('renders one slot per configured worker slot', () => {
+  it('renders only live registered workers without phantom slot placeholders', () => {
     mockBuildStatus.mockReturnValue({
       worker_capacity: {
         configured_slots: 3,
@@ -61,7 +61,7 @@ describe('App', () => {
         waiting_for_capacity: 0,
         slots: [
           {
-            agent_id: 'orc-1',
+            agent_id: 'amber-anchor',
             role: 'worker',
             provider: 'codex',
             model: null,
@@ -103,7 +103,7 @@ describe('App', () => {
           {
             run_id: 'run-1',
             task_ref: 'feat/task-1',
-            agent_id: 'orc-1',
+            agent_id: 'amber-anchor',
             state: 'in_progress',
             age_seconds: 12,
             idle_seconds: 3,
@@ -122,9 +122,14 @@ describe('App', () => {
     const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
     const frame = app.lastFrame() ?? '';
 
-    expect(frame).toContain('orc-1');
-    expect(frame).toContain('orc-2');
-    expect(frame).toContain('orc-3');
+    // Only the registered live worker appears — no phantom orc-N placeholders
+    expect(frame).toContain('amber-anchor');
+    expect(frame).not.toContain('orc-2');
+    expect(frame).not.toContain('orc-3');
+    // Capacity summary is shown separately from the live worker list
+    expect(frame).toContain('1/3 capacity');
+    expect(frame).toContain('2 available');
+    // Scouts still rendered
     expect(frame).toContain('scout-1');
     expect(frame).toContain('[SCOUT]');
   });

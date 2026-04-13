@@ -94,18 +94,95 @@ describe('buildPhases', () => {
   });
 });
 
-describe('buildWorkerSlotViewModels — phases', () => {
+const liveSlot: TuiStatus['worker_capacity']['slots'][number] = {
+  agent_id: 'orc-1',
+  role: 'worker',
+  provider: 'claude',
+  model: null,
+  status: 'running',
+  session_handle: 'pty:orc-1',
+  slot_state: 'busy',
+  active_run_id: null,
+  active_task_ref: null,
+  last_status_change_at: null,
+  last_heartbeat_at: null,
+};
+
+describe('buildWorkerSlotViewModels — live workers only', () => {
   const baseStatus: TuiStatus = {
     worker_capacity: {
-      configured_slots: 1,
+      configured_slots: 3,
       used_slots: 0,
-      available_slots: 1,
+      available_slots: 3,
       warming_slots: 0,
       unavailable_slots: 0,
       provider: 'claude',
       dispatch_ready_count: 0,
       waiting_for_capacity: 0,
       slots: [],
+    },
+    scout_capacity: {
+      total_slots: 0,
+      investigating_slots: 0,
+      idle_slots: 0,
+      warming_slots: 0,
+      unavailable_slots: 0,
+      slots: [],
+    },
+    tasks: { counts: {}, total: 0 },
+    claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
+    failures: { startup: [], lifecycle: [] },
+    recentEvents: [],
+    eventReadError: '',
+  };
+
+  it('returns empty array when no workers are registered, even if configured_slots > 0', () => {
+    const vms = buildWorkerSlotViewModels(baseStatus);
+    expect(vms).toHaveLength(0);
+  });
+
+  it('renders only registered live workers, not phantom orc-N slot placeholders', () => {
+    const status: TuiStatus = {
+      ...baseStatus,
+      worker_capacity: {
+        ...baseStatus.worker_capacity,
+        used_slots: 1,
+        available_slots: 2,
+        slots: [{ ...liveSlot, agent_id: 'amber-anchor', active_run_id: 'run-1', active_task_ref: 'feat/task-1' }],
+      },
+    };
+    const vms = buildWorkerSlotViewModels(status);
+    expect(vms).toHaveLength(1);
+    expect(vms[0].slot_id).toBe('amber-anchor');
+  });
+
+  it('removes a worker from the view when its task-scoped session ends', () => {
+    const statusWithWorker: TuiStatus = {
+      ...baseStatus,
+      worker_capacity: { ...baseStatus.worker_capacity, slots: [{ ...liveSlot, agent_id: 'amber-anchor' }] },
+    };
+    expect(buildWorkerSlotViewModels(statusWithWorker)).toHaveLength(1);
+
+    const statusAfterEnd: TuiStatus = {
+      ...baseStatus,
+      worker_capacity: { ...baseStatus.worker_capacity, slots: [] },
+    };
+    expect(buildWorkerSlotViewModels(statusAfterEnd)).toHaveLength(0);
+  });
+});
+
+describe('buildWorkerSlotViewModels — phases', () => {
+  const baseStatus: TuiStatus = {
+    worker_capacity: {
+      configured_slots: 1,
+      used_slots: 1,
+      available_slots: 0,
+      warming_slots: 0,
+      unavailable_slots: 0,
+      provider: 'claude',
+      dispatch_ready_count: 0,
+      waiting_for_capacity: 0,
+      slots: [liveSlot],
     },
     scout_capacity: {
       total_slots: 0,

@@ -502,7 +502,7 @@ export function formatStatus(status: Record<string, unknown>): string {
   lines.push(`  available_slots:     ${workerCapacity.available_slots}`);
   lines.push(`  warming_slots:       ${workerCapacity.warming_slots}`);
   lines.push(`  unavailable_slots:   ${workerCapacity.unavailable_slots}`);
-  lines.push(`  slot_provider:       ${workerCapacity.provider}`);
+  lines.push(`  provider:            ${workerCapacity.provider}`);
   lines.push(`  dispatch_ready:      ${workerCapacity.dispatch_ready_count}`);
   lines.push(`  waiting_for_capacity:${` ${workerCapacity.waiting_for_capacity}`}`);
   if (workerCapacity.dispatch_ready_tasks.length === 0) {

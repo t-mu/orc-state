@@ -577,6 +577,28 @@ describe('formatStatus', () => {
     expect(output).toContain('/tmp/orc-worktrees/run-finalize-2');
   });
 
+  it('shows live worker with two-word id in capacity section, no phantom orc-N placeholders', () => {
+    writeState({
+      agents: [
+        { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
+        { agent_id: 'amber-anchor', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:amber-anchor' } as Agent,
+      ],
+    });
+    writeConfig({ worker_pool: { max_workers: 3, provider: 'claude' } });
+    writeEvents([]);
+    const output = formatStatus(buildStatus(dir));
+    // Live worker shown
+    expect(output).toContain('amber-anchor');
+    // Capacity shown separately from live worker list
+    expect(output).toContain('configured_slots:    3');
+    // used_slots reflects active claims (0 here), available_slots reflects remaining concurrency capacity
+    expect(output).toContain('used_slots:          0');
+    expect(output).toContain('available_slots:     2');
+    // No synthetic orc-N placeholders for unregistered slots
+    expect(output).not.toContain('orc-2');
+    expect(output).not.toContain('orc-3');
+  });
+
   it('renders a separate scout slots section', () => {
     writeState({
       agents: [

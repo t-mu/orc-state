@@ -35,7 +35,15 @@ export function App({ stateDir, sprites, intervalMs = 3000 }: AppProps) {
     <Box flexDirection="column">
       <Header status={status} />
       <FailureAlert failures={status.failures} />
-      <WorkerGrid slots={workerSlots} sprites={sprites} />
+      <WorkerGrid
+        slots={workerSlots}
+        sprites={sprites}
+        capacity={{
+          configured: status.worker_capacity.configured_slots,
+          used: status.worker_capacity.used_slots,
+          available: status.worker_capacity.available_slots,
+        }}
+      />
       <RunsTable runs={status.claims.active} />
       <EventFeed events={status.recentEvents} eventReadError={status.eventReadError} />
     </Box>
