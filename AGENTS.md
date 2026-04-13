@@ -191,7 +191,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 2. Task authoring: edit `backlog/<N>-<slug>.md`
 3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. Run `orc backlog-sync-check` to verify.
 4. Task completion: worker updates task markdown in its worktree; coordinator calls `orc task-mark-done <task-ref>` after merge to update shared runtime state
-5. Worker lifecycle: `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
+5. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
 6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
 7. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
 
