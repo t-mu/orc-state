@@ -73,11 +73,11 @@ describe('buildStatus', () => {
     expect(s.claims.total).toBe(0);
   });
 
-  it('separates the master from managed worker capacity', () => {
+  it('separates the master from live worker capacity', () => {
     writeState({
       agents: [
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
-        { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
+        { agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
       ],
     });
     writeConfig({ worker_pool: { max_workers: 2, provider: 'codex' } });
@@ -85,15 +85,17 @@ describe('buildStatus', () => {
     const s = buildStatus(dir) as unknown as StatusResult;
     expect(s.master?.agent_id).toBe('master');
     expect(s.worker_capacity.configured_slots).toBe(2);
-    expect(s.worker_capacity.available_slots).toBe(2);
-    expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['orc-1', 'orc-2']);
+    // One live worker consumes a slot; available = max - live
+    expect(s.worker_capacity.available_slots).toBe(1);
+    // Only the registered worker appears — no synthetic idle slots
+    expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['amber-anchor']);
   });
 
   it('surfaces scouts in a separate scout capacity block', () => {
     writeState({
       agents: [
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
-        { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
+        { agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
         { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1' } as Agent,
         { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'idle' } as Agent,
       ],
@@ -102,7 +104,7 @@ describe('buildStatus', () => {
     writeEvents([]);
 
     const s = buildStatus(dir) as unknown as StatusResult;
-    expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['orc-1']);
+    expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['amber-anchor']);
     expect(s.scout_capacity.total_slots).toBe(2);
     expect(s.scout_capacity.investigating_slots).toBe(1);
     expect(s.scout_capacity.idle_slots).toBe(1);
@@ -347,7 +349,7 @@ describe('buildStatus', () => {
 
   it('counts dispatch-ready work waiting for capacity', () => {
     writeState({
-      agents: [{ agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', session_handle: 'pty:orc-1' } as Agent],
+      agents: [{ agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'running', session_handle: 'pty:amber-anchor' } as Agent],
       tasks: [
         { ref: 'orch/task-1', title: 'Task 1', status: 'todo' },
         { ref: 'orch/task-2', title: 'Task 2', status: 'todo', depends_on: ['orch/task-3'] },
@@ -359,18 +361,20 @@ describe('buildStatus', () => {
 
     const s = buildStatus(dir) as unknown as StatusResult;
     expect(s.worker_capacity.dispatch_ready_count).toBe(2);
-    expect(s.worker_capacity.available_slots).toBe(1);
-    expect(s.worker_capacity.waiting_for_capacity).toBe(1);
+    // One live worker consumes the only slot; no additional capacity to spawn workers.
+    expect(s.worker_capacity.available_slots).toBe(0);
+    expect(s.worker_capacity.waiting_for_capacity).toBe(2);
   });
 
-  it('treats pre-started idle worker sessions as available capacity', () => {
+  it('live workers without active claims still consume capacity slots', () => {
     writeState({
-      agents: [{ agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', session_handle: 'pty:orc-1' } as Agent],
+      agents: [{ agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'running', session_handle: 'pty:amber-anchor' } as Agent],
     });
-    writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
+    writeConfig({ worker_pool: { max_workers: 2, provider: 'codex' } });
     writeEvents([]);
 
     const s = buildStatus(dir) as unknown as StatusResult;
+    // One registered worker consumes 1 of 2 slots; 1 remains available.
     expect(s.worker_capacity.available_slots).toBe(1);
     expect(s.worker_capacity.warming_slots).toBe(0);
   });

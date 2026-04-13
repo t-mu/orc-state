@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { nextEligibleTaskFromBacklog, nextEligibleTask } from './taskScheduler.ts';
+import { computeWorkerCapacity } from './workerCapacity.ts';
 import type { Agent } from '../types/index.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
@@ -86,6 +87,32 @@ describe('nextEligibleTaskFromBacklog', () => {
       { ref: 'docs/b', title: 'B', status: 'todo', priority: 'high' },
     ]), { agent_id: 'worker-01', role: 'worker' } as Agent);
     expect(taskRef).toBe('docs/a');
+  });
+});
+
+describe('computeWorkerCapacity via workerCapacity', () => {
+  it('computes available worker capacity from active live workers instead of idle slots or only started runs', () => {
+    // A booting worker (idle status, no session) counts against capacity
+    // because it exists in the registry as a live worker.
+    const booting = { agent_id: 'amber-anchor', role: 'worker', status: 'idle' } as Agent;
+    // A running worker also counts.
+    const running = { agent_id: 'amber-anvil', role: 'worker', status: 'running' } as Agent;
+    // A master does not count against worker capacity.
+    const master = { agent_id: 'master', role: 'master', status: 'running' } as Agent;
+
+    const capacityWithTwo = computeWorkerCapacity([booting, running, master], 3);
+    expect(capacityWithTwo.active).toBe(2);
+    expect(capacityWithTwo.available).toBe(1);
+
+    // Removing the booting worker frees a slot immediately.
+    const capacityWithOne = computeWorkerCapacity([running, master], 3);
+    expect(capacityWithOne.active).toBe(1);
+    expect(capacityWithOne.available).toBe(2);
+
+    // An empty registry means full capacity is available.
+    const capacityEmpty = computeWorkerCapacity([master], 3);
+    expect(capacityEmpty.active).toBe(0);
+    expect(capacityEmpty.available).toBe(3);
   });
 });
 

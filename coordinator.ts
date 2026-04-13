@@ -23,7 +23,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
 import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
-import { getAgent, listCoordinatorAgents, reconcileManagedWorkerSlots, updateAgentRuntime } from './lib/agentRegistry.ts';
+import { getAgent, listCoordinatorAgents, updateAgentRuntime } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
@@ -339,6 +339,9 @@ async function processClaimedSessionReadiness(
         run_id: claim.run_id,
         task_ref: claim.task_ref,
         task_model: claimedTask?.model ?? null,
+        // Legacy: only orc-N format agents get retried; ephemeral workers with
+        // two-word names return false here and take the fail-and-requeue path,
+        // which is correct — their sessions are managed externally.
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
         execution_mode: workerPoolConfig.execution_mode,
       });
@@ -1362,7 +1365,6 @@ function initializeTickState(): {
 } | null {
   try {
     const workerPoolConfig = loadWorkerPoolConfig();
-    reconcileManagedWorkerSlots(STATE_DIR, workerPoolConfig);
     const preClaims = (readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] }).claims ?? [];
     pruneMissingRunWorktrees(STATE_DIR, preClaims
       .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
