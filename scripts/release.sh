@@ -115,7 +115,7 @@ classify_commit() {
   case "$prefix" in
     feat)                       echo "feat" ;;
     fix)                        echo "fix" ;;
-    refactor|chore|docs)        echo "changed" ;;
+    refactor|chore|docs|test)   echo "changed" ;;
     *)                          echo "other" ;;
   esac
 }
@@ -138,7 +138,7 @@ while IFS= read -r line; do
     feat)     ADDED="${ADDED}- ${summary}"$'\n' ;;
     fix)      FIXED="${FIXED}- ${summary}"$'\n' ;;
     changed)  CHANGED="${CHANGED}- ${summary}"$'\n' ;;
-    *)        OTHER="${OTHER}- ${line}"$'\n' ;;
+    *)        OTHER="${OTHER}- ${summary}"$'\n' ;;
   esac
 done <<< "$COMMITS"
 
@@ -204,7 +204,7 @@ echo "→ Pushing commit and tag..."
 # state has the commit and tag but origin doesn't — re-running the script
 # will fail at the sync check (Step 1). Recovery: `git push origin main "$TAG"`
 # manually after fixing the underlying issue.
-if ! git push origin main "$TAG"; then
+if ! git push --atomic origin main "$TAG"; then
   echo "" >&2
   echo "error: push failed. Local has commit and tag '$TAG', but origin does not." >&2
   echo "  Recovery: fix the push failure, then run: git push origin main $TAG" >&2
