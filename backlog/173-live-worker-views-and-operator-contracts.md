@@ -3,7 +3,7 @@ ref: dynamic-workers/173-live-worker-views-and-operator-contracts
 feature: dynamic-workers
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - dynamic-workers/172-dynamic-worker-spawn-and-provider-routing
 ---
