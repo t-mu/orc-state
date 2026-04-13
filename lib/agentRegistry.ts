@@ -2,11 +2,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
-import { isSupportedProvider, loadWorkerPoolConfig, resolveWorkerModel } from './providers.ts';
+import { isSupportedProvider } from './providers.ts';
 import type { Agent, AgentsState, AgentRole, Provider, DispatchMode } from '../types/agents.ts';
-import type { WorkerPoolConfig } from './providers.ts';
 import { AGENT_ID_RE, AGENT_ROLES } from './constants.ts';
 import { logger } from './logger.ts';
+import { nextAvailableAgentName } from './agentNames.ts';
 
 const VALID_ROLES = new Set<AgentRole>(AGENT_ROLES as AgentRole[]);
 
@@ -19,36 +19,6 @@ function readAgentsFile(stateDir: string): AgentsState {
     }
     return { version: '1', agents: [] };
   }
-}
-
-function createManagedSlotEntry(agentId: string, workerPoolConfig: WorkerPoolConfig): Agent {
-  return {
-    agent_id: agentId,
-    provider: workerPoolConfig.provider,
-    model: resolveWorkerModel(workerPoolConfig),
-    dispatch_mode: null,
-    role: 'worker',
-    capabilities: [],
-    status: 'idle',
-    session_handle: null,
-    session_token: null,
-    session_started_at: null,
-    session_ready_at: null,
-    provider_ref: null,
-    last_heartbeat_at: null,
-    registered_at: new Date().toISOString(),
-  };
-}
-
-function managedWorkerIds(workerPoolConfig: WorkerPoolConfig): string[] {
-  return Array.from(
-    { length: workerPoolConfig.max_workers },
-    (_, index) => `orc-${index + 1}`,
-  );
-}
-
-function isManagedWorkerId(agentId: string | undefined): boolean {
-  return /^orc-\d+$/.test(agentId ?? '');
 }
 
 export interface AgentDefinition {
@@ -158,60 +128,18 @@ export function listAgents(stateDir: string): Agent[] {
   return readAgentsFile(stateDir).agents;
 }
 
-export function reconcileManagedWorkerSlots(
-  stateDir: string,
-  workerPoolConfig: WorkerPoolConfig = loadWorkerPoolConfig(),
-): Agent[] {
-  return withLock(lockPath(stateDir), () => {
-    const file = readAgentsFile(stateDir);
-    let modified = false;
-
-    for (const agentId of managedWorkerIds(workerPoolConfig)) {
-      const existing = file.agents.find((agent) => agent.agent_id === agentId);
-      if (!existing) {
-        file.agents.push(createManagedSlotEntry(agentId, workerPoolConfig));
-        modified = true;
-        continue;
-      }
-
-      const canRefreshProviderBinding = existing.role !== 'master'
-        && existing.session_handle == null
-        && existing.status !== 'running';
-
-      const resolvedModel = resolveWorkerModel(workerPoolConfig);
-      if (canRefreshProviderBinding && (
-        existing.provider !== workerPoolConfig.provider
-        || existing.model !== resolvedModel
-      )) {
-        existing.provider = workerPoolConfig.provider;
-        existing.model = resolvedModel;
-        modified = true;
-      }
-    }
-
-    if (modified) {
-      atomicWriteJson(join(stateDir, 'agents.json'), file);
-    }
-
-    return file.agents;
-  });
-}
-
+/**
+ * Return all coordinator-visible agents. In the ephemeral worker model, agents
+ * exist only when a live session exists — this returns the registry as-is with
+ * no virtual slot synthesis.
+ */
 export function listCoordinatorAgents(
   stateDir: string,
-  workerPoolConfig: WorkerPoolConfig = loadWorkerPoolConfig(),
+  // workerPoolConfig retained for call-site compatibility; no longer used for
+  // slot synthesis.
+  _workerPoolConfig?: unknown,
 ): Agent[] {
-  const agents = readAgentsFile(stateDir).agents;
-  const byId = new Map(agents.map((agent) => [agent.agent_id, agent]));
-  const slotIds = new Set(managedWorkerIds(workerPoolConfig));
-  const managedSlots = [...slotIds].map((agentId) =>
-    byId.get(agentId) ?? createManagedSlotEntry(agentId, workerPoolConfig),
-  );
-
-  return [
-    ...agents.filter((agent) => !isManagedWorkerId(agent.agent_id)),
-    ...managedSlots,
-  ];
+  return listAgents(stateDir);
 }
 
 /**
@@ -226,22 +154,20 @@ export function removeAgent(stateDir: string, agentId: string): void {
 }
 
 /**
- * Return next available worker id in the format orc-<N>, preferring the
- * smallest missing positive N among non-master agents.
+ * Return the next available deterministic two-word worker name that is not
+ * currently in use by any registered worker agent.
+ *
+ * Names are unique only among agents currently in the registry. Removing a
+ * worker frees its name for reuse.
  */
-export function nextAvailableWorkerId(stateDir: string): string {
-  const used = new Set<number>();
-  for (const agent of listAgents(stateDir)) {
-    if (agent.role === 'master') continue;
-    const match = /^orc-(\d+)$/.exec(agent.agent_id ?? '');
-    if (!match) continue;
-    const num = Number(match[1]);
-    if (Number.isInteger(num) && num > 0) used.add(num);
-  }
-
-  let candidate = 1;
-  while (used.has(candidate)) candidate += 1;
-  return `orc-${candidate}`;
+export function nextAvailableWorkerName(stateDir: string): string {
+  return withLock(lockPath(stateDir), () => {
+    const agents = readAgentsFile(stateDir).agents;
+    const inUse = new Set(
+      agents.filter((a) => a.role === 'worker').map((a) => a.agent_id),
+    );
+    return nextAvailableAgentName(inUse);
+  });
 }
 
 export function nextAvailableScoutId(stateDir: string): string {

@@ -9,7 +9,7 @@ import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
-import { isManagedSlot } from './workerSlots.ts';
+import { computeWorkerCapacity } from './workerCapacity.ts';
 const STARTUP_FAILURE_LIMIT = 5;
 const LIFECYCLE_FAILURE_LIMIT = 5;
 
@@ -300,11 +300,12 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       .filter((claim) => claim.agent_id)
       .map((claim) => [claim.agent_id, claim]),
   );
-  const workerSlots = agents.filter((agent) => isManagedSlot(agent.agent_id, workerPoolConfig.max_workers));
+  const liveWorkers = agents.filter((agent) => agent.role === 'worker');
   const scoutAgents = agents.filter((agent) => agent.role === 'scout');
-  const { slotDetails, scoutDetails } = buildSlotSummary(workerSlots, scoutAgents, activeClaimByAgentId);
+  const { slotDetails, scoutDetails } = buildSlotSummary(liveWorkers, scoutAgents, activeClaimByAgentId);
   const dispatchReadyTasks = listDispatchReadyTasks(backlogFile);
-  const availableSlots = slotDetails.filter((slot) => slot.slot_state === 'available').length;
+  const capacity = computeWorkerCapacity(agents, workerPoolConfig.max_workers);
+  const availableSlots = capacity.available;
   const startupFailures = collectRecentFailures(sessionEvents);
   const tasks = buildTaskCounts(backlogFile);
   const finalizationRuns = activeClaimsWithMetrics
@@ -341,10 +342,10 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       last_heartbeat_at: master.last_heartbeat_at ?? null,
     } : null,
     worker_capacity: {
-      configured_slots: workerPoolConfig.max_workers,
+      configured_slots: capacity.max,
       provider: workerPoolConfig.provider,
       model: workerPoolConfig.model,
-      used_slots: slotDetails.filter((slot) => slot.slot_state === 'busy').length,
+      used_slots: liveWorkers.filter((w) => activeClaimByAgentId.has(w.agent_id)).length,
       available_slots: availableSlots,
       warming_slots: slotDetails.filter((slot) => slot.slot_state === 'warming').length,
       unavailable_slots: slotDetails.filter((slot) => slot.slot_state === 'unavailable').length,

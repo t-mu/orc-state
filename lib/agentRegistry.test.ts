@@ -8,9 +8,8 @@ import {
   listAgents,
   listCoordinatorAgents,
   removeAgent,
-  reconcileManagedWorkerSlots,
+  nextAvailableWorkerName,
   nextAvailableScoutId,
-  nextAvailableWorkerId,
 } from './agentRegistry.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 
@@ -189,48 +188,24 @@ describe('listAgents', () => {
   });
 });
 
-describe('managed worker slots', () => {
-  it('reconciles missing config-backed worker slots into agents.json', () => {
+// ── listCoordinatorAgents ─────────────────────────────────────────────────
+
+describe('listCoordinatorAgents', () => {
+  it('does not synthesize idle worker slots when max_workers is configured', () => {
     registerAgent(dir, { agent_id: 'master', provider: 'claude', role: 'master' });
 
-    reconcileManagedWorkerSlots(dir, { max_workers: 2, provider: 'codex', model: null, provider_models: {}, execution_mode: 'full-access' });
-
-    expect(listAgents(dir).map((agent) => agent.agent_id)).toEqual(['master', 'orc-1', 'orc-2']);
-    expect(getAgent(dir, 'orc-1')?.provider).toBe('codex');
-    expect(getAgent(dir, 'orc-2')?.role).toBe('worker');
+    // Even with max_workers=3, no synthetic slots are created
+    const agents = listCoordinatorAgents(dir, { max_workers: 3, provider: 'codex', model: null });
+    expect(agents.map((a) => a.agent_id)).toEqual(['master']);
+    expect(agents.some((a) => /^orc-\d+$/.test(a.agent_id))).toBe(false);
   });
 
-  it('returns a coordinator view with legacy agents plus configured slots', () => {
+  it('returns only agents present in the registry', () => {
     registerAgent(dir, { agent_id: 'master', provider: 'claude', role: 'master' });
-    registerAgent(dir, { agent_id: 'reviewer-01', provider: 'claude', role: 'reviewer' });
-    registerAgent(dir, { agent_id: 'legacy-worker', provider: 'gemini', role: 'worker' });
-    registerAgent(dir, { agent_id: 'orc-1', provider: 'claude', role: 'worker' });
+    registerAgent(dir, { agent_id: 'amber-kettle', provider: 'claude', role: 'worker' });
 
-    const agents = listCoordinatorAgents(dir, { max_workers: 2, provider: 'codex', model: null, provider_models: {}, execution_mode: 'full-access' });
-
-    expect(agents.map((agent) => agent.agent_id)).toEqual(['master', 'reviewer-01', 'legacy-worker', 'orc-1', 'orc-2']);
-    expect(agents.find((agent) => agent.agent_id === 'orc-1')?.provider).toBe('claude');
-    expect(agents.find((agent) => agent.agent_id === 'orc-2')?.provider).toBe('codex');
-  });
-
-  it('refreshes provider bindings for idle managed slots from config', () => {
-    registerAgent(dir, { agent_id: 'orc-1', provider: 'claude', role: 'worker' });
-
-    reconcileManagedWorkerSlots(dir, { max_workers: 1, provider: 'gemini', model: 'gemini-2.5-pro', provider_models: {}, execution_mode: 'full-access' });
-
-    const slot = getAgent(dir, 'orc-1');
-    expect(slot?.provider).toBe('gemini');
-    expect(slot?.model).toBe('gemini-2.5-pro');
-  });
-
-  it('removes out-of-range managed slots from the coordinator view when capacity shrinks', () => {
-    registerAgent(dir, { agent_id: 'orc-1', provider: 'codex', role: 'worker' });
-    registerAgent(dir, { agent_id: 'orc-2', provider: 'codex', role: 'worker' });
-    registerAgent(dir, { agent_id: 'legacy-worker', provider: 'claude', role: 'worker' });
-
-    const agents = listCoordinatorAgents(dir, { max_workers: 1, provider: 'codex', model: null, provider_models: {}, execution_mode: 'full-access' });
-
-    expect(agents.map((agent) => agent.agent_id)).toEqual(['legacy-worker', 'orc-1']);
+    const agents = listCoordinatorAgents(dir);
+    expect(agents.map((a) => a.agent_id)).toEqual(['master', 'amber-kettle']);
   });
 });
 
@@ -250,30 +225,34 @@ describe('removeAgent', () => {
   });
 });
 
-// ── nextAvailableWorkerId ──────────────────────────────────────────────────
+// ── nextAvailableWorkerName ────────────────────────────────────────────────
 
-describe('nextAvailableWorkerId', () => {
-  it('returns orc-1 when no workers exist', () => {
-    expect(nextAvailableWorkerId(dir)).toBe('orc-1');
+describe('nextAvailableWorkerName', () => {
+  it('allocates the first unused deterministic two-word worker name', () => {
+    const name = nextAvailableWorkerName(dir);
+    expect(name).toBe('amber-anchor');
+    expect(name).toMatch(/^[a-z]+-[a-z]+$/);
   });
 
-  it('returns next number when sequence is contiguous', () => {
-    registerAgent(dir, { agent_id: 'orc-1', provider: 'claude', role: 'worker' });
-    registerAgent(dir, { agent_id: 'orc-2', provider: 'codex', role: 'worker' });
-    expect(nextAvailableWorkerId(dir)).toBe('orc-3');
+  it('skips names already in use by registered worker agents', () => {
+    registerAgent(dir, { agent_id: 'amber-anchor', provider: 'claude', role: 'worker' });
+    const name = nextAvailableWorkerName(dir);
+    expect(name).toBe('amber-anvil');
   });
 
-  it('reuses gaps in numbering', () => {
-    registerAgent(dir, { agent_id: 'orc-1', provider: 'claude', role: 'worker' });
-    registerAgent(dir, { agent_id: 'orc-3', provider: 'codex', role: 'worker' });
-    expect(nextAvailableWorkerId(dir)).toBe('orc-2');
+  it('reuses a worker name only after the prior live worker is removed', () => {
+    registerAgent(dir, { agent_id: 'amber-anchor', provider: 'claude', role: 'worker' });
+    expect(nextAvailableWorkerName(dir)).toBe('amber-anvil');
+
+    removeAgent(dir, 'amber-anchor');
+    expect(nextAvailableWorkerName(dir)).toBe('amber-anchor');
   });
 
-  it('ignores master and non-orc ids', () => {
+  it('does not use names held by non-worker agents (master, scout)', () => {
     registerAgent(dir, { agent_id: 'master', provider: 'claude', role: 'master' });
-    registerAgent(dir, { agent_id: 'alice', provider: 'codex', role: 'worker' });
-    registerAgent(dir, { agent_id: 'orc-2', provider: 'gemini', role: 'worker' });
-    expect(nextAvailableWorkerId(dir)).toBe('orc-1');
+    registerAgent(dir, { agent_id: 'scout-1', provider: 'codex', role: 'scout' });
+    // Non-worker names do not affect worker name pool
+    expect(nextAvailableWorkerName(dir)).toBe('amber-anchor');
   });
 });
 

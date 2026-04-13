@@ -37,18 +37,18 @@ describe('selectDispatchableAgents', () => {
     expect(result.map((a) => a.agent_id)).toEqual(['worker-01']);
   });
 
-  it('treats coordinator-managed slot ids as normal dispatch capacity', () => {
+  it('treats live worker agents as normal dispatch capacity', () => {
     const agents = [
-      agent('orc-1'),
-      agent('orc-2', { status: 'idle', session_handle: null }),
+      agent('amber-anchor'),
+      agent('amber-anvil', { status: 'idle', session_handle: null }),
       agent('master', { role: 'master' }),
     ];
 
     const result = selectDispatchableAgents(agents, {
-      busyAgents: new Set(['orc-2']),
+      busyAgents: new Set(['amber-anvil']),
     });
 
-    expect(result.map((candidate) => candidate.agent_id)).toEqual(['orc-1']);
+    expect(result.map((candidate) => candidate.agent_id)).toEqual(['amber-anchor']);
   });
 });
 
