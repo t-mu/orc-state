@@ -108,7 +108,6 @@ If a test times out, check:
 
 For each case, the test validates:
 - Two sequential task completions (task 2 depends on task 1)
-- Worker slot reuse across tasks (same agent ID handles both runs)
 - Lifecycle event sequencing (`run_started` appears for each run)
 - Path containment (all state, worktrees, and artifacts stay inside the temp repo)
 

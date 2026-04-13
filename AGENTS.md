@@ -96,7 +96,7 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
    orc review-submit --run-id=<run_id> --agent-id=<agent_id> \
      --outcome=<approved|findings> --reason="<findings text>"
    ```
-   `--agent-id` MUST be the worker's own agent_id (e.g. `orc-1`), NOT a
+   `--agent-id` MUST be the worker's own agent_id (e.g. `amber-kettle`), NOT a
    reviewer label like `reviewer-1`. The coordinator uses this field to
    match events to claims — a mismatched agent_id blocks event processing.
    Findings written this way survive context compaction.
@@ -190,10 +190,11 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 1. Session startup: `orc start-session`
 2. Task authoring: edit `backlog/<N>-<slug>.md`
 3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. Run `orc backlog-sync-check` to verify.
-4. Task completion: worker updates task markdown in its worktree; coordinator calls `orc task-mark-done <task-ref>` after merge to update shared runtime state
-5. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
-6. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
-7. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
+4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a deterministic two-word name (e.g., `amber-kettle`), unique among active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
+5. Task completion: worker updates task markdown in its worktree; coordinator calls `orc task-mark-done <task-ref>` after merge to update shared runtime state
+6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
+7. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
+8. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
 
 Outside the blessed workflow, commands are for observability, setup, or recovery only — not the default path.
 

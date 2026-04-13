@@ -152,7 +152,7 @@ A task is eligible for dispatch when all of:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent_id` | string | yes | Unique identifier (e.g. `orc-1`, `master`) |
+| `agent_id` | string | yes | Unique identifier — `master` for the master agent; workers use deterministic two-word names (e.g. `amber-kettle`) that are unique among currently active workers |
 | `provider` | `"claude"` \| `"codex"` \| `"gemini"` \| `"human"` | yes | Provider backend |
 | `model` | string | no | Specific model variant |
 | `status` | AgentStatus | yes | Current agent state |
@@ -293,6 +293,10 @@ are processed. Workers do not need to emit periodic heartbeats.
 ---
 
 ## Worker Lifecycle
+
+Workers are task-scoped: the coordinator registers a new worker agent and launches its
+PTY session at dispatch time, then removes the agent registration after the run completes.
+No persistent idle worker agents exist between tasks.
 
 The worker lifecycle is the sequence of `orc run-*` commands a worker emits
 during task execution. These commands mutate claim state and emit events.
@@ -509,7 +513,7 @@ search. Results are capped at 500 per query.
 
 Worker and master session handles use the format `pty:<agent_id>`.
 
-Examples: `pty:master`, `pty:orc-1`, `pty:worker-01`
+Examples: `pty:master`, `pty:amber-kettle`
 
 The handle identifies a local PTY process owned by the coordinator. Handles are
 deterministic within the active PTY runtime. If a session is restarted, the
