@@ -61,8 +61,8 @@ which gemini
 ```
 
 2. Check provider authentication and local environment health.
-3. Distinguish managed-slot launch failures from manual worker-session failures and recover with the matching operator command.
-4. If the slot remains unhealthy, use the existing worker reset or cleanup path before redispatching work.
+3. If the coordinator retried the session start and all attempts failed, the task is automatically requeued. For manual intervention, use the worker cleanup path.
+4. If a worker session remains unhealthy after cleanup, use `orc task-reset` to return the task to `todo` before redispatching work.
 
 ## Stale Workers
 

@@ -64,10 +64,14 @@ implement tasks directly.
 ### Worker
 
 A worker is a headless agent session spawned by the coordinator for a single task run.
-It operates entirely inside an isolated git worktree (`.worktrees/<run-id>/`), follows
-a five-phase lifecycle (explore, implement, review, complete, finalize), and signals
-progress through `orc` CLI commands. When work is done, it signals the coordinator and
-waits for the merge.
+It is assigned a deterministic two-word name (e.g., `amber-kettle`) that is unique among
+currently active workers. The provider (Claude, Codex, Gemini) is resolved at dispatch
+time from the task's `required_provider` field, or from the configured default when absent.
+The worker operates entirely inside an isolated git worktree (`.worktrees/<run-id>/`),
+follows a five-phase lifecycle (explore, implement, review, complete, finalize), and
+signals progress through `orc` CLI commands. When work is done, it signals the coordinator
+and waits for the merge. The coordinator removes the worker's agent registration after the
+run completes, freeing the concurrency slot for the next task.
 
 ### Scout
 
@@ -85,8 +89,10 @@ lifecycle. The master cleans them up after reading their report.
    and reconciles them into `.orc-state/backlog.json`.
 3. **Task becomes eligible** — once a task's `depends_on` refs are all `done` or
    `released`, the coordinator marks it eligible for dispatch.
-4. **Claim created** — when a worker is available, the coordinator creates a claim in
-   `.orc-state/claims.json` and spawns a worker PTY session.
+4. **Claim created** — when concurrency capacity is available (live worker count is below
+   `max_workers`), the coordinator registers a new task-scoped worker agent, resolves the
+   provider from the task's `required_provider` field or the configured default, creates a
+   claim in `.orc-state/claims.json`, and launches a PTY session for the new worker.
 5. **Worker runs** — the worker reads the spec, writes code, runs tests, and submits
    the work for self-review. Each lifecycle event is appended to `.orc-state/events.db`.
 6. **Work complete** — the worker signals `run-work-complete`; the coordinator takes
@@ -112,6 +118,18 @@ files directly — all mutations go through `orc` CLI commands or MCP tool handl
 For field-level schemas and concurrency guarantees, see [Contracts & invariants](./contracts.md).
 
 ---
+
+## Worker capacity
+
+`max_workers` is a concurrency limit, not a count of pre-created worker agents. No idle
+worker agents exist between tasks — capacity is computed dynamically as the configured
+limit minus the number of workers currently registered in `agents.json`. When a run
+completes, the coordinator removes the worker from the registry and the freed slot becomes
+available for the next dispatch.
+
+Worker names are drawn from a fixed list of adjective-noun combinations
+(`amber-kettle`, `swift-brook`, etc.) and are unique only among agents currently registered.
+A name is released for reuse once the worker is deregistered after its run completes.
 
 ## Worktree isolation
 

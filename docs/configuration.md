@@ -18,8 +18,8 @@ orc-state is configured through environment variables and an optional JSON confi
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_MAX_WORKERS` | Maximum number of concurrent worker agents | `0` (set via config or CLI) |
-| `ORC_WORKER_PROVIDER` | Provider for worker agents (`claude`, `codex`, or `gemini`) | `codex` (or config `default_provider`) |
+| `ORC_MAX_WORKERS` | Concurrency limit — maximum number of simultaneously active task-scoped workers | `0` (set via config or CLI) |
+| `ORC_WORKER_PROVIDER` | Default provider for task-scoped workers (`claude`, `codex`, or `gemini`); overridden per task by `required_provider` | `codex` (or config `default_provider`) |
 | `ORC_WORKER_MODEL` | Model identifier for worker agents | Provider default |
 | `ORC_WORKER_EXECUTION_MODE` | Execution mode for worker agents (`full-access` or `sandbox`) | `full-access` |
 
@@ -117,10 +117,16 @@ Sets the fallback execution mode for both master and worker pool when neither a 
 
 ### `worker_pool`
 
+Workers are spawned on demand at dispatch time — `max_workers` is a concurrency limit, not
+a count of pre-created agents. No idle worker agents exist between tasks; available capacity
+equals `max_workers` minus the number of workers currently registered. The provider for each
+worker is resolved at dispatch time from the task's `required_provider` field when set,
+otherwise from `worker_pool.provider` (or `ORC_WORKER_PROVIDER`).
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `max_workers` | integer | `0` | Maximum concurrent workers. Default: `0`. `orc init` generates a config with `max_workers: 1` for immediate usability. |
-| `provider` | string | `"codex"` | Default provider for workers |
+| `max_workers` | integer | `0` | Concurrency limit — maximum number of task-scoped workers that may run simultaneously. Workers are spawned on demand up to this limit and removed after completion. Default: `0`. `orc init` generates a config with `max_workers: 1` for immediate usability. |
+| `provider` | string | `"codex"` | Default provider for task-scoped workers. Overridden per task by the task's `required_provider` field. |
 | `model` | string | `null` | Default model for all workers |
 | `execution_mode` | string | `"full-access"` | Execution mode for worker agents (`full-access` or `sandbox`) |
 | `provider_models` | object | `{}` | Per-provider model overrides (keyed by provider name) |
