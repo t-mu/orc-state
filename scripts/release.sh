@@ -99,12 +99,13 @@ COMMITS=$(git log "$COMMIT_RANGE" --pretty=format:"%s" --no-merges \
 ADDED=""
 FIXED=""
 CHANGED=""
-DOCS=""
 OTHER=""
 
 classify_commit() {
-  # Echoes one of: feat, fix, changed, docs, other
+  # Echoes one of: feat, fix, changed, other
   # Matches conventional commit prefixes with optional (scope).
+  # Aligned with Keep a Changelog standard categories (Added, Changed, Fixed).
+  # docs/refactor/chore commits all fold into "Changed".
   local msg="$1"
   local prefix
   # Extract everything before the first ":" — that's the type[(scope)]
@@ -112,11 +113,10 @@ classify_commit() {
   # Strip optional (scope)
   prefix="${prefix%%(*}"
   case "$prefix" in
-    feat)              echo "feat" ;;
-    fix)               echo "fix" ;;
-    refactor|chore)    echo "changed" ;;
-    docs)              echo "docs" ;;
-    *)                 echo "other" ;;
+    feat)                       echo "feat" ;;
+    fix)                        echo "fix" ;;
+    refactor|chore|docs)        echo "changed" ;;
+    *)                          echo "other" ;;
   esac
 }
 
@@ -138,7 +138,6 @@ while IFS= read -r line; do
     feat)     ADDED="${ADDED}- ${summary}"$'\n' ;;
     fix)      FIXED="${FIXED}- ${summary}"$'\n' ;;
     changed)  CHANGED="${CHANGED}- ${summary}"$'\n' ;;
-    docs)     DOCS="${DOCS}- ${summary}"$'\n' ;;
     *)        OTHER="${OTHER}- ${line}"$'\n' ;;
   esac
 done <<< "$COMMITS"
@@ -148,33 +147,41 @@ DATE=$(date -u +%Y-%m-%d)
 NEW_SECTION="## [${NEW_VERSION}] - ${DATE}"$'\n\n'
 
 [ -n "$ADDED" ]   && NEW_SECTION="${NEW_SECTION}### Added"$'\n\n'"${ADDED}"$'\n'
-[ -n "$FIXED" ]   && NEW_SECTION="${NEW_SECTION}### Fixed"$'\n\n'"${FIXED}"$'\n'
 [ -n "$CHANGED" ] && NEW_SECTION="${NEW_SECTION}### Changed"$'\n\n'"${CHANGED}"$'\n'
-[ -n "$DOCS" ]    && NEW_SECTION="${NEW_SECTION}### Documentation"$'\n\n'"${DOCS}"$'\n'
+[ -n "$FIXED" ]   && NEW_SECTION="${NEW_SECTION}### Fixed"$'\n\n'"${FIXED}"$'\n'
 [ -n "$OTHER" ]   && NEW_SECTION="${NEW_SECTION}### Other"$'\n\n'"${OTHER}"$'\n'
 
 # ── Step 5: Prepend to CHANGELOG.md ───────────────────────────────────────
 echo "→ Updating CHANGELOG.md..."
 
-# Insert new section after the header (before the first existing version section).
-# CHANGELOG.md format: header, blank line, [<version>] sections in reverse chronological order.
-# We prepend the new section directly above the first ## line.
 if [ ! -f "$CHANGELOG" ]; then
   echo "error: CHANGELOG.md not found at $CHANGELOG" >&2
   exit 1
 fi
 
-# Find line number of first existing "## [" entry
-FIRST_VERSION_LINE=$(grep -n '^## \[' "$CHANGELOG" | head -1 | cut -d: -f1)
-
-if [ -n "$FIRST_VERSION_LINE" ]; then
-  # Split: header (everything before first ## [...]) + new section + rest
-  HEADER=$(head -n $((FIRST_VERSION_LINE - 1)) "$CHANGELOG")
-  REST=$(tail -n +"$FIRST_VERSION_LINE" "$CHANGELOG")
-  printf '%s\n%s%s\n' "$HEADER" "$NEW_SECTION" "$REST" > "$CHANGELOG"
+# Check if this version already has an entry — if so, skip insertion (idempotent).
+if grep -q "^## \[${NEW_VERSION}\]" "$CHANGELOG"; then
+  echo "  CHANGELOG.md already has an entry for [${NEW_VERSION}] — skipping insertion"
 else
-  # No existing version sections — append after current content
-  printf '%s\n%s' "$(cat "$CHANGELOG")" "$NEW_SECTION" > "$CHANGELOG"
+  # Find line number of first existing "## [" entry
+  FIRST_VERSION_LINE=$(grep -n '^## \[' "$CHANGELOG" | head -1 | cut -d: -f1)
+  TMP_CHANGELOG="${CHANGELOG}.tmp"
+
+  if [ -n "$FIRST_VERSION_LINE" ]; then
+    # Stream-insert without command substitution to preserve trailing newlines.
+    {
+      head -n $((FIRST_VERSION_LINE - 1)) "$CHANGELOG"
+      printf '%s' "$NEW_SECTION"
+      tail -n +"$FIRST_VERSION_LINE" "$CHANGELOG"
+    } > "$TMP_CHANGELOG"
+  else
+    # No existing version sections — append after current content
+    {
+      cat "$CHANGELOG"
+      printf '\n%s' "$NEW_SECTION"
+    } > "$TMP_CHANGELOG"
+  fi
+  mv "$TMP_CHANGELOG" "$CHANGELOG"
 fi
 
 # Write release notes to a temp file for the host adapter
@@ -184,21 +191,36 @@ printf '%s' "$NEW_SECTION" > "$NOTES_FILE"
 
 # ── Step 6 & 7: Commit and tag ────────────────────────────────────────────
 echo "→ Committing and tagging..."
+# Stage package.json, package-lock.json (npm version updates both), and CHANGELOG.md.
+PACKAGE_LOCK="${REPO_ROOT}/package-lock.json"
 git add "$PACKAGE_JSON" "$CHANGELOG"
+[ -f "$PACKAGE_LOCK" ] && git add "$PACKAGE_LOCK"
 git commit -m "chore(release): ${TAG}"
 git tag "$TAG"
 
-# ── Step 8: Push ──────────────────────────────────────────────────────────
+# ── Step 8: Push (atomic) ──────────────────────────────────────────────────
 echo "→ Pushing commit and tag..."
-git push origin main
-git push origin "$TAG"
+# Atomic push so commit and tag arrive together. If this fails, the local
+# state has the commit and tag but origin doesn't — re-running the script
+# will fail at the sync check (Step 1). Recovery: `git push origin main "$TAG"`
+# manually after fixing the underlying issue.
+if ! git push origin main "$TAG"; then
+  echo "" >&2
+  echo "error: push failed. Local has commit and tag '$TAG', but origin does not." >&2
+  echo "  Recovery: fix the push failure, then run: git push origin main $TAG" >&2
+  exit 1
+fi
 
 # ── Step 9: Create host release page (best-effort) ────────────────────────
 echo "→ Creating host release page..."
 # shellcheck source=release-hosts/index.sh
 source "${SCRIPT_DIR}/release-hosts/index.sh"
-create_release "$NEW_VERSION" "$NOTES_FILE"
+# Best-effort: tag is already pushed, so a host release page failure should not
+# fail the entire release. The user can create the release page manually later.
+if ! create_release "$NEW_VERSION" "$NOTES_FILE"; then
+  echo "warning: host release page creation failed — tag $TAG is pushed, you can create the release page manually" >&2
+fi
 
 echo ""
 echo "✓ Released ${TAG}"
-echo "  Run ./scripts/publish.sh to publish to npm."
+echo "  Run 'npm run release:publish' to publish to npm."

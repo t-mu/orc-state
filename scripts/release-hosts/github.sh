@@ -16,6 +16,11 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! gh auth status >/dev/null 2>&1; then
+  echo "error: gh CLI is not authenticated. Run 'gh auth login' first." >&2
+  exit 1
+fi
+
 if [ ! -f "$NOTES_FILE" ]; then
   echo "error: notes file not found: $NOTES_FILE" >&2
   exit 1
