@@ -71,6 +71,8 @@
     "test:e2e": "vitest run --config vitest.e2e.config.mjs",
     "test:real-providers": "vitest run --config vitest.real-providers.config.mjs",
     "pack:dry": "npm pack --dry-run",
+    "release": "bash scripts/release.sh",
+    "release:publish": "bash scripts/publish.sh",
     "task:done": "node cli/task-mark-done.ts"
   },
   "simple-git-hooks": {
