@@ -164,7 +164,7 @@ if grep -q "^## \[${NEW_VERSION}\]" "$CHANGELOG"; then
   echo "  CHANGELOG.md already has an entry for [${NEW_VERSION}] — skipping insertion"
 else
   # Find line number of first existing "## [" entry
-  FIRST_VERSION_LINE=$(grep -n '^## \[' "$CHANGELOG" | head -1 | cut -d: -f1)
+  FIRST_VERSION_LINE=$(grep -n '^## \[' "$CHANGELOG" | head -1 | cut -d: -f1 || true)
   TMP_CHANGELOG="${CHANGELOG}.tmp"
 
   if [ -n "$FIRST_VERSION_LINE" ]; then
