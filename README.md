@@ -31,6 +31,23 @@ orc start-session --provider=claude   # start orchestrating
 That's it — the coordinator picks up tasks from your backlog and dispatches
 them to workers automatically.
 
+## How it works
+
+After `orc start-session` starts, you're in a conversation with the master
+agent in your terminal. You can now start planning the work with the master
+and ask it to create tasks to the backlog. Discuss scope, break work into
+units, and the master writes task specs to `backlog/*.md`.
+
+Once tasks are in the backlog, the coordinator dispatches them to worker
+agents that execute each task in an isolated git worktree. You can monitor
+progress, intervene on blockers, and review results — all through the
+master session.
+
+For deeper work, you can also write task specs directly in `backlog/*.md` —
+the coordinator picks them up on the next tick. See
+[Concepts & terminology](./docs/concepts.md) and
+[Architecture overview](./docs/architecture.md) for the mental model.
+
 ## Documentation
 
 - [Getting started](./docs/getting-started.md)
