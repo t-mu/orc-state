@@ -3,7 +3,7 @@ ref: dynamic-workers/174-worker-architecture-docs-and-contracts
 feature: dynamic-workers
 review_level: light
 priority: normal
-status: todo
+status: done
 depends_on:
   - dynamic-workers/173-live-worker-views-and-operator-contracts
 ---
