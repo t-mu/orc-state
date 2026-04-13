@@ -9,7 +9,7 @@
  * Also runs tsc --project tsconfig.build.json for .d.ts declarations.
  */
 import { execSync } from 'node:child_process';
-import { globSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, globSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { buildSync } from 'esbuild';
 
 const allFiles = globSync([
@@ -28,6 +28,10 @@ const entryPoints = allFiles.filter(
 );
 
 console.log(`esbuild: compiling ${entryPoints.length} files to dist/`);
+
+// Start from a clean dist/ tree so removed source assets do not linger in the
+// published tarball across builds.
+rmSync('dist', { recursive: true, force: true });
 
 buildSync({
   entryPoints,
@@ -61,10 +65,13 @@ for (const file of outputFiles) {
 console.log(`  rewrote .ts imports → .js in ${rewritten} files`);
 
 // Copy non-TS assets that are resolved via import.meta.dirname
-import { cpSync } from 'node:fs';
 for (const dir of ['schemas', 'templates', 'skills', 'agents']) {
   cpSync(dir, `dist/${dir}`, { recursive: true });
 }
+// Strip package-irrelevant source metadata and scratch workspace content from
+// the published tarball.
+rmSync('dist/skills/.npmignore', { force: true });
+rmSync('dist/skills/plan-to-tasks-workspace', { recursive: true, force: true });
 console.log('  copied schemas/, templates/, skills/, and agents/ into dist/');
 
 console.log('tsc: emitting declarations to dist/');
@@ -82,5 +89,17 @@ for (const f of dtsFiles) {
   }
 }
 console.log(`  removed ${removed} empty .d.ts files`);
+
+// Remove empty runtime .js stubs emitted for type-only modules. They add noise
+// to the published tarball and are not useful to consumers.
+const jsFiles = globSync('dist/**/*.js');
+let removedJs = 0;
+for (const f of jsFiles) {
+  if (statSync(f).size === 0) {
+    unlinkSync(f);
+    removedJs++;
+  }
+}
+console.log(`  removed ${removedJs} empty .js files`);
 
 console.log('build complete');
