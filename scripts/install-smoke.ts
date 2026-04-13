@@ -41,11 +41,24 @@ function runWithEnv(cmd: string, args: string[], cwd: string, env: NodeJS.Proces
   return result.stdout ?? '';
 }
 
+function listTarballs(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((f) => f.startsWith('orc-state-') && f.endsWith('.tgz'))
+    .map((f) => join(dir, f));
+}
+
 function findTarball(dir: string): string {
-  const files = readdirSync(dir).filter((f) => f.startsWith('orc-state-') && f.endsWith('.tgz'));
+  const files = listTarballs(dir);
   if (files.length === 0) throw new Error('no orc-state tarball found');
   if (files.length > 1) throw new Error(`multiple tarballs found: ${files.join(', ')}`);
-  return join(dir, files[0]);
+  return files[0];
+}
+
+function cleanStaleTarballs(dir: string): void {
+  // Remove leftover tarballs from prior runs to keep the smoke test idempotent.
+  for (const tarball of listTarballs(dir)) {
+    rmSync(tarball, { force: true });
+  }
 }
 
 function main(): void {
@@ -57,6 +70,7 @@ function main(): void {
     const env: NodeJS.ProcessEnv = { ...process.env, npm_config_cache: tmpCache };
 
     console.log('1. packing tarball...');
+    cleanStaleTarballs(repoRoot);  // idempotent: remove leftovers from prior runs
     runWithEnv('npm', ['pack'], repoRoot, env);
     tarballPath = findTarball(repoRoot);
     console.log(`   → ${tarballPath}`);

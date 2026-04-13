@@ -5,13 +5,17 @@
 #
 # Usage: ./scripts/publish.sh [--otp=<2fa-code>]
 #
+# Uses an isolated npm cache for all npm operations so release behavior is
+# resilient to broken or root-owned ~/.npm state. Authentication still uses
+# the user's npm credentials (read from ~/.npmrc); only the cache is isolated.
+#
 # Steps:
 #   1. Validate working tree is clean
 #   2. Validate HEAD is at a release tag (vX.Y.Z)
 #   3. Validate package.json version matches the tag
 #   4. Verify npm authentication (npm whoami)
 #   5. Run npm publish (which triggers prepublishOnly: build, test, smokes)
-#   6. Verify the published version appears in the registry
+#   6. Best-effort registry verification (warning, not failure)
 
 set -euo pipefail
 
@@ -20,6 +24,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PACKAGE_JSON="${REPO_ROOT}/package.json"
 
 cd "$REPO_ROOT"
+
+# ── Isolated npm cache (resilient to broken ~/.npm state) ──────────────────
+TMP_CACHE=$(mktemp -d -t orc-publish-cache.XXXXXX)
+trap 'rm -rf "$TMP_CACHE"' EXIT
+export npm_config_cache="$TMP_CACHE"
 
 # ── Step 1: Working tree clean ────────────────────────────────────────────
 if [ -n "$(git status --porcelain)" ]; then
@@ -57,18 +66,21 @@ echo "  npm user: $NPM_USER"
 
 # ── Step 5: Publish ────────────────────────────────────────────────────────
 echo "→ Running npm publish (prepublishOnly will run build + tests + smokes)..."
-# Pass through any extra args (e.g., --otp=123456) for 2FA
+# Pass through any extra args (e.g., --otp=123456) for 2FA.
+# set -e means a non-zero exit here aborts the script.
 npm publish "$@"
 
-# ── Step 6: Verify the version is live ────────────────────────────────────
-echo "→ Verifying registry..."
+# Past this point, npm publish has succeeded — the package IS live.
+# Registry verification is best-effort observability, not a publish gate.
+
+# ── Step 6: Best-effort registry verification ─────────────────────────────
+echo "→ Verifying registry (best-effort — publish already succeeded)..."
 PACKAGE_NAME=$(node -p "require('${PACKAGE_JSON}').name")
 
-# Registry can take a few seconds to propagate. Retry up to 6 times (60s total).
 for attempt in 1 2 3 4 5 6; do
   REGISTRY_VERSION=$(npm view "$PACKAGE_NAME" version 2>/dev/null || true)
   if [ "$REGISTRY_VERSION" = "$VERSION" ]; then
-    echo "✓ Published $PACKAGE_NAME@$VERSION"
+    echo "✓ Published $PACKAGE_NAME@$VERSION (verified live in registry)"
     exit 0
   fi
   if [ "$attempt" -lt 6 ]; then
@@ -77,8 +89,12 @@ for attempt in 1 2 3 4 5 6; do
   fi
 done
 
-echo "warning: registry version verification did not match within 60s" >&2
+# Registry didn't reflect the new version within 60s. The publish itself
+# succeeded — propagation is just slow. This is a warning, not a failure.
+echo ""
+echo "✓ Published $PACKAGE_NAME@$VERSION (npm publish succeeded)"
+echo "  warning: registry version did not match within 60s — propagation may be slow" >&2
 echo "  expected: $VERSION" >&2
 echo "  found:    $REGISTRY_VERSION" >&2
-echo "  publish may still have succeeded — check https://www.npmjs.com/package/${PACKAGE_NAME}" >&2
-exit 1
+echo "  Verify manually: https://www.npmjs.com/package/${PACKAGE_NAME}" >&2
+exit 0
