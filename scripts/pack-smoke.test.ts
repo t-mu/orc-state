@@ -66,4 +66,20 @@ describe('scripts/pack-smoke.ts', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('pack smoke ok');
   });
+
+  it('excludes plan-to-tasks workspace and eval artifacts from the packed tarball', { timeout: 30000 }, () => {
+    execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'ignore' });
+    const result = spawnSync('npm', ['pack', '--dry-run', '--json'], {
+      cwd: ROOT,
+      env: { ...process.env, npm_config_cache: join(tmpdir(), 'orc-pack-manifest-test-cache') },
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(result.stdout) as Array<{ files: Array<{ path: string }> }>;
+    const paths = manifest[0]?.files.map((file) => file.path) ?? [];
+
+    expect(paths.some((path) => path.includes('plan-to-tasks-workspace'))).toBe(false);
+    expect(paths.some((path) => path.includes('dist/skills/plan-to-tasks/evals/'))).toBe(false);
+  });
 });

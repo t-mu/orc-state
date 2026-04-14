@@ -72,6 +72,7 @@ for (const dir of ['schemas', 'templates', 'skills', 'agents']) {
 // the published tarball.
 rmSync('dist/skills/.npmignore', { force: true });
 rmSync('dist/skills/plan-to-tasks-workspace', { recursive: true, force: true });
+rmSync('dist/skills/plan-to-tasks/evals', { recursive: true, force: true });
 console.log('  copied schemas/, templates/, skills/, and agents/ into dist/');
 
 console.log('tsc: emitting declarations to dist/');

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installSkills, type InstallResult } from './install-skills.ts';
 
@@ -17,6 +17,23 @@ describe('installSkills', () => {
     expect(Array.isArray(result.copied)).toBe(true);
     expect(result.count).toBe(result.copied.length);
     expect(result.count).toBeGreaterThan(0);
+  });
+
+  it('installs only real skills and excludes workspace/eval artifacts', () => {
+    const base = mkdtempSync(join(tmpdir(), 'install-skills-test-'));
+    const result = installSkills(['claude'], base, true);
+    const topLevelSkillName = (path: string): string | null => {
+      const marker = `${sep}skills${sep}`;
+      const index = path.indexOf(marker);
+      if (index === -1) return null;
+      return path.slice(index + marker.length).split(sep)[0] ?? null;
+    };
+    const installedSkillDirs = new Set(
+      result.copied.map((path) => topLevelSkillName(path)).filter((name): name is string => Boolean(name)),
+    );
+    expect(installedSkillDirs).toEqual(new Set(['create-task', 'orc-commands', 'plan-to-tasks', 'worker-inspect']));
+    expect(result.copied.some((path) => path.includes(`${sep}evals${sep}`))).toBe(false);
+    expect(result.copied.some((path) => path.includes(`${sep}plan-to-tasks-workspace${sep}`))).toBe(false);
   });
 
   it('returns count matching copied array length', () => {

@@ -41,15 +41,21 @@ function parseArgs() {
   return { isGlobal, isDryRun, providers };
 }
 
-function copyDir(src: string, dest: string, dryRun: boolean): Array<{ src: string; dest: string }> {
+function shouldSkipSkillEntry(skillName: string, relativePath: string): boolean {
+  return relativePath === '.npmignore' || (skillName === 'plan-to-tasks' && relativePath === 'evals');
+}
+
+function copyDir(src: string, dest: string, dryRun: boolean, skillName: string, relativeRoot = ''): Array<{ src: string; dest: string }> {
   const entries = readdirSync(src, { withFileTypes: true });
   const copied: Array<{ src: string; dest: string }> = [];
   for (const entry of entries) {
+    const relativePath = relativeRoot ? `${relativeRoot}/${entry.name}` : entry.name;
+    if (shouldSkipSkillEntry(skillName, relativePath)) continue;
     const srcPath  = join(src, entry.name);
     const destPath = join(dest, entry.name);
     if (entry.isDirectory()) {
       if (!dryRun) mkdirSync(destPath, { recursive: true });
-      copied.push(...copyDir(srcPath, destPath, dryRun));
+      copied.push(...copyDir(srcPath, destPath, dryRun, skillName, relativePath));
     } else {
       copied.push({ src: srcPath, dest: destPath });
       if (!dryRun) {
@@ -84,7 +90,10 @@ export function installSkills(providers: string[], base: string, dryRun: boolean
   if (dryRun) console.log('Dry run — no files will be written.\n');
 
   const skillEntries = readdirSync(SKILLS_ROOT, { withFileTypes: true });
-  const skills = skillEntries.filter((e) => e.isDirectory()).map((e) => e.name);
+  const skills = skillEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => existsSync(join(SKILLS_ROOT, name, 'SKILL.md')));
 
   if (skills.length === 0) {
     console.log('No skills found in skills/ directory.');
@@ -104,7 +113,7 @@ export function installSkills(providers: string[], base: string, dryRun: boolean
     for (const skill of skills) {
       const src    = join(SKILLS_ROOT, skill);
       const dest   = join(destBase, skill);
-      const copied = copyDir(src, dest, dryRun);
+      const copied = copyDir(src, dest, dryRun, skill);
       for (const { dest: d } of copied) {
         console.log(`  ${dryRun ? '(would copy) ' : ''}${relative(base, d)}`);
         allCopied.push(d);
