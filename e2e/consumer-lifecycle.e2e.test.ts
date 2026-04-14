@@ -128,8 +128,11 @@ describe('consumer lifecycle e2e', () => {
     //
     // No real provider binary (claude/codex/gemini) is required.
     const dispatchedRunIds: string[] = [];
+    // Capture the dynamically assigned agent ID from the ephemeral worker spawn
+    let spawnedAgentId: string | null = null;
     const adapter = {
       start: vi.fn().mockImplementation((agentId: string, { system_prompt }: { system_prompt: string }) => {
+        spawnedAgentId = agentId;
         const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
         const sessionHandle = createSessionHandle(agentId);
         // Simulate the fake provider calling report-for-duty after receiving the bootstrap
@@ -148,9 +151,9 @@ describe('consumer lifecycle e2e', () => {
       send: vi.fn().mockImplementation((_handle: string, text: string) => {
         // Called with TASK_START — simulate the fake provider calling `orc run-start`
         const runId = /\nrun_id: ([^\n]+)/.exec(text)?.[1]?.trim();
-        if (runId) {
+        if (runId && spawnedAgentId) {
           dispatchedRunIds.push(runId);
-          startRun(dir, runId, 'orc-1');
+          startRun(dir, runId, spawnedAgentId);
           // finishRun is called manually after the tick so that markTaskEnvelopeSent
           // (which runs after adapter.send returns) can record the delivery first
         }
@@ -178,7 +181,7 @@ describe('consumer lifecycle e2e', () => {
     // (mirrors what `orc task-mark-done` + `orc run-finish` would do in the real flow)
     expect(dispatchedRunIds).toHaveLength(1);
     const runId = dispatchedRunIds[0];
-    finishRun(dir, runId, 'orc-1', { success: true });
+    finishRun(dir, runId, spawnedAgentId!, { success: true });
 
     // Assert task status reached done
     const backlogAfterRun = readBacklog(dir);
