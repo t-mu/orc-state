@@ -31,6 +31,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
+  delete process.env.ORC_MAX_WORKERS;
+  delete process.env.ORC_WORKER_PROVIDER;
   vi.unmock('../adapters/index.ts');
   vi.unmock('../lib/runWorktree.ts');
 });
@@ -265,8 +267,6 @@ describe('coordinator policy e2e', () => {
     expect(runFailed).toBeTruthy();
     expect((runFailed!.payload as Record<string, unknown>).code).toBe('ERR_DISPATCH_FAILURE');
 
-    delete process.env.ORC_MAX_WORKERS;
-    delete process.env.ORC_WORKER_PROVIDER;
   });
 
   it('throttles run_start nudges to configured interval', async () => {
@@ -505,8 +505,6 @@ describe('coordinator policy e2e', () => {
     const events = readEvents();
     expect(events.some((event) => event.event === 'claim_created' && event.agent_id === spawnedAgentId)).toBe(true);
 
-    delete process.env.ORC_MAX_WORKERS;
-    delete process.env.ORC_WORKER_PROVIDER;
   });
 });
 
