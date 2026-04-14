@@ -19,7 +19,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pty from 'node-pty';
 
@@ -189,6 +189,84 @@ function writeMcpConfig() {
   return configPath;
 }
 
+function escapeTomlString(value: string) {
+  return JSON.stringify(value);
+}
+
+function resolveActiveCheckoutRoot(cwd: string = process.cwd()) {
+  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd,
+    encoding: 'utf8',
+  });
+  const configuredRoot = process.env.ORC_REPO_ROOT ? resolve(process.env.ORC_REPO_ROOT) : null;
+  if (result.status !== 0) {
+    return configuredRoot ?? resolve(cwd);
+  }
+  return result.stdout.trim() || configuredRoot || resolve(cwd);
+}
+
+function stripTomlTable(existing: string, tablePath: string) {
+  const lines = existing.split('\n');
+  const stripped: string[] = [];
+  let skipTable = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === '# BEGIN ORC MANAGED MCP' || trimmed === '# END ORC MANAGED MCP') {
+      continue;
+    }
+
+    const tableMatch = trimmed.match(/^\[([^\]]+)\]$/);
+    if (tableMatch) {
+      const currentTable = tableMatch[1].trim();
+      skipTable = currentTable === tablePath || currentTable.startsWith(`${tablePath}.`);
+    }
+
+    if (!skipTable) {
+      stripped.push(line);
+    }
+  }
+
+  return stripped.join('\n').trimEnd();
+}
+
+function writeCodexProjectMcpConfig(repoRoot: string) {
+  const serverPath = runtimeModulePath('../mcp/server.ts', '../mcp/server.js');
+  const codexDir = join(repoRoot, '.codex');
+  const configPath = join(codexDir, 'config.toml');
+  const managedBlockStart = '# BEGIN ORC MANAGED MCP';
+  const managedBlockEnd = '# END ORC MANAGED MCP';
+  const managedBlock = [
+    managedBlockStart,
+    '[mcp_servers.orchestrator]',
+    `command = ${escapeTomlString(process.execPath)}`,
+    `args = [${escapeTomlString(serverPath)}]`,
+    `cwd = ${escapeTomlString(repoRoot)}`,
+    '',
+    '[mcp_servers.orchestrator.env]',
+    `ORC_STATE_DIR = ${escapeTomlString(STATE_DIR)}`,
+    managedBlockEnd,
+    '',
+  ].join('\n');
+
+  mkdirSync(codexDir, { recursive: true });
+
+  let existing = '';
+  try {
+    existing = readFileSync(configPath, 'utf8');
+  } catch {
+    existing = '';
+  }
+
+  const withoutManagedBlock = stripTomlTable(existing, 'mcp_servers.orchestrator');
+  const nextContents = withoutManagedBlock
+    ? `${withoutManagedBlock}\n\n${managedBlock}`
+    : managedBlock;
+
+  writeFileSync(configPath, nextContents);
+  return configPath;
+}
+
 // ── Find master ────────────────────────────────────────────────────────────
 
 const agents = listAgents(STATE_DIR);
@@ -310,6 +388,7 @@ console.log('  Recovery/debug:     orc register-worker / orc start-worker-sessio
 let spawnArgs: string[] = [];
 const masterConfig = loadMasterConfig();
 const masterModelArgs = masterConfig.model ? ['--model', masterConfig.model] : [];
+const checkoutRoot = resolveActiveCheckoutRoot();
 try {
   if (master.provider === 'claude') {
     const mcpConfigPath = writeMcpConfig();
@@ -323,10 +402,12 @@ try {
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
+    const codexConfigPath = writeCodexProjectMcpConfig(checkoutRoot);
     const codexModeArgs = masterConfig.execution_mode === 'sandbox'
       ? ['--sandbox', 'workspace-write', '--ask-for-approval', 'never']
       : ['--dangerously-bypass-approvals-and-sandbox'];
     spawnArgs = [...codexModeArgs, ...masterModelArgs, bootstrap];
+    console.log(`  MCP server: orchestrator tools available via ${codexConfigPath}.`);
     console.log('  Master bootstrap loaded via initial prompt.');
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
     console.log('\n----- MASTER BOOTSTRAP -----');
