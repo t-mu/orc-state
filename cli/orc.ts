@@ -10,7 +10,7 @@
  *   orc watch
  */
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { resolve }   from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,6 +18,18 @@ function resolveScript(name: string): string {
   const resolved = resolve(import.meta.dirname, name);
   if (import.meta.url.endsWith('.ts')) return resolved;
   return resolved.replace(/\.ts$/, '.js');
+}
+
+function packageJsonPath(): string {
+  return fileURLToPath(new URL(
+    import.meta.url.endsWith('.ts') ? '../package.json' : '../../package.json',
+    import.meta.url,
+  ));
+}
+
+export function readVersion(): string {
+  const pkg = JSON.parse(readFileSync(packageJsonPath(), 'utf8')) as { version?: string };
+  return pkg.version ?? '0.0.0';
 }
 
 const COMMANDS: Record<string, string> = {
@@ -138,6 +150,11 @@ export function buildNodeArgs(subcommand: string, scriptPath: string, rest: stri
 
 export function main(argv: string[]): number {
   const [subcommand, ...rest] = argv;
+
+  if (subcommand === '--version' || subcommand === '-v') {
+    console.log(readVersion());
+    return 0;
+  }
 
   if (!subcommand || subcommand === '--help' || subcommand === '-h') {
     console.log('Usage: orc <subcommand> [args...]');

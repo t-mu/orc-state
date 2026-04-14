@@ -4,7 +4,7 @@ import { symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
 import { createTempStateDir } from '../test-fixtures/stateHelpers.ts';
-import { buildNodeArgs, isMainModule } from './orc.ts';
+import { buildNodeArgs, isMainModule, readVersion } from './orc.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 
@@ -28,6 +28,24 @@ describe('cli/orc.ts', () => {
     expect(result.stdout.indexOf('Blessed workflow commands:')).toBeLessThan(result.stdout.indexOf('Recovery / debug commands:'));
     expect(result.stdout.indexOf('Recovery / debug commands:')).toBeLessThan(result.stdout.indexOf('Supported inspection commands:'));
     expect(result.stdout.indexOf('Supported inspection commands:')).toBeLessThan(result.stdout.indexOf('Advanced / specialized commands:'));
+  });
+
+  it('prints the package version for --version and -v', () => {
+    const expectedVersion = readVersion();
+
+    const longFlag = spawnSync('node', ['cli/orc.ts', '--version'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    const shortFlag = spawnSync('node', ['cli/orc.ts', '-v'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+
+    expect(longFlag.status).toBe(0);
+    expect(shortFlag.status).toBe(0);
+    expect(longFlag.stdout.trim()).toBe(expectedVersion);
+    expect(shortFlag.stdout.trim()).toBe(expectedVersion);
   });
 
   it('dispatches documented inspection commands', () => {
