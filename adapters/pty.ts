@@ -30,6 +30,7 @@ import {
 import { delimiter, isAbsolute, join } from 'node:path';
 import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
+import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
@@ -58,6 +59,8 @@ const BLOCKING_PROMPT_PATTERNS = [
   // followed by a choice indicator (e.g. "Overwrite file? [y/n]", "Continue? (yes/no)").
   /[^\n]+\?\s*[\[(](?:y\/n|yes\/no)[\])]/i,
 ];
+
+ensureNodePtySpawnHelperPermissions();
 
 function pidPath(agentId: string) { return join(STATE_DIR, 'pty-pids', `${agentId}.pid`); }
 function logPath(agentId: string) { return join(STATE_DIR, 'pty-logs', `${agentId}.log`); }

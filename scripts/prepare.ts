@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 
 export function isPackLikeCommand(env: NodeJS.ProcessEnv = process.env): boolean {
   const npmCommand = env.npm_command ?? '';
@@ -28,14 +28,7 @@ export function runPrepare(env: NodeJS.ProcessEnv = process.env): void {
     }
   }
 
-  const spawnHelper = join('node_modules', 'node-pty', 'prebuilds', 'darwin-arm64', 'spawn-helper');
-  if (existsSync(spawnHelper)) {
-    try {
-      chmodSync(spawnHelper, 0o755);
-    } catch (error) {
-      log(`warning: failed to chmod ${spawnHelper}: ${(error as Error).message}`);
-    }
-  }
+  ensureNodePtySpawnHelperPermissions();
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

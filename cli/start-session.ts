@@ -42,6 +42,7 @@ import {
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
+import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
 import {
@@ -52,6 +53,8 @@ import {
 } from '../lib/sessionState.ts';
 
 export let masterPty: ReturnType<typeof pty.spawn> | null = null;
+
+ensureNodePtySpawnHelperPermissions();
 
 function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): string {
   return fileURLToPath(new URL(
