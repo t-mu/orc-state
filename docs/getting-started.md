@@ -36,7 +36,7 @@ This launches two things:
 1. **Coordinator** — background process that dispatches tasks to workers, monitors heartbeats, and manages the run lifecycle
 2. **Master agent** — foreground interactive session where you direct the work
 
-The provider flag (`claude`, `codex`, `gemini`) controls which agent CLI spawns worker sessions. You can mix providers across workers in the same session.
+The provider for master and worker sessions is configured during `orc init` and stored in `orc-state.config.json`. You can override per task via `required_provider` in the task spec, or mix providers across workers in the same session.
 
 ## Create your first task
 

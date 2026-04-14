@@ -2,7 +2,8 @@
 /**
  * cli/init.ts
  * Usage:
- *   orc init [--provider=claude,codex,gemini] [--skip-skills] [--skip-agents] [--skip-mcp]
+ *   orc init [--provider=claude,codex,gemini] [--worker-provider=<name>]
+ *            [--skip-skills] [--skip-agents] [--skip-mcp]
  *            [--feature=<ref>] [--feature-title=<title>] [--force]
  *
  * Interactive first-time setup: provider selection, state initialization,
@@ -83,19 +84,30 @@ if (stateExists && !force) {
 
 // Step 2: Provider and install option selection
 let providers: string[];
+let workerProvider: string | null = null;
 let skipSkills: boolean;
 let skipAgents: boolean;
 let skipMcp: boolean;
 
 const isTTY = Boolean(process.stdin.isTTY);
+const workerProviderFlag = flag('worker-provider');
 
 if (providerFlag) {
   providers = providerFlag.split(',').map((p) => p.trim()).filter(Boolean);
+  if (workerProviderFlag) {
+    if (!providers.includes(workerProviderFlag)) {
+      console.error(`Error: --worker-provider '${workerProviderFlag}' is not in the selected providers: ${providers.join(', ')}`);
+      process.exit(1);
+    }
+    workerProvider = workerProviderFlag;
+  } else {
+    workerProvider = providers.length > 1 ? providers[1] : null;
+  }
   skipSkills = boolFlag('skip-skills');
   skipAgents = boolFlag('skip-agents');
   skipMcp = boolFlag('skip-mcp');
 } else if (isTTY) {
-  const { checkbox, confirm } = await import('@inquirer/prompts');
+  const { checkbox, confirm, select } = await import('@inquirer/prompts');
 
   providers = await checkbox({
     message: 'Which provider(s) will you use?',
@@ -110,6 +122,12 @@ if (providerFlag) {
     console.error('At least one provider must be selected.');
     process.exit(1);
   }
+
+  workerProvider = await select({
+    message: 'Choose default provider for worker agents:',
+    choices: providers.map((p) => ({ name: p, value: p })),
+    default: providers.length > 1 ? providers[1] : providers[0],
+  });
 
   const installSkills = await confirm({ message: 'Install skills? (recommended)', default: true });
   const installAgents = await confirm({ message: 'Install agents? (recommended)', default: true });
@@ -134,14 +152,12 @@ for (const provider of providers) {
 
 // Step 3: Write orc-state.config.json
 const config: Record<string, unknown> = {};
-if (providers.length === 1) {
-  config.default_provider = providers[0];
-} else if (providers.length > 1) {
-  config.default_provider = providers[0];
-  config.worker_pool = { provider: providers[1] };
+config.default_provider = providers[0];
+const pool: Record<string, unknown> = { max_workers: 1 };
+if (workerProvider) {
+  pool.provider = workerProvider;
 }
-// Always ensure worker_pool.max_workers is set so fresh installs dispatch work
-config.worker_pool = { ...(config.worker_pool as object ?? {}), max_workers: 1 };
+config.worker_pool = pool;
 writeFileSync('orc-state.config.json', JSON.stringify(config, null, 2) + '\n', 'utf8');
 
 // Step 4: Run install

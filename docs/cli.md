@@ -22,7 +22,7 @@ orc init --provider=claude,codex   # multiple providers
 orc init --force                   # reinitialize (backs up existing state)
 ```
 
-**Flags:** `[--provider=<providers>]` `[--feature=<ref>]` `[--feature-title=<title>]` `[--skip-skills]` `[--skip-agents]` `[--skip-mcp]` `[--force]`
+**Flags:** `[--provider=<providers>]` `[--worker-provider=<name>]` `[--feature=<ref>]` `[--feature-title=<title>]` `[--skip-skills]` `[--skip-agents]` `[--skip-mcp]` `[--force]`
 
 ### `orc start-session`
 
