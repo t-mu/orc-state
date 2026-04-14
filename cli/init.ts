@@ -94,7 +94,15 @@ const workerProviderFlag = flag('worker-provider');
 
 if (providerFlag) {
   providers = providerFlag.split(',').map((p) => p.trim()).filter(Boolean);
-  workerProvider = workerProviderFlag ?? (providers.length > 1 ? providers[1] : null);
+  if (workerProviderFlag) {
+    if (!providers.includes(workerProviderFlag)) {
+      console.error(`Error: --worker-provider '${workerProviderFlag}' is not in the selected providers: ${providers.join(', ')}`);
+      process.exit(1);
+    }
+    workerProvider = workerProviderFlag;
+  } else {
+    workerProvider = providers.length > 1 ? providers[1] : null;
+  }
   skipSkills = boolFlag('skip-skills');
   skipAgents = boolFlag('skip-agents');
   skipMcp = boolFlag('skip-mcp');

@@ -118,6 +118,20 @@ describe('cli/init.ts', () => {
     expect(config.worker_pool).toEqual({ provider: 'codex', max_workers: 1 });
   });
 
+  it('respects --worker-provider flag to override default worker provider', () => {
+    const result = run(['--provider=claude,codex', '--worker-provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    expect(result.status).toBe(0);
+    const config = JSON.parse(readFileSync(orcConfigPath, 'utf8'));
+    expect(config.default_provider).toBe('claude');
+    expect(config.worker_pool).toEqual({ provider: 'claude', max_workers: 1 });
+  });
+
+  it('rejects --worker-provider not in selected providers', () => {
+    const result = run(['--provider=claude', '--worker-provider=codex', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('not in the selected providers');
+  });
+
   it('works non-interactively with --provider flag', () => {
     const result = run(['--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
     expect(result.status).toBe(0);
