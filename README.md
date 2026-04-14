@@ -24,12 +24,13 @@ or [Gemini](https://github.com/google/gemini-cli)).
 ```bash
 npm install -g orc-state
 cd my-project
-orc init                              # first-time setup
-orc start-session --provider=claude   # start orchestrating
+orc init                    # pick providers, install skills/agents/MCP
+orc start-session           # start orchestrating
 ```
 
-That's it — the coordinator picks up tasks from your backlog and dispatches
-them to workers automatically.
+`orc init` walks you through provider selection and installs the skills,
+agent definitions, and MCP configuration your providers need. After init,
+`orc start-session` reads from your config — no flags required.
 
 ## How it works
 
