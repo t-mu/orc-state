@@ -115,13 +115,11 @@ if (providerFlag) {
     process.exit(1);
   }
 
-  if (providers.length > 1) {
-    workerProvider = await select({
-      message: 'Choose default provider for worker agents:',
-      choices: providers.map((p) => ({ name: p, value: p })),
-      default: providers[1] ?? providers[0],
-    });
-  }
+  workerProvider = await select({
+    message: 'Choose default provider for worker agents:',
+    choices: providers.map((p) => ({ name: p, value: p })),
+    default: providers.length > 1 ? providers[1] : providers[0],
+  });
 
   const installSkills = await confirm({ message: 'Install skills? (recommended)', default: true });
   const installAgents = await confirm({ message: 'Install agents? (recommended)', default: true });
@@ -148,7 +146,7 @@ for (const provider of providers) {
 const config: Record<string, unknown> = {};
 config.default_provider = providers[0];
 const pool: Record<string, unknown> = { max_workers: 1 };
-if (workerProvider && workerProvider !== providers[0]) {
+if (workerProvider) {
   pool.provider = workerProvider;
 }
 config.worker_pool = pool;
