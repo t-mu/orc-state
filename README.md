@@ -32,12 +32,16 @@ orc start-session           # start orchestrating
 agent definitions, and MCP configuration your providers need. After init,
 `orc start-session` reads from your config — no flags required.
 
+`orc start-session` starts the coordinator in the background and opens a
+master agent session in your terminal. If a coordinator is already running,
+it reuses it. You pick the provider for your master session at init time
+(or override with `--provider=<name>`).
+
 ## How it works
 
-After `orc start-session` starts, you're in a conversation with the master
-agent in your terminal. You can now start planning the work with the master
-and ask it to create tasks to the backlog. Discuss scope, break work into
-units, and the master writes task specs to `backlog/*.md`.
+You're now in a conversation with the master agent. Start planning the work
+— discuss scope, break it into units, and ask the master to create tasks.
+It writes task specs to `backlog/*.md`.
 
 Once tasks are in the backlog, the coordinator dispatches them to worker
 agents that execute each task in an isolated git worktree. You can monitor
