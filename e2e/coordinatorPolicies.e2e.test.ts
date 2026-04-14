@@ -187,12 +187,34 @@ describe('coordinator policy e2e', () => {
     expect((needInput!.payload as Record<string, unknown>).reason).toBe('run_progress_stale');
   });
 
-  it('marks agent offline when dispatch send fails and session becomes unreachable', async () => {
-    seedState({
-      taskStatus: 'todo',
-      claim: null,
-    });
-    let heartbeatCallCount = 0;
+  it('cleans up ephemeral worker and requeues task when dispatch send fails', async () => {
+    // Use managed pool: master-only, ephemeral workers spawned on demand
+    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+      version: '1',
+      features: [{ ref: 'docs', title: 'Docs', tasks: [{
+        ref: 'docs/task-1',
+        title: 'Task 1',
+        status: 'todo',
+        planning_state: 'ready_for_dispatch',
+        task_type: 'implementation',
+      }] }],
+    }));
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({
+      version: '1',
+      agents: [{
+        agent_id: 'master',
+        provider: 'claude',
+        role: 'master',
+        status: 'running',
+        session_handle: 'pty:master',
+        provider_ref: null,
+        registered_at: '2026-01-01T00:00:00Z',
+      }],
+    }));
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
+
     const adapter = {
       start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
         const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
@@ -212,13 +234,11 @@ describe('coordinator policy e2e', () => {
         });
       }),
       send: vi.fn().mockRejectedValue(new Error('dispatch boom')),
-      heartbeatProbe: vi.fn().mockImplementation(() => {
-        heartbeatCallCount++;
-        // Count 1: ensureSessionPoolReady on tick 1 → true
-        // Count 2: PID probe on tick 2 (claim is claimed) → true
-        // Count 3: post-dispatch-error check in sendTaskEnvelope → false (session unreachable)
-        return Promise.resolve(heartbeatCallCount <= 2);
-      }),
+      // heartbeat returns true during session startup, false after dispatch failure
+      // (simulating session becoming unreachable right when send fails)
+      heartbeatProbe: vi.fn()
+        .mockResolvedValueOnce(true)   // tick 2: probeActiveWorkerSessions
+        .mockResolvedValue(false),     // post-dispatch-error check → unreachable
       detectInputBlock: vi.fn().mockReturnValue(null),
       attach: vi.fn(),
       stop: vi.fn(),
@@ -227,25 +247,26 @@ describe('coordinator policy e2e', () => {
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
-    // Tick 1: claim task, start session (reported_for_duty emitted)
+    // Tick 1: claim task, spawn ephemeral worker (reported_for_duty emitted)
     await coordinator.tick();
     // Tick 2: process reported_for_duty, send envelope → send fails, session unreachable
     await coordinator.tick();
 
-    const claim = readClaims().claims[0];
-    expect(claim.state).toBe('failed');
+    // Task should be requeued
     const task = readBacklog().features[0].tasks[0];
     expect(task.status).toBe('todo');
 
-    const agents = readAgents().agents;
-    expect(agents.find((a) => a.agent_id === 'worker-01')!.status).toBe('offline');
+    // Ephemeral worker is removed entirely (not marked offline)
+    const workers = readAgents().agents.filter((a) => a.role === 'worker');
+    expect(workers).toHaveLength(0);
 
-    const runFailed = readEvents().find((e) => e.event === 'run_failed' && e.run_id === claim.run_id);
+    const events = readEvents();
+    const runFailed = events.find((e) => e.event === 'run_failed');
     expect(runFailed).toBeTruthy();
     expect((runFailed!.payload as Record<string, unknown>).code).toBe('ERR_DISPATCH_FAILURE');
-    const offlineEvent = readEvents().find((e) => e.event === 'agent_offline' && e.agent_id === 'worker-01');
-    expect(offlineEvent).toBeTruthy();
-    expect((offlineEvent!.payload as Record<string, unknown>).reason).toBe('dispatch_failed_session_unreachable');
+
+    delete process.env.ORC_MAX_WORKERS;
+    delete process.env.ORC_WORKER_PROVIDER;
   });
 
   it('throttles run_start nudges to configured interval', async () => {
@@ -408,27 +429,55 @@ describe('coordinator policy e2e', () => {
     expect(expiredEvents).toHaveLength(1);
   });
 
-  it('recovers from stale PTY session metadata and resumes dispatch safely', async () => {
-    seedState({ taskStatus: 'todo', claim: null });
+  it('dispatches task via ephemeral worker in managed pool', async () => {
+    // Use managed pool: master-only, ephemeral workers spawned on demand
+    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
+      version: '1',
+      features: [{ ref: 'docs', title: 'Docs', tasks: [{
+        ref: 'docs/task-1',
+        title: 'Task 1',
+        status: 'todo',
+        planning_state: 'ready_for_dispatch',
+        task_type: 'implementation',
+      }] }],
+    }));
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{
-        agent_id: 'worker-01',
+        agent_id: 'master',
         provider: 'claude',
-        role: 'worker',
-        capabilities: [],
+        role: 'master',
         status: 'running',
-        session_handle: 'pty:worker-01',
-        provider_ref: { pid: 999999, provider: 'claude', binary: 'claude' },
+        session_handle: 'pty:master',
+        provider_ref: null,
         registered_at: '2026-01-01T00:00:00Z',
-        last_heartbeat_at: null,
       }],
     }));
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'claude';
 
+    let spawnedAgentId: string | null = null;
     const adapter = {
       heartbeatProbe: vi.fn().mockResolvedValue(true),
-      ownsSession: vi.fn().mockReturnValue(false),
-      start: vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01-new', provider_ref: { pid: 12345 } }),
+      start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
+        spawnedAgentId = _agentId;
+        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        if (sessionToken) {
+          appendSequencedEvent(dir, {
+            ts: new Date().toISOString(),
+            event: 'reported_for_duty',
+            actor_type: 'agent',
+            actor_id: _agentId,
+            agent_id: _agentId,
+            payload: { session_token: sessionToken },
+          });
+        }
+        return Promise.resolve({
+          session_handle: createSessionHandle(_agentId),
+          provider_ref: { pid: 12345 },
+        });
+      }),
       send: vi.fn().mockResolvedValue(''),
       attach: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
@@ -438,19 +487,26 @@ describe('coordinator policy e2e', () => {
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
     const coordinator = await import('../coordinator.ts');
+    // Tick 1: spawn ephemeral worker
+    await coordinator.tick();
+    // Tick 2: process reported_for_duty, dispatch envelope
     await coordinator.tick();
 
-    const agent = readAgents().agents[0];
-    expect(agent.status).toBe('running');
-    expect(agent.session_handle).toBe('pty:worker-01-new');
-    expect(adapter.stop).toHaveBeenCalledWith('pty:worker-01');
+    expect(spawnedAgentId).toBeTruthy();
+    const agent = readAgents().agents.find((a) => a.agent_id === spawnedAgentId);
+    expect(agent).toBeDefined();
+    expect(agent!.status).toBe('running');
+    expect(agent!.session_handle).toMatch(/^pty:/);
 
     const claims = readClaims().claims.filter((c) => ['claimed', 'in_progress', 'done'].includes(c.state as string));
     expect(claims).toHaveLength(1);
     const task = readBacklog().features[0].tasks.find((t) => t.ref === 'docs/task-1');
     expect(task!.status).not.toBe('todo');
     const events = readEvents();
-    expect(events.some((event) => event.event === 'claim_created' && event.agent_id === 'worker-01')).toBe(true);
+    expect(events.some((event) => event.event === 'claim_created' && event.agent_id === spawnedAgentId)).toBe(true);
+
+    delete process.env.ORC_MAX_WORKERS;
+    delete process.env.ORC_WORKER_PROVIDER;
   });
 });
 
