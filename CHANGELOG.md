@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-04-14
+
+### Added
+
+- add interactive worker provider prompt
+- spawn task-scoped workers with dynamic provider routing
+- update live worker views and remove persistent-slot assumptions
+- introduce ephemeral worker naming and shared capacity
+
+### Changed
+
+- add --worker-provider flag to orc init documentation
+- explain start-session behavior between quick start and how it works
+- fix quick start — drop --provider flag, explain orc init
+- mark task done
+- mark task done
+- update architecture docs for ephemeral task-scoped workers
+- mark task done
+- mark task done
+- add dynamic worker architecture tasks
+
+### Fixed
+
+- validate --worker-provider, add tests, fix stale getting-started text
+- always show worker provider prompt, not just for multi-provider
+- move env var cleanup to afterEach for test isolation
+- update e2e tests for dynamic ephemeral worker model
+
+### Other
+
+- address review findings, fix coordinator test regressions
+
 ## [0.1.2] - 2026-04-13
 
 ### Fixed
