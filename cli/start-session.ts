@@ -17,7 +17,7 @@
  *   2. Reuse/replace/register the foreground master session
  *   3. Start the master provider CLI in this terminal
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -193,7 +193,22 @@ function escapeTomlString(value: string) {
   return JSON.stringify(value);
 }
 
-function resolveActiveCheckoutRoot(cwd: string = process.cwd()) {
+function resolveInvocationCwd(cwd: string = process.cwd()) {
+  const shellPwd = process.env.PWD;
+  if (!shellPwd) return cwd;
+  try {
+    const shellStats = statSync(shellPwd);
+    const cwdStats = statSync(cwd);
+    if (shellStats.dev === cwdStats.dev && shellStats.ino === cwdStats.ino) {
+      return shellPwd;
+    }
+  } catch {
+    // Fall back to the canonical cwd if either path is unavailable.
+  }
+  return cwd;
+}
+
+function resolveActiveCheckoutRoot(cwd: string = resolveInvocationCwd()) {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
     cwd,
     encoding: 'utf8',
@@ -454,7 +469,7 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       name: 'xterm-256color',
       cols: process.stdout.columns ?? 220,
       rows: process.stdout.rows ?? 50,
-      cwd: process.cwd(),
+      cwd: resolveInvocationCwd(),
       env: process.env as Record<string, string>,
     });
     const startedAt = new Date().toISOString();

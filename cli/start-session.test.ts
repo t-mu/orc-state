@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync }     from 'node:child_process';
@@ -8,6 +8,7 @@ import { queryEvents } from '../lib/eventLog.ts';
 const repoRoot = resolve(import.meta.dirname, '..');
 const coordinatorScriptPath = resolve(import.meta.dirname, '..', 'coordinator.ts');
 const originalCwd = process.cwd();
+const originalPwd = process.env.PWD;
 let dir: string;
 
 beforeEach(() => {
@@ -30,6 +31,11 @@ afterEach(() => {
   vi.doUnmock('node-pty');
   vi.doUnmock('node:child_process');
   process.chdir(originalCwd);
+  if (originalPwd === undefined) {
+    delete process.env.PWD;
+  } else {
+    process.env.PWD = originalPwd;
+  }
   delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_REPO_ROOT;
   cleanupTempStateDir(dir);
@@ -1018,6 +1024,7 @@ describe('cli/start-session.ts', () => {
       setEnv(dir);
       seedCoordinatorRunning();
       process.chdir(nestedCwd);
+      process.env.PWD = nestedCwd;
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
 
@@ -1061,6 +1068,7 @@ describe('cli/start-session.ts', () => {
       setEnv(dir);
       seedCoordinatorRunning();
       process.chdir(nestedCwd);
+      process.env.PWD = nestedCwd;
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
 
@@ -1091,12 +1099,47 @@ describe('cli/start-session.ts', () => {
       setEnv(dir);
       seedCoordinatorRunning();
       process.chdir(nestedCwd);
+      process.env.PWD = nestedCwd;
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
 
       expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(true);
       const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[], Record<string, unknown>] | undefined;
       expect(providerCall?.[2]).toEqual(expect.objectContaining({ cwd: nestedCwd }));
+    });
+
+    it('prefers the shell PWD spelling when it aliases the active checkout path', async () => {
+      seedState([masterAgent({ provider: 'codex' })]);
+      const checkoutRoot = join(dir, 'checkout');
+      const realNestedCwd = join(checkoutRoot, 'packages', 'app');
+      const shellCheckoutRoot = join(dir, 'checkout-shell');
+      const shellNestedCwd = join(shellCheckoutRoot, 'packages', 'app');
+      mkdirSync(realNestedCwd, { recursive: true });
+      symlinkSync(checkoutRoot, shellCheckoutRoot, 'dir');
+      const spawnMock = makeSpawnMock();
+      const spawnSyncMock = vi.fn().mockImplementation((command: string, args: string[] = [], options?: { cwd?: string }) => {
+        if (command === 'git' && args.includes('--show-toplevel')) {
+          expect(options?.cwd).toBe(shellNestedCwd);
+          return { status: 0, stdout: `${shellCheckoutRoot}\n` };
+        }
+        if (command === 'ps') {
+          return { status: 0, stdout: `node ${coordinatorScriptPath}` };
+        }
+        return { status: 0, stdout: `node ${coordinatorScriptPath}` };
+      });
+      mockSpawn(spawnMock, spawnSyncMock);
+      mockBinaryCheck(true);
+
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.chdir(realNestedCwd);
+      process.env.PWD = shellNestedCwd;
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
+
+      expect(existsSync(join(shellCheckoutRoot, '.codex', 'config.toml'))).toBe(true);
+      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[], Record<string, unknown>] | undefined;
+      expect(providerCall?.[2]).toEqual(expect.objectContaining({ cwd: shellNestedCwd }));
     });
 
     it('replaces an existing Codex orchestrator stanza instead of duplicating it', async () => {
