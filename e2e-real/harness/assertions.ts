@@ -117,7 +117,7 @@ export async function waitForWorkerDispatches(
   options: WaitOptions,
 ): Promise<OrcEvent[]> {
   let found: OrcEvent[] = [];
-  return waitUntil(() => {
+  await waitUntil(() => {
     try {
       const events = queryEvents(stateDir, {
         event_type: 'run_started',
@@ -125,7 +125,7 @@ export async function waitForWorkerDispatches(
       });
       const expected = new Set(taskRefs);
       found = events.filter((event) => {
-        const taskRef: unknown = event.task_ref;
+        const taskRef: unknown = (event as unknown as Record<string, unknown>).task_ref;
         return typeof taskRef === 'string' && expected.has(taskRef);
       });
       return found.length >= expected.size;
