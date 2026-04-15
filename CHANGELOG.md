@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.2.4] - 2026-04-15
+## [0.2.5] - 2026-04-15
+
+### Fixed
+
+- filter internal changelog commits
+- preserve shell cwd spelling
+- repair dispatch assertion typing
+- align smoke tests with task-scoped workers## [0.2.4] - 2026-04-15
 
 ### Fixed
 
