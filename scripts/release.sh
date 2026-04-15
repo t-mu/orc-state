@@ -107,66 +107,11 @@ else
   echo "  range: full history (no previous tag found)"
 fi
 
-# Read commits, parse conventional prefixes, group by category.
-# Skip release commits to avoid recursion.
-COMMITS=$(git log "$COMMIT_RANGE" --pretty=format:"%s" --no-merges \
-  | grep -v '^chore(release):' \
-  || true)
-
-ADDED=""
-FIXED=""
-CHANGED=""
-OTHER=""
-
-classify_commit() {
-  # Echoes one of: feat, fix, changed, other
-  # Matches conventional commit prefixes with optional (scope).
-  # Aligned with Keep a Changelog standard categories (Added, Changed, Fixed).
-  # docs/refactor/chore commits all fold into "Changed".
-  local msg="$1"
-  local prefix
-  # Extract everything before the first ":" — that's the type[(scope)]
-  prefix="${msg%%:*}"
-  # Strip optional (scope)
-  prefix="${prefix%%(*}"
-  case "$prefix" in
-    feat)                       echo "feat" ;;
-    fix)                        echo "fix" ;;
-    refactor|chore|docs|test)   echo "changed" ;;
-    *)                          echo "other" ;;
-  esac
-}
-
-extract_summary() {
-  # Strip the "type[(scope)]: " prefix from a conventional commit message.
-  # If no prefix matches, returns the original message unchanged.
-  local msg="$1"
-  case "$msg" in
-    *:\ *)  echo "${msg#*: }" ;;
-    *)      echo "$msg" ;;
-  esac
-}
-
-while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  category=$(classify_commit "$line")
-  summary=$(extract_summary "$line")
-  case "$category" in
-    feat)     ADDED="${ADDED}- ${summary}"$'\n' ;;
-    fix)      FIXED="${FIXED}- ${summary}"$'\n' ;;
-    changed)  CHANGED="${CHANGED}- ${summary}"$'\n' ;;
-    *)        OTHER="${OTHER}- ${summary}"$'\n' ;;
-  esac
-done <<< "$COMMITS"
-
-# Build the new section
 DATE=$(date -u +%Y-%m-%d)
-NEW_SECTION="## [${NEW_VERSION}] - ${DATE}"$'\n\n'
-
-[ -n "$ADDED" ]   && NEW_SECTION="${NEW_SECTION}### Added"$'\n\n'"${ADDED}"$'\n'
-[ -n "$CHANGED" ] && NEW_SECTION="${NEW_SECTION}### Changed"$'\n\n'"${CHANGED}"$'\n'
-[ -n "$FIXED" ]   && NEW_SECTION="${NEW_SECTION}### Fixed"$'\n\n'"${FIXED}"$'\n'
-[ -n "$OTHER" ]   && NEW_SECTION="${NEW_SECTION}### Other"$'\n\n'"${OTHER}"$'\n'
+COMMITS=$(git log "$COMMIT_RANGE" --pretty=format:"%s" --no-merges || true)
+NEW_SECTION=$(printf '%s\n' "$COMMITS" | node "${SCRIPT_DIR}/release-notes.ts" \
+  --version="${NEW_VERSION}" \
+  --date="${DATE}")
 
 # ── Step 5: Prepend to CHANGELOG.md ───────────────────────────────────────
 echo "→ Updating CHANGELOG.md..."

@@ -3,7 +3,7 @@ ref: release-automation/175-filter-internal-workflow-commits-from-changelog
 feature: release-automation
 review_level: full
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 175 — Filter Internal Workflow Commits from Release Changelog
