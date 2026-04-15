@@ -102,31 +102,38 @@ export async function waitForRunEvent(
   return found!;
 }
 
-// ── Worker reuse polling ────────────────────────────────────────────────────
+// ── Worker dispatch polling ─────────────────────────────────────────────────
 
 /**
- * Wait for an agent to be reused for a second run (two `run_started` events
- * recorded for the same agent slot).
+ * Wait for `run_started` events to appear for all expected task refs.
  *
  * @param stateDir - Path to `.orc-state` in the temp repo.
- * @param agentId  - Agent ID to watch (e.g. `'orc-1'`).
+ * @param taskRefs - Task refs that must each have a corresponding `run_started`.
  * @param options  - Stage label and timeout.
  */
-export async function waitForWorkerReuse(
+export async function waitForWorkerDispatches(
   stateDir: string,
-  agentId: string,
+  taskRefs: string[],
   options: WaitOptions,
-): Promise<void> {
+): Promise<OrcEvent[]> {
+  let found: OrcEvent[] = [];
   return waitUntil(() => {
     try {
-      // queryEvents filters by agent_id at the DB level; count run_started events for this agent
-      const events = queryEvents(stateDir, { agent_id: agentId });
-      const startCount = events.filter((e) => e.event === 'run_started').length;
-      return startCount >= 2;
+      const events = queryEvents(stateDir, {
+        event_type: 'run_started',
+        limit: Math.max(20, taskRefs.length * 10),
+      });
+      const expected = new Set(taskRefs);
+      found = events.filter((event) => {
+        const taskRef: unknown = event.task_ref;
+        return typeof taskRef === 'string' && expected.has(taskRef);
+      });
+      return found.length >= expected.size;
     } catch {
       return false;
     }
   }, options);
+  return found;
 }
 
 // ── Path containment assertions ─────────────────────────────────────────────

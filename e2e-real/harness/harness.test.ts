@@ -23,7 +23,7 @@ import {
 import {
   waitForTaskStatus,
   waitForRunEvent,
-  waitForWorkerReuse,
+  waitForWorkerDispatches,
   assertPathsInside,
   assertRuntimePathsInside,
 } from './assertions.ts';
@@ -55,7 +55,7 @@ describe('seedManagedWorkerBaseline', () => {
     expect(log.stdout).toContain('chore: add smoke backlog specs');
   });
 
-  it('seeds the managed-worker dispatch baseline without a master session', () => {
+  it('seeds the task-scoped worker dispatch baseline without a master session', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
@@ -63,15 +63,9 @@ describe('seedManagedWorkerBaseline', () => {
       { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
     ]);
 
-    // agents.json: one managed slot, idle, no session handle, no master
+    // agents.json: no pre-registered workers and no master
     const agents = JSON.parse(readFileSync(join(repo.stateDir, 'agents.json'), 'utf8'));
-    expect(agents.agents).toHaveLength(1);
-    const worker = agents.agents[0];
-    expect(worker.agent_id).toBe('orc-1');
-    expect(worker.role).toBe('worker');
-    expect(worker.status).toBe('idle');
-    expect(worker.session_handle).toBeNull();
-    // Critically: no master agent seeded
+    expect(agents.agents).toHaveLength(0);
     expect(agents.agents.every((a: Record<string, unknown>) => a.role !== 'master')).toBe(true);
 
     // backlog.json: task in todo + ready_for_dispatch
@@ -440,37 +434,36 @@ describe('blessedTasks fixtures', () => {
   });
 });
 
-// ── waitForWorkerReuse ──────────────────────────────────────────────────────
+// ── waitForWorkerDispatches ─────────────────────────────────────────────────
 
-describe('waitForWorkerReuse', () => {
-  it('times out when fewer than two run_started events exist', async () => {
+describe('waitForWorkerDispatches', () => {
+  it('times out when an expected task has no run_started event', async () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
     initEventsDb(repo.stateDir);
 
-    // Seed only one run_started event — reuse requires two
     appendSequencedEvent(repo.stateDir, {
       ts: new Date().toISOString(),
       event: 'run_started',
       actor_type: 'agent',
-      actor_id: 'orc-1',
+      actor_id: 'amber-anchor',
       run_id: 'run-reuse-001',
       task_ref: BLESSED_TASK_1.ref,
-      agent_id: 'orc-1',
+      agent_id: 'amber-anchor',
       payload: {},
     });
 
     await expect(
-      waitForWorkerReuse(repo.stateDir, 'orc-1', {
-        stage: 'worker_reuse',
+      waitForWorkerDispatches(repo.stateDir, [BLESSED_TASK_1.ref, BLESSED_TASK_2.ref], {
+        stage: 'worker_dispatches',
         timeoutMs: 100,
         pollMs: 20,
       }),
-    ).rejects.toThrow(/timeout waiting for stage 'worker_reuse'/);
+    ).rejects.toThrow(/timeout waiting for stage 'worker_dispatches'/);
   });
 
-  it('resolves when two run_started events exist for the same agent', async () => {
+  it('resolves when run_started events exist for both expected tasks', async () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
@@ -484,17 +477,67 @@ describe('waitForWorkerReuse', () => {
         ts: new Date().toISOString(),
         event: 'run_started',
         actor_type: 'agent',
-        actor_id: 'orc-1',
+        actor_id: 'amber-anchor',
         run_id: runId,
         task_ref: taskRef,
-        agent_id: 'orc-1',
+        agent_id: 'amber-anchor',
         payload: {},
       });
     }
 
     await expect(
-      waitForWorkerReuse(repo.stateDir, 'orc-1', {
-        stage: 'worker_reuse',
+      waitForWorkerDispatches(repo.stateDir, [BLESSED_TASK_1.ref, BLESSED_TASK_2.ref], {
+        stage: 'worker_dispatches',
+        timeoutMs: 1000,
+        pollMs: 50,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('resolves when later lifecycle noise pushes the second run_started past the default event window', async () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    initEventsDb(repo.stateDir);
+
+    appendSequencedEvent(repo.stateDir, {
+      ts: new Date().toISOString(),
+      event: 'run_started',
+      actor_type: 'agent',
+      actor_id: 'amber-anchor',
+      run_id: 'run-reuse-001',
+      task_ref: BLESSED_TASK_1.ref,
+      agent_id: 'amber-anchor',
+      payload: {},
+    });
+
+    for (let i = 0; i < 75; i++) {
+      appendSequencedEvent(repo.stateDir, {
+        ts: new Date().toISOString(),
+        event: 'heartbeat',
+        actor_type: 'agent',
+        actor_id: 'amber-anchor',
+        run_id: 'run-noise',
+        task_ref: BLESSED_TASK_1.ref,
+        agent_id: 'amber-anchor',
+        payload: { index: i },
+      });
+    }
+
+    appendSequencedEvent(repo.stateDir, {
+      ts: new Date().toISOString(),
+      event: 'run_started',
+      actor_type: 'agent',
+      actor_id: 'amber-anchor',
+      run_id: 'run-reuse-002',
+      task_ref: BLESSED_TASK_2.ref,
+      agent_id: 'amber-anchor',
+      payload: {},
+    });
+
+    await expect(
+      waitForWorkerDispatches(repo.stateDir, [BLESSED_TASK_1.ref, BLESSED_TASK_2.ref], {
+        stage: 'worker_dispatches',
         timeoutMs: 1000,
         pollMs: 50,
       }),

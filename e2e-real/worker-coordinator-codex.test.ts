@@ -10,7 +10,7 @@
  * What this test covers:
  *   - Coordinator dispatches a real Codex worker session for task 1
  *   - Worker completes task 1 via the full phased lifecycle
- *   - Coordinator dispatches the same worker slot for task 2 (worker reuse)
+ *   - Coordinator dispatches task-scoped workers for both sequential tasks
  *   - Worker completes task 2 via the full phased lifecycle
  *   - Lifecycle events appear in the event log in correct order
  *   - All orchestrator-managed paths (state, worktrees) remain inside the temp repo
@@ -32,7 +32,7 @@ import { requireProviderReady } from './harness/providerReadiness.ts';
 import { startCoordinator, type CoordinatorRunner } from './harness/coordinatorRunner.ts';
 import {
   waitForTaskStatus,
-  waitForWorkerReuse,
+  waitForWorkerDispatches,
   assertRuntimePathsInside,
 } from './harness/assertions.ts';
 import {
@@ -50,8 +50,8 @@ const ENABLED = process.env.RUN_REAL_PROVIDERS === '1' || process.env.RUN_REAL_P
 // the full phased workflow, especially sub-agent review spawning.
 const TASK_TIMEOUT_MS = 900_000;
 
-// Worker reuse check timeout: short since this is checked after both tasks done.
-const WORKER_REUSE_TIMEOUT_MS = 10_000;
+// Worker dispatch check timeout: short since this is checked after both tasks done.
+const WORKER_DISPATCH_TIMEOUT_MS = 10_000;
 
 // Coordinator startup timeout: 30 seconds.
 const COORDINATOR_STARTUP_MS = 30_000;
@@ -89,7 +89,7 @@ describe.skipIf(!ENABLED)('coordinator + real Codex worker smoke', () => {
     );
     repo.commitAll('chore: add smoke backlog specs');
 
-    // Seed the managed-worker dispatch baseline (no master session needed).
+    // Seed the task-scoped worker dispatch baseline (no master session needed).
     // Task 2 depends_on task 1 to enforce sequential dispatch order.
     seedManagedWorkerBaseline(
       repo.stateDir,
@@ -137,11 +137,11 @@ describe.skipIf(!ENABLED)('coordinator + real Codex worker smoke', () => {
         timeoutMs: TASK_TIMEOUT_MS,
       });
 
-      // ── Worker reuse ────────────────────────────────────────────────────
-      // The same agent slot (orc-1) must have emitted run_started for both runs.
-      await waitForWorkerReuse(repo.stateDir, 'orc-1', {
-        stage: 'worker_reuse',
-        timeoutMs: WORKER_REUSE_TIMEOUT_MS,
+      // ── Worker dispatches ───────────────────────────────────────────────
+      // Each blessed task must have produced a run_started event.
+      await waitForWorkerDispatches(repo.stateDir, [BLESSED_TASK_1.ref, BLESSED_TASK_2.ref], {
+        stage: 'worker_dispatches',
+        timeoutMs: WORKER_DISPATCH_TIMEOUT_MS,
       });
 
       // ── Path containment ────────────────────────────────────────────────
