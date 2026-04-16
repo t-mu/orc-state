@@ -23,6 +23,10 @@ export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
   ? resolve(process.env.ORC_BACKLOG_DIR)
   : resolve(resolveRepoRoot(), 'backlog');
 
+export const PLANS_DIR = process.env.ORC_PLANS_DIR
+  ? resolve(process.env.ORC_PLANS_DIR)
+  : resolve(resolveRepoRoot(), 'plans');
+
 /** Path to per-agent hook-events NDJSON file written by the Notification hook. */
 export function hookEventPath(agentId: string): string {
   return join(STATE_DIR, 'pty-hook-events', `${agentId}.ndjson`);
