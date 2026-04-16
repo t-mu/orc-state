@@ -3,7 +3,7 @@ ref: lifecycle-verbs/179-implement-spec-task-from-saved-plans
 feature: lifecycle-verbs
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - lifecycle-verbs/176-add-plan-artifact-contract-and-lookup
   - lifecycle-verbs/177-extract-file-backed-plan-to-backlog-engine

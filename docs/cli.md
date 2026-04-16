@@ -237,6 +237,36 @@ See `plans/TEMPLATE.md` for the baseline artifact. Parsing, lookup
 (`findPlanById`), and id allocation (`nextPlanId`) helpers live in
 `lib/planDocs.ts`.
 
+### Turning a plan into backlog tasks — `/spec`
+
+`/spec` is an agent-agnostic skill (`skills/spec/SKILL.md`) that converts a
+plan into backlog task specs. It has two invocation forms; both flow through
+the same MCP tools (`spec_preview`, `spec_publish`) and the same file-backed
+engine (`lib/planToBacklog.ts`).
+
+- **`/spec plan <id>`** — reads the saved plan at `plans/<id>-*.md`, shows a
+  preview of the proposed backlog specs, asks for confirmation, then
+  publishes. Runs entirely inside the invoking agent's worktree.
+- **`/spec` (no args)** — conversational fallback. Extracts the most recent
+  numbered plan printed in the conversation, persists it via `plan_write`
+  into `plans/`, then continues through the same preview/publish pipeline so
+  every plan ends up on disk with the same contract.
+
+`spec_publish` stages generated specs under
+`.orc-state/plan-staging/<plan_id>/` as its concurrency lock, then moves them
+into the worktree's `backlog/` and writes `derived_task_refs` back into the
+plan file. It does NOT touch `.orc-state/backlog.json` or git — the skill
+commits the worktree and merges to main using the AGENTS.md cleanup ordering.
+The coordinator's auto-sync tick picks up the new specs from main on its
+next pass.
+
+Hard failures (no overrides):
+
+- `confirm !== true` on `spec_publish`
+- plan already has non-empty `derived_task_refs` (regeneration is a future
+  task — create a new plan instead)
+- stale `.orc-state/plan-staging/<plan_id>/` directory already exists
+
 ---
 
 ## Inspection

@@ -303,18 +303,32 @@ The repo has two first-class artifact directories:
 ### Lifecycle verbs
 
 Lifecycle verbs are agent-agnostic MCP-backed workflows any caller (master,
-worker, automation) can invoke. They author and publish artifacts under
-`plans/` and `backlog/`.
+worker, automation) can invoke from inside a fresh worktree. They author and
+publish artifacts under `plans/` and `backlog/`. Each verb pairs a skill
+(prompt/UI surface) with one or more MCP tools (engine + state contract):
 
 - `/plan` — interactive plan authoring. See `skills/plan/SKILL.md`. Backed
   by the `plan_write` MCP tool, which writes `plans/<plan_id>-<slug>.md`
   **only inside the current worktree**. The tool does not touch
-  `.orc-state/backlog.json`, main, or git. Run `/plan` inside a fresh
-  worktree per the worker worktree workflow above, then commit, merge to
-  main, and clean up in the order specified under **Worktree cleanup
-  ordering**. Feature-slug collisions with unrelated existing features are
-  rejected unless the caller sets `acknowledge_feature_collision: true`
-  after disambiguating with the user.
+  `.orc-state/backlog.json`, main, or git. Feature-slug collisions with
+  unrelated existing features are rejected unless the caller sets
+  `acknowledge_feature_collision: true` after disambiguating with the user.
+- `/spec plan <id>` and `/spec` (conversational fallback) — handled by
+  `skills/spec/SKILL.md`, backed by the `spec_preview` and `spec_publish`
+  MCP tools. Produces backlog task specs from a saved plan artifact. Stages
+  files under `.orc-state/plan-staging/<plan_id>/` as a concurrency lock
+  before moving them into the worktree's `backlog/`. Hard-fails on a
+  pre-existing non-empty `derived_task_refs` or a stale staging directory
+  — there are no override flags. The conversational form calls `plan_write`
+  to persist the extracted plan before proceeding through the same
+  preview/publish pipeline.
+
+Invocation contract for every verb: run inside a fresh `.worktrees/<run_id>`
+worktree per the worker worktree workflow above, then commit, merge to main,
+and clean up in the order specified under **Worktree cleanup ordering**.
+The coordinator's auto-sync tick picks up the new specs on its next pass —
+verbs do not mutate `.orc-state/backlog.json` directly and do not call
+`orc backlog-sync-check` as part of the flow.
 
 ### Execution Modes
 

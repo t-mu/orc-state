@@ -189,6 +189,19 @@ memory_store(content, wing?, hall?, room?, importance?, sourceType?, sourceRef?)
 memory_status()
   Return memory statistics: total drawers, distinct wings/rooms, oldest/newest memory, DB size.
 
+LIFECYCLE VERBS
+
+spec_preview(plan_id)
+  Preview the backlog task specs that would be generated from plans/<plan_id>-*.md.
+  Pure read — no files written, no state mutated. Pairs with spec_publish.
+
+spec_publish(plan_id, confirm)
+  Publish a saved plan into backlog task specs inside the invoking agent's worktree.
+  Stages under .orc-state/plan-staging/<plan_id>/ as a concurrency lock, writes specs
+  to backlog/, and updates the plan file with derived_task_refs.
+  `confirm` MUST be the literal boolean true. Does NOT touch .orc-state/backlog.json
+  or git — the caller commits and merges per AGENTS.md. Invoke through the /spec skill.
+
 TYPICAL FLOW
 
 Planning new work:

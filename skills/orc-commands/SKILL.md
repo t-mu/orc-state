@@ -108,12 +108,21 @@ Workers emit these from inside their PTY session via Bash tool:
 ### Lifecycle verbs (MCP tools + skills)
 
 Agent-agnostic workflows for authoring plans and backlog tasks. Any caller
-may invoke them — they have no master affinity. See the individual skills
-for the full flow.
+may invoke them from inside a fresh worktree — they have no master affinity.
+See the individual skills for the full flow.
 
 | MCP tool | Skill | Purpose |
 |----------|-------|---------|
 | `plan_write` | `/plan` (`skills/plan/SKILL.md`) | Persist a fully-specified plan artifact to `plans/<plan_id>-<slug>.md` within the current worktree. Allocates `plan_id` atomically, validates all required sections, writes `derived_task_refs: []`, rejects unresolved placeholders, and hard-fails on unrelated feature-slug collisions unless `acknowledge_feature_collision: true` is set. Does NOT touch `.orc-state/backlog.json`, git, or any file outside the worktree — commit and merge are the skill's responsibility. |
+| `spec_preview` | `/spec` (`skills/spec/SKILL.md`) | Preview the backlog task specs that would be generated from `plans/<plan_id>-*.md`. Pure read — no files written, no state mutated. Pair with `spec_publish`. |
+| `spec_publish` | `/spec` (`skills/spec/SKILL.md`) | Publish generated specs into the current worktree's `backlog/` and write `derived_task_refs` back into the plan file. Stages under `<state_dir>/plan-staging/<plan_id>/` as a concurrency lock. Hard-fails if `confirm !== true`, if the plan already has non-empty `derived_task_refs`, or if the staging directory already exists. Does NOT touch `.orc-state/backlog.json` or git — the caller commits and merges per AGENTS.md. |
+
+Both `spec_*` tools accept an optional `worktree_path` that targets a
+specific worktree. Recommended for worker-initiated calls — the MCP
+server's own cwd is the main checkout, not the worktree. `/spec plan <id>`
+uses a saved plan artifact directly; `/spec` (no args) takes the most
+recent printed plan from the conversation, persists it via `plan_write`,
+then continues through preview/publish.
 
 ### Input Request / Response
 
