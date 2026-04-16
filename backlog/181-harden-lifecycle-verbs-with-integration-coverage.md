@@ -3,7 +3,7 @@ ref: lifecycle-verbs/181-harden-lifecycle-verbs-with-integration-coverage
 feature: lifecycle-verbs
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - lifecycle-verbs/179-implement-spec-task-from-saved-plans
   - lifecycle-verbs/180-implement-interactive-plan-authoring-workflow
