@@ -384,21 +384,11 @@ into `.claude/skills/` or `.codex/skills/`. The packaged skills include:
 | `worker-inspect` | Inspect worker state via MCP orchestrator tools. |
 
 The `spec` skill delegates structural decisions to a pure engine at
-`lib/planToBacklog.ts`. Given a parsed plan input, the engine returns a list
-of proposed backlog tasks with inferred dependencies and grouped steps:
-
-```ts
-type ProposedTask = {
-  title: string;
-  slug: string;                 // "<N>-<kebab-title>"
-  ref: string;                  // "<feature>/<slug>"
-  description: string;
-  dependsOn: string[];          // refs within this batch
-  reviewLevel: 'none' | 'light' | 'full';
-  stepNumbers: number[];
-  feature: string;              // == plan.name
-};
-```
-
-`reviewLevel` matches the enum consumed by `lib/backlogSync.ts`, and every
-`ProposedTask.feature` is stamped from the plan's `name` field.
+[`lib/planToBacklog.ts`](../lib/planToBacklog.ts) (authoritative source of the
+`PlanInput` and `ProposedTask` types). Given a parsed plan input, the engine
+returns a list of proposed backlog tasks with inferred dependencies and
+grouped steps. Each `ProposedTask` carries a title, a `<N>-<kebab-title>`
+slug, a `<feature>/<slug>` ref, a description, an intra-batch `dependsOn`
+ref list, a `reviewLevel` matching the enum consumed by
+`lib/backlogSync.ts`, the merged plan step numbers, and a `feature` stamp
+copied from the plan's `name` field.

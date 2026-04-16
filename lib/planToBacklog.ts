@@ -54,8 +54,10 @@ function combineReviewLevels(levels: (ReviewLevel | undefined)[]): ReviewLevel {
 
 function formatDescription(steps: PlanStepInput[]): string {
   if (steps.length === 1) return steps[0].body.trim();
+  // Prefix with "Plan Step" so the number is not confused with the backlog
+  // task number when merged-step bodies land in a generated task spec.
   return steps
-    .map((step) => `### Step ${step.number} — ${step.title}\n\n${step.body.trim()}`)
+    .map((step) => `### Plan Step ${step.number} — ${step.title}\n\n${step.body.trim()}`)
     .join('\n\n');
 }
 
