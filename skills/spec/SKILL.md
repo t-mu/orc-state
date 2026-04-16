@@ -2,9 +2,9 @@
 name: spec
 description: >
   Converts an approved plan into a complete set of registered backlog task specs
-  in one shot — with dependency inference, a preview, and a sync-check gate.
-  Prefers a saved plan artifact under `plans/<plan_id>-*.md` (invoke as
-  `/spec plan <id>`) and falls back to the most recent numbered plan printed in
+  in one shot — with dependency inference and a preview. Prefers a saved plan
+  artifact under `plans/<plan_id>-*.md` (invoke as `/spec plan <id>`) and falls
+  back to the most recent numbered plan printed in
   the current conversation (invoke as `/spec`). Use when a plan exists — either
   on disk or already printed above — and the user wants all of its steps turned
   into task files. Trigger phrases include "create tasks from that", "turn
