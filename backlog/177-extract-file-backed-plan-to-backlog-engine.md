@@ -15,12 +15,13 @@ Depends on Task 176. Blocks Tasks 179 and 181.
 ## Scope
 
 **In scope:**
-- Refactor the current `plan-to-tasks` logic into a reusable plan-to-backlog engine that consumes structured saved-plan input rather than conversational context.
+- Refactor the current `plan-to-tasks` logic into a reusable plan-to-backlog engine that consumes structured parsed-plan input (either from a saved plan file or from a conversationally-extracted plan) rather than reading from conversation context directly.
+- Rename the existing `skills/plan-to-tasks/` skill directory to `skills/spec/` and update its content to prefer saved plan artifacts while **retaining the conversational fallback** for agents invoking `/spec` with no saved plan.
 - Preserve dependency inference, grouping, preview data preparation, and `create-task`-quality task-shape expectations.
-- Add focused tests for engine behavior on saved plan input.
+- Add focused tests for engine behavior on parsed plan input.
 
 **Out of scope:**
-- Wiring `/spec task <id>` into the master command path.
+- Exposing the engine as MCP tools or wiring it into `/spec` (see Task 179).
 - Writing backlog task files or syncing them to runtime state.
 - Interactive `/plan` authoring.
 
@@ -28,7 +29,7 @@ Depends on Task 176. Blocks Tasks 179 and 181.
 
 ## Context
 
-The existing `skills/plan-to-tasks/SKILL.md` is useful, but it assumes the plan already exists in the current conversation. The approved lifecycle-verbs design flips the source of truth: a saved file in `plans/` becomes the authoritative plan input, and later `/spec task <id>` flows should reuse one deterministic engine for grouping steps into backlog task specs.
+The existing `skills/plan-to-tasks/SKILL.md` is useful, but it assumes the plan already exists in the current conversation. The approved lifecycle-verbs design flips the source of truth: a saved file in `plans/` becomes the authoritative plan input, and later `/spec plan <id>` flows should reuse one deterministic engine for grouping steps into backlog task specs.
 
 This task isolates that engine so later command routing and publication flows can call it without re-implementing dependency or batching rules.
 
@@ -54,7 +55,9 @@ A narrow module accepts a parsed saved plan and returns deterministic proposed b
 **Affected files:**
 - `lib/planToBacklog.ts` — new reusable engine module
 - `lib/planToBacklog.test.ts` — saved-plan grouping and dependency tests
-- `skills/plan-to-tasks/SKILL.md` — update the skill to align with the file-backed model
+- `skills/spec/SKILL.md` — renamed from `skills/plan-to-tasks/SKILL.md`; describes the new file-backed primary path with a retained conversational fallback
+- `skills/orc-commands/SKILL.md` — update any references from `plan-to-tasks` to `spec`
+- `docs/cli.md` — reflect the renamed skill and the engine contract
 
 ---
 
@@ -63,7 +66,7 @@ A narrow module accepts a parsed saved plan and returns deterministic proposed b
 1. Must accept structured parsed plan input rather than reading from conversation context.
 2. Must preserve dependency inference based on actual implementation need, not raw list order.
 3. Must support grouping multiple implementation steps into one backlog task when the boundaries are tighter than one-step-per-task.
-4. Must produce a stable in-memory preview model that later `/spec task <id>` routing can render before confirmation.
+4. Must produce a stable in-memory preview model that later `/spec plan <id>` routing can render before confirmation.
 5. Must keep the output aligned with `create-task` section expectations so downstream task writing stays high-quality.
 
 ---
@@ -82,18 +85,31 @@ type ProposedTask = {
   slug: string;
   description: string;
   dependsOn: string[];
-  reviewLevel: 'quick' | 'full' | 'deep';
+  reviewLevel: 'none' | 'light' | 'full';
   stepNumbers: number[];
+  feature: string;   // propagated from plan.name for every generated task
 };
 ```
 
+The `reviewLevel` values MUST match the repo-wide enum used by `lib/backlogSync.ts` (`'none' | 'light' | 'full'`). Do not introduce a new vocabulary.
+
+The engine MUST stamp every proposed task with `feature: <plan.name>` so downstream publication produces backlog specs that sync cleanly.
+
 Keep preview rendering, confirmation, and file writes outside this module.
 
-### Step 2 — Reconcile the prompt-layer skill with the new source model
+### Step 2 — Rename the skill and reconcile it with the new source model
 
-**File:** `skills/plan-to-tasks/SKILL.md`
+Rename `skills/plan-to-tasks/` → `skills/spec/`. This is the user-facing skill directory for the `/spec` verb that later tasks (179) wire to MCP tools.
 
-Update the skill instructions so they no longer describe conversational plan extraction as the authoritative source. The skill should point to saved plan artifacts and the extracted engine contract instead of telling agents to paste or recover plan steps from chat by default.
+**File:** `skills/spec/SKILL.md` (renamed from `skills/plan-to-tasks/SKILL.md`)
+
+Update the skill instructions so:
+- **Saved plan artifacts are the preferred source.** `/spec plan <id>` reads `plans/<plan_id>-*.md` via the Task 176 lookup, parses it, and feeds the engine.
+- **Conversational plans remain a supported fallback.** `/spec` (no args) reads the most recent plan printed in conversation, structures it into the plan artifact shape, and feeds the engine. This path remains useful for quick ad-hoc turns and does not require a saved plan file.
+- The skill is agent-agnostic — any agent (not only the master) may invoke it; do not add master-specific framing.
+- The skill describes the engine contract (`ProposedTask`) so the model knows what shape to expect from the engine before `/spec` is wired to MCP tools in Task 179.
+
+Update any references in `skills/orc-commands/SKILL.md` and `docs/cli.md` from `plan-to-tasks` to `spec`.
 
 ### Step 3 — Test grouping and dependency inference
 
@@ -110,10 +126,13 @@ Add cases for:
 
 ## Acceptance criteria
 
-- [ ] The reusable engine accepts parsed saved-plan input and returns proposed backlog tasks without reading conversation state.
+- [ ] The reusable engine accepts parsed plan input (saved or conversational) and returns proposed backlog tasks without reading conversation state directly.
+- [ ] Every `ProposedTask` carries `feature: <plan.name>` and a `reviewLevel` in `'none' | 'light' | 'full'`.
 - [ ] Dependency inference and grouping behavior are covered by tests.
 - [ ] The engine output is sufficient for a preview step before any task-spec files are written.
-- [ ] `skills/plan-to-tasks/SKILL.md` no longer describes conversation context as the canonical plan source.
+- [ ] `skills/plan-to-tasks/` has been renamed to `skills/spec/` and its content describes file-backed as primary with the conversational fallback explicitly retained.
+- [ ] `skills/orc-commands/SKILL.md` and `docs/cli.md` reflect the rename.
+- [ ] The skill contains no master-specific framing.
 - [ ] No command routing, worktree creation, or backlog publication happens in this task.
 - [ ] No changes to files outside the stated scope.
 
