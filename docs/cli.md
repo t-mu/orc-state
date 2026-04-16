@@ -368,3 +368,37 @@ Used internally by agent integrations.
 | Command | Description |
 |---------|-------------|
 | `mcp-server` | Start the MCP server. |
+
+---
+
+## Skills
+
+The `orc install-skills` command installs provider-agnostic skill definitions
+into `.claude/skills/` or `.codex/skills/`. The packaged skills include:
+
+| Skill | Purpose |
+|-------|---------|
+| `create-task` | Create a single backlog task spec file. |
+| `spec` | Convert a saved plan artifact (`plans/<plan_id>-*.md`, preferred) or a conversational plan (fallback) into a full batch of registered backlog task specs. Invoked as `/spec plan <id>` or `/spec`. |
+| `orc-commands` | Inline reference for orc CLI subcommands. |
+| `worker-inspect` | Inspect worker state via MCP orchestrator tools. |
+
+The `spec` skill delegates structural decisions to a pure engine at
+`lib/planToBacklog.ts`. Given a parsed plan input, the engine returns a list
+of proposed backlog tasks with inferred dependencies and grouped steps:
+
+```ts
+type ProposedTask = {
+  title: string;
+  slug: string;                 // "<N>-<kebab-title>"
+  ref: string;                  // "<feature>/<slug>"
+  description: string;
+  dependsOn: string[];          // refs within this batch
+  reviewLevel: 'none' | 'light' | 'full';
+  stepNumbers: number[];
+  feature: string;              // == plan.name
+};
+```
+
+`reviewLevel` matches the enum consumed by `lib/backlogSync.ts`, and every
+`ProposedTask.feature` is stamped from the plan's `name` field.

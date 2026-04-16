@@ -31,7 +31,7 @@ describe('installSkills', () => {
     const installedSkillDirs = new Set(
       result.copied.map((path) => topLevelSkillName(path)).filter((name): name is string => Boolean(name)),
     );
-    expect(installedSkillDirs).toEqual(new Set(['create-task', 'orc-commands', 'plan-to-tasks', 'worker-inspect']));
+    expect(installedSkillDirs).toEqual(new Set(['create-task', 'orc-commands', 'spec', 'worker-inspect']));
     expect(result.copied.some((path) => path.includes(`${sep}evals${sep}`))).toBe(false);
     expect(result.copied.some((path) => path.includes(`${sep}plan-to-tasks-workspace${sep}`))).toBe(false);
   });

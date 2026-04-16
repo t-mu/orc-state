@@ -80,6 +80,6 @@ describe('scripts/pack-smoke.ts', () => {
     const paths = manifest[0]?.files.map((file) => file.path) ?? [];
 
     expect(paths.some((path) => path.includes('plan-to-tasks-workspace'))).toBe(false);
-    expect(paths.some((path) => path.includes('dist/skills/plan-to-tasks/evals/'))).toBe(false);
+    expect(paths.some((path) => path.includes('dist/skills/spec/evals/'))).toBe(false);
   });
 });

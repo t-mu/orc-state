@@ -4,7 +4,7 @@ description: >
   Creates a single backlog task spec file in backlog/. Use when the user says
   "create a task", "add to backlog", "write a task for", "plan this as a task",
   or "draft a task spec". For multiple tasks from an approved plan, use
-  plan-to-tasks instead.
+  spec instead.
 argument-hint: "[task title or description]"
 ---
 
@@ -16,7 +16,7 @@ Use this skill when the user asks to create or refine a single backlog task `.md
 
 **Scope check:** Before writing, assess whether this task should be merged with
 related planned work. If the user has a multi-task plan in progress, suggest
-using `plan-to-tasks` instead — grouping related work into fewer tasks reduces
+using `spec` instead — grouping related work into fewer tasks reduces
 worker bootstrap overhead significantly.
 
 The output target is task-spec markdown only.

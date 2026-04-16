@@ -3,7 +3,7 @@ ref: lifecycle-verbs/177-extract-file-backed-plan-to-backlog-engine
 feature: lifecycle-verbs
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - lifecycle-verbs/176-add-plan-artifact-contract-and-lookup
 ---
