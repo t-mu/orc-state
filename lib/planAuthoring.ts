@@ -1,5 +1,4 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PLANS_DIR, STATE_DIR } from './paths.ts';
 import { nextPlanId, parsePlan, PlanValidationError } from './planDocs.ts';
@@ -84,7 +83,10 @@ function validateInput(input: WritePlanInput): void {
       `name must be a lowercase feature slug matching ${NAME_SLUG_RE}, got "${input.name}"`,
     );
   }
-  requireNonEmpty('title', input.title);
+  const title = requireNonEmpty('title', input.title);
+  if (/[\r\n]/.test(title)) {
+    throw new PlanAuthoringError('title must not contain line breaks');
+  }
   requireNonEmpty('objective', input.objective);
   requireNonEmpty('scope', input.scope);
   requireNonEmpty('outOfScope', input.outOfScope);
@@ -215,8 +217,12 @@ function atomicWriteTextFile(filePath: string, content: string): void {
   }
 }
 
-function validateRenderedContent(content: string, planId: number, name: string): void {
-  const probeDir = mkdtempSync(join(tmpdir(), 'plan-authoring-probe-'));
+function validateRenderedContent(content: string, plansDir: string, planId: number, name: string): void {
+  // Probe inside plansDir (worktree-local) so plan_write never touches files
+  // outside the current worktree. The probe subdirectory starts with `.`, so
+  // nextPlanId's PLAN_FILE_RE scan ignores it.
+  const probeDir = join(plansDir, '.plan-authoring-probe');
+  mkdirSync(probeDir, { recursive: true });
   const probePath = join(probeDir, `${planId}-${name}.md`);
   try {
     writeFileSync(probePath, content, 'utf8');
@@ -248,8 +254,28 @@ export async function writePlan(
     );
   }
 
-  const planId = await nextPlanId(plansDir);
   const now = (options.now ?? (() => new Date()))().toISOString();
+  // Validate the rendered content before allocating a plan_id so a validation
+  // failure (placeholders, missing sections, bad title, etc.) does not advance
+  // the on-disk counter. We render with plan_id=0 for the probe, then re-render
+  // with the allocated id once validation passes.
+  mkdirSync(plansDir, { recursive: true });
+  const probeContent = renderPlan({
+    planId: 0,
+    name: input.name,
+    title: input.title.trim(),
+    createdAt: now,
+    updatedAt: now,
+    objective: input.objective,
+    scope: input.scope,
+    outOfScope: input.outOfScope,
+    constraints: input.constraints,
+    affectedAreas: input.affectedAreas,
+    steps: input.steps,
+  });
+  validateRenderedContent(probeContent, plansDir, 0, input.name);
+
+  const planId = await nextPlanId(plansDir);
   const content = renderPlan({
     planId,
     name: input.name,
@@ -264,11 +290,8 @@ export async function writePlan(
     steps: input.steps,
   });
 
-  validateRenderedContent(content, planId, input.name);
-
   const filename = `${planId}-${input.name}.md`;
   const path = join(plansDir, filename);
-  mkdirSync(plansDir, { recursive: true });
   atomicWriteTextFile(path, content);
 
   return { planId, path };

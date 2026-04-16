@@ -213,4 +213,25 @@ describe('writePlan', () => {
     const entries = readdirSync(plansDir);
     expect(entries.some((name) => name.startsWith('.plan-authoring-probe'))).toBe(false);
   });
+
+  it('rejects titles containing line breaks', async () => {
+    await expect(
+      writePlan(validInput({ title: 'First line\nSecond line' }), { stateDir, plansDir }),
+    ).rejects.toThrow(/line breaks/);
+  });
+
+  it('does not advance the plan_id counter on validation failure', async () => {
+    // First: a valid write consumes plan_id 1.
+    const first = await writePlan(validInput(), { stateDir, plansDir });
+    expect(first.planId).toBe(1);
+
+    // Second: a validation-failing write must NOT consume plan_id 2.
+    await expect(
+      writePlan(validInput({ name: 'another', objective: 'TBD' }), { stateDir, plansDir }),
+    ).rejects.toThrow();
+
+    // Third: the next valid write should get plan_id 2, not 3.
+    const third = await writePlan(validInput({ name: 'third-plan' }), { stateDir, plansDir });
+    expect(third.planId).toBe(2);
+  });
 });
