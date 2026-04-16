@@ -12,6 +12,7 @@ beforeEach(() => {
   process.env.ORC_STATE_DIR = dir;
   process.env.ORC_WORKTREES_DIR = join(dir, 'repo', '.worktrees');
   process.env.ORC_BACKLOG_DIR = join(dir, 'docs', 'backlog');
+  process.env.ORC_PLANS_DIR = join(dir, 'plans');
 });
 
 afterEach(() => {
@@ -19,6 +20,7 @@ afterEach(() => {
   delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_WORKTREES_DIR;
   delete process.env.ORC_BACKLOG_DIR;
+  delete process.env.ORC_PLANS_DIR;
 });
 
 describe('ensureRunWorktree', () => {
