@@ -105,6 +105,16 @@ Workers emit these from inside their PTY session via Bash tool:
 | `run-fail` | `orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--policy=requeue\|block]` | Terminal failure. Default policy is `requeue`. |
 | `progress` | `orc progress --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--policy=<requeue\|block>]` | Emit a named lifecycle event (e.g. `phase_started`, `phase_finished`). |
 
+### Lifecycle verbs (MCP tools + skills)
+
+Agent-agnostic workflows for authoring plans and backlog tasks. Any caller
+may invoke them — they have no master affinity. See the individual skills
+for the full flow.
+
+| MCP tool | Skill | Purpose |
+|----------|-------|---------|
+| `plan_write` | `/plan` (`skills/plan/SKILL.md`) | Persist a fully-specified plan artifact to `plans/<plan_id>-<slug>.md` within the current worktree. Allocates `plan_id` atomically, validates all required sections, writes `derived_task_refs: []`, rejects unresolved placeholders, and hard-fails on unrelated feature-slug collisions unless `acknowledge_feature_collision: true` is set. Does NOT touch `.orc-state/backlog.json`, git, or any file outside the worktree — commit and merge are the skill's responsibility. |
+
 ### Input Request / Response
 
 For workers that need master input (e.g. blocked on a decision):

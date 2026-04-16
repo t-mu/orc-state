@@ -5,6 +5,8 @@ import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory,
 
 import { createAdapter } from '../adapters/index.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
+import { PlanAuthoringError, writePlan, type WritePlanInput } from '../lib/planAuthoring.ts';
+import { PLANS_DIR } from '../lib/paths.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
@@ -58,6 +60,14 @@ function assertActorId(stateDir: string, actorId: unknown) {
 function backlogDocsDirForState(stateDir: string) {
   const colocatedDocsDir = join(stateDir, 'backlog');
   return existsSync(colocatedDocsDir) ? colocatedDocsDir : BACKLOG_DOCS_DIR;
+}
+
+function plansDirForState(stateDir: string) {
+  const colocatedPlansDir = join(stateDir, 'plans');
+  if (existsSync(colocatedPlansDir)) return colocatedPlansDir;
+  const siblingPlansDir = join(stateDir, '..', 'plans');
+  if (existsSync(siblingPlansDir)) return siblingPlansDir;
+  return PLANS_DIR;
 }
 
 function readBacklogFresh(stateDir: string, { lockAlreadyHeld = false }: { lockAlreadyHeld?: boolean } = {}) {
@@ -1137,6 +1147,84 @@ export function handleGetNotifications(stateDir: string, { after_seq }: { after_
     ? (notifications[notifications.length - 1].seq ?? afterSeq)
     : afterSeq;
   return { notifications, last_seq: lastSeq };
+}
+
+export async function handlePlanWrite(stateDir: string, args: Record<string, unknown> = {}) {
+  const {
+    name,
+    title,
+    objective,
+    scope,
+    out_of_scope,
+    constraints,
+    affected_areas,
+    steps,
+    acknowledge_feature_collision,
+  } = args;
+
+  if (typeof name !== 'string') throw new Error('name is required');
+  if (typeof title !== 'string') throw new Error('title is required');
+  if (typeof objective !== 'string') throw new Error('objective is required');
+  if (typeof scope !== 'string') throw new Error('scope is required');
+  if (typeof out_of_scope !== 'string') throw new Error('out_of_scope is required');
+  if (typeof constraints !== 'string') throw new Error('constraints is required');
+  if (typeof affected_areas !== 'string') throw new Error('affected_areas is required');
+  if (!Array.isArray(steps) || steps.length === 0) {
+    throw new Error('steps must be a non-empty array');
+  }
+  if (
+    acknowledge_feature_collision !== undefined
+    && typeof acknowledge_feature_collision !== 'boolean'
+  ) {
+    throw new Error('acknowledge_feature_collision must be a boolean');
+  }
+
+  const normalizedSteps: WritePlanInput['steps'] = [];
+  for (let i = 0; i < steps.length; i += 1) {
+    const step = steps[i] as Record<string, unknown>;
+    if (!step || typeof step !== 'object') {
+      throw new Error(`steps[${i + 1}] must be an object`);
+    }
+    if (typeof step.title !== 'string') throw new Error(`steps[${i + 1}].title is required`);
+    if (typeof step.body !== 'string') throw new Error(`steps[${i + 1}].body is required`);
+    const depends = step.depends_on;
+    const normalized: WritePlanInput['steps'][number] = {
+      title: step.title,
+      body: step.body,
+    };
+    if (depends !== undefined) {
+      if (!Array.isArray(depends) || depends.some((d) => !Number.isInteger(d))) {
+        throw new Error(`steps[${i + 1}].depends_on must be an array of integers`);
+      }
+      normalized.dependsOn = depends as number[];
+    }
+    normalizedSteps.push(normalized);
+  }
+
+  try {
+    return await writePlan(
+      {
+        name,
+        title,
+        objective,
+        scope,
+        outOfScope: out_of_scope,
+        constraints,
+        affectedAreas: affected_areas,
+        steps: normalizedSteps,
+      },
+      {
+        stateDir,
+        plansDir: plansDirForState(stateDir),
+        acknowledgeFeatureCollision: acknowledge_feature_collision === true,
+      },
+    );
+  } catch (err) {
+    if (err instanceof PlanAuthoringError) {
+      throw new Error(err.message);
+    }
+    throw err;
+  }
 }
 
 export function handleMemoryWakeUp(stateDir: string, args: Record<string, unknown> = {}) {

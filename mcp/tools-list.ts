@@ -426,6 +426,68 @@ export const TOOLS = [
     },
   },
   {
+    name: 'plan_write',
+    description: 'Persist a fully-specified plan artifact to plans/<plan_id>-<slug>.md within the current worktree. Allocates the next plan_id atomically, validates all required sections, writes derived_task_refs: [] on fresh plans, and rejects unresolved placeholders. Does NOT touch .orc-state/backlog.json, git, or any file outside the worktree. If the derived name collides with an existing backlog feature ref, the call fails unless acknowledge_feature_collision is true — pass true only when the new plan genuinely belongs to the same feature, per the /plan skill disambiguation flow.',
+    inputSchema: {
+      type: 'object',
+      required: ['name', 'title', 'objective', 'scope', 'out_of_scope', 'constraints', 'affected_areas', 'steps'],
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Kebab-case feature slug; must match ^[a-z][a-z0-9-]*$. Becomes the filename slug and the feature ref on any tasks later derived from this plan.',
+        },
+        title: {
+          type: 'string',
+          description: 'Human-readable plan title.',
+        },
+        objective: {
+          type: 'string',
+          description: 'Concrete objective prose. Must contain no placeholders (TBD, TODO, ???, bare [fill-ins]).',
+        },
+        scope: {
+          type: 'string',
+          description: 'Scope body markdown. Bullets enumerating concrete outcomes.',
+        },
+        out_of_scope: {
+          type: 'string',
+          description: 'Out of Scope body markdown. Bullets enumerating explicit exclusions.',
+        },
+        constraints: {
+          type: 'string',
+          description: 'Constraints body markdown. Hard constraints that bound the implementation.',
+        },
+        affected_areas: {
+          type: 'string',
+          description: 'Affected Areas body markdown. Files, modules, or subsystems the plan touches.',
+        },
+        steps: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['title', 'body'],
+            properties: {
+              title: { type: 'string' },
+              body: { type: 'string' },
+              depends_on: {
+                type: 'array',
+                items: { type: 'integer', minimum: 1 },
+                description: 'Optional list of earlier step numbers this step depends on.',
+              },
+            },
+            additionalProperties: false,
+          },
+          description: 'Ordered implementation steps. Step numbers are assigned by array order (1-based).',
+        },
+        acknowledge_feature_collision: {
+          type: 'boolean',
+          description: 'Set true when the derived name matches an existing backlog feature ref AND the new plan belongs to that same feature. Omit or pass false otherwise — unrelated collisions must be disambiguated by the /plan skill.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'memory_wake_up',
     description: 'Load essential memories for context. Returns formatted wake-up text grouped by wing/room.',
     inputSchema: {

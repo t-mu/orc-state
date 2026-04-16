@@ -114,6 +114,19 @@ respond_input(run_id, agent_id, response, actor_id?)
 reset_task(task_ref, actor_id?)
   Reset a task to todo status and cancel any active claims. Same as orc task-reset.
 
+LIFECYCLE VERBS
+
+plan_write(name, title, objective, scope, out_of_scope, constraints, affected_areas, steps, acknowledge_feature_collision?)
+  Persist a fully-specified plan artifact at plans/<plan_id>-<slug>.md within
+  the current worktree. Allocates plan_id atomically via nextPlanId(), validates
+  every required section (placeholders rejected, round-trips through parsePlan),
+  writes derived_task_refs: [] on fresh plans, and does NOT touch
+  .orc-state/backlog.json, git, or any file outside the worktree.
+  The /plan skill wraps this tool with interactive follow-ups; see skills/plan/SKILL.md.
+  Feature-slug collisions with unrelated features are rejected unless
+  acknowledge_feature_collision: true is passed after disambiguation.
+  Returns { planId, path }.
+
 NOTIFICATIONS
 
 Notifications use cursor polling via get_notifications(after_seq?). There are
