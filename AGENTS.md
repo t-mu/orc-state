@@ -189,7 +189,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 
 1. Session startup: `orc start-session`
 2. Task authoring: edit `backlog/<N>-<slug>.md`
-3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. Run `orc backlog-sync-check` to verify.
+3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. No explicit verification step is required from the authoring agent.
 4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a deterministic two-word name (e.g., `amber-kettle`), unique among active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
 5. Task completion: worker updates task markdown in its worktree; coordinator calls `orc task-mark-done <task-ref>` after merge to update shared runtime state
 6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
@@ -283,7 +283,7 @@ orc memory-record --content="..." [--wing=X] [--hall=Y] \
 Normal task-authoring path:
 - edit the markdown spec in `backlog/`
 - the coordinator auto-syncs specs to runtime state on each tick
-- run `orc backlog-sync-check` to verify sync
+- no explicit sync-check call is needed; `orc backlog-sync-check` remains available as an ad-hoc operator inspection tool
 
 Do not treat generic runtime mutation as a substitute for backlog markdown edits.
 
@@ -436,11 +436,10 @@ Follow the **Phased Workflow** above. The five phases are:
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 
-### Task Creation Completion Gate
+### Task Creation Completion
 - When creating or updating backlog task specs, save the markdown spec under the backlog directory.
-- The coordinator auto-syncs specs to runtime state on each tick. Manual registration is not required.
-- After task creation or update work, run `orc backlog-sync-check` to verify the sync completed.
-- Do not report success unless the sync check passes, or you explicitly report which refs failed to sync.
+- The coordinator auto-syncs specs to runtime state on each tick. No explicit sync step is required; treat saving the file as the completion of the authoring turn.
+- `orc backlog-sync-check` remains available as an ad-hoc operator inspection tool, but is not part of the normal task-creation flow.
 
 ---
 

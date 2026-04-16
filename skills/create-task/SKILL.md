@@ -21,16 +21,14 @@ worker bootstrap overhead significantly.
 
 The output target is task-spec markdown only.
 
-## Completion Gate — Do Not Skip
+## Completion
 
-A task-creation turn is complete only when both are true:
-
-1. The `backlog/<N>-<slug>.md` file is saved.
-2. `orc backlog-sync-check --refs=<ref>` passes for the newly created ref(s).
+A task-creation turn is complete when the `backlog/<N>-<slug>.md` file is saved.
 
 The coordinator auto-syncs specs to runtime state on each tick. Manual registration
-via `create_task` MCP is not required. If sync-check fails, wait for the next
-coordinator tick and retry, or report the failing refs.
+via `create_task` MCP is not required, and no explicit `orc backlog-sync-check` call
+is part of this skill's flow. The command remains available as an ad-hoc operator
+inspection tool if a human wants to verify, but agents should not treat it as a gate.
 
 ## Step 0 — Orient Before Drafting
 
@@ -124,8 +122,6 @@ If a field is unknown, make a minimal reasonable assumption and mark it in `Cont
 Final response requirements for this skill:
 
 - List every task-spec file written.
-- Report the result of `orc backlog-sync-check --refs=<ref1>,<ref2>` (scoped to refs created in this invocation).
-- If sync-check fails, report the failing refs explicitly.
 
 Every task file must follow this section order exactly:
 
@@ -167,24 +163,6 @@ Use these optional sections only when they improve execution quality:
 4. Add acceptance criteria as checkboxes with observable outcomes.
 5. Add tests and verification commands.
 6. Ensure the task can be executed independently by an LLM agent.
-
-## Step: Verify Sync
-
-After saving each .md file, the coordinator auto-syncs specs to runtime state on
-its next tick. No manual MCP registration is needed.
-
-Run a targeted check scoped to the refs created in this invocation:
-
-```bash
-orc backlog-sync-check --refs=<ref1>,<ref2>
-```
-
-This only validates what was just written, so pre-existing backlog issues do not
-pollute the signal. If multiple tasks were created, include all their refs as a
-comma-separated list.
-
-If sync-check fails, the coordinator may not have ticked yet. Wait a few seconds
-and retry. If it still fails, report the failing refs in the final response.
 
 ## Quality Gate (score before saving)
 
