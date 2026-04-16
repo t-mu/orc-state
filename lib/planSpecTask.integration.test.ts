@@ -50,8 +50,12 @@ function mergeAndCleanup(repo: string, branch: string, worktreePath: string, mes
   // worker's cwd inside the worktree. The test driver sits outside the
   // worktree, so the reverse order is safe and sidesteps git's refusal to
   // delete a branch that is still checked out in a worktree.
+  //
+  // Use `git worktree remove` without --force so any lingering file handle
+  // from the code under test surfaces as a removal error instead of being
+  // silently papered over.
   run(`git merge -q --no-ff ${branch} -m "${message}"`, repo);
-  run(`git worktree remove --force "${worktreePath}"`, repo);
+  run(`git worktree remove "${worktreePath}"`, repo);
   run(`git branch -q -D ${branch}`, repo);
 }
 
@@ -172,12 +176,20 @@ describe('plan → spec → merge round-trip', () => {
   });
 
   it('handles /spec conversational fallback (no plan id) end to end', async () => {
-    // The conversational fallback re-uses plan_write to persist the chat-extracted
-    // plan before preview/publish. It shares the same on-disk contract as the
-    // saved-plan path, so the round-trip below uses plan_write directly with a
-    // minimal, chat-like input shape.
+    // The /spec skill's conversational fallback has two responsibilities beyond
+    // the saved-plan path: (a) the plan file does NOT exist on disk when /spec
+    // is invoked; (b) plan_write is what persists it before spec_publish runs.
+    // Model both halves explicitly below: first assert the worktree has no plan
+    // file, then plan_write, then assert the file landed before publishSpec
+    // runs.
     const branch = 'task/fallback-1';
     const wt = addWorktree(mainRepo, branch, 'fallback-1');
+
+    // Pre-state: no plan artifact exists yet. This is the chat-only entry
+    // condition — the worktree was seeded by the initial commit but carries no
+    // `<plan_id>-*.md` files.
+    expect(readdirSync(join(wt, 'plans')).filter((name) => /^\d+-.*\.md$/.test(name)))
+      .toEqual([]);
 
     const plan = await writePlan(
       {
@@ -196,6 +208,13 @@ describe('plan → spec → merge round-trip', () => {
       { stateDir, plansDir: join(wt, 'plans') },
     );
     expect(plan.planId).toBe(1);
+
+    // plan_write persisted the chat-extracted plan. publishSpec must be able
+    // to resolve it by plan_id from the newly-created file — that's the whole
+    // point of the fallback.
+    expect(existsSync(plan.path)).toBe(true);
+    expect(readdirSync(join(wt, 'plans')).filter((name) => /^\d+-.*\.md$/.test(name)))
+      .toEqual(['1-chat-extracted.md']);
 
     const result = publishSpec(1, { confirm: true, worktreePath: wt, stateDir });
     expect(result.createdRefs).toHaveLength(2);
@@ -289,7 +308,7 @@ describe('plan → spec → merge round-trip', () => {
     const branch = 'task/stale-staging';
     const wt = addWorktree(mainRepo, branch, 'stale-staging');
 
-    await writePlan(
+    const plan = await writePlan(
       {
         name: 'stale-demo',
         title: 'Stale Demo',
@@ -303,12 +322,16 @@ describe('plan → spec → merge round-trip', () => {
       { stateDir, plansDir: join(wt, 'plans') },
     );
 
+    const planContentsBefore = readFileSync(plan.path, 'utf8');
     mkdirSync(join(stateDir, 'plan-staging', '1'), { recursive: true });
 
     expect(() => publishSpec(1, { confirm: true, worktreePath: wt, stateDir }))
       .toThrow(/staging directory already exists/);
     expect(listBacklogFiles(wt)).toEqual([]);
     expect(listBacklogFiles(mainRepo)).toEqual([]);
+    // The plan file must not have been mutated by a partial publish: the
+    // stale-staging check fires before any derived_task_refs write.
+    expect(readFileSync(plan.path, 'utf8')).toBe(planContentsBefore);
 
     // Cleanup so afterEach can remove the repo without noise.
     rmSync(join(stateDir, 'plan-staging', '1'), { recursive: true, force: true });
