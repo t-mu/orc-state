@@ -1879,6 +1879,7 @@ describe('handlePlanWrite', () => {
 
 describe('spec_preview / spec_publish handlers', () => {
   let specDir: string;
+  let specWorktree: string;
   let specPlansDir: string;
   let specBacklogDir: string;
   let specStateDir: string;
@@ -1933,31 +1934,25 @@ Depends on: 1
 
   beforeEach(() => {
     specDir = createTempStateDir('spec-handlers-');
-    specPlansDir = join(specDir, 'plans');
-    specBacklogDir = join(specDir, 'backlog');
+    // specWorktree stands in for the agent's assigned worktree. The MCP
+    // handler targets it via the worktree_path argument — no env var plumbing.
+    specWorktree = join(specDir, 'worktree');
+    specPlansDir = join(specWorktree, 'plans');
+    specBacklogDir = join(specWorktree, 'backlog');
     specStateDir = join(specDir, '.orc-state');
     mkdirSync(specPlansDir, { recursive: true });
     mkdirSync(specBacklogDir, { recursive: true });
     mkdirSync(specStateDir, { recursive: true });
-
-    process.env.ORC_REPO_ROOT = specDir;
-    process.env.ORC_PLANS_DIR = specPlansDir;
-    process.env.ORC_BACKLOG_DIR = specBacklogDir;
-    process.env.ORC_STATE_DIR = specStateDir;
   });
 
   afterEach(() => {
     cleanupTempStateDir(specDir);
-    delete process.env.ORC_REPO_ROOT;
-    delete process.env.ORC_PLANS_DIR;
-    delete process.env.ORC_BACKLOG_DIR;
-    delete process.env.ORC_STATE_DIR;
   });
 
   it('spec_preview returns a proposal without side effects', () => {
     writeSamplePlan(1);
     const before = readdirSyncFs(specBacklogDir);
-    const preview = handleSpecPreview(specStateDir, { plan_id: 1 }) as unknown as {
+    const preview = handleSpecPreview(specStateDir, { plan_id: 1, worktree_path: specWorktree }) as unknown as {
       tasks: Array<{ feature: string }>;
       plan: { planId: number };
     };
@@ -1969,21 +1964,27 @@ Depends on: 1
   });
 
   it('spec_preview rejects non-integer plan_id', () => {
-    expect(() => handleSpecPreview(specStateDir, { plan_id: 'x' as unknown as number })).toThrow(/plan_id/);
-    expect(() => handleSpecPreview(specStateDir, {})).toThrow(/plan_id/);
+    expect(() => handleSpecPreview(specStateDir, { plan_id: 'x' as unknown as number, worktree_path: specWorktree })).toThrow(/plan_id/);
+    expect(() => handleSpecPreview(specStateDir, { worktree_path: specWorktree })).toThrow(/plan_id/);
+  });
+
+  it('spec_preview rejects a non-string worktree_path', () => {
+    writeSamplePlan(1);
+    expect(() => handleSpecPreview(specStateDir, { plan_id: 1, worktree_path: 42 as unknown as string }))
+      .toThrow(/worktree_path/);
   });
 
   it('spec_publish requires confirm: true', () => {
     writeSamplePlan(2);
-    expect(() => handleSpecPublish(specStateDir, { plan_id: 2 })).toThrow(/confirm must be true/);
-    expect(() => handleSpecPublish(specStateDir, { plan_id: 2, confirm: false })).toThrow(/confirm must be true/);
-    expect(() => handleSpecPublish(specStateDir, { plan_id: 2, confirm: 'true' })).toThrow(/confirm must be true/);
+    expect(() => handleSpecPublish(specStateDir, { plan_id: 2, worktree_path: specWorktree })).toThrow(/confirm must be true/);
+    expect(() => handleSpecPublish(specStateDir, { plan_id: 2, confirm: false, worktree_path: specWorktree })).toThrow(/confirm must be true/);
+    expect(() => handleSpecPublish(specStateDir, { plan_id: 2, confirm: 'true', worktree_path: specWorktree })).toThrow(/confirm must be true/);
     expect(readdirSyncFs(specBacklogDir)).toEqual([]);
   });
 
-  it('spec_publish writes backlog specs and returns the created refs', () => {
+  it('spec_publish writes backlog specs inside the targeted worktree and derives the staging root from stateDir', () => {
     writeSamplePlan(3);
-    const result = handleSpecPublish(specStateDir, { plan_id: 3, confirm: true }) as {
+    const result = handleSpecPublish(specStateDir, { plan_id: 3, confirm: true, worktree_path: specWorktree }) as {
       createdRefs: string[];
       createdFiles: string[];
       planPath: string;
@@ -1992,6 +1993,9 @@ Depends on: 1
     expect(result.createdFiles.length).toBe(2);
     for (const file of result.createdFiles) {
       expect(existsSyncFs(file)).toBe(true);
+      expect(file.startsWith(specBacklogDir)).toBe(true);
     }
+    // Staging dir lives under the handler-provided stateDir, not the worktree.
+    expect(existsSyncFs(join(specStateDir, 'plan-staging', '3'))).toBe(false);
   });
 });

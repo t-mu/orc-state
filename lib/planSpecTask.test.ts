@@ -205,11 +205,12 @@ describe('publishSpec', () => {
     expect(readdirSync(backlogDir)).toEqual([]);
   });
 
-  it('leaves derived_task_refs unchanged on partial publication failure', () => {
+  // chmod 555 does not restrict root, so skip when the test harness is root.
+  // On non-root runs this deterministically fails updatePlanDerivedRefs' tmp
+  // write after the backlog specs have already landed.
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  (isRoot ? it.skip : it)('leaves derived_task_refs unchanged on partial publication failure', () => {
     const planPath = writePlan({ planId: 6 });
-
-    // Make plansDir read-only so the tmp-write in updatePlanDerivedRefs fails
-    // AFTER the backlog specs have already been renamed into place.
     chmodSync(plansDir, 0o555);
 
     try {
@@ -224,6 +225,24 @@ describe('publishSpec', () => {
     expect(updatedPlan).toMatch(/^derived_task_refs: \[\]$/m);
     // And some backlog files should have landed already — the error names them.
     expect(readdirSync(backlogDir).length).toBeGreaterThan(0);
+  });
+
+  it('rewrites derived_task_refs correctly when the plan body contains a horizontal rule', () => {
+    const planPath = writePlan({ planId: 12 });
+    // Inject a body-level `---` horizontal rule after the plan is authored.
+    // Earlier we used a lazy regex that matched the first `\n---` found
+    // anywhere in the body; this regression check keeps us honest.
+    const original = readFileSync(planPath, 'utf8');
+    writeFileSync(planPath, original.replace(
+      '### Step 1 — Write draft',
+      '---\n\nSeparator above.\n\n### Step 1 — Write draft',
+    ), 'utf8');
+
+    const result = publishSpec(12, { confirm: true, plansDir, backlogDir, stagingRoot });
+    expect(result.createdRefs.length).toBe(3);
+    const updatedPlan = readFileSync(planPath, 'utf8');
+    expect(updatedPlan).toMatch(/^derived_task_refs:\n  - demo-feature\//m);
+    expect(updatedPlan).toContain('Separator above.');
   });
 
   it('derives filenames from the engine slug and startTaskNumber', () => {

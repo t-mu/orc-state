@@ -5,9 +5,16 @@ import { findPlanById, parsePlan, type ParsedPlan } from './planDocs.ts';
 import { planToBacklog, type PlanInput, type ProposedTask } from './planToBacklog.ts';
 
 export interface SpecOptions {
+  /** Explicit plans directory override. Precedence: highest. */
   plansDir?: string;
+  /** Explicit backlog directory override. Precedence: highest. */
   backlogDir?: string;
+  /** Explicit staging root override (replaces <stateDir>/plan-staging). */
   stagingRoot?: string;
+  /** Worktree root. When provided, plansDir=<wt>/plans and backlogDir=<wt>/backlog. */
+  worktreePath?: string;
+  /** Coordinator state dir. When provided, stagingRoot=<stateDir>/plan-staging. */
+  stateDir?: string;
 }
 
 export interface SpecPreview {
@@ -25,6 +32,10 @@ export interface SpecResult {
 
 const SPEC_FILE_RE = /^(\d+)([-.].+)?\.md$/;
 
+// The engine runs inside a fresh worktree before any backlog sync to shared
+// state has happened, so .orc-state/backlog.json may not reflect the specs
+// staged here yet. Scan the filesystem to pick up the authoritative "next
+// available number" from the worktree's own backlog/ directory.
 function scanNextTaskNumber(backlogDir: string): number {
   if (!existsSync(backlogDir)) return 1;
   let max = 0;
@@ -111,29 +122,20 @@ function buildPlanInput(plan: ParsedPlan, startTaskNumber: number): PlanInput {
   };
 }
 
-function defaultStateDir(): string {
-  return process.env.ORC_STATE_DIR
-    ? resolve(process.env.ORC_STATE_DIR)
-    : resolve(resolveRepoRoot(), '.orc-state');
-}
-
-function defaultPlansDir(): string {
-  return process.env.ORC_PLANS_DIR
-    ? resolve(process.env.ORC_PLANS_DIR)
-    : resolve(resolveRepoRoot(), 'plans');
-}
-
-function defaultBacklogDir(): string {
-  return process.env.ORC_BACKLOG_DIR
-    ? resolve(process.env.ORC_BACKLOG_DIR)
-    : resolve(resolveRepoRoot(), 'backlog');
-}
-
 function resolveDirs(opts: SpecOptions): { plansDir: string; backlogDir: string; stagingRoot: string } {
+  // Resolution precedence (most specific wins):
+  //   1. Explicit plansDir / backlogDir / stagingRoot in opts.
+  //   2. opts.worktreePath — derive plansDir = <worktree>/plans, backlogDir = <worktree>/backlog.
+  //   3. opts.stateDir — derive stagingRoot = <stateDir>/plan-staging.
+  //   4. Process-level fallback via resolveRepoRoot() for plans/backlog and <repo>/.orc-state for staging.
+  const repoRoot = opts.worktreePath ? resolve(opts.worktreePath) : resolveRepoRoot();
+  const stateRootForStaging = opts.stateDir
+    ? resolve(opts.stateDir)
+    : resolve(repoRoot, '.orc-state');
   return {
-    plansDir: opts.plansDir ?? defaultPlansDir(),
-    backlogDir: opts.backlogDir ?? defaultBacklogDir(),
-    stagingRoot: opts.stagingRoot ?? join(defaultStateDir(), 'plan-staging'),
+    plansDir: opts.plansDir ?? resolve(repoRoot, 'plans'),
+    backlogDir: opts.backlogDir ?? resolve(repoRoot, 'backlog'),
+    stagingRoot: opts.stagingRoot ?? resolve(stateRootForStaging, 'plan-staging'),
   };
 }
 
@@ -155,7 +157,11 @@ export function previewSpec(planId: number, opts: SpecOptions = {}): SpecPreview
 
 function updatePlanDerivedRefs(planPath: string, refs: string[]): void {
   const text = readFileSync(planPath, 'utf8');
-  const match = /^(---\s*\n)([\s\S]*?)(\n---)/.exec(text);
+  // Anchor the closing fence to the start of a line AND end of line/file so a
+  // stray `---` inside the plan body (e.g. a markdown horizontal rule) does
+  // not terminate frontmatter parsing prematurely. Matches the boundary used
+  // by lib/planDocs.ts splitFrontmatter.
+  const match = /^(---\s*\n)([\s\S]*?)(\n---(?:\n|$))/.exec(text);
   if (!match) {
     throw new Error(`publishSpec: plan file has no frontmatter: ${planPath}`);
   }
@@ -186,7 +192,8 @@ function updatePlanDerivedRefs(planPath: string, refs: string[]): void {
   }
 
   const newFrontmatter = [...before, ...rewritten, ...after].join('\n');
-  const newContent = `${match[1]}${newFrontmatter}\n---${body}`;
+  const closingFence = match[3];
+  const newContent = `${match[1]}${newFrontmatter}${closingFence}${body}`;
   const tmp = `${planPath}.tmp`;
   writeFileSync(tmp, newContent, 'utf8');
   renameSync(tmp, planPath);
@@ -256,10 +263,18 @@ export function publishSpec(
     updatePlanDerivedRefs(planPath, createdRefs);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const visible = createdRefs.length > 0
-      ? ` Visible refs in backlog: ${createdRefs.join(', ')}. derived_task_refs was NOT updated.`
-      : '';
-    throw new Error(`publishSpec: publication failed: ${message}.${visible}`);
+    if (createdRefs.length === 0) {
+      // No backlog files landed yet — staging is pure temp, safe to remove so
+      // the next attempt doesn't trip the mkdir lock.
+      rmSync(stagingDir, { recursive: true, force: true });
+      throw new Error(`publishSpec: publication failed: ${message}`);
+    }
+    // Partial publication: leave staging in place as a signal that manual
+    // rollback is required. The caller must remove the visible backlog files
+    // and then `rm -rf` the staging directory before retrying.
+    throw new Error(
+      `publishSpec: publication failed: ${message}. Visible refs in backlog: ${createdRefs.join(', ')}. derived_task_refs was NOT updated. Roll back the visible refs, then rm -rf ${stagingDir} before retrying.`,
+    );
   }
 
   rmSync(stagingDir, { recursive: true, force: true });

@@ -1300,15 +1300,26 @@ export function handleMemoryStatus(stateDir: string, _args: Record<string, unkno
   }
 }
 
-export function handleSpecPreview(_stateDir: string, args: Record<string, unknown> = {}) {
+function specOptsFromArgs(stateDir: string, args: Record<string, unknown>) {
+  const { worktree_path } = args;
+  if (worktree_path !== undefined && typeof worktree_path !== 'string') {
+    throw new Error('worktree_path must be a string');
+  }
+  return {
+    stateDir,
+    ...(typeof worktree_path === 'string' ? { worktreePath: worktree_path } : {}),
+  };
+}
+
+export function handleSpecPreview(stateDir: string, args: Record<string, unknown> = {}) {
   const { plan_id } = args;
   if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
     throw new Error('plan_id must be a non-negative integer');
   }
-  return previewSpec(plan_id);
+  return previewSpec(plan_id, specOptsFromArgs(stateDir, args));
 }
 
-export function handleSpecPublish(_stateDir: string, args: Record<string, unknown> = {}) {
+export function handleSpecPublish(stateDir: string, args: Record<string, unknown> = {}) {
   const { plan_id, confirm } = args;
   if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
     throw new Error('plan_id must be a non-negative integer');
@@ -1316,7 +1327,7 @@ export function handleSpecPublish(_stateDir: string, args: Record<string, unknow
   if (confirm !== true) {
     throw new Error('confirm must be true to publish');
   }
-  return publishSpec(plan_id, { confirm: true });
+  return publishSpec(plan_id, { confirm: true, ...specOptsFromArgs(stateDir, args) });
 }
 
 export { closeMemoryDb };

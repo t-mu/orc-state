@@ -164,16 +164,17 @@ only difference is how that file comes into existence.
 
 1. Extract the most recent numbered plan printed in the conversation. If none
    is visible, ask the user to paste or restate it as numbered steps and stop.
-2. Structure the extracted plan into the Task 176 plan artifact shape:
-   frontmatter (`plan_id` — leave the caller to allocate via `plan_write`,
-   `name`, `title`, `created_at`, `updated_at`, `derived_task_refs: []`) and
-   the six required sections (`Objective`, `Scope`, `Out of Scope`,
-   `Constraints`, `Affected Areas`, `Implementation Steps`). Apply the
-   dependency, grouping, and `reviewLevel` guidance in Step 2 and Step 2.5
-   below when authoring step bodies and explicit `Depends on: N` cues.
-3. Call `plan_write` (MCP, from Task 180) to persist the structured plan
-   into the current worktree's `plans/` directory. Capture the returned
-   `plan_id` — that becomes the `<id>` used for the rest of the flow.
+2. Structure the extracted plan into the plan artifact shape: the six
+   required sections (`Objective`, `Scope`, `Out of Scope`, `Constraints`,
+   `Affected Areas`, `Implementation Steps`) plus steps with titles, bodies,
+   and explicit `Depends on: N` cues. Apply the dependency, grouping, and
+   `reviewLevel` guidance in Step 2 and Step 2.5 below.
+3. Call `plan_write` (MCP) with `name`, `title`, the section bodies, and
+   `steps[]`. The tool allocates a new `plan_id`, writes
+   `plans/<plan_id>-<name>.md` inside the current worktree, and returns
+   `{ planId, path }`. Capture `planId` — that becomes the `<id>` used for
+   the rest of the flow. Set `acknowledge_feature_collision: true` only if
+   the user explicitly disambiguates an existing feature-slug collision.
 4. Resolve the feature override, if any. A `$ARGUMENTS`-provided feature
    overrides `plan.name` only when the user explicitly asks. Otherwise
    `plan.name` wins for every generated task.
@@ -238,10 +239,13 @@ group's members.
 
 ## Step 3 — Preview via `spec_preview`
 
-Call the `spec_preview` MCP tool:
+Call the `spec_preview` MCP tool. Always pass the absolute path to the
+current worktree so the tool targets the right `plans/` and `backlog/`
+directories — the MCP server's own cwd is the main checkout, not the
+worktree:
 
 ```
-spec_preview({ plan_id: <id> })
+spec_preview({ plan_id: <id>, worktree_path: '<assigned_worktree>' })
 ```
 
 This is a pure read — nothing is written. It returns the plan header and the
@@ -271,10 +275,10 @@ no tasks were created."
 
 ## Step 4 — Publish via `spec_publish`
 
-Once the user confirms, call:
+Once the user confirms, call (again with the worktree path):
 
 ```
-spec_publish({ plan_id: <id>, confirm: true })
+spec_publish({ plan_id: <id>, confirm: true, worktree_path: '<assigned_worktree>' })
 ```
 
 `confirm` MUST be the literal boolean `true`. Any other value (including the
