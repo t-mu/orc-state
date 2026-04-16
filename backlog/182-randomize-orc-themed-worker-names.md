@@ -3,7 +3,7 @@ ref: orc-names/182-randomize-orc-themed-worker-names
 feature: orc-names
 review_level: full
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 182 — Randomize Orc-Themed Worker Names
