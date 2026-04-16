@@ -42,7 +42,7 @@ function parseArgs() {
 }
 
 function shouldSkipSkillEntry(skillName: string, relativePath: string): boolean {
-  return relativePath === '.npmignore' || (skillName === 'plan-to-tasks' && relativePath === 'evals');
+  return relativePath === '.npmignore' || (skillName === 'spec' && relativePath === 'evals');
 }
 
 function copyDir(src: string, dest: string, dryRun: boolean, skillName: string, relativeRoot = ''): Array<{ src: string; dest: string }> {
