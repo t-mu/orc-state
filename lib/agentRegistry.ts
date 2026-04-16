@@ -158,8 +158,10 @@ export function removeAgent(stateDir: string, agentId: string): void {
 }
 
 /**
- * Return the next available deterministic two-word worker name that is not
- * currently in use by any registered worker agent.
+ * Return a random orc-themed two-word worker name that is not currently in
+ * use by any registered worker agent. The picker draws a random
+ * `(first, second)` pair, retries on collision, then falls back to a
+ * deterministic scan of the remaining pool before throwing on true exhaustion.
  *
  * Names are unique only among agents currently in the registry. Removing a
  * worker frees its name for reuse.

@@ -152,7 +152,7 @@ A task is eligible for dispatch when all of:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent_id` | string | yes | Unique identifier — `master` for the master agent; workers use deterministic two-word names (e.g. `amber-kettle`) that are unique among currently active workers |
+| `agent_id` | string | yes | Unique identifier — `master` for the master agent; workers use random orc-themed two-word names (e.g. `broken-nose`, `slithering-arrow`) that are unique among currently active workers |
 | `provider` | `"claude"` \| `"codex"` \| `"gemini"` \| `"human"` | yes | Provider backend |
 | `model` | string | no | Specific model variant |
 | `status` | AgentStatus | yes | Current agent state |
@@ -513,7 +513,7 @@ search. Results are capped at 500 per query.
 
 Worker and master session handles use the format `pty:<agent_id>`.
 
-Examples: `pty:master`, `pty:amber-kettle`
+Examples: `pty:master`, `pty:broken-nose`
 
 The handle identifies a local PTY process owned by the coordinator. Handles are
 deterministic within the active PTY runtime. If a session is restarted, the
