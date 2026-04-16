@@ -64,8 +64,8 @@ implement tasks directly.
 ### Worker
 
 A worker is a headless agent session spawned by the coordinator for a single task run.
-It is assigned a deterministic two-word name (e.g., `amber-kettle`) that is unique among
-currently active workers. The provider (Claude, Codex, Gemini) is resolved at dispatch
+It is assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`)
+that is unique among currently active workers. The provider (Claude, Codex, Gemini) is resolved at dispatch
 time from the task's `required_provider` field, or from the configured default when absent.
 The worker operates entirely inside an isolated git worktree (`.worktrees/<run-id>/`),
 follows a five-phase lifecycle (explore, implement, review, complete, finalize), and
@@ -127,9 +127,10 @@ limit minus the number of workers currently registered in `agents.json`. When a 
 completes, the coordinator removes the worker from the registry and the freed slot becomes
 available for the next dispatch.
 
-Worker names are drawn from a fixed list of adjective-noun combinations
-(`amber-kettle`, `swift-brook`, etc.) and are unique only among agents currently registered.
-A name is released for reuse once the worker is deregistered after its run completes.
+Worker names are drawn randomly from fixed orc-themed adjective and noun lists
+(`broken-nose`, `slithering-arrow`, `iron-fang`, etc.) and are unique only among
+agents currently registered. A name is released for reuse once the worker is
+deregistered after its run completes.
 
 ## Worktree isolation
 

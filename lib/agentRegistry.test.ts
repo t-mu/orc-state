@@ -228,31 +228,41 @@ describe('removeAgent', () => {
 // ── nextAvailableWorkerName ────────────────────────────────────────────────
 
 describe('nextAvailableWorkerName', () => {
-  it('allocates the first unused deterministic two-word worker name', () => {
+  it('allocates an orc-themed two-word worker name', () => {
     const name = nextAvailableWorkerName(dir);
-    expect(name).toBe('amber-anchor');
     expect(name).toMatch(/^[a-z]+-[a-z]+$/);
   });
 
   it('skips names already in use by registered worker agents', () => {
-    registerAgent(dir, { agent_id: 'amber-anchor', provider: 'claude', role: 'worker' });
-    const name = nextAvailableWorkerName(dir);
-    expect(name).toBe('amber-anvil');
+    const first = nextAvailableWorkerName(dir);
+    registerAgent(dir, { agent_id: first, provider: 'claude', role: 'worker' });
+    const second = nextAvailableWorkerName(dir);
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/^[a-z]+-[a-z]+$/);
   });
 
   it('reuses a worker name only after the prior live worker is removed', () => {
-    registerAgent(dir, { agent_id: 'amber-anchor', provider: 'claude', role: 'worker' });
-    expect(nextAvailableWorkerName(dir)).toBe('amber-anvil');
+    const first = nextAvailableWorkerName(dir);
+    registerAgent(dir, { agent_id: first, provider: 'claude', role: 'worker' });
 
-    removeAgent(dir, 'amber-anchor');
-    expect(nextAvailableWorkerName(dir)).toBe('amber-anchor');
+    const second = nextAvailableWorkerName(dir);
+    expect(second).not.toBe(first);
+
+    removeAgent(dir, first);
+    // With the prior worker gone, the same name is eligible again — but the
+    // picker is random, so we assert the weaker property that any subsequent
+    // allocation is a valid shape and not colliding with the current registry.
+    const next = nextAvailableWorkerName(dir);
+    expect(next).toMatch(/^[a-z]+-[a-z]+$/);
   });
 
   it('does not use names held by non-worker agents (master, scout)', () => {
     registerAgent(dir, { agent_id: 'master', provider: 'claude', role: 'master' });
     registerAgent(dir, { agent_id: 'scout-1', provider: 'codex', role: 'scout' });
-    // Non-worker names do not affect worker name pool
-    expect(nextAvailableWorkerName(dir)).toBe('amber-anchor');
+    const name = nextAvailableWorkerName(dir);
+    expect(name).toMatch(/^[a-z]+-[a-z]+$/);
+    expect(name).not.toBe('master');
+    expect(name).not.toBe('scout-1');
   });
 });
 
