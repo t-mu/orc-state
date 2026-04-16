@@ -287,6 +287,19 @@ Normal task-authoring path:
 
 Do not treat generic runtime mutation as a substitute for backlog markdown edits.
 
+### Artifact directories
+
+The repo has two first-class artifact directories:
+
+- `backlog/` — task specs. Each task is `backlog/<N>-<slug>.md` and drives the
+  coordinator's task lifecycle.
+- `plans/` — plan artifacts. Each plan is `plans/<plan_id>-<slug>.md` with a
+  documented on-disk contract (required frontmatter, required sections,
+  placeholder rejection rules, and the plans-only `Depends on: N[, N...]`
+  dependency cue). Plan ids are an independent sequence from backlog task
+  numbers. See `plans/TEMPLATE.md` and `docs/cli.md` → **Plans** for the full
+  contract. Parser, lookup, and id-allocator helpers live in `lib/planDocs.ts`.
+
 ### Execution Modes
 
 Each agent role (master, worker) can run in one of two execution mode presets:

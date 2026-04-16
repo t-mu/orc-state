@@ -3,7 +3,7 @@ ref: lifecycle-verbs/176-add-plan-artifact-contract-and-lookup
 feature: lifecycle-verbs
 review_level: full
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 176 — Add Plan Artifact Contract and Lookup

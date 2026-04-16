@@ -210,6 +210,35 @@ specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
 
 ---
 
+## Plans
+
+Plans live alongside the backlog as a first-class artifact directory. A plan
+artifact is a markdown file at `plans/<plan_id>-<slug>.md` that captures the
+approved design for a chunk of work before it becomes backlog tasks.
+
+**On-disk contract:**
+
+- Required frontmatter: `plan_id`, `name`, `title`, `created_at`, `updated_at`,
+  `derived_task_refs`. `derived_task_refs: []` is valid for fresh plans.
+- Required sections: `## Objective`, `## Scope`, `## Out of Scope`,
+  `## Constraints`, `## Affected Areas`, `## Implementation Steps`.
+- `## Implementation Steps` is an ordered sequence of `### Step N — Title`
+  sub-headings. Steps may declare dependencies with the exact structured cue
+  `Depends on: N` or `Depends on: N, M`. The structured cue is plans-only;
+  backlog specs continue to use the prose `Depends on Task N.` form.
+- Plan bodies must not contain unresolved placeholders: `TBD`, `TODO`, three or
+  more `?` characters, or bare bracketed fill-ins (`[like this]`) outside fenced
+  code blocks and outside markdown link syntax (`[text](url)`).
+- Plan files must be UTF-8 without a byte-order mark.
+- `plan_id` numbering is an independent sequence from backlog task numbers.
+  Collisions across the two sequences are expected and benign.
+
+See `plans/TEMPLATE.md` for the baseline artifact. Parsing, lookup
+(`findPlanById`), and id allocation (`nextPlanId`) helpers live in
+`lib/planDocs.ts`.
+
+---
+
 ## Inspection
 
 Commands for digging into active runs and the event stream.

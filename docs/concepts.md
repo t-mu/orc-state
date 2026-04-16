@@ -60,6 +60,26 @@ _You'll encounter this when reading `orc status` or browsing the `backlog/` dire
 
 ---
 
+### Plan
+
+A saved design artifact, stored as a markdown file in `plans/<plan_id>-<slug>.md`. A plan
+records the objective, scope, constraints, affected areas, and an ordered list of
+implementation steps before those steps become backlog tasks. Plans are a first-class
+artifact directory alongside `backlog/`, with a documented contract: required frontmatter
+(`plan_id`, `name`, `title`, `created_at`, `updated_at`, `derived_task_refs`) and required
+sections (`Objective`, `Scope`, `Out of Scope`, `Constraints`, `Affected Areas`,
+`Implementation Steps`). Plans reject unresolved placeholders (`TBD`, `TODO`, `???`,
+bare bracketed fill-ins outside code blocks and links) and accept explicit dependency
+cues only in the exact form `Depends on: N[, N...]` (plans-only; backlog specs keep
+the prose `Depends on Task N.` form). Plan ids are a separate sequence from backlog
+task numbers — they may collide numerically without consequence. See `plans/TEMPLATE.md`
+for the baseline artifact.
+
+_You'll encounter this when browsing the `plans/` directory or running
+`/plan` / `/spec plan <id>` lifecycle verbs._
+
+---
+
 ### Run
 
 One execution attempt of a task. A task can have multiple runs (for example, after a
