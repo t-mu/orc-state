@@ -128,6 +128,10 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleMemoryStore(stateDir, args);
     case 'memory_status':
       return handlers.handleMemoryStatus(stateDir, args);
+    case 'spec_preview':
+      return handlers.handleSpecPreview(stateDir, args);
+    case 'spec_publish':
+      return handlers.handleSpecPublish(stateDir, args);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

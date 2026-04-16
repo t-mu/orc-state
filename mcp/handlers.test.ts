@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync as existsSyncFs, mkdirSync, mkdtempSync, readdirSync as readdirSyncFs, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -33,6 +33,8 @@ import {
   handleMemoryStore,
   handleMemoryStatus,
   handlePlanWrite,
+  handleSpecPreview,
+  handleSpecPublish,
   closeMemoryDb,
 } from './handlers.ts';
 import { parsePlan } from '../lib/planDocs.ts';
@@ -1872,5 +1874,124 @@ describe('handlePlanWrite', () => {
     );
     const result = await handlePlanWrite(dir, validArgs({ acknowledge_feature_collision: true }));
     expect(result.planId).toBe(1);
+  });
+});
+
+describe('spec_preview / spec_publish handlers', () => {
+  let specDir: string;
+  let specPlansDir: string;
+  let specBacklogDir: string;
+  let specStateDir: string;
+
+  function writeSamplePlan(planId = 1): string {
+    const path = join(specPlansDir, `${planId}-sample.md`);
+    writeFileSync(path, `---
+plan_id: ${planId}
+name: sample-feature
+title: Sample Plan
+created_at: 2026-04-16T00:00:00Z
+updated_at: 2026-04-16T00:00:00Z
+derived_task_refs: []
+---
+
+# Sample Plan
+
+## Objective
+
+Ship sample.
+
+## Scope
+
+- One outcome.
+
+## Out of Scope
+
+- Nothing excluded.
+
+## Constraints
+
+- Keep it small.
+
+## Affected Areas
+
+- lib/foo.ts
+
+## Implementation Steps
+
+### Step 1 — Write draft
+
+Body of the first step.
+
+### Step 2 — Run evals
+
+Body of the second step.
+
+Depends on: 1
+`);
+    return path;
+  }
+
+  beforeEach(() => {
+    specDir = createTempStateDir('spec-handlers-');
+    specPlansDir = join(specDir, 'plans');
+    specBacklogDir = join(specDir, 'backlog');
+    specStateDir = join(specDir, '.orc-state');
+    mkdirSync(specPlansDir, { recursive: true });
+    mkdirSync(specBacklogDir, { recursive: true });
+    mkdirSync(specStateDir, { recursive: true });
+
+    process.env.ORC_REPO_ROOT = specDir;
+    process.env.ORC_PLANS_DIR = specPlansDir;
+    process.env.ORC_BACKLOG_DIR = specBacklogDir;
+    process.env.ORC_STATE_DIR = specStateDir;
+  });
+
+  afterEach(() => {
+    cleanupTempStateDir(specDir);
+    delete process.env.ORC_REPO_ROOT;
+    delete process.env.ORC_PLANS_DIR;
+    delete process.env.ORC_BACKLOG_DIR;
+    delete process.env.ORC_STATE_DIR;
+  });
+
+  it('spec_preview returns a proposal without side effects', () => {
+    writeSamplePlan(1);
+    const before = readdirSyncFs(specBacklogDir);
+    const preview = handleSpecPreview(specStateDir, { plan_id: 1 }) as unknown as {
+      tasks: Array<{ feature: string }>;
+      plan: { planId: number };
+    };
+    expect(preview.plan.planId).toBe(1);
+    expect(preview.tasks).toHaveLength(2);
+    expect(preview.tasks[0].feature).toBe('sample-feature');
+    const after = readdirSyncFs(specBacklogDir);
+    expect(after).toEqual(before);
+  });
+
+  it('spec_preview rejects non-integer plan_id', () => {
+    expect(() => handleSpecPreview(specStateDir, { plan_id: 'x' as unknown as number })).toThrow(/plan_id/);
+    expect(() => handleSpecPreview(specStateDir, {})).toThrow(/plan_id/);
+  });
+
+  it('spec_publish requires confirm: true', () => {
+    writeSamplePlan(2);
+    expect(() => handleSpecPublish(specStateDir, { plan_id: 2 })).toThrow(/confirm must be true/);
+    expect(() => handleSpecPublish(specStateDir, { plan_id: 2, confirm: false })).toThrow(/confirm must be true/);
+    expect(() => handleSpecPublish(specStateDir, { plan_id: 2, confirm: 'true' })).toThrow(/confirm must be true/);
+    expect(readdirSyncFs(specBacklogDir)).toEqual([]);
+  });
+
+  it('spec_publish writes backlog specs and returns the created refs', () => {
+    writeSamplePlan(3);
+    const result = handleSpecPublish(specStateDir, { plan_id: 3, confirm: true }) as {
+      createdRefs: string[];
+      createdFiles: string[];
+      planPath: string;
+    };
+    expect(result.createdRefs).toHaveLength(2);
+    expect(result.createdFiles.length).toBe(2);
+    for (const file of result.createdFiles) {
+      expect(existsSyncFs(file)).toBe(true);
+    }
   });
 });

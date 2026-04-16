@@ -29,10 +29,14 @@ individual task spec, it delegates to the `create-task` skill.
 This skill is agent-agnostic — any agent (master, worker, or reviewer) may
 invoke it. It does not assume it is running as the foreground master.
 
-**Before anything else:** read `skills/create-task/SKILL.md` now using the Read
-tool and keep it in context for all task-writing steps below. All of
-create-task's style rules, section requirements, quality gate, and
-registration flow apply to every task produced here.
+**Worktree rule:** Run this verb inside a fresh worktree per the worker
+worktree workflow in AGENTS.md. Commit, merge to main, and clean up in the
+order AGENTS.md specifies. The MCP tools this skill calls (`spec_preview`,
+`spec_publish`) write only to the current worktree and a transient staging
+directory under `.orc-state/plan-staging/<plan_id>/`; they never mutate main,
+`.orc-state/backlog.json`, or git. After merge, the coordinator's auto-sync
+picks up the new specs on its next tick — this skill does NOT call
+`orc backlog-sync-check` as part of the flow.
 
 ## Source Model
 
@@ -148,20 +152,34 @@ from step-level `dependsOn`, drops intra-group deps, and stamps every output
 with `feature: <plan.name>`. `reviewLevel` values match the repo-wide enum
 consumed by `lib/backlogSync.ts`.
 
-## Step 1 — Orient
+## Step 1 — Orient and Prepare the Plan
 
-1. **Get the next task number** via `mcp__orchestrator__get_status` →
-   `next_task_seq`. This becomes `startTaskNumber` in the engine input.
-   Shell fallback (only if MCP is unavailable):
-   `ls backlog/ | grep -oE '^[0-9]+' | sort -n | tail -1 | xargs -I{} expr {} + 1`
+Both invocation forms end up feeding a saved plan file to the MCP tools. The
+only difference is how that file comes into existence.
 
-2. **Resolve the feature:**
-   - Saved plan path: use `plan.name` from the plan artifact. A
-     `$ARGUMENTS`-provided feature override replaces it only when the user
-     explicitly asks.
-   - Conversational path: if `$ARGUMENTS` provides a feature name, use it.
-     Otherwise infer from context or ask the user (same process as create-task
-     Step 0.5).
+**Saved plan (`/spec plan <id>`):** the plan artifact is already on disk at
+`plans/<id>-*.md`. Capture `<id>` from `$ARGUMENTS`. No further prep needed.
+
+**Conversational (`/spec` with no plan id):**
+
+1. Extract the most recent numbered plan printed in the conversation. If none
+   is visible, ask the user to paste or restate it as numbered steps and stop.
+2. Structure the extracted plan into the Task 176 plan artifact shape:
+   frontmatter (`plan_id` — leave the caller to allocate via `plan_write`,
+   `name`, `title`, `created_at`, `updated_at`, `derived_task_refs: []`) and
+   the six required sections (`Objective`, `Scope`, `Out of Scope`,
+   `Constraints`, `Affected Areas`, `Implementation Steps`). Apply the
+   dependency, grouping, and `reviewLevel` guidance in Step 2 and Step 2.5
+   below when authoring step bodies and explicit `Depends on: N` cues.
+3. Call `plan_write` (MCP, from Task 180) to persist the structured plan
+   into the current worktree's `plans/` directory. Capture the returned
+   `plan_id` — that becomes the `<id>` used for the rest of the flow.
+4. Resolve the feature override, if any. A `$ARGUMENTS`-provided feature
+   overrides `plan.name` only when the user explicitly asks. Otherwise
+   `plan.name` wins for every generated task.
+
+The engine's `startTaskNumber` is computed inside `spec_publish` by scanning
+the worktree's `backlog/` directory — you do not need to look it up yourself.
 
 ## Step 2 — Infer Dependencies (conversational path only)
 
@@ -218,95 +236,101 @@ into a single housekeeping task with numbered subtasks in Implementation.
 Default to `full` if unsure. The engine picks the highest level among a
 group's members.
 
-## Step 3 — Show Preview and Confirm
+## Step 3 — Preview via `spec_preview`
 
-Run the engine on the assembled `PlanInput` and render the returned
-`ProposedTask[]` as a confirmation table. Use the full `ref` slug
-(`<feature>/<N>-<slug>`) in the slug column — see create-task Step 0 for slug
-construction.
+Call the `spec_preview` MCP tool:
 
 ```
-Plan: <title or first step's context>
-Feature: <feature-ref>
+spec_preview({ plan_id: <id> })
+```
+
+This is a pure read — nothing is written. It returns the plan header and the
+`ProposedTask[]` the engine would generate. Render the result as a
+confirmation table using the full ref (`<feature>/<N>-<slug>`):
+
+```
+Plan: <title>
+Feature: <plan.name>
 
   #    ref                                  title                           deps
   21   general/21-write-skill-draft         Write the skill draft           Independent
   22   general/22-write-test-prompts        Write 3 test prompts            Independent
   23   general/23-run-evals                 Run evals                       Depends on 21, 22
   24   general/24-review-and-iterate        Review outputs and iterate      Depends on 23
-  25   general/25-optimize-description      Optimize triggering desc        Depends on 24
 
 Proceed? (confirm or adjust)
 ```
 
-Wait for confirmation before writing anything. If the user adjusts numbering,
-titles, or deps, adjust the `PlanInput` and re-run the engine.
+Wait for confirmation before calling `spec_publish`. If the user asks for
+adjustments (titles, deps, grouping), edit the saved plan file, then call
+`spec_preview` again.
 
 **If the user cancels** (says "no", "cancel", "stop", "never mind", or
-similar): stop immediately. Do not write any files. Report: "Cancelled — no
-tasks were created."
+similar): stop immediately. Do not call `spec_publish`. Report: "Cancelled —
+no tasks were created."
 
-## Step 4 — Create Tasks (delegating to create-task)
+## Step 4 — Publish via `spec_publish`
 
-**Coordinator note:** If the live coordinator is running, it may auto-claim
-and dispatch a task as soon as it syncs the spec. To prevent a task from
-being dispatched before its dependencies are synced, write all task files in
-sequence from first to last. If tasks get auto-claimed or auto-dispatched
-prematurely, use `orc task-reset <ref>` to reset them.
+Once the user confirms, call:
 
-For each `ProposedTask`, in order, run the **create-task workflow** (from
-`skills/create-task/SKILL.md`). Treat the proposed task's `title` and
-`description` as the task description input.
+```
+spec_publish({ plan_id: <id>, confirm: true })
+```
 
-**Which create-task steps to skip in batch mode:**
-- **Step 0 (orient / next_task_seq):** already done above — use the
-  per-task `slug` the engine produced.
-- **Step 0.5 (feature resolution):** already done above — use the engine's
-  `feature` stamp (or the user-provided override) for every task.
-- **create-task Output Contract** (the final per-task report): do not emit a
-  separate report per task — the batch report in Step 5 covers all tasks.
+`confirm` MUST be the literal boolean `true`. Any other value (including the
+string `"true"`) hard-fails.
 
-All other create-task steps — including the "Verify Sync" step — apply
-unchanged for each task.
+What this call does, entirely inside the current worktree:
 
-**What differs from a normal create-task invocation:**
+1. Re-resolves and re-validates the plan.
+2. Hard-fails if `derived_task_refs` is already non-empty (regeneration is a
+   separate future task — create a new plan instead).
+3. Creates `.orc-state/plan-staging/<plan_id>/` — the `mkdir` is the
+   concurrency lock. If a stale directory exists from an aborted publish,
+   the call hard-fails with instructions to remove it manually; this is
+   intentional and has no override flag.
+4. Runs the engine, stages the spec files, moves them atomically into the
+   worktree's `backlog/`, and writes `derived_task_refs` back into the plan
+   file.
+5. Removes the staging directory on full success.
 
-1. **Slug construction:** use the engine's `slug` verbatim.
+The return value contains `createdRefs`, `createdFiles`, and `planPath`.
 
-2. **Dependency line:** use the engine's `dependsOn` (task refs within this
-   batch) to author the body dependency line:
-   - Single predecessor: `Depends on Task <N>.`
-   - Multiple predecessors: `Depends on Tasks <N1>, <N2>, and <N3>.`
-   - Has a successor: append `Blocks Task <N+1>.`
-   - No dependencies: `Independent.`
-   Set `depends_on` in the markdown frontmatter when there is a real dep
-   (list multiple refs if needed). Do **not** pass `--depends-on` to
-   `task-create` CLI or `depends_on` to `mcp__orchestrator__create_task` — it
-   is a markdown-authoritative field. The frontmatter is the authoritative
-   source.
+**Do not write backlog files by hand** and **do not call `create_task`** —
+the tool owns spec file creation. The engine already handles feature
+stamping, dependency inference, grouping, and `reviewLevel` derivation per
+the rules in Steps 2 and 2.5.
 
-3. **Batch mode:** write all task files in sequence. The coordinator
-   auto-syncs them. Run `orc backlog-sync-check` after the batch to verify.
+## Step 5 — Commit, Merge, and Report
 
-4. **`## Tests` section:** for tasks whose output is a markdown file, eval
-   data, or documentation (not executable code), include the section with a
-   single line:
-   `Not applicable — task output is a markdown/data file, not executable code.`
+After `spec_publish` returns, land the result through the standard worktree
+workflow:
 
-5. **Quality gate:** run create-task's quality gate for each task spec before
-   saving it.
+1. `git add` the new backlog specs and the updated plan file listed in
+   `createdFiles` / `planPath`.
+2. `git commit -m "feat(<feature>): spec tasks from plan <id>"` in the
+   worktree.
+3. Merge the worktree to main using the AGENTS.md cleanup ordering (merge →
+   branch delete → worktree remove). In PR mode, push and let the PR
+   reviewer land the change.
 
-## Step 5 — Sync Check and Final Report
-
-After all tasks are written, run `orc backlog-sync-check
---refs=<ref1>,<ref2>,...` scoped to the refs created in this batch.
+Do NOT call `orc backlog-sync-check` — runtime state is the coordinator's
+responsibility. The auto-sync tick picks up the new specs from main
+automatically. Any agent or operator may run `orc backlog-sync-check` ad-hoc
+to verify, but it is not part of this verb's flow.
 
 Report:
-- Source (saved plan `<id>` or conversational).
-- Number of tasks created.
-- File paths written.
-- Sync check result (✓ or ✗ per ref).
+- Source (saved plan `<id>` or conversational; for conversational, also the
+  newly-allocated `plan_id` returned by `plan_write`).
+- `createdRefs` and their file paths.
+- Updated plan path.
 
-If sync-check fails, the coordinator may not have ticked yet. Wait a few
-seconds and retry. If it still fails, report the failing refs. Do not hide
-failures behind aggregate pass/fail messages.
+If `spec_publish` throws, surface the exact error. Common failure modes:
+- `confirm must be true` — the tool was called without `confirm: true`.
+- `already has derived_task_refs` — regenerating is not supported.
+- `staging directory already exists` — a prior publish left stale state; the
+  message names the directory to remove.
+- `publication failed: ... Visible refs in backlog: ...` — partial failure;
+  some specs landed but `derived_task_refs` was NOT written. Do not retry
+  blindly — inspect the worktree, roll back the visible refs manually, and
+  remove the staging directory before re-running.

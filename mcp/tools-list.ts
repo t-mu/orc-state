@@ -603,4 +603,41 @@ export const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'spec_preview',
+    description: 'Preview the backlog task specs that would be generated from a saved plan artifact. Pure read — no files are written and no state is mutated. Pairs with spec_publish.',
+    inputSchema: {
+      type: 'object',
+      required: ['plan_id'],
+      properties: {
+        plan_id: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Numeric plan id resolving to plans/<plan_id>-*.md',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'spec_publish',
+    description: 'Publish a saved plan into backlog task specs inside the invoking agent\'s worktree. Stages files under .orc-state/plan-staging/<plan_id>/ as a concurrency lock, writes specs to backlog/, and updates the plan file with derived_task_refs. Does not touch .orc-state/backlog.json or git — the caller is responsible for commit + merge. Hard-fails if confirm !== true, if derived_task_refs is already non-empty, or if the staging directory already exists.',
+    inputSchema: {
+      type: 'object',
+      required: ['plan_id', 'confirm'],
+      properties: {
+        plan_id: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Numeric plan id resolving to plans/<plan_id>-*.md',
+        },
+        confirm: {
+          type: 'boolean',
+          enum: [true],
+          description: 'Must be the literal boolean true to proceed. Any other value hard-fails.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
 ];

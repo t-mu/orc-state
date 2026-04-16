@@ -22,6 +22,7 @@ import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration,
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
+import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
@@ -1297,6 +1298,25 @@ export function handleMemoryStatus(stateDir: string, _args: Record<string, unkno
   } catch {
     return { error: 'memory system not initialized' };
   }
+}
+
+export function handleSpecPreview(_stateDir: string, args: Record<string, unknown> = {}) {
+  const { plan_id } = args;
+  if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
+    throw new Error('plan_id must be a non-negative integer');
+  }
+  return previewSpec(plan_id);
+}
+
+export function handleSpecPublish(_stateDir: string, args: Record<string, unknown> = {}) {
+  const { plan_id, confirm } = args;
+  if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
+    throw new Error('plan_id must be a non-negative integer');
+  }
+  if (confirm !== true) {
+    throw new Error('confirm must be true to publish');
+  }
+  return publishSpec(plan_id, { confirm: true });
 }
 
 export { closeMemoryDb };
