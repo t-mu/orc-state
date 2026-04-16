@@ -300,6 +300,22 @@ The repo has two first-class artifact directories:
   numbers. See `plans/TEMPLATE.md` and `docs/cli.md` → **Plans** for the full
   contract. Parser, lookup, and id-allocator helpers live in `lib/planDocs.ts`.
 
+### Lifecycle verbs
+
+Lifecycle verbs are agent-agnostic MCP-backed workflows any caller (master,
+worker, automation) can invoke. They author and publish artifacts under
+`plans/` and `backlog/`.
+
+- `/plan` — interactive plan authoring. See `skills/plan/SKILL.md`. Backed
+  by the `plan_write` MCP tool, which writes `plans/<plan_id>-<slug>.md`
+  **only inside the current worktree**. The tool does not touch
+  `.orc-state/backlog.json`, main, or git. Run `/plan` inside a fresh
+  worktree per the worker worktree workflow above, then commit, merge to
+  main, and clean up in the order specified under **Worktree cleanup
+  ordering**. Feature-slug collisions with unrelated existing features are
+  rejected unless the caller sets `acknowledge_feature_collision: true`
+  after disambiguating with the user.
+
 ### Execution Modes
 
 Each agent role (master, worker) can run in one of two execution mode presets:

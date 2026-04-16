@@ -379,6 +379,7 @@ into `.claude/skills/` or `.codex/skills/`. The packaged skills include:
 | Skill | Purpose |
 |-------|---------|
 | `create-task` | Create a single backlog task spec file. |
+| `plan` | Interactive plan authoring. Normalizes a user request into a candidate feature slug and title, asks only the high-value follow-ups needed to remove ambiguity, and persists a validated plan artifact under `plans/<plan_id>-<slug>.md` via the `plan_write` MCP tool. Run in a fresh worktree; commit and merge to main follow the standard worker worktree workflow. |
 | `spec` | Convert a saved plan artifact (`plans/<plan_id>-*.md`, preferred) or a conversational plan (fallback) into a full batch of registered backlog task specs. Invoked as `/spec plan <id>` or `/spec`. |
 | `orc-commands` | Inline reference for orc CLI subcommands. |
 | `worker-inspect` | Inspect worker state via MCP orchestrator tools. |
@@ -392,3 +393,33 @@ slug, a `<feature>/<slug>` ref, a description, an intra-batch `dependsOn`
 ref list, a `reviewLevel` matching the enum consumed by
 `lib/backlogSync.ts`, the merged plan step numbers, and a `feature` stamp
 copied from the plan's `name` field.
+
+### `/plan` lifecycle verb
+
+`/plan` is an agent-agnostic interactive workflow that produces a plan
+artifact any later caller can pick up via `/spec plan <id>`. Invoke from a
+fresh worktree:
+
+1. The skill normalizes the request into a candidate kebab-case `name` and
+   human-readable `title`.
+2. It checks `.orc-state/backlog.json` for feature-slug collisions. If the
+   derived slug matches an unrelated feature, the skill prompts the invoker
+   to disambiguate (new slug or cancel). Same-feature re-use is accepted
+   explicitly.
+3. It asks only the high-value follow-ups needed to fill every required
+   section (`Objective`, `Scope`, `Out of Scope`, `Constraints`,
+   `Affected Areas`, `Implementation Steps`).
+4. Once every section is concrete, it calls the `plan_write` MCP tool,
+   which allocates the next `plan_id` atomically via `nextPlanId()`,
+   validates the rendered artifact through `parsePlan` (round-trip), and
+   writes `plans/<plan_id>-<slug>.md` inside the current worktree. The
+   tool does not touch `.orc-state/backlog.json`, main, or git.
+5. The skill commits the new plan file in the worktree and merges to main
+   following the worker worktree workflow in AGENTS.md.
+
+The `plan_write` MCP tool accepts the fields listed in the `/plan` skill:
+`name`, `title`, `objective`, `scope`, `out_of_scope`, `constraints`,
+`affected_areas`, `steps: [{ title, body, depends_on? }]`, and the optional
+`acknowledge_feature_collision: boolean` flag used by the skill to accept a
+same-feature collision after confirming with the user. The tool returns
+`{ planId, path }` on success.

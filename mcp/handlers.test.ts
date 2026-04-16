@@ -32,8 +32,10 @@ import {
   handleMemorySearch,
   handleMemoryStore,
   handleMemoryStatus,
+  handlePlanWrite,
   closeMemoryDb,
 } from './handlers.ts';
+import { parsePlan } from '../lib/planDocs.ts';
 import { assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
 
 let dir: string;
@@ -1809,5 +1811,66 @@ describe('memory handlers', () => {
     expect(handleMemoryStatus(badDir)).toEqual({ error: 'memory system not initialized' });
     // memoryWakeUp handles DB failure internally and returns empty text, so handleMemoryWakeUp returns { text: '' }
     expect(handleMemoryWakeUp(badDir, {})).toEqual({ text: '' });
+  });
+});
+
+describe('handlePlanWrite', () => {
+  function validArgs(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      name: 'gemini-cli-integration',
+      title: 'Add Gemini CLI Integration',
+      objective: 'Ship a new Gemini adapter so workers can use Gemini as a provider.',
+      scope: '- Adapter binding for Gemini CLI.',
+      out_of_scope: '- Managed-API Gemini support.',
+      constraints: '- Must not change the existing Codex adapter.',
+      affected_areas: '- adapters/gemini.ts',
+      steps: [
+        { title: 'Add adapter', body: 'Wire the Gemini CLI adapter.' },
+        { title: 'Wire provider', body: 'Register gemini in the resolver.', depends_on: [1] },
+      ],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    mkdirSync(join(dir, 'plans'), { recursive: true });
+  });
+
+  it('plan_write MCP handler writes a valid plan artifact', async () => {
+    const result = await handlePlanWrite(dir, validArgs());
+    expect(result.planId).toBe(1);
+    expect(result.path).toBe(join(dir, 'plans', '1-gemini-cli-integration.md'));
+    const parsed = parsePlan(result.path);
+    expect(parsed.name).toBe('gemini-cli-integration');
+    expect(parsed.derivedTaskRefs).toEqual([]);
+    expect(parsed.steps).toHaveLength(2);
+  });
+
+  it('plan_write MCP handler rejects missing required fields', async () => {
+    await expect(handlePlanWrite(dir, validArgs({ title: undefined }))).rejects.toThrow(/title/);
+    await expect(handlePlanWrite(dir, validArgs({ steps: [] }))).rejects.toThrow(/steps/);
+  });
+
+  it('plan_write MCP handler surfaces feature-slug collision as an error', async () => {
+    writeFileSync(
+      join(dir, 'backlog.json'),
+      JSON.stringify({
+        version: '1',
+        features: [{ ref: 'gemini-cli-integration', title: 'Gemini', tasks: [] }],
+      }, null, 2),
+    );
+    await expect(handlePlanWrite(dir, validArgs())).rejects.toThrow(/collides/);
+  });
+
+  it('plan_write MCP handler accepts acknowledged feature-slug collisions', async () => {
+    writeFileSync(
+      join(dir, 'backlog.json'),
+      JSON.stringify({
+        version: '1',
+        features: [{ ref: 'gemini-cli-integration', title: 'Gemini', tasks: [] }],
+      }, null, 2),
+    );
+    const result = await handlePlanWrite(dir, validArgs({ acknowledge_feature_collision: true }));
+    expect(result.planId).toBe(1);
   });
 });

@@ -116,6 +116,8 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleListWorktrees(stateDir);
     case 'get_notifications':
       return handlers.handleGetNotifications(stateDir, args);
+    case 'plan_write':
+      return handlers.handlePlanWrite(stateDir, args);
     case 'memory_wake_up':
       return handlers.handleMemoryWakeUp(stateDir, args);
     case 'memory_recall':
