@@ -86,13 +86,13 @@ Before writing any file, determine the feature for this task:
    Enter the new feature name (lowercase, hyphen-separated, e.g. "my-feature"):
    ```
 
-   Use the entered value as the feature ref. The `create_task` MCP call will create the
-   feature if it does not yet exist (Task 103 behavior - only works for "general" automatically;
-   for any other new feature name the agent must note it may not exist and the MCP call may fail).
+   Use the entered value as the feature ref. The coordinator's auto-sync creates
+   any unknown feature referenced by a backlog spec on its next tick — no explicit
+   feature-creation call is required from the agent.
 
-5. **Store the resolved feature** and use it for:
-   - The `feature:` frontmatter field in every .md file written during this skill invocation
-   - The `feature` argument to `mcp__orchestrator__create_task` (Task 105)
+5. **Store the resolved feature** and use it for the `feature:` frontmatter field
+   in every .md file written during this skill invocation. The coordinator picks
+   it up from the markdown on its next auto-sync tick.
 
 ## Required Inputs Before Drafting
 
@@ -185,4 +185,4 @@ A draft is ready to save only when all applicable sections pass.
 
 ## Reference
 
-See `references/task-template.md` for the fill-in-the-blanks template.
+See `backlog/TASK_TEMPLATE.md` for the canonical fill-in-the-blanks template (already referenced in Step 0).
