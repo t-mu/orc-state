@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
+let savedRepoRoot: string | undefined;
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -13,6 +14,11 @@ beforeEach(() => {
   process.env.ORC_WORKTREES_DIR = join(dir, 'repo', '.worktrees');
   process.env.ORC_BACKLOG_DIR = join(dir, 'docs', 'backlog');
   process.env.ORC_PLANS_DIR = join(dir, 'plans');
+  // resolveRepoRoot short-circuits on ORC_REPO_ROOT and bypasses the mocked
+  // node:child_process spawnSync — clear it so the mock is exercised. An
+  // ambient ORC_REPO_ROOT is present inside orc worker sessions.
+  savedRepoRoot = process.env.ORC_REPO_ROOT;
+  delete process.env.ORC_REPO_ROOT;
 });
 
 afterEach(() => {
@@ -21,6 +27,7 @@ afterEach(() => {
   delete process.env.ORC_WORKTREES_DIR;
   delete process.env.ORC_BACKLOG_DIR;
   delete process.env.ORC_PLANS_DIR;
+  if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
 });
 
 describe('ensureRunWorktree', () => {

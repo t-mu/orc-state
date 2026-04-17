@@ -6,6 +6,14 @@ import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateH
 describe('paths', () => {
   beforeEach(() => {
     vi.resetModules();
+    // paths.ts short-circuits on these env vars before resolveRepoRoot runs —
+    // clear them so the mock under test is actually exercised. An ambient
+    // ORC_STATE_DIR is present inside orc worker sessions.
+    vi.stubEnv('ORC_STATE_DIR', undefined as unknown as string);
+    vi.stubEnv('ORC_CONFIG_FILE', undefined as unknown as string);
+    vi.stubEnv('ORC_WORKTREES_DIR', undefined as unknown as string);
+    vi.stubEnv('ORC_BACKLOG_DIR', undefined as unknown as string);
+    vi.stubEnv('ORC_PLANS_DIR', undefined as unknown as string);
   });
 
   afterEach(() => {
