@@ -49,7 +49,8 @@ ad-hoc turns where no saved plan artifact exists.
 Invocation: `/spec plan <id>` (or `/spec plan <id> <feature-override>`).
 
 1. Parse `<id>` as a positive integer from `$ARGUMENTS`.
-2. Resolve and parse the plan file via the plan-docs helpers (Task 176):
+2. Resolve and parse the plan file via the plan-docs helpers in
+   `lib/planDocs.ts`:
    - locate the single file matching `plans/<id>-*.md`
    - validate frontmatter (`plan_id`, `name`, `title`, `created_at`,
      `updated_at`, `derived_task_refs`) and required sections

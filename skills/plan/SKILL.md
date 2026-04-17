@@ -51,10 +51,11 @@ A plan file at `plans/<plan_id>-<slug>.md` must carry:
   `Depends on: N, M`) to declare dependencies between steps. This cue is
   plans-only; backlog specs continue to use the prose `Depends on Task N.`
   form.
-- No unresolved placeholders. The Task 176 validator rejects `TBD`, `TODO`,
-  three or more `?` characters, and bare bracketed fill-ins (`[like this]`)
-  outside fenced code blocks and outside markdown link syntax
-  (`[text](url)`). The plan file must be UTF-8 without a byte-order mark.
+- No unresolved placeholders. The plan validator (`parsePlan` in
+  `lib/planDocs.ts`) rejects `TBD`, `TODO`, three or more `?` characters, and
+  bare bracketed fill-ins (`[like this]`) outside fenced code blocks and
+  outside markdown link syntax (`[text](url)`). The plan file must be UTF-8
+  without a byte-order mark.
 
 See `plans/TEMPLATE.md` for the baseline shape.
 
@@ -70,9 +71,9 @@ before proceeding.
 
 ## Step 2 — Check Feature-Slug Collision
 
-Inspect the current `.orc-state/backlog.json` (or ask via
-`mcp__orchestrator__get_status` / `list_tasks`) and extract the feature
-refs.
+Call `mcp__orchestrator__get_status` or `list_tasks` and extract the feature
+refs from the response. Do not read `.orc-state/backlog.json` directly; use
+the MCP tools.
 
 - **No collision:** proceed.
 - **Collision, but this plan genuinely belongs to the same feature:** accept

@@ -34,7 +34,7 @@ Normal workflow:
 2. write/edit the backlog markdown spec
 3. coordinator auto-syncs specs to runtime state on each tick (no explicit verify step needed)
 4. `orc delegate`
-5. worker lifecycle via `run-start` -> `run-heartbeat` -> `run-work-complete` -> `run-finish`
+5. worker lifecycle via `run-start` -> `run-work-complete` -> `run-finish`
 6. inspect with `orc status` / `orc doctor`; `orc backlog-sync-check` is available ad-hoc if you want to double-check state
 
 Outside the blessed workflow, use only:
@@ -85,10 +85,12 @@ These commands are for observability. They are supported, but they are not alter
 
 | Command | Usage | Notes |
 |---------|-------|-------|
-| `task-create` | `orc task-create --feature=<ref> --title=<text> [options]` | Add a task to backlog. Prefer MCP `create_task` from master. |
+| `task-create` | `orc task-create --feature=<ref> --title=<text> [options]` | Add a task to backlog. Recovery path only — the normal path is to save a `backlog/<N>-<slug>.md` spec and let the coordinator auto-sync on its next tick. |
 | `task-mark-done` | `orc task-mark-done <feature/task>` | Mark a task done in runtime state after the markdown spec has already been updated. |
+| `task-reset` | `orc task-reset <feature/task>` | Reset a task to `todo`, cancelling any active claim. Use when a blocked or stuck task needs another attempt. |
+| `task-unblock` | `orc task-unblock <feature/task>` | Transition a blocked task back to `todo`. |
 | `backlog-sync` | `orc backlog-sync` | Repair runtime backlog metadata from authoritative markdown specs. |
-| `backlog-sync-check` | `orc backlog-sync-check` | Validate that runtime backlog metadata matches active markdown specs. |
+| `backlog-sync-check` | `orc backlog-sync-check` | Validate that runtime backlog metadata matches active markdown specs. Ad-hoc only — not part of the task-creation flow. |
 | `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
 
 ### Run Lifecycle (Worker Commands)
@@ -98,7 +100,6 @@ Workers emit these from inside their PTY session via Bash tool:
 | Command | Usage | Notes |
 |---------|-------|-------|
 | `run-start` | `orc run-start --run-id=<id> --agent-id=<id>` | **Required first.** Acknowledge task start. |
-| `run-heartbeat` | `orc run-heartbeat --run-id=<id> --agent-id=<id>` | Extend idle timeout. Emit every ~5 min during long work. |
 | `run-work-complete` | `orc run-work-complete --run-id=<id> --agent-id=<id>` | Signal implementation+review+rebase done. Remain alive for coordinator finalization. |
 | `run-finish` | `orc run-finish --run-id=<id> --agent-id=<id>` | Terminal success. Emit only after `run-work-complete` handoff. |
 | `run-fail` | `orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--policy=requeue\|block]` | Terminal failure. Default policy is `requeue`. |
@@ -132,6 +133,17 @@ For workers that need master input (e.g. blocked on a decision):
 | `run-input-request` | `orc run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>]` | Worker calls this to ask master a question. Blocks until response or timeout. |
 | `run-input-respond` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]` | Master calls this to answer a worker's input request. |
 
+### Memory (Worker)
+
+Workers use these to persist and recall drawer-scoped memories. Store lives at `.orc-state/memory.db` (SQLite).
+
+| Command | Usage | Notes |
+|---------|-------|-------|
+| `memory-wake-up` | `orc memory-wake-up [--wing=<wing>] [--budget=<N>]` | Recall essential memories at session start. |
+| `memory-record` | `orc memory-record --content="..." [--wing=<wing>] [--hall=<hall>] [--room=<room>] [--importance=<N>]` | Store a memory. |
+| `memory-search` | `orc memory-search <query> [--wing=<wing>] [--room=<room>]` | FTS5 search across stored memories. |
+| `memory-status` | `orc memory-status` | Memory store statistics. |
+
 ---
 
 ## Common Operational Patterns
@@ -139,7 +151,7 @@ For workers that need master input (e.g. blocked on a decision):
 ### Reset a blocked/failed task to todo
 
 ```bash
-orc task-reset orch/task-NNN-slug
+orc task-reset <feature>/<N>-<slug>
 ```
 
 Use the CLI or MCP tools for orchestrator state changes. Do not mutate state
