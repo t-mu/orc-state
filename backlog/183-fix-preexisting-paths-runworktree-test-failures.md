@@ -3,7 +3,7 @@ ref: test-infra/183-fix-preexisting-paths-runworktree-test-failures
 feature: test-infra
 review_level: full
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 183 — Fix Pre-existing paths/runWorktree Test Failures
