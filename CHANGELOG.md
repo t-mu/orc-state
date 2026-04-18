@@ -5,7 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.2.5] - 2026-04-15
+## [0.3.0] - 2026-04-18
+
+### Added
+
+- add integration coverage for /plan + /spec round-trip
+- randomize orc-themed worker names
+- add task spec to randomize orc-themed worker names
+- implement /spec from saved plans
+- add /plan skill and plan_write MCP tool
+- extract file-backed plan-to-backlog engine
+- add plan artifact contract, parser, lookup, and id allocator
+- add backlog tasks for plan and spec verbs
+
+### Changed
+
+- mark task 183 done
+- audit plan, spec, and orc-commands skills
+- clean up create-task skill
+- prune plan-to-tasks-workspace eval harness
+- mark task 181 done
+- mark task 182 done
+- drop sync-check gate from agent instructions
+- mark task 179 done
+- mark task 180 done
+- mark task 176 done
+- revise plan/spec task specs after review
+
+### Fixed
+
+- clear ambient ORC env vars before paths/runWorktree mocks
+- set ORC_PLANS_DIR in runWorktree tests
+- address review findings on /spec publisher
+- address review findings on /plan authoring
+- address review findings on plan-to-backlog engine
+
+### Other
+
+- address critic findings on integration tests## [0.2.5] - 2026-04-15
 
 ### Fixed
 
