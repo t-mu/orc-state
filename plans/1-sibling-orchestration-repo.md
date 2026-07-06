@@ -4,7 +4,16 @@ name: sibling-orchestration-repo
 title: Sibling Orchestration Repo — Two-Root Model
 created_at: 2026-07-06T11:12:41.760Z
 updated_at: 2026-07-06T11:12:41.760Z
-derived_task_refs: []
+derived_task_refs:
+  - sibling-orchestration-repo/184-two-root-path-resolution-and-config-schema
+  - sibling-orchestration-repo/185-call-site-audit-orchestration-root-vs-target-repo-consumers
+  - sibling-orchestration-repo/186-worktree-and-merge-operations-against-the-target-repo
+  - sibling-orchestration-repo/187-sibling-mode-phase-4-coordinator-side-spec-status-writeback
+  - sibling-orchestration-repo/188-mode-aware-worker-prompts-and-gitignore-behavior
+  - sibling-orchestration-repo/189-orc-home-propagation-and-in-worktree-discovery-for-worker-orc-commands
+  - sibling-orchestration-repo/190-sandbox-execution-mode-scoping-for-sibling-layout
+  - sibling-orchestration-repo/191-orc-init-sibling-scaffolding-and-health-checks
+  - sibling-orchestration-repo/192-documentation-and-end-to-end-lifecycle-coverage
 ---
 # Sibling Orchestration Repo — Two-Root Model
 
