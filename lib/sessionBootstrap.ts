@@ -56,6 +56,12 @@ function renderBootstrap(template: string, provider: string, agentId: string): s
 
 export type WorkerBootstrapProfile = 'default' | 'smoke';
 
+// The smoke profile keeps its own hardcoded attached-mode Phase 4 step (it also
+// folds the spec edit into the task commit). It is a deterministic lifecycle
+// smoke-test fixture run in the attached layout, not a production or sibling
+// path — sibling-mode smoke is out of scope (the sibling e2e lives in task 192).
+// It has no {{phase_complete_step}} placeholder, so the injected var is simply
+// unused for this profile.
 function resolveWorkerTemplate(role: string, workerBootstrapProfile: WorkerBootstrapProfile = 'default'): string {
   if (role === 'worker' && workerBootstrapProfile === 'smoke') {
     return WORKER_BOOTSTRAP_SMOKE_TEMPLATE;

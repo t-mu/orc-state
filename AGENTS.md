@@ -157,6 +157,7 @@ different directories), Phase 4 changes:
   (task specs, plans, `.orc-state`, or other orchestration artifacts) into the
   target repo.
 - Steps 2–3 (rebase, `run-work-complete`) are unchanged.
+
 The worker bootstrap emits the correct Phase 4 instructions for the active
 layout automatically; this callout documents the contract.
 

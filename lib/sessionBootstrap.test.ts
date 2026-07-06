@@ -97,9 +97,16 @@ describe('buildSessionBootstrap', () => {
 
   it('emits attached-mode Phase 4 (worker edits the spec) when siblingLayout is false', () => {
     const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token', { siblingLayout: false });
-    expect(rendered).toContain('update the task markdown in this assigned worktree to `status: done`');
-    expect(rendered).toContain('Edit the task spec file referenced by `task_spec_path`');
-    expect(rendered).toContain('Change its frontmatter `status:` field to `done`');
+    // Byte-exact: the attached-mode Phase 4 block must reproduce the original
+    // template step 7 verbatim (the "attached-mode prompts unchanged" mandate).
+    const expectedStep7 = [
+      '  7. Signal complete phase and update the task markdown in this assigned worktree to `status: done`:',
+      '       orc progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=bob',
+      '       - Edit the task spec file referenced by `task_spec_path`',
+      '       - Change its frontmatter `status:` field to `done`',
+      '       - Do not call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge',
+    ].join('\n');
+    expect(rendered).toContain(expectedStep7);
     // No placeholder leaks and no sibling-only prohibition.
     expect(rendered).not.toContain('{{phase_complete_step}}');
     expect(rendered).not.toContain('Never commit framework files');
