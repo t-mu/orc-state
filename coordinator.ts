@@ -40,7 +40,7 @@ import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
-import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
+import { markTaskDoneRuntimeOnly, writeSpecStatusDone } from './lib/taskCompletion.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
@@ -642,6 +642,14 @@ async function mergeAndFinishDirectRun(claim: Claim, runWorktree: { branch: stri
     return markFinalizeBlocked(claim, workerPoolConfig, `failed to mark runtime task done after merge: ${(error as Error).message}`);
   }
 
+  // Sibling-mode only: mirror the runtime `done` into the spec under the
+  // orchestration backlog/ (best-effort; never blocks finalization).
+  try {
+    writeSpecStatusDone(claim.task_ref);
+  } catch (error) {
+    log(`warning: spec writeback failed for ${claim.task_ref}: ${(error as Error).message}`);
+  }
+
   try {
     pushMain();
   } catch (error) {
@@ -693,6 +701,13 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
       markTaskDoneRuntimeOnly(claim.task_ref, 'coordinator', STATE_DIR);
     } catch (error) {
       return markFinalizeBlocked(claim, workerPoolConfig, `failed to mark runtime task done after PR merge: ${(error as Error).message}`);
+    }
+
+    // Sibling-mode only: mirror the runtime `done` into the orchestration spec.
+    try {
+      writeSpecStatusDone(claim.task_ref);
+    } catch (error) {
+      log(`warning: spec writeback failed for ${claim.task_ref}: ${(error as Error).message}`);
     }
 
     finishRun(STATE_DIR, claim.run_id, claim.agent_id, { success: true });

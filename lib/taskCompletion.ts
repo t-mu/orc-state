@@ -1,9 +1,13 @@
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { withLock } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { readBacklog, findTask } from './stateReader.ts';
-import { STATE_DIR } from './paths.ts';
+import { discoverActiveTaskSpecs } from './backlogSync.ts';
+import { BACKLOG_DOCS_DIR, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT } from './paths.ts';
+import { logger } from './logger.ts';
 
 const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'released', 'cancelled']);
 
@@ -48,4 +52,103 @@ export function markTaskDoneRuntimeOnly(
 
     console.log(`task marked done: ${taskRef} (was: ${previousStatus})`);
   });
+}
+
+/**
+ * Rewrite the leading frontmatter `status:` value to `done`. Returns the new
+ * text and whether it changed, or null when the text has no frontmatter or no
+ * status field. Only the leading frontmatter block is touched — a later
+ * "status:" line in the task body is never matched.
+ */
+function setFrontmatterStatusDone(text: string): { text: string; changed: boolean } | null {
+  const match = /^(---\s*\n)([\s\S]*?)(\n---(?:\n|$))/.exec(text);
+  if (!match) return null;
+  const [full, open, body, close] = match;
+  if (!/^status:[ \t]*\S+/m.test(body)) return null;
+  if (/^status:[ \t]*done[ \t]*$/m.test(body)) return { text, changed: false };
+  const newBody = body.replace(/^(status:[ \t]*)\S.*$/m, '$1done');
+  return { text: open + newBody + close + text.slice(full.length), changed: true };
+}
+
+function orchestrationRepoIsGit(orchestrationRoot: string): boolean {
+  return spawnSync('git', ['rev-parse', '--git-dir'], { cwd: orchestrationRoot, encoding: 'utf8' }).status === 0;
+}
+
+/**
+ * Sibling-mode Phase 4 spec writeback (distinct from the runtime-only
+ * `markTaskDoneRuntimeOnly`). In the sibling layout the worker never edits or
+ * commits the task spec — product-code merges land in the target repo — so the
+ * coordinator writes `status: done` into the spec under the orchestration
+ * repo's backlog/ after merge and commits it there.
+ *
+ * No-op in the attached layout (orchestration root == target repo root), where
+ * the worker's own spec edit is carried by the merge. When the orchestration
+ * root is not a git repository, the file is written and the commit is skipped.
+ * Best-effort: never throws — the caller's finalization must not fail on a
+ * writeback problem. The file write is what matters for backlogSync
+ * convergence (spec `done` matches the runtime `done` just recorded); the
+ * commit is a durable audit trail on top.
+ */
+export function writeSpecStatusDone(
+  taskRef: string,
+  {
+    docsDir = BACKLOG_DOCS_DIR,
+    orchestrationRoot = ORCHESTRATION_ROOT,
+    targetRepoRoot = TARGET_REPO_ROOT,
+  }: { docsDir?: string; orchestrationRoot?: string; targetRepoRoot?: string } = {},
+): { written: boolean; committed: boolean } {
+  if (orchestrationRoot === targetRepoRoot) return { written: false, committed: false };
+
+  let entry;
+  try {
+    entry = discoverActiveTaskSpecs(docsDir).find((spec) => spec.ref === taskRef) ?? null;
+  } catch (err) {
+    logger.warn(`[specWriteback] failed to scan specs under ${docsDir}: ${(err as Error).message}`);
+    return { written: false, committed: false };
+  }
+  if (!entry) {
+    logger.warn(`[specWriteback] no spec file found for ${taskRef} under ${docsDir}`);
+    return { written: false, committed: false };
+  }
+
+  const specPath = join(docsDir, entry.file);
+  let result: { text: string; changed: boolean } | null;
+  try {
+    result = setFrontmatterStatusDone(readFileSync(specPath, 'utf8'));
+  } catch (err) {
+    logger.warn(`[specWriteback] cannot read spec ${specPath}: ${(err as Error).message}`);
+    return { written: false, committed: false };
+  }
+  if (!result) {
+    logger.warn(`[specWriteback] spec ${specPath} has no frontmatter status to update`);
+    return { written: false, committed: false };
+  }
+  if (!result.changed) return { written: false, committed: false };
+
+  try {
+    writeFileSync(specPath, result.text);
+  } catch (err) {
+    logger.warn(`[specWriteback] failed to write spec ${specPath}: ${(err as Error).message}`);
+    return { written: false, committed: false };
+  }
+
+  if (!orchestrationRepoIsGit(orchestrationRoot)) {
+    return { written: true, committed: false };
+  }
+
+  const relPath = isAbsolute(specPath) ? relative(orchestrationRoot, specPath) : specPath;
+  const staged = spawnSync('git', ['add', relPath], { cwd: orchestrationRoot, encoding: 'utf8' });
+  if (staged.status !== 0) {
+    logger.warn(`[specWriteback] git add failed for ${taskRef}: ${(staged.stderr || staged.stdout || '').trim()}`);
+    return { written: true, committed: false };
+  }
+  const committed = spawnSync('git', ['commit', '-m', `chore(backlog): ${taskRef} done`, '--', relPath], {
+    cwd: orchestrationRoot,
+    encoding: 'utf8',
+  });
+  if (committed.status !== 0) {
+    logger.warn(`[specWriteback] git commit failed for ${taskRef}: ${(committed.stderr || committed.stdout || '').trim()}`);
+    return { written: true, committed: false };
+  }
+  return { written: true, committed: true };
 }
