@@ -3,7 +3,7 @@ ref: sibling-orchestration-repo/186-worktree-and-merge-operations-against-the-ta
 feature: sibling-orchestration-repo
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - sibling-orchestration-repo/185-call-site-audit-orchestration-root-vs-target-repo-consumers
 ---

@@ -678,7 +678,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     if (!prRef || !COORD_CONFIG.pr_provider) {
       return markFinalizeBlocked(claim, workerPoolConfig, 'pr_review_in_progress but pr_ref or pr_provider is missing');
     }
-    const adapter = getGitHostAdapter(COORD_CONFIG.pr_provider);
+    const adapter = getGitHostAdapter(COORD_CONFIG.pr_provider, TARGET_REPO_ROOT);
     try {
       adapter.mergePr(prRef);
     } catch (error) {
@@ -723,7 +723,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     if (!COORD_CONFIG.pr_provider) {
       return markFinalizeBlocked(claim, workerPoolConfig, 'merge_strategy=pr but pr_provider is not configured');
     }
-    const gitAdapter = getGitHostAdapter(COORD_CONFIG.pr_provider);
+    const gitAdapter = getGitHostAdapter(COORD_CONFIG.pr_provider, TARGET_REPO_ROOT);
 
     // Push the branch
     try {

@@ -3,8 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { withLock, lockPath } from './lock.ts';
-import { RUN_WORKTREES_FILE, WORKTREES_DIR } from './paths.ts';
-import { resolveRepoRoot } from './repoRoot.ts';
+import { RUN_WORKTREES_FILE, WORKTREES_DIR, TARGET_REPO_ROOT } from './paths.ts';
 import type { RunWorktreesState, RunWorktreeEntry } from '../types/run-worktrees.ts';
 import { logger } from './logger.ts';
 
@@ -16,6 +15,11 @@ function readRunWorktrees(_stateDir: string): RunWorktreesState {
   }
 }
 
+// Worktrees are worktrees OF the target repo (root = TARGET_REPO_ROOT, the cwd
+// of `git worktree add`) but are PLACED under the orchestration root's
+// WORKTREES_DIR. In the single-repo layout the two roots coincide; in the
+// sibling layout the product branch lives in the target repo while the working
+// files sit beside the orchestration state.
 function ensureGitWorktree({ root, path, branch, createBranch }: {
   root: string;
   path: string;
@@ -69,7 +73,7 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
       return false;
     }
 
-    const root = resolveRepoRoot();
+    const root = TARGET_REPO_ROOT;
     let cleanupSucceeded = true;
     if (entry.worktree_path) {
       if (existsSync(entry.worktree_path)) {
@@ -138,7 +142,7 @@ export function ensureRunWorktree(
   return withLock(lockPath(stateDir), () => {
     const file = readRunWorktrees(stateDir);
     const existing = file.runs.find((entry) => entry.run_id === runId) ?? null;
-    const root = resolveRepoRoot();
+    const root = TARGET_REPO_ROOT;
     const branch = existing?.branch ?? `task/${runId}`;
     const worktreePath = existing?.worktree_path ?? join(WORKTREES_DIR, runId);
 
