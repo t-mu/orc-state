@@ -31,7 +31,7 @@ import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interfac
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
 import { latestRunActivityMap, latestRunPhaseMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
-import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, consumeHookEvents } from './lib/paths.ts';
+import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
@@ -91,7 +91,29 @@ const WORKER_STALE_NUDGE_MS = intFlag('worker-stale-nudge-ms', COORD_CONFIG.work
 const WORKER_STALE_FORCE_FAIL_MS = intFlag('worker-stale-force-fail-ms', COORD_CONFIG.worker_stale_force_fail_ms);
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
+// Orchestration root: where the orc framework lives — the `orc` binary,
+// backlog specs, plans, config, and state dir. Coordinator-launched processes
+// (worker sessions, orc CLI invocations) and spec-relative path math key off
+// this. In the single-repo (attached) layout it equals TARGET_REPO_ROOT.
 const REPO_ROOT = resolveRepoRoot();
+
+// ── Repo-root call-site classification (task 185) ────────────────────────────
+// Every "repo root" consumer is one of two kinds. Later sibling-layout steps
+// rely on this split:
+//
+//   orchestration-root consumers (use REPO_ROOT / paths.ts ORCHESTRATION_ROOT):
+//     - resolveOrcBinSh(REPO_ROOT)            orc binary lookup
+//     - relative(REPO_ROOT, source_path)      backlog spec path math
+//     - repoRoot: REPO_ROOT → worker env      orc bin/context for workers
+//     - paths.ts STATE_DIR/WORKTREES_DIR/BACKLOG_DOCS_DIR/PLANS_DIR
+//     - lib/planSpecTask.ts fallback          plans/backlog/staging dirs
+//
+//   target-repo consumers (use TARGET_REPO_ROOT — git ops on product code):
+//     - coordinator branchContainsMain / pushMain / mergeTaskBranch  → migrated here
+//     - lib/runWorktree.ts git worktree add/remove/branch            → task 186
+//     - lib/gitHosts/github.ts gh/git (implicit process.cwd())       → task 186
+//     - lib/gitignore.ts ensureGitignore (skip target in sibling)    → task 188
+//     - cli/doctor.ts, preflight.ts, init.ts git-dir probes          → task 191
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -503,7 +525,7 @@ function getClaim(runId: string): Claim | null {
 
 function branchContainsMain(branch: string) {
   const result = spawnSync('git', ['merge-base', '--is-ancestor', 'main', branch], {
-    cwd: REPO_ROOT,
+    cwd: TARGET_REPO_ROOT,
     encoding: 'utf8',
     timeout: GIT_OP_TIMEOUT_MS,
   });
@@ -515,7 +537,7 @@ function branchContainsMain(branch: string) {
 
 function pushMain() {
   const result = spawnSync('git', ['push'], {
-    cwd: REPO_ROOT,
+    cwd: TARGET_REPO_ROOT,
     encoding: 'utf8',
     timeout: GIT_OP_TIMEOUT_MS,
   });
@@ -527,7 +549,7 @@ function pushMain() {
 
 function mergeTaskBranch(branch: string, taskRef: string) {
   const result = spawnSync('git', ['merge', branch, '--no-ff', '-m', `task(${taskRef}): merge worktree`], {
-    cwd: REPO_ROOT,
+    cwd: TARGET_REPO_ROOT,
     encoding: 'utf8',
     timeout: GIT_OP_TIMEOUT_MS,
   });
