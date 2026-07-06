@@ -1,31 +1,45 @@
 import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
-import { resolveRepoRoot } from './repoRoot.ts';
+import { resolveOrchestrationRoot, resolveTargetRepoRoot } from './repoRoot.ts';
 import { logger } from './logger.ts';
+
+// Orchestration root: owns the config, state dir, backlog, plans, and
+// worktrees. In the single-repo (attached) layout this is the repo root.
+// With ORC_STATE_DIR set, the root is its parent — mirroring the
+// ORC_CONFIG_FILE convention below — so importing this module makes no git
+// calls when the ambient dir overrides are present (worker sessions, tests
+// that mock node:child_process).
+export const ORCHESTRATION_ROOT = process.env.ORC_STATE_DIR
+  ? resolve(process.env.ORC_STATE_DIR, '..')
+  : resolveOrchestrationRoot();
 
 export const STATE_DIR = process.env.ORC_STATE_DIR
   ? resolve(process.env.ORC_STATE_DIR)
-  : resolve(resolveRepoRoot(), '.orc-state');
+  : resolve(ORCHESTRATION_ROOT, '.orc-state');
 
 export const EVENTS_FILE = resolve(STATE_DIR, 'events.db');
-// Config lives at repo root (parent of .orc-state/), not inside the state dir.
-// Use ORC_CONFIG_FILE to override the path explicitly.
+// Config lives at the orchestration root (parent of .orc-state/), not inside
+// the state dir. Use ORC_CONFIG_FILE to override the path explicitly.
 export const ORC_CONFIG_FILE = process.env.ORC_CONFIG_FILE
   ? resolve(process.env.ORC_CONFIG_FILE)
   : resolve(STATE_DIR, '..', 'orc-state.config.json');
 export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 
+// Target repo root: the repository whose product code runs operate on.
+// Equals ORCHESTRATION_ROOT unless the config sets target_repo (sibling layout).
+export const TARGET_REPO_ROOT = resolveTargetRepoRoot(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
+
 export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)
-  : resolve(resolveRepoRoot(), '.worktrees');
+  : resolve(ORCHESTRATION_ROOT, '.worktrees');
 
 export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
   ? resolve(process.env.ORC_BACKLOG_DIR)
-  : resolve(resolveRepoRoot(), 'backlog');
+  : resolve(ORCHESTRATION_ROOT, 'backlog');
 
 export const PLANS_DIR = process.env.ORC_PLANS_DIR
   ? resolve(process.env.ORC_PLANS_DIR)
-  : resolve(resolveRepoRoot(), 'plans');
+  : resolve(ORCHESTRATION_ROOT, 'plans');
 
 /** Path to per-agent hook-events NDJSON file written by the Notification hook. */
 export function hookEventPath(agentId: string): string {

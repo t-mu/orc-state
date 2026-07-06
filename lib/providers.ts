@@ -126,6 +126,7 @@ function parsePositiveInteger(rawValue: unknown, fieldName: string): number | nu
 interface RawConfigFile {
   default_provider?: string | null;
   default_execution_mode?: string | null;
+  target_repo?: string | null;
   master?: Record<string, unknown> | null;
   worker_pool?: Record<string, unknown> | null;
   coordinator?: Record<string, unknown> | null;
@@ -156,6 +157,13 @@ function parseRawConfigFile(configFile: string = ORC_CONFIG_FILE): RawConfigFile
   }
 
   const result: RawConfigFile = { default_provider: defaultProvider, default_execution_mode: defaultExecutionMode };
+
+  if (topLevel.target_repo != null) {
+    if (typeof topLevel.target_repo !== 'string' || topLevel.target_repo === '') {
+      throw new Error(`Invalid orchestrator config at ${configFile}: target_repo must be a non-empty string path`);
+    }
+    result.target_repo = topLevel.target_repo;
+  }
 
   if (topLevel.master != null) {
     if (typeof topLevel.master !== 'object' || Array.isArray(topLevel.master)) {
