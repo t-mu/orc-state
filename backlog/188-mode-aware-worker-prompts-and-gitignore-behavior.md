@@ -3,7 +3,7 @@ ref: sibling-orchestration-repo/188-mode-aware-worker-prompts-and-gitignore-beha
 feature: sibling-orchestration-repo
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - sibling-orchestration-repo/187-sibling-mode-phase-4-coordinator-side-spec-status-writeback
 ---
