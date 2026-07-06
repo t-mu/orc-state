@@ -3,7 +3,7 @@
   "$id": "schemas/orc-config.schema.json",
   "title": "Orchestrator Config (orc-state.config.json)",
   "type": "object",
-  "additionalProperties": false,
+  "additionalProperties": true,
   "properties": {
     "default_provider": {
       "type": "string",

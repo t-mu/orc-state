@@ -86,6 +86,28 @@ describe('paths', () => {
     expect(STATE_DIR).toBe('/tmp/override-state');
   });
 
+  it('anchors the orchestration root to ORC_STATE_DIR without consulting git', async () => {
+    // Worker sessions and tests that mock node:child_process rely on paths.ts
+    // making no git calls at import when the ambient dir overrides are set.
+    const resolveOrchestrationRoot = vi.fn().mockReturnValue('/tmp/should-not-be-used');
+    vi.doMock('./repoRoot.ts', () => ({
+      resolveRepoRoot: vi.fn().mockReturnValue('/tmp/should-not-be-used'),
+      resolveOrchestrationRoot,
+      resolveTargetRepoRoot: vi.fn(
+        (_configFile: string, orchestrationRoot: string) => orchestrationRoot,
+      ),
+    }));
+    vi.stubEnv('ORC_STATE_DIR', '/tmp/orch-home/.orc-state');
+
+    const { ORCHESTRATION_ROOT, TARGET_REPO_ROOT, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR } = await import('./paths.ts');
+    expect(ORCHESTRATION_ROOT).toBe('/tmp/orch-home');
+    expect(TARGET_REPO_ROOT).toBe('/tmp/orch-home');
+    expect(WORKTREES_DIR).toBe('/tmp/orch-home/.worktrees');
+    expect(BACKLOG_DOCS_DIR).toBe('/tmp/orch-home/backlog');
+    expect(PLANS_DIR).toBe('/tmp/orch-home/plans');
+    expect(resolveOrchestrationRoot).not.toHaveBeenCalled();
+  });
+
   it('hookEventPath returns per-agent ndjson file under pty-hook-events', async () => {
     mockRepoRoot('/tmp/repo-root');
 

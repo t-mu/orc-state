@@ -48,6 +48,17 @@ describe('repoRoot', () => {
       expect(resolveOrchestrationRoot(other)).toBe(home);
     });
 
+    it('ORC_HOME wins over ORC_REPO_ROOT when both are set', () => {
+      const home = join(tmp, 'orch-home');
+      const forced = join(tmp, 'forced-root');
+      mkdirSync(home, { recursive: true });
+      mkdirSync(forced, { recursive: true });
+      vi.stubEnv('ORC_HOME', home);
+      vi.stubEnv('ORC_REPO_ROOT', forced);
+
+      expect(resolveOrchestrationRoot(tmp)).toBe(home);
+    });
+
     it('ORC_REPO_ROOT keeps precedence over walk-up discovery', () => {
       const forced = join(tmp, 'forced-root');
       const nested = join(tmp, 'project', 'src');

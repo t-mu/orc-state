@@ -41,6 +41,12 @@ function findConfigDirUpwards(cwd: string): string | null {
  * also carries a config file: in the attached layout the config is checked
  * in, so a worker whose cwd is .worktrees/<run>/ would otherwise resolve
  * state paths to its own worktree copy instead of the shared main checkout.
+ *
+ * Caveat: when the TARGET repo itself carries a committed config file
+ * (e.g. orchestrating this repo from a sibling orch home), the walk-up
+ * finds the target's config first and resolves into the target repo.
+ * Sibling-layout worker sessions must therefore be launched with ORC_HOME
+ * (or ORC_STATE_DIR) set rather than rely on walk-up discovery.
  */
 export function resolveOrchestrationRoot(cwd: string = process.cwd()): string {
   const home = process.env.ORC_HOME;
