@@ -299,9 +299,28 @@ describe('ensureRunWorktree (real git, sibling layout)', () => {
     return result.stdout.trim();
   }
 
+  let stateDir: string;
+
   beforeEach(() => {
     // realpathSync: macOS tmpdir is a symlink; git reports resolved paths.
     orchRoot = realpathSync(dir);
+
+    // Model the real sibling layout: orchRoot is itself a git repo holding
+    // tracked framework files (AGENTS.md, backlog/) plus a real .orc-state, and
+    // gitignoring the runtime dirs. The target-repo worktree is created NESTED
+    // inside this orchestration repo's working tree.
+    git(orchRoot, 'init', '-b', 'main');
+    git(orchRoot, 'config', 'user.email', 'test@example.com');
+    git(orchRoot, 'config', 'user.name', 'Test');
+    writeFileSync(join(orchRoot, '.gitignore'), '.orc-state/\n.worktrees/\ntarget-repo/\n');
+    writeFileSync(join(orchRoot, 'AGENTS.md'), '# Orchestration home\n');
+    mkdirSync(join(orchRoot, 'backlog'), { recursive: true });
+    writeFileSync(join(orchRoot, 'backlog', '1-task.md'), '# framework spec\n');
+    mkdirSync(join(orchRoot, '.orc-state'), { recursive: true });
+    git(orchRoot, 'add', '.gitignore', 'AGENTS.md', 'backlog/1-task.md');
+    git(orchRoot, 'commit', '-m', 'orchestration home');
+
+    // Separate target (product) repo.
     target = join(orchRoot, 'target-repo');
     mkdirSync(target, { recursive: true });
     git(target, 'init', '-b', 'main');
@@ -311,16 +330,19 @@ describe('ensureRunWorktree (real git, sibling layout)', () => {
     git(target, 'add', 'product.txt');
     git(target, 'commit', '-m', 'initial product commit');
 
-    // Point the framework roots at the orchestration home; worktrees are placed
-    // under it, but are worktrees OF the target repo.
-    process.env.ORC_STATE_DIR = orchRoot;
+    // Framework roots live under the orchestration home; git ops target the
+    // product repo. ORC_STATE_DIR under orchRoot makes ORCHESTRATION_ROOT resolve
+    // to orchRoot (parent of .orc-state).
+    stateDir = join(orchRoot, '.orc-state');
+    process.env.ORC_STATE_DIR = stateDir;
     process.env.ORC_WORKTREES_DIR = join(orchRoot, '.worktrees');
+    process.env.ORC_BACKLOG_DIR = join(orchRoot, 'backlog');
     process.env.ORC_REPO_ROOT = target;
   });
 
   it('creates the worktree under the orchestration root but as a worktree of the target repo', async () => {
     const { ensureRunWorktree } = await import('./runWorktree.ts');
-    const entry = ensureRunWorktree(orchRoot, {
+    const entry = ensureRunWorktree(stateDir, {
       runId: 'run-real-1',
       taskRef: 'sibling/task-1',
       agentId: 'orc-1',
@@ -332,15 +354,18 @@ describe('ensureRunWorktree (real git, sibling layout)', () => {
     // ...but its git dir resolves into the TARGET repo, not the orchestration root.
     const commonDir = git(entry.worktree_path, 'rev-parse', '--path-format=absolute', '--git-common-dir');
     expect(commonDir).toBe(join(target, '.git'));
-    // The branch was created in the target repo.
+    // The branch was created in the target repo, not the orchestration repo.
     expect(git(target, 'branch', '--list', 'task/run-real-1')).toContain('task/run-real-1');
+    expect(git(orchRoot, 'branch', '--list', 'task/run-real-1')).toBe('');
     // Product file from the target repo is present in the worktree checkout.
     expect(existsSync(join(entry.worktree_path, 'product.txt'))).toBe(true);
+    // The nested worktree does not dirty the orchestration repo (it is gitignored).
+    expect(git(orchRoot, 'status', '--porcelain')).toBe('');
   });
 
   it('merges the worktree branch into the target repo, and no framework files leak in', async () => {
     const { ensureRunWorktree, cleanupRunWorktree } = await import('./runWorktree.ts');
-    const entry = ensureRunWorktree(orchRoot, {
+    const entry = ensureRunWorktree(stateDir, {
       runId: 'run-real-2',
       taskRef: 'sibling/task-2',
       agentId: 'orc-1',
@@ -358,13 +383,19 @@ describe('ensureRunWorktree (real git, sibling layout)', () => {
     expect(existsSync(join(target, 'feature.txt'))).toBe(true);
     expect(git(target, 'log', '--oneline', '--all')).toContain('add feature');
 
-    // No orchestration/framework artifacts leaked into the target repo.
+    // Framework files exist in the orchestration repo but must NOT appear in the
+    // target repo — these checks are meaningful because orchRoot really has them.
+    expect(existsSync(join(orchRoot, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(orchRoot, 'backlog'))).toBe(true);
+    expect(existsSync(join(target, 'AGENTS.md'))).toBe(false);
+    expect(existsSync(join(target, 'backlog'))).toBe(false);
     expect(existsSync(join(target, '.orc-state'))).toBe(false);
     expect(existsSync(join(target, '.worktrees'))).toBe(false);
-    expect(existsSync(join(target, 'backlog'))).toBe(false);
+    // The orchestration repo's tracked files are untouched by the whole flow.
+    expect(git(orchRoot, 'status', '--porcelain')).toBe('');
 
-    // Cleanup (branch delete + worktree remove) runs against the target repo.
-    expect(cleanupRunWorktree(orchRoot, 'run-real-2')).toBe(true);
+    // Cleanup (worktree remove + branch delete) runs against the target repo.
+    expect(cleanupRunWorktree(stateDir, 'run-real-2')).toBe(true);
     expect(existsSync(entry.worktree_path)).toBe(false);
   });
 });
