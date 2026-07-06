@@ -128,6 +128,46 @@ describe('writeSpecStatusDone', () => {
     expect(result).toEqual({ written: false, committed: false });
   });
 
+  it('rewrites only the status token, leaving the rest of the spec intact', () => {
+    const orchestrationRoot = join(root, 'orch');
+    const docsDir = join(orchestrationRoot, 'backlog');
+    const specPath = writeSpec(docsDir, '187-example.md', 'sibling/187-example');
+    const original = readFileSync(specPath, 'utf8');
+
+    writeSpecStatusDone('sibling/187-example', {
+      docsDir,
+      orchestrationRoot,
+      targetRepoRoot: join(root, 'target'),
+    });
+
+    // Exactly one substitution: `status: todo` → `status: done`; nothing else.
+    expect(readFileSync(specPath, 'utf8')).toBe(original.replace('status: todo', 'status: done'));
+  });
+
+  it('commits only the spec, not unrelated staged changes', () => {
+    const orchestrationRoot = join(root, 'orch');
+    mkdirSync(orchestrationRoot, { recursive: true });
+    initGitRepo(orchestrationRoot);
+    const docsDir = join(orchestrationRoot, 'backlog');
+    writeSpec(docsDir, '187-example.md', 'sibling/187-example');
+    // An unrelated, staged change that must NOT be swept into the chore commit.
+    writeFileSync(join(orchestrationRoot, 'unrelated.txt'), 'staged but unrelated\n');
+    git(orchestrationRoot, 'add', 'unrelated.txt');
+
+    const result = writeSpecStatusDone('sibling/187-example', {
+      docsDir,
+      orchestrationRoot,
+      targetRepoRoot: join(root, 'target'),
+    });
+
+    expect(result).toEqual({ written: true, committed: true });
+    // The commit contains only the spec file.
+    const files = git(orchestrationRoot, 'show', '--name-only', '--format=', 'HEAD').trim();
+    expect(files).toBe('backlog/187-example.md');
+    // The unrelated file remains staged/uncommitted.
+    expect(git(orchestrationRoot, 'status', '--porcelain', 'unrelated.txt')).toContain('unrelated.txt');
+  });
+
   it('backlog sync converges (does not revert) after writeback', () => {
     const orchestrationRoot = join(root, 'orch');
     const stateDir = join(root, 'state');
@@ -157,5 +197,33 @@ describe('writeSpecStatusDone', () => {
     expect(syncResult.updated).toBe(false);
     const backlog = JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'));
     expect(backlog.features[0].tasks[0].status).toBe('done');
+  });
+
+  it('sync WOULD revert a done runtime task if the spec were left stale — writeback is load-bearing', () => {
+    // Documents the invariant the coordinator relies on: writeback runs
+    // synchronously right after markTaskDoneRuntimeOnly, so no sync tick ever
+    // observes runtime=done while the spec is still todo. If it did, the
+    // active-status guard (claimed/in_progress only) would NOT protect a done
+    // task, and sync would drag it back to the stale spec status.
+    const orchestrationRoot = join(root, 'orch');
+    const stateDir = join(root, 'state');
+    const docsDir = join(orchestrationRoot, 'backlog');
+    mkdirSync(stateDir, { recursive: true });
+    writeSpec(docsDir, '187-example.md', 'sibling/187-example', 'todo'); // spec left stale
+
+    atomicWriteJson(join(stateDir, 'backlog.json'), {
+      version: '1',
+      features: [{
+        ref: 'sibling',
+        title: 'Sibling',
+        tasks: [{ ref: 'sibling/187-example', title: 'Example', status: 'done', task_type: 'implementation', review_level: 'full' }],
+      }],
+    });
+
+    // No writeback here — simulate the (unsafe) state writeback exists to prevent.
+    const syncResult = syncBacklogFromSpecs(stateDir, docsDir);
+    expect(syncResult.updated).toBe(true);
+    const backlog = JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'));
+    expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 });

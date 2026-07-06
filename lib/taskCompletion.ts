@@ -60,13 +60,20 @@ export function markTaskDoneRuntimeOnly(
  * status field. Only the leading frontmatter block is touched — a later
  * "status:" line in the task body is never matched.
  */
+// Follows the same frontmatter conventions as parseSpecFrontmatter /
+// discoverActiveTaskSpecs (leading `---\n ... \n---` block, LF-terminated,
+// bare status token) — writeback only ever runs on specs that discovery has
+// already parsed and registered, so it need not be more permissive than that.
 function setFrontmatterStatusDone(text: string): { text: string; changed: boolean } | null {
   const match = /^(---\s*\n)([\s\S]*?)(\n---(?:\n|$))/.exec(text);
   if (!match) return null;
   const [full, open, body, close] = match;
-  if (!/^status:[ \t]*\S+/m.test(body)) return null;
-  if (/^status:[ \t]*done[ \t]*$/m.test(body)) return { text, changed: false };
-  const newBody = body.replace(/^(status:[ \t]*)\S.*$/m, '$1done');
+  // Match the value token only (not the whole line), so the already-done guard
+  // and the rewrite never depend on or clobber trailing content.
+  const current = /^status:[ \t]*(\S+)/m.exec(body)?.[1];
+  if (current === undefined) return null;
+  if (current === 'done') return { text, changed: false };
+  const newBody = body.replace(/^(status:[ \t]*)\S+/m, '$1done');
   return { text: open + newBody + close + text.slice(full.length), changed: true };
 }
 
