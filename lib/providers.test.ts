@@ -468,3 +468,27 @@ describe('parseRawConfigFile default_execution_mode', () => {
     expect(result.execution_mode).toBe('sandbox');
   });
 });
+
+describe('parseRawConfigFile target_repo', () => {
+  it('accepts a config carrying a valid target_repo', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      target_repo: '../product-repo',
+      default_execution_mode: 'sandbox',
+    }));
+    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    expect(result.execution_mode).toBe('sandbox');
+  });
+
+  it('throws on a non-string target_repo', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({ target_repo: 42 }));
+    expect(() => loadMasterConfig({ env: {}, configFile: configPath })).toThrow(/target_repo must be a non-empty string/i);
+  });
+
+  it('throws on an empty-string target_repo', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({ target_repo: '' }));
+    expect(() => loadMasterConfig({ env: {}, configFile: configPath })).toThrow(/target_repo must be a non-empty string/i);
+  });
+});

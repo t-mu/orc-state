@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/orc-config.schema.json",
+  "title": "Orchestrator Config (orc-state.config.json)",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "default_provider": {
+      "type": "string",
+      "enum": ["claude", "codex", "gemini"]
+    },
+    "default_execution_mode": {
+      "type": "string",
+      "enum": ["full-access", "sandbox"]
+    },
+    "target_repo": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the repository whose product code runs operate on (sibling layout). Relative paths resolve against the config file's directory. Absent: the orchestration root itself is the target repo (single-repo layout)."
+    },
+    "master": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "provider": { "type": "string", "enum": ["claude", "codex", "gemini"] },
+        "model": { "type": ["string", "null"] },
+        "execution_mode": { "type": "string", "enum": ["full-access", "sandbox"] }
+      }
+    },
+    "worker_pool": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "max_workers": { "type": "integer", "minimum": 0 },
+        "provider": { "type": "string", "enum": ["claude", "codex", "gemini"] },
+        "model": { "type": ["string", "null"] },
+        "execution_mode": { "type": "string", "enum": ["full-access", "sandbox"] },
+        "provider_models": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "claude": { "type": "string" },
+            "codex": { "type": "string" },
+            "gemini": { "type": "string" }
+          }
+        }
+      }
+    },
+    "coordinator": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "leases": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "default_ms": { "type": "integer", "minimum": 1 },
+        "finalize_ms": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

@@ -3,7 +3,7 @@ ref: sibling-orchestration-repo/184-two-root-path-resolution-and-config-schema
 feature: sibling-orchestration-repo
 review_level: full
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 184 — Two-root path resolution and config schema
