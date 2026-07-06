@@ -1,5 +1,6 @@
 import { renderTemplate } from './templateRender.ts';
 import { isSupportedProvider, type ProviderName } from './providers.ts';
+import { IS_SIBLING_LAYOUT } from './paths.ts';
 
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
 const WORKER_BOOTSTRAP_SMOKE_TEMPLATE = 'worker-bootstrap-smoke-v1.txt';
@@ -14,12 +15,42 @@ function assertProvider(provider: string): ProviderName {
   return provider;
 }
 
+/**
+ * Phase-4 "complete" step text, injected into the worker bootstrap as
+ * {{phase_complete_step}}. Mode-aware: in the attached layout the worker edits
+ * the task spec to `status: done` (carried by the merge); in the sibling layout
+ * the coordinator writes the spec back after merge (task 187), so the worker
+ * must NOT edit the spec and must never commit framework files into the target
+ * repo. Built with orc_bin/agent_id already interpolated because the outer
+ * renderTemplate makes a single pass and will not re-expand placeholders inside
+ * an injected value.
+ */
+function phaseCompleteStep(orcBin: string, agentId: string, sibling: boolean): string {
+  if (sibling) {
+    return [
+      '  7. Signal complete phase. In this sibling layout the coordinator records completion after merge — do NOT edit the task spec:',
+      `       ${orcBin} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=${agentId}`,
+      '       - Do NOT edit the task spec `status:` field; the coordinator writes `status: done` back into the orchestration backlog after merge',
+      '       - Commit ONLY product code. Never commit framework files (task specs, plans, .orc-state, or other orchestration artifacts) into the target repo',
+      `       - Do not call \`${orcBin} task-mark-done\` from the worker session`,
+    ].join('\n');
+  }
+  return [
+    '  7. Signal complete phase and update the task markdown in this assigned worktree to `status: done`:',
+    `       ${orcBin} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=${agentId}`,
+    '       - Edit the task spec file referenced by `task_spec_path`',
+    '       - Change its frontmatter `status:` field to `done`',
+    `       - Do not call \`${orcBin} task-mark-done\` from the worker session; the coordinator marks shared runtime state done after merge`,
+  ].join('\n');
+}
+
 function renderBootstrap(template: string, provider: string, agentId: string): string {
   return renderTemplate(template, {
     agent_id: agentId,
     orc_bin: 'orc',
     provider,
     session_token: 'session-token-unset',
+    phase_complete_step: phaseCompleteStep('orc', agentId, IS_SIBLING_LAYOUT),
   });
 }
 
@@ -61,14 +92,14 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string): string;
-export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile }): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile; siblingLayout?: boolean }): string;
 export function buildSessionBootstrap(
   agentId: string,
   provider: string,
   role: string,
   orcBin: string = 'orc',
   sessionToken: string = 'session-token-unset',
-  options: { workerBootstrapProfile?: WorkerBootstrapProfile } = {},
+  options: { workerBootstrapProfile?: WorkerBootstrapProfile; siblingLayout?: boolean } = {},
 ): string {
   if (role === 'master') return getMasterBootstrap(provider, agentId);
   if (role === 'scout') {
@@ -79,10 +110,12 @@ export function buildSessionBootstrap(
       session_token: sessionToken,
     });
   }
+  const sibling = options.siblingLayout ?? IS_SIBLING_LAYOUT;
   return renderTemplate(resolveWorkerTemplate(role, options.workerBootstrapProfile ?? 'default'), {
     agent_id: agentId,
     orc_bin: orcBin,
     provider,
     session_token: sessionToken,
+    phase_complete_step: phaseCompleteStep(orcBin, agentId, sibling),
   });
 }

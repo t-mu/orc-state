@@ -29,6 +29,11 @@ export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 // Equals ORCHESTRATION_ROOT unless the config sets target_repo (sibling layout).
 export const TARGET_REPO_ROOT = resolveTargetRepoRoot(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
 
+// Sibling layout is active when the product repo is a different directory from
+// the orchestration home. In the attached (single-repo) layout the two roots
+// coincide and this is false.
+export const IS_SIBLING_LAYOUT = ORCHESTRATION_ROOT !== TARGET_REPO_ROOT;
+
 // ─── Repo-root call-site classification (authoritative; task 185) ────────────
 // Every consumer of a "repo root" is one of two kinds. This table is the
 // authority tasks 186/188/191 rely on; it lives here, beside the two root

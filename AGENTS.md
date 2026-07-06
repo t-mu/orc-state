@@ -147,6 +147,19 @@ Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run
 **Gate:** `run-work-complete` MUST exit 0 after the task markdown in the assigned worktree has been updated to `status: done`.
 Do NOT call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge.
 
+**Sibling layout:** When orchestration runs against a separate target repo (a
+`target_repo` is configured, so the orchestration home and product repo are
+different directories), Phase 4 changes:
+- Do NOT edit the task spec `status:` field. Product-code merges land in the
+  target repo, which never carries spec files; the coordinator writes
+  `status: done` back into the orchestration backlog after merge.
+- Commit ONLY product code in your worktree. Never commit framework files
+  (task specs, plans, `.orc-state`, or other orchestration artifacts) into the
+  target repo.
+- Steps 2–3 (rebase, `run-work-complete`) are unchanged.
+The worker bootstrap emits the correct Phase 4 instructions for the active
+layout automatically; this callout documents the contract.
+
 ### Phase 5 — Finalize
 
 Signal phase: `orc progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id=<agent_id>`
