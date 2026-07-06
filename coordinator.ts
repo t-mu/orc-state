@@ -95,25 +95,10 @@ const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 // backlog specs, plans, config, and state dir. Coordinator-launched processes
 // (worker sessions, orc CLI invocations) and spec-relative path math key off
 // this. In the single-repo (attached) layout it equals TARGET_REPO_ROOT.
+// This stays resolveRepoRoot() (an orchestration-root consumer); the git ops
+// below use the imported TARGET_REPO_ROOT. See the authoritative repo-root
+// call-site classification table in lib/paths.ts (task 185).
 const REPO_ROOT = resolveRepoRoot();
-
-// ── Repo-root call-site classification (task 185) ────────────────────────────
-// Every "repo root" consumer is one of two kinds. Later sibling-layout steps
-// rely on this split:
-//
-//   orchestration-root consumers (use REPO_ROOT / paths.ts ORCHESTRATION_ROOT):
-//     - resolveOrcBinSh(REPO_ROOT)            orc binary lookup
-//     - relative(REPO_ROOT, source_path)      backlog spec path math
-//     - repoRoot: REPO_ROOT → worker env      orc bin/context for workers
-//     - paths.ts STATE_DIR/WORKTREES_DIR/BACKLOG_DOCS_DIR/PLANS_DIR
-//     - lib/planSpecTask.ts fallback          plans/backlog/staging dirs
-//
-//   target-repo consumers (use TARGET_REPO_ROOT — git ops on product code):
-//     - coordinator branchContainsMain / pushMain / mergeTaskBranch  → migrated here
-//     - lib/runWorktree.ts git worktree add/remove/branch            → task 186
-//     - lib/gitHosts/github.ts gh/git (implicit process.cwd())       → task 186
-//     - lib/gitignore.ts ensureGitignore (skip target in sibling)    → task 188
-//     - cli/doctor.ts, preflight.ts, init.ts git-dir probes          → task 191
 
 // ── State ──────────────────────────────────────────────────────────────────
 

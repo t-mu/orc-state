@@ -29,6 +29,47 @@ export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 // Equals ORCHESTRATION_ROOT unless the config sets target_repo (sibling layout).
 export const TARGET_REPO_ROOT = resolveTargetRepoRoot(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
 
+// ─── Repo-root call-site classification (authoritative; task 185) ────────────
+// Every consumer of a "repo root" is one of two kinds. This table is the
+// authority tasks 186/188/191 rely on; it lives here, beside the two root
+// constants, because those are what each consumer imports. In the single-repo
+// (attached) layout all three of ORCHESTRATION_ROOT, TARGET_REPO_ROOT, and
+// resolveRepoRoot() resolve to the same directory, so the split below is a
+// no-op there and only diverges once a `target_repo` is configured.
+//
+// ORCHESTRATION-ROOT consumers — framework home (orc binary, specs, plans,
+// config, state). These are correct as-is and were NOT changed by task 185:
+//   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
+//                       WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, ORC_CONFIG_FILE
+//   lib/planSpecTask.ts resolveRepoRoot() fallback → plans/backlog/staging dirs
+//   coordinator.ts      resolveOrcBinSh(REPO_ROOT)           (orc binary lookup)
+//   coordinator.ts      relative(REPO_ROOT, source_path)     (backlog spec path math)
+//   coordinator.ts      repoRoot: REPO_ROOT → worker env     (orc bin/ctx for workers)
+//   mcp/handlers.ts     PLANS_DIR / BACKLOG_DOCS_DIR / RUN_WORKTREES_FILE
+//   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT ?? join(stateDir,'..')
+//                       (scout/agent working dir + orc bin; no git ops)
+//   NOTE: coordinator's REPO_ROOT is still resolveRepoRoot(), NOT the paths.ts
+//   ORCHESTRATION_ROOT constant. They coincide in production (coordinator cwd
+//   is the orchestration root) but can diverge in tests that set ORC_STATE_DIR
+//   to a temp dir whose parent is not a git root. Left on resolveRepoRoot() in
+//   task 185 to preserve behavior; reconciling the two anchors is deferred and
+//   only matters if that divergence ever becomes load-bearing.
+//
+// TARGET-REPO consumers — git operations on product history/worktrees:
+//   coordinator.ts      branchContainsMain / pushMain / mergeTaskBranch
+//                       → MIGRATED to TARGET_REPO_ROOT in task 185.
+//                       mergeTaskBranch has NO coordinator-side conflict
+//                       recovery: on conflict it throws and the caller marks
+//                       the run finalize-blocked (manual recovery), so there is
+//                       no additional git op needing classification here.
+//   lib/runWorktree.ts  git worktree add/remove/branch (cwd)   → task 186
+//   lib/gitHosts/github.ts  gh/git via implicit process.cwd()  → task 186
+//   lib/gitignore.ts    ensureGitignore (must skip target repo) → task 188
+//   cli/doctor.ts, cli/preflight.ts, cli/init.ts  git-dir probes → task 191
+// Deferred consumers stay on resolveRepoRoot()/process.cwd() (== target root in
+// single-repo mode) and are handed to the tasks that own their test rewrites.
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)
   : resolve(ORCHESTRATION_ROOT, '.worktrees');
