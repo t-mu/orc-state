@@ -157,12 +157,24 @@ describe('worker ORC_HOME resolution from inside a target-repo worktree', () => 
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('resolves the orchestration root with ORC_HOME set (as the worker env provides)', async () => {
-    vi.stubEnv('ORC_HOME', orch);
+  it('ORC_HOME from the worker env drives resolution, overriding walk-up', async () => {
+    // Distinct orchestration home NOT on the worktree's ancestry, so walk-up
+    // (which would find `orch`) and ORC_HOME (which points at `orch2`) give
+    // different answers — proving the ORC_HOME branch, not walk-up, decides.
+    const orch2 = join(tmp, 'orch2');
+    mkdirSync(join(orch2, '.orc-state'), { recursive: true });
+    writeFileSync(join(orch2, 'orc-state.config.json'), '{}');
+
+    const { normalizeWorkerEnv } = await import('./workerRuntime.ts');
+    // Source ORC_HOME from the real coordinator seam (repoRoot = orch2).
+    const workerEnv = normalizeWorkerEnv({ ORC_STATE_DIR: join(orch2, '.orc-state') }, orch2);
+    expect(workerEnv.ORC_HOME).toBe(orch2);
+
+    vi.stubEnv('ORC_HOME', workerEnv.ORC_HOME);
     vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
     const { resolveOrchestrationRoot } = await import('./repoRoot.ts');
-    // From the worktree cwd, git discovery would point at the target repo; ORC_HOME wins.
-    expect(resolveOrchestrationRoot(worktree)).toBe(orch);
+    // From the worktree cwd, walk-up would resolve to `orch`; ORC_HOME wins → orch2.
+    expect(resolveOrchestrationRoot(worktree)).toBe(orch2);
   });
 
   it('resolves the orchestration root via walk-up when ORC_HOME is unset', async () => {

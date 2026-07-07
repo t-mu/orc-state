@@ -33,6 +33,13 @@ export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string 
     env.PATH = process.env.PATH;
   }
   if (repoRoot) {
+    // NB: ORC_REPO_ROOT is the orchestration root here. In the sibling layout it
+    // is therefore NOT the target repo, and per resolveTargetRepoRoot's
+    // precedence (ORC_REPO_ROOT wins) a worker that resolved TARGET_REPO_ROOT
+    // would get the orchestration root. That is harmless because no
+    // worker-invoked orc path consumes TARGET_REPO_ROOT — workers run git in
+    // their worktree cwd, and the PR adapter defaults to process.cwd() (task
+    // 186). Target-repo resolution for workers is intentionally left to git-in-cwd.
     env.ORC_REPO_ROOT = repoRoot;
     // ORC_HOME is the top-precedence orchestration-root signal (see
     // resolveOrchestrationRoot). A worker cds into its assigned worktree, which
