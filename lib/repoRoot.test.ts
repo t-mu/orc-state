@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveOrchestrationRoot, resolveRepoRoot, resolveTargetRepoRoot } from './repoRoot.ts';
+import { isSiblingLayout, resolveOrchestrationRoot, resolveRepoRoot, resolveTargetRepoRoot } from './repoRoot.ts';
 
 const CONFIG = 'orc-state.config.json';
 
@@ -167,6 +167,37 @@ describe('repoRoot', () => {
     it('ignores a non-string target_repo value', () => {
       writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: 42 }));
       expect(resolveTargetRepoRoot(join(tmp, CONFIG), tmp)).toBe(tmp);
+    });
+  });
+
+  describe('isSiblingLayout', () => {
+    it('is false when no config file exists', () => {
+      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
+    });
+
+    it('is false when target_repo is absent', () => {
+      writeFileSync(join(tmp, CONFIG), JSON.stringify({ default_provider: 'claude' }));
+      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
+    });
+
+    it('is true when target_repo resolves to a different directory', () => {
+      const orch = join(tmp, 'orch');
+      mkdirSync(orch, { recursive: true });
+      writeFileSync(join(orch, CONFIG), JSON.stringify({ target_repo: '../product' }));
+      expect(isSiblingLayout(join(orch, CONFIG), orch)).toBe(true);
+    });
+
+    it('is false when target_repo resolves to the orchestration root itself', () => {
+      writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: '.' }));
+      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
+    });
+
+    it('is NOT inferred from ORC_REPO_ROOT (forcing override) alone', () => {
+      // No target_repo configured; ORC_REPO_ROOT diverging from the orchestration
+      // root must not enable sibling mode.
+      vi.stubEnv('ORC_REPO_ROOT', join(tmp, 'forced'));
+      writeFileSync(join(tmp, CONFIG), JSON.stringify({ default_provider: 'claude' }));
+      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
     });
   });
 });

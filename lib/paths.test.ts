@@ -10,6 +10,7 @@ function mockRepoRoot(root: string, { targetRepoRoot }: { targetRepoRoot?: strin
     resolveTargetRepoRoot: vi.fn(
       (_configFile: string, orchestrationRoot: string) => targetRepoRoot ?? orchestrationRoot,
     ),
+    isSiblingLayout: vi.fn().mockReturnValue(targetRepoRoot !== undefined),
   }));
 }
 
@@ -74,6 +75,7 @@ describe('paths', () => {
       resolveRepoRoot: vi.fn().mockReturnValue('/tmp/orch-root'),
       resolveOrchestrationRoot: vi.fn().mockReturnValue('/tmp/orch-root'),
       resolveTargetRepoRoot,
+      isSiblingLayout: vi.fn().mockReturnValue(false),
     }));
 
     const { ORC_CONFIG_FILE } = await import('./paths.ts');
@@ -96,6 +98,7 @@ describe('paths', () => {
       resolveTargetRepoRoot: vi.fn(
         (_configFile: string, orchestrationRoot: string) => orchestrationRoot,
       ),
+      isSiblingLayout: vi.fn().mockReturnValue(false),
     }));
     vi.stubEnv('ORC_STATE_DIR', '/tmp/orch-home/.orc-state');
 

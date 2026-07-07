@@ -18,10 +18,10 @@
  *   --skip-agents            skip agent installation
  *   --skip-mcp               skip MCP config merge
  */
-import { existsSync, mkdirSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync, copyFileSync, appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { join } from 'node:path';
-import { STATE_DIR, BACKLOG_DOCS_DIR } from '../lib/paths.ts';
+import { join, relative, resolve } from 'node:path';
+import { STATE_DIR, BACKLOG_DOCS_DIR, PLANS_DIR } from '../lib/paths.ts';
 import { boolFlag, flag } from '../lib/args.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
@@ -36,15 +36,46 @@ const featureTitle = flag('feature-title') ?? 'Project';
 const providerFlag = flag('provider');
 const stateFiles = ['backlog.json', 'agents.json', 'claims.json', 'events.db'];
 
-// Validate git repo before anything else
+// Sibling layout: `orc init --sibling=<target-repo-path>` scaffolds an
+// orchestration home in the current directory that operates on a separate
+// target (product) repo, so no framework files land in the target repo.
+const siblingFlag = flag('sibling');
+let siblingTargetRepo: string | null = null;
+if (siblingFlag !== null) {
+  if (siblingFlag === '') cliError('--sibling requires a target repo path, e.g. --sibling=../my-product');
+  const resolvedTarget = resolve(siblingFlag);
+  if (!existsSync(resolvedTarget)) cliError(`--sibling target does not exist: ${resolvedTarget}`);
+  try {
+    execSync('git rev-parse --git-dir', { stdio: 'pipe', cwd: resolvedTarget });
+  } catch {
+    cliError(`--sibling target is not a git repository: ${resolvedTarget}. Run \`git init\` there first.`);
+  }
+  siblingTargetRepo = resolvedTarget;
+}
+
+// Validate git repo before anything else. In sibling mode, initialize the
+// orchestration home as a git repo if it is not one already.
 try {
   execSync('git rev-parse --git-dir', { stdio: 'pipe' });
 } catch {
-  cliError('Must run inside a git repository. Run `git init` first.');
+  if (siblingTargetRepo) {
+    execSync('git init', { stdio: 'pipe' });
+    console.log('Initialized a git repository for the orchestration home.');
+  } else {
+    cliError('Must run inside a git repository. Run `git init` first.');
+  }
 }
 
-ensureGitignore();
+if (siblingTargetRepo) {
+  // The orchestration repo owns the runtime dirs; ensure they are gitignored
+  // here (the target repo is never touched — ensureGitignore no-ops in the
+  // sibling layout). Written explicitly because both entries are required.
+  ensureGitignoreEntries(['.orc-state/', '.worktrees/']);
+} else {
+  ensureGitignore();
+}
 mkdirSync(BACKLOG_DOCS_DIR, { recursive: true });
+if (siblingTargetRepo) mkdirSync(PLANS_DIR, { recursive: true });
 
 // Step 1: State initialization (idempotent)
 const existing = stateFiles.filter((name) => existsSync(join(STATE_DIR, name)));
@@ -153,6 +184,12 @@ for (const provider of providers) {
 // Step 3: Write orc-state.config.json
 const config: Record<string, unknown> = {};
 config.default_provider = providers[0];
+if (siblingTargetRepo) {
+  // Store a path relative to the orchestration root (cwd) for portability;
+  // resolveTargetRepoRoot resolves it against the config file's directory.
+  const rel = relative(process.cwd(), siblingTargetRepo);
+  config.target_repo = rel === '' ? '.' : rel;
+}
 const pool: Record<string, unknown> = { max_workers: 1 };
 if (workerProvider) {
   pool.provider = workerProvider;
@@ -173,8 +210,29 @@ runInstall({
 // Step 5: Print success summary
 console.log('');
 console.log('Setup complete!');
+if (siblingTargetRepo) {
+  console.log('');
+  console.log('Sibling layout configured:');
+  console.log(`  orchestration home: ${process.cwd()}`);
+  console.log(`  target repo:        ${siblingTargetRepo}`);
+  console.log('  Framework files stay here; only product code lands in the target repo.');
+}
 console.log('');
 console.log('Next steps:');
 console.log('  orc start-session');
 console.log(`  orc task-create --feature=${featureRef} --title="First task" --ac="Done"`);
 console.log('  orc delegate');
+
+/**
+ * Ensure each entry is present in the orchestration repo's .gitignore.
+ * Idempotent — only appends entries that are not already listed.
+ */
+function ensureGitignoreEntries(entries: string[]): void {
+  const gitignorePath = join(process.cwd(), '.gitignore');
+  const existingText = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+  const present = new Set(existingText.split('\n').map((l) => l.trim()));
+  const missing = entries.filter((entry) => !present.has(entry));
+  if (missing.length === 0) return;
+  const prefix = existingText === '' || existingText.endsWith('\n') ? '' : '\n';
+  appendFileSync(gitignorePath, `${prefix}# orc-state runtime data\n${missing.join('\n')}\n`);
+}

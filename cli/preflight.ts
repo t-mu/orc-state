@@ -5,8 +5,9 @@
  */
 import { execSync } from 'node:child_process';
 import { validateStateDir } from '../lib/stateValidation.ts';
-import { STATE_DIR } from '../lib/paths.ts';
+import { STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
 import { boolFlag } from '../lib/args.ts';
+import { checkSiblingLayout } from '../lib/siblingLayoutCheck.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
@@ -21,11 +22,18 @@ const claimsRaw = readClaimsFromLib(STATE_DIR).claims ?? [];
 const agents = agentsRaw;
 const claims = claimsRaw;
 
+const siblingLayout = checkSiblingLayout({
+  isSibling: IS_SIBLING_LAYOUT,
+  targetRepoRoot: TARGET_REPO_ROOT,
+  stateDir: STATE_DIR,
+});
+
 const checks = {
   state_valid: stateErrors.length === 0,
   has_registered_workers: agents.length > 0,
   has_online_workers: agents.some((a) => a.status !== 'offline'),
   orphaned_active_claims: getOrphanedClaims(agents, claims),
+  sibling_layout_ok: siblingLayout.ok,
 };
 const providerBinaries = getProviderBinaries(agents);
 const allBinariesPresent = Object.values(providerBinaries).every(Boolean);
@@ -33,7 +41,8 @@ const allBinariesPresent = Object.values(providerBinaries).every(Boolean);
 const ok = checks.state_valid
   && checks.has_registered_workers
   && checks.orphaned_active_claims.length === 0
-  && allBinariesPresent;
+  && allBinariesPresent
+  && siblingLayout.ok;
 
 const result = {
   ok,
@@ -49,6 +58,8 @@ const result = {
     ...(!gitRepo
       ? ['Not inside a git repository — worktree isolation will not work']
       : []),
+    ...siblingLayout.errors.map((e) => `sibling layout: ${e}`),
+    ...siblingLayout.warnings.map((w) => `sibling layout: ${w}`),
   ],
   details: {
     state_errors: stateErrors,
@@ -67,6 +78,9 @@ console.log(`state_valid:            ${checks.state_valid}`);
 console.log(`has_registered_workers: ${checks.has_registered_workers}`);
 console.log(`has_online_workers:     ${checks.has_online_workers}`);
 console.log(`orphaned_active_claims: ${checks.orphaned_active_claims.length}`);
+if (!siblingLayout.skipped) {
+  console.log(`sibling_layout_ok:      ${siblingLayout.ok}`);
+}
 console.log('provider_binaries:');
 for (const [provider, available] of Object.entries(providerBinaries)) {
   const packageName = (PROVIDER_PACKAGES)[provider] ?? '';

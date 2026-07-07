@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
-import { resolveOrchestrationRoot, resolveTargetRepoRoot } from './repoRoot.ts';
+import { resolveOrchestrationRoot, resolveTargetRepoRoot, isSiblingLayout } from './repoRoot.ts';
 import { logger } from './logger.ts';
 
 // Orchestration root: owns the config, state dir, backlog, plans, and
@@ -29,10 +29,12 @@ export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 // Equals ORCHESTRATION_ROOT unless the config sets target_repo (sibling layout).
 export const TARGET_REPO_ROOT = resolveTargetRepoRoot(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
 
-// Sibling layout is active when the product repo is a different directory from
-// the orchestration home. In the attached (single-repo) layout the two roots
-// coincide and this is false.
-export const IS_SIBLING_LAYOUT = ORCHESTRATION_ROOT !== TARGET_REPO_ROOT;
+// Sibling layout is active when the operator has configured a `target_repo`
+// (in orc-state.config.json) that resolves to a different directory from the
+// orchestration home. This is config-driven, NOT inferred from root divergence
+// — ORC_REPO_ROOT (a forcing override) and ORC_STATE_DIR can make the roots
+// differ without a real sibling target, which must not enable sibling mode.
+export const IS_SIBLING_LAYOUT = isSiblingLayout(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
 
 // ─── Repo-root call-site classification (authoritative; task 185) ────────────
 // Every consumer of a "repo root" is one of two kinds. This table is the

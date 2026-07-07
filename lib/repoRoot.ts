@@ -93,3 +93,17 @@ export function resolveTargetRepoRoot(configFile: string, orchestrationRoot: str
   if (!targetRepo) return orchestrationRoot;
   return resolve(dirname(configFile), targetRepo);
 }
+
+/**
+ * Whether the sibling layout is active: the operator has configured a
+ * `target_repo` that resolves to a directory different from the orchestration
+ * root. This is the explicit config opt-in — deliberately NOT inferred from
+ * ORC_REPO_ROOT (a forcing override for git-op targeting) or from incidental
+ * divergence between ORC_STATE_DIR's parent and ORC_REPO_ROOT, both of which
+ * can differ in tests/overrides without a real sibling target being present.
+ */
+export function isSiblingLayout(configFile: string, orchestrationRoot: string): boolean {
+  const targetRepo = readTargetRepoFromConfig(configFile);
+  if (!targetRepo) return false;
+  return resolve(dirname(configFile), targetRepo) !== resolve(orchestrationRoot);
+}

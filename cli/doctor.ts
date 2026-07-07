@@ -4,8 +4,9 @@
  * Usage: node cli/doctor.ts [--json]
  */
 import { execSync } from 'node:child_process';
-import { STATE_DIR } from '../lib/paths.ts';
+import { STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
+import { checkSiblingLayout } from '../lib/siblingLayoutCheck.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
 import { validateStateDir, validateMemoryDb } from '../lib/stateValidation.ts';
@@ -34,6 +35,11 @@ const providers = new Set(agents.map((a) => a.provider));
 
 const sandboxDeps = checkSandboxDependencies();
 const memoryHealth = validateMemoryDb(STATE_DIR);
+const siblingLayout = checkSiblingLayout({
+  isSibling: IS_SIBLING_LAYOUT,
+  targetRepoRoot: TARGET_REPO_ROOT,
+  stateDir: STATE_DIR,
+});
 
 const checks: Record<string, unknown> = {
   gitRepo,
@@ -46,6 +52,7 @@ const checks: Record<string, unknown> = {
   backlogSync,
   sandboxDependencies: sandboxDeps,
   memoryHealth,
+  siblingLayout,
 };
 
 for (const provider of providers) {
@@ -107,7 +114,8 @@ const summary = {
     (checks.staleActiveClaims as unknown[]).length === 0 &&
     (checks.lifecycleIssues as unknown[]).length === 0 &&
     sandboxDeps.ok &&
-    memoryHealth.ok,
+    memoryHealth.ok &&
+    siblingLayout.ok,
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
@@ -199,6 +207,19 @@ const mh = checks.memoryHealth as ReturnType<typeof validateMemoryDb>;
 console.log(`memory health: ok=${String(mh.ok)}`);
 for (const msg of mh.messages) {
   console.log(`  ${msg}`);
+}
+
+console.log('');
+if (siblingLayout.skipped) {
+  console.log(`sibling layout: skipped (${siblingLayout.reason})`);
+} else {
+  console.log(`sibling layout: ok=${String(siblingLayout.ok)} target=${TARGET_REPO_ROOT}`);
+  for (const error of siblingLayout.errors) {
+    console.log(`  error: ${error}`);
+  }
+  for (const warning of siblingLayout.warnings) {
+    console.log(`  warning: ${warning}`);
+  }
 }
 
 if (!summary.ok) {
