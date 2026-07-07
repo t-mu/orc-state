@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
-import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
+import { STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
@@ -102,6 +102,33 @@ function ensureDirs() {
   mkdirSync(join(STATE_DIR, 'pty-settings'), { recursive: true });
 }
 
+/**
+ * Compute the Claude sandbox filesystem writable roots (task 190).
+ *
+ * `.` is the worker's launch cwd (ORC_REPO_ROOT = the orchestration root), which
+ * covers the assigned worktree, the state dir, and the backlog in one grant.
+ *
+ * In the sibling layout, the assigned worktree is a worktree OF the target repo:
+ * a worktree shares its main repo's object store, so a commit inside the
+ * worktree writes objects/refs to `<target>/.git`, which lives OUTSIDE the
+ * orchestration subtree. That path must therefore also be writable, or sandboxed
+ * worker commits fail. We grant `<target>/.git` (the object store), NOT the
+ * target repo's working tree — direct-mode merges are coordinator-side and PR
+ * pushes run from inside the worktree.
+ *
+ * Read-only (scouts) get no writable roots at all.
+ */
+export function claudeSandboxFilesystem(opts: {
+  readOnly: boolean;
+  siblingLayout: boolean;
+  targetRepoRoot: string;
+}): { allowWrite: string[] } | undefined {
+  if (opts.readOnly) return undefined;
+  const allowWrite = ['.'];
+  if (opts.siblingLayout) allowWrite.push(join(opts.targetRepoRoot, '.git'));
+  return { allowWrite };
+}
+
 function buildStartArgs(provider: string, config: Record<string, unknown>, claudeSettingsPath?: string) {
   // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
   // 'full-access' for backward compatibility when field is absent.
@@ -112,6 +139,13 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     const args: string[] = [];
     if (executionMode === 'sandbox') {
       // sandbox + read_only (scouts) → read-only filesystem; otherwise workspace-write.
+      // workspace-write scopes writes to the launch cwd (the orchestration root),
+      // covering the worktree, state dir, and backlog. SIBLING-LAYOUT GAP: a
+      // worktree's commits write to the target repo's shared object store
+      // (<target>/.git), outside that scope — Codex needs an additional writable
+      // root there. The exact Codex config key is unverified, so this is
+      // deferred to a follow-up task (see backlog task 193); Claude already
+      // grants <target>/.git via claudeSandboxFilesystem.
       const sandboxScope = readOnly ? 'read-only' : 'workspace-write';
       args.push('--sandbox', sandboxScope, '--ask-for-approval', 'never');
     } else {
@@ -323,8 +357,13 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
               mode: 'auto-allow',
               allowUnsandboxedCommands: false,
             };
-            if (!readOnly) {
-              sandboxConfig.filesystem = { allowWrite: ['.'] };
+            const filesystem = claudeSandboxFilesystem({
+              readOnly,
+              siblingLayout: IS_SIBLING_LAYOUT,
+              targetRepoRoot: TARGET_REPO_ROOT,
+            });
+            if (filesystem) {
+              sandboxConfig.filesystem = filesystem;
             }
             settings.sandbox = sandboxConfig;
           }

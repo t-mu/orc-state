@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
@@ -354,6 +354,49 @@ describe('buildStartArgs execution mode', () => {
 
     const args = spawnSpy.mock.calls[0][1] as string[];
     expect(args).toContain('--dangerously-bypass-approvals-and-sandbox');
+  });
+});
+
+// ─── sibling-layout sandbox scoping (task 190) ──────────────────────────────
+
+describe('claudeSandboxFilesystem', () => {
+  it('attached, writable: grants only the launch cwd (orchestration root)', async () => {
+    const { claudeSandboxFilesystem } = await import('./pty.ts');
+    expect(claudeSandboxFilesystem({ readOnly: false, siblingLayout: false, targetRepoRoot: '/target' }))
+      .toEqual({ allowWrite: ['.'] });
+  });
+
+  it('sibling, writable: also grants the target repo .git (shared object store)', async () => {
+    const { claudeSandboxFilesystem } = await import('./pty.ts');
+    expect(claudeSandboxFilesystem({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' }))
+      .toEqual({ allowWrite: ['.', '/target/.git'] });
+  });
+
+  it('read-only (scouts): no writable roots in either layout', async () => {
+    const { claudeSandboxFilesystem } = await import('./pty.ts');
+    expect(claudeSandboxFilesystem({ readOnly: true, siblingLayout: false, targetRepoRoot: '/target' })).toBeUndefined();
+    expect(claudeSandboxFilesystem({ readOnly: true, siblingLayout: true, targetRepoRoot: '/target' })).toBeUndefined();
+  });
+});
+
+describe('claude sandbox settings file in the sibling layout', () => {
+  it('allowWrite includes the target repo .git end-to-end via start()', async () => {
+    const orch = join(dir, 'orch');
+    const target = join(dir, 'target');
+    mkdirSync(join(orch, '.orc-state'), { recursive: true });
+    writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: target }));
+
+    const savedRepoRoot = process.env.ORC_REPO_ROOT;
+    delete process.env.ORC_REPO_ROOT; // ensure target_repo (not ORC_REPO_ROOT) drives resolution
+    process.env.ORC_STATE_DIR = join(orch, '.orc-state'); // → ORCHESTRATION_ROOT = orch, sibling layout
+    try {
+      const { adapter } = await makeAdapter({ provider: 'claude' });
+      await adapter.start('bob', { execution_mode: 'sandbox' });
+      const settings = JSON.parse(readFileSync(join(orch, '.orc-state', 'pty-settings', 'bob.json'), 'utf8'));
+      expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', join(target, '.git')]);
+    } finally {
+      if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
+    }
   });
 });
 
