@@ -34,6 +34,15 @@ export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string 
   }
   if (repoRoot) {
     env.ORC_REPO_ROOT = repoRoot;
+    // ORC_HOME is the top-precedence orchestration-root signal (see
+    // resolveOrchestrationRoot). A worker cds into its assigned worktree, which
+    // in the sibling layout is a worktree of the TARGET repo — from that cwd
+    // git-based discovery would resolve to the target repo, not the
+    // orchestration home. Pinning ORC_HOME makes every `orc` invocation from a
+    // worker shell resolve the orchestration state dir regardless of cwd; the
+    // walk-up fallback (worktrees live under the orchestration root) covers the
+    // case where ORC_HOME is somehow unset.
+    env.ORC_HOME = repoRoot;
   }
   // Prevent interactive editors, pagers, and merge-tool prompts from blocking
   // headless PTY sessions. Workers never need an interactive editor.

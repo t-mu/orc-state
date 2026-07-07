@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Agent } from '../types/agents.ts';
@@ -76,7 +77,7 @@ describe('normalizeWorkerEnv', () => {
     expect(env.PAGER).toBe('cat');
   });
 
-  it('carries ORC_REPO_ROOT into the launch env', async () => {
+  it('carries ORC_REPO_ROOT and ORC_HOME into the launch env', async () => {
     vi.stubEnv('HOME', '/home/tester');
     vi.doMock('node:fs', async () => {
       const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -91,7 +92,87 @@ describe('normalizeWorkerEnv', () => {
 
     expect(env.ORC_STATE_DIR).toBe('/tmp/state');
     expect(env.ORC_REPO_ROOT).toBe('/repo/root');
+    // ORC_HOME is the orchestration-root signal for worker orc resolution.
+    expect(env.ORC_HOME).toBe('/repo/root');
     expect(env.ORC_BIN).toBe('/repo/root/cli/orc.ts');
+  });
+
+  it('sets neither ORC_HOME nor ORC_REPO_ROOT when no repo root is given', async () => {
+    const { normalizeWorkerEnv } = await import('./workerRuntime.ts');
+    const env = normalizeWorkerEnv({});
+    expect(env.ORC_HOME).toBeUndefined();
+    expect(env.ORC_REPO_ROOT).toBeUndefined();
+  });
+});
+
+// Integration: a worker cds into its target-repo worktree, from which git-based
+// discovery resolves to the TARGET repo. The propagated ORC_HOME (and, as a
+// fallback, walk-up discovery since worktrees live under the orchestration root)
+// must make orc resolution land on the ORCHESTRATION home instead.
+describe('worker ORC_HOME resolution from inside a target-repo worktree', () => {
+  let tmp: string;
+  let orch: string;
+  let target: string;
+  let worktree: string;
+
+  function git(cwd: string, ...args: string[]): void {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+  }
+
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    // The normalizeWorkerEnv tests vi.doMock('node:fs') to stub existsSync;
+    // doMock registrations survive resetModules, so clear them here or the real
+    // filesystem walk-up in findConfigDirUpwards would use the stub.
+    vi.doUnmock('node:fs');
+    vi.doUnmock('node:child_process');
+    // realpathSync: macOS tmpdir is a symlink; git reports resolved paths.
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), 'orc-home-test-')));
+    orch = join(tmp, 'orch');
+    target = join(tmp, 'target');
+    mkdirSync(orch, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    // Orchestration home: a git repo carrying the config (its presence is what
+    // walk-up keys off) and the state dir.
+    git(orch, 'init', '-b', 'main');
+    writeFileSync(join(orch, 'orc-state.config.json'), '{}');
+    mkdirSync(join(orch, '.orc-state'), { recursive: true });
+    // Target (product) repo with one commit.
+    git(target, 'init', '-b', 'main');
+    git(target, 'config', 'user.email', 'test@example.com');
+    git(target, 'config', 'user.name', 'Test');
+    writeFileSync(join(target, 'product.txt'), 'code\n');
+    git(target, 'add', 'product.txt');
+    git(target, 'commit', '-m', 'init');
+    // A worktree OF the target repo, placed under the orchestration root.
+    worktree = join(orch, '.worktrees', 'run-1');
+    mkdirSync(join(orch, '.worktrees'), { recursive: true });
+    git(target, 'worktree', 'add', worktree, '-b', 'task/run-1');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('resolves the orchestration root with ORC_HOME set (as the worker env provides)', async () => {
+    vi.stubEnv('ORC_HOME', orch);
+    vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
+    const { resolveOrchestrationRoot } = await import('./repoRoot.ts');
+    // From the worktree cwd, git discovery would point at the target repo; ORC_HOME wins.
+    expect(resolveOrchestrationRoot(worktree)).toBe(orch);
+  });
+
+  it('resolves the orchestration root via walk-up when ORC_HOME is unset', async () => {
+    vi.stubEnv('ORC_HOME', undefined as unknown as string);
+    vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
+    const { resolveOrchestrationRoot, resolveRepoRoot } = await import('./repoRoot.ts');
+    // Sanity: bare git discovery from the worktree resolves to the TARGET repo…
+    expect(resolveRepoRoot(worktree)).toBe(target);
+    // …but orchestration resolution walks up to the config-bearing orch home.
+    expect(resolveOrchestrationRoot(worktree)).toBe(orch);
   });
 });
 
