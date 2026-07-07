@@ -209,10 +209,10 @@ for (const msg of mh.messages) {
   console.log(`  ${msg}`);
 }
 
-console.log('');
-if (siblingLayout.skipped) {
-  console.log(`sibling layout: skipped (${siblingLayout.reason})`);
-} else {
+// Only surface the sibling layout in doctor when it is active — keeps the
+// default attached-layout output unchanged (matches preflight's suppression).
+if (!siblingLayout.skipped) {
+  console.log('');
   console.log(`sibling layout: ok=${String(siblingLayout.ok)} target=${TARGET_REPO_ROOT}`);
   for (const error of siblingLayout.errors) {
     console.log(`  error: ${error}`);

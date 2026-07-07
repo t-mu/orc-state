@@ -58,8 +58,8 @@ const result = {
     ...(!gitRepo
       ? ['Not inside a git repository — worktree isolation will not work']
       : []),
-    ...siblingLayout.errors.map((e) => `sibling layout: ${e}`),
-    ...siblingLayout.warnings.map((w) => `sibling layout: ${w}`),
+    ...siblingLayout.errors.map((e) => `sibling layout error (fails preflight): ${e}`),
+    ...siblingLayout.warnings.map((w) => `sibling layout warning: ${w}`),
   ],
   details: {
     state_errors: stateErrors,

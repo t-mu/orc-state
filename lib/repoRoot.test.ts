@@ -192,12 +192,22 @@ describe('repoRoot', () => {
       expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
     });
 
-    it('is NOT inferred from ORC_REPO_ROOT (forcing override) alone', () => {
-      // No target_repo configured; ORC_REPO_ROOT diverging from the orchestration
-      // root must not enable sibling mode.
-      vi.stubEnv('ORC_REPO_ROOT', join(tmp, 'forced'));
+    it('depends only on config, never on ORC_REPO_ROOT (forcing override)', () => {
+      // Without target_repo: false regardless of ORC_REPO_ROOT.
       writeFileSync(join(tmp, CONFIG), JSON.stringify({ default_provider: 'claude' }));
+      vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
       expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
+      vi.stubEnv('ORC_REPO_ROOT', join(tmp, 'forced'));
+      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
+
+      // With target_repo: true regardless of ORC_REPO_ROOT (env does not change it).
+      const orch = join(tmp, 'orch');
+      mkdirSync(orch, { recursive: true });
+      writeFileSync(join(orch, CONFIG), JSON.stringify({ target_repo: '../product' }));
+      vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
+      expect(isSiblingLayout(join(orch, CONFIG), orch)).toBe(true);
+      vi.stubEnv('ORC_REPO_ROOT', join(tmp, 'forced'));
+      expect(isSiblingLayout(join(orch, CONFIG), orch)).toBe(true);
     });
   });
 });

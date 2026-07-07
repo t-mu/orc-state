@@ -275,4 +275,13 @@ describe('cli/init.ts --sibling', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('does not exist');
   });
+
+  it('errors when --sibling resolves to the orchestration home itself', () => {
+    const orch = join(dir, 'orch4');
+    mkdirSync(orch, { recursive: true });
+
+    const result = runSibling(orch, ['--sibling=.', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('different directory');
+  });
 });

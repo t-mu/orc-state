@@ -44,6 +44,9 @@ let siblingTargetRepo: string | null = null;
 if (siblingFlag !== null) {
   if (siblingFlag === '') cliError('--sibling requires a target repo path, e.g. --sibling=../my-product');
   const resolvedTarget = resolve(siblingFlag);
+  if (resolvedTarget === process.cwd()) {
+    cliError('--sibling target must be a different directory from the orchestration home (the current directory). For a single-repo setup, run `orc init` without --sibling.');
+  }
   if (!existsSync(resolvedTarget)) cliError(`--sibling target does not exist: ${resolvedTarget}`);
   try {
     execSync('git rev-parse --git-dir', { stdio: 'pipe', cwd: resolvedTarget });
@@ -67,14 +70,17 @@ try {
 }
 
 if (siblingTargetRepo) {
-  // The orchestration repo owns the runtime dirs; ensure they are gitignored
-  // here (the target repo is never touched — ensureGitignore no-ops in the
-  // sibling layout). Written explicitly because both entries are required.
+  // The orchestration repo owns the runtime dirs, so gitignore both here.
+  // ensureGitignore() is NOT used: the config is not written yet at this point,
+  // so IS_SIBLING_LAYOUT reads false during this init run and ensureGitignore
+  // would add only `.orc-state/` (missing `.worktrees/`). Write both explicitly.
   ensureGitignoreEntries(['.orc-state/', '.worktrees/']);
 } else {
   ensureGitignore();
 }
 mkdirSync(BACKLOG_DOCS_DIR, { recursive: true });
+// A fresh sibling orchestration home eagerly scaffolds plans/ so the layout is
+// obviously complete; attached init leaves plans/ to lazy creation by plan_write.
 if (siblingTargetRepo) mkdirSync(PLANS_DIR, { recursive: true });
 
 // Step 1: State initialization (idempotent)
