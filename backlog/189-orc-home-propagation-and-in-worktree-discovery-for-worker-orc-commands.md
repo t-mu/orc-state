@@ -3,7 +3,7 @@ ref: sibling-orchestration-repo/189-orc-home-propagation-and-in-worktree-discove
 feature: sibling-orchestration-repo
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - sibling-orchestration-repo/184-two-root-path-resolution-and-config-schema
 ---
