@@ -398,6 +398,33 @@ describe('claude sandbox settings file in the sibling layout', () => {
       if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
     }
   });
+
+  it('codex flags stay workspace-write and gemini stays flag-free in the sibling layout', async () => {
+    // Codex/gemini branches do not read IS_SIBLING_LAYOUT, so the sibling layout
+    // must not change their flag sets — pins the intentional Codex deferral
+    // (task 193) and the Gemini no-op.
+    const orch = join(dir, 'orch');
+    const target = join(dir, 'target');
+    mkdirSync(join(orch, '.orc-state'), { recursive: true });
+    writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: target }));
+
+    const savedRepoRoot = process.env.ORC_REPO_ROOT;
+    delete process.env.ORC_REPO_ROOT;
+    process.env.ORC_STATE_DIR = join(orch, '.orc-state');
+    try {
+      const codex = await makeAdapter({ provider: 'codex' });
+      await codex.adapter.start('c', { execution_mode: 'sandbox' });
+      const codexArgs = codex.spawnSpy.mock.calls[0][1] as string[];
+      expect(codexArgs).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'never', '--enable', 'multi_agent']);
+
+      vi.resetModules();
+      const gemini = await makeAdapter({ provider: 'gemini' });
+      await gemini.adapter.start('g', { execution_mode: 'sandbox' });
+      expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
+    } finally {
+      if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
+    }
+  });
 });
 
 // ─── claude auto-accept dance ───────────────────────────────────────────────
