@@ -77,6 +77,11 @@ beforeEach(() => {
   if (initResult.status !== 0) {
     throw new Error(`init --sibling failed: ${initResult.stderr}\n${initResult.stdout}`);
   }
+  // `orc init --sibling` git-inits the orchestration home but does not set a
+  // committer identity; configure one so the baseline + writeback commits work
+  // on CI/containers without a global ~/.gitconfig (mirrors initRepo for product).
+  git(orch, 'config', 'user.email', 'test@example.com');
+  git(orch, 'config', 'user.name', 'Test');
 
   // In-process env for the lifecycle functions: point at the orchestration home;
   // clear ORC_REPO_ROOT so the configured target_repo drives target resolution.
@@ -140,6 +145,9 @@ describe('sibling-layout lifecycle e2e', () => {
     for (const artifact of ['.orc-state', '.worktrees', 'backlog', 'plans', 'orc-state.config.json']) {
       expect(existsSync(join(product, artifact))).toBe(false);
     }
+    // Positive guarantee: the target's tracked set on main is EXACTLY the two
+    // product files — no framework file (or anything else) was committed.
+    expect(git(product, 'ls-files').split('\n').filter(Boolean).sort()).toEqual(['feature.txt', 'product.txt']);
 
     // ── The orchestration repo received the status writeback commit. ──
     expect(git(orch, 'log', '--oneline')).toContain(`chore(backlog): ${TASK_REF} done`);

@@ -50,7 +50,6 @@ Location: `orc-state.config.json` in the repository root (sibling of `.orc-state
 {
   "default_provider": "claude",
   "default_execution_mode": "full-access",
-  "target_repo": "../my-product",
   "master": {
     "provider": "claude",
     "model": "claude-sonnet-4-20250514",
@@ -113,11 +112,11 @@ Sets the fallback execution mode for both master and worker pool when neither a 
 ### `target_repo`
 
 Path to the product repository that orc operates on, enabling the **sibling
-layout**. When set, orc runs from the orchestration home (which holds state,
+layout**. When set, orc runs from the orchestration root (which holds state,
 backlog, plans, and config) while all product-code git operations target this
 repo, so no framework files land in the product repo. A relative path resolves
 against the config file's directory (the orchestration root); an absolute path
-is used as-is. Absent (the default), the orchestration home and target repo are
+is used as-is. Absent (the default), the orchestration root and target repo are
 the same directory — the attached, single-repo layout.
 
 Set this with `orc init --sibling=<target-repo-path>` rather than by hand. See
