@@ -6,7 +6,7 @@ import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { readBacklog, findTask } from './stateReader.ts';
 import { discoverActiveTaskSpecs } from './backlogSync.ts';
-import { BACKLOG_DOCS_DIR, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT } from './paths.ts';
+import { BACKLOG_DOCS_DIR, IS_SIBLING_LAYOUT, ORCHESTRATION_ROOT, STATE_DIR } from './paths.ts';
 import { logger } from './logger.ts';
 
 const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'released', 'cancelled']);
@@ -88,23 +88,29 @@ function orchestrationRepoIsGit(orchestrationRoot: string): boolean {
  * coordinator writes `status: done` into the spec under the orchestration
  * repo's backlog/ after merge and commits it there.
  *
- * No-op in the attached layout (orchestration root == target repo root), where
- * the worker's own spec edit is carried by the merge. When the orchestration
- * root is not a git repository, the file is written and the commit is skipped.
- * Best-effort: never throws — the caller's finalization must not fail on a
- * writeback problem. The file write is what matters for backlogSync
- * convergence (spec `done` matches the runtime `done` just recorded); the
- * commit is a durable audit trail on top.
+ * No-op in the attached layout, where the worker's own spec edit is carried by
+ * the merge. When the orchestration root is not a git repository, the file is
+ * written and the commit is skipped. Best-effort: never throws — the caller's
+ * finalization must not fail on a writeback problem. The file write is what
+ * matters for backlogSync convergence (spec `done` matches the runtime `done`
+ * just recorded); the commit is a durable audit trail on top.
+ *
+ * Sibling detection is the config-driven `IS_SIBLING_LAYOUT` (overridable via
+ * `isSibling` for tests), NOT root-equality: a worker/operator shell carries
+ * ambient `ORC_REPO_ROOT` (and `ORC_HOME`) pointing at the orchestration root,
+ * which collapses TARGET_REPO_ROOT onto ORCHESTRATION_ROOT — so gating on
+ * `orchestrationRoot === targetRepoRoot` would make `orc task-mark-done` (and
+ * any writeback from such a shell) silently no-op in a genuinely-sibling setup.
  */
 export function writeSpecStatusDone(
   taskRef: string,
   {
     docsDir = BACKLOG_DOCS_DIR,
     orchestrationRoot = ORCHESTRATION_ROOT,
-    targetRepoRoot = TARGET_REPO_ROOT,
-  }: { docsDir?: string; orchestrationRoot?: string; targetRepoRoot?: string } = {},
+    isSibling = IS_SIBLING_LAYOUT,
+  }: { docsDir?: string; orchestrationRoot?: string; isSibling?: boolean } = {},
 ): { written: boolean; committed: boolean } {
-  if (orchestrationRoot === targetRepoRoot) return { written: false, committed: false };
+  if (!isSibling) return { written: false, committed: false };
 
   let entry;
   try {

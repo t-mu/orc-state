@@ -219,6 +219,63 @@ describe('syncBacklogFromSpecs', () => {
     expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
   });
 
+  it('does NOT demote a done runtime task from a stale (todo) spec', async () => {
+    // Terminal-status guard: a merged task (runtime done) whose spec still says
+    // todo — e.g. a sibling-mode writeback that failed or has not landed — must
+    // stay done, never revert to todo (which would re-dispatch completed work).
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'Spec Still Todo',
+    });
+    writeBacklog(dir, {
+      version: '1',
+      features: [{
+        ref: 'orch',
+        title: 'Orch',
+        tasks: [{
+          ref: 'orch/task-155-example',
+          title: 'Spec Still Todo',
+          status: 'done',
+          task_type: 'implementation',
+        }],
+      }],
+    });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    const result = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+
+    expect(result.updated).toBe(false);
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
+  });
+
+  it('does NOT demote a released runtime task from a stale spec', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example',
+      feature: 'orch',
+      status: 'todo',
+      title: 'Released Work',
+    });
+    writeBacklog(dir, {
+      version: '1',
+      features: [{
+        ref: 'orch',
+        title: 'Orch',
+        tasks: [{
+          ref: 'orch/task-155-example',
+          title: 'Released Work',
+          status: 'released',
+          task_type: 'implementation',
+        }],
+      }],
+    });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('released');
+  });
+
   it('is idempotent when called twice with the same specs', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',

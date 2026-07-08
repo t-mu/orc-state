@@ -41,30 +41,43 @@ afterEach(() => {
 });
 
 describe('writeSpecStatusDone', () => {
-  it('is a no-op in the attached layout (orchestration root == target repo root)', () => {
+  it('is a no-op in the attached layout (isSibling false)', () => {
     const docsDir = join(root, 'backlog');
     const specPath = writeSpec(docsDir, '187-example.md', 'sibling/187-example');
 
     const result = writeSpecStatusDone('sibling/187-example', {
       docsDir,
       orchestrationRoot: root,
-      targetRepoRoot: root,
+      isSibling: false,
     });
 
     expect(result).toEqual({ written: false, committed: false });
     expect(readFileSync(specPath, 'utf8')).toContain('status: todo');
   });
 
+  it('is a no-op when isSibling is false even if roots differ (e.g. ORC_REPO_ROOT-forced target)', () => {
+    // Regression: detection is config-driven, not root-equality. A shell with
+    // ambient ORC_REPO_ROOT collapses the roots; isSibling=false must still gate.
+    const docsDir = join(root, 'backlog');
+    const specPath = writeSpec(docsDir, '187-example.md', 'sibling/187-example');
+    const result = writeSpecStatusDone('sibling/187-example', {
+      docsDir,
+      orchestrationRoot: root,
+      isSibling: false,
+    });
+    expect(result).toEqual({ written: false, committed: false });
+    expect(readFileSync(specPath, 'utf8')).toContain('status: todo');
+  });
+
   it('writes status: done into the spec frontmatter in the sibling layout (non-git orchestration root)', () => {
     const orchestrationRoot = join(root, 'orch');
-    const target = join(root, 'target');
     const docsDir = join(orchestrationRoot, 'backlog');
     const specPath = writeSpec(docsDir, '187-example.md', 'sibling/187-example');
 
     const result = writeSpecStatusDone('sibling/187-example', {
       docsDir,
       orchestrationRoot,
-      targetRepoRoot: target,
+      isSibling: true,
     });
 
     // Non-git orchestration root: file written, commit gracefully skipped.
@@ -79,7 +92,6 @@ describe('writeSpecStatusDone', () => {
 
   it('commits the spec in the orchestration repo when it is a git repository', () => {
     const orchestrationRoot = join(root, 'orch');
-    const target = join(root, 'target');
     mkdirSync(orchestrationRoot, { recursive: true });
     initGitRepo(orchestrationRoot);
     const docsDir = join(orchestrationRoot, 'backlog');
@@ -88,7 +100,7 @@ describe('writeSpecStatusDone', () => {
     const result = writeSpecStatusDone('sibling/187-example', {
       docsDir,
       orchestrationRoot,
-      targetRepoRoot: target,
+      isSibling: true,
     });
 
     expect(result).toEqual({ written: true, committed: true });
@@ -108,7 +120,7 @@ describe('writeSpecStatusDone', () => {
     const result = writeSpecStatusDone('sibling/999-missing', {
       docsDir,
       orchestrationRoot,
-      targetRepoRoot: join(root, 'target'),
+      isSibling: true,
     });
 
     expect(result).toEqual({ written: false, committed: false });
@@ -122,7 +134,7 @@ describe('writeSpecStatusDone', () => {
     const result = writeSpecStatusDone('sibling/187-example', {
       docsDir,
       orchestrationRoot,
-      targetRepoRoot: join(root, 'target'),
+      isSibling: true,
     });
 
     expect(result).toEqual({ written: false, committed: false });
@@ -137,7 +149,7 @@ describe('writeSpecStatusDone', () => {
     writeSpecStatusDone('sibling/187-example', {
       docsDir,
       orchestrationRoot,
-      targetRepoRoot: join(root, 'target'),
+      isSibling: true,
     });
 
     // Exactly one substitution: `status: todo` → `status: done`; nothing else.
@@ -157,7 +169,7 @@ describe('writeSpecStatusDone', () => {
     const result = writeSpecStatusDone('sibling/187-example', {
       docsDir,
       orchestrationRoot,
-      targetRepoRoot: join(root, 'target'),
+      isSibling: true,
     });
 
     expect(result).toEqual({ written: true, committed: true });
@@ -189,7 +201,7 @@ describe('writeSpecStatusDone', () => {
     writeSpecStatusDone('sibling/187-example', {
       docsDir,
       orchestrationRoot,
-      targetRepoRoot: join(root, 'target'),
+      isSibling: true,
     });
 
     // Next sync tick must NOT revert the runtime task back to the old spec status.
@@ -199,12 +211,13 @@ describe('writeSpecStatusDone', () => {
     expect(backlog.features[0].tasks[0].status).toBe('done');
   });
 
-  it('sync WOULD revert a done runtime task if the spec were left stale — writeback is load-bearing', () => {
-    // Documents the invariant the coordinator relies on: writeback runs
-    // synchronously right after markTaskDoneRuntimeOnly, so no sync tick ever
-    // observes runtime=done while the spec is still todo. If it did, the
-    // active-status guard (claimed/in_progress only) would NOT protect a done
-    // task, and sync would drag it back to the stale spec status.
+  it('does NOT revert a done runtime task when the spec is left stale (terminal-status guard)', () => {
+    // A merged task is done in runtime; if its spec still says todo (writeback
+    // failed or has not landed), sync must NOT drag it back to todo — that would
+    // re-dispatch already-completed work. The terminal-status guard in
+    // backlogSync protects done/released runtime tasks from spec demotion, so
+    // writeback is no longer load-bearing for lifecycle safety (only for the
+    // audit trail).
     const orchestrationRoot = join(root, 'orch');
     const stateDir = join(root, 'state');
     const docsDir = join(orchestrationRoot, 'backlog');
@@ -220,10 +233,9 @@ describe('writeSpecStatusDone', () => {
       }],
     });
 
-    // No writeback here — simulate the (unsafe) state writeback exists to prevent.
-    const syncResult = syncBacklogFromSpecs(stateDir, docsDir);
-    expect(syncResult.updated).toBe(true);
+    // No writeback — the exact state the guard must tolerate without reverting.
+    syncBacklogFromSpecs(stateDir, docsDir);
     const backlog = JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'));
-    expect(backlog.features[0].tasks[0].status).toBe('todo');
+    expect(backlog.features[0].tasks[0].status).toBe('done');
   });
 });

@@ -16,6 +16,11 @@ import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { formatErrorMessage } from './shared.ts';
 
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
+// Mirror backlogSync: a terminal runtime status is never demoted by a spec, so
+// a done/released runtime task with a stale (e.g. still-todo) spec is not an
+// actionable mismatch — reporting it would flag the benign sibling-writeback
+// lag window as a fixable drift.
+const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'released']);
 
 interface RegisteredTaskEntry {
   feature: string;
@@ -88,7 +93,11 @@ function findMetadataMismatches(specs: SpecEntry[], registered: Map<string, Regi
       });
     }
 
-    if (!ACTIVE_STATUSES.has(actualStatus as TaskStatus) && actualStatus !== spec.status) {
+    if (
+      !ACTIVE_STATUSES.has(actualStatus as TaskStatus) &&
+      !TERMINAL_STATUSES.has(actualStatus as TaskStatus) &&
+      actualStatus !== spec.status
+    ) {
       mismatches.push({
         file: spec.file,
         ref: spec.ref,

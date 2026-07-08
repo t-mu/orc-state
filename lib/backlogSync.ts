@@ -6,6 +6,12 @@ import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
 
 const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
+// Terminal runtime states are never demoted by a spec sync. Once a task is done
+// or released, the runtime is authoritative and the spec is a mirror: a stale
+// spec that still says `todo` (e.g. a sibling-mode writeback that has not landed
+// yet, or failed) must NOT drag a merged task back to todo, which would make it
+// eligible for claiming again and re-run completed work.
+const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'released']);
 const VALID_SPEC_STATUSES = new Set<string>(['todo', 'blocked', 'done', 'released', 'cancelled']);
 const LEGACY_DIR_RE = /^legacy\//;
 
@@ -152,7 +158,11 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
       taskUpdated = true;
     }
 
-    if (!ACTIVE_STATUSES.has(existingEntry.task.status) && existingEntry.task.status !== spec.status) {
+    if (
+      !ACTIVE_STATUSES.has(existingEntry.task.status) &&
+      !TERMINAL_STATUSES.has(existingEntry.task.status) &&
+      existingEntry.task.status !== spec.status
+    ) {
       existingEntry.task.status = spec.status as TaskStatus;
       changed = true;
       taskUpdated = true;
