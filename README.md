@@ -59,6 +59,7 @@ the coordinator picks them up on the next tick. See
 - [Concepts & terminology](./docs/concepts.md)
 - [Architecture overview](./docs/architecture.md)
 - [Configuration](./docs/configuration.md)
+- [Sibling mode](./docs/sibling-mode.md) — orchestrate a repo that can't hold framework files
 - [CLI reference](./docs/cli.md)
 - [Memory system](./docs/memory.md)
 - [Writing custom adapters](./docs/adapters.md)

@@ -146,8 +146,25 @@ like an HTTP API or remote SSH session._
 
 ---
 
+### Orchestration root vs target repo
+
+The **orchestration root** is orc's home: it holds `orc-state.config.json`,
+`.orc-state/`, `backlog/`, `plans/`, and `.worktrees/`. The **target repo** is the
+repository whose product code the runs operate on.
+
+By default these are the same directory (the *attached* layout). Configuring a
+`target_repo` splits them (the *sibling* layout), so orc can drive a product repo
+that must stay free of framework files — orchestration state lives in the
+orchestration root, and only product-code commits land in the target repo.
+
+_You'll encounter this when setting up `orc init --sibling` or reading
+`target_repo` in `orc-state.config.json`._
+
+---
+
 ## See also
 
 - [Getting started](./getting-started.md)
 - [Architecture overview](./architecture.md)
+- [Sibling mode](./sibling-mode.md)
 - [Contracts & invariants](./contracts.md)

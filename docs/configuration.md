@@ -8,11 +8,13 @@ orc-state is configured through environment variables and an optional JSON confi
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_STATE_DIR` | Root directory for all state files (backlog.json, agents.json, claims.json, events.db) | `<repo-root>/.orc-state` |
-| `ORC_REPO_ROOT` | Force the repository root path instead of auto-detecting via `git rev-parse` | Auto-detected from cwd |
-| `ORC_CONFIG_FILE` | Path to the config file | `<repo-root>/orc-state.config.json` |
-| `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<repo-root>/.worktrees` |
-| `ORC_BACKLOG_DIR` | Directory containing backlog task spec markdown files | `<repo-root>/backlog` |
+| `ORC_STATE_DIR` | Root directory for all state files (backlog.json, agents.json, claims.json, events.db) | `<orchestration-root>/.orc-state` |
+| `ORC_HOME` | Force the orchestration root (where state, backlog, plans, and config live). Top precedence for orchestration-root resolution; the coordinator propagates it into worker sessions so `orc` resolves the orchestration state dir from inside a target-repo worktree. See [Sibling Mode](./sibling-mode.md). | Walk-up to `orc-state.config.json`, else git root |
+| `ORC_REPO_ROOT` | Force the repository root path instead of auto-detecting via `git rev-parse`. Also forces the target repo root for git operations. A forcing/recovery override — it does **not** by itself enable sibling mode (that is driven by the `target_repo` config key). | Auto-detected from cwd |
+| `ORC_CONFIG_FILE` | Path to the config file | `<orchestration-root>/orc-state.config.json` |
+| `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<orchestration-root>/.worktrees` |
+| `ORC_BACKLOG_DIR` | Directory containing backlog task spec markdown files | `<orchestration-root>/backlog` |
+| `ORC_PLANS_DIR` | Directory containing plan artifact markdown files | `<orchestration-root>/plans` |
 
 ### Worker Pool
 
@@ -48,6 +50,7 @@ Location: `orc-state.config.json` in the repository root (sibling of `.orc-state
 {
   "default_provider": "claude",
   "default_execution_mode": "full-access",
+  "target_repo": "../my-product",
   "master": {
     "provider": "claude",
     "model": "claude-sonnet-4-20250514",
@@ -106,6 +109,19 @@ Sets the fallback provider for both master and worker pool when neither a sectio
 ### `default_execution_mode`
 
 Sets the fallback execution mode for both master and worker pool when neither a section-specific `execution_mode` nor an environment variable is set. Must be `full-access` or `sandbox`. Defaults to `full-access`.
+
+### `target_repo`
+
+Path to the product repository that orc operates on, enabling the **sibling
+layout**. When set, orc runs from the orchestration home (which holds state,
+backlog, plans, and config) while all product-code git operations target this
+repo, so no framework files land in the product repo. A relative path resolves
+against the config file's directory (the orchestration root); an absolute path
+is used as-is. Absent (the default), the orchestration home and target repo are
+the same directory — the attached, single-repo layout.
+
+Set this with `orc init --sibling=<target-repo-path>` rather than by hand. See
+[Sibling Mode](./sibling-mode.md) for the full model and operating contract.
 
 ### `master`
 
