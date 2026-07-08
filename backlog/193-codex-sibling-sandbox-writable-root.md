@@ -3,7 +3,7 @@ ref: sibling-orchestration-repo/193-codex-sibling-sandbox-writable-root
 feature: sibling-orchestration-repo
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - sibling-orchestration-repo/190-sandbox-execution-mode-scoping-for-sibling-layout
 ---
