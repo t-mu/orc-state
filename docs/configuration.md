@@ -238,7 +238,7 @@ The flags passed to each provider CLI differ by preset:
 | `full-access` | `--dangerously-skip-permissions` |
 | `sandbox` | `--permission-mode auto` |
 
-In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to the working directory.
+In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to the working directory. In the [sibling layout](./sibling-mode.md), the settings `allowWrite` list additionally includes the target repo's `.git` directory, because a worktree's commits write to the target repo's shared object store (which lies outside the orchestration-root workspace).
 
 #### Codex (`codex`)
 
@@ -246,6 +246,14 @@ In `sandbox` mode, a Claude settings file is also written that sets `allowUnsand
 |--------|-------------|
 | `full-access` | `--dangerously-bypass-approvals-and-sandbox` |
 | `sandbox` | `--sandbox workspace-write --ask-for-approval never` |
+
+In the [sibling layout](./sibling-mode.md), Codex sandbox mode additionally passes a config override granting the target repo's `.git` directory as a writable root, for the same reason as Claude (worktree commits write to the target repo's shared object store):
+
+```
+-c sandbox_workspace_write.writable_roots=["<target-repo>/.git"]
+```
+
+> **Note:** this override form is documented but was not verifiable against a live Codex CLI at the time it shipped (the CLI binary was unavailable in the build environment). If Codex sandbox commits fail in the sibling layout, verify the current `writable_roots` config key against your installed `codex` version and adjust `codexSandboxWritableRootArgs` in `adapters/pty.ts`.
 
 #### Gemini (`gemini`)
 

@@ -399,10 +399,9 @@ describe('claude sandbox settings file in the sibling layout', () => {
     }
   });
 
-  it('codex flags stay workspace-write and gemini stays flag-free in the sibling layout', async () => {
-    // Codex/gemini branches do not read IS_SIBLING_LAYOUT, so the sibling layout
-    // must not change their flag sets — pins the intentional Codex deferral
-    // (task 193) and the Gemini no-op.
+  it('codex grants the target .git writable root, and gemini stays flag-free, in the sibling layout', async () => {
+    // Task 193: codex sandbox in the sibling layout adds the target repo .git as
+    // a writable root (mirroring claude). Gemini has no sandbox flags either way.
     const orch = join(dir, 'orch');
     const target = join(dir, 'target');
     mkdirSync(join(orch, '.orc-state'), { recursive: true });
@@ -415,7 +414,11 @@ describe('claude sandbox settings file in the sibling layout', () => {
       const codex = await makeAdapter({ provider: 'codex' });
       await codex.adapter.start('c', { execution_mode: 'sandbox' });
       const codexArgs = codex.spawnSpy.mock.calls[0][1] as string[];
-      expect(codexArgs).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'never', '--enable', 'multi_agent']);
+      expect(codexArgs).toEqual([
+        '--sandbox', 'workspace-write', '--ask-for-approval', 'never',
+        '-c', `sandbox_workspace_write.writable_roots=["${join(target, '.git')}"]`,
+        '--enable', 'multi_agent',
+      ]);
 
       vi.resetModules();
       const gemini = await makeAdapter({ provider: 'gemini' });
@@ -424,6 +427,25 @@ describe('claude sandbox settings file in the sibling layout', () => {
     } finally {
       if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
     }
+  });
+});
+
+describe('codexSandboxWritableRootArgs', () => {
+  it('attached, writable: no extra writable-root args', async () => {
+    const { codexSandboxWritableRootArgs } = await import('./pty.ts');
+    expect(codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: false, targetRepoRoot: '/target' })).toEqual([]);
+  });
+
+  it('sibling, writable: grants the target repo .git via the writable_roots override', async () => {
+    const { codexSandboxWritableRootArgs } = await import('./pty.ts');
+    expect(codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' }))
+      .toEqual(['-c', 'sandbox_workspace_write.writable_roots=["/target/.git"]']);
+  });
+
+  it('read-only (scouts): no writable-root args in either layout', async () => {
+    const { codexSandboxWritableRootArgs } = await import('./pty.ts');
+    expect(codexSandboxWritableRootArgs({ readOnly: true, siblingLayout: false, targetRepoRoot: '/target' })).toEqual([]);
+    expect(codexSandboxWritableRootArgs({ readOnly: true, siblingLayout: true, targetRepoRoot: '/target' })).toEqual([]);
   });
 });
 

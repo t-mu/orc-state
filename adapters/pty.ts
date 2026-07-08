@@ -129,6 +129,28 @@ export function claudeSandboxFilesystem(opts: {
   return { allowWrite };
 }
 
+/**
+ * Extra Codex sandbox args (task 193) granting the target repo's `.git` as an
+ * additional writable root in the sibling layout — the Codex counterpart to
+ * claudeSandboxFilesystem. A worktree's commits write to the target repo's
+ * shared object store (`<target>/.git`), which sits outside the workspace-write
+ * scope (the orchestration root), so it must be granted or sandboxed commits
+ * fail. Returns [] in the attached layout and for read-only scouts.
+ *
+ * Uses Codex's documented `-c` config override for `writable_roots`. NOTE:
+ * pending verification against a live Codex CLI (the binary was unavailable when
+ * this shipped) — see docs/configuration.md → Execution Modes → Codex.
+ */
+export function codexSandboxWritableRootArgs(opts: {
+  readOnly: boolean;
+  siblingLayout: boolean;
+  targetRepoRoot: string;
+}): string[] {
+  if (opts.readOnly || !opts.siblingLayout) return [];
+  const gitDir = join(opts.targetRepoRoot, '.git');
+  return ['-c', `sandbox_workspace_write.writable_roots=["${gitDir}"]`];
+}
+
 function buildStartArgs(provider: string, config: Record<string, unknown>, claudeSettingsPath?: string) {
   // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
   // 'full-access' for backward compatibility when field is absent.
@@ -140,14 +162,17 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     if (executionMode === 'sandbox') {
       // sandbox + read_only (scouts) → read-only filesystem; otherwise workspace-write.
       // workspace-write scopes writes to the launch cwd (the orchestration root),
-      // covering the worktree, state dir, and backlog. SIBLING-LAYOUT GAP: a
-      // worktree's commits write to the target repo's shared object store
-      // (<target>/.git), outside that scope — Codex needs an additional writable
-      // root there. The exact Codex config key is unverified, so this is
-      // deferred to a follow-up task (see backlog task 193); Claude already
-      // grants <target>/.git via claudeSandboxFilesystem.
+      // covering the worktree, state dir, and backlog. In the sibling layout a
+      // worktree's commits also write to the target repo's shared object store
+      // (<target>/.git), outside that scope, so grant it as an additional
+      // writable root — mirroring claudeSandboxFilesystem.
       const sandboxScope = readOnly ? 'read-only' : 'workspace-write';
       args.push('--sandbox', sandboxScope, '--ask-for-approval', 'never');
+      args.push(...codexSandboxWritableRootArgs({
+        readOnly,
+        siblingLayout: IS_SIBLING_LAYOUT,
+        targetRepoRoot: TARGET_REPO_ROOT,
+      }));
     } else {
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
