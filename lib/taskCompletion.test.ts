@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -67,6 +67,43 @@ describe('writeSpecStatusDone', () => {
     });
     expect(result).toEqual({ written: false, committed: false });
     expect(readFileSync(specPath, 'utf8')).toContain('status: todo');
+  });
+
+  it('default gate writes back in a real sibling config even with ambient ORC_REPO_ROOT set', async () => {
+    // Regression for BUG 2: the DEFAULT gate resolves `isSibling` from the
+    // config-driven IS_SIBLING_LAYOUT, not root-equality. A worker/operator
+    // shell carries ambient ORC_REPO_ROOT (= orch root), which collapses
+    // TARGET_REPO_ROOT onto ORCHESTRATION_ROOT — the OLD `orchestrationRoot ===
+    // targetRepoRoot` gate would no-op here. The config (target_repo set) must
+    // still drive detection so the writeback fires.
+    const orch = join(root, 'orch');
+    mkdirSync(join(orch, '.orc-state'), { recursive: true });
+    writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: '../target' }));
+    const docsDir = join(orch, 'backlog');
+    const specPath = writeSpec(docsDir, '187-example.md', 'sibling/187-example');
+
+    const saved = {
+      ORC_STATE_DIR: process.env.ORC_STATE_DIR,
+      ORC_REPO_ROOT: process.env.ORC_REPO_ROOT,
+      ORC_HOME: process.env.ORC_HOME,
+    };
+    process.env.ORC_STATE_DIR = join(orch, '.orc-state'); // → ORCHESTRATION_ROOT = orch
+    process.env.ORC_REPO_ROOT = orch; // ambient: collapses roots under the OLD gate
+    delete process.env.ORC_HOME;
+    vi.resetModules();
+    try {
+      const { writeSpecStatusDone } = await import('./taskCompletion.ts');
+      // No options → default docsDir/orchestrationRoot/isSibling from paths.ts.
+      const result = writeSpecStatusDone('sibling/187-example');
+      expect(result.written).toBe(true);
+      expect(readFileSync(specPath, 'utf8')).toContain('status: done');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      vi.resetModules();
+    }
   });
 
   it('writes status: done into the spec frontmatter in the sibling layout (non-git orchestration root)', () => {

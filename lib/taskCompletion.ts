@@ -91,9 +91,14 @@ function orchestrationRepoIsGit(orchestrationRoot: string): boolean {
  * No-op in the attached layout, where the worker's own spec edit is carried by
  * the merge. When the orchestration root is not a git repository, the file is
  * written and the commit is skipped. Best-effort: never throws — the caller's
- * finalization must not fail on a writeback problem. The file write is what
- * matters for backlogSync convergence (spec `done` matches the runtime `done`
- * just recorded); the commit is a durable audit trail on top.
+ * finalization must not fail on a writeback problem.
+ *
+ * This is an AUDIT MIRROR, not a lifecycle-safety mechanism: it keeps the
+ * spec's `status:` in sync with the runtime and gives a durable git trail. It
+ * is NOT load-bearing for backlogSync convergence — the terminal-status guard
+ * in backlogSync is what prevents a stale `todo` spec from demoting a merged
+ * (`done`/`released`) task, so a failed or late writeback can no longer
+ * re-dispatch completed work.
  *
  * Sibling detection is the config-driven `IS_SIBLING_LAYOUT` (overridable via
  * `isSibling` for tests), NOT root-equality: a worker/operator shell carries

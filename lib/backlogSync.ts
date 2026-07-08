@@ -11,6 +11,10 @@ const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
 // spec that still says `todo` (e.g. a sibling-mode writeback that has not landed
 // yet, or failed) must NOT drag a merged task back to todo, which would make it
 // eligible for claiming again and re-run completed work.
+//
+// Consequence (intended): a done/released task can only be re-opened via a
+// runtime command (e.g. `orc task-reset`), NOT by editing the spec status back
+// to todo — spec sync can advance a task's status but never un-complete it.
 const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'released']);
 const VALID_SPEC_STATUSES = new Set<string>(['todo', 'blocked', 'done', 'released', 'cancelled']);
 const LEGACY_DIR_RE = /^legacy\//;
