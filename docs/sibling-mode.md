@@ -86,8 +86,9 @@ orc start-session
 - **Sandbox mode** — when `execution_mode: sandbox`, the worker's writable
   workspace is the orchestration-root subtree (covering its worktree, the state
   dir, and the backlog); the target repo's `.git` object store is additionally
-  granted so worktree commits succeed. (Claude is fully supported; Codex sibling
-  sandbox support is tracked as a follow-up.)
+  granted so worktree commits succeed. Both Claude and Codex apply this grant
+  (Codex's writable-root config override is documented but pending verification
+  against a live Codex CLI — see [Configuration → Execution Modes → Codex](./configuration.md)).
 
 ## Operating contract
 
