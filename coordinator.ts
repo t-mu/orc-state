@@ -37,6 +37,7 @@ import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { resolveRepoRoot } from './lib/repoRoot.ts';
+import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
@@ -509,7 +510,7 @@ function getClaim(runId: string): Claim | null {
 }
 
 function branchContainsMain(branch: string) {
-  const result = spawnSync('git', ['merge-base', '--is-ancestor', 'main', branch], {
+  const result = spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, 'merge-base', '--is-ancestor', 'main', branch], {
     cwd: TARGET_REPO_ROOT,
     encoding: 'utf8',
     timeout: GIT_OP_TIMEOUT_MS,
@@ -521,7 +522,7 @@ function branchContainsMain(branch: string) {
 }
 
 function pushMain() {
-  const result = spawnSync('git', ['push'], {
+  const result = spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, 'push'], {
     cwd: TARGET_REPO_ROOT,
     encoding: 'utf8',
     timeout: GIT_OP_TIMEOUT_MS,
@@ -533,7 +534,7 @@ function pushMain() {
 }
 
 function mergeTaskBranch(branch: string, taskRef: string) {
-  const result = spawnSync('git', ['merge', branch, '--no-ff', '-m', `task(${taskRef}): merge worktree`], {
+  const result = spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, 'merge', branch, '--no-ff', '-m', `task(${taskRef}): merge worktree`], {
     cwd: TARGET_REPO_ROOT,
     encoding: 'utf8',
     timeout: GIT_OP_TIMEOUT_MS,

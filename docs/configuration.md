@@ -238,7 +238,9 @@ The flags passed to each provider CLI differ by preset:
 | `full-access` | `--dangerously-skip-permissions` |
 | `sandbox` | `--permission-mode auto` |
 
-In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to the working directory. In the [sibling layout](./sibling-mode.md), the settings `allowWrite` list additionally includes the target repo's `.git` directory, because a worktree's commits write to the target repo's shared object store (which lies outside the orchestration-root workspace).
+In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to the working directory (the orchestration root). That grant covers the assigned worktree, `backlog/`, `plans/`, and `.orc-state/`. The state directory stays writable deliberately: a sandboxed worker mutates runtime state only indirectly, by running `orc` lifecycle commands (`run-start`, `progress`, `run-work-complete`, `review-submit`, `memory-record`, …) from inside its own session, and those commands write the event log, claims, and memory store under `.orc-state/`. The sandbox therefore bounds a worker to the orchestration subtree and denies network + the rest of the filesystem; it does not isolate the worker from state it legitimately writes through the CLI.
+
+In the [sibling layout](./sibling-mode.md), the settings `allowWrite` list additionally includes the specific `.git` subtrees a worktree commit/rebase/fetch writes — `objects/`, `refs/`, `logs/`, and `worktrees/` under `<target-repo>/.git` — because those commits write to the target repo's shared object store, which lies outside the orchestration-root workspace. The grant is scoped to those subtrees rather than the whole `.git` directory on purpose: `<target-repo>/.git/hooks` and `<target-repo>/.git/config` are **excluded**, so a sandboxed worker cannot plant a hook script or rewrite git config that the unsandboxed coordinator would later execute during a merge, push, or worktree operation.
 
 #### Codex (`codex`)
 
@@ -247,13 +249,13 @@ In `sandbox` mode, a Claude settings file is also written that sets `allowUnsand
 | `full-access` | `--dangerously-bypass-approvals-and-sandbox` |
 | `sandbox` | `--sandbox workspace-write --ask-for-approval never` |
 
-In the [sibling layout](./sibling-mode.md), Codex sandbox mode additionally passes a config override granting the target repo's `.git` directory as a writable root, for the same reason as Claude (worktree commits write to the target repo's shared object store):
+In the [sibling layout](./sibling-mode.md), Codex sandbox mode additionally passes a config override granting the same `<target-repo>/.git` subtrees as Claude (`objects/`, `refs/`, `logs/`, `worktrees/`) as writable roots, for the same reason (worktree commits write to the target repo's shared object store) and with the same `hooks/` + `config` exclusion. The value is JSON-encoded so paths with special characters stay well-formed:
 
 ```
--c sandbox_workspace_write.writable_roots=["<target-repo>/.git"]
+-c sandbox_workspace_write.writable_roots=["<target-repo>/.git/objects","<target-repo>/.git/refs","<target-repo>/.git/logs","<target-repo>/.git/worktrees"]
 ```
 
-> **Note:** this override form is documented but was not verifiable against a live Codex CLI at the time it shipped (the CLI binary was unavailable in the build environment). If Codex sandbox commits fail in the sibling layout, verify the current `writable_roots` config key against your installed `codex` version and adjust `codexSandboxWritableRootArgs` in `adapters/pty.ts`.
+> **Note:** this `writable_roots` override form is documented but was not verifiable against a live Codex CLI at the time it shipped (the CLI binary was unavailable in the build environment). If Codex sandbox commits fail in the sibling layout, verify the current `writable_roots` config key against your installed `codex` version and adjust `codexSandboxWritableRootArgs` in `adapters/pty.ts`.
 
 #### Gemini (`gemini`)
 

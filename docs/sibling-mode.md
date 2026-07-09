@@ -78,17 +78,28 @@ orc start-session
   bootstrap emits the correct instructions automatically.
 - **git operations** — worktree creation/removal, branch deletion, direct-mode
   merges, and PR pushes all run against the target repo. Coordinator state,
-  backlog, and plans stay in the orchestration root.
+  backlog, and plans stay in the orchestration root. These coordinator-side git
+  operations run **hermetically**: each is invoked with
+  `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, so the target repo's
+  own git hooks do not fire during automated merges/pushes/worktree operations,
+  and no fsmonitor daemon is spawned. This keeps orchestration plumbing
+  independent of whatever hooks the product repo ships, and prevents a sandboxed
+  worker from getting a planted hook executed by the unsandboxed coordinator.
+  Worker commits inside the worktree are unaffected and still run the repo's
+  commit hooks normally.
 - **`orc` resolution from workers** — the coordinator propagates `ORC_HOME` (the
   orchestration root) into worker sessions so every `orc` command a worker runs
   resolves the orchestration state dir, even though the worker's working
   directory is a target-repo worktree.
 - **Sandbox mode** — when `execution_mode: sandbox`, the worker's writable
   workspace is the orchestration-root subtree (covering its worktree, the state
-  dir, and the backlog); the target repo's `.git` object store is additionally
-  granted so worktree commits succeed. Both Claude and Codex apply this grant
-  (Codex's writable-root config override is documented but pending verification
-  against a live Codex CLI — see [Configuration → Execution Modes → Codex](./configuration.md)).
+  dir, and the backlog); the target repo's `.git` write subtrees (`objects/`,
+  `refs/`, `logs/`, `worktrees/`) are additionally granted so worktree commits
+  succeed. `<target>/.git/hooks` and `<target>/.git/config` are deliberately
+  **not** granted, so a sandboxed worker cannot plant a hook or rewrite git
+  config. Both Claude and Codex apply this grant (Codex's writable-root config
+  override is documented but pending verification against a live Codex CLI — see
+  [Configuration → Execution Modes → Codex](./configuration.md)).
 
 ## Operating contract
 

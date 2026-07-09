@@ -3,6 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { HERMETIC_GIT_CONFIG_ARGS } from './gitPlumbing.ts';
+
+// Coordinator/runWorktree target-repo git ops run hooks-off and fsmonitor-off
+// (see gitPlumbing.ts). Spread these flags ahead of every asserted git args array.
+const H = [...HERMETIC_GIT_CONFIG_ARGS];
 
 let dir: string;
 let targetRoot: string;
@@ -57,7 +62,7 @@ describe('ensureRunWorktree', () => {
 
     // The worktree is created as a worktree OF the target repo (cwd), while its
     // files live under the orchestration WORKTREES_DIR (the add path arg).
-    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', ['worktree', 'add', worktreePath, '-b', 'task/run-1'], expect.objectContaining({
+    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', [...H, 'worktree', 'add', worktreePath, '-b', 'task/run-1'], expect.objectContaining({
       cwd: targetRoot,
     }));
 
@@ -168,11 +173,11 @@ describe('ensureRunWorktree', () => {
     const { cleanupRunWorktree } = await import('./runWorktree.ts');
     expect(cleanupRunWorktree(dir, 'run-cleanup')).toBe(true);
     // Cleanup git ops run against the target repo (the worktree's owning repo).
-    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', ['worktree', 'remove', '--force', join(dir, 'repo', '.worktrees', 'run-cleanup')], expect.objectContaining({
+    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', [...H, 'worktree', 'remove', '--force', join(dir, 'repo', '.worktrees', 'run-cleanup')], expect.objectContaining({
       cwd: targetRoot,
       encoding: 'utf8',
     }));
-    expect(spawnSync).toHaveBeenNthCalledWith(2, 'git', ['branch', '-d', 'task/run-cleanup'], expect.objectContaining({
+    expect(spawnSync).toHaveBeenNthCalledWith(2, 'git', [...H, 'branch', '-d', 'task/run-cleanup'], expect.objectContaining({
       cwd: targetRoot,
       encoding: 'utf8',
     }));
@@ -206,7 +211,7 @@ describe('ensureRunWorktree', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('worktree path not found'));
     // Only the branch delete runs; the missing worktree remove is skipped.
     expect(spawnSync).toHaveBeenCalledTimes(1);
-    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', ['branch', '-d', 'task/run-missing-path'], expect.objectContaining({
+    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', [...H, 'branch', '-d', 'task/run-missing-path'], expect.objectContaining({
       cwd: targetRoot,
     }));
   });

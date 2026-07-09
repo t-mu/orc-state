@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { queryEvents } from './lib/eventLog.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
+import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { initMemoryDb, listDrawers, closeMemoryDb } from './lib/memoryStore.ts';
 import {
   createTempStateDir,
@@ -2030,15 +2031,15 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'awaiting_finalize', retry_count: 0 },
     }]);
 
-    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', ['merge-base', '--is-ancestor', 'main', 'task/run-finalize-success'], expect.objectContaining({
+    expect(spawnSync).toHaveBeenNthCalledWith(1, 'git', [...HERMETIC_GIT_CONFIG_ARGS, 'merge-base', '--is-ancestor', 'main', 'task/run-finalize-success'], expect.objectContaining({
       cwd: dir,
       encoding: 'utf8',
     }));
-    expect(spawnSync).toHaveBeenNthCalledWith(2, 'git', ['merge', 'task/run-finalize-success', '--no-ff', '-m', 'task(orch/task-151): merge worktree'], expect.objectContaining({
+    expect(spawnSync).toHaveBeenNthCalledWith(2, 'git', [...HERMETIC_GIT_CONFIG_ARGS, 'merge', 'task/run-finalize-success', '--no-ff', '-m', 'task(orch/task-151): merge worktree'], expect.objectContaining({
       cwd: dir,
       encoding: 'utf8',
     }));
-    expect(spawnSync).toHaveBeenNthCalledWith(3, 'git', ['push'], expect.objectContaining({
+    expect(spawnSync).toHaveBeenNthCalledWith(3, 'git', [...HERMETIC_GIT_CONFIG_ARGS, 'push'], expect.objectContaining({
       cwd: dir,
       encoding: 'utf8',
     }));
@@ -3968,7 +3969,7 @@ describe('PR finalization', () => {
     // Direct path: no branch push
     expect(mockPushBranch).not.toHaveBeenCalled();
     // Direct merge happened
-    expect(spawnSyncMock).toHaveBeenCalledWith('git', ['merge', 'task/run-direct', '--no-ff', '-m', 'task(orch/direct-task): merge worktree'], expect.anything());
+    expect(spawnSyncMock).toHaveBeenCalledWith('git', [...HERMETIC_GIT_CONFIG_ARGS, 'merge', 'task/run-direct', '--no-ff', '-m', 'task(orch/direct-task): merge worktree'], expect.anything());
   });
 
   it('pushes branch and creates PR after work_complete when strategy=pr', async () => {
@@ -4441,7 +4442,7 @@ describe('PR finalization', () => {
     expect(mockPushBranch).not.toHaveBeenCalled();
     expect(mockCreatePr).not.toHaveBeenCalled();
     // Direct merge happened
-    expect(spawnSyncMock).toHaveBeenCalledWith('git', ['merge', 'task/run-direct-unchanged', '--no-ff', '-m', 'task(orch/direct-unchanged): merge worktree'], expect.anything());
+    expect(spawnSyncMock).toHaveBeenCalledWith('git', [...HERMETIC_GIT_CONFIG_ARGS, 'merge', 'task/run-direct-unchanged', '--no-ff', '-m', 'task(orch/direct-unchanged): merge worktree'], expect.anything());
 
     const claim = readClaims(dir).find((c) => c.run_id === 'run-direct-unchanged')!;
     expect(claim.state).toBe('done');

@@ -103,6 +103,33 @@ function ensureDirs() {
 }
 
 /**
+ * Subpaths under `<target>/.git` that a sandboxed worker legitimately writes
+ * during commit / rebase / fetch inside its linked worktree. Verified
+ * empirically against real git — a worktree commit, a conflicted rebase, and a
+ * fetch all write only within these four subtrees:
+ *
+ *   objects/    new blobs, trees, commits, and packs
+ *   refs/       the worker's own branch ref plus remote-tracking refs
+ *   logs/       reflogs for those refs
+ *   worktrees/  per-worktree transient state (HEAD, index, ORIG_HEAD,
+ *               COMMIT_EDITMSG, MERGE_MSG, REBASE_HEAD, rebase-merge/*,
+ *               FETCH_HEAD)
+ *
+ * The grant deliberately EXCLUDES `hooks/` and `config`: a sandboxed worker
+ * must not be able to plant a hook script or rewrite git config (e.g.
+ * core.hooksPath / core.fsmonitor / an alias) that the UNSANDBOXED coordinator
+ * would later execute during merge / push / worktree operations — a
+ * privilege-escalation vector. `packed-refs` is also excluded; the worker only
+ * ever creates loose refs, and auto-gc ref-packing failures are non-fatal.
+ */
+const TARGET_GIT_WRITABLE_SUBPATHS = ['objects', 'refs', 'logs', 'worktrees'];
+
+function targetGitWritableRoots(targetRepoRoot: string): string[] {
+  const gitDir = join(targetRepoRoot, '.git');
+  return TARGET_GIT_WRITABLE_SUBPATHS.map((sub) => join(gitDir, sub));
+}
+
+/**
  * Compute the Claude sandbox filesystem writable roots (task 190).
  *
  * `.` is the worker's launch cwd (ORC_REPO_ROOT = the orchestration root), which
@@ -110,11 +137,13 @@ function ensureDirs() {
  *
  * In the sibling layout, the assigned worktree is a worktree OF the target repo:
  * a worktree shares its main repo's object store, so a commit inside the
- * worktree writes objects/refs to `<target>/.git`, which lives OUTSIDE the
- * orchestration subtree. That path must therefore also be writable, or sandboxed
- * worker commits fail. We grant `<target>/.git` (the object store), NOT the
- * target repo's working tree — direct-mode merges are coordinator-side and PR
- * pushes run from inside the worktree.
+ * worktree writes objects and refs to `<target>/.git`, which lives OUTSIDE the
+ * orchestration subtree. Those paths must therefore also be writable, or
+ * sandboxed worker commits fail. We grant only the specific `<target>/.git`
+ * subtrees a worker writes (see TARGET_GIT_WRITABLE_SUBPATHS) — NOT `.git`
+ * wholesale, so the worker cannot write `hooks/` or `config`, and NOT the target
+ * repo's working tree (direct-mode merges are coordinator-side; PR pushes run
+ * from inside the worktree).
  *
  * Read-only (scouts) get no writable roots at all.
  */
@@ -125,21 +154,25 @@ export function claudeSandboxFilesystem(opts: {
 }): { allowWrite: string[] } | undefined {
   if (opts.readOnly) return undefined;
   const allowWrite = ['.'];
-  if (opts.siblingLayout) allowWrite.push(join(opts.targetRepoRoot, '.git'));
+  if (opts.siblingLayout) allowWrite.push(...targetGitWritableRoots(opts.targetRepoRoot));
   return { allowWrite };
 }
 
 /**
- * Extra Codex sandbox args (task 193) granting the target repo's `.git` as an
- * additional writable root in the sibling layout — the Codex counterpart to
- * claudeSandboxFilesystem. A worktree's commits write to the target repo's
- * shared object store (`<target>/.git`), which sits outside the workspace-write
- * scope (the orchestration root), so it must be granted or sandboxed commits
- * fail. Returns [] in the attached layout and for read-only scouts.
+ * Extra Codex sandbox args (task 193) granting the target repo's `.git`
+ * subtrees as additional writable roots in the sibling layout — the Codex
+ * counterpart to claudeSandboxFilesystem. A worktree's commits write to the
+ * target repo's shared object store, which sits outside the workspace-write
+ * scope (the orchestration root), so those subtrees must be granted or
+ * sandboxed commits fail. The grant mirrors claudeSandboxFilesystem
+ * (TARGET_GIT_WRITABLE_SUBPATHS) — it excludes `hooks/` and `config`. Returns []
+ * in the attached layout and for read-only scouts.
  *
- * Uses Codex's documented `-c` config override for `writable_roots`. NOTE:
- * pending verification against a live Codex CLI (the binary was unavailable when
- * this shipped) — see docs/configuration.md → Execution Modes → Codex.
+ * Uses Codex's `-c` config override for `writable_roots`. The value is JSON —
+ * a well-formed JSON array is valid input for a Codex `-c` override, and
+ * JSON.stringify escapes any special characters in the paths (a raw string
+ * interpolation would break on a `"` or `\` in the target path). See
+ * docs/configuration.md → Execution Modes → Codex.
  */
 export function codexSandboxWritableRootArgs(opts: {
   readOnly: boolean;
@@ -147,8 +180,8 @@ export function codexSandboxWritableRootArgs(opts: {
   targetRepoRoot: string;
 }): string[] {
   if (opts.readOnly || !opts.siblingLayout) return [];
-  const gitDir = join(opts.targetRepoRoot, '.git');
-  return ['-c', `sandbox_workspace_write.writable_roots=["${gitDir}"]`];
+  const roots = targetGitWritableRoots(opts.targetRepoRoot);
+  return ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(roots)}`];
 }
 
 function buildStartArgs(provider: string, config: Record<string, unknown>, claudeSettingsPath?: string) {

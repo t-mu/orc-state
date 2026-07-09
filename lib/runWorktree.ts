@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { withLock, lockPath } from './lock.ts';
 import { RUN_WORKTREES_FILE, WORKTREES_DIR, TARGET_REPO_ROOT } from './paths.ts';
+import { HERMETIC_GIT_CONFIG_ARGS } from './gitPlumbing.ts';
 import type { RunWorktreesState, RunWorktreeEntry } from '../types/run-worktrees.ts';
 import { logger } from './logger.ts';
 
@@ -28,8 +29,8 @@ function ensureGitWorktree({ root, path, branch, createBranch }: {
 }): void {
   mkdirSync(WORKTREES_DIR, { recursive: true });
   const args = createBranch
-    ? ['worktree', 'add', path, '-b', branch]
-    : ['worktree', 'add', path, branch];
+    ? [...HERMETIC_GIT_CONFIG_ARGS, 'worktree', 'add', path, '-b', branch]
+    : [...HERMETIC_GIT_CONFIG_ARGS, 'worktree', 'add', path, branch];
   const result = spawnSync('git', args, {
     cwd: root,
     encoding: 'utf8',
@@ -77,7 +78,7 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
     let cleanupSucceeded = true;
     if (entry.worktree_path) {
       if (existsSync(entry.worktree_path)) {
-        const result = spawnSync('git', ['worktree', 'remove', '--force', entry.worktree_path], {
+        const result = spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, 'worktree', 'remove', '--force', entry.worktree_path], {
           cwd: root,
           encoding: 'utf8',
         });
@@ -92,7 +93,7 @@ export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
     }
 
     if (entry.branch) {
-      const result = spawnSync('git', ['branch', '-d', entry.branch], {
+      const result = spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, 'branch', '-d', entry.branch], {
         cwd: root,
         encoding: 'utf8',
       });

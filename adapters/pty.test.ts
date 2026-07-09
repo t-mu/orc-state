@@ -366,10 +366,26 @@ describe('claudeSandboxFilesystem', () => {
       .toEqual({ allowWrite: ['.'] });
   });
 
-  it('sibling, writable: also grants the target repo .git (shared object store)', async () => {
+  it('sibling, writable: grants the target repo .git write subtrees, not hooks/config', async () => {
     const { claudeSandboxFilesystem } = await import('./pty.ts');
     expect(claudeSandboxFilesystem({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' }))
-      .toEqual({ allowWrite: ['.', '/target/.git'] });
+      .toEqual({
+        allowWrite: [
+          '.',
+          '/target/.git/objects',
+          '/target/.git/refs',
+          '/target/.git/logs',
+          '/target/.git/worktrees',
+        ],
+      });
+  });
+
+  it('sibling grant excludes the escalation-sensitive .git/hooks and .git/config paths', async () => {
+    const { claudeSandboxFilesystem } = await import('./pty.ts');
+    const result = claudeSandboxFilesystem({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' });
+    expect(result?.allowWrite).not.toContain('/target/.git');
+    expect(result?.allowWrite).not.toContain('/target/.git/hooks');
+    expect(result?.allowWrite).not.toContain('/target/.git/config');
   });
 
   it('read-only (scouts): no writable roots in either layout', async () => {
@@ -393,7 +409,13 @@ describe('claude sandbox settings file in the sibling layout', () => {
       const { adapter } = await makeAdapter({ provider: 'claude' });
       await adapter.start('bob', { execution_mode: 'sandbox' });
       const settings = JSON.parse(readFileSync(join(orch, '.orc-state', 'pty-settings', 'bob.json'), 'utf8'));
-      expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', join(target, '.git')]);
+      expect(settings.sandbox.filesystem.allowWrite).toEqual([
+        '.',
+        join(target, '.git', 'objects'),
+        join(target, '.git', 'refs'),
+        join(target, '.git', 'logs'),
+        join(target, '.git', 'worktrees'),
+      ]);
     } finally {
       if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
     }
@@ -414,9 +436,15 @@ describe('claude sandbox settings file in the sibling layout', () => {
       const codex = await makeAdapter({ provider: 'codex' });
       await codex.adapter.start('c', { execution_mode: 'sandbox' });
       const codexArgs = codex.spawnSpy.mock.calls[0][1] as string[];
+      const expectedRoots = JSON.stringify([
+        join(target, '.git', 'objects'),
+        join(target, '.git', 'refs'),
+        join(target, '.git', 'logs'),
+        join(target, '.git', 'worktrees'),
+      ]);
       expect(codexArgs).toEqual([
         '--sandbox', 'workspace-write', '--ask-for-approval', 'never',
-        '-c', `sandbox_workspace_write.writable_roots=["${join(target, '.git')}"]`,
+        '-c', `sandbox_workspace_write.writable_roots=${expectedRoots}`,
         '--enable', 'multi_agent',
       ]);
 
@@ -436,10 +464,20 @@ describe('codexSandboxWritableRootArgs', () => {
     expect(codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: false, targetRepoRoot: '/target' })).toEqual([]);
   });
 
-  it('sibling, writable: grants the target repo .git via the writable_roots override', async () => {
+  it('sibling, writable: grants the target repo .git write subtrees via the writable_roots override', async () => {
     const { codexSandboxWritableRootArgs } = await import('./pty.ts');
     expect(codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' }))
-      .toEqual(['-c', 'sandbox_workspace_write.writable_roots=["/target/.git"]']);
+      .toEqual(['-c', 'sandbox_workspace_write.writable_roots='
+        + '["/target/.git/objects","/target/.git/refs","/target/.git/logs","/target/.git/worktrees"]']);
+  });
+
+  it('sibling: JSON-encodes the value so a path with special characters stays well-formed', async () => {
+    const { codexSandboxWritableRootArgs } = await import('./pty.ts');
+    const args = codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: true, targetRepoRoot: '/tmp/a"b\\c' });
+    // The value after the `=` must parse as JSON (raw interpolation would break here).
+    const value = args[1].slice('sandbox_workspace_write.writable_roots='.length);
+    expect(() => JSON.parse(value)).not.toThrow();
+    expect(JSON.parse(value)).toContain('/tmp/a"b\\c/.git/objects');
   });
 
   it('read-only (scouts): no writable-root args in either layout', async () => {
