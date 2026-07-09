@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { GitHubAdapter } from './github.ts';
 import { getGitHostAdapter } from './index.ts';
+import { HERMETIC_GIT_CONFIG_ARGS } from '../gitPlumbing.ts';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -167,7 +168,7 @@ describe('pushBranch', () => {
     adapter.pushBranch('origin', 'feature-branch');
     expect(mockedSpawnSync).toHaveBeenCalledWith(
       'git',
-      ['push', '--set-upstream', 'origin', 'feature-branch'],
+      [...HERMETIC_GIT_CONFIG_ARGS, 'push', '--set-upstream', 'origin', 'feature-branch'],
       expect.objectContaining({ encoding: 'utf8' }),
     );
   });

@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import type { GitHostAdapter } from './interface.ts';
+import { HERMETIC_GIT_CONFIG_ARGS } from '../gitPlumbing.ts';
 
 export class GitHubAdapter implements GitHostAdapter {
   // cwd scopes every gh/git invocation to a specific checkout. In the sibling
@@ -30,7 +31,11 @@ export class GitHubAdapter implements GitHostAdapter {
   }
 
   pushBranch(remote: string, branch: string): void {
-    const result = spawnSync('git', ['push', '--set-upstream', remote, branch], {
+    // Coordinator-side push against the target repo (cwd = TARGET_REPO_ROOT in
+    // the sibling layout). Run it hermetically — matching pushMain and the
+    // other coordinator git ops — so the product repo's pre-push hook does not
+    // fire and no fsmonitor daemon is spawned during automated PR pushes.
+    const result = spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, 'push', '--set-upstream', remote, branch], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       ...this.cwdOpt(),

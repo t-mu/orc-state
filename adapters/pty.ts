@@ -196,9 +196,11 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
       // sandbox + read_only (scouts) → read-only filesystem; otherwise workspace-write.
       // workspace-write scopes writes to the launch cwd (the orchestration root),
       // covering the worktree, state dir, and backlog. In the sibling layout a
-      // worktree's commits also write to the target repo's shared object store
-      // (<target>/.git), outside that scope, so grant it as an additional
-      // writable root — mirroring claudeSandboxFilesystem.
+      // worktree's commits also write to the target repo's shared object store,
+      // outside that scope, so grant the specific <target>/.git write subtrees
+      // (TARGET_GIT_WRITABLE_SUBPATHS — objects/refs/logs/worktrees, excluding
+      // hooks/ and config) as additional writable roots — mirroring
+      // claudeSandboxFilesystem.
       const sandboxScope = readOnly ? 'read-only' : 'workspace-write';
       args.push('--sandbox', sandboxScope, '--ask-for-approval', 'never');
       args.push(...codexSandboxWritableRootArgs({

@@ -1,8 +1,9 @@
 /**
  * `-c` flags prepended to every coordinator- and runWorktree-side git
- * invocation that runs against the TARGET repo (merge, push, worktree
- * add/remove, branch delete, ancestry checks). They make orchestration
- * plumbing hermetic:
+ * invocation that runs against the TARGET repo: direct-mode merge/push and
+ * ancestry check (coordinator.ts), worktree add/remove and branch delete
+ * (runWorktree.ts), and the PR-mode branch push (gitHosts/github.ts
+ * `pushBranch`). They make orchestration plumbing hermetic:
  *
  *  - core.hooksPath=/dev/null — do not run the target repo's hooks. Automated
  *    merges / pushes / worktree operations must not execute product-repo hook
