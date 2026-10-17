@@ -11,6 +11,7 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims, readBacklog, findTask } from '../lib/stateReader.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { boolFlag } from '../lib/args.ts';
+import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 
 const asJson = boolFlag('json');
 const runId = process.argv.slice(2).find((a) => !a.startsWith('-'));
@@ -52,9 +53,11 @@ const idleAnchor = claim.last_heartbeat_at
   ?? claim.started_at
   ?? (claim.state === 'claimed' ? claimedRunStartupAnchor(claim) : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null));
 const idleSec = idleAnchor ? Math.round((now - new Date(idleAnchor).getTime()) / 1000) : null;
+const taskSpecRevisionStatus = claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot) : 'unknown';
 
 if (asJson) {
-  console.log(JSON.stringify({ ...claim, task_title: taskTitle, worktree_path: worktreePath }, null, 2));
+  console.log(JSON.stringify({ ...claim, task_title: taskTitle, worktree_path: worktreePath,
+    task_spec_revision_status: taskSpecRevisionStatus }, null, 2));
   process.exit(0);
 }
 
@@ -66,5 +69,6 @@ console.log(`  envelope:    ${claim.task_envelope_sent_at ?? 'not yet'}`);
 console.log(`  started:     ${claim.started_at ?? 'not yet'}`);
 console.log(`  idle:        ${idleSec ?? '?'}s`);
 console.log(`  worktree:    ${worktreePath ?? 'none'}`);
+console.log(`  task spec:   ${taskSpecRevisionStatus}`);
 console.log(`  finalize:    ${claim.finalization_state ?? 'n/a'}`);
 console.log(`  input_state: ${claim.input_state ?? 'none'}`);

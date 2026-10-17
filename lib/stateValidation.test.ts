@@ -154,6 +154,12 @@ describe('validateClaims', () => {
     expect(validateClaims({ version: '1', claims: [validClaim()] })).toEqual([]);
   });
 
+  it('accepts a pinned task revision and rejects a malformed hash', () => {
+    const snapshot = { source_path: '/orch/backlog/196-task.md', snapshot_path: '/orch/.orc-state/run-specs/run-abc123.md', sha256: 'a'.repeat(64) };
+    expect(validateClaims({ version: '1', claims: [validClaim({ task_spec_snapshot: snapshot })] })).toEqual([]);
+    expect(validateClaims({ version: '1', claims: [validClaim({ task_spec_snapshot: { ...snapshot, sha256: 'short' } })] }).length).toBeGreaterThan(0);
+  });
+
   it('accepts claim waiting for input', () => {
     expect(validateClaims({
       version: '1',

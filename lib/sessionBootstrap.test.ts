@@ -97,12 +97,11 @@ describe('buildSessionBootstrap', () => {
 
   it('emits attached-mode Phase 4 (worker edits the spec) when siblingLayout is false', () => {
     const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token', { siblingLayout: false });
-    // Byte-exact: the attached-mode Phase 4 block must reproduce the original
-    // template step 7 verbatim (the "attached-mode prompts unchanged" mandate).
+    // Attached mode edits the worktree copy, never the pinned run snapshot.
     const expectedStep7 = [
       '  7. Signal complete phase and update the task markdown in this assigned worktree to `status: done`:',
       '       orc progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=bob',
-      '       - Edit the task spec file referenced by `task_spec_path`',
+      '       - Edit the task spec file referenced by `task_spec_worktree_path` (the pinned `task_spec_path` is read-only)',
       '       - Change its frontmatter `status:` field to `done`',
       '       - Do not call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge',
     ].join('\n');

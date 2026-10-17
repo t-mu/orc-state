@@ -3,7 +3,7 @@ ref: vnext-control-plane/196-pin-markdown-task-revisions
 feature: vnext-control-plane
 review_level: full
 priority: high
-status: todo
+status: done
 ---
 
 # Task 196 — Pin Markdown task revisions at dispatch

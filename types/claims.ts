@@ -13,6 +13,12 @@ export type FinalizationState =
   | null;
 export type InputState = 'awaiting_input' | null;
 
+export interface TaskSpecSnapshot {
+  source_path: string;
+  snapshot_path: string;
+  sha256: string;
+}
+
 export interface Claim {
   run_id: RunId;
   task_ref: string;
@@ -36,6 +42,7 @@ export interface Claim {
   escalation_notified_at?: string | null;
   pr_ref?: string | null;
   pr_created_at?: string | null;
+  task_spec_snapshot?: TaskSpecSnapshot;
 }
 
 export interface ClaimsState {

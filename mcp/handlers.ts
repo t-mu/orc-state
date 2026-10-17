@@ -8,6 +8,7 @@ import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { PlanAuthoringError, writePlan, type WritePlanInput } from '../lib/planAuthoring.ts';
 import { PLANS_DIR } from '../lib/paths.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
+import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
@@ -852,7 +853,8 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
   const wtEntry = worktrees.runs.find((e) => e.run_id === run_id);
   const worktreePath = wtEntry?.worktree_path ?? null;
 
-  return { ...claim, task_title: taskTitle, worktree_path: worktreePath };
+  return { ...claim, task_title: taskTitle, worktree_path: worktreePath,
+    task_spec_revision_status: claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot) : 'unknown' };
 }
 
 export async function handleRequestScout(stateDir: string, {

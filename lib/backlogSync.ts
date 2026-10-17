@@ -86,6 +86,7 @@ function parseSpecTitle(text: string, ref: string | null): string {
 
 export interface SpecEntry {
   file: string;
+  content: string;
   ref: string;
   feature: string;
   status: string;
@@ -93,6 +94,22 @@ export interface SpecEntry {
   review_level?: string;
   merge_strategy?: string;
   depends_on: string[];
+}
+
+export function parseTaskSpecEntry(text: string, file: string): SpecEntry | null {
+  const { ref, feature, status, review_level, merge_strategy, depends_on } = parseSpecFrontmatter(text, file);
+  if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return null;
+  return {
+    file,
+    content: text,
+    ref,
+    feature,
+    status,
+    title: parseSpecTitle(text, ref),
+    depends_on,
+    ...(review_level !== null ? { review_level } : {}),
+    ...(merge_strategy !== null ? { merge_strategy } : {}),
+  };
 }
 
 export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
@@ -104,18 +121,8 @@ export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
     .sort((a, b) => basename(a).localeCompare(basename(b), 'en', { numeric: true }))
     .flatMap((rel) => {
       const text = readFileSync(join(docsDir, rel), 'utf8');
-      const { ref, feature, status, review_level, merge_strategy, depends_on } = parseSpecFrontmatter(text, rel);
-      if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return [];
-      return [{
-        file: rel,
-        ref,
-        feature,
-        status,
-        title: parseSpecTitle(text, ref),
-        depends_on,
-        ...(review_level !== null ? { review_level } : {}),
-        ...(merge_strategy !== null ? { merge_strategy } : {}),
-      }];
+      const spec = parseTaskSpecEntry(text, rel);
+      return spec ? [spec] : [];
     });
 }
 

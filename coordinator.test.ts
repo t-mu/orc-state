@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { queryEvents } from './lib/eventLog.ts';
@@ -27,6 +27,12 @@ beforeEach(() => {
   dir = createTempStateDir('orc-coord-test-');
   process.env.ORC_STATE_DIR = dir;
   process.env.ORC_REPO_ROOT = dir;
+  process.env.ORC_BACKLOG_DIR = join(dir, 'backlog');
+  mkdirSync(join(dir, 'backlog'));
+  for (const [index, ref] of ['proj/fix-bug', 'proj/task-a', 'proj/task-b', 'proj/claude-task', 'proj/codex-task'].entries()) {
+    writeFileSync(join(dir, 'backlog', `${900 + index}-fixture.md`),
+      `---\nref: ${ref}\nfeature: proj\nstatus: todo\n---\n\n# Task ${900 + index} — Fixture\n`);
+  }
 });
 
 afterEach(() => {
@@ -39,6 +45,7 @@ afterEach(() => {
   delete process.env.ORC_WORKER_PROVIDER;
   delete process.env.ORC_WORKER_MODEL;
   delete process.env.ORC_CONFIG_FILE;
+  delete process.env.ORC_BACKLOG_DIR;
 });
 
 function readEvents(stateDir: string): Array<Record<string, unknown>> {
@@ -2952,6 +2959,28 @@ describe('processTerminalRunEvents', () => {
 });
 
 describe('buildTaskEnvelope', () => {
+  it('hands the worker the claimed revision after the live Markdown changes', async () => {
+    const docsDir = join(dir, 'backlog');
+    const specPath = join(docsDir, '900-fixture.md');
+    const original = '---\nref: proj/fix-bug\nfeature: proj\nstatus: todo\n---\n\n# Task 196 — Original instructions\n';
+    writeFileSync(specPath, original);
+    seedState(dir, { tasks: [DISPATCHABLE_TASK] });
+    const { claimTask } = await import('./lib/claimManager.ts');
+    const { run_id } = claimTask(dir, 'proj/fix-bug', 'orc-1', { docsDir });
+    writeFileSync(specPath, original.replace('Original instructions', 'Changed instructions'));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      getRunWorktree: vi.fn().mockReturnValue({ worktree_path: '/tmp/product-worktree' }),
+    }));
+
+    const { buildTaskEnvelope } = await import('./coordinator.ts');
+    const rendered = buildTaskEnvelope('proj/fix-bug', run_id, 'orc-1');
+    const snapshotPath = join(dir, 'run-specs', `${run_id}.md`);
+    expect(rendered).toContain(`task_spec_path: ${snapshotPath}`);
+    expect(rendered).toContain('task_spec_revision_status: stale');
+    expect(rendered).toContain('task_spec_sha256: ');
+    expect(readFileSync(snapshotPath, 'utf8')).toBe(original);
+  });
+
   it('renders a minimal TASK_START payload with runtime handoff data only', async () => {
     seedState(dir, {
       tasks: [{
