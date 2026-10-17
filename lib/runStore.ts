@@ -154,7 +154,7 @@ export function recordProviderSession(stateDir: string, session: {
   return withEventDbTransaction(stateDir, (db) => {
     importLegacyAgentSessions(db, stateDir);
     if (session.runId !== null && !db.prepare('SELECT 1 FROM runs WHERE run_id = ?').get(session.runId)) return false;
-    db.prepare("UPDATE sessions SET state = 'offline', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state = 'running'")
+    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
       .run(session.startedAt, session.agentId, session.sessionId);
     db.prepare(`
       INSERT INTO sessions (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at,
@@ -176,7 +176,7 @@ export function closeProviderSessionsForAgent(stateDir: string, agentId: string,
   if (!existsSync(join(stateDir, 'events.db'))) return;
   withEventDbTransaction(stateDir, (db) => {
     importLegacyAgentSessions(db, stateDir);
-    db.prepare("UPDATE sessions SET state = 'offline', updated_at = ? WHERE agent_id = ? AND state = 'running'").run(at, agentId);
+    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'session closed', updated_at = ? WHERE agent_id = ? AND state <> 'offline'").run(at, agentId);
   });
 }
 

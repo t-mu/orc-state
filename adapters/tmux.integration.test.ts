@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -100,6 +101,21 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     spawnSync('tmux', ['-L', module.tmuxSocketName(dir), 'kill-server']);
     expect(adapter.inspectSession(second.session_handle)).toMatchObject({ alive: false, reason: 'tmux session not found' });
     await expect(adapter.heartbeatProbe(second.session_handle)).resolves.toBe(false);
+  }, 20_000);
+
+  it('gives each session its own env without leaking it through the shared server', async () => {
+    const { adapter } = await loadAdapter();
+    const first = await adapter.start('worker.1', { working_directory: dir, env: { ORC_PROBE: 'first' } });
+    const second = await adapter.start('worker_1', { working_directory: dir });
+    expect(existsSync(join(dir, 'pty-settings', 'worker.1.launch.sh'))).toBe(false);
+    // Similar agent IDs must not share (or kill) each other's session.
+    expect(adapter.inspectSession(first.session_handle).alive).toBe(true);
+    expect(adapter.inspectSession(second.session_handle).alive).toBe(true);
+    const environ = (handle: string) => readFileSync(`/proc/${adapter.inspectSession(handle).pid}/environ`, 'utf8').split('\0');
+    if (existsSync('/proc/self/environ')) {
+      expect(environ(first.session_handle)).toContain('ORC_PROBE=first');
+      expect(environ(second.session_handle).some((entry) => entry.startsWith('ORC_PROBE='))).toBe(false);
+    }
   }, 20_000);
 
   it('stop() ends the session and its provider process', async () => {

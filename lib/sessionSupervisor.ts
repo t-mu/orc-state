@@ -97,6 +97,23 @@ export function setSessionState(
   });
 }
 
+/** The agent's current (non-offline) session record, or null for legacy agents without one. */
+export function currentSessionForAgent(stateDir: string, agentId: string): SupervisedSession | null {
+  if (!existsSync(join(stateDir, 'events.db'))) return null;
+  return withEventDb(stateDir, (db) => (db.prepare(`SELECT session_id, run_id, agent_id, provider, state, transport, process_pid,
+    process_start, owner_id, owner_expires_at, state_reason, started_at, updated_at FROM sessions
+    WHERE agent_id = ? AND state <> 'offline' ORDER BY rowid DESC LIMIT 1`).get(agentId) as SupervisedSession | undefined) ?? null);
+}
+
+export const IDENTITY_MISMATCH_REASON = 'live process does not match the recorded process identity';
+export const UNWRITABLE_REASON = 'session is alive but not writable by this coordinator; stop it with orc worker-remove to relaunch';
+
+/** True when a live inspection contradicts the recorded PID and start time. */
+export function identityMismatch(session: SupervisedSession, inspection: SessionInspection | null): boolean {
+  if (!inspection?.alive || session.process_pid == null || session.process_start == null) return false;
+  return inspection.pid !== session.process_pid || inspection.processStart !== session.process_start;
+}
+
 /** Extend this owner's lease on the running sessions it supervises. */
 export function renewSessionOwnership(stateDir: string, owner: string, ttlMs: number): number {
   if (!existsSync(join(stateDir, 'events.db'))) return 0;
@@ -120,8 +137,8 @@ export function classifySession(session: SupervisedSession, inspection: SessionI
       reason: 'no recorded process identity; cannot rule out PID reuse. Stop the worker (orc worker-remove) or wait for it to exit',
     };
   }
-  if (inspection.pid !== session.process_pid || inspection.processStart !== session.process_start) {
-    return { state: 'unknown', outcome: 'unknown', reason: 'live process does not match the recorded process identity' };
+  if (identityMismatch(session, inspection)) {
+    return { state: 'unknown', outcome: 'unknown', reason: IDENTITY_MISMATCH_REASON };
   }
   if (!inspection.writable) {
     return {

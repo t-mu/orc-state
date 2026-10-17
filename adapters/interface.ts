@@ -117,7 +117,8 @@ export async function adapterInspectSession(adapter: unknown, sessionHandle: str
   try {
     return await inspect.call(adapter, sessionHandle);
   } catch (error) {
-    return { transport: 'pty', alive: false, writable: false, pid: null, processStart: null, reason: (error as Error).message };
+    const transport = sessionHandle.startsWith('tmux:') ? 'tmux' : 'pty';
+    return { transport, alive: false, writable: false, pid: null, processStart: null, reason: (error as Error).message };
   }
 }
 

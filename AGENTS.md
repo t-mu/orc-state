@@ -224,6 +224,7 @@ orc preflight                                     # lightweight environment heal
 orc watch                                         # live-refresh status
 orc events-tail                                   # tail the event stream
 orc runs-active                                   # list in-progress/claimed runs
+orc sessions [--all] [--json]                     # list supervised sessions (running/recoverable/unknown) with reason
 orc memory-status                                 # memory store stats
 orc memory-search <query> [--wing=X] [--room=Y]  # search memories (FTS5)
 

@@ -26,7 +26,7 @@ type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor
 import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
-import { createAdapter } from './adapters/index.ts';
+import { createAdapter, resolveSessionTransport } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
@@ -48,7 +48,10 @@ import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { startControlServer, type ControlServer } from './lib/controlServer.ts';
-import { SESSION_OWNER_TTL_MS, currentSessionOwnerId, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession } from './lib/sessionSupervisor.ts';
+import {
+  IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, UNWRITABLE_REASON, currentSessionForAgent, currentSessionOwnerId,
+  identityMismatch, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession,
+} from './lib/sessionSupervisor.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
@@ -68,9 +71,35 @@ import type { Backlog } from './types/backlog.ts';
 const adapterInstances = new Map<string, ReturnType<typeof createAdapter>>();
 function getAdapter(provider: string): ReturnType<typeof createAdapter> {
   if (!adapterInstances.has(provider)) {
-    adapterInstances.set(provider, createAdapter(provider));
+    const adapter = createAdapter(provider);
+    // Every direct write (task envelopes, nudges, PR review) passes the supervision gate.
+    adapterInstances.set(provider, {
+      ...adapter,
+      send: async (sessionHandle: string, text: string) => {
+        await assertSessionWritable(adapter, sessionHandle);
+        return adapter.send(sessionHandle, text);
+      },
+    });
   }
   return adapterInstances.get(provider)!;
+}
+
+/**
+ * Refuse to write to a session the supervisor has not confirmed: a recorded
+ * session must be `running`, and a live process must still match its recorded
+ * PID and start time. Agents without a session record keep legacy behavior.
+ */
+async function assertSessionWritable(adapter: ReturnType<typeof createAdapter>, sessionHandle: string): Promise<void> {
+  const agentId = sessionHandle.slice(sessionHandle.indexOf(':') + 1);
+  const session = currentSessionForAgent(STATE_DIR, agentId);
+  if (!session) return;
+  if (session.state !== 'running') {
+    throw new Error(`session ${session.session_id} is ${session.state}: ${session.state_reason ?? 'not writable'}`);
+  }
+  if (identityMismatch(session, await adapterInspectSession(adapter, sessionHandle))) {
+    setSessionState(STATE_DIR, session.session_id, 'unknown', IDENTITY_MISMATCH_REASON, { outcome: 'unknown' });
+    throw new Error(`session ${session.session_id} is unknown: ${IDENTITY_MISMATCH_REASON}`);
+  }
 }
 
 // ── CLI args ───────────────────────────────────────────────────────────────
@@ -228,6 +257,9 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
   if (agent.session_handle) {
     const alive = await adapter.heartbeatProbe(agent.session_handle);
     if (!alive) {
+      if (agent.session_token) {
+        setSessionState(STATE_DIR, agent.session_token, 'offline', 'session process exited', { outcome: 'exited' });
+      }
       updateAgentRuntime(STATE_DIR, agent.agent_id, {
         status: 'idle',   // session dead; coordinator will recreate on next tick
         session_handle: null,
@@ -240,12 +272,21 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
       log(`worker ${agent.agent_id} session unreachable; cleared stale handle for recreation`);
       return { ok: false, reason: 'session unreachable' };
     }
+    // A live session this coordinator cannot confirm or write to (for example
+    // a PTY that outlived its coordinator) is never killed or redispatched
+    // here. It stays visible until it exits or an operator stops it; an
+    // existing recoverable/unknown decision is kept as recorded.
+    const session = currentSessionForAgent(STATE_DIR, agent.agent_id);
+    if (session && (session.state === 'recoverable' || session.state === 'unknown')) {
+      return { ok: false, reason: `session ${session.state}: ${session.state_reason ?? 'not writable'}` };
+    }
+    if (session && identityMismatch(session, await adapterInspectSession(adapter, agent.session_handle))) {
+      setSessionState(STATE_DIR, session.session_id, 'unknown', IDENTITY_MISMATCH_REASON, { outcome: 'unknown' });
+      log(`worker ${agent.agent_id} session no longer matches its recorded process; marked unknown`);
+      return { ok: false, reason: `session unknown: ${IDENTITY_MISMATCH_REASON}` };
+    }
     if (!adapterOwnsSession(adapter, agent.session_handle)) {
-      // A live session this coordinator cannot write to (for example a PTY
-      // that outlived its coordinator) is never killed or redispatched here.
-      // It stays visible as recoverable until it exits or an operator stops it.
-      const reason = 'session is alive but not writable by this coordinator; stop it with orc worker-remove to relaunch';
-      if (agent.session_token && setSessionState(STATE_DIR, agent.session_token, 'recoverable', reason, { outcome: 'recoverable' })) {
+      if (agent.session_token && setSessionState(STATE_DIR, agent.session_token, 'recoverable', UNWRITABLE_REASON, { outcome: 'recoverable' })) {
         log(`worker ${agent.agent_id} session is alive but not owned by this coordinator; marked recoverable`);
       }
       return { ok: false, reason: 'session recoverable: not writable by this coordinator' };
@@ -2179,6 +2220,11 @@ export async function main() {
   }
 
   reconcileState(STATE_DIR);
+  try {
+    log(`session transport for new workers: ${resolveSessionTransport()}`);
+  } catch (error) {
+    log(`warning: ${(error as Error).message}`);
+  }
   await reconcileSupervisedSessions();
   // The control API is additive during migration; legacy CLI/MCP paths keep working without it.
   if (process.env.ORC_CONTROL_API !== 'off') {
@@ -2258,7 +2304,7 @@ export async function doShutdown() {
   process.exit(0);
 }
 
-export { tick };
+export { tick, getAdapter as getCoordinatorAdapter };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch(err => { console.error(err); process.exit(1); });

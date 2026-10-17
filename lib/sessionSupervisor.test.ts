@@ -1,7 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { processIdentity } from './processIdentity.ts';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDb, withEventDbTransaction } from './eventLog.ts';
-import { commitClaims } from './runStore.ts';
+import { closeProviderSessionsForAgent, commitClaims, recordProviderSession } from './runStore.ts';
 import { CommandDispatcher } from './commandDelivery.ts';
 import {
   classifySession, currentSessionOwnerId, listSupervisedSessions, reconcileSessions,
@@ -136,5 +140,64 @@ describe('reconcileSessions', () => {
     const expires = withEventDb(dir, (db) => db.prepare("SELECT owner_expires_at FROM sessions WHERE session_id = 's-1'").get() as { owner_expires_at: string });
     expect(Date.parse(expires.owner_expires_at)).toBeGreaterThan(Date.now() + 50_000);
     expect(currentSessionOwnerId()).toMatch(new RegExp(`^pid:${process.pid}:`));
+  });
+});
+
+describe('closing recoverable and unknown sessions', () => {
+  it('worker-remove and relaunch leave no live row for a recoverable or unknown session', () => {
+    insertSession('s-1', 'worker-a', 'run-1', 100, 'proc:5', 'pty');
+    insertSession('s-2', 'worker-b', null, 200, 'proc:6', 'pty');
+    setSessionState(dir, 's-1', 'recoverable', 'not writable');
+    setSessionState(dir, 's-2', 'unknown', 'mismatch');
+
+    closeProviderSessionsForAgent(dir, 'worker-a', new Date().toISOString());
+    recordProviderSession(dir, { sessionId: 's-3', runId: null, agentId: 'worker-b', provider: 'claude', providerRef: null, startedAt: new Date().toISOString() });
+
+    const states = Object.fromEntries(listSupervisedSessions(dir).map((row) => [row.session_id, row.state]));
+    expect(states).toEqual({ 's-1': 'offline', 's-2': 'offline', 's-3': 'running' });
+  });
+});
+
+describe('PID reuse with real processes', () => {
+  async function spawnSleeper() {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)']);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return child;
+  }
+
+  it('never adopts a live process that differs from the recorded one', async () => {
+    const original = await spawnSleeper();
+    const recorded = processIdentity(original.pid!)!;
+    original.kill('SIGKILL');
+    await new Promise((resolve) => original.once('exit', resolve));
+    const other = await spawnSleeper();
+    const previousStateDir = process.env.ORC_STATE_DIR;
+    try {
+      process.env.ORC_STATE_DIR = dir;
+      vi.resetModules();
+      const { createPtyAdapter } = await import('../adapters/pty.ts');
+      const adapter = createPtyAdapter({ provider: 'claude' });
+      mkdirSync(join(dir, 'pty-pids'), { recursive: true });
+      // The PID now belongs to another process: the recorded start time no longer matches.
+      insertSession('s-reused', 'worker-a', null, other.pid!, recorded.start, 'pty');
+      writeFileSync(join(dir, 'pty-pids', 'worker-a.pid'), JSON.stringify({ pid: other.pid, start: recorded.start }));
+      // A legacy bare PID file cannot prove identity either.
+      insertSession('s-legacy', 'worker-b', null, other.pid!, recorded.start, 'pty');
+      writeFileSync(join(dir, 'pty-pids', 'worker-b.pid'), String(other.pid));
+
+      const results = await reconcileSessions(dir, {
+        owner: 'me',
+        agents: [agent('worker-a', 's-reused', 'pty:worker-a'), agent('worker-b', 's-legacy', 'pty:worker-b')],
+        inspect: (a) => Promise.resolve(adapter.inspectSession(a.session_handle!)),
+      });
+      expect(Object.fromEntries(results.map((r) => [r.session_id, r.state]))).toEqual({ 's-reused': 'offline', 's-legacy': 'unknown' });
+      await adapter.stop('pty:worker-a');
+      expect(other.exitCode).toBeNull();
+      expect(other.signalCode).toBeNull();
+    } finally {
+      other.kill('SIGKILL');
+      if (previousStateDir === undefined) delete process.env.ORC_STATE_DIR;
+      else process.env.ORC_STATE_DIR = previousStateDir;
+    }
   });
 });

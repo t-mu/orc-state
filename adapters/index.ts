@@ -42,10 +42,10 @@ export function createAdapter(provider: string, options: Record<string, unknown>
   const tmux = createTmuxAdapter({ ...options, provider });
   const route = (sessionHandle: string) => (String(sessionHandle).startsWith('tmux:') ? tmux : pty);
   const adapter = {
-    start: (agentId: string, config: Record<string, unknown> = {}) => {
+    start: async (agentId: string, config: Record<string, unknown> = {}) => {
       const transport = resolveSessionTransport();
       if (transport === 'tmux' && !isTmuxAvailable()) throw new Error('ORC_SESSION_TRANSPORT=tmux but tmux is not available');
-      return (transport === 'tmux' ? tmux : pty).start(agentId, config);
+      return await (transport === 'tmux' ? tmux : pty).start(agentId, config);
     },
     send: (sessionHandle: string, text: string) => route(sessionHandle).send(sessionHandle, text),
     attach: (sessionHandle: string) => route(sessionHandle).attach(sessionHandle),

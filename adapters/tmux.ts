@@ -13,11 +13,12 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
+import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { detectBlockingPromptFromText, prepareProviderLaunch, runStartupDialogs } from './pty.ts';
 import type { SessionInspection } from './interface.ts';
 
@@ -32,12 +33,15 @@ export function tmuxSocketName(stateDir = STATE_DIR): string {
   return `orc-${createHash('sha256').update(stateDir).digest('hex').slice(0, 12)}`;
 }
 
+/** Readable and injective: the hash keeps `a.b` and `a_b` from sharing a session. */
 function sessionName(agentId: string): string {
-  return `orc-${agentId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+  const readable = agentId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
+  return `orc-${readable}-${createHash('sha256').update(agentId).digest('hex').slice(0, 8)}`;
 }
 
 function logPath(agentId: string) { return join(STATE_DIR, 'pty-logs', `${agentId}.log`); }
 function settingsPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.json`); }
+function launcherPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.launch.sh`); }
 
 function tmux(args: string[], options: { input?: string; env?: Record<string, string> } = {}) {
   return spawnSync(tmuxBinary(), ['-L', tmuxSocketName(), ...args], {
@@ -108,7 +112,7 @@ function write(agentId: string, text: string): void {
     tmuxOrThrow(['send-keys', '-t', target(agentId), 'Enter']);
     return;
   }
-  const buffer = `orc-${agentId}`;
+  const buffer = sessionName(agentId);
   tmuxOrThrow(['load-buffer', '-b', buffer, '-'], { input: text });
   tmuxOrThrow(['paste-buffer', '-d', '-p', '-b', buffer, '-t', target(agentId)]);
 }
@@ -119,12 +123,23 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       const launch = prepareProviderLaunch(provider, agentId, config);
       tmux(['kill-session', '-t', target(agentId)]);
       writeFileSync(logPath(agentId), '');
-      // The private server is started by orc with the stripped launch env; per-run
-      // ORC_* overrides are passed explicitly so a long-lived server cannot go stale.
-      const envArgs = Object.entries((config.env as Record<string, string> | undefined) ?? {})
-        .flatMap(([key, value]) => ['-e', `${key}=${value}`]);
-      const command = ['exec', launch.binary, ...launch.args].map((part, index) => (index === 0 ? part : shellQuote(part))).join(' ');
-      tmuxOrThrow(['new-session', '-d', '-s', sessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, ...envArgs, command], { env: launch.env });
+      // A long-lived tmux server keeps the environment of whoever started it,
+      // so each session gets its exact env from a private launcher script that
+      // deletes itself before exec. Env values never appear in argv.
+      const launcher = launcherPath(agentId);
+      const exports = Object.entries(launch.env)
+        .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+        .map(([key, value]) => `export ${key}=${shellQuote(value)}`);
+      writeFileSync(launcher, ['#!/bin/sh', 'rm -f "$0"', ...exports,
+        `exec ${[launch.binary, ...launch.args].map(shellQuote).join(' ')}`, ''].join('\n'), { mode: 0o700 });
+      chmodSync(launcher, 0o700);
+      try {
+        tmuxOrThrow(['new-session', '-d', '-s', sessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher)],
+          { env: stripNestedProviderEnv(process.env) as Record<string, string> });
+      } catch (error) {
+        try { unlinkSync(launcher); } catch { /* already consumed */ }
+        throw error;
+      }
       tmux(['pipe-pane', '-o', '-t', target(agentId), `cat >> ${shellQuote(logPath(agentId))}`]);
 
       const started = inspect(agentId);
@@ -203,7 +218,7 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       try {
         const agentId = parseHandle(sessionHandle);
         tmux(['kill-session', '-t', target(agentId)]);
-        for (const path of [hookEventPath(agentId), `${hookEventPath(agentId)}.processing`, settingsPath(agentId)]) {
+        for (const path of [hookEventPath(agentId), `${hookEventPath(agentId)}.processing`, settingsPath(agentId), launcherPath(agentId)]) {
           try { unlinkSync(path); } catch { /* already gone or never created */ }
         }
       } catch {

@@ -608,7 +608,11 @@ and an ownership lease (`owner_expires_at`) renewed every coordinator tick.
 On startup the coordinator reconciles every non-offline session with the live
 process and records a `session_reconciled` event with the outcome (`adopted`,
 `recoverable`, `unknown`, `exited` or `superseded`) and a reason. It never kills
-a session during reconciliation. On shutdown it stops PTY sessions it owns
+a session during reconciliation. Every direct coordinator write (task envelope,
+nudge, PR review) is refused unless the agent's session row is `running` and the
+live process still matches the recorded PID and start time; a mismatch moves the
+session to `unknown`. Stopping or replacing a session (`orc worker-remove`, a
+relaunch) moves every non-offline row of that agent to `offline`. On shutdown it stops PTY sessions it owns
 (they could not outlive it) and leaves tmux sessions running for the next
 coordinator to adopt. `orc sessions` lists supervised sessions with their state
 and reason; see `docs/recovery.md` → **Recoverable or Unknown Sessions**.

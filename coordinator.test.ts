@@ -3319,6 +3319,41 @@ describe('doShutdown', () => {
     expect(readAgents(dir)[0]).toMatchObject({ session_handle: 'pty:orc-1', session_token: 'sess-1' });
   });
 
+  it('refuses direct sends to sessions the supervisor has not confirmed', async () => {
+    const now = new Date().toISOString();
+    seedState(dir, {
+      agents: ['orc-1', 'orc-2', 'orc-3'].map((id, index) => ({
+        agent_id: id, provider: 'claude', role: 'worker', status: 'running',
+        session_handle: `${index === 0 ? 'tmux' : 'pty'}:${id}`, session_token: `sess-${index + 1}`, provider_ref: null,
+        registered_at: now, last_heartbeat_at: now,
+      })),
+    });
+    const { initEventsDb, withEventDbTransaction, withEventDb } = await import('./lib/eventLog.ts');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, transport, process_pid, process_start, state_reason)
+        VALUES ('sess-1', NULL, 'orc-1', 'claude', 'running', 'now', 'now', 'tmux', 4242, 'proc:42', NULL),
+          ('sess-2', NULL, 'orc-2', 'claude', 'recoverable', 'now', 'now', 'pty', 4343, 'proc:43', 'not writable')`).run();
+    });
+    const mockSend = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      send: mockSend,
+      // The tmux pane now runs a different process than the one recorded.
+      inspectSession: vi.fn().mockReturnValue({ transport: 'tmux', alive: true, writable: true, pid: 9999, processStart: 'proc:99' }),
+    }));
+    const coordinator = await import('./coordinator.ts');
+    const adapter = coordinator.getCoordinatorAdapter('claude');
+
+    await expect(adapter.send('tmux:orc-1', 'TASK_START')).rejects.toThrow('is unknown');
+    await expect(adapter.send('pty:orc-2', 'nudge')).rejects.toThrow('is recoverable: not writable');
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(withEventDb(dir, (db) => db.prepare("SELECT state FROM sessions WHERE session_id = 'sess-1'").get())).toEqual({ state: 'unknown' });
+
+    // An agent without a session record keeps the legacy path.
+    await adapter.send('pty:orc-3', 'hello');
+    expect(mockSend).toHaveBeenCalledWith('pty:orc-3', 'hello');
+  });
+
   it('releases coordinator lock only once across shutdown and exit hook', async () => {
     seedState(dir);
 
