@@ -1,7 +1,7 @@
 # vNext provider and terminal protocol spike
 
-Status: partial evidence, 2026-10-17. This is an opt-in local experiment, not a
-runtime integration. The host Docker experiment remains open.
+Status: complete, 2026-10-17. This is an opt-in local experiment, not a
+runtime integration. The host Docker experiment ran on the user's macOS host.
 No token, API key, provider response text, or private transcript is recorded here.
 
 ## Environment and reproduction
@@ -105,42 +105,81 @@ leases; those are terminal broker requirements for a later task.
 
 ## Host-to-container control transport
 
-This agent ran inside the existing `devbox` container. Its
-`docker/dev/docker-compose.yml` service publishes no ports, and this container
-has no Docker CLI or host daemon access. A server started here alone cannot
-prove that a request from the host reaches a host-loopback published port.
-No claim about host-loopback reachability, socket bind behavior, or
-authentication is possible from this environment. The transport choice
-remains open.
+The dev container cannot reach Docker (`docker: command not found`; no
+`/var/run/docker.sock`; the workspace is a Docker volume, not a host bind
+mount), so the operator ran these checks on the actual host on 2026-10-17:
+macOS `26.3`, Docker client and server `29.2.1` (Docker Desktop, Linux engine).
+Each check used a disposable `node:24-alpine` container with no host home or
+Docker socket mount. The server bound to the container interface (`0.0.0.0`);
+the port was published only on host loopback.
 
-On the actual host, run a disposable container without mounting host home or
-the Docker socket. This probes the host's Docker port-publishing behavior; it
-does not test the current `devbox` container or a future project container.
-Use a free host port and stop the container after testing. The server must bind
-to the container interface (`0.0.0.0`); the published port binds only to host loopback.
-Confirm a host request succeeds and that a request to the host's non-loopback
-address fails before choosing TCP. Then repeat with a scoped authentication
-token and verify missing/wrong tokens are rejected. A Unix socket needs a
-separate bind-mount and host permission test before it can be selected instead.
+**Loopback reachability and LAN exposure:**
 
 ```bash
 docker run --rm --name orc-transport-smoke \
   -p 127.0.0.1:18765:8765 node:24-alpine \
   node -e 'require("http").createServer((_,r)=>r.end("ok")).listen(8765,"0.0.0.0")'
-# In a second host terminal:
-curl --fail --silent http://127.0.0.1:18765/
+# Second host terminal:
+curl --fail --silent http://127.0.0.1:18765/                                  # -> ok
+curl --fail --silent --max-time 5 "http://$(ipconfig getifaddr en0):18765/"; echo "exit=$?"   # -> exit=7
 ```
 
-The example only tests connectivity. It is not an authenticated control
-server, and it must not be used as the final API design. The final project
-container needs its own published-port and authentication checks on the host.
-Unix socket versus authenticated loopback TCP cannot be decided until the
-actual host experiment and rejection tests are recorded.
+The loopback request returned `ok`. The request to the host's LAN address was
+refused (curl exit 7, connection refused), so a `127.0.0.1:` publish is not
+reachable from the network.
+
+**Bearer token rejection** (token generated per run, never recorded):
+
+```bash
+F=/tmp/orc-auth.js
+echo "const t=process.env.ORC_TOKEN;" > $F
+echo "const ok=(q)=>q.headers.authorization==='Bearer '+t;" >> $F
+echo "require('http').createServer((q,r)=>{" >> $F
+echo "if(ok(q))return r.end('ok');" >> $F
+echo "r.statusCode=401;r.end('unauthorized');" >> $F
+echo "}).listen(8766,'0.0.0.0');" >> $F
+TOKEN=$(openssl rand -hex 16)
+docker run -d --name orc-transport-auth \
+  -e ORC_TOKEN="$TOKEN" -e SCRIPT="$(cat $F)" \
+  -p 127.0.0.1:18766:8766 node:24-alpine \
+  sh -c 'node -e "$SCRIPT"'
+U=http://127.0.0.1:18766/
+curl -s -o /dev/null -w 'missing: %{http_code}\n' $U                                   # -> 401
+curl -s -o /dev/null -w 'wrong: %{http_code}\n' -H 'Authorization: Bearer wrong' $U    # -> 401
+curl -s -o /dev/null -w 'correct: %{http_code}\n' -H "Authorization: Bearer $TOKEN" $U # -> 200
+docker rm -f orc-transport-auth
+```
+
+Results: missing `401`, wrong `401`, correct `200`.
+
+**Failure cases seen while running it.** Two earlier attempts returned `000` for
+all three requests (connection failed): pasting a long one-line `node -e` script
+wrapped a line inside a JavaScript string and made it a syntax error, and in a
+heredoc variant the pasted terminal status text turned `SCRIPT=$(...)` into an
+env prefix for a nonexistent command. In both cases the server exited at once
+and `--rm` removed the container. Write the script to a file in short lines,
+and check `docker ps` and `docker logs` before you read the curl results.
+
+**Not tested:** a Unix socket bind-mounted from the container to the host.
+Docker Desktop for Mac runs the engine in a VM and shares host files through a
+file-sharing layer, so socket files in bind mounts cannot be relied on to
+connect from the host; this alternative is rejected rather than proven broken.
 
 ## Decision and remaining gates
 
-Codex app-server stdio is a viable local structured candidate under the CLI's
-ChatGPT login. Claude structured output passed a local turn and resume using
-the CLI's Team login. tmux passed a basic cross-process attach/detach test
-with a suitable terminal type. Defer the host transport selection and Task
-195 completion until the actual-host Docker test is recorded.
+- **Codex:** subscription-backed structured path is app-server stdio under the
+  CLI's ChatGPT login. Approval request handling and resume after an interrupted
+  turn still need opt-in tests before an approval bridge is built.
+- **Claude:** subscription-backed structured path is `claude -p` stream-json
+  under the CLI's Team login, including `--resume`. Live tool approval and resume
+  after interruption are untested.
+- **Gemini:** not exercised; it stays on the existing CLI PTY adapter (explicit
+  CLI fallback).
+- **Terminal:** tmux cross-process attach/detach works with a usable `TERM`;
+  resize, scrollback, observers and input leases belong to the terminal broker.
+- **Host-to-container control transport:** authenticated loopback TCP. The
+  project container publishes the daemon port as `127.0.0.1:<port>:<port>` and
+  every request carries a bearer token. Inside the container, local clients
+  keep the Unix socket from Task 201; adding the TCP listener is Task 206's
+  packaging work, and that container needs its own published-port and token
+  checks.

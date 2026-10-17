@@ -3,7 +3,7 @@ ref: vnext-control-plane/195-prove-provider-and-terminal-protocols
 feature: vnext-control-plane
 review_level: none
 priority: high
-status: blocked
+status: done
 ---
 
 # Task 195 — Prove subscription provider and terminal protocols
@@ -51,9 +51,9 @@ Sanitized, reproducible evidence identifies which structured protocol paths are 
 
 ## Acceptance criteria
 
-- [ ] Evidence identifies a demonstrably subscription-backed path or explicitly records fallback to CLI for each provider.
-- [ ] No committed token, API key, or private transcript.
-- [ ] Terminal and container transport results include exact commands, versions, and failure cases.
+- [x] Evidence identifies a demonstrably subscription-backed path or explicitly records fallback to CLI for each provider.
+- [x] No committed token, API key, or private transcript.
+- [x] Terminal and container transport results include exact commands, versions, and failure cases.
 
 ## Tests
 
@@ -63,14 +63,11 @@ Opt-in real-provider smoke only; no CI dependency on login or paid API keys.
 
 `npm test`; manually rerun documented smoke commands where credentials are available.
 
-## Current blockers (2026-10-17)
+## Outcome (2026-10-17)
 
-The sanitized local results and rerun commands are in
-`docs/vnext-provider-protocols.md`. A rerun proved a successful Claude turn
-and resume under the existing Team login. Docker CLI/host daemon access is
-unavailable in the dev container, so the required actual-host transport test
-has not run. **Deferred follow-up:** when host Docker access is available,
-run the host-to-container loopback and authentication checks documented in
-`docs/vnext-provider-protocols.md`, record the exact host commands and results,
-then reassess the transport choice and this task's status. Keep this task
-blocked until that result is recorded.
+Evidence is in `docs/vnext-provider-protocols.md`. Codex (app-server stdio) and
+Claude (stream-json with resume) have subscription-backed structured paths;
+Gemini stays on the CLI adapter. The host Docker checks ran on macOS 26.3 with
+Docker 29.2.1: loopback publishing works, the LAN address is refused, and
+missing or wrong bearer tokens are rejected. Chosen host-to-container transport:
+authenticated loopback TCP.

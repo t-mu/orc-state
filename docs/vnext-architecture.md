@@ -24,7 +24,7 @@ failures were observed.
 | Worker workspace | `lib/workerRuntime.ts` passes `working_directory`; `adapters/pty.ts` currently prefers `ORC_REPO_ROOT` as process cwd. | **Adapt.** Spawn in the assigned worktree and repair provider sandbox/Git metadata paths; keep `ORC_HOME` for orchestration state resolution. |
 | Process recovery | `coordinator.ts` probes a PID file and marks stale agents; PTY handles live in coordinator memory. | **Build.** Stable provider session identity, supervisor ownership or explicit resume, process reconciliation, and recoverable/unknown status. Do not kill a healthy worker solely on daemon restart. |
 | Terminal access | `cli/attach.ts` and `cli/control-worker.ts` print a log tail; `node-pty` handle is process-local. Docker image has tmux installed. | **Build.** Terminal broker and independent worktree shell; attach/detach, resize, scrollback, read-only default, exclusive input lease. |
-| Local control API | Task 201: the coordinator serves protocol v1 (HTTP/JSON over an owner-only Unix socket plus a token): snapshot, cursor event stream, scoped command enqueue/ACK. `runs-active --via-control` and `orc control` use it; other CLI and MCP paths still call libraries directly. | **Adapt.** Choose the host-to-container transport (Task 195), add per-session secrets, wire command delivery, then move the remaining CLI/MCP paths and the desktop onto shared services. |
+| Local control API | Task 201: the coordinator serves protocol v1 (HTTP/JSON over an owner-only Unix socket plus a token): snapshot, cursor event stream, scoped command enqueue/ACK. `runs-active --via-control` and `orc control` use it; other CLI and MCP paths still call libraries directly. | **Adapt.** Add the loopback TCP listener for the host (chosen in Task 195; packaged in Task 206), add per-session secrets, wire command delivery, then move the remaining CLI/MCP paths and the desktop onto shared services. |
 | Container | `docker/dev` is a development shell, with a persistent home volume and host GitHub config mount; it does not run a project daemon. | **Adapt/build.** One long-lived non-root project container, scoped auth/runtime volumes, project bind mount, loopback control transport, preflight, no host home or Docker socket mount. |
 | Desktop | No Electron app; Ink TUI exists under `lib/tui`. | **Defer.** Build only after control API, state, sessions, and reconnect behavior have passed integration gates. Retain Ink/CLI. |
 
@@ -65,8 +65,9 @@ controls Docker directly.
 3. **Container:** `docker/dev` is a starting image, not the runtime contract.
    Use one project container with a read/write project bind mount plus narrowly
    scoped login/runtime volumes. The mounted project is exposed to agents.
-   Never mount host home or Docker socket. Verify loopback transport on the
-   actual host Docker implementation before choosing TCP versus socket bridge.
+   Never mount host home or Docker socket. Host to container control uses
+   authenticated loopback TCP (`127.0.0.1` publish plus bearer token), verified
+   on the macOS host in Task 195; in-container clients keep the Unix socket.
 4. **Terminal ownership:** `node-pty` continues as a legacy launch/log tool;
    tmux or a dedicated broker provides cross-process attachment. A lease grants
    exclusive input, while observers remain read-only. A lease does not pause
