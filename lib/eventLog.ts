@@ -15,6 +15,7 @@ function getDb(stateDir: string): Database.Database {
 
   const dbPath = join(stateDir, 'events.db');
   const db = new Database(dbPath);
+  db.pragma('busy_timeout = 10000');
   db.pragma('journal_mode = WAL');
 
   db.exec(`
@@ -33,6 +34,12 @@ function getDb(stateDir: string): Database.Database {
       content='events', content_rowid='seq'
     );
     CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
+      INSERT INTO events_fts(rowid, event, agent_id, run_id, task_ref, payload)
+      VALUES (new.seq, new.event, new.agent_id, new.run_id, new.task_ref, new.payload);
+    END;
+    CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE OF payload ON events BEGIN
+      INSERT INTO events_fts(events_fts, rowid, event, agent_id, run_id, task_ref, payload)
+      VALUES ('delete', old.seq, old.event, old.agent_id, old.run_id, old.task_ref, old.payload);
       INSERT INTO events_fts(rowid, event, agent_id, run_id, task_ref, payload)
       VALUES (new.seq, new.event, new.agent_id, new.run_id, new.task_ref, new.payload);
     END;
@@ -230,35 +237,36 @@ export function appendSequencedEvent(
   } = {},
 ): number {
   const db = getDb(stateDir);
-
-  // Assign seq first so validation can check all required fields including seq.
-  const maxRow = db.prepare(`SELECT MAX(seq) as max_seq FROM events`).get() as { max_seq: number | null };
-  const seq = (maxRow.max_seq ?? 0) + 1;
-
-  const withSeq = ensureEventIdentity({ ...event, seq } as OrcEvent);
-  const errors = validateEventObject(withSeq);
+  // Validate before writing. The provisional seq satisfies the event schema;
+  // SQLite assigns the actual value inside the transaction below.
+  const provisional = ensureEventIdentity({ ...event, seq: 1 } as OrcEvent);
+  const errors = validateEventObject(provisional);
   if (errors.length > 0) {
     throw new Error(`event validation failed: ${errors.join('; ')}`);
   }
-
-  const ev = withSeq as unknown as Record<string, unknown>;
-  const payload = JSON.stringify(withSeq);
-
-  db.prepare(`
-    INSERT INTO events (seq, event_id, ts, event, agent_id, run_id, task_ref, payload)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    seq,
-    withSeq.event_id ?? null,
-    withSeq.ts,
-    withSeq.event,
-    ev.agent_id ?? null,
-    ev.run_id ?? null,
-    ev.task_ref ?? null,
-    payload,
-  );
-
-  return seq;
+  const ev = provisional as unknown as Record<string, unknown>;
+  const insert = db.prepare(`
+    INSERT INTO events (event_id, ts, event, agent_id, run_id, task_ref, payload)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    RETURNING seq
+  `);
+  const update = db.prepare('UPDATE events SET payload = ? WHERE seq = ?');
+  return db.transaction(() => {
+    const row = insert.get(
+      provisional.event_id ?? null,
+      provisional.ts,
+      provisional.event,
+      ev.agent_id ?? null,
+      ev.run_id ?? null,
+      ev.task_ref ?? null,
+      JSON.stringify(provisional),
+    ) as { seq: number };
+    const assigned = { ...provisional, seq: row.seq };
+    const assignedErrors = validateEventObject(assigned);
+    if (assignedErrors.length > 0) throw new Error(`event validation failed: ${assignedErrors.join('; ')}`);
+    update.run(JSON.stringify(assigned), row.seq);
+    return row.seq;
+  }).immediate();
 }
 
 /**
