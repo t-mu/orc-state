@@ -283,6 +283,7 @@ Commands for digging into active runs and the event stream.
 | `waiting-input` | List runs blocked waiting for master input. |
 | `events-tail` | Print the last N events. |
 | `events-filter` | Query events by run, agent, or event type. |
+| `event-cursor` | Inspect a durable consumer offset; reset it for replay while the coordinator is stopped. |
 
 **Flags:**
 
@@ -292,7 +293,13 @@ Commands for digging into active runs and the event stream.
 | `run-info` | `<run_id>` `[--json]` |
 | `events-tail` | `[--n=<N>]` `[--event=<name>]` `[--json]` |
 | `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--json]` |
+| `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` |
 | `waiting-input` | `[--json]` |
+
+The coordinator reads at most 128 event rows per tick and records its cursor in
+SQLite. The old `event-checkpoint.json` is retained as a migration backup.
+Resetting the cursor replays events after the chosen sequence; stop the
+coordinator first and use a sequence at or before the event you want replayed.
 
 ---
 

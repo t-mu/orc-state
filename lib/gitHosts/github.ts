@@ -46,6 +46,8 @@ export class GitHubAdapter implements GitHostAdapter {
   }
 
   createPr(title: string, branch: string, body: string): string {
+    const existing = this.run(['pr', 'list', '--head', branch, '--state', 'open', '--json', 'url', '--jq', '.[0].url // empty']);
+    if (existing) return existing;
     return this.run(['pr', 'create', '--title', title, '--head', branch, '--body', body]);
   }
 
@@ -66,6 +68,7 @@ export class GitHubAdapter implements GitHostAdapter {
   }
 
   mergePr(prRef: string): void {
+    if (this.checkPrStatus(prRef) === 'merged') return;
     this.run(['pr', 'merge', prRef, '--squash']);
   }
 

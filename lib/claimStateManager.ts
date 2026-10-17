@@ -225,6 +225,7 @@ export function setPrCreatedAt(
   stateDir: string,
   runId: string,
   createdAt: string,
+  initialWorkCompleteSeq?: number,
 ): Claim {
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
@@ -234,8 +235,12 @@ export function setPrCreatedAt(
       throw new Error(`PR created_at update requires in_progress claim state (got: ${claim.state})`);
     }
     assertValidTimestamp(createdAt, 'pr_created_at');
+    if (initialWorkCompleteSeq !== undefined && (!Number.isSafeInteger(initialWorkCompleteSeq) || initialWorkCompleteSeq < 1)) {
+      throw new Error('initial work_complete seq must be a positive safe integer');
+    }
 
     claim.pr_created_at = createdAt;
+    if (initialWorkCompleteSeq !== undefined) claim.pr_initial_work_complete_seq = initialWorkCompleteSeq;
     commitClaims(stateDir, claims);
 
     return claim;

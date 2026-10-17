@@ -46,6 +46,11 @@ function getDb(stateDir: string): Database.Database {
       INSERT INTO events_fts(rowid, event, agent_id, run_id, task_ref, payload)
       VALUES (new.seq, new.event, new.agent_id, new.run_id, new.task_ref, new.payload);
     END;
+    CREATE INDEX IF NOT EXISTS events_run_seq_idx ON events(run_id, seq);
+    CREATE INDEX IF NOT EXISTS events_run_event_ts_idx ON events(run_id, event, ts DESC, seq DESC)
+      WHERE json_valid(payload) AND COALESCE(json_extract(payload, '$.actor_type'), '') NOT IN ('coordinator', 'human');
+    CREATE INDEX IF NOT EXISTS events_run_phase_ts_idx ON events(run_id, ts DESC, seq DESC)
+      WHERE event = 'phase_started' AND json_valid(payload);
     `);
 
     migrateRuntimeSchema(db);
@@ -337,6 +342,69 @@ export function readEventsSince(logPath: string, afterSeq: number): OrcEvent[] {
   for (let i = 0; i < rows.length; i++) {
     const event = parseEventRow(rows[i], i);
     if (event) events.push(event);
+  }
+  return events;
+}
+
+export interface EventBatchRow {
+  seq: number;
+  event: OrcEvent | null;
+}
+
+/**
+ * Read a bounded physical batch. Invalid rows remain in the result so a
+ * consumer can advance beyond them without scanning the same corruption
+ * forever. The SQLite seq, rather than a payload-supplied value, is authoritative.
+ */
+export function readEventBatch(logPath: string, afterSeq: number, limit: number): EventBatchRow[] {
+  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('afterSeq must be a non-negative safe integer');
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('limit must be between 1 and 1000');
+  const db = getDb(dirname(logPath));
+  const rows = db.prepare('SELECT seq, payload FROM events WHERE seq > ? ORDER BY seq LIMIT ?')
+    .all(afterSeq, limit) as Array<{ seq: number; payload: string }>;
+  return rows.map((row, index) => {
+    const event = parseEventRow(row, index, { validate: true });
+    if (event && event.seq !== row.seq) {
+      logger.error(`[eventLog] skipping event with mismatched seq at row ${row.seq}`);
+      return { seq: row.seq, event: null };
+    }
+    return { seq: row.seq, event };
+  });
+}
+
+/**
+ * Hydrate at most one activity event per type and one phase per active run.
+ * Indexed lookups keep restart work independent of each run's event history.
+ */
+export function readEventsForRuns(logPath: string, runIds: string[]): OrcEvent[] {
+  if (runIds.length === 0) return [];
+  const db = getDb(dirname(logPath));
+  const activityTypes = [
+    'run_started', 'heartbeat', 'work_complete', 'finalize_rebase_started',
+    'ready_to_merge', 'phase_started', 'phase_finished', 'blocked',
+    'need_input', 'input_requested', 'input_provided', 'unblocked',
+  ];
+  const selectActivity = db.prepare(`SELECT seq, payload FROM events
+    WHERE run_id = ? AND event = ?
+      AND json_valid(payload)
+      AND COALESCE(json_extract(payload, '$.actor_type'), '') NOT IN ('coordinator', 'human')
+    ORDER BY ts DESC, seq DESC LIMIT 1`);
+  const selectPhase = db.prepare(`SELECT seq, payload FROM events
+    WHERE run_id = ? AND event = 'phase_started' AND json_valid(payload)
+    ORDER BY ts DESC, seq DESC LIMIT 1`);
+  const events: OrcEvent[] = [];
+  for (const runId of new Set(runIds)) {
+    for (const type of activityTypes) {
+      const row = selectActivity.get(runId, type) as { seq: number; payload: string } | undefined;
+      if (!row) continue;
+      const event = parseEventRow(row, row.seq, { validate: true });
+      if (event && event.seq === row.seq) events.push(event);
+    }
+    const phase = selectPhase.get(runId) as { seq: number; payload: string } | undefined;
+    if (phase) {
+      const event = parseEventRow(phase, phase.seq, { validate: true });
+      if (event && event.seq === phase.seq) events.push(event);
+    }
   }
   return events;
 }
