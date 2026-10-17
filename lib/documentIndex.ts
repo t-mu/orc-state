@@ -7,7 +7,7 @@ import { parsePlan } from './planDocs.ts';
 import { scanForInjection } from './promptInjectionScan.ts';
 import { InjectionScanError } from './taskSpecReader.ts';
 import type { TaskSpecSnapshot } from '../types/claims.ts';
-import type { ClaimsState } from '../types/claims.ts';
+import { readClaims } from './stateReader.ts';
 
 export interface DocumentIndexEntry {
   kind: 'task' | 'plan';
@@ -115,7 +115,7 @@ export function verifyRunTaskSnapshot(snapshot: TaskSpecSnapshot): void {
 export function pruneOrphanRunTaskSnapshots(stateDir: string): number {
   const directory = join(stateDir, 'run-specs');
   if (!existsSync(directory)) return 0;
-  const claims = JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8')) as ClaimsState;
+  const claims = readClaims(stateDir);
   const known = new Set(claims.claims.map((claim) => claim.run_id));
   let removed = 0;
   for (const file of readdirSync(directory)) {

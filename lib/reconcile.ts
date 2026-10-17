@@ -6,6 +6,7 @@ import { selectDuplicateClaimWinner } from './lifecycleDiagnostics.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
 import { logger } from './logger.ts';
+import { commitClaims, refreshClaimsProjection } from './runStore.ts';
 
 const ACTIVE_CLAIM_STATES = new Set(['claimed', 'in_progress']);
 
@@ -87,8 +88,9 @@ export function reconcileState(stateDir: string): void {
       atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
     }
     if (claimsModified) {
-      atomicWriteJson(join(stateDir, 'claims.json'), claims);
+      commitClaims(stateDir, claims);
     }
+    refreshClaimsProjection(stateDir);
 
     const repairCount = (backlogModified ? 1 : 0) + (claimsModified ? 1 : 0);
     if (repairCount === 0) {

@@ -49,7 +49,7 @@ describe('runtime schema migration', () => {
     initEventsDb(dir);
     const repeated = new Database(join(dir, 'events.db'), { readonly: true });
     try {
-      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 1 });
+      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 2 });
     } finally {
       repeated.close();
     }
@@ -104,15 +104,32 @@ describe('runtime schema migration', () => {
     }
   });
 
+  it('keeps version 1 intact if the version 2 migration is interrupted, then retries', () => {
+    const db = new Database(join(dir, 'events.db'));
+    try {
+      db.exec('CREATE TABLE runtime_cutovers (name TEXT PRIMARY KEY)');
+      expect(() => migrateRuntimeSchema(db)).toThrow();
+      expect(db.pragma('user_version', { simple: true })).toBe(1);
+      expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }]);
+      expect((db.pragma('table_info(runs)') as Array<{ name: string }>).some((column) => column.name === 'claim_json')).toBe(false);
+      db.exec('DROP TABLE runtime_cutovers');
+      migrateRuntimeSchema(db);
+      expect(db.pragma('user_version', { simple: true })).toBe(2);
+      expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }]);
+    } finally {
+      db.close();
+    }
+  });
+
   it('refuses a future version before touching its schema', () => {
     const db = new Database(join(dir, 'events.db'));
-    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 2');
+    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 3');
     db.close();
     expect(() => initEventsDb(dir)).toThrow('newer than supported version');
     const check = new Database(join(dir, 'events.db'), { readonly: true });
     try {
       expect(check.prepare("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeUndefined();
-      expect(check.pragma('user_version', { simple: true })).toBe(2);
+      expect(check.pragma('user_version', { simple: true })).toBe(3);
     } finally {
       check.close();
     }
@@ -120,6 +137,6 @@ describe('runtime schema migration', () => {
     const result = doctor(dir);
     expect(result.status).toBe(1);
     expect((JSON.parse(result.stdout) as { checks: { runtimeSchema: { version: number; ok: boolean } } }).checks.runtimeSchema)
-      .toMatchObject({ version: 2, ok: false });
+      .toMatchObject({ version: 3, ok: false });
   });
 });

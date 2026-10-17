@@ -4,10 +4,15 @@ import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState } from '../types/agents.ts';
 import type { ClaimsState } from '../types/claims.ts';
 import { logger } from './logger.ts';
+import { readAuthoritativeClaims, withAuthoritativeAgentSessions } from './runStore.ts';
 
 const TASK_SEQ_RE = /(?:^|\/)task-(\d+)(?:-|$)/;
 
 export function readJson(stateDir: string, file: string): unknown {
+  if (file === 'claims.json') {
+    const authoritative = readAuthoritativeClaims(stateDir);
+    if (authoritative) return authoritative;
+  }
   return JSON.parse(readFileSync(join(stateDir, file), 'utf8'));
 }
 
@@ -23,7 +28,7 @@ export function readBacklog(stateDir: string): Backlog {
 
 export function readAgents(stateDir: string): AgentsState {
   try {
-    return readJson(stateDir, 'agents.json') as AgentsState;
+    return withAuthoritativeAgentSessions(stateDir, readJson(stateDir, 'agents.json') as AgentsState);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       logger.error('[stateReader] unexpected error reading agents.json:', err);

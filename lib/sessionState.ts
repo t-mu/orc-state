@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { withLock } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
+import { readClaims } from './stateReader.ts';
+import { closeProviderSessionsForAgent, commitClaims, restoreProviderSessionsForAgents } from './runStore.ts';
 import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState, Agent } from '../types/agents.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
@@ -17,7 +19,7 @@ function readAgentsState(stateDir: string): AgentsState {
 }
 
 function readClaimsState(stateDir: string): ClaimsState {
-  return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8')) as ClaimsState;
+  return readClaims(stateDir);
 }
 
 function resetTask(task: Task, now: string): boolean {
@@ -109,7 +111,10 @@ export function resetVolatileRuntimeStateForSession(
     }
 
     atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
+    for (const agent of snapshot.agents.agents) {
+      if (agent.session_handle) closeProviderSessionsForAgent(stateDir, agent.agent_id, now);
+    }
     atomicWriteJson(join(stateDir, 'agents.json'), agents);
 
     return {
@@ -150,7 +155,8 @@ export function restoreVolatileRuntimeStateFromSnapshot(
 ): void {
   withLock(join(stateDir, '.lock'), () => {
     atomicWriteJson(join(stateDir, 'backlog.json'), snapshot.backlog);
-    atomicWriteJson(join(stateDir, 'claims.json'), snapshot.claims);
+    commitClaims(stateDir, snapshot.claims);
+    restoreProviderSessionsForAgents(stateDir, snapshot.agents.agents, new Date().toISOString());
     atomicWriteJson(join(stateDir, 'agents.json'), snapshot.agents);
   });
 }

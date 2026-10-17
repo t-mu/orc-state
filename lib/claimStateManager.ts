@@ -1,10 +1,8 @@
-import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
-import { atomicWriteJson } from './atomicWrite.ts';
-import { appendSequencedEvent } from './eventLog.ts';
+import { commitClaims } from './runStore.ts';
 import { readJson } from './stateReader.ts';
 import type { Claim, ClaimsState, FinalizationState, InputState } from '../types/claims.ts';
-import type { ActorType, OrcEventInput } from '../types/events.ts';
+import type { ActorType } from '../types/events.ts';
 
 const FINALIZATION_STATES = new Set<FinalizationState | null>([
   'awaiting_finalize',
@@ -23,13 +21,6 @@ function assertValidTimestamp(ts: string, label: string): void {
   if (!Number.isFinite(new Date(ts).getTime())) {
     throw new Error(`Invalid ${label} timestamp: ${ts}`);
   }
-}
-
-function emit(stateDir: string, event: OrcEventInput): void {
-  appendSequencedEvent(stateDir, event, {
-    fsyncPolicy: 'always',
-    lockAlreadyHeld: true,
-  });
 }
 
 export function markTaskEnvelopeSent(
@@ -57,10 +48,7 @@ export function markTaskEnvelopeSent(
     }
 
     claim.task_envelope_sent_at = at;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    if (emitEvent) {
-      emit(stateDir, {
+    commitClaims(stateDir, claims, emitEvent ? [{
         ts: at,
         event: 'task_envelope_sent',
         actor_type: actorType,
@@ -69,8 +57,7 @@ export function markTaskEnvelopeSent(
         task_ref: claim.task_ref,
         agent_id: agentId,
         payload: {},
-      });
-    }
+      }] : []);
 
     return claim;
   });
@@ -111,7 +98,7 @@ export function setRunFinalizationState(
     claim.finalization_state = finalizationState ?? null;
     claim.finalization_retry_count = Math.max(0, (claim.finalization_retry_count ?? 0) + retryCountDelta);
     claim.finalization_blocked_reason = blockedReason;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
 
     return claim;
   });
@@ -148,7 +135,7 @@ export function setRunInputState(
     claim.input_requested_at = inputState === 'awaiting_input'
       ? (requestedAt ?? new Date().toISOString())
       : null;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
 
     return claim;
   });
@@ -189,7 +176,7 @@ export function setRunSessionStartRetryState(
     claim.session_start_retry_count = retryCount;
     claim.session_start_retry_next_at = retryCount > 0 ? nextRetryAt : null;
     claim.session_start_last_error = retryCount > 0 ? lastError : null;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
 
     return claim;
   });
@@ -205,7 +192,7 @@ export function setEscalationNotified(
     if (!claim) throw new Error(`Claim not found: ${runId}`);
 
     claim.escalation_notified_at = new Date().toISOString();
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
 
     return claim;
   });
@@ -228,7 +215,7 @@ export function setPrRef(
     }
 
     claim.pr_ref = prRef;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
 
     return claim;
   });
@@ -249,7 +236,7 @@ export function setPrCreatedAt(
     assertValidTimestamp(createdAt, 'pr_created_at');
 
     claim.pr_created_at = createdAt;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
 
     return claim;
   });

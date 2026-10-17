@@ -2,11 +2,10 @@ import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
 import { INPUT_WAIT_TIMEOUT_MS } from './constants.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
-import { appendSequencedEvent } from './eventLog.ts';
+import { commitClaims } from './runStore.ts';
 import { readJson, findTask } from './stateReader.ts';
 import type { Claim, ClaimsState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
-import type { OrcEventInput } from '../types/events.ts';
 
 const MAX_ATTEMPTS = 5;
 const BACKOFF_BASE_MS = 30_000;
@@ -22,13 +21,6 @@ function resetClaimVolatileFields(claim: Claim): void {
   claim.session_start_retry_count = 0;
   claim.session_start_retry_next_at = null;
   claim.session_start_last_error = null;
-}
-
-function emit(stateDir: string, event: OrcEventInput): void {
-  appendSequencedEvent(stateDir, event, {
-    fsyncPolicy: 'always',
-    lockAlreadyHeld: true,
-  });
 }
 
 function _expireLeasesCore(
@@ -79,15 +71,12 @@ function _expireLeasesCore(
   }
 
   if (expired.length > 0) {
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-    for (const { run_id, task_ref, code } of expired) {
-      emit(stateDir, {
+    commitClaims(stateDir, claims, expired.map(({ run_id, task_ref, code }) => ({
         ts: now.toISOString(), event: 'claim_expired',
         actor_type: 'coordinator', actor_id: actorId,
         run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code },
-      });
-    }
+      })));
+    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
   }
 
   return expired;

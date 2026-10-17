@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { withLock, lockPath } from './lock.ts';
 import { DEFAULT_LEASE_MS } from './constants.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
-import { appendSequencedEvent } from './eventLog.ts';
+import { commitClaims } from './runStore.ts';
 import { readJson, findTask } from './stateReader.ts';
 import type { ClaimsState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
@@ -37,13 +37,6 @@ function makeRunId(): string {
   const ts   = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
   const rand = Math.random().toString(16).slice(2, 6);
   return `run-${ts}-${rand}`;
-}
-
-function emit(stateDir: string, event: OrcEventInput): void {
-  appendSequencedEvent(stateDir, event, {
-    fsyncPolicy: 'always',
-    lockAlreadyHeld: true,
-  });
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -88,7 +81,6 @@ export function claimTask(
       : undefined;
 
     task.status = 'claimed';
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
 
     claims.claims.push({
       run_id, task_ref: taskRef, agent_id: agentId,
@@ -100,14 +92,13 @@ export function claimTask(
       session_start_retry_count: 0, session_start_retry_next_at: null, session_start_last_error: null,
       ...(taskSpecSnapshot ? { task_spec_snapshot: taskSpecSnapshot } : {}),
     });
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    emit(stateDir, {
+    commitClaims(stateDir, claims, [{
       ts: now.toISOString(), event: 'claim_created',
       actor_type: 'agent', actor_id: agentId,
       run_id, task_ref: taskRef, agent_id: agentId,
       payload: { lease_expires_at },
-    });
+    }]);
+    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
 
     return { run_id, lease_expires_at };
   });
@@ -140,19 +131,16 @@ export function startRun(
     claim.state = 'in_progress';
     claim.started_at = at;
     resetClaimVolatileFields(claim);
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
     const task    = findTask(backlog, claim.task_ref);
-    if (task) { task.status = 'in_progress'; atomicWriteJson(join(stateDir, 'backlog.json'), backlog); }
+    if (task) task.status = 'in_progress';
 
-    if (emitEvent) {
-      emit(stateDir, {
+    commitClaims(stateDir, claims, emitEvent ? [{
         ts: at, event: 'run_started',
         actor_type: actorType, actor_id: actorId ?? agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
-      });
-    }
+      }] : []);
+    if (task) atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
   });
 }
 
@@ -186,16 +174,12 @@ export function heartbeat(
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
     claim.last_heartbeat_at = at;
     claim.lease_expires_at  = lease_expires_at;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
-    if (emitEvent) {
-      emit(stateDir, {
+    commitClaims(stateDir, claims, emitEvent ? [{
         ts: at, event: 'heartbeat',
         actor_type: 'agent', actor_id: agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
         payload: { lease_expires_at },
-      });
-    }
+      }] : []);
 
     return { lease_expires_at };
   });
@@ -219,7 +203,7 @@ export function renewLeaseOnly(
     const now = new Date();
     if (claim.lease_expires_at && new Date(claim.lease_expires_at) < now) return; // already expired
     claim.lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
+    commitClaims(stateDir, claims);
   });
 }
 
@@ -246,6 +230,7 @@ export function finishRun(
     if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
 
     assertValidTimestamp(at, 'finishRun');
+    if (claim.state === 'done' || claim.state === 'failed') return;
     claim.state       = success ? 'done' : 'failed';
     claim.finished_at = at;
     if (!success && failureReason) claim.failure_reason = failureReason;
@@ -253,8 +238,6 @@ export function finishRun(
     claim.finalization_state = null;
     claim.finalization_retry_count = 0;
     claim.finalization_blocked_reason = null;
-    atomicWriteJson(join(stateDir, 'claims.json'), claims);
-
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
     const task    = findTask(backlog, claim.task_ref);
     if (task) {
@@ -283,19 +266,19 @@ export function finishRun(
           task.status = 'todo';
         }
       }
-      atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
     }
 
+    const events: OrcEventInput[] = [];
     if (emitEvent) {
       if (success) {
-        emit(stateDir, {
+        events.push({
           ts: at, event: 'run_finished',
           actor_type: 'agent', actor_id: agentId,
           run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
           payload: {},
         });
       } else {
-        emit(stateDir, {
+        events.push({
           ts: at, event: 'run_failed',
           actor_type: 'agent', actor_id: agentId,
           run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
@@ -303,5 +286,7 @@ export function finishRun(
         });
       }
     }
+    commitClaims(stateDir, claims, events);
+    if (task) atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
   });
 }

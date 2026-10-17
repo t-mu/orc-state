@@ -7,12 +7,14 @@ import type { Agent, AgentsState, AgentRole, Provider, DispatchMode } from '../t
 import { AGENT_ID_RE, AGENT_ROLES } from './constants.ts';
 import { logger } from './logger.ts';
 import { nextAvailableAgentName } from './agentNames.ts';
+import { closeProviderSessionsForAgent, withAuthoritativeAgentSessions } from './runStore.ts';
 
 const VALID_ROLES = new Set<AgentRole>(AGENT_ROLES as AgentRole[]);
 
 function readAgentsFile(stateDir: string): AgentsState {
   try {
-    return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')) as AgentsState;
+    return withAuthoritativeAgentSessions(stateDir,
+      JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')) as AgentsState);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       logger.error('[agentRegistry] unexpected error reading agents.json:', err);
@@ -113,6 +115,10 @@ export function updateAgentRuntime(stateDir: string, agentId: string, updates: P
     ) as Partial<Agent>;
     Object.assign(file.agents[idx], filtered);
 
+    if (filtered.session_handle === null || filtered.status === 'offline' || filtered.status === 'dead') {
+      closeProviderSessionsForAgent(stateDir, agentId, new Date().toISOString());
+    }
+
     atomicWriteJson(join(stateDir, 'agents.json'), file);
   });
 }
@@ -153,6 +159,7 @@ export function removeAgent(stateDir: string, agentId: string): void {
   withLock(lockPath(stateDir), () => {
     const file = readAgentsFile(stateDir);
     file.agents = file.agents.filter((a) => a.agent_id !== agentId);
+    closeProviderSessionsForAgent(stateDir, agentId, new Date().toISOString());
     atomicWriteJson(join(stateDir, 'agents.json'), file);
   });
 }

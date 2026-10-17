@@ -3,13 +3,12 @@ import { randomUUID } from 'node:crypto';
 
 import { appendSequencedEvent, readEventsSince } from './eventLog.ts';
 import { validateProgressCommandInput } from './progressValidation.ts';
-import { startRun } from './claimManager.ts';
+import { finishRun, startRun } from './claimManager.ts';
 import { STATE_DIR, EVENTS_FILE } from './paths.ts';
 import { readClaims } from './stateReader.ts';
 import { INPUT_REQUEST_HEARTBEAT_INTERVAL_MS } from './constants.ts';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from './inputRequestConfig.ts';
 import type { Claim } from '../types/claims.ts';
-import type { FailurePolicy } from '../types/events.ts';
 import { logger } from './logger.ts';
 
 const INPUT_REQUEST_TIMEOUT_GRACE_MS = 250;
@@ -37,7 +36,7 @@ export function executeRunStart(runId: string, agentId: string): void {
     return;
   }
 
-  const { claim: validatedClaim } = validateProgressCommandInput({
+  validateProgressCommandInput({
     event: 'run_started',
     runId,
     agentId,
@@ -47,31 +46,14 @@ export function executeRunStart(runId: string, agentId: string): void {
   }, claim);
 
   const at = new Date().toISOString();
-  appendSequencedEvent(STATE_DIR, {
-    ts: at,
-    event: 'run_started',
-    actor_type: 'agent',
-    actor_id: agentId,
-    run_id: runId,
-    task_ref: validatedClaim.task_ref,
-    agent_id: agentId,
-    payload: {},
-  }, { lockStrategy: 'none' });
-
-  // Update claims.json synchronously so enforceRunStartLifecycle sees in_progress
-  // immediately, without waiting for the coordinator's event polling cycle (~30 s).
-  try {
-    startRun(STATE_DIR, runId, agentId, { emitEvent: false, at });
-  } catch {
-    // Ignore: coordinator may have already transitioned the claim via event processing.
-  }
+  startRun(STATE_DIR, runId, agentId, { at });
 
   console.log(`run_started: ${runId} (${agentId})`);
 }
 
 export function executeRunFail(runId: string, agentId: string, reason: string, code: string, policy: string): void {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressCommandInput({
+  validateProgressCommandInput({
     event: 'run_failed',
     runId,
     agentId,
@@ -80,26 +62,15 @@ export function executeRunFail(runId: string, agentId: string, reason: string, c
     policy,
   }, claim);
 
-  appendSequencedEvent(STATE_DIR, {
-    ts: new Date().toISOString(),
-    event: 'run_failed',
-    actor_type: 'agent',
-    actor_id: agentId,
-    run_id: runId,
-    task_ref: validatedClaim.task_ref,
-    agent_id: agentId,
-    payload: {
-      reason,
-      code,
-      policy: policy as FailurePolicy,
-    },
-  }, { lockStrategy: 'none' });
+  finishRun(STATE_DIR, runId, agentId, {
+    success: false, failureReason: reason, failureCode: code, policy, at: new Date().toISOString(),
+  });
   console.log(`run_failed: ${runId} (${agentId}) reason=${reason}`);
 }
 
 export function executeRunFinish(runId: string, agentId: string): void {
   const claim = loadClaim(runId);
-  const { claim: validatedClaim } = validateProgressCommandInput({
+  validateProgressCommandInput({
     event: 'run_finished',
     runId,
     agentId,
@@ -108,16 +79,7 @@ export function executeRunFinish(runId: string, agentId: string): void {
     policy: null,
   }, claim);
 
-  appendSequencedEvent(STATE_DIR, {
-    ts: new Date().toISOString(),
-    event: 'run_finished',
-    actor_type: 'agent',
-    actor_id: agentId,
-    run_id: runId,
-    task_ref: validatedClaim.task_ref,
-    agent_id: agentId,
-    payload: {},
-  }, { lockStrategy: 'none' });
+  finishRun(STATE_DIR, runId, agentId, { success: true, at: new Date().toISOString() });
   console.log(`run_finished: ${runId} (${agentId})`);
 }
 
@@ -268,20 +230,12 @@ export async function executeRunInputRequest(
   const shouldEmitTimeoutFailure = isActiveRunClaim(currentClaim, agentId);
 
   if (shouldEmitTimeoutFailure) {
-    appendSequencedEvent(STATE_DIR, {
-      ts: new Date().toISOString(),
-      event: 'run_failed',
-      actor_type: 'agent',
-      actor_id: agentId,
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      payload: {
-        reason: 'input_request_timeout',
-        code: 'ERR_INPUT_REQUEST_TIMEOUT',
-        policy: 'requeue' as FailurePolicy,
-      },
-    }, { lockStrategy: 'none' });
+    finishRun(STATE_DIR, runId, agentId, {
+      success: false,
+      failureReason: 'input_request_timeout',
+      failureCode: 'ERR_INPUT_REQUEST_TIMEOUT',
+      policy: 'requeue',
+    });
   }
   logger.error(`Timed out waiting for input_response for run ${runId} after ${timeoutMs}ms`);
   process.exit(1);

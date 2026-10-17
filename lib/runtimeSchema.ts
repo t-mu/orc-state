@@ -2,11 +2,11 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
-export const RUNTIME_SCHEMA_VERSION = 1;
+export const RUNTIME_SCHEMA_VERSION = 2;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
-  'input_requests', 'offsets', 'control_leases',
+  'input_requests', 'offsets', 'control_leases', 'runtime_cutovers',
 ] as const;
 
 /** A zero-version database is the legacy event-only store. */
@@ -21,23 +21,17 @@ export function assertSupportedRuntimeSchemaVersion(db: Database.Database): void
 export function migrateRuntimeSchema(db: Database.Database): void {
   db.pragma('foreign_keys = ON');
   assertSupportedRuntimeSchemaVersion(db);
-  const currentVersion = db.pragma('user_version', { simple: true }) as number;
+  let currentVersion = db.pragma('user_version', { simple: true }) as number;
   if (currentVersion === RUNTIME_SCHEMA_VERSION) {
     const health = inspectRuntimeSchemaDb(db);
     if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
     return;
   }
-  db.transaction(() => {
-    // Recheck after taking the write lock: another process may have migrated it.
-    assertSupportedRuntimeSchemaVersion(db);
-    const version = db.pragma('user_version', { simple: true }) as number;
-    if (version === RUNTIME_SCHEMA_VERSION) {
-      const health = inspectRuntimeSchemaDb(db);
-      if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
-      return;
-    }
-
-    db.exec(`
+  if (currentVersion === 0) {
+    db.transaction(() => {
+      assertSupportedRuntimeSchemaVersion(db);
+      if ((db.pragma('user_version', { simple: true }) as number) !== 0) return;
+      db.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
@@ -118,8 +112,41 @@ export function migrateRuntimeSchema(db: Database.Database): void {
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (1, 'initial_operational_tables', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
     `);
-    db.pragma(`user_version = ${RUNTIME_SCHEMA_VERSION}`);
-  }).immediate();
+      db.pragma('user_version = 1');
+    }).immediate();
+    currentVersion = db.pragma('user_version', { simple: true }) as number;
+  }
+  if (currentVersion === 1) {
+    db.transaction(() => {
+      assertSupportedRuntimeSchemaVersion(db);
+      if ((db.pragma('user_version', { simple: true }) as number) !== 1) return;
+      db.exec(`
+        ALTER TABLE runs ADD COLUMN claim_json TEXT;
+        DROP TABLE sessions;
+        CREATE TABLE sessions (
+          session_id TEXT PRIMARY KEY,
+          run_id TEXT REFERENCES runs(run_id) ON DELETE SET NULL,
+          agent_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          state TEXT NOT NULL,
+          provider_ref TEXT,
+          started_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX sessions_one_running_agent_idx ON sessions(agent_id)
+          WHERE state = 'running';
+        CREATE TABLE runtime_cutovers (
+          name TEXT PRIMARY KEY,
+          imported_at TEXT NOT NULL
+        );
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (2, 'run_authority_cutover', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 2');
+    }).immediate();
+  }
+  const health = inspectRuntimeSchemaDb(db);
+  if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
 }
 
 export function inspectRuntimeSchema(stateDir: string): { ok: boolean; version: number | null; messages: string[] } {
@@ -146,8 +173,10 @@ function inspectRuntimeSchemaDb(db: Database.Database): { ok: boolean; version: 
     const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
     for (const table of OPERATIONAL_TABLES) if (!tables.has(table)) messages.push(`missing table ${table}`);
     if (tables.has('schema_migrations')) {
-      const row = db.prepare('SELECT name FROM schema_migrations WHERE version = ?').get(RUNTIME_SCHEMA_VERSION) as { name: string } | undefined;
-      if (row?.name !== 'initial_operational_tables') messages.push(`missing migration record ${RUNTIME_SCHEMA_VERSION}`);
+      const rows = db.prepare('SELECT version, name FROM schema_migrations').all() as Array<{ version: number; name: string }>;
+      const byVersion = new Map(rows.map((row) => [row.version, row.name]));
+      if (byVersion.get(1) !== 'initial_operational_tables') messages.push('missing migration record 1');
+      if (byVersion.get(2) !== 'run_authority_cutover') messages.push('missing migration record 2');
     }
     const violations = db.pragma('foreign_key_check') as unknown[];
     if (violations.length > 0) messages.push(`${violations.length} foreign key violation(s)`);
