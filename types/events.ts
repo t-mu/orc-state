@@ -148,6 +148,26 @@ export interface RunCancelledEvent extends BaseEvent {
   payload?: Record<string, unknown>;
 }
 
+export type CommandEventName =
+  | 'command_queued'
+  | 'command_dispatching'
+  | 'command_send_started'
+  | 'command_sent'
+  | 'command_accepted'
+  | 'command_running'
+  | 'command_completed'
+  | 'command_failed'
+  | 'command_cancelled'
+  | 'command_outcome_unknown';
+
+export interface CommandLifecycleEvent extends BaseEvent {
+  event: CommandEventName;
+  run_id: string;
+  task_ref: string;
+  agent_id: string;
+  payload: { command_id: string; state: string; [key: string]: unknown };
+}
+
 // ── Phase events ─────────────────────────────────────────────────────────────
 
 export interface PhaseStartedEvent extends BaseEvent {
@@ -339,6 +359,7 @@ export type OrcEvent =
   | RunFinishedEvent
   | RunFailedEvent
   | RunCancelledEvent
+  | CommandLifecycleEvent
   | PhaseStartedEvent
   | PhaseFinishedEvent
   | BlockedEvent
