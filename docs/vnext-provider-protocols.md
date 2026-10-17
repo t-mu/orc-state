@@ -100,15 +100,19 @@ leases; those are terminal broker requirements for a later task.
 
 ## Host-to-container control transport
 
-The actual host Docker implementation could not be exercised from this dev
-container because it has no Docker CLI or host daemon access. No claim about
-host-loopback reachability, socket bind behavior, or authentication is possible
-from this environment. The transport choice remains open.
+This agent ran inside the existing `devbox` container. Its
+`docker/dev/docker-compose.yml` service publishes no ports, and this container
+has no Docker CLI or host daemon access. A server started here alone cannot
+prove that a request from the host reaches a host-loopback published port.
+No claim about host-loopback reachability, socket bind behavior, or
+authentication is possible from this environment. The transport choice
+remains open.
 
 On the actual host, run a disposable container without mounting host home or
-the Docker socket. A candidate loopback test is shown below; use a free host
-port and stop the container after testing. The server must bind to the
-container interface (`0.0.0.0`); the published port binds only to host loopback.
+the Docker socket. This probes the host's Docker port-publishing behavior; it
+does not test the current `devbox` container or a future project container.
+Use a free host port and stop the container after testing. The server must bind
+to the container interface (`0.0.0.0`); the published port binds only to host loopback.
 Confirm a host request succeeds and that a request to the host's non-loopback
 address fails before choosing TCP. Then repeat with a scoped authentication
 token and verify missing/wrong tokens are rejected. A Unix socket needs a
@@ -123,9 +127,10 @@ curl --fail --silent http://127.0.0.1:18765/
 ```
 
 The example only tests connectivity. It is not an authenticated control
-server, and it must not be used as the final API design. Unix socket versus
-authenticated loopback TCP cannot be decided until the actual host experiment
-and rejection tests are recorded.
+server, and it must not be used as the final API design. The final project
+container needs its own published-port and authentication checks on the host.
+Unix socket versus authenticated loopback TCP cannot be decided until the
+actual host experiment and rejection tests are recorded.
 
 ## Decision and remaining gates
 
