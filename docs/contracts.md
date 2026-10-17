@@ -25,6 +25,9 @@ Auxiliary runtime files (not orchestrator state):
 |------|---------|
 | `pty-pids/<agent_id>.pid` | Cross-process heartbeat probing for PTY sessions |
 | `pty-logs/<agent_id>.log` | PTY output capture for `orc attach` |
+| `control.json` | Control API endpoint descriptor (protocol version, transport, socket path, daemon PID) |
+| `control.token` | Control API bearer token, mode `0600`, rotated on each daemon start |
+| `control.sock` | Control API Unix socket, mode `0600` (under the OS temp dir when the state path is too long) |
 
 ### Concurrency model
 
@@ -519,6 +522,44 @@ agent's notification polling. These are:
 Events can be queried via `orc events-tail` (CLI) or `query_events` (MCP tool)
 with filters on `run_id`, `agent_id`, `event_type`, `after_seq`, and free-text
 search. Results are capped at 500 per query.
+
+---
+
+## Local Control API
+
+The coordinator serves a versioned control API while it runs (disable with
+`ORC_CONTROL_API=off`). Legacy CLI and MCP paths keep reading and writing state
+directly during migration; the API is additive.
+
+**Transport.** HTTP/JSON over the Unix socket named in `control.json`. Host to
+container transport is still open (Task 195); the descriptor's `transport` field
+lets a later transport be added without changing the protocol.
+
+**Every request** sends `x-orc-protocol: 1` and `Authorization: Bearer <control.token>`.
+A missing or unsupported version returns `unsupported_protocol_version`; a missing
+or wrong token returns `401 unauthenticated`. Responses are
+`{ protocol_version, ok: true, result }` or `{ protocol_version, ok: false, error: { code, message } }`
+with `code` in `unsupported_protocol_version | unauthenticated | forbidden | not_found | conflict | bad_request | internal`.
+
+**Mutations** also send `x-orc-session: <session_id>`, the caller's running
+provider session ID from the `sessions` table. Actor and recipient names in the
+request body are never trusted. Commands go through the durable command queue,
+which enforces run scope: a worker may only address its own run; the master may
+address any active run, but only that run's recipient session.
+
+| Method | Path | Result |
+|--------|------|--------|
+| `GET` | `/v1/snapshot` | `{ cursor, generated_at, runs }`; `runs` and `cursor` come from one SQLite read transaction |
+| `GET` | `/v1/events?after=<seq>&limit=<n>` | `{ events: [{ seq, event }], cursor }` (`limit` 1-1000) |
+| `GET` | `/v1/events/stream?after=<seq>` | NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
+| `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |
+| `POST` | `/v1/commands/<id>/ack` | Recipient ACK `{ state: accepted\|running\|completed\|failed }` -> `{ command }` |
+
+**Snapshot then subscribe.** Read `/v1/snapshot`, then stream from
+`after=cursor`. Every event committed after the snapshot has `seq > cursor`. To
+reconnect, including after a daemon restart, stream from the last `seq` you
+processed. An `event: null` frame is a corrupt or invalid row; its `seq` still
+advances the cursor.
 
 ---
 
