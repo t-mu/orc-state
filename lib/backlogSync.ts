@@ -33,16 +33,48 @@ interface SpecFrontmatter {
   status: string | null;
   review_level: string | null;
   merge_strategy: string | null;
+  depends_on: string[];
 }
 
-function parseSpecFrontmatter(text: string): SpecFrontmatter {
+function parseSpecDependencies(block: string, ref: string | null, file: string): string[] {
+  const lines = block.split('\n');
+  const headers = lines.flatMap((line, index) => /^\s*depends_on\b/.test(line) ? [index] : []);
+  if (headers.length === 0) return [];
+
+  const invalid = (reason: string): never => {
+    throw new Error(`Invalid depends_on in ${file} (${ref ?? 'unknown ref'}): ${reason}`);
+  };
+  if (headers.length > 1) invalid('duplicate field');
+
+  const headerIndex = headers[0] ?? 0;
+  const header = lines[headerIndex] ?? '';
+  if (/^depends_on:\s*\[\s*\]\s*$/.test(header)) return [];
+  if (!/^depends_on:\s*$/.test(header)) invalid('expected a YAML-style list');
+
+  const dependencies: string[] = [];
+  for (const line of lines.slice(headerIndex + 1)) {
+    if (/^[A-Za-z_][\w-]*\s*:/.test(line)) break;
+    if (line.trim() === '') continue;
+    const dependency = line.match(/^  -\s+([A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*)\s*$/)?.[1]
+      ?? invalid(`malformed list item: ${line.trim()}`);
+    if (dependency === ref) invalid('self dependency');
+    if (dependencies.includes(dependency)) invalid(`duplicate dependency: ${dependency}`);
+    dependencies.push(dependency);
+  }
+  if (dependencies.length === 0) invalid('expected at least one list item');
+  return dependencies;
+}
+
+function parseSpecFrontmatter(text: string, file: string): SpecFrontmatter {
   const block = text.match(/^---\s*\n([\s\S]*?)\n---(?:\n|$)/)?.[1] ?? '';
+  const ref = block.match(/^ref:\s+(.+)$/m)?.[1]?.trim() ?? null;
   return {
-    ref: block.match(/^ref:\s+(.+)$/m)?.[1]?.trim() ?? null,
+    ref,
     feature: (block.match(/^feature:\s+(.+)$/m)?.[1] ?? block.match(/^epic:\s+(.+)$/m)?.[1])?.trim() ?? null,
     status: block.match(/^status:\s+(.+)$/m)?.[1]?.trim() ?? null,
     review_level: block.match(/^review_level:\s+(.+)$/m)?.[1]?.trim() ?? null,
     merge_strategy: block.match(/^merge_strategy:\s+(.+)$/m)?.[1]?.trim() ?? null,
+    depends_on: parseSpecDependencies(block, ref, file),
   };
 }
 
@@ -60,6 +92,7 @@ export interface SpecEntry {
   title: string;
   review_level?: string;
   merge_strategy?: string;
+  depends_on: string[];
 }
 
 export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
@@ -71,7 +104,7 @@ export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
     .sort((a, b) => basename(a).localeCompare(basename(b), 'en', { numeric: true }))
     .flatMap((rel) => {
       const text = readFileSync(join(docsDir, rel), 'utf8');
-      const { ref, feature, status, review_level, merge_strategy } = parseSpecFrontmatter(text);
+      const { ref, feature, status, review_level, merge_strategy, depends_on } = parseSpecFrontmatter(text, rel);
       if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return [];
       return [{
         file: rel,
@@ -79,6 +112,7 @@ export function discoverActiveTaskSpecs(docsDir: string): SpecEntry[] {
         feature,
         status,
         title: parseSpecTitle(text, ref),
+        depends_on,
         ...(review_level !== null ? { review_level } : {}),
         ...(merge_strategy !== null ? { merge_strategy } : {}),
       }];
@@ -139,6 +173,7 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
           title: spec.title,
           status: spec.status as TaskStatus,
           task_type: 'implementation',
+          ...(spec.depends_on.length > 0 ? { depends_on: spec.depends_on } : {}),
           ...(spec.review_level !== undefined ? { review_level: spec.review_level as 'none' | 'light' | 'full' } : {}),
           ...(spec.merge_strategy !== undefined ? { merge_strategy: spec.merge_strategy as 'direct' | 'pr' } : {}),
         },
@@ -160,6 +195,18 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
       existingEntry.task.title = spec.title;
       changed = true;
       taskUpdated = true;
+    }
+
+    if (!ACTIVE_STATUSES.has(existingEntry.task.status)) {
+      const currentDependencies = existingEntry.task.depends_on ?? [];
+      if (
+        currentDependencies.length !== spec.depends_on.length ||
+        currentDependencies.some((dependency, index) => dependency !== spec.depends_on[index])
+      ) {
+        existingEntry.task.depends_on = spec.depends_on.length > 0 ? [...spec.depends_on] : undefined;
+        changed = true;
+        taskUpdated = true;
+      }
     }
 
     if (

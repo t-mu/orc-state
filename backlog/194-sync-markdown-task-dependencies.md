@@ -3,7 +3,7 @@ ref: vnext-control-plane/194-sync-markdown-task-dependencies
 feature: vnext-control-plane
 review_level: light
 priority: high
-status: todo
+status: done
 ---
 
 # Task 194 — Sync Markdown task dependencies into runtime state
