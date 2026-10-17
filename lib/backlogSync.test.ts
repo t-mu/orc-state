@@ -5,13 +5,14 @@ import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateH
 
 let dir: string;
 
-function writeSpec(baseDir: string, name: string, { ref, feature, status, title = 'Example Title', review_level }: { ref?: string; feature?: string; status?: string; title?: string; review_level?: string } = {}) {
+function writeSpec(baseDir: string, name: string, { ref, feature, status, title = 'Example Title', review_level, depends_on }: { ref?: string; feature?: string; status?: string; title?: string; review_level?: string; depends_on?: string[] } = {}) {
   const frontmatter = [
     '---',
     ...(ref ? [`ref: ${ref}`] : []),
     ...(feature ? [`feature: ${feature}`] : []),
     ...(status ? [`status: ${status}`] : []),
     ...(review_level !== undefined ? [`review_level: ${review_level}`] : []),
+    ...(depends_on !== undefined ? ['depends_on:', ...depends_on.map((dependency) => `  - ${dependency}`)] : []),
     '---',
     '',
   ].join('\n');
@@ -40,6 +41,66 @@ afterEach(() => {
 });
 
 describe('syncBacklogFromSpecs', () => {
+  it('imports dependencies and updates them for an inactive task', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example', feature: 'orch', status: 'todo',
+      depends_on: ['orch/task-100-first', 'other/task-101-second'],
+    });
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+    expect(readBacklog(dir).features[0].tasks[0].depends_on).toEqual(['orch/task-100-first', 'other/task-101-second']);
+
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example', feature: 'orch', status: 'todo',
+      depends_on: ['orch/task-100-first'],
+    });
+    expect(syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog')).updated_tasks).toBe(1);
+    expect(readBacklog(dir).features[0].tasks[0].depends_on).toEqual(['orch/task-100-first']);
+
+    writeSpec(dir, '155-example.md', { ref: 'orch/task-155-example', feature: 'orch', status: 'todo' });
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+    expect(readBacklog(dir).features[0].tasks[0].depends_on).toBeUndefined();
+  });
+
+  it('preserves dependencies on an active claim', async () => {
+    writeSpec(dir, '155-example.md', {
+      ref: 'orch/task-155-example', feature: 'orch', status: 'todo',
+      depends_on: ['orch/task-101-new'],
+    });
+    writeBacklog(dir, {
+      version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [{
+        ref: 'orch/task-155-example', title: 'Example Title', status: 'in_progress',
+        task_type: 'implementation', depends_on: ['orch/task-100-original'],
+      }] }],
+    });
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
+    expect(readBacklog(dir).features[0].tasks[0].depends_on).toEqual(['orch/task-100-original']);
+  });
+
+  it.each([
+    ['scalar', 'depends_on: orch/task-100-first', 'expected a YAML-style list'],
+    ['missing colon', 'depends_on\n  - orch/task-100-first', 'expected a YAML-style list'],
+    ['empty list', 'depends_on:', 'expected at least one list item'],
+    ['malformed item', 'depends_on:\n  - invalid-ref', 'malformed list item'],
+    ['self dependency', 'depends_on:\n  - orch/task-155-example', 'self dependency'],
+    ['duplicate dependency', 'depends_on:\n  - orch/task-100-first\n  - orch/task-100-first', 'duplicate dependency'],
+    ['duplicate field', 'depends_on: []\ndepends_on: []', 'duplicate field'],
+  ])('rejects %s without writing any backlog changes', async (_case, dependencyField, reason) => {
+    writeFileSync(join(dir, 'backlog', '155-example.md'),
+      `---\nref: orch/task-155-example\nfeature: orch\nstatus: todo\n${dependencyField}\n---\n\n# Task 999 — Example Title\n`);
+    writeBacklog(dir, { version: '1', features: [{ ref: 'orch', title: 'Orch', tasks: [] }] });
+    const before = readFileSync(join(dir, '.orc-state', 'backlog.json'), 'utf8');
+
+    const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
+    expect(() => syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog')))
+      .toThrow(`Invalid depends_on in 155-example.md (orch/task-155-example): ${reason}`);
+    expect(readFileSync(join(dir, '.orc-state', 'backlog.json'), 'utf8')).toBe(before);
+  });
+
   it('adds a missing task from a spec file with status todo', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
