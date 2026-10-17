@@ -1,7 +1,7 @@
 # vNext provider and terminal protocol spike
 
 Status: partial evidence, 2026-10-17. This is an opt-in local experiment, not a
-runtime integration. The Claude turn and host Docker experiment remain open.
+runtime integration. The host Docker experiment remains open.
 No token, API key, provider response text, or private transcript is recorded here.
 
 ## Environment and reproduction
@@ -61,21 +61,26 @@ the Codex CLI's ChatGPT login with app-server stdio.
 
 `claude auth status` reported a `claude.ai` Team login. The smoke launched
 `claude -p` with `--output-format stream-json --verbose`, an empty tools list,
-and a generated session ID. It received `system`, `assistant`, and `result`
-frames. The result's `subtype` was `success`, **but `is_error` was true and the
-process exited 1**. The failure was classified as authentication without
-recording the provider's error text. It therefore did not prove a successful
-subscription-backed turn; the script exits nonzero and does not attempt
-`--resume` after that failure. The login status alone is insufficient evidence
-of usable inference in this environment.
+and a generated session ID. The initial run received `system`, `assistant`,
+and `result` frames with `subtype: success`, **but `is_error: true` and exit
+code 1**. It was classified as an authentication failure without recording
+the provider's error text.
 
-The existing Claude CLI PTY adapter remains the fallback implementation path.
-This test does not establish that a CLI turn currently succeeds here. Retry the
-documented command after the local subscription session is repaired, and require
-a successful first turn and `--resume` turn before adopting structured Claude
-output. [Claude's subscription guidance](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
-describes Claude Code / Agent SDK access with plan limits; this local failure
-does not determine whether the account, service, or environment caused it.
+After the Claude session became usable, the same command was rerun on
+2026-10-17. Both the first turn and `--resume` emitted `system`, `assistant`,
+`rate_limit_event`, and `result` frames. Both returned `subtype: success`,
+`is_error: false`, and exit code 0. Stderr was present but discarded. The
+script did not record either response text. This proves a successful
+structured Claude CLI turn and session resume using the existing local login
+with API key settings removed from the child environment. The `rate_limit_event`
+frame is an observed event type; its payload and any limit value were not
+examined. A live tool approval and resume after interruption remain untested.
+
+The existing Claude CLI PTY adapter remains available while a structured
+adapter is designed and reviewed. [Claude's subscription guidance](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+describes Claude Code / Agent SDK access with plan limits. The CLI's Team
+login and successful turn support the subscription path locally, though this
+experiment cannot independently inspect provider-side billing records.
 
 ## Cross-process terminal attachment
 
@@ -135,8 +140,7 @@ actual host experiment and rejection tests are recorded.
 ## Decision and remaining gates
 
 Codex app-server stdio is a viable local structured candidate under the CLI's
-ChatGPT login. Claude structured output has not passed a successful turn or
-resume test, so keep its PTY path. tmux passed a basic cross-process
-attach/detach test with a suitable terminal type. Defer the host transport
-selection and Task 195 completion until the actual-host Docker test and a
-successful Claude subscription turn/resume are recorded.
+ChatGPT login. Claude structured output passed a local turn and resume using
+the CLI's Team login. tmux passed a basic cross-process attach/detach test
+with a suitable terminal type. Defer the host transport selection and Task
+195 completion until the actual-host Docker test is recorded.
