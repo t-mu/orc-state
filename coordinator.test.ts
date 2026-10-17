@@ -3243,6 +3243,82 @@ describe('doShutdown', () => {
     expect(mockStop).toHaveBeenCalledTimes(2);
   });
 
+  it('adopts a live tmux session on restart and leaves it running on shutdown', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running',
+        session_handle: 'tmux:orc-1', session_token: 'sess-1', provider_ref: null,
+        registered_at: new Date().toISOString(), last_heartbeat_at: new Date().toISOString(),
+      }],
+    });
+    const { initEventsDb, withEventDbTransaction, withEventDb, queryEvents } = await import('./lib/eventLog.ts');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at,
+        transport, process_pid, process_start, owner_id)
+        VALUES ('sess-1', NULL, 'orc-1', 'claude', 'running', '2026-01-01', '2026-01-01', 'tmux', 4242, 'proc:42', 'pid:1:previous')`).run();
+    });
+    const mockStop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      stop: mockStop,
+      ownsSession: vi.fn().mockReturnValue(true),
+      survivesCoordinatorExit: (handle: string) => handle.startsWith('tmux:'),
+      inspectSession: vi.fn().mockReturnValue({ transport: 'tmux', alive: true, writable: true, pid: 4242, processStart: 'proc:42' }),
+      detectInputBlock: vi.fn().mockReturnValue(null),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({ ensureRunWorktree: vi.fn() }));
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    const session = withEventDb(dir, (db) => db.prepare("SELECT state, owner_id FROM sessions WHERE session_id = 'sess-1'").get());
+    expect(session).toEqual({ state: 'running', owner_id: expect.stringMatching(new RegExp(`^pid:${process.pid}:`)) });
+    expect(queryEvents(dir, { event_type: 'session_reconciled' })).toMatchObject([{ payload: { session_id: 'sess-1', outcome: 'adopted' } }]);
+
+    await coordinator.doShutdown();
+    expect(mockStop).not.toHaveBeenCalled();
+    expect(readAgents(dir)[0]).toMatchObject({ session_handle: 'tmux:orc-1', status: 'running' });
+  });
+
+  it('marks an unwritable surviving PTY recoverable without stopping it', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running',
+        session_handle: 'pty:orc-1', session_token: 'sess-1', provider_ref: null,
+        registered_at: new Date().toISOString(), last_heartbeat_at: new Date().toISOString(),
+      }],
+    });
+    const { initEventsDb, withEventDbTransaction, withEventDb } = await import('./lib/eventLog.ts');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at,
+        transport, process_pid, process_start, owner_id)
+        VALUES ('sess-1', NULL, 'orc-1', 'claude', 'running', '2026-01-01', '2026-01-01', 'pty', 4242, 'proc:42', 'pid:1:previous')`).run();
+    });
+    const mockStop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      stop: mockStop,
+      ownsSession: vi.fn().mockReturnValue(false),
+      inspectSession: vi.fn().mockReturnValue({
+        transport: 'pty', alive: true, writable: false, pid: 4242, processStart: 'proc:42',
+        reason: 'pty is owned by another process and cannot be written',
+      }),
+      detectInputBlock: vi.fn().mockReturnValue(null),
+    }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({ ensureRunWorktree: vi.fn() }));
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    await coordinator.tick();
+
+    const session = withEventDb(dir, (db) => db.prepare("SELECT state, state_reason FROM sessions WHERE session_id = 'sess-1'").get()) as { state: string; state_reason: string };
+    expect(session.state).toBe('recoverable');
+    expect(session.state_reason).toContain('orc worker-remove');
+    expect(mockStop).not.toHaveBeenCalled();
+    expect(readAgents(dir)[0]).toMatchObject({ session_handle: 'pty:orc-1', session_token: 'sess-1' });
+  });
+
   it('releases coordinator lock only once across shutdown and exit hook', async () => {
     seedState(dir);
 

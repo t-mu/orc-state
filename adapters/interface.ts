@@ -43,6 +43,17 @@
  * ─────────────────────────────────────────────────────────────────────────
  */
 
+/** What a supervisor can learn about a session without owning it. */
+export interface SessionInspection {
+  transport: 'pty' | 'tmux';
+  alive: boolean;
+  /** True when this process can deliver input to the session. */
+  writable: boolean;
+  pid: number | null;
+  processStart: string | null;
+  reason?: string;
+}
+
 export interface AdapterInterface {
   start(agentId: string, config: Record<string, unknown>): Promise<{ session_handle: string; provider_ref: unknown }>;
   send(sessionHandle: string, text: string): Promise<string>;
@@ -94,4 +105,27 @@ export function adapterGetOutputTail(adapter: unknown, sessionHandle: string) {
 export function adapterDetectInputBlock(adapter: unknown, sessionHandle: string) {
   if (typeof (adapter as Record<string, (...args: unknown[]) => unknown>)?.detectInputBlock !== 'function') return null;
   return (adapter as Record<string, (...args: unknown[]) => unknown>).detectInputBlock(sessionHandle);
+}
+
+/**
+ * Optional capability: inspect a session's liveness, writability and process
+ * identity. Adapters without it are treated as owned when their probe passes.
+ */
+export async function adapterInspectSession(adapter: unknown, sessionHandle: string): Promise<SessionInspection | null> {
+  const inspect = (adapter as { inspectSession?: (handle: string) => SessionInspection | Promise<SessionInspection> })?.inspectSession;
+  if (typeof inspect !== 'function') return null;
+  try {
+    return await inspect.call(adapter, sessionHandle);
+  } catch (error) {
+    return { transport: 'pty', alive: false, writable: false, pid: null, processStart: null, reason: (error as Error).message };
+  }
+}
+
+/**
+ * Optional capability: sessions whose process is supervised outside the
+ * coordinator (tmux) survive a coordinator exit and must not be stopped by it.
+ */
+export function adapterSurvivesCoordinatorExit(adapter: unknown, sessionHandle: string): boolean {
+  const survives = (adapter as { survivesCoordinatorExit?: (handle: string) => boolean })?.survivesCoordinatorExit;
+  return typeof survives === 'function' ? survives.call(adapter, sessionHandle) : false;
 }

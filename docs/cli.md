@@ -278,6 +278,7 @@ Commands for digging into active runs and the event stream.
 | Command | Description |
 |---------|-------------|
 | `runs-active` | List in-progress and claimed runs with idle/age metrics. |
+| `sessions` | List supervised provider sessions with state (`running`, `recoverable`, `unknown`, `offline`), transport, PID, owner and reason. |
 | `run-info <run_id>` | Show claim state, task, worktree path, and idle time for a run. |
 | `run-expire <run_id>` | Force-expire a claim and requeue the task. |
 | `waiting-input` | List runs blocked waiting for master input. |
@@ -291,6 +292,7 @@ Commands for digging into active runs and the event stream.
 | Command | Flags |
 |---------|-------|
 | `runs-active` | `[--json]` `[--via-control]` |
+| `sessions` | `[--all]` `[--json]` |
 | `run-info` | `<run_id>` `[--json]` |
 | `events-tail` | `[--n=<N>]` `[--event=<name>]` `[--json]` |
 | `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--json]` |

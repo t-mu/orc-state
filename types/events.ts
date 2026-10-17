@@ -284,6 +284,14 @@ export interface AgentMarkedDeadEvent extends BaseEvent {
   payload: { elapsed_ms: number; [key: string]: unknown };
 }
 
+export interface SessionReconciledEvent extends BaseEvent {
+  event: 'session_reconciled';
+  agent_id: string;
+  run_id?: string;
+  task_ref?: string;
+  payload: { session_id: string; state: string; previous_state?: string; reason?: string; [key: string]: unknown };
+}
+
 export interface SessionStartFailedEvent extends BaseEvent {
   event: 'session_start_failed';
   run_id: string;
@@ -375,6 +383,7 @@ export type OrcEvent =
   | AgentOfflineEvent
   | AgentMarkedDeadEvent
   | SessionStartFailedEvent
+  | SessionReconciledEvent
   | SessionStartedEvent
   | CoordinatorStartedEvent
   | CoordinatorStoppedEvent

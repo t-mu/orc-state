@@ -93,6 +93,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
         'agent_offline',
         'agent_marked_dead',
         'session_start_failed',
+        'session_reconciled',
   ]);
 
   if (eventName && taskEvents.has(eventName)) {
@@ -125,6 +126,11 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
   ]).has(eventName)) {
     requireTaskRef(event, errors);
     requireAgentId(event, errors);
+  }
+
+  if (eventName === 'session_reconciled') {
+    requirePayloadField(event, 'session_id', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+    requirePayloadField(event, 'state', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
   }
 
   if (eventName && COMMAND_EVENTS.has(eventName)) {

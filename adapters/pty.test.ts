@@ -141,7 +141,7 @@ describe('pty adapter start()', () => {
 
     const pidPath = join(dir, 'pty-pids', 'bob.pid');
     expect(existsSync(pidPath)).toBe(true);
-    expect(readFileSync(pidPath, 'utf8')).toBe(String(ptyProcess.pid));
+    expect((JSON.parse(readFileSync(pidPath, 'utf8')) as { pid: number }).pid).toBe(ptyProcess.pid);
   });
 
   it('delivers bootstrap via ptyProcess.write() when system_prompt provided', async () => {
@@ -708,6 +708,34 @@ describe('pty adapter heartbeatProbe()', () => {
   it('never throws — returns false on malformed handle', async () => {
     const { adapter } = await makeAdapter();
     await expect(adapter.heartbeatProbe('invalid')).resolves.toBe(false);
+  });
+
+  it('rejects a PID file whose PID was reused by another process', async () => {
+    const { adapter } = await makeAdapter();
+    mkdirSync(join(dir, 'pty-pids'), { recursive: true });
+    writeFileSync(join(dir, 'pty-pids', 'bob.pid'), JSON.stringify({ pid: process.pid, start: 'proc:1' }));
+    await expect(adapter.heartbeatProbe('pty:bob')).resolves.toBe(false);
+    expect(adapter.inspectSession('pty:bob')).toMatchObject({ alive: false, writable: false, reason: 'process exited or pid was reused' });
+
+    const { processIdentity } = await import('../lib/processIdentity.ts');
+    writeFileSync(join(dir, 'pty-pids', 'bob.pid'), JSON.stringify(processIdentity(process.pid)));
+    await expect(adapter.heartbeatProbe('pty:bob')).resolves.toBe(true);
+    // Alive in another process: visible, but never reported as writable.
+    expect(adapter.inspectSession('pty:bob')).toMatchObject({ alive: true, writable: false, pid: process.pid });
+    expect(adapter.ownsSession('pty:bob')).toBe(false);
+
+    writeFileSync(join(dir, 'pty-pids', 'bob.pid'), String(process.pid));
+    await expect(adapter.heartbeatProbe('pty:bob')).resolves.toBe(true);
+  });
+
+  it('stop() never signals a PID that now belongs to an unrelated process', async () => {
+    const { adapter } = await makeAdapter();
+    mkdirSync(join(dir, 'pty-pids'), { recursive: true });
+    writeFileSync(join(dir, 'pty-pids', 'bob.pid'), JSON.stringify({ pid: process.pid, start: 'proc:1' }));
+    const killSpy = vi.spyOn(process, 'kill');
+    await adapter.stop('pty:bob');
+    expect(killSpy).not.toHaveBeenCalledWith(process.pid, 'SIGTERM');
+    expect(existsSync(join(dir, 'pty-pids', 'bob.pid'))).toBe(false);
   });
 
   it('returns false when PID file contains non-numeric content', async () => {

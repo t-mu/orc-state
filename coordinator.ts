@@ -27,7 +27,8 @@ import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseO
 import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter } from './adapters/index.ts';
-import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
+import { adapterDetectInputBlock, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
+import type { SessionInspection } from './adapters/interface.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
@@ -47,6 +48,7 @@ import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { startControlServer, type ControlServer } from './lib/controlServer.ts';
+import { SESSION_OWNER_TTL_MS, currentSessionOwnerId, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession } from './lib/sessionSupervisor.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
@@ -239,22 +241,14 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
       return { ok: false, reason: 'session unreachable' };
     }
     if (!adapterOwnsSession(adapter, agent.session_handle)) {
-      try {
-        await adapter.stop(agent.session_handle);
-      } catch {
-        // Best-effort cross-process teardown. Runtime is still cleared below.
+      // A live session this coordinator cannot write to (for example a PTY
+      // that outlived its coordinator) is never killed or redispatched here.
+      // It stays visible as recoverable until it exits or an operator stops it.
+      const reason = 'session is alive but not writable by this coordinator; stop it with orc worker-remove to relaunch';
+      if (agent.session_token && setSessionState(STATE_DIR, agent.session_token, 'recoverable', reason, { outcome: 'recoverable' })) {
+        log(`worker ${agent.agent_id} session is alive but not owned by this coordinator; marked recoverable`);
       }
-      updateAgentRuntime(STATE_DIR, agent.agent_id, {
-        status: 'idle',
-        session_handle: null,
-        provider_ref: null,
-        last_status_change_at: new Date().toISOString(),
-      });
-      agent.status = 'idle';
-      agent.session_handle = null;
-      agent.provider_ref = null;
-      log(`worker ${agent.agent_id} session is alive but not owned by this coordinator; cleared handle for recreation`);
-      return { ok: false, reason: 'session not owned by this coordinator' };
+      return { ok: false, reason: 'session recoverable: not writable by this coordinator' };
     }
     return { ok: true };
   }
@@ -1360,6 +1354,11 @@ function reloadTickState(workerPoolConfig: WorkerPoolConfig): { agents: Agent[];
 async function tick() {
   tickCount++;
   log(`tick ${tickCount}`);
+  try {
+    renewSessionOwnership(STATE_DIR, currentSessionOwnerId(), sessionOwnerTtlMs());
+  } catch (error) {
+    log(`warning: session ownership renewal failed: ${(error as Error).message}`);
+  }
 
   // 2. Autonomous dispatch.
   if (MODE !== 'autonomous') return;
@@ -2088,6 +2087,42 @@ function releaseCoordinatorLock() {
   try { unlinkSync(COORDINATOR_PID_FILE); } catch { /* already gone */ }
 }
 
+// ── Session supervision ────────────────────────────────────────────────────
+
+function sessionOwnerTtlMs(): number {
+  return Math.max(SESSION_OWNER_TTL_MS, INTERVAL_MS * 3);
+}
+
+/** Adapters without inspectSession are judged by probe and ownership alone. */
+async function inspectAgentSession(agent: Agent, session: SupervisedSession): Promise<SessionInspection | null> {
+  const adapter = getAdapter(agent.provider);
+  const inspected = await adapterInspectSession(adapter, agent.session_handle!);
+  if (inspected) return inspected;
+  const alive = await adapter.heartbeatProbe(agent.session_handle!);
+  return {
+    transport: agent.session_handle!.startsWith('tmux:') ? 'tmux' : 'pty',
+    alive, writable: alive && adapterOwnsSession(adapter, agent.session_handle!) === true,
+    pid: session.process_pid, processStart: session.process_start,
+  };
+}
+
+/** Adopt live sessions from a previous coordinator instead of killing them. */
+async function reconcileSupervisedSessions() {
+  try {
+    const results = await reconcileSessions(STATE_DIR, {
+      owner: currentSessionOwnerId(),
+      ownerTtlMs: sessionOwnerTtlMs(),
+      agents: listCoordinatorAgents(STATE_DIR),
+      inspect: inspectAgentSession,
+    });
+    for (const result of results) {
+      log(`session ${result.session_id} (${result.agent_id}): ${result.previous_state} -> ${result.state} [${result.outcome}]${result.reason ? ` — ${result.reason}` : ''}`);
+    }
+  } catch (error) {
+    log(`warning: session reconciliation failed: ${(error as Error).message}`);
+  }
+}
+
 // ── Main loop ──────────────────────────────────────────────────────────────
 
 export async function main() {
@@ -2144,6 +2179,7 @@ export async function main() {
   }
 
   reconcileState(STATE_DIR);
+  await reconcileSupervisedSessions();
   // The control API is additive during migration; legacy CLI/MCP paths keep working without it.
   if (process.env.ORC_CONTROL_API !== 'off') {
     try {
@@ -2201,7 +2237,9 @@ export async function doShutdown() {
       if (!agent.session_handle) continue;
       try {
         const adapter = getAdapter(agent.provider);
-        if (adapterOwnsSession(adapter, agent.session_handle)) {
+        if (adapterSurvivesCoordinatorExit(adapter, agent.session_handle)) {
+          log(`left session running for ${agent.agent_id}; the next coordinator will adopt it`);
+        } else if (adapterOwnsSession(adapter, agent.session_handle)) {
           await adapter.stop(agent.session_handle);
           log(`stopped session for ${agent.agent_id}`);
         }
