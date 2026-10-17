@@ -66,8 +66,7 @@ Opt-in real-provider smoke only; no CI dependency on login or paid API keys.
 ## Current blockers (2026-10-17)
 
 The sanitized local results and rerun commands are in
-`docs/vnext-provider-protocols.md`. The Claude structured turn returned
-`is_error: true` and exit code 1 despite a Team login status, so a successful
-subscription turn and resume are unproven. Docker CLI/host daemon access is
+`docs/vnext-provider-protocols.md`. A rerun proved a successful Claude turn
+and resume under the existing Team login. Docker CLI/host daemon access is
 unavailable in the dev container, so the required actual-host transport test
-has not run. Keep this task blocked until both results are recorded.
+has not run. Keep this task blocked until that result is recorded.
