@@ -38,7 +38,7 @@ function phaseCompleteStep(orcBin: string, agentId: string, sibling: boolean): s
   return [
     '  7. Signal complete phase and update the task markdown in this assigned worktree to `status: done`:',
     `       ${orcBin} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=${agentId}`,
-    '       - Edit the task spec file referenced by `task_spec_path`',
+    '       - Edit the task spec file referenced by `task_spec_worktree_path` (the pinned `task_spec_path` is read-only)',
     '       - Change its frontmatter `status:` field to `done`',
     `       - Do not call \`${orcBin} task-mark-done\` from the worker session; the coordinator marks shared runtime state done after merge`,
   ].join('\n');

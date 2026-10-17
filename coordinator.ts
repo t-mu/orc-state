@@ -31,7 +31,7 @@ import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interfac
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
 import { latestRunActivityMap, latestRunPhaseMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
-import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
+import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
@@ -40,6 +40,7 @@ import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
 import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
+import { rebuildDocumentIndex, pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly, writeSpecStatusDone } from './lib/taskCompletion.ts';
 import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
@@ -1613,7 +1614,11 @@ async function executeDispatchPlan(
       const adapter = getAdapter(provider);
 
       // Claim the task before session work so capacity is held
-      const claimed = claimTask(STATE_DIR, taskRef, agentId, { leaseDurationMs: LEASE_CONFIG.default_ms });
+      const claimed = claimTask(STATE_DIR, taskRef, agentId, {
+        leaseDurationMs: LEASE_CONFIG.default_ms,
+        docsDir: BACKLOG_DOCS_DIR,
+        requireSpec: true,
+      });
       runId = claimed.run_id;
       log(`claimed ${taskRef} for ${agentId} (${runId})`);
 
@@ -1706,21 +1711,28 @@ async function executeDispatchPlan(
 }
 
 export function buildTaskEnvelope(taskRef: string, runId: string, agentId: string) {
-  const taskSpec = readTaskSpecSections(taskRef);
+  const claim = (readJson(STATE_DIR, 'claims.json') as { claims: Claim[] }).claims.find((entry) => entry.run_id === runId);
+  const snapshot = claim?.task_spec_snapshot;
+  if (snapshot) verifyRunTaskSnapshot(snapshot);
+  const taskSpec = snapshot ? null : readTaskSpecSections(taskRef);
   const runWorktree = getRunWorktree(STATE_DIR, runId);
-  const taskSpecPath = (() => {
-    if (!taskSpec.source_path) return '(task spec not found)';
-    if (!runWorktree?.worktree_path) return taskSpec.source_path;
-    const repoRelativePath = isAbsolute(taskSpec.source_path)
-      ? relative(REPO_ROOT, taskSpec.source_path)
-      : taskSpec.source_path;
+  const taskSpecWorktreePath = (() => {
+    const sourcePath = snapshot?.source_path ?? taskSpec?.source_path;
+    if (!sourcePath) return '(task spec not found)';
+    if (!runWorktree?.worktree_path) return sourcePath;
+    const repoRelativePath = isAbsolute(sourcePath)
+      ? relative(REPO_ROOT, sourcePath)
+      : sourcePath;
     return join(runWorktree.worktree_path, repoRelativePath);
   })();
   return renderTemplate('task-envelope-v2.txt', {
     task_ref: taskRef,
     run_id: runId,
     agent_id: agentId,
-    task_spec_path: taskSpecPath,
+    task_spec_path: snapshot?.snapshot_path ?? taskSpecWorktreePath,
+    task_spec_worktree_path: taskSpecWorktreePath,
+    task_spec_sha256: snapshot?.sha256 ?? '(not pinned)',
+    task_spec_revision_status: snapshot ? taskSnapshotStatus(snapshot) : 'unknown',
     assigned_worktree: runWorktree?.worktree_path ?? join(WORKTREES_DIR, runId),
     orc_bin: resolveOrcBinSh(REPO_ROOT),
   });
@@ -2103,6 +2115,8 @@ export async function main() {
 
   try {
     syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);
+    rebuildDocumentIndex(STATE_DIR, BACKLOG_DOCS_DIR, PLANS_DIR);
+    pruneOrphanRunTaskSnapshots(STATE_DIR);
   } catch (error) {
     log(`backlog sync from specs skipped: ${(error as Error).message}`);
   }

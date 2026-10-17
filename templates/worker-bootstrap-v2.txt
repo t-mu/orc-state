@@ -54,7 +54,7 @@ WORKTREE RULE
 
 The coordinator starts every worker session at the repo root.
 Shared orchestrator state lives under the main repo root, and the worker environment is preconfigured to reach it.
-The TASK_START payload contains the assigned worktree path in the `assigned_worktree` field and the markdown spec path in `task_spec_path`.
+The TASK_START payload contains the assigned worktree path in `assigned_worktree`, the pinned read-only Markdown revision in `task_spec_path`, and the editable worktree copy in `task_spec_worktree_path` (attached layout only). `task_spec_sha256` identifies the pinned bytes; `task_spec_revision_status` reports whether the source still matches at handoff.
 Do not create a second worktree for the same run unless the payload explicitly instructs you to recover a missing one.
 
 When a TASK_START block arrives:

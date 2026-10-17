@@ -2,5 +2,8 @@ TASK_START v4
 task_ref: {{task_ref}}
 run_id: {{run_id}}
 task_spec_path: {{task_spec_path}}
+task_spec_worktree_path: {{task_spec_worktree_path}}
+task_spec_sha256: {{task_spec_sha256}}
+task_spec_revision_status: {{task_spec_revision_status}}
 assigned_worktree: {{assigned_worktree}}
 TASK_END

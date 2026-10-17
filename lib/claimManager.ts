@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { withLock, lockPath } from './lock.ts';
 import { DEFAULT_LEASE_MS } from './constants.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
@@ -8,6 +9,7 @@ import type { ClaimsState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
+import { writeRunTaskSnapshot } from './documentIndex.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 
@@ -54,7 +56,10 @@ export function claimTask(
   stateDir: string,
   taskRef: string,
   agentId: string,
-  { leaseDurationMs = DEFAULT_LEASE_MS }: { leaseDurationMs?: number } = {},
+  { leaseDurationMs = DEFAULT_LEASE_MS,
+    docsDir = join(basename(stateDir) === '.orc-state' ? join(stateDir, '..') : stateDir, 'backlog'),
+    requireSpec = false }:
+    { leaseDurationMs?: number; docsDir?: string; requireSpec?: boolean } = {},
 ): { run_id: string; lease_expires_at: string } {
   return withLock(lockPath(stateDir), () => {
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
@@ -75,6 +80,12 @@ export function claimTask(
     const run_id = makeRunId();
     const now    = new Date();
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
+    // Older in-memory test states have no Markdown directory. Real orchestration
+    // roots do; a missing or invalid spec there must block a new claim.
+    if (requireSpec && !existsSync(docsDir)) throw new Error(`Markdown spec directory not found: ${docsDir}`);
+    const taskSpecSnapshot = existsSync(docsDir)
+      ? writeRunTaskSnapshot(stateDir, run_id, taskRef, docsDir)
+      : undefined;
 
     task.status = 'claimed';
     atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
@@ -87,6 +98,7 @@ export function claimTask(
       finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
       input_state: null, input_requested_at: null,
       session_start_retry_count: 0, session_start_retry_next_at: null, session_start_last_error: null,
+      ...(taskSpecSnapshot ? { task_spec_snapshot: taskSpecSnapshot } : {}),
     });
     atomicWriteJson(join(stateDir, 'claims.json'), claims);
 

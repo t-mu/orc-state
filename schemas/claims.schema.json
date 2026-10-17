@@ -128,6 +128,16 @@
         "pr_created_at": {
           "type": ["string", "null"],
           "format": "date-time"
+        },
+        "task_spec_snapshot": {
+          "type": "object",
+          "required": ["source_path", "snapshot_path", "sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "source_path": { "type": "string", "minLength": 1 },
+            "snapshot_path": { "type": "string", "minLength": 1 },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
         }
       }
     }
