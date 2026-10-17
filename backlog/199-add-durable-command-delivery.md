@@ -3,7 +3,7 @@ ref: vnext-control-plane/199-add-durable-command-delivery
 feature: vnext-control-plane
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - vnext-control-plane/197-add-versioned-runtime-schema
 ---

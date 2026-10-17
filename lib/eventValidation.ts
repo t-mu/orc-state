@@ -10,6 +10,11 @@ const EVENT_SCHEMA = JSON.parse(readFileSync(join(SCHEMA_DIR, 'event.schema.json
 const ajv = createOrchestratorAjv();
 const validateSchema = ajv.compile(EVENT_SCHEMA);
 const FAILURE_POLICY_SET = new Set(['requeue', 'block']);
+const COMMAND_EVENTS = new Set([
+  'command_queued', 'command_dispatching', 'command_send_started', 'command_sent',
+  'command_accepted', 'command_running', 'command_completed', 'command_failed',
+  'command_cancelled', 'command_outcome_unknown',
+]);
 
 function requireTaskRef(event: unknown, errors: string[]): void {
   const e = event as { task_ref?: unknown } | null;
@@ -79,6 +84,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'input_response',
     'worker_needs_attention',
     'remediation_applied',
+    ...COMMAND_EVENTS,
   ]);
   const agentEvents = new Set([
         'agent_registered',
@@ -115,9 +121,15 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'input_provided',
     'worker_needs_attention',
     'remediation_applied',
+    ...COMMAND_EVENTS,
   ]).has(eventName)) {
     requireTaskRef(event, errors);
     requireAgentId(event, errors);
+  }
+
+  if (eventName && COMMAND_EVENTS.has(eventName)) {
+    requirePayloadField(event, 'command_id', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+    requirePayloadField(event, 'state', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
   }
 
   if (eventName && new Set(['input_requested', 'input_response']).has(eventName)) {

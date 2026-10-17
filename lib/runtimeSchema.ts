@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
-export const RUNTIME_SCHEMA_VERSION = 2;
+export const RUNTIME_SCHEMA_VERSION = 3;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
@@ -154,6 +154,28 @@ export function migrateRuntimeSchema(db: Database.Database): void {
       db.pragma('foreign_keys = ON');
     }
   }
+  currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (currentVersion === 2) {
+    db.transaction(() => {
+      if ((db.pragma('user_version', { simple: true }) as number) !== 2) return;
+      db.exec(`
+        ALTER TABLE commands ADD COLUMN actor_session_id TEXT REFERENCES sessions(session_id) ON DELETE SET NULL;
+        ALTER TABLE commands ADD COLUMN side_effecting INTEGER NOT NULL DEFAULT 1 CHECK (side_effecting IN (0, 1));
+        ALTER TABLE commands ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0);
+        ALTER TABLE commands ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1);
+        ALTER TABLE commands ADD COLUMN next_attempt_at TEXT;
+        ALTER TABLE commands ADD COLUMN deadline_at TEXT;
+        ALTER TABLE commands ADD COLUMN dispatch_started_at TEXT;
+        ALTER TABLE commands ADD COLUMN send_started_at TEXT;
+        ALTER TABLE commands ADD COLUMN terminal_at TEXT;
+        ALTER TABLE commands ADD COLUMN last_error TEXT;
+        CREATE INDEX commands_ready_idx ON commands(state, next_attempt_at, created_at);
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (3, 'durable_command_delivery', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 3');
+    }).immediate();
+  }
   const health = inspectRuntimeSchemaDb(db);
   if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
 }
@@ -186,6 +208,7 @@ function inspectRuntimeSchemaDb(db: Database.Database): { ok: boolean; version: 
       const byVersion = new Map(rows.map((row) => [row.version, row.name]));
       if (byVersion.get(1) !== 'initial_operational_tables') messages.push('missing migration record 1');
       if (byVersion.get(2) !== 'run_authority_cutover') messages.push('missing migration record 2');
+      if (byVersion.get(3) !== 'durable_command_delivery') messages.push('missing migration record 3');
     }
     const violations = db.pragma('foreign_key_check') as unknown[];
     if (violations.length > 0) messages.push(`${violations.length} foreign key violation(s)`);
