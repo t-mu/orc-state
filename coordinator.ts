@@ -46,6 +46,7 @@ import { markTaskDoneRuntimeOnly, writeSpecStatusDone } from './lib/taskCompleti
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
+import { startControlServer, type ControlServer } from './lib/controlServer.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
@@ -111,6 +112,7 @@ let ticking = false;
 let timerHandle: ReturnType<typeof setInterval> | null = null;
 let shutdownStarted = false;
 let coordinatorLockReleased = false;
+let controlServer: ControlServer | null = null;
 const latestActivityByRun: Map<string, string> = new Map();
 const latestPhaseByRun: Map<string, string> = new Map();
 const latestPhaseAtByRun: Map<string, string> = new Map();
@@ -2142,6 +2144,15 @@ export async function main() {
   }
 
   reconcileState(STATE_DIR);
+  // The control API is additive during migration; legacy CLI/MCP paths keep working without it.
+  if (process.env.ORC_CONTROL_API !== 'off') {
+    try {
+      controlServer = await startControlServer(STATE_DIR);
+      log(`control API listening on ${controlServer.endpoint.path}`);
+    } catch (error) {
+      log(`warning: control API unavailable: ${(error as Error).message}`);
+    }
+  }
   emit({ event: 'coordinator_started', actor_type: 'coordinator', actor_id: 'coordinator', payload: { mode: MODE } });
 
   // First tick immediately.
@@ -2161,6 +2172,8 @@ export async function doShutdown() {
 
   log('shutting down — waiting for current tick to complete...');
   running = false;
+  // Stop accepting control requests before the databases close.
+  try { void controlServer?.close(); } catch { /* best-effort */ }
   if (timerHandle) {
     clearInterval(timerHandle);
     timerHandle = null;

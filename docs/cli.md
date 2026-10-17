@@ -284,22 +284,36 @@ Commands for digging into active runs and the event stream.
 | `events-tail` | Print the last N events. |
 | `events-filter` | Query events by run, agent, or event type. |
 | `event-cursor` | Inspect a durable consumer offset; reset it for replay while the coordinator is stopped. |
+| `control` | Client for the local daemon control API: `snapshot`, `events`, `command`, `ack`. |
 
 **Flags:**
 
 | Command | Flags |
 |---------|-------|
-| `runs-active` | `[--json]` |
+| `runs-active` | `[--json]` `[--via-control]` |
 | `run-info` | `<run_id>` `[--json]` |
 | `events-tail` | `[--n=<N>]` `[--event=<name>]` `[--json]` |
 | `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--json]` |
 | `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` |
+| `control snapshot` | — |
+| `control events` | `[--after=<seq>]` `[--limit=<N>]` `[--follow]` `[--max-events=<N>]` |
+| `control command` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<kind>` `--idempotency-key=<key>` `[--payload=<json>]` `[--session-token=<id>]` |
+| `control ack` | `<command_id>` `--state=<accepted\|running\|completed\|failed>` `[--session-token=<id>]` |
 | `waiting-input` | `[--json]` |
 
 The coordinator reads at most 128 event rows per tick and records its cursor in
 SQLite. The old `event-checkpoint.json` is retained as a migration backup.
 Resetting the cursor replays events after the chosen sequence; stop the
 coordinator first and use a sequence at or before the event you want replayed.
+
+`orc control` and `runs-active --via-control` talk to the coordinator's local
+control API (see `docs/contracts.md` → **Local Control API**). They fail with
+"Control daemon is not running" when the coordinator is stopped or has crashed;
+the plain `runs-active` path still works then. Mutations authenticate with the
+caller's running provider session ID from `--session-token` or
+`ORC_SESSION_TOKEN`. Sessions are not yet given this variable automatically;
+`orc control snapshot` lists running sessions (caller and recipient IDs).
+Queued commands are not yet delivered to workers.
 
 ---
 
