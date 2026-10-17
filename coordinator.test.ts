@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { queryEvents } from './lib/eventLog.ts';
+import Database from 'better-sqlite3';
+import { appendSequencedEvent, initEventsDb, queryEvents } from './lib/eventLog.ts';
+import { readEventOffset, resetEventOffset } from './lib/eventOffsets.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { initMemoryDb, listDrawers, closeMemoryDb } from './lib/memoryStore.ts';
@@ -60,6 +62,9 @@ function resetCheckpoint(stateDir: string) {
     processed_event_ids: [],
     updated_at: new Date().toISOString(),
   }));
+  if (existsSync(join(stateDir, 'events.db')) && readEventOffset(stateDir) > 0) {
+    resetEventOffset(stateDir, 0);
+  }
 }
 
 // A minimal dispatchable task — required to reach ensureSessionReady, which
@@ -2443,12 +2448,7 @@ describe('processTerminalRunEvents', () => {
     await processTerminalRunEvents([event]);
     await processTerminalRunEvents([event]);
 
-    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
-      last_processed_seq: number;
-      processed_event_ids: string[];
-    };
-    expect(checkpoint.last_processed_seq).toBe(11);
-    expect(checkpoint.processed_event_ids).toContain('evt-input-request-001');
+    expect(readEventOffset(dir)).toBe(11);
   });
 
   it('resumes safely after restart with persisted processing state', async () => {
@@ -2470,12 +2470,7 @@ describe('processTerminalRunEvents', () => {
     coordinator = await import('./coordinator.ts');
     await coordinator.processTerminalRunEvents([event]);
 
-    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
-      last_processed_seq: number;
-      processed_event_ids: string[];
-    };
-    expect(checkpoint.last_processed_seq).toBe(12);
-    expect(checkpoint.processed_event_ids).toContain('evt-input-request-002');
+    expect(readEventOffset(dir)).toBe(12);
   });
 
   it('dedupes legacy events without event_id across restart', async () => {
@@ -2496,10 +2491,7 @@ describe('processTerminalRunEvents', () => {
     coordinator = await import('./coordinator.ts');
     await coordinator.processTerminalRunEvents([legacyEvent]);
 
-    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
-      processed_event_ids: string[];
-    };
-    expect(checkpoint.processed_event_ids[0]).toContain('legacy:');
+    expect(readEventOffset(dir)).toBe(13);
   });
 
   it('does not skip a new event when another processed event shares the dedupe window', async () => {
@@ -2527,14 +2519,11 @@ describe('processTerminalRunEvents', () => {
       payload: { question: 'Second question?' },
     }]);
 
-    // Both events processed: checkpoint should have advanced past seq 21.
-    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
-      last_processed_seq: number;
-    };
-    expect(checkpoint.last_processed_seq).toBe(21);
+    // Both events processed: the durable cursor advanced past seq 21.
+    expect(readEventOffset(dir)).toBe(21);
   });
 
-  it('bootstraps the checkpoint from the retained log instead of replaying old events on first load', async () => {
+  it('advances the cursor through retained events on first load', async () => {
     seedState(dir);
     writeFileSync(join(dir, 'events.jsonl'), `${JSON.stringify({
       seq: 30,
@@ -2551,15 +2540,87 @@ describe('processTerminalRunEvents', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    // No claims seeded, so checkpoint was bootstrapped but no input state changes made.
-    expect(true).toBe(true); // The tick ran without errors — main assertion is checkpoint state above.
+    expect(readEventOffset(dir)).toBe(30);
+  });
 
-    const checkpoint = JSON.parse(readFileSync(join(dir, 'event-checkpoint.json'), 'utf8')) as {
-      last_processed_seq: number;
-      processed_event_ids: string[];
+  it('processes a bounded batch per tick even with a large event history', async () => {
+    seedState(dir);
+    for (let index = 0; index < 300; index++) {
+      appendSequencedEvent(dir, {
+        ts: '2026-03-11T05:13:00.000Z', event: 'heartbeat',
+        actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1',
+        run_id: 'run-history', payload: {},
+      });
+    }
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    expect(readEventOffset(dir)).toBe(128);
+    await tick();
+    expect(readEventOffset(dir)).toBe(256);
+    await tick();
+    expect(readEventOffset(dir)).toBe(300);
+  });
+
+  it('advances past a corrupt event row and processes the next event', async () => {
+    seedState(dir);
+    appendSequencedEvent(dir, {
+      ts: '2026-03-11T05:13:00.000Z', event: 'heartbeat',
+      actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1',
+      run_id: 'run-corrupt', payload: {},
+    });
+    appendSequencedEvent(dir, {
+      ts: '2026-03-11T05:13:01.000Z', event: 'heartbeat',
+      actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1',
+      run_id: 'run-corrupt', payload: {},
+    });
+    initEventsDb(dir);
+    const db = new Database(join(dir, 'events.db'));
+    try { db.prepare('UPDATE events SET payload = ? WHERE seq = 1').run('BROKEN'); }
+    finally { db.close(); }
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    expect(readEventOffset(dir)).toBe(2);
+    expect(queryEvents(dir, { after_seq: 1 })).toHaveLength(1);
+  });
+
+  it('migrates a checkpoint gap and applies the pending event once across restart', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running',
+        session_handle: null, registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'orch/cursor-gap', status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-cursor-gap', task_ref: 'orch/cursor-gap', agent_id: 'orc-1',
+        state: 'in_progress', claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(), lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      }],
+    });
+    const common = {
+      actor_type: 'agent' as const, actor_id: 'orc-1',
+      agent_id: 'orc-1', run_id: 'run-cursor-gap', task_ref: 'orch/cursor-gap',
     };
-    expect(checkpoint.last_processed_seq).toBe(30);
-    expect(checkpoint.processed_event_ids).toHaveLength(1);
+    appendSequencedEvent(dir, { ...common, event_id: 'gap-1', ts: new Date().toISOString(), event: 'heartbeat', payload: {} });
+    appendSequencedEvent(dir, {
+      ...common, event_id: 'gap-2', ts: new Date().toISOString(),
+      event: 'input_requested', payload: { question: 'Continue?' },
+    });
+    appendSequencedEvent(dir, { ...common, event_id: 'gap-3', ts: new Date().toISOString(), event: 'heartbeat', payload: {} });
+    writeFileSync(join(dir, 'event-checkpoint.json'), JSON.stringify({
+      version: '1', last_processed_seq: 3, processed_event_ids: ['gap-1', 'gap-3'],
+      updated_at: new Date().toISOString(),
+    }));
+
+    let coordinator = await import('./coordinator.ts');
+    await coordinator.tick();
+    expect(readEventOffset(dir)).toBe(3);
+    expect(readClaims(dir).find((claim) => claim.run_id === 'run-cursor-gap')?.input_state).toBe('awaiting_input');
+
+    vi.resetModules();
+    coordinator = await import('./coordinator.ts');
+    await coordinator.tick();
+    expect(readEventOffset(dir)).toBe(3);
+    expect(readClaims(dir).find((claim) => claim.run_id === 'run-cursor-gap')?.input_state).toBe('awaiting_input');
   });
 
   it('does not process coordinator-originated INPUT_REQUEST events as new work items', async () => {

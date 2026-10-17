@@ -46,6 +46,7 @@ function getDb(stateDir: string): Database.Database {
       INSERT INTO events_fts(rowid, event, agent_id, run_id, task_ref, payload)
       VALUES (new.seq, new.event, new.agent_id, new.run_id, new.task_ref, new.payload);
     END;
+    CREATE INDEX IF NOT EXISTS events_run_seq_idx ON events(run_id, seq);
     `);
 
     migrateRuntimeSchema(db);
@@ -337,6 +338,48 @@ export function readEventsSince(logPath: string, afterSeq: number): OrcEvent[] {
   for (let i = 0; i < rows.length; i++) {
     const event = parseEventRow(rows[i], i);
     if (event) events.push(event);
+  }
+  return events;
+}
+
+export interface EventBatchRow {
+  seq: number;
+  event: OrcEvent | null;
+}
+
+/**
+ * Read a bounded physical batch. Invalid rows remain in the result so a
+ * consumer can advance beyond them without scanning the same corruption
+ * forever. The SQLite seq, rather than a payload-supplied value, is authoritative.
+ */
+export function readEventBatch(logPath: string, afterSeq: number, limit: number): EventBatchRow[] {
+  if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('afterSeq must be a non-negative safe integer');
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('limit must be between 1 and 1000');
+  const db = getDb(dirname(logPath));
+  const rows = db.prepare('SELECT seq, payload FROM events WHERE seq > ? ORDER BY seq LIMIT ?')
+    .all(afterSeq, limit) as Array<{ seq: number; payload: string }>;
+  return rows.map((row, index) => {
+    const event = parseEventRow(row, index, { validate: true });
+    if (event && event.seq !== row.seq) {
+      logger.error(`[eventLog] skipping event with mismatched seq at row ${row.seq}`);
+      return { seq: row.seq, event: null };
+    }
+    return { seq: row.seq, event };
+  });
+}
+
+/** Startup hydration for active runs only; regular ticks use new event batches. */
+export function readEventsForRuns(logPath: string, runIds: string[]): OrcEvent[] {
+  if (runIds.length === 0) return [];
+  const db = getDb(dirname(logPath));
+  const select = db.prepare('SELECT seq, payload FROM events WHERE run_id = ? ORDER BY seq');
+  const events: OrcEvent[] = [];
+  for (const runId of new Set(runIds)) {
+    const rows = select.all(runId) as Array<{ seq: number; payload: string }>;
+    for (const row of rows) {
+      const event = parseEventRow(row, row.seq, { validate: true });
+      if (event && event.seq === row.seq) events.push(event);
+    }
   }
   return events;
 }

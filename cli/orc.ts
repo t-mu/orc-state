@@ -51,6 +51,7 @@ const COMMANDS: Record<string, string> = {
   'init':               'init.ts',
   'runs-active':        'runs-active.ts',
   'events-tail':        'events-tail.ts',
+  'event-cursor':       'event-cursor.ts',
   'run-start':          'run-start.ts',
   'report-for-duty':    'report-for-duty.ts',
   'run-input-request':  'run-input-request.ts',
@@ -125,6 +126,7 @@ const RECOVERY_DEBUG = [
   'task-reset',
   'task-unblock',
   'run-expire',
+  'event-cursor',
 ];
 
 const INSPECTION = [

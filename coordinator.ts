@@ -28,8 +28,8 @@ import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorke
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterOwnsSession } from './adapters/interface.ts';
-import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEvents } from './lib/eventLog.ts';
-import { latestRunActivityMap, latestRunPhaseMap, runIdleMs } from './lib/runActivity.ts';
+import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
+import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
 import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
@@ -43,7 +43,8 @@ import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
 import { rebuildDocumentIndex, pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly, writeSpecStatusDone } from './lib/taskCompletion.ts';
-import { advanceEventCheckpoint, pruneEventCheckpoint, readEventCheckpoint, seedEventCheckpointFromEvents, writeEventCheckpoint } from './lib/eventCheckpoint.ts';
+import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
+import { advanceEventOffset, initializeEventOffset, readEventOffset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
@@ -110,8 +111,9 @@ let ticking = false;
 let timerHandle: ReturnType<typeof setInterval> | null = null;
 let shutdownStarted = false;
 let coordinatorLockReleased = false;
-let latestActivityByRun: Map<string, string> = new Map();
-let latestPhaseByRun: Map<string, string> = new Map();
+const latestActivityByRun: Map<string, string> = new Map();
+const latestPhaseByRun: Map<string, string> = new Map();
+const latestPhaseAtByRun: Map<string, string> = new Map();
 const runStartNudgeAtMs = new Map<string, number>();
 const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
@@ -122,30 +124,42 @@ let lastMemoryPruneAt = Date.now(); // startup prune counts as first
 
 function log(msg: string) { console.log(`[coordinator] ${new Date().toISOString()} ${msg}`); }
 
-function initializeEventCheckpoint() {
-  const checkpointPath = join(STATE_DIR, 'event-checkpoint.json');
-  if (existsSync(checkpointPath)) {
-    return readEventCheckpoint(STATE_DIR);
-  }
+const EVENT_BATCH_SIZE = 128;
+let legacyProcessedIds: Set<string> | null = null;
+let legacyLastSeq = 0;
+let activityHydrated = false;
 
-  const allEvents = readEvents(EVENTS_FILE);
-  const seededCheckpoint = seedEventCheckpointFromEvents(
-    allEvents.map((event) => eventIdentity(event)),
-    allEvents.at(-1)?.seq ?? 0,
-  );
-  return writeEventCheckpoint(STATE_DIR, seededCheckpoint);
+function getEventCursor(): number {
+  const cursor = initializeEventOffset(STATE_DIR);
+  if (legacyProcessedIds === null) {
+    const path = join(STATE_DIR, 'event-checkpoint.json');
+    const legacy = existsSync(path) ? readEventCheckpoint(STATE_DIR) : null;
+    legacyProcessedIds = new Set(legacy?.processed_event_ids ?? []);
+    legacyLastSeq = legacy?.last_processed_seq ?? 0;
+  }
+  return cursor;
 }
 
-// Lazy-initialized on first access. In production, main() initializes it
-// after acquiring the coordinator lock. In tests that call tick() directly,
-// it initializes on first tick.
-let eventCheckpoint: ReturnType<typeof initializeEventCheckpoint> | null = null;
+function advanceCursor(seq: number): void {
+  const current = readEventOffset(STATE_DIR);
+  if (seq > current) advanceEventOffset(STATE_DIR, current, seq);
+}
 
-function getEventCheckpoint() {
-  if (!eventCheckpoint) {
-    eventCheckpoint = initializeEventCheckpoint();
+function observeRunActivity(events: OrcEvent[]): void {
+  for (const [runId, timestamp] of latestRunActivityMap(events)) {
+    const existing = latestActivityByRun.get(runId);
+    if (!existing || Date.parse(timestamp) > Date.parse(existing)) latestActivityByRun.set(runId, timestamp);
   }
-  return eventCheckpoint;
+  for (const event of events) {
+    if (event.event !== 'phase_started' || !event.run_id) continue;
+    const phase = event.phase ?? (event.payload as { phase?: unknown } | undefined)?.phase;
+    if (typeof phase !== 'string' || phase.length === 0) continue;
+    const previous = latestPhaseAtByRun.get(event.run_id);
+    if (!previous || Date.parse(event.ts) > Date.parse(previous)) {
+      latestPhaseAtByRun.set(event.run_id, event.ts);
+      latestPhaseByRun.set(event.run_id, phase);
+    }
+  }
 }
 
 function emit(event: Omit<OrcEventInput, 'ts'> | Record<string, unknown>) {
@@ -1410,21 +1424,20 @@ async function processEventCheckpoint(
   workerPoolConfig: WorkerPoolConfig,
 ): Promise<{ agents: Agent[]; claims: Claim[] }> {
   try {
-    // TODO(perf): latestRunActivityMap currently scans all events.
-    // A future task should window this to recent events only.
-    const allEvents = readEvents(EVENTS_FILE);
-    const allEventIds = allEvents.map((event) => eventIdentity(event));
-    const currentCheckpoint = getEventCheckpoint();
-    const prunedCheckpoint = pruneEventCheckpoint(currentCheckpoint, allEventIds);
-    if (prunedCheckpoint.processed_event_ids.length !== currentCheckpoint.processed_event_ids.length) {
-      eventCheckpoint = writeEventCheckpoint(STATE_DIR, prunedCheckpoint);
+    const cursor = getEventCursor();
+    if (!activityHydrated) {
+      const activeRunIds = claims.filter((claim) => ['claimed', 'in_progress'].includes(claim.state)).map((claim) => claim.run_id);
+      observeRunActivity(readEventsForRuns(EVENTS_FILE, activeRunIds));
+      activityHydrated = true;
     }
-    const processedEventIds = new Set(getEventCheckpoint().processed_event_ids);
-    const newEvents = allEvents.filter((event) => !processedEventIds.has(eventIdentity(event)));
-    latestActivityByRun = latestRunActivityMap(allEvents);
-    latestPhaseByRun = latestRunPhaseMap(allEvents);
-    if (newEvents.length > 0) {
-      await processTerminalRunEvents(newEvents, workerPoolConfig);
+    const batch = readEventBatch(EVENTS_FILE, cursor, EVENT_BATCH_SIZE);
+    for (const row of batch) {
+      if (row.event) {
+        observeRunActivity([row.event]);
+        await processTerminalRunEvents([row.event], workerPoolConfig);
+      } else {
+        advanceCursor(row.seq);
+      }
     }
     ({ agents, claims } = reloadTickState(workerPoolConfig));
   } catch (err) {
@@ -1432,8 +1445,6 @@ async function processEventCheckpoint(
     if ((err as Error)?.stack) {
       console.error((err as Error).stack);
     }
-    latestActivityByRun = new Map();
-    latestPhaseByRun = new Map();
   }
   return { agents, claims };
 }
@@ -1820,11 +1831,12 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     const seq = typeof event.seq === 'number' ? event.seq : 0;
     const eventTs = coerceTs(event.ts);
 
-    // ── Duplicate / already-processed events ──────────────────────────────
-    if (getEventCheckpoint().processed_event_ids.includes(normalizedEventId)) {
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(getEventCheckpoint(), normalizedEventId, seq, eventTs));
-      }
+    // The SQLite cursor is authoritative. During migration, preserve the old
+    // processed-ID set until the cursor has crossed the legacy checkpoint.
+    getEventCursor();
+    if (seq > 0 && (seq <= readEventOffset(STATE_DIR)
+      || (seq <= legacyLastSeq && legacyProcessedIds!.has(normalizedEventId)))) {
+      if (seq > 0) advanceCursor(seq);
       continue;
     }
 
@@ -1845,9 +1857,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
         });
         recordAgentActivity(STATE_DIR, agentId, { at: eventTs });
       }
-      if (seq > 0) {
-        eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(getEventCheckpoint(), normalizedEventId, seq, eventTs));
-      }
+      if (seq > 0) advanceCursor(seq);
       continue;
     }
 
@@ -2004,9 +2014,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       }
     }
 
-    if (seq > 0) {
-      eventCheckpoint = writeEventCheckpoint(STATE_DIR, advanceEventCheckpoint(getEventCheckpoint(), normalizedEventId, seq, eventTs));
-    }
+    if (seq > 0) advanceCursor(seq);
   }
 }
 
@@ -2070,7 +2078,7 @@ function releaseCoordinatorLock() {
 
 export async function main() {
   acquireCoordinatorLock();
-  eventCheckpoint = initializeEventCheckpoint();
+  getEventCursor();
   process.on('exit', releaseCoordinatorLock);
   function shutdown() {
     doShutdown().catch((err) => { console.error(err); process.exit(1); });
