@@ -84,6 +84,8 @@ orc watch
 Comprehensive health check. Validates state files, checks provider binaries
 are installed, detects stale workers, orphaned claims, lifecycle invariant
 violations, sandbox dependencies, and memory store integrity.
+It also checks the versioned runtime tables in `events.db` and reports schema
+version or migration problems under `checks.runtimeSchema` in JSON output.
 
 ```bash
 orc doctor

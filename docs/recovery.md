@@ -3,6 +3,37 @@
 This guide covers multi-step operational recovery procedures. For quick
 single-symptom fixes, see [Troubleshooting](./troubleshooting.md).
 
+## Runtime Database Upgrade and Restore
+
+The operational schema shares `.orc-state/events.db` with the event log. Before
+starting a newer binary against an existing project, make a consistent SQLite
+backup (the `sqlite3` command-line tool is required for this procedure):
+
+```bash
+sqlite3 .orc-state/events.db ".backup '.orc-state/events.db.pre-upgrade'"
+```
+
+The first open applies versioned migrations in one transaction. `orc doctor`
+reports the current `runtimeSchema.version` and any missing tables or migration
+records. Version 1 creates operational tables only; JSON state files remain the
+active lifecycle store. A failed migration rolls back its tables and version
+record. A database from a newer binary is refused rather than downgraded.
+
+If startup fails after an upgrade, stop the coordinator and every process using
+the database. Keep the failed database for diagnosis, then restore the backup
+and run the previous binary:
+
+```bash
+mv .orc-state/events.db .orc-state/events.db.failed
+rm -f .orc-state/events.db-wal .orc-state/events.db-shm
+cp .orc-state/events.db.pre-upgrade .orc-state/events.db
+orc doctor
+```
+
+Only restore while all database users are stopped. The backup includes events;
+restoring it discards events written after the backup. Do not edit
+`PRAGMA user_version` or remove migration records to force a downgrade.
+
 ## Finalization Failure (`blocked_finalize`)
 
 A run enters `blocked_finalize` when the coordinator cannot complete the
