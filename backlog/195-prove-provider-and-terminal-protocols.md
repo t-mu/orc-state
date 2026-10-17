@@ -69,4 +69,8 @@ The sanitized local results and rerun commands are in
 `docs/vnext-provider-protocols.md`. A rerun proved a successful Claude turn
 and resume under the existing Team login. Docker CLI/host daemon access is
 unavailable in the dev container, so the required actual-host transport test
-has not run. Keep this task blocked until that result is recorded.
+has not run. **Deferred follow-up:** when host Docker access is available,
+run the host-to-container loopback and authentication checks documented in
+`docs/vnext-provider-protocols.md`, record the exact host commands and results,
+then reassess the transport choice and this task's status. Keep this task
+blocked until that result is recorded.
