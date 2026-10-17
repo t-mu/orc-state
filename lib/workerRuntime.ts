@@ -8,6 +8,7 @@ import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { recordProviderSession } from './runStore.ts';
+import { SESSION_OWNER_TTL_MS, currentSessionOwnerId } from './sessionSupervisor.ts';
 import type { WorkerBootstrapProfile } from './sessionBootstrap.ts';
 
 function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
@@ -215,6 +216,7 @@ export async function launchWorkerSession(
       last_heartbeat_at: nowIso,
       last_status_change_at: nowIso,
     };
+    const ref = (provider_ref ?? {}) as { transport?: unknown; pid?: unknown; process_start?: unknown };
     recordProviderSession(stateDir, {
       sessionId: sessionToken,
       runId,
@@ -222,6 +224,11 @@ export async function launchWorkerSession(
       provider: agent.provider,
       providerRef: provider_ref,
       startedAt: nowIso,
+      transport: typeof ref.transport === 'string' ? ref.transport : null,
+      processPid: typeof ref.pid === 'number' ? ref.pid : null,
+      processStart: typeof ref.process_start === 'string' ? ref.process_start : null,
+      ownerId: currentSessionOwnerId(),
+      ownerExpiresAt: new Date(Date.now() + SESSION_OWNER_TTL_MS).toISOString(),
     });
     updateAgentRuntime(stateDir, agent.agent_id, updates);
     syncAgentRuntime(agent, updates);

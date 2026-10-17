@@ -63,6 +63,7 @@
         "agent_offline",
         "agent_marked_dead",
         "session_start_failed",
+        "session_reconciled",
         "session_started",
         "task_added",
         "task_updated",

@@ -224,6 +224,7 @@ orc preflight                                     # lightweight environment heal
 orc watch                                         # live-refresh status
 orc events-tail                                   # tail the event stream
 orc runs-active                                   # list in-progress/claimed runs
+orc sessions [--all] [--json]                     # list supervised sessions (running/recoverable/unknown) with reason
 orc memory-status                                 # memory store stats
 orc memory-search <query> [--wing=X] [--room=Y]  # search memories (FTS5)
 
@@ -376,10 +377,15 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 
 ### Worker liveness
 
-Liveness is determined by the coordinator probing the worker's PTY PID
-via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears the agent session,
-expires the claim, and requeues the task. Lease renewal is automatic —
-the coordinator extends the lease whenever phase events are processed.
+Liveness is determined by the coordinator probing the worker's session: for
+`tmux:` sessions it asks the private tmux server for the pane process; for
+`pty:` sessions it checks the PTY PID (with its recorded start time, so a
+reused PID is not mistaken for the worker). If the process is dead, the
+coordinator clears the agent session, expires the claim, and requeues the task.
+Lease renewal is automatic — the coordinator extends the lease whenever phase
+events are processed. A coordinator restart does not kill workers: tmux
+sessions are adopted, and sessions it cannot write to are marked
+`recoverable` (see `orc sessions` and `docs/recovery.md`).
 
 ---
 

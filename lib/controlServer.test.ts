@@ -255,7 +255,7 @@ describe('local daemon control API', () => {
     await expect(new ControlClient(dir, { sessionToken: 'session-a' }).acknowledge('cmd-missing', 'accepted'))
       .rejects.toMatchObject({ code: 'not_found', status: 404 });
     const snapshot = await new ControlClient(dir).snapshot();
-    expect(snapshot.sessions.find((row) => row.agent_id === 'worker-a')).toEqual({ session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a' });
+    expect(snapshot.sessions.find((row) => row.agent_id === 'worker-a')).toEqual({ session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', state: 'running', transport: null, state_reason: null });
   });
 
   it('reports a crashed daemon with a stale descriptor as not running', async () => {

@@ -15,6 +15,8 @@ orc-state is configured through environment variables and an optional JSON confi
 | `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<orchestration-root>/.worktrees` |
 | `ORC_BACKLOG_DIR` | Directory containing backlog task spec markdown files | `<orchestration-root>/backlog` |
 | `ORC_PLANS_DIR` | Directory containing plan artifact markdown files | `<orchestration-root>/plans` |
+| `ORC_SESSION_TRANSPORT` | Transport for new worker sessions: `auto` (tmux if installed, else node-pty), `tmux` or `pty`. tmux sessions survive a coordinator restart | `auto` |
+| `ORC_TMUX_BIN` | tmux binary used by the tmux session transport | `tmux` |
 | `ORC_CONTROL_API` | Set to `off` to stop the coordinator serving the local control API (`control.sock`, `control.json`, `control.token` in the state dir) | on |
 
 ### Worker Pool

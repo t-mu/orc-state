@@ -32,6 +32,8 @@ import { STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT, hookEventPath, consumeH
 import { stripAnsi } from '../lib/ansi.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
+import { isPidAlive, isSameProcess, processIdentity } from '../lib/processIdentity.ts';
+import type { SessionInspection } from './interface.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
   claude: 'claude',
@@ -237,6 +239,158 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
   return [];
 }
 
+export interface ProviderLaunch {
+  binary: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string;
+}
+
+/** Resolve binary, args, env and cwd for a provider CLI; writes the Claude settings file. */
+export function prepareProviderLaunch(provider: string, agentId: string, config: Record<string, unknown>): ProviderLaunch {
+  ensureDirs();
+  const binary = PROVIDER_BINARIES[provider] ?? provider;
+  // For claude: write a settings file that installs a Notification hook so
+  // permission_prompt events are pushed to the hook-events file in real time.
+  // In sandbox mode, merge in a sandbox config block alongside the hook.
+  let claudeSettingsFile: string | undefined;
+  if (provider === 'claude') {
+    claudeSettingsFile = settingsPath(agentId);
+    const eventsFile = hookEventPath(agentId);
+    // Inline node one-liner: reads stdin JSON, filters to permission_prompt
+    // notifications, and appends a record to the hook-events NDJSON file.
+    const hookCmd = `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const e=JSON.parse(d);if(e.notification_type!=='permission_prompt')return;require('fs').appendFileSync(${JSON.stringify(eventsFile)},JSON.stringify({type:'permission',message:e.message||'',ts:new Date().toISOString()})+'\\\\n')}catch(x){}})"`;
+    const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
+    const readOnly = config.read_only === true;
+    const settings: Record<string, unknown> = {
+      hooks: {
+        Notification: [{ hooks: [{ type: 'command', command: hookCmd }] }],
+      },
+    };
+    if (executionMode === 'sandbox') {
+      const sandboxConfig: Record<string, unknown> = {
+        enabled: true,
+        mode: 'auto-allow',
+        allowUnsandboxedCommands: false,
+      };
+      const filesystem = claudeSandboxFilesystem({
+        readOnly,
+        siblingLayout: IS_SIBLING_LAYOUT,
+        targetRepoRoot: TARGET_REPO_ROOT,
+      });
+      if (filesystem) {
+        sandboxConfig.filesystem = filesystem;
+      }
+      settings.sandbox = sandboxConfig;
+    }
+    writeFileSync(claudeSettingsFile, JSON.stringify(settings));
+  }
+
+  const spawnArgs = buildStartArgs(provider, config, claudeSettingsFile);
+
+  // Strip parent provider/session control env vars so nested worker
+  // sessions start cleanly instead of inheriting the parent CLI sandbox
+  // or session metadata.
+  const baseEnv = stripNestedProviderEnv(process.env);
+  const spawnEnv = { ...baseEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>;
+  const resolvedBinary = resolveBinary(binary, spawnEnv);
+  return {
+    binary: resolvedBinary,
+    args: spawnArgs,
+    env: spawnEnv,
+    // Spawn at the repo root so the sandbox covers both the worktree and
+    // .orc-state/. Workers navigate to their assigned worktree themselves
+    // via the cd instruction in the TASK_START envelope.
+    cwd: (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT
+      ?? (config.working_directory as string)
+      ?? process.cwd(),
+  };
+}
+
+/** Dismiss provider startup dialogs, then deliver the bootstrap prompt. */
+export async function runStartupDialogs(
+  write: (text: string) => void,
+  provider: string,
+  config: Record<string, unknown>,
+  readRecentOutput: () => string,
+): Promise<void> {
+  // ── Startup dialog handling ───────────────────────────────────────
+  // Provider CLIs may show interactive startup dialogs that must be
+  // dismissed before they accept work. We send keystrokes after a
+  // startup delay to auto-accept these dialogs.
+  await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
+
+  if (provider === 'codex') {
+    // Codex may show a workspace confirmation dialog for new directories:
+    //   "You are in /tmp/... 1. Yes, continue  Press enter to continue"
+    // The smoke harness uses a prompt-aware path because it launches Codex
+    // inside disposable repos where trust/workspace dialogs can appear late.
+    // Outside that test-only profile we preserve the existing runtime
+    // behavior: send a single Enter after startup delay to dismiss the
+    // workspace prompt if present.
+    if (shouldUseExtendedCodexPromptWait(config)) {
+      const prompt = await waitForCodexWorkspacePrompt(readRecentOutput);
+      if (prompt != null) {
+        write('\r');
+        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+      }
+    } else {
+      write('\r');
+      await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+    }
+  } else if (provider === 'claude' && config.execution_mode !== 'sandbox') {
+    // Claude shows up to two startup dialogs:
+    //
+    // 1. Workspace trust ("❯ 1. Yes, I trust" / "2. No, exit")
+    //    — only for new/untrusted directories. Enter accepts default.
+    //
+    // 2. Bypass Permissions ("1. No, exit" / "❯ 2. Yes, I accept")
+    //    — always with --dangerously-skip-permissions. Select '2'.
+    //
+    // We send Enter (trust dismiss or bypass accept), then '2' + Enter
+    // (explicit bypass accept). When trust is absent, the initial Enter
+    // accepts bypass directly and '2' + Enter is absorbed harmlessly.
+    write('\r');
+    await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+    write('2');
+    await new Promise((r) => setTimeout(r, 200));
+    write('\r');
+    await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
+  }
+
+  if (config.system_prompt && typeof config.system_prompt === 'string' && provider !== 'codex') {
+    write(config.system_prompt);
+    await new Promise((r) => setTimeout(r, provider === 'codex' ? 700 : 500));
+    write('\r');
+  }
+}
+
+function writePidFile(agentId: string, pid: number): void {
+  const identity = processIdentity(pid);
+  writeFileSync(pidPath(agentId), JSON.stringify(identity ?? { pid, start: null }));
+}
+
+/** Accept both the JSON identity format and the legacy bare PID. */
+function readPidFile(agentId: string): { pid: number; start: string | null } | null {
+  const file = pidPath(agentId);
+  if (!existsSync(file)) return null;
+  const raw = readFileSync(file, 'utf8').trim();
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === 'number') return Number.isSafeInteger(parsed) ? { pid: parsed, start: null } : null;
+    const record = parsed as { pid?: unknown; start?: unknown };
+    if (typeof record.pid !== 'number') return null;
+    return { pid: record.pid, start: typeof record.start === 'string' ? record.start : null };
+  } catch {
+    return null;
+  }
+}
+
+/** A legacy PID file has no start time, so only bare liveness can be checked. */
+function pidFileProcessAlive(record: { pid: number; start: string | null }): boolean {
+  return record.start ? isSameProcess({ pid: record.pid, start: record.start }) : isPidAlive(record.pid);
+}
+
 /** Create a "pty:{agentId}" session handle from an agent ID. */
 export function createSessionHandle(agentId: string): string {
   return `pty:${agentId}`;
@@ -334,13 +488,12 @@ export function detectCodexWorkspacePromptFromText(text: string) {
 }
 
 async function waitForCodexWorkspacePrompt(
-  getRecentOutput: (agentId: string) => string,
-  agentId: string,
+  readRecentOutput: () => string,
   timeoutMs = CODEX_PROMPT_WAIT_MS,
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const prompt = detectCodexWorkspacePromptFromText(getRecentOutput(agentId));
+    const prompt = detectCodexWorkspacePromptFromText(readRecentOutput());
     if (prompt != null) return prompt;
     await new Promise((r) => setTimeout(r, CODEX_PROMPT_POLL_MS));
   }
@@ -394,61 +547,13 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         stream = createWriteStream(logPath(agentId), { flags: 'w' });
         stream.on('error', () => { /* output stream teardown races are non-fatal */ });
 
-        // For claude: write a settings file that installs a Notification hook so
-        // permission_prompt events are pushed to the hook-events file in real time.
-        // In sandbox mode, merge in a sandbox config block alongside the hook.
-        let claudeSettingsFile: string | undefined;
-        if (provider === 'claude') {
-          claudeSettingsFile = settingsPath(agentId);
-          const eventsFile = hookEventPath(agentId);
-          // Inline node one-liner: reads stdin JSON, filters to permission_prompt
-          // notifications, and appends a record to the hook-events NDJSON file.
-          const hookCmd = `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const e=JSON.parse(d);if(e.notification_type!=='permission_prompt')return;require('fs').appendFileSync(${JSON.stringify(eventsFile)},JSON.stringify({type:'permission',message:e.message||'',ts:new Date().toISOString()})+'\\\\n')}catch(x){}})"`;
-          const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
-          const readOnly = config.read_only === true;
-          const settings: Record<string, unknown> = {
-            hooks: {
-              Notification: [{ hooks: [{ type: 'command', command: hookCmd }] }],
-            },
-          };
-          if (executionMode === 'sandbox') {
-            const sandboxConfig: Record<string, unknown> = {
-              enabled: true,
-              mode: 'auto-allow',
-              allowUnsandboxedCommands: false,
-            };
-            const filesystem = claudeSandboxFilesystem({
-              readOnly,
-              siblingLayout: IS_SIBLING_LAYOUT,
-              targetRepoRoot: TARGET_REPO_ROOT,
-            });
-            if (filesystem) {
-              sandboxConfig.filesystem = filesystem;
-            }
-            settings.sandbox = sandboxConfig;
-          }
-          writeFileSync(claudeSettingsFile, JSON.stringify(settings));
-        }
-
-        const spawnArgs = buildStartArgs(provider, config, claudeSettingsFile);
-
-        // Strip parent provider/session control env vars so nested worker
-        // sessions start cleanly instead of inheriting the parent CLI sandbox
-        // or session metadata.
-        const baseEnv = stripNestedProviderEnv(process.env);
-        const spawnEnv = { ...baseEnv, ...(config.env as Record<string, string> ?? {}) } as Record<string, string>;
-        const resolvedBinary = resolveBinary(binary, spawnEnv);
-        ptyProcess = pty.spawn(resolvedBinary, spawnArgs, {
+        const launch = prepareProviderLaunch(provider, agentId, config);
+        ptyProcess = pty.spawn(launch.binary, launch.args, {
           name: 'xterm-256color',
           cols: 220,
           rows: 50,
-          // Spawn at the repo root so the sandbox covers both the worktree and
-          // .orc-state/. Workers navigate to their assigned worktree themselves
-          // via the cd instruction in the TASK_START envelope.
-          cwd:  (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT
-            ?? (config.working_directory as string)
-            ?? process.cwd(),
-          env: spawnEnv,
+          cwd: launch.cwd,
+          env: launch.env,
         });
 
         ptyProcess.onData((data) => {
@@ -458,8 +563,8 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           recentOutput.set(agentId, next.slice(-RECENT_OUTPUT_BYTES));
         });
 
-        // Write PID file for cross-process heartbeat.
-        writeFileSync(pidPath(agentId), String(ptyProcess.pid));
+        // Write PID file (with start time, to detect PID reuse) for cross-process heartbeat.
+        writePidFile(agentId, ptyProcess.pid);
 
         sessions.set(agentId, ptyProcess);
         outputStreams.set(agentId, stream);
@@ -470,59 +575,15 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         throw error;
       }
 
-      // ── Startup dialog handling ───────────────────────────────────────
-      // Provider CLIs may show interactive startup dialogs that must be
-      // dismissed before they accept work. We send keystrokes after a
-      // startup delay to auto-accept these dialogs.
-      await new Promise((r) => setTimeout(r, STARTUP_DELAY_MS));
-
-      if (provider === 'codex') {
-        // Codex may show a workspace confirmation dialog for new directories:
-        //   "You are in /tmp/... 1. Yes, continue  Press enter to continue"
-        // The smoke harness uses a prompt-aware path because it launches Codex
-        // inside disposable repos where trust/workspace dialogs can appear late.
-        // Outside that test-only profile we preserve the existing runtime
-        // behavior: send a single Enter after startup delay to dismiss the
-        // workspace prompt if present.
-        if (shouldUseExtendedCodexPromptWait(config)) {
-          const prompt = await waitForCodexWorkspacePrompt(getRecentOutput, agentId);
-          if (prompt != null) {
-            ptyProcess.write('\r');
-            await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
-          }
-        } else {
-          ptyProcess.write('\r');
-          await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
-        }
-      } else if (provider === 'claude' && config.execution_mode !== 'sandbox') {
-        // Claude shows up to two startup dialogs:
-        //
-        // 1. Workspace trust ("❯ 1. Yes, I trust" / "2. No, exit")
-        //    — only for new/untrusted directories. Enter accepts default.
-        //
-        // 2. Bypass Permissions ("1. No, exit" / "❯ 2. Yes, I accept")
-        //    — always with --dangerously-skip-permissions. Select '2'.
-        //
-        // We send Enter (trust dismiss or bypass accept), then '2' + Enter
-        // (explicit bypass accept). When trust is absent, the initial Enter
-        // accepts bypass directly and '2' + Enter is absorbed harmlessly.
-        ptyProcess.write('\r');
-        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
-        ptyProcess.write('2');
-        await new Promise((r) => setTimeout(r, 200));
-        ptyProcess.write('\r');
-        await new Promise((r) => setTimeout(r, BYPASS_SETTLE_MS));
-      }
-
-      if (config.system_prompt && typeof config.system_prompt === 'string' && provider !== 'codex') {
-        ptyProcess.write(config.system_prompt);
-        await new Promise((r) => setTimeout(r, provider === 'codex' ? 700 : 500));
-        ptyProcess.write('\r');
-      }
+      const spawned = ptyProcess;
+      await runStartupDialogs((text) => spawned.write(text), provider, config, () => getRecentOutput(agentId));
 
       return {
         session_handle: `pty:${agentId}`,
-        provider_ref: { pid: ptyProcess.pid, provider, binary },
+        provider_ref: {
+          pid: ptyProcess.pid, provider, binary, transport: 'pty',
+          process_start: processIdentity(ptyProcess.pid)?.start ?? null,
+        },
       };
     },
 
@@ -558,6 +619,27 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       } catch {
         return false;
       }
+    },
+
+    /**
+     * Report liveness, writability and process identity. A PTY can only be
+     * written by the process that spawned it, so a session that outlived its
+     * coordinator is alive but not writable.
+     */
+    inspectSession(sessionHandle: string): SessionInspection {
+      const agentId = parseHandle(sessionHandle);
+      const owned = sessions.get(agentId);
+      if (owned) {
+        const identity = processIdentity(owned.pid);
+        return { transport: 'pty', alive: identity != null, writable: identity != null, pid: owned.pid, processStart: identity?.start ?? null };
+      }
+      const record = readPidFile(agentId);
+      if (!record) return { transport: 'pty', alive: false, writable: false, pid: null, processStart: null, reason: 'no pid file' };
+      const alive = pidFileProcessAlive(record);
+      return {
+        transport: 'pty', alive, writable: false, pid: record.pid, processStart: record.start,
+        reason: alive ? 'pty is owned by another process and cannot be written' : 'process exited or pid was reused',
+      };
     },
 
     detectInputBlock(sessionHandle: string) {
@@ -631,13 +713,9 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           }
         }
 
-        // Fallback: cross-process check via PID file.
-        const pidFile = pidPath(agentId);
-        if (!existsSync(pidFile)) return Promise.resolve(false);
-        const pid = parseInt(readFileSync(pidFile, 'utf8'), 10);
-        if (!Number.isFinite(pid)) return Promise.resolve(false);
-        process.kill(pid, 0);
-        return Promise.resolve(true);
+        // Fallback: cross-process check via PID file, rejecting a reused PID.
+        const record = readPidFile(agentId);
+        return Promise.resolve(record != null && pidFileProcessAlive(record));
       } catch {
         return Promise.resolve(false);
       }
@@ -660,15 +738,14 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           recentOutput.delete(agentId);
         }
         const pidFile = pidPath(agentId);
-        if (existsSync(pidFile)) {
-          try {
-            const pid = parseInt(readFileSync(pidFile, 'utf8'), 10);
-            if (Number.isFinite(pid)) {
-              try { process.kill(pid, 'SIGTERM'); } catch { /* already dead or inaccessible */ }
-            }
-          } catch {
-            // Ignore pid read/kill failures; unlink below is still best effort.
+        try {
+          // Never signal a PID that now belongs to an unrelated process.
+          const record = readPidFile(agentId);
+          if (record && pidFileProcessAlive(record)) {
+            try { process.kill(record.pid, 'SIGTERM'); } catch { /* already dead or inaccessible */ }
           }
+        } catch {
+          // Ignore pid read/kill failures; unlink below is still best effort.
         }
         try { unlinkSync(pidFile); } catch { /* already gone */ }
         // Clean up hook events and settings files created for this session.

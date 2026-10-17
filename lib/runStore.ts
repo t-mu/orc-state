@@ -96,7 +96,8 @@ export function withAuthoritativeAgentSessions(stateDir: string, state: AgentsSt
       agents: state.agents.map((agent) => {
         const session = latest.get(agent.agent_id);
         if (!session) return agent;
-        return { ...agent, session_token: session.state === 'running' ? session.session_id : null };
+        // Recoverable and unknown sessions still belong to the agent; only offline ones are cleared.
+        return { ...agent, session_token: session.state !== 'offline' ? session.session_id : null };
       }),
     };
   });
@@ -140,6 +141,12 @@ export function recordProviderSession(stateDir: string, session: {
   provider: string;
   providerRef: unknown;
   startedAt: string;
+  /** Supervision metadata (Task 202); absent for legacy callers. */
+  transport?: string | null;
+  processPid?: number | null;
+  processStart?: string | null;
+  ownerId?: string | null;
+  ownerExpiresAt?: string | null;
 }): boolean {
   if (session.sessionId === session.agentId || session.sessionId === session.runId) {
     throw new Error('Provider session ID must differ from agent and run IDs');
@@ -147,15 +154,20 @@ export function recordProviderSession(stateDir: string, session: {
   return withEventDbTransaction(stateDir, (db) => {
     importLegacyAgentSessions(db, stateDir);
     if (session.runId !== null && !db.prepare('SELECT 1 FROM runs WHERE run_id = ?').get(session.runId)) return false;
-    db.prepare("UPDATE sessions SET state = 'offline', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state = 'running'")
+    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
       .run(session.startedAt, session.agentId, session.sessionId);
     db.prepare(`
-      INSERT INTO sessions (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at)
-      VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+      INSERT INTO sessions (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at,
+        transport, process_pid, process_start, owner_id, owner_expires_at, state_reason)
+      VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL)
       ON CONFLICT(session_id) DO UPDATE SET
-        state = 'running', provider_ref = excluded.provider_ref, updated_at = excluded.updated_at
+        state = 'running', provider_ref = excluded.provider_ref, updated_at = excluded.updated_at,
+        transport = excluded.transport, process_pid = excluded.process_pid, process_start = excluded.process_start,
+        owner_id = excluded.owner_id, owner_expires_at = excluded.owner_expires_at, state_reason = NULL
     `).run(session.sessionId, session.runId, session.agentId, session.provider,
-      session.providerRef == null ? null : JSON.stringify(session.providerRef), session.startedAt, session.startedAt);
+      session.providerRef == null ? null : JSON.stringify(session.providerRef), session.startedAt, session.startedAt,
+      session.transport ?? null, session.processPid ?? null, session.processStart ?? null,
+      session.ownerId ?? null, session.ownerExpiresAt ?? null);
     return true;
   });
 }
@@ -164,7 +176,7 @@ export function closeProviderSessionsForAgent(stateDir: string, agentId: string,
   if (!existsSync(join(stateDir, 'events.db'))) return;
   withEventDbTransaction(stateDir, (db) => {
     importLegacyAgentSessions(db, stateDir);
-    db.prepare("UPDATE sessions SET state = 'offline', updated_at = ? WHERE agent_id = ? AND state = 'running'").run(at, agentId);
+    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'session closed', updated_at = ? WHERE agent_id = ? AND state <> 'offline'").run(at, agentId);
   });
 }
 

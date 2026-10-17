@@ -140,6 +140,36 @@ If a task was claimed by the stale worker, reset it so it can be re-dispatched:
 orc task-reset <task-ref>
 ```
 
+## Recoverable or Unknown Sessions
+
+### Symptoms
+
+- `orc sessions` shows a session with `state=recoverable` or `state=unknown` and a `reason:` line.
+- The coordinator log shows `marked recoverable` or a `session_reconciled` event with outcome `recoverable` or `unknown`.
+
+### Diagnosis
+
+- `recoverable`: the provider process is alive but this coordinator cannot
+  write to it, usually a `pty:` session from an earlier coordinator process.
+  The worker keeps running and can still report through `orc run-*`, but it
+  cannot receive nudges, task envelopes or queued commands.
+- `unknown`: a live process exists but does not match the recorded PID and
+  start time (the PID may have been reused), or the session predates identity
+  recording. orc refuses to adopt it.
+
+### Fix
+
+The coordinator never kills or redispatches these sessions on its own.
+
+1. Let the worker finish, or stop it: `orc worker-remove <agent_id>`. The stop
+   only signals the recorded process if its start time still matches.
+2. If the run must be redone: `orc task-reset <task_ref>`.
+3. To avoid the case for future workers, keep `tmux` installed and leave
+   `ORC_SESSION_TRANSPORT` at `auto` (or set `tmux`). tmux sessions survive a
+   coordinator restart and are adopted.
+
+---
+
 ## Stuck/Orphaned Worktrees
 
 After a run finishes or fails, the coordinator cleans up the worktree and branch. If the

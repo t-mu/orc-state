@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
-export const RUNTIME_SCHEMA_VERSION = 3;
+export const RUNTIME_SCHEMA_VERSION = 4;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
@@ -176,6 +176,23 @@ export function migrateRuntimeSchema(db: Database.Database): void {
       db.pragma('user_version = 3');
     }).immediate();
   }
+  currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (currentVersion === 3) {
+    db.transaction(() => {
+      if ((db.pragma('user_version', { simple: true }) as number) !== 3) return;
+      db.exec(`
+        ALTER TABLE sessions ADD COLUMN transport TEXT;
+        ALTER TABLE sessions ADD COLUMN process_pid INTEGER;
+        ALTER TABLE sessions ADD COLUMN process_start TEXT;
+        ALTER TABLE sessions ADD COLUMN owner_id TEXT;
+        ALTER TABLE sessions ADD COLUMN owner_expires_at TEXT;
+        ALTER TABLE sessions ADD COLUMN state_reason TEXT;
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (4, 'session_supervision', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 4');
+    }).immediate();
+  }
   const health = inspectRuntimeSchemaDb(db);
   if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
 }
@@ -209,6 +226,7 @@ function inspectRuntimeSchemaDb(db: Database.Database): { ok: boolean; version: 
       if (byVersion.get(1) !== 'initial_operational_tables') messages.push('missing migration record 1');
       if (byVersion.get(2) !== 'run_authority_cutover') messages.push('missing migration record 2');
       if (byVersion.get(3) !== 'durable_command_delivery') messages.push('missing migration record 3');
+      if (byVersion.get(4) !== 'session_supervision') messages.push('missing migration record 4');
     }
     const violations = db.pragma('foreign_key_check') as unknown[];
     if (violations.length > 0) messages.push(`${violations.length} foreign key violation(s)`);

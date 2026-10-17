@@ -483,6 +483,7 @@ before upgrading an existing project.
 | `agent_offline` | Coordinator | Agent session lost |
 | `agent_marked_dead` | Coordinator | Agent marked dead by GC |
 | `session_start_failed` | Coordinator | PTY session failed to start |
+| `session_reconciled` | Coordinator | Restart reconciliation or ownership decision for a provider session (`payload.session_id`, `state`, `outcome`, `reason`) |
 | `session_started` | Coordinator | PTY session launched successfully |
 
 #### Blocking and input events
@@ -574,13 +575,47 @@ advances the cursor.
 
 ## Session Handles
 
-Worker and master session handles use the format `pty:<agent_id>`.
+Worker session handles use the format `<transport>:<agent_id>`.
 
-Examples: `pty:master`, `pty:broken-nose`
+Examples: `tmux:broken-nose`, `pty:broken-nose`, `pty:master`
 
-The handle identifies a local PTY process owned by the coordinator. Handles are
-deterministic within the active PTY runtime. If a session is restarted, the
-coordinator recreates the PTY and rewrites `session_handle` in `agents.json`.
+| Transport | Owner of the provider process | Survives coordinator exit | Writable by |
+|-----------|-------------------------------|---------------------------|-------------|
+| `tmux` | A private tmux server (`tmux -L orc-<hash of state dir>`) | Yes | Any orc process of the same user |
+| `pty` | The process that spawned it via node-pty | No (the PTY closes with its owner) | Only the spawning process |
+
+`ORC_SESSION_TRANSPORT` picks the transport for new sessions: `auto` (default,
+tmux when the `tmux` binary is available, otherwise pty), `tmux` or `pty`.
+Existing sessions are always handled by the transport named in their handle.
+When a session is restarted, the coordinator rewrites `session_handle` in
+`agents.json`.
+
+### Session supervision
+
+Each provider session is a row in the `sessions` table of `events.db`, keyed
+by a unique session ID that differs from both the agent ID and the run ID. The
+row records the transport, the provider process PID with its start time
+(`process_start`, used to detect PID reuse), the owning process (`owner_id`)
+and an ownership lease (`owner_expires_at`) renewed every coordinator tick.
+
+| State | Meaning | Accepts commands |
+|-------|---------|------------------|
+| `running` | Live and writable by the current owner | Yes |
+| `recoverable` | Process alive but this coordinator cannot write to it (a PTY from an earlier coordinator) | No |
+| `unknown` | A live process does not match the recorded PID and start time, or no identity was recorded | No |
+| `offline` | Process exited, its supervisor is gone, or the agent moved to a new session | No |
+
+On startup the coordinator reconciles every non-offline session with the live
+process and records a `session_reconciled` event with the outcome (`adopted`,
+`recoverable`, `unknown`, `exited` or `superseded`) and a reason. It never kills
+a session during reconciliation. Every direct coordinator write (task envelope,
+nudge, PR review) is refused unless the agent's session row is `running` and the
+live process still matches the recorded PID and start time; a mismatch moves the
+session to `unknown`. Stopping or replacing a session (`orc worker-remove`, a
+relaunch) moves every non-offline row of that agent to `offline`. On shutdown it stops PTY sessions it owns
+(they could not outlive it) and leaves tmux sessions running for the next
+coordinator to adopt. `orc sessions` lists supervised sessions with their state
+and reason; see `docs/recovery.md` → **Recoverable or Unknown Sessions**.
 
 ---
 

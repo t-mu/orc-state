@@ -3,7 +3,7 @@ ref: vnext-control-plane/202-supervise-and-reconcile-agent-sessions
 feature: vnext-control-plane
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - vnext-control-plane/198-migrate-run-transitions-transactionally
   - vnext-control-plane/195-prove-provider-and-terminal-protocols
