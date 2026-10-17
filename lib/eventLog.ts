@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { validateEventObject } from './eventValidation.ts';
 import type { OrcEvent, OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
+import { assertSupportedRuntimeSchemaVersion, migrateRuntimeSchema } from './runtimeSchema.ts';
 
 // Module-level singleton: one DB connection per stateDir.
 const _dbs = new Map<string, Database.Database>();
@@ -15,10 +16,12 @@ function getDb(stateDir: string): Database.Database {
 
   const dbPath = join(stateDir, 'events.db');
   const db = new Database(dbPath);
-  db.pragma('busy_timeout = 10000');
-  db.pragma('journal_mode = WAL');
+  try {
+    db.pragma('busy_timeout = 10000');
+    assertSupportedRuntimeSchemaVersion(db);
+    db.pragma('journal_mode = WAL');
 
-  db.exec(`
+    db.exec(`
     CREATE TABLE IF NOT EXISTS events (
       seq       INTEGER PRIMARY KEY AUTOINCREMENT,
       event_id  TEXT    NOT NULL UNIQUE,
@@ -43,11 +46,16 @@ function getDb(stateDir: string): Database.Database {
       INSERT INTO events_fts(rowid, event, agent_id, run_id, task_ref, payload)
       VALUES (new.seq, new.event, new.agent_id, new.run_id, new.task_ref, new.payload);
     END;
-  `);
+    `);
 
-  migrateJsonlIfNeeded(db, stateDir);
-  _dbs.set(stateDir, db);
-  return db;
+    migrateRuntimeSchema(db);
+    migrateJsonlIfNeeded(db, stateDir);
+    _dbs.set(stateDir, db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 function migrateJsonlIfNeeded(db: Database.Database, stateDir: string): void {

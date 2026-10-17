@@ -15,6 +15,7 @@ import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { validateBacklogSync } from './backlog-sync-check.ts';
 import { checkSandboxDependencies } from '../lib/sandboxDeps.ts';
+import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -35,6 +36,7 @@ const providers = new Set(agents.map((a) => a.provider));
 
 const sandboxDeps = checkSandboxDependencies();
 const memoryHealth = validateMemoryDb(STATE_DIR);
+const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
 const siblingLayout = checkSiblingLayout({
   isSibling: IS_SIBLING_LAYOUT,
   targetRepoRoot: TARGET_REPO_ROOT,
@@ -52,6 +54,7 @@ const checks: Record<string, unknown> = {
   backlogSync,
   sandboxDependencies: sandboxDeps,
   memoryHealth,
+  runtimeSchema,
   siblingLayout,
 };
 
@@ -115,6 +118,7 @@ const summary = {
     (checks.lifecycleIssues as unknown[]).length === 0 &&
     sandboxDeps.ok &&
     memoryHealth.ok &&
+    runtimeSchema.ok &&
     siblingLayout.ok,
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
@@ -208,6 +212,10 @@ console.log(`memory health: ok=${String(mh.ok)}`);
 for (const msg of mh.messages) {
   console.log(`  ${msg}`);
 }
+
+console.log('');
+console.log(`runtime schema: ok=${String(runtimeSchema.ok)} version=${String(runtimeSchema.version)}`);
+for (const message of runtimeSchema.messages) console.log(`  ${message}`);
 
 // Only surface the sibling layout in doctor when it is active — keeps the
 // default attached-layout output unchanged (matches preflight's suppression).
