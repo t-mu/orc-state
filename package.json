@@ -86,11 +86,11 @@
   },
   "dependencies": {
     "@inquirer/prompts": "7.5.2",
-    "@modelcontextprotocol/sdk": "1.27.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "ajv": "8.18.0",
     "better-sqlite3": "12.8.0",
     "chalk": "5.4.1",
-    "figlet": "1.8.0",
+    "figlet": "1.12.0",
     "ink": "5.2.1",
     "node-pty": "1.1.0",
     "react": "18.3.1"
@@ -106,11 +106,11 @@
     "esbuild": "0.25.4",
     "eslint": "10.0.3",
     "ink-testing-library": "4.0.0",
-    "lint-staged": "16.3.3",
+    "lint-staged": "16.4.0",
     "simple-git-hooks": "2.13.1",
     "tsx": "4.19.3",
     "typescript": "5.9.3",
     "typescript-eslint": "8.57.0",
-    "vitest": "4.0.18"
+    "vitest": "4.1.12"
   }
 }
