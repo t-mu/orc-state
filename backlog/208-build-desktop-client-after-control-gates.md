@@ -1,0 +1,74 @@
+---
+ref: vnext-control-plane/208-build-desktop-client-after-control-gates
+feature: vnext-control-plane
+review_level: full
+priority: low
+status: todo
+depends_on:
+  - vnext-control-plane/201-add-local-daemon-control-api
+  - vnext-control-plane/202-supervise-and-reconcile-agent-sessions
+  - vnext-control-plane/203-integrate-structured-provider-runtimes
+  - vnext-control-plane/205-add-terminal-broker-and-worktree-shell
+  - vnext-control-plane/206-package-one-project-container
+---
+
+# Task 208 — Build desktop client after control gates
+
+Depends on Tasks 201, 202, 203, 205 and 206. Do not start before those gates pass.
+
+## Scope
+
+**In scope:** Project selector, agent sidebar, run/task inspector, activity/logs, worktree shell and scoped operator actions.
+
+**Out of scope:** Scheduling or direct SQLite/Docker access from renderer; provider TUI simulation for structured sessions.
+
+---
+
+## Context
+
+### Current state
+
+Ink TUI and CLI exist. There is no desktop app or stable daemon client contract.
+
+### Desired state
+
+An optional desktop client reconnects to the daemon, observes runs and intervenes while CLI/TUI remain functional.
+
+### Start here
+
+- `lib/tui/` — reusable status concepts.
+- Control API from Task 201 — client contract.
+
+**Affected files:** new desktop app, shared protocol types, tests.
+
+---
+
+## Goals
+
+1. Must render snapshot plus cursor events without lost updates on reconnect.
+2. Must keep privileged Docker/filesystem operations in main process or daemon.
+3. Must preserve CLI/TUI workflow when app is closed.
+
+## Implementation
+
+1. Build Electron main process client and restricted renderer with React.
+2. Add inspector, activity/logs and independent shell using existing API/broker.
+3. Add blocker/approval/interrupt controls and reconnect tests.
+
+## Acceptance criteria
+
+- [ ] Existing run is visible and controllable after GUI restart.
+- [ ] Renderer has no raw Docker, filesystem or SQLite privilege.
+- [ ] CLI remains usable throughout desktop disconnect.
+
+## Tests
+
+Protocol-contract and UI reconnect tests with fake daemon; opt-in desktop smoke.
+
+## Verification
+
+`npm test`; desktop integration suite; end-to-end CLI/GUI parallel smoke.
+
+## Risk / Rollback
+
+**Risk:** GUI reconnect could show stale state. **Rollback:** Keep app optional and use CLI; cursor replay restores accurate state after repair.
