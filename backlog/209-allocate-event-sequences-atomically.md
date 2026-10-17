@@ -3,7 +3,7 @@ ref: vnext-control-plane/209-allocate-event-sequences-atomically
 feature: vnext-control-plane
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - vnext-control-plane/194-sync-markdown-task-dependencies
 ---

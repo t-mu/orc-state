@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -274,6 +275,73 @@ describe('nextSeq', () => {
 });
 
 describe('appendSequencedEvent', () => {
+  it('assigns distinct matching row and payload sequences across processes', async () => {
+    // Initialize schema before processes race to append to the same database.
+    appendSequencedEvent(dir, { ...validEvent(undefined), event_id: 'evt-concurrency-seed' });
+    closeAllDatabases();
+    const moduleUrl = new URL('./eventLog.ts', import.meta.url).href;
+    const childCode = `
+      const { appendSequencedEvent, closeAllDatabases } = await import(process.argv[1]);
+      const stateDir = process.argv[2];
+      const start = Number(process.argv[3]);
+      const sequences = [];
+      for (let i = 0; i < 10; i++) {
+        sequences.push(appendSequencedEvent(stateDir, {
+          event_id: 'evt-concurrent-' + (start + i),
+          ts: '2026-01-01T00:00:00Z',
+          event: 'heartbeat', actor_type: 'coordinator', actor_id: 'coordinator', agent_id: 'agent-01',
+        }));
+      }
+      closeAllDatabases();
+      process.stdout.write(JSON.stringify(sequences));
+    `;
+    const runChild = (start: number) => new Promise<number[]>((resolve, reject) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', childCode, moduleUrl, dir, String(start)]);
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('exit', (code) => code === 0 ? resolve(JSON.parse(stdout) as number[]) : reject(new Error(`child exited ${code}: ${stderr}`)));
+    });
+
+    const returned = (await Promise.all(Array.from({ length: 8 }, (_, i) => runChild(i * 10)))).flat();
+    expect(returned).toHaveLength(80);
+    expect(new Set(returned).size).toBe(80);
+    const db = new Database(join(dir, 'events.db'), { readonly: true });
+    try {
+      const rows = db.prepare('SELECT seq, event_id, payload FROM events ORDER BY seq').all() as Array<{ seq: number; event_id: string; payload: string }>;
+      expect(rows).toHaveLength(81);
+      expect(rows.map((row) => row.seq)).toEqual(Array.from({ length: 81 }, (_, i) => i + 1));
+      expect(new Set(rows.map((row) => row.event_id)).size).toBe(81);
+      for (const row of rows) expect((JSON.parse(row.payload) as OrcEvent).seq).toBe(row.seq);
+      expect(db.prepare('SELECT count(*) AS count FROM events_fts').get()).toEqual({ count: 81 });
+    } finally {
+      db.close();
+    }
+  }, 30_000);
+
+  it('rolls back invalid and duplicate events without leaving an FTS entry', () => {
+    const seq = appendSequencedEvent(dir, { ...validEvent(undefined), event_id: 'evt-unique-first' });
+    expect(seq).toBe(1);
+    expect(() => appendSequencedEvent(dir, { ...validEvent(undefined), event_id: 'evt-unique-first' })).toThrow();
+    expect(() => appendSequencedEvent(dir, { ...validEvent(undefined, 'run_started'), event_id: 'evt-invalid' })).toThrow('event validation failed');
+    const db = new Database(join(dir, 'events.db'), { readonly: true });
+    try {
+      expect(db.prepare('SELECT count(*) AS count FROM events').get()).toEqual({ count: 1 });
+      expect(db.prepare('SELECT count(*) AS count FROM events_fts').get()).toEqual({ count: 1 });
+      expect(db.prepare('SELECT payload FROM events WHERE seq = 1').get()).toEqual({ payload: JSON.stringify({ ...validEvent(undefined), event_id: 'evt-unique-first', seq: 1 }) });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('updates FTS to index the SQLite-assigned sequence', () => {
+    appendEvent(logPath, { ...validEvent(40), event_id: 'evt-explicit-forty' });
+    expect(appendSequencedEvent(dir, { ...validEvent(undefined), event_id: 'evt-assigned-next' })).toBe(41);
+    expect(queryEvents(dir, { fts_query: '41' }).map((event) => event.seq)).toEqual([41]);
+  });
+
   it('assigns sequential ids', () => {
     appendSequencedEvent(dir, { ...validEvent(undefined), event_id: 'evt-a-heartbeat' }, { fsyncPolicy: 'never' });
     appendSequencedEvent(dir, { ...validEvent(undefined), event_id: 'evt-b-heartbeat' }, { fsyncPolicy: 'never' });
