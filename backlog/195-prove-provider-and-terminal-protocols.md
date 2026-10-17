@@ -3,7 +3,7 @@ ref: vnext-control-plane/195-prove-provider-and-terminal-protocols
 feature: vnext-control-plane
 review_level: none
 priority: high
-status: todo
+status: blocked
 ---
 
 # Task 195 — Prove subscription provider and terminal protocols
@@ -62,3 +62,12 @@ Opt-in real-provider smoke only; no CI dependency on login or paid API keys.
 ## Verification
 
 `npm test`; manually rerun documented smoke commands where credentials are available.
+
+## Current blockers (2026-10-17)
+
+The sanitized local results and rerun commands are in
+`docs/vnext-provider-protocols.md`. The Claude structured turn returned
+`is_error: true` and exit code 1 despite a Team login status, so a successful
+subscription turn and resume are unproven. Docker CLI/host daemon access is
+unavailable in the dev container, so the required actual-host transport test
+has not run. Keep this task blocked until both results are recorded.
