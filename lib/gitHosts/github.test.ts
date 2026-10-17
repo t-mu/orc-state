@@ -22,7 +22,8 @@ const adapter = new GitHubAdapter();
 
 describe('createPr', () => {
   it('calls gh with correct arguments and returns URL', () => {
-    mockedSpawnSync.mockReturnValue(makeResult('https://github.com/org/repo/pull/42\n'));
+    mockedSpawnSync.mockReturnValueOnce(makeResult(''));
+    mockedSpawnSync.mockReturnValueOnce(makeResult('https://github.com/org/repo/pull/42\n'));
     const url = adapter.createPr('My PR', 'feature-branch', 'PR body');
     expect(mockedSpawnSync).toHaveBeenCalledWith(
       'gh',
@@ -35,8 +36,17 @@ describe('createPr', () => {
   it('throws on non-zero exit', () => {
     mockedSpawnSync.mockReturnValue(makeResult('', 1, 'error: not authenticated'));
     expect(() => adapter.createPr('title', 'branch', 'body')).toThrow(
-      'gh pr create failed: error: not authenticated',
+      'gh pr list failed: error: not authenticated',
     );
+  });
+
+  it('reuses an open PR for the same branch after a replay', () => {
+    mockedSpawnSync.mockReturnValue(makeResult('https://github.com/org/repo/pull/42\n'));
+    expect(adapter.createPr('My PR', 'feature-branch', 'PR body')).toBe('https://github.com/org/repo/pull/42');
+    expect(mockedSpawnSync).toHaveBeenCalledTimes(1);
+    expect(mockedSpawnSync).toHaveBeenCalledWith('gh', [
+      'pr', 'list', '--head', 'feature-branch', '--state', 'open', '--json', 'url', '--jq', '.[0].url // empty',
+    ], expect.anything());
   });
 });
 
@@ -82,7 +92,8 @@ describe('waitForCi', () => {
 
 describe('mergePr', () => {
   it('calls gh pr merge with --squash', () => {
-    mockedSpawnSync.mockReturnValue(makeResult(''));
+    mockedSpawnSync.mockReturnValueOnce(makeResult('OPEN\n'));
+    mockedSpawnSync.mockReturnValueOnce(makeResult(''));
     adapter.mergePr('42');
     expect(mockedSpawnSync).toHaveBeenCalledWith(
       'gh',
@@ -92,8 +103,15 @@ describe('mergePr', () => {
   });
 
   it('throws on non-zero exit', () => {
-    mockedSpawnSync.mockReturnValue(makeResult('', 1, 'merge failed'));
+    mockedSpawnSync.mockReturnValueOnce(makeResult('OPEN\n'));
+    mockedSpawnSync.mockReturnValueOnce(makeResult('', 1, 'merge failed'));
     expect(() => adapter.mergePr('42')).toThrow('gh pr merge failed: merge failed');
+  });
+
+  it('does not merge an already merged PR again', () => {
+    mockedSpawnSync.mockReturnValue(makeResult('MERGED\n'));
+    adapter.mergePr('42');
+    expect(mockedSpawnSync).toHaveBeenCalledTimes(1);
   });
 });
 

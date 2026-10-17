@@ -19,7 +19,7 @@ export function initializeEventOffset(stateDir: string, consumerId = COORDINATOR
   const already = withEventDb(stateDir, (db) => db.prepare('SELECT last_event_seq FROM offsets WHERE consumer_id = ?')
     .get(consumerId) as { last_event_seq: number } | undefined);
   if (already) return already.last_event_seq;
-  const hasLegacy = existsSync(join(stateDir, 'event-checkpoint.json'));
+  const hasLegacy = consumerId === COORDINATOR_EVENT_CONSUMER && existsSync(join(stateDir, 'event-checkpoint.json'));
   const legacy = hasLegacy ? readEventCheckpoint(stateDir) : null;
   return withEventDbTransaction(stateDir, (db) => {
     const existing = db.prepare('SELECT last_event_seq FROM offsets WHERE consumer_id = ?')
@@ -30,15 +30,12 @@ export function initializeEventOffset(stateDir: string, consumerId = COORDINATOR
       const processed = new Set(legacy.processed_event_ids);
       const rows = db.prepare('SELECT seq, event_id FROM events WHERE seq <= ? ORDER BY seq')
         .all(legacy.last_processed_seq) as Array<{ seq: number; event_id: string }>;
-      let gap = false;
       for (const row of rows) {
         if (!processed.has(row.event_id) && !processed.has(`legacy:seq:${row.seq}`)) {
-          gap = true;
           break;
         }
         cursor = row.seq;
       }
-      if (!gap) cursor = legacy.last_processed_seq;
     }
     db.prepare('INSERT INTO offsets (consumer_id, last_event_seq, updated_at) VALUES (?, ?, ?)')
       .run(consumerId, cursor, new Date().toISOString());
@@ -78,5 +75,13 @@ export function resetEventOffset(stateDir: string, seq: number, consumerId = COO
     if (seq > current.last_event_seq) throw new Error('Recovery reset cannot skip pending events');
     db.prepare('UPDATE offsets SET last_event_seq = ?, updated_at = ? WHERE consumer_id = ?')
       .run(seq, new Date().toISOString(), consumerId);
+    db.prepare('INSERT OR IGNORE INTO runtime_cutovers (name, imported_at) VALUES (?, ?)')
+      .run(`event_cursor_reset:${consumerId}`, new Date().toISOString());
   });
+}
+
+/** An explicit reset overrides legacy checkpoint deduplication. */
+export function wasEventOffsetReset(stateDir: string, consumerId = COORDINATOR_EVENT_CONSUMER): boolean {
+  return withEventDb(stateDir, (db) => Boolean(db.prepare('SELECT 1 FROM runtime_cutovers WHERE name = ?')
+    .get(`event_cursor_reset:${consumerId}`)));
 }

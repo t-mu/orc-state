@@ -129,6 +129,11 @@
           "type": ["string", "null"],
           "format": "date-time"
         },
+        "pr_initial_work_complete_seq": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Sequence of the work_complete event that opened PR review."
+        },
         "task_spec_snapshot": {
           "type": "object",
           "required": ["source_path", "snapshot_path", "sha256"],

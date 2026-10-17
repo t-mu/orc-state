@@ -17,7 +17,13 @@ try {
     if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('--reset-to must be a non-negative safe integer');
     const pidFile = join(STATE_DIR, 'coordinator.pid');
     if (existsSync(pidFile)) {
-      const pid = Number(readFileSync(pidFile, 'utf8').trim());
+      const content = readFileSync(pidFile, 'utf8').trim();
+      let pid: number;
+      try {
+        pid = Number((JSON.parse(content) as { pid?: unknown }).pid);
+      } catch {
+        pid = Number(content);
+      }
       if (Number.isSafeInteger(pid) && pid > 0) {
         try {
           process.kill(pid, 0);

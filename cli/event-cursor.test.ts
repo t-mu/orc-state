@@ -30,7 +30,7 @@ describe('event-cursor recovery CLI', () => {
 
   it('rejects invalid offsets and a reset while the coordinator is alive', () => {
     expect(run('--reset-to=-1').status).toBe(1);
-    writeFileSync(join(dir, 'coordinator.pid'), String(process.pid));
+    writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
     const result = run('--reset-to=1');
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Stop the coordinator');

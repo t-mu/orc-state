@@ -44,7 +44,7 @@ import { rebuildDocumentIndex, pruneOrphanRunTaskSnapshots, taskSnapshotStatus, 
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly, writeSpecStatusDone } from './lib/taskCompletion.ts';
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
-import { advanceEventOffset, initializeEventOffset, readEventOffset } from './lib/eventOffsets.ts';
+import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
@@ -653,7 +653,9 @@ async function mergeAndFinishDirectRun(claim: Claim, runWorktree: { branch: stri
   }
 
   try {
-    markTaskDoneRuntimeOnly(claim.task_ref, 'coordinator', STATE_DIR);
+    if (findTask(readBacklog(STATE_DIR), claim.task_ref)?.status !== 'done') {
+      markTaskDoneRuntimeOnly(claim.task_ref, 'coordinator', STATE_DIR);
+    }
   } catch (error) {
     return markFinalizeBlocked(claim, workerPoolConfig, `failed to mark runtime task done after merge: ${(error as Error).message}`);
   }
@@ -690,7 +692,7 @@ async function mergeAndFinishDirectRun(claim: Claim, runWorktree: { branch: stri
   return true;
 }
 
-async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
+async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig, eventSeq = 0) {
   const runWorktree = getRunWorktree(STATE_DIR, claim.run_id);
   if (!runWorktree?.branch) {
     return markFinalizeBlocked(claim, workerPoolConfig, 'missing run worktree metadata for finalization');
@@ -714,7 +716,9 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     } catch { /* ignore races */ }
 
     try {
-      markTaskDoneRuntimeOnly(claim.task_ref, 'coordinator', STATE_DIR);
+      if (findTask(readBacklog(STATE_DIR), claim.task_ref)?.status !== 'done') {
+        markTaskDoneRuntimeOnly(claim.task_ref, 'coordinator', STATE_DIR);
+      }
     } catch (error) {
       return markFinalizeBlocked(claim, workerPoolConfig, `failed to mark runtime task done after PR merge: ${(error as Error).message}`);
     }
@@ -783,7 +787,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig) {
     const nowIso = new Date().toISOString();
     try {
       setPrRef(STATE_DIR, claim.run_id, prRef);
-      setPrCreatedAt(STATE_DIR, claim.run_id, nowIso);
+      setPrCreatedAt(STATE_DIR, claim.run_id, nowIso, eventSeq > 0 ? eventSeq : undefined);
     } catch (error) {
       log(`warning: failed to store PR fields for ${claim.run_id}: ${(error as Error).message}`);
     }
@@ -1835,7 +1839,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     // processed-ID set until the cursor has crossed the legacy checkpoint.
     getEventCursor();
     if (seq > 0 && (seq <= readEventOffset(STATE_DIR)
-      || (seq <= legacyLastSeq && legacyProcessedIds!.has(normalizedEventId)))) {
+      || (seq <= legacyLastSeq && !wasEventOffsetReset(STATE_DIR) && legacyProcessedIds!.has(normalizedEventId)))) {
       if (seq > 0) advanceCursor(seq);
       continue;
     }
@@ -1886,7 +1890,8 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       recordAgentActivity(STATE_DIR, agentId, { at: action.at });
     }
 
-    if (action.type === 'heartbeat') {
+    if (action.type === 'heartbeat' && (!claim?.last_heartbeat_at
+      || Date.parse(claim.last_heartbeat_at) < Date.parse(action.at))) {
       try {
         heartbeat(STATE_DIR, runId!, agentId, { emitEvent: false, at: action.at, leaseDurationMs: action.leaseDurationMs });
         recordAgentActivity(STATE_DIR, agentId, { at: action.at });
@@ -2009,8 +2014,15 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     // the finalization state was advanced above (handles idempotent re-delivery).
     if (event.event === 'work_complete' || event.event === 'ready_to_merge') {
       const latestClaim = runId ? getClaim(runId) : null;
-      if (latestClaim && latestClaim.state === 'in_progress') {
-        await finalizeRun(latestClaim, workerPoolConfig);
+      // The initial work_complete can be replayed after PR review has started.
+      // The durable event sequence identifies that handoff independently of
+      // worker clock skew; only the later reviewer handoff may merge the PR.
+      const stalePrHandoff = event.event === 'work_complete'
+        && latestClaim?.finalization_state === 'pr_review_in_progress'
+        && seq > 0
+        && latestClaim.pr_initial_work_complete_seq === seq;
+      if (latestClaim && latestClaim.state === 'in_progress' && !stalePrHandoff) {
+        await finalizeRun(latestClaim, workerPoolConfig, seq);
       }
     }
 

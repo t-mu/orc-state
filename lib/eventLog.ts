@@ -47,6 +47,10 @@ function getDb(stateDir: string): Database.Database {
       VALUES (new.seq, new.event, new.agent_id, new.run_id, new.task_ref, new.payload);
     END;
     CREATE INDEX IF NOT EXISTS events_run_seq_idx ON events(run_id, seq);
+    CREATE INDEX IF NOT EXISTS events_run_event_ts_idx ON events(run_id, event, ts DESC, seq DESC)
+      WHERE json_valid(payload) AND COALESCE(json_extract(payload, '$.actor_type'), '') NOT IN ('coordinator', 'human');
+    CREATE INDEX IF NOT EXISTS events_run_phase_ts_idx ON events(run_id, ts DESC, seq DESC)
+      WHERE event = 'phase_started' AND json_valid(payload);
     `);
 
     migrateRuntimeSchema(db);
@@ -368,17 +372,38 @@ export function readEventBatch(logPath: string, afterSeq: number, limit: number)
   });
 }
 
-/** Startup hydration for active runs only; regular ticks use new event batches. */
+/**
+ * Hydrate at most one activity event per type and one phase per active run.
+ * Indexed lookups keep restart work independent of each run's event history.
+ */
 export function readEventsForRuns(logPath: string, runIds: string[]): OrcEvent[] {
   if (runIds.length === 0) return [];
   const db = getDb(dirname(logPath));
-  const select = db.prepare('SELECT seq, payload FROM events WHERE run_id = ? ORDER BY seq');
+  const activityTypes = [
+    'run_started', 'heartbeat', 'work_complete', 'finalize_rebase_started',
+    'ready_to_merge', 'phase_started', 'phase_finished', 'blocked',
+    'need_input', 'input_requested', 'input_provided', 'unblocked',
+  ];
+  const selectActivity = db.prepare(`SELECT seq, payload FROM events
+    WHERE run_id = ? AND event = ?
+      AND json_valid(payload)
+      AND COALESCE(json_extract(payload, '$.actor_type'), '') NOT IN ('coordinator', 'human')
+    ORDER BY ts DESC, seq DESC LIMIT 1`);
+  const selectPhase = db.prepare(`SELECT seq, payload FROM events
+    WHERE run_id = ? AND event = 'phase_started' AND json_valid(payload)
+    ORDER BY ts DESC, seq DESC LIMIT 1`);
   const events: OrcEvent[] = [];
   for (const runId of new Set(runIds)) {
-    const rows = select.all(runId) as Array<{ seq: number; payload: string }>;
-    for (const row of rows) {
+    for (const type of activityTypes) {
+      const row = selectActivity.get(runId, type) as { seq: number; payload: string } | undefined;
+      if (!row) continue;
       const event = parseEventRow(row, row.seq, { validate: true });
       if (event && event.seq === row.seq) events.push(event);
+    }
+    const phase = selectPhase.get(runId) as { seq: number; payload: string } | undefined;
+    if (phase) {
+      const event = parseEventRow(phase, phase.seq, { validate: true });
+      if (event && event.seq === phase.seq) events.push(event);
     }
   }
   return events;

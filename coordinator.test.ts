@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { appendSequencedEvent, initEventsDb, queryEvents } from './lib/eventLog.ts';
-import { readEventOffset, resetEventOffset } from './lib/eventOffsets.ts';
+import { initializeEventOffset, readEventOffset, resetEventOffset } from './lib/eventOffsets.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { initMemoryDb, listDrawers, closeMemoryDb } from './lib/memoryStore.ts';
@@ -2059,6 +2059,13 @@ describe('processTerminalRunEvents', () => {
     expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_SUCCESS'));
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-success');
 
+    // A crash before cursor persistence must not replay the completed merge.
+    await processTerminalRunEvents([{
+      event: 'work_complete', run_id: 'run-finalize-success', task_ref: 'orch/task-151',
+      agent_id: 'orc-1', ts: '2026-03-11T08:00:00.000Z', payload: { status: 'awaiting_finalize' },
+    }]);
+    expect(spawnSync).toHaveBeenCalledTimes(3);
+
     const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-success')!;
     expect(claim.state).toBe('done');
     const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
@@ -2621,6 +2628,55 @@ describe('processTerminalRunEvents', () => {
     await coordinator.tick();
     expect(readEventOffset(dir)).toBe(3);
     expect(readClaims(dir).find((claim) => claim.run_id === 'run-cursor-gap')?.input_state).toBe('awaiting_input');
+  });
+
+  it('replays a legacy processed event after an explicit cursor reset', async () => {
+    seedState(dir, {
+      agents: [{ agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running',
+        session_handle: null, registered_at: new Date().toISOString() }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'orch/cursor-reset', status: 'claimed' }],
+      claims: [{ run_id: 'run-cursor-reset', task_ref: 'orch/cursor-reset', agent_id: 'orc-1',
+        state: 'claimed', claimed_at: new Date().toISOString(), lease_expires_at: new Date(Date.now() + 60000).toISOString() }],
+    });
+    const event = {
+      event_id: 'already-processed', ts: new Date().toISOString(), event: 'run_started',
+      actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1',
+      run_id: 'run-cursor-reset', task_ref: 'orch/cursor-reset', payload: {},
+    } as const;
+    const seq = appendSequencedEvent(dir, event);
+    writeFileSync(join(dir, 'event-checkpoint.json'), JSON.stringify({
+      version: '1', last_processed_seq: seq, processed_event_ids: ['already-processed'],
+      updated_at: new Date().toISOString(),
+    }));
+    expect(initializeEventOffset(dir)).toBe(seq);
+    resetEventOffset(dir, 0);
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{ ...event, seq }]);
+    expect(readClaims(dir).find((claim) => claim.run_id === 'run-cursor-reset')?.state).toBe('in_progress');
+    expect(readEventOffset(dir)).toBe(seq);
+  });
+
+  it('does not merge a PR when the initial work_complete replays after review starts', async () => {
+    seedState(dir, {
+      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running',
+        session_handle: 'pty:orc-1', registered_at: new Date().toISOString() }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'orch/pr-replay', status: 'in_progress' }],
+      claims: [{ run_id: 'run-pr-replay', task_ref: 'orch/pr-replay', agent_id: 'orc-1',
+        state: 'in_progress', claimed_at: new Date().toISOString(), started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+        finalization_state: 'pr_review_in_progress', pr_ref: 'https://github.com/org/repo/pull/9',
+        pr_created_at: '2026-03-11T08:10:00.000Z', pr_initial_work_complete_seq: 1 }],
+    });
+    const mergePr = vi.fn();
+    vi.doMock('./lib/gitHosts/index.ts', () => ({ getGitHostAdapter: () => ({ mergePr }) }));
+    const { processTerminalRunEvents } = await import('./coordinator.ts');
+    await processTerminalRunEvents([{
+      seq: 1, event_id: 'initial-work-complete', event: 'work_complete',
+      run_id: 'run-pr-replay', task_ref: 'orch/pr-replay', agent_id: 'orc-1',
+      ts: '2026-03-11T08:20:00.000Z', payload: { status: 'awaiting_finalize' },
+    }]);
+    expect(mergePr).not.toHaveBeenCalled();
+    expect(readEventOffset(dir)).toBe(1);
   });
 
   it('does not process coordinator-originated INPUT_REQUEST events as new work items', async () => {

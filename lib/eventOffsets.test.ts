@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { closeAllDatabases, initEventsDb, queryEvents, readEventBatch } from './eventLog.ts';
-import { advanceEventOffset, initializeEventOffset, readEventOffset, resetEventOffset } from './eventOffsets.ts';
+import { closeAllDatabases, initEventsDb, queryEvents, readEventBatch, readEventsForRuns } from './eventLog.ts';
+import { advanceEventOffset, initializeEventOffset, readEventOffset, resetEventOffset, wasEventOffsetReset } from './eventOffsets.ts';
 
 let dir: string;
 beforeEach(() => { dir = createTempStateDir('orch-event-offset-'); seedState(dir); initEventsDb(dir); });
@@ -48,6 +48,7 @@ describe('durable event offsets', () => {
     }));
     expect(initializeEventOffset(dir)).toBe(1);
     expect(readEventBatch(join(dir, 'events.db'), readEventOffset(dir), 128).map((row) => row.seq)).toEqual([2, 3]);
+    expect(initializeEventOffset(dir, 'notifications')).toBe(0);
     expect(queryEvents(dir, { fts_query: 'heartbeat' })).toHaveLength(3);
     mkdirSync(join(dir, 'backlog'), { recursive: true });
     const doctor = spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
@@ -56,6 +57,15 @@ describe('durable event offsets', () => {
       encoding: 'utf8',
     });
     expect(doctor.status, doctor.stderr || doctor.stdout).toBe(0);
+  });
+
+  it('never migrates the cursor beyond events that exist', () => {
+    insertEvents(3);
+    writeFileSync(join(dir, 'event-checkpoint.json'), JSON.stringify({
+      version: '1', last_processed_seq: 99,
+      processed_event_ids: ['event-1', 'event-2', 'event-3'], updated_at: '2026-01-01T00:00:00Z',
+    }));
+    expect(initializeEventOffset(dir)).toBe(3);
   });
 
   it('keeps corrupt rows visible to the cursor while preserving later events', () => {
@@ -71,6 +81,21 @@ describe('durable event offsets', () => {
     advanceEventOffset(dir, 0, 3);
     resetEventOffset(dir, 2);
     expect(readEventOffset(dir)).toBe(2);
+    expect(wasEventOffsetReset(dir)).toBe(true);
     expect(readEventBatch(join(dir, 'events.db'), 2, 3)).toHaveLength(1);
+  });
+
+  it('hydrates a bounded set of latest activity and phase events for active runs', () => {
+    insertEvents(400);
+    const db = new Database(join(dir, 'events.db'));
+    try {
+      db.prepare("UPDATE events SET event = 'phase_started', task_ref = 'proj/task', payload = json_set(payload, '$.event', 'phase_started', '$.phase', 'review', '$.task_ref', 'proj/task') WHERE seq = 7").run();
+      db.prepare("UPDATE events SET event = 'input_requested', payload = json_set(payload, '$.event', 'input_requested', '$.actor_type', 'coordinator') WHERE seq = 399").run();
+    } finally { db.close(); }
+    const hydrated = readEventsForRuns(join(dir, 'events.db'), ['run-1']);
+    expect(hydrated.length).toBeLessThanOrEqual(13);
+    expect(hydrated.some((event) => event.event === 'phase_started' && event.phase === 'review')).toBe(true);
+    expect(hydrated.some((event) => event.event === 'heartbeat' && event.seq === 400)).toBe(true);
+    expect(hydrated.some((event) => event.seq === 399)).toBe(false);
   });
 });

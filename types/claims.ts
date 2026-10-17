@@ -42,6 +42,7 @@ export interface Claim {
   escalation_notified_at?: string | null;
   pr_ref?: string | null;
   pr_created_at?: string | null;
+  pr_initial_work_complete_seq?: number | null;
   task_spec_snapshot?: TaskSpecSnapshot;
 }
 
