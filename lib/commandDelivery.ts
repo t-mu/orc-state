@@ -33,7 +33,6 @@ export interface DurableCommand {
 
 export interface EnqueueCommand {
   runId: string;
-  actorSessionId: string;
   recipientSessionId: string;
   idempotencyKey: string;
   kind: string;
@@ -42,6 +41,13 @@ export interface EnqueueCommand {
   maxAttempts?: number;
   deadlineAt?: string;
 }
+
+/** Supplied by the trusted CLI/MCP boundary, never by a command request. */
+export interface CommandPrincipal {
+  agentId: string;
+  sessionId: string;
+}
+export type CommandAuthenticator = (credential: string) => CommandPrincipal | null;
 
 type Session = { session_id: string; agent_id: string; run_id: string | null; state: string };
 type Run = { run_id: string; task_ref: string; agent_id: string | null; state: string };
@@ -81,7 +87,7 @@ function transition(stateDir: string, db: Database.Database, command: DurableCom
 }
 
 /** The session IDs are capabilities; caller-supplied actor/recipient names are never trusted. */
-export function enqueueCommand(stateDir: string, input: EnqueueCommand): DurableCommand {
+function enqueueCommand(stateDir: string, principal: CommandPrincipal, input: EnqueueCommand): DurableCommand {
   if (!input.idempotencyKey || !input.kind) throw new Error('Command key and kind are required');
   if (!Number.isInteger(input.maxAttempts ?? 3) || (input.maxAttempts ?? 3) < 1) throw new Error('maxAttempts must be positive');
   if (input.deadlineAt && !Number.isFinite(Date.parse(input.deadlineAt))) throw new Error('Invalid deadline');
@@ -90,7 +96,8 @@ export function enqueueCommand(stateDir: string, input: EnqueueCommand): Durable
   return withEventDbTransaction(stateDir, (db) => {
     const owner = run(db, input.runId);
     if (!['claimed', 'in_progress'].includes(owner.state)) throw new Error('Run is not active');
-    const actor = session(db, input.actorSessionId);
+    const actor = session(db, principal.sessionId);
+    if (actor.agent_id !== principal.agentId) throw new Error('Authenticated actor does not match session');
     const recipient = session(db, input.recipientSessionId);
     if (actor.agent_id !== 'master' && (actor.agent_id !== owner.agent_id || actor.run_id !== input.runId)) {
       throw new Error('Actor is not scoped to the run');
@@ -100,7 +107,10 @@ export function enqueueCommand(stateDir: string, input: EnqueueCommand): Durable
       .get(input.runId, input.idempotencyKey) as DurableCommand | undefined;
     if (existing) {
       if (existing.actor_session_id !== actor.session_id || existing.session_id !== recipient.session_id
-        || existing.kind !== input.kind || existing.payload !== payload) throw new Error('Idempotency key conflicts with existing command');
+        || existing.kind !== input.kind || existing.payload !== payload
+        || existing.side_effecting !== (input.sideEffecting === false ? 0 : 1)
+        || existing.max_attempts !== (input.maxAttempts ?? 3)
+        || existing.deadline_at !== (input.deadlineAt ?? null)) throw new Error('Idempotency key conflicts with existing command');
       return existing;
     }
     const commandId = `cmd-${randomUUID()}`;
@@ -141,6 +151,7 @@ export function markSendStarted(stateDir: string, commandId: string): DurableCom
   return withEventDbTransaction(stateDir, (db) => {
     const command = row(db, commandId);
     if (command.state !== 'dispatching' || command.send_started_at) throw new Error('Command is not reserved for send');
+    if (!['claimed', 'in_progress'].includes(run(db, command.run_id).state)) throw new Error('Run is no longer active');
     const recipient = session(db, command.session_id!);
     if (recipient.run_id !== command.run_id || recipient.agent_id !== command.recipient_id) throw new Error('Recipient session changed');
     db.prepare('UPDATE commands SET send_started_at = ? WHERE command_id = ?').run(now(), commandId);
@@ -161,10 +172,11 @@ export function markSent(stateDir: string, commandId: string): DurableCommand {
   });
 }
 
-export function acknowledgeCommand(stateDir: string, commandId: string, recipientSessionId: string, state: 'accepted' | 'running' | 'completed' | 'failed'): DurableCommand {
+function acknowledgeCommand(stateDir: string, commandId: string, principal: CommandPrincipal, state: 'accepted' | 'running' | 'completed' | 'failed'): DurableCommand {
   return withEventDbTransaction(stateDir, (db) => {
     const command = row(db, commandId);
-    const recipient = session(db, recipientSessionId);
+    const recipient = session(db, principal.sessionId);
+    if (recipient.agent_id !== principal.agentId) throw new Error('Authenticated recipient does not match session');
     if (recipient.session_id !== command.session_id || recipient.run_id !== command.run_id
       || recipient.agent_id !== command.recipient_id) throw new Error('ACK from wrong recipient');
     const allowed: Record<string, string[]> = {
@@ -207,11 +219,12 @@ export function reconcileCommands(stateDir: string, at = now(), staleAfterMs = 3
     const changed: DurableCommand[] = [];
     for (const command of commands) {
       const recipient = db.prepare('SELECT state FROM sessions WHERE session_id = ?').get(command.session_id) as { state: string } | undefined;
+      const activeRun = ['claimed', 'in_progress'].includes(run(db, command.run_id).state);
       const timedOut = Boolean(command.deadline_at && command.deadline_at <= at);
       const stalled = command.state === 'dispatching' && Boolean(command.dispatch_started_at && Date.parse(at) - Date.parse(command.dispatch_started_at) >= staleAfterMs);
-      const exited = !recipient || recipient.state !== 'running';
+      const exited = !recipient || recipient.state !== 'running' || !activeRun;
       if (!timedOut && !stalled && !exited) continue;
-      const reason = exited ? 'recipient session exited' : timedOut ? 'deadline exceeded' : 'dispatch interrupted';
+      const reason = !activeRun ? 'run ended' : exited ? 'recipient session exited' : timedOut ? 'deadline exceeded' : 'dispatch interrupted';
       if (command.state === 'queued' || (command.state === 'dispatching' && !command.send_started_at)) {
         if (exited || timedOut || command.attempt_count >= command.max_attempts) {
           changed.push(transition(stateDir, db, command, 'failed', 'command_failed', reason));
@@ -237,10 +250,10 @@ export function reconcileCommands(stateDir: string, at = now(), staleAfterMs = 3
 }
 
 /** An operator must supply a current master session and an explicit outcome. */
-export function resolveUnknownCommand(stateDir: string, commandId: string, masterSessionId: string, outcome: 'completed' | 'failed' | 'cancelled', reason: string): DurableCommand {
+function resolveUnknownCommand(stateDir: string, commandId: string, principal: CommandPrincipal, outcome: 'completed' | 'failed' | 'cancelled', reason: string): DurableCommand {
   if (!reason.trim()) throw new Error('Resolution reason is required');
   return withEventDbTransaction(stateDir, (db) => {
-    if (session(db, masterSessionId).agent_id !== 'master') throw new Error('Master session required');
+    if (principal.agentId !== 'master' || session(db, principal.sessionId).agent_id !== principal.agentId) throw new Error('Master session required');
     const command = row(db, commandId);
     if (command.state !== 'outcome_unknown') throw new Error('Command outcome is not unknown');
     return transition(stateDir, db, command, outcome, `command_${outcome}` as CommandEventName, reason);
@@ -252,6 +265,16 @@ export interface CommandTransport {
   isAlive?(command: DurableCommand): Promise<boolean>;
 }
 
+function bounded<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('transport operation timed out')), timeoutMs);
+    operation.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); },
+    );
+  });
+}
+
 /** Wake on enqueue and sweep periodically; each tick is safe to rerun after a crash. */
 export class CommandDispatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -259,19 +282,43 @@ export class CommandDispatcher {
   private readonly stateDir: string;
   private readonly transport: CommandTransport;
   private readonly sweepMs: number;
-  constructor(stateDir: string, transport: CommandTransport, sweepMs = 1000) {
+  private readonly operationTimeoutMs: number;
+  private readonly authenticate: CommandAuthenticator;
+  constructor(stateDir: string, transport: CommandTransport, authenticate: CommandAuthenticator, sweepMs = 1000, operationTimeoutMs = 30000) {
+    if (sweepMs < 1 || operationTimeoutMs < 1) throw new Error('Intervals must be positive');
     this.stateDir = stateDir;
     this.transport = transport;
+    this.authenticate = authenticate;
     this.sweepMs = sweepMs;
+    this.operationTimeoutMs = operationTimeoutMs;
   }
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => { void this.tick(); }, this.sweepMs);
+    this.timer = setInterval(() => {
+      reconcileCommands(this.stateDir);
+      void this.tick();
+    }, this.sweepMs);
     this.timer.unref();
     this.wake();
   }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null; }
   wake(): void { queueMicrotask(() => { void this.tick(); }); }
+  private principal(credential: string): CommandPrincipal {
+    const principal = this.authenticate(credential);
+    if (!principal) throw new Error('Command caller is not authenticated');
+    return principal;
+  }
+  enqueue(credential: string, input: EnqueueCommand): DurableCommand {
+    const command = enqueueCommand(this.stateDir, this.principal(credential), input);
+    if (this.timer) this.wake();
+    return command;
+  }
+  acknowledge(credential: string, commandId: string, state: 'accepted' | 'running' | 'completed' | 'failed'): DurableCommand {
+    return acknowledgeCommand(this.stateDir, commandId, this.principal(credential), state);
+  }
+  resolveUnknown(credential: string, commandId: string, outcome: 'completed' | 'failed' | 'cancelled', reason: string): DurableCommand {
+    return resolveUnknownCommand(this.stateDir, commandId, this.principal(credential), outcome, reason);
+  }
   async tick(): Promise<void> {
     if (this.busy) return;
     this.busy = true;
@@ -281,12 +328,12 @@ export class CommandDispatcher {
       while ((command = reserveCommand(this.stateDir)) !== null) {
         if (command.state !== 'dispatching') continue;
         try {
-          if (this.transport.isAlive && !(await this.transport.isAlive(command))) {
+          if (this.transport.isAlive && !(await bounded(this.transport.isAlive(command), this.operationTimeoutMs))) {
             failTransport(this.stateDir, command.command_id, 'provider exited before send');
             continue;
           }
           markSendStarted(this.stateDir, command.command_id);
-          await this.transport.send(command);
+          await bounded(this.transport.send(command), this.operationTimeoutMs);
           markSent(this.stateDir, command.command_id);
         } catch (error) {
           failTransport(this.stateDir, command.command_id, (error as Error).message);
