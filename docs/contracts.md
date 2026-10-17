@@ -539,17 +539,26 @@ lets a later transport be added without changing the protocol.
 A missing or unsupported version returns `unsupported_protocol_version`; a missing
 or wrong token returns `401 unauthenticated`. Responses are
 `{ protocol_version, ok: true, result }` or `{ protocol_version, ok: false, error: { code, message } }`
-with `code` in `unsupported_protocol_version | unauthenticated | forbidden | not_found | conflict | bad_request | internal`.
+with `code` in `unsupported_protocol_version | unauthenticated | forbidden | not_found | conflict | bad_request | unavailable | internal`.
+`unavailable` means the daemon is shutting down, stopped, or crashed (stale descriptor).
 
 **Mutations** also send `x-orc-session: <session_id>`, the caller's running
 provider session ID from the `sessions` table. Actor and recipient names in the
 request body are never trusted. Commands go through the durable command queue,
 which enforces run scope: a worker may only address its own run; the master may
-address any active run, but only that run's recipient session.
+address any active run, but only that run's recipient session. Derived
+`legacy-*` session IDs (imported from `agents.json`) are never accepted.
+
+**Known limitation.** This is a same-user scope check, not a security boundary.
+Session IDs appear in `agents.json`, and any process running as the same OS
+user can read `control.token` or open `events.db` directly. Per-session secrets
+and process isolation are follow-up work (session supervision and the project
+container). Delivery of queued commands to a provider transport is also not
+wired yet; commands stay `queued` until a dispatcher with a transport runs.
 
 | Method | Path | Result |
 |--------|------|--------|
-| `GET` | `/v1/snapshot` | `{ cursor, generated_at, runs }`; `runs` and `cursor` come from one SQLite read transaction |
+| `GET` | `/v1/snapshot` | `{ cursor, generated_at, runs, sessions }`; all fields come from one SQLite read transaction. `sessions` lists running sessions so callers can find a run's recipient session |
 | `GET` | `/v1/events?after=<seq>&limit=<n>` | `{ events: [{ seq, event }], cursor }` (`limit` 1-1000) |
 | `GET` | `/v1/events/stream?after=<seq>` | NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
 | `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |

@@ -26,13 +26,22 @@ function discover(stateDir: string): { endpoint: ControlEndpoint; token: string 
     endpoint = JSON.parse(readFileSync(join(stateDir, CONTROL_ENDPOINT_FILE), 'utf8')) as ControlEndpoint;
     token = readFileSync(join(stateDir, CONTROL_TOKEN_FILE), 'utf8').trim();
   } catch {
-    throw new ControlError('internal', 'Control daemon is not running (no endpoint descriptor)', 503);
+    throw new ControlError('unavailable', 'Control daemon is not running (no endpoint descriptor)', 503);
   }
   if (endpoint.protocol_version !== CONTROL_PROTOCOL_VERSION || endpoint.transport !== 'unix') {
     throw new ControlError('unsupported_protocol_version',
       `Daemon endpoint uses protocol ${endpoint.protocol_version}/${endpoint.transport}; client supports ${CONTROL_PROTOCOL_VERSION}/unix`, 400);
   }
   return { endpoint, token };
+}
+
+/** A crashed daemon leaves its descriptor behind; report it like a stopped one. */
+function connectionError(error: unknown): Error {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === 'ECONNREFUSED' || code === 'ENOENT') {
+    return new ControlError('unavailable', 'Control daemon is not running (stale endpoint descriptor)', 503);
+  }
+  return error as Error;
 }
 
 export class ControlClient {
@@ -75,7 +84,7 @@ export class ControlClient {
         });
       });
       req.on('timeout', () => req.destroy(new Error('Control request timed out')));
-      req.on('error', reject);
+      req.on('error', (error) => reject(connectionError(error)));
       req.end(text);
     });
   }
@@ -102,7 +111,7 @@ export class ControlClient {
     const { endpoint, token } = discover(this.stateDir);
     const res = await new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
       const req = request({ socketPath: endpoint.path, path: `/v1/events/stream?after=${after}`, method: 'GET', agent: false, headers: this.headers(token), signal }, resolve);
-      req.on('error', reject);
+      req.on('error', (error) => reject(connectionError(error)));
       req.end();
     });
     if (res.statusCode !== 200) {

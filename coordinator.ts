@@ -2172,6 +2172,8 @@ export async function doShutdown() {
 
   log('shutting down — waiting for current tick to complete...');
   running = false;
+  // Stop accepting control requests before the databases close.
+  try { void controlServer?.close(); } catch { /* best-effort */ }
   if (timerHandle) {
     clearInterval(timerHandle);
     timerHandle = null;
@@ -2211,7 +2213,6 @@ export async function doShutdown() {
     log(`warning: session cleanup failed: ${(err as Error).message}`);
   }
 
-  try { void controlServer?.close(); } catch { /* best-effort */ }
   emit({ event: 'coordinator_stopped', actor_type: 'coordinator', actor_id: 'coordinator', payload: {} });
   try { closeAllDatabases(); } catch { /* best-effort */ }
   releaseCoordinatorLock();

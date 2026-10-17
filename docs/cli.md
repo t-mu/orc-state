@@ -308,9 +308,12 @@ coordinator first and use a sequence at or before the event you want replayed.
 
 `orc control` and `runs-active --via-control` talk to the coordinator's local
 control API (see `docs/contracts.md` → **Local Control API**). They fail with
-"Control daemon is not running" when the coordinator is stopped; the plain
-`runs-active` path still works then. Mutations authenticate with the caller's
-running provider session ID from `--session-token` or `ORC_SESSION_TOKEN`.
+"Control daemon is not running" when the coordinator is stopped or has crashed;
+the plain `runs-active` path still works then. Mutations authenticate with the
+caller's running provider session ID from `--session-token` or
+`ORC_SESSION_TOKEN`. Sessions are not yet given this variable automatically;
+`orc control snapshot` lists running sessions (caller and recipient IDs).
+Queued commands are not yet delivered to workers.
 
 ---
 

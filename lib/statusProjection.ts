@@ -23,6 +23,8 @@ export interface ControlSnapshot {
   cursor: number;
   generated_at: string;
   runs: ActiveRunRow[];
+  /** Running provider sessions; a command's recipient is the run owner's session. */
+  sessions: Array<{ session_id: string; agent_id: string; run_id: string | null }>;
 }
 
 function elapsedSeconds(anchor: string | null, now: number): number | null {
@@ -67,6 +69,8 @@ export function readControlSnapshot(stateDir: string, now = Date.now()): Control
     const claims = readClaims(stateDir).claims;
     const activeIds = claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).map((c) => c.run_id);
     const activity = latestRunActivityDetailMap(readEventsForRuns(join(stateDir, 'events.db'), activeIds));
-    return { cursor, generated_at: new Date(now).toISOString(), runs: projectActiveRuns(claims, activity, now) };
+    const sessions = db.prepare("SELECT session_id, agent_id, run_id FROM sessions WHERE state = 'running' ORDER BY rowid")
+      .all() as ControlSnapshot['sessions'];
+    return { cursor, generated_at: new Date(now).toISOString(), runs: projectActiveRuns(claims, activity, now), sessions };
   })());
 }

@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { closeAllDatabases, initEventsDb, withEventDb, withEventDbTransaction } from './eventLog.ts';
+import { appendSequencedEvent, closeAllDatabases, initEventsDb, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
 import { markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
 import { ControlClient, type EventRow } from './controlClient.ts';
-import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError } from './controlProtocol.ts';
+import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, defaultSocketPath } from './controlProtocol.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -56,9 +56,9 @@ function cli(...args: string[]) {
   );
 }
 
-function rawGet(headers: Record<string, string>): Promise<{ status: number; body: { ok: boolean; error?: { code: string } } }> {
+function rawGet(headers: Record<string, string>, path = '/v1/snapshot'): Promise<{ status: number; body: { ok: boolean; error?: { code: string } } }> {
   return new Promise((resolve, reject) => {
-    const req = request({ socketPath: server.endpoint.path, path: '/v1/snapshot', headers }, (res) => {
+    const req = request({ socketPath: server.endpoint.path, path, headers }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (chunk: Buffer) => chunks.push(chunk));
       res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
@@ -66,6 +66,15 @@ function rawGet(headers: Record<string, string>): Promise<{ status: number; body
     req.on('error', reject);
     req.end();
   });
+}
+
+function heartbeats(count: number): void {
+  for (let i = 0; i < count; i += 1) {
+    appendSequencedEvent(dir, {
+      ts: new Date().toISOString(), event: 'heartbeat', actor_type: 'agent', actor_id: 'worker-a',
+      run_id: 'run-a', task_ref: 'orch/task-a', agent_id: 'worker-a', payload: {},
+    });
+  }
 }
 
 function commandCount(): number {
@@ -89,7 +98,7 @@ describe('local daemon control API', () => {
   it('publishes an owner-only endpoint and rejects unversioned or unauthenticated requests', async () => {
     expect(statSync(server.endpoint.path).mode & 0o777).toBe(0o600);
     expect(statSync(join(dir, CONTROL_TOKEN_FILE)).mode & 0o777).toBe(0o600);
-    const token = (await import('node:fs')).readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
 
     const noVersion = await rawGet({ authorization: `Bearer ${token}` });
     expect(noVersion.status).toBe(400);
@@ -191,5 +200,80 @@ describe('local daemon control API', () => {
     expect(JSON.parse(legacy.stdout).total).toBe(2);
     expect((await cli('cli/runs-active.ts', '--via-control')).stderr).toContain('not running');
     server = await startControlServer(dir, { pollMs: 20 });
+  });
+
+  it('pages events with a bounded limit and validates cursors', async () => {
+    const client = new ControlClient(dir);
+    const { cursor } = await client.snapshot();
+    heartbeats(5);
+    const first = await client.events(cursor, 3);
+    expect(first.events.map((row) => row.seq)).toEqual([cursor + 1, cursor + 2, cursor + 3]);
+    expect(first.cursor).toBe(cursor + 3);
+    const rest = await client.events(first.cursor, 100);
+    expect(rest.events).toHaveLength(2);
+    expect((await client.events(rest.cursor)).cursor).toBe(rest.cursor);
+    await expect(client.events(0, 1001)).rejects.toMatchObject({ code: 'bad_request' });
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    const negative = await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/events?after=-1');
+    expect(negative.body.error?.code).toBe('bad_request');
+  });
+
+  it('streams more than one read batch in order and sends heartbeats', async () => {
+    await server.close();
+    server = await startControlServer(dir, { pollMs: 20, heartbeatMs: 20 });
+    const client = new ControlClient(dir);
+    const { cursor } = await client.snapshot();
+    heartbeats(650);
+    const rows = await take(client.subscribe(cursor), 650);
+    expect(rows.map((row) => row.seq)).toEqual(Array.from({ length: 650 }, (_, i) => cursor + i + 1));
+
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    const frames = await new Promise<string[]>((resolve, reject) => {
+      const req = request({ socketPath: server.endpoint.path, path: `/v1/events/stream?after=${cursor + 650}`, headers: { 'x-orc-protocol': '1', authorization: `Bearer ${token}` } }, (res) => {
+        let text = '';
+        res.on('data', (chunk: Buffer) => {
+          text += chunk.toString('utf8');
+          const lines = text.split('\n').filter(Boolean);
+          if (lines.length >= 2) { req.destroy(); resolve(lines); }
+        });
+      });
+      req.on('error', (error) => { if (!req.destroyed) reject(error); });
+      req.end();
+    });
+    expect(frames.map((line) => JSON.parse(line) as { type: string; cursor: number })).toEqual([
+      { type: 'heartbeat', cursor: cursor + 650 }, { type: 'heartbeat', cursor: cursor + 650 },
+    ]);
+  });
+
+  it('rejects derived legacy credentials and maps unknown commands to not_found', async () => {
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
+        VALUES ('legacy-0123456789abcdef01234567', NULL, 'auditor', 'codex', 'running', '2026-01-01', '2026-01-01')`).run();
+    });
+    await expect(submit(new ControlClient(dir, { sessionToken: 'legacy-0123456789abcdef01234567' }), 'l1'))
+      .rejects.toMatchObject({ code: 'unauthenticated' });
+    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).acknowledge('cmd-missing', 'accepted'))
+      .rejects.toMatchObject({ code: 'not_found', status: 404 });
+    const snapshot = await new ControlClient(dir).snapshot();
+    expect(snapshot.sessions.find((row) => row.agent_id === 'worker-a')).toEqual({ session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a' });
+  });
+
+  it('reports a crashed daemon with a stale descriptor as not running', async () => {
+    const descriptor = readFileSync(join(dir, CONTROL_ENDPOINT_FILE), 'utf8');
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    await server.close();
+    writeFileSync(join(dir, CONTROL_ENDPOINT_FILE), descriptor);
+    writeFileSync(join(dir, CONTROL_TOKEN_FILE), token);
+    await expect(new ControlClient(dir).snapshot()).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining('stale endpoint') });
+    const iterator = new ControlClient(dir).subscribe(0);
+    await expect(iterator.next()).rejects.toMatchObject({ code: 'unavailable' });
+    server = await startControlServer(dir, { pollMs: 20 });
+  });
+
+  it('falls back to a private per-user directory for long state paths', () => {
+    const path = defaultSocketPath(join(dir, 'x'.repeat(120)));
+    expect(Buffer.byteLength(path)).toBeLessThanOrEqual(104);
+    expect(statSync(join(path, '..')).mode & 0o777).toBe(0o700);
+    expect(defaultSocketPath(join(dir, 'x'.repeat(120)))).toBe(path);
   });
 });

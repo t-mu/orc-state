@@ -29,29 +29,51 @@ export interface ControlServer {
   close(): Promise<void>;
 }
 
-/** A running provider session ID is the caller's actor credential. */
+/**
+ * A running provider session ID is the caller's actor credential. This is a
+ * same-user scope check, not a security boundary: session IDs are readable in
+ * agents.json, and any same-user process can open events.db directly. Legacy
+ * imported IDs are derived from public names, so they are never accepted.
+ */
 export function sessionAuthenticator(stateDir: string): CommandAuthenticator {
-  return (credential) => withEventDb(stateDir, (db) => {
-    const row = db.prepare("SELECT session_id, agent_id FROM sessions WHERE session_id = ? AND state = 'running'")
-      .get(credential) as { session_id: string; agent_id: string } | undefined;
-    return row ? { agentId: row.agent_id, sessionId: row.session_id } : null;
-  });
+  return (credential) => {
+    if (credential.startsWith('legacy-')) return null;
+    return withEventDb(stateDir, (db) => {
+      const row = db.prepare("SELECT session_id, agent_id FROM sessions WHERE session_id = ? AND state = 'running'")
+        .get(credential) as { session_id: string; agent_id: string } | undefined;
+      return row ? { agentId: row.agent_id, sessionId: row.session_id } : null;
+    });
+  };
 }
 
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
 
-/** Map domain errors from command delivery onto stable protocol codes. */
+// Exact command-delivery failure messages; anything else is an internal error.
+const DOMAIN_ERRORS: Array<[string | RegExp, ControlErrorCode, number]> = [
+  ['Command caller is not authenticated', 'unauthenticated', 401],
+  ['Authenticated session is not running', 'forbidden', 403],
+  ['Authenticated actor does not match session', 'forbidden', 403],
+  ['Authenticated recipient does not match session', 'forbidden', 403],
+  ['Actor is not scoped to the run', 'forbidden', 403],
+  ['Recipient is not scoped to the run', 'forbidden', 403],
+  ['ACK from wrong recipient', 'forbidden', 403],
+  ['Run not found', 'not_found', 404],
+  ['Command not found', 'not_found', 404],
+  ['Run is not active', 'conflict', 409],
+  ['Idempotency key conflicts with existing command', 'conflict', 409],
+  [/^Cannot acknowledge \w+ as \w+$/, 'conflict', 409],
+  ['Command key and kind are required', 'bad_request', 400],
+  ['maxAttempts must be positive', 'bad_request', 400],
+  ['Invalid deadline', 'bad_request', 400],
+  ['Payload must be JSON serializable', 'bad_request', 400],
+];
+
 function classify(error: unknown): ControlError {
   if (error instanceof ControlError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  const rules: Array<[RegExp, ControlErrorCode, number]> = [
-    [/not authenticated/i, 'unauthenticated', 401],
-    [/not scoped|does not match|wrong recipient|master session required|session is not running/i, 'forbidden', 403],
-    [/not found/i, 'not_found', 404],
-    [/conflicts|not active|cannot acknowledge|no longer active/i, 'conflict', 409],
-    [/required|must be|invalid/i, 'bad_request', 400],
-  ];
-  for (const [pattern, code, status] of rules) if (pattern.test(message)) return new ControlError(code, message, status);
+  for (const [match, code, status] of DOMAIN_ERRORS) {
+    if (typeof match === 'string' ? message === match : match.test(message)) return new ControlError(code, message, status);
+  }
   return new ControlError('internal', message, 500);
 }
 
@@ -112,6 +134,10 @@ export async function startControlServer(stateDir: string, options: ControlServe
   const token = randomBytes(32).toString('hex');
   const tokenDigest = digest(token);
   const streams = new Set<ServerResponse>();
+  let closing = false;
+  const assertOpen = (): void => {
+    if (closing) throw new ControlError('unavailable', 'Control daemon is shutting down', 503);
+  };
 
   function authenticated(req: IncomingMessage): void {
     const header = req.headers.authorization ?? '';
@@ -161,6 +187,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
   }
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    assertOpen();
     const version = req.headers[PROTOCOL_HEADER];
     if (version !== String(CONTROL_PROTOCOL_VERSION)) {
       throw new ControlError('unsupported_protocol_version',
@@ -181,6 +208,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
       const credential = actorCredential(req);
       const body = await readBody(req) as unknown as SubmitCommandRequest;
+      assertOpen();
       for (const field of ['run_id', 'recipient_session_id', 'idempotency_key', 'kind'] as const) {
         if (typeof body[field] !== 'string' || !body[field]) throw new ControlError('bad_request', `${field} is required`, 400);
       }
@@ -197,6 +225,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (req.method === 'POST' && ack) {
       const credential = actorCredential(req);
       const body = await readBody(req);
+      assertOpen();
       if (!ACK_STATES.has(body.state as AckState)) throw new ControlError('bad_request', 'state must be accepted, running, completed or failed', 400);
       return ok({ command: commands.acknowledge(credential, decodeURIComponent(ack[1]), body.state as AckState) });
     }
@@ -230,6 +259,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     endpoint,
     // Endpoint cleanup is synchronous so a caller that exits right away leaves no stale descriptor.
     close: () => {
+      closing = true;
       for (const res of streams) res.destroy();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       let ours = true;

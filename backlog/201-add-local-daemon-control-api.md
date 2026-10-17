@@ -3,7 +3,7 @@ ref: vnext-control-plane/201-add-local-daemon-control-api
 feature: vnext-control-plane
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - vnext-control-plane/198-migrate-run-transitions-transactionally
   - vnext-control-plane/199-add-durable-command-delivery

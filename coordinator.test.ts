@@ -3315,7 +3315,9 @@ describe('global error handlers', () => {
 
     const coordinator = await import('./coordinator.ts');
     await coordinator.main();
+    expect(existsSync(join(dir, 'control.json'))).toBe(true);
     await coordinator.doShutdown();
+    expect(existsSync(join(dir, 'control.json'))).toBe(false);
     await coordinator.doShutdown(); // second call must not throw or double-exit
 
     // process.exit(0) should have been called exactly once

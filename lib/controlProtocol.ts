@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { lstatSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,7 +24,7 @@ export interface ControlEndpoint {
 
 export type ControlErrorCode =
   | 'unsupported_protocol_version' | 'unauthenticated' | 'forbidden'
-  | 'not_found' | 'conflict' | 'bad_request' | 'internal';
+  | 'not_found' | 'conflict' | 'bad_request' | 'unavailable' | 'internal';
 
 export interface ControlErrorBody { code: ControlErrorCode; message: string }
 
@@ -59,9 +60,18 @@ export class ControlError extends Error {
   }
 }
 
-/** Unix socket paths are limited to ~104 bytes; long state dirs use tmpdir. */
+/**
+ * Unix socket paths are limited to ~104 bytes; long state dirs fall back to a
+ * per-user 0700 directory under tmpdir so another user cannot pre-create the path.
+ */
 export function defaultSocketPath(stateDir: string): string {
   const preferred = join(stateDir, 'control.sock');
   if (Buffer.byteLength(preferred) <= 100) return preferred;
-  return join(tmpdir(), `orc-control-${createHash('sha256').update(stateDir).digest('hex').slice(0, 16)}.sock`);
+  const dir = join(tmpdir(), `orc-control-${process.getuid?.() ?? 'user'}`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(dir);
+  if (!stat.isDirectory() || (process.getuid && stat.uid !== process.getuid()) || (stat.mode & 0o077) !== 0) {
+    throw new Error(`Control socket directory ${dir} must be a private directory owned by the current user`);
+  }
+  return join(dir, `${createHash('sha256').update(stateDir).digest('hex').slice(0, 16)}.sock`);
 }
