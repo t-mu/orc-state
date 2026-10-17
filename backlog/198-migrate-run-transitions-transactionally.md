@@ -3,7 +3,7 @@ ref: vnext-control-plane/198-migrate-run-transitions-transactionally
 feature: vnext-control-plane
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - vnext-control-plane/197-add-versioned-runtime-schema
   - vnext-control-plane/196-pin-markdown-task-revisions

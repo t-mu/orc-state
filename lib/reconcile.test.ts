@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { reconcileState } from './reconcile.ts';
+import { queryEvents } from './eventLog.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState, readStateFile } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -118,6 +119,9 @@ describe('reconcileState', () => {
     const claims = readStateFile<{ claims: Array<Record<string, unknown>> }>(dir, 'claims.json').claims;
     expect(claims.find((c) => c['run_id'] === 'run-old')?.['state']).toBe('claimed');
     expect(claims.find((c) => c['run_id'] === 'run-new')?.['state']).toBe('failed');
+    expect(queryEvents(dir, { event_type: 'run_failed' })).toMatchObject([
+      { run_id: 'run-new', payload: { reason: 'reconcile_duplicate_claim' } },
+    ]);
   });
 
   it('marks orphan active claim as failed', () => {
@@ -136,6 +140,9 @@ describe('reconcileState', () => {
     reconcileState(dir);
     const claims = readStateFile<{ claims: Array<Record<string, unknown>> }>(dir, 'claims.json').claims;
     expect(claims[0]['state']).toBe('failed');
+    expect(queryEvents(dir, { event_type: 'run_failed' })).toMatchObject([
+      { run_id: 'run-orphan', payload: { reason: 'reconcile_orphan_claim' } },
+    ]);
   });
 
   it('is idempotent', () => {

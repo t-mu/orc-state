@@ -85,6 +85,9 @@ describe('resetVolatileRuntimeStateForSession', () => {
     expect(readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token).toBeNull();
     restoreVolatileRuntimeStateFromSnapshot(dir, reset.snapshot);
     expect(readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token).toBe(before);
+    expect(queryEvents(dir, {}).map((event) => event.event)).toEqual([
+      'run_failed', 'run_failed', 'claim_created', 'run_started',
+    ]);
   });
 
   it('resets active runtime state and appends a session_started event on demand', () => {
@@ -120,7 +123,11 @@ describe('resetVolatileRuntimeStateForSession', () => {
     expect(result.session_id).toContain('session-');
 
     const beforeEvents = queryEvents(dir, {});
-    expect(beforeEvents).toHaveLength(0);
+    expect(beforeEvents.map((event) => event.event)).toEqual(['run_failed', 'run_failed']);
+    expect(beforeEvents.map((event) => event.payload)).toEqual([
+      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
+      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
+    ]);
 
     const seq = appendSessionStartedEvent(dir, result);
     const events = queryEvents(dir, {});

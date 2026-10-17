@@ -109,22 +109,27 @@ if (existsSync(join(STATE_DIR, 'backlog.json')) && existsSync(join(STATE_DIR, 'c
     }
 
     let cancelledClaims = 0;
+    const cancelledRuns: Array<{ run_id: string; task_ref: string; agent_id: string }> = [];
     for (const claim of claimsState.claims ?? []) {
       if (claim.state === 'claimed' || claim.state === 'in_progress') {
         claim.state = 'failed';
         claim.failure_reason = 'kill_all';
         claim.finished_at = now;
         cancelledClaims++;
+        cancelledRuns.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id });
       }
     }
 
-    commitClaims(STATE_DIR, claimsState, resetCount > 0 ? [{
+    commitClaims(STATE_DIR, claimsState, [{
           ts: now,
           event: 'coordinator_stopped',
           actor_type: 'human',
           actor_id: 'human',
           payload: { tasks_reset: resetCount, claims_cancelled: cancelledClaims },
-        }] : []);
+        }, ...cancelledRuns.map((run) => ({
+          ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: 'human',
+          ...run, payload: { reason: 'kill_all' },
+        }))]);
     atomicWriteJson(join(STATE_DIR, 'backlog.json'), backlog);
 
     console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)`);

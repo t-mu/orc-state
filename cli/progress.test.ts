@@ -3,7 +3,8 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
-import { queryEvents } from '../lib/eventLog.ts';
+import { initEventsDb, queryEvents } from '../lib/eventLog.ts';
+import Database from 'better-sqlite3';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -38,24 +39,43 @@ describe('cli/progress.ts', () => {
     expect(readEvents().some((event) => event.event === 'phase_started' && event.phase === 'impl')).toBe(true);
   });
 
-  it('accepts duplicate run_started reports and leaves shared state untouched', () => {
-    const before = readClaims();
+  it('commits run_started once and accepts a duplicate report', () => {
     const first = runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
     const result = runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
     expect(first.status).toBe(0);
     expect(result.status).toBe(0);
-    expect(readClaims()).toEqual(before);
-    expect(readEvents().filter((event) => event.event === 'run_started')).toHaveLength(2);
+    expect(readClaims().claims[0].state).toBe('in_progress');
+    expect(readEvents().filter((event) => event.event === 'run_started')).toHaveLength(1);
   });
 
-  it('accepts run_finished as an append-only lifecycle report', () => {
-    const beforeClaims = readClaims();
-    const beforeBacklog = readBacklog();
+  it('rolls back a reported start if its event insert fails', () => {
+    initEventsDb(dir);
+    const db = new Database(join(dir, 'events.db'));
+    try {
+      db.exec("CREATE TRIGGER reject_start BEFORE INSERT ON events WHEN new.event = 'run_started' BEGIN SELECT RAISE(ABORT, 'injected event failure'); END");
+    } finally {
+      db.close();
+    }
+    const result = runProgress(['--event=run_started', '--run-id=run-1', '--agent-id=bob']);
+    expect(result.status).toBe(1);
+    expect(readClaims().claims[0].state).toBe('claimed');
+    expect(readEvents().filter((event) => event.event === 'run_started')).toEqual([]);
+  });
+
+  it('commits run_finished with the completed run', () => {
     const result = runProgress(['--event=run_finished', '--run-id=run-1', '--agent-id=bob']);
     expect(result.status).toBe(0);
-    expect(readClaims()).toEqual(beforeClaims);
-    expect(readBacklog()).toEqual(beforeBacklog);
+    expect(readClaims().claims[0].state).toBe('done');
+    expect(readBacklog().features[0].tasks[0].status).toBe('done');
     expect(readEvents().some((event) => event.event === 'run_finished' && event.run_id === 'run-1')).toBe(true);
+  });
+
+  it('commits run_failed with the failed run', () => {
+    const result = runProgress(['--event=run_failed', '--run-id=run-1', '--agent-id=bob', '--reason=boom']);
+    expect(result.status).toBe(0);
+    expect(readClaims().claims[0].state).toBe('failed');
+    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
+    expect(readEvents().some((event) => event.event === 'run_failed' && event.run_id === 'run-1')).toBe(true);
   });
 
   it('accepts work_complete as an append-only event and leaves claims untouched', () => {

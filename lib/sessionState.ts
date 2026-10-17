@@ -9,6 +9,7 @@ import { closeProviderSessionsForAgent, commitClaims, restoreProviderSessionsFor
 import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState, Agent } from '../types/agents.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
+import type { OrcEventInput } from '../types/events.ts';
 
 function readBacklogState(stateDir: string): Backlog {
   return JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8')) as Backlog;
@@ -101,8 +102,12 @@ export function resetVolatileRuntimeStateForSession(
     }
 
     let resetClaims = 0;
+    const failedClaims: Claim[] = [];
     for (const claim of claims.claims ?? []) {
-      if (resetClaim(claim, now)) resetClaims += 1;
+      if (resetClaim(claim, now)) {
+        resetClaims += 1;
+        failedClaims.push(claim);
+      }
     }
 
     let resetAgents = 0;
@@ -111,7 +116,12 @@ export function resetVolatileRuntimeStateForSession(
     }
 
     atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-    commitClaims(stateDir, claims);
+    const events: OrcEventInput[] = failedClaims.map((claim) => ({
+      ts: now, event: 'run_failed', actor_type: 'human', actor_id: 'human',
+      run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
+      payload: { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
+    }));
+    commitClaims(stateDir, claims, events);
     for (const agent of snapshot.agents.agents) {
       if (agent.session_handle) closeProviderSessionsForAgent(stateDir, agent.agent_id, now);
     }
@@ -154,9 +164,26 @@ export function restoreVolatileRuntimeStateFromSnapshot(
   snapshot: SessionStateSnapshot,
 ): void {
   withLock(join(stateDir, '.lock'), () => {
+    const current = readClaimsState(stateDir);
+    const currentByRun = new Map(current.claims.map((claim) => [claim.run_id, claim]));
+    const now = new Date().toISOString();
+    const events = snapshot.claims.claims.flatMap<OrcEventInput>((claim) => {
+      if (currentByRun.get(claim.run_id)?.state === claim.state) return [];
+      if (claim.state === 'claimed') return [{
+        ts: now, event: 'claim_created', actor_type: 'human', actor_id: 'human',
+        run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
+        payload: { lease_expires_at: claim.lease_expires_at, reason: 'session_reset_rollback' },
+      }];
+      if (claim.state === 'in_progress') return [{
+        ts: now, event: 'run_started', actor_type: 'human', actor_id: 'human',
+        run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
+        payload: { reason: 'session_reset_rollback' },
+      }];
+      return [];
+    });
     atomicWriteJson(join(stateDir, 'backlog.json'), snapshot.backlog);
-    commitClaims(stateDir, snapshot.claims);
-    restoreProviderSessionsForAgents(stateDir, snapshot.agents.agents, new Date().toISOString());
+    commitClaims(stateDir, snapshot.claims, events);
+    restoreProviderSessionsForAgents(stateDir, snapshot.agents.agents, now);
     atomicWriteJson(join(stateDir, 'agents.json'), snapshot.agents);
   });
 }

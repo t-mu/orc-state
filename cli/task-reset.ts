@@ -57,7 +57,11 @@ try {
         actor_id: actorId,
         task_ref: taskRef,
         payload: { reset: true, previous_status: previousStatus, status: 'todo' },
-      }]);
+      }, ...activeClaims.map((claim) => ({
+        ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: actorId,
+        run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
+        payload: { reason: 'manual_reset' },
+      }))]);
     atomicWriteJson(backlogPath, backlog);
 
     console.log(`task reset: ${taskRef} (was: ${previousStatus}, cancelled ${activeClaims.length} active claims)`);

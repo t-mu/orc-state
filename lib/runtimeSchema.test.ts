@@ -113,9 +113,17 @@ describe('runtime schema migration', () => {
       expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }]);
       expect((db.pragma('table_info(runs)') as Array<{ name: string }>).some((column) => column.name === 'claim_json')).toBe(false);
       db.exec('DROP TABLE runtime_cutovers');
+      db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-old', 'feature/task', 'agent-old', 'in_progress', 'now', 'now')").run();
+      db.prepare("INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at) VALUES ('session-old', 'run-old', 'agent-old', 'codex', 'running', 'now', 'now')").run();
+      db.prepare("INSERT INTO commands (command_id, run_id, session_id, actor_id, recipient_id, idempotency_key, kind, payload, state, created_at) VALUES ('cmd-old', 'run-old', 'session-old', 'master', 'agent-old', 'key-old', 'send', '{}', 'queued', 'now')").run();
+      db.prepare("INSERT INTO control_leases (resource_type, resource_id, lease_id, session_id, owner_id, expires_at) VALUES ('run', 'run-old', 'lease-old', 'session-old', 'agent-old', 'later')").run();
       migrateRuntimeSchema(db);
       expect(db.pragma('user_version', { simple: true })).toBe(2);
       expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }]);
+      expect(db.prepare("SELECT session_id, run_id FROM sessions WHERE session_id = 'session-old'").get()).toEqual({ session_id: 'session-old', run_id: 'run-old' });
+      expect(db.prepare("SELECT session_id FROM commands WHERE command_id = 'cmd-old'").get()).toEqual({ session_id: 'session-old' });
+      expect(db.prepare("SELECT session_id FROM control_leases WHERE lease_id = 'lease-old'").get()).toEqual({ session_id: 'session-old' });
+      expect(db.pragma('foreign_key_check')).toEqual([]);
     } finally {
       db.close();
     }

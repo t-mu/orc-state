@@ -117,13 +117,14 @@ export function migrateRuntimeSchema(db: Database.Database): void {
     currentVersion = db.pragma('user_version', { simple: true }) as number;
   }
   if (currentVersion === 1) {
-    db.transaction(() => {
-      assertSupportedRuntimeSchemaVersion(db);
-      if ((db.pragma('user_version', { simple: true }) as number) !== 1) return;
-      db.exec(`
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        assertSupportedRuntimeSchemaVersion(db);
+        if ((db.pragma('user_version', { simple: true }) as number) !== 1) return;
+        db.exec(`
         ALTER TABLE runs ADD COLUMN claim_json TEXT;
-        DROP TABLE sessions;
-        CREATE TABLE sessions (
+        CREATE TABLE sessions_v2 (
           session_id TEXT PRIMARY KEY,
           run_id TEXT REFERENCES runs(run_id) ON DELETE SET NULL,
           agent_id TEXT NOT NULL,
@@ -133,6 +134,11 @@ export function migrateRuntimeSchema(db: Database.Database): void {
           started_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        INSERT INTO sessions_v2
+          (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at)
+        SELECT session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at FROM sessions;
+        DROP TABLE sessions;
+        ALTER TABLE sessions_v2 RENAME TO sessions;
         CREATE UNIQUE INDEX sessions_one_running_agent_idx ON sessions(agent_id)
           WHERE state = 'running';
         CREATE TABLE runtime_cutovers (
@@ -141,9 +147,12 @@ export function migrateRuntimeSchema(db: Database.Database): void {
         );
         INSERT INTO schema_migrations (version, name, applied_at)
         VALUES (2, 'run_authority_cutover', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-      `);
-      db.pragma('user_version = 2');
-    }).immediate();
+        `);
+        db.pragma('user_version = 2');
+      }).immediate();
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
   }
   const health = inspectRuntimeSchemaDb(db);
   if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
