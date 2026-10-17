@@ -402,9 +402,12 @@ free-text queries across event, agent_id, run_id, task_ref, and payload.
 same database. Version 1 adds `runs`, `sessions`, `commands`, `messages`,
 `input_requests`, `offsets`, and `control_leases`. Run and session references
 use SQLite foreign keys; command and message idempotency keys are unique.
-These tables reserve the durable runtime contract. Legacy JSON state remains
-authoritative until later cutover tasks explicitly switch its readers and
-writers. `orc doctor` checks the version, migration record, tables, and foreign
+Version 2 adds `runs.claim_json` and the `runtime_cutovers` marker. On first
+claim read or transition, legacy claims are imported once in a transaction;
+SQLite then owns run state while `claims.json` is refreshed as a compatibility
+view. Session IDs are separate from run and agent IDs, including for sessions
+without a task run. Other JSON state remains in place pending later cutovers.
+`orc doctor` checks the version, migration record, tables, and foreign
 key integrity. See [Runtime Database Upgrade and Restore](./recovery.md#runtime-database-upgrade-and-restore)
 before upgrading an existing project.
 

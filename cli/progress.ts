@@ -6,10 +6,11 @@
  */
 import { flag } from '../lib/args.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
+import { finishRun, heartbeat, startRun } from '../lib/claimManager.ts';
 import { validateProgressCommandInput, validateProgressInput } from '../lib/progressValidation.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { loadClaim, cliError } from './shared.ts';
-import type { EventFinalizationStatus, FailurePolicy, OrcEvent } from '../types/events.ts';
+import type { EventFinalizationStatus, OrcEvent } from '../types/events.ts';
 
 const event = flag('event');
 const runId = flag('run-id');
@@ -54,28 +55,30 @@ try {
     policy,
   }, claim);
 
-  const payload = finalizationPayload(event)
-    ?? (event === 'run_failed'
-      ? {
-        reason: reason ?? 'worker reported failure',
-        code: 'ERR_WORKER_REPORTED_FAILURE',
-        policy: policy as FailurePolicy,
-      }
-      : reason
-        ? { reason }
-        : undefined);
-
-  appendSequencedEvent(STATE_DIR, {
-    ts: new Date().toISOString(),
-    event: event as OrcEvent['event'],
-    actor_type: 'agent',
-    actor_id: agentId,
-    run_id: runId,
-    task_ref: validatedClaim.task_ref,
-    agent_id: agentId,
-    ...(phase ? { phase } : {}),
-    ...(payload ? { payload } : {}),
-  } as OrcEvent, { lockStrategy: 'none' });
+  if (event === 'run_started') {
+    startRun(STATE_DIR, runId, agentId);
+  } else if (event === 'run_finished') {
+    finishRun(STATE_DIR, runId, agentId, { success: true });
+  } else if (event === 'run_failed') {
+    finishRun(STATE_DIR, runId, agentId, {
+      success: false, failureReason: reason, failureCode: 'ERR_WORKER_REPORTED_FAILURE', policy,
+    });
+  } else if (event === 'heartbeat') {
+    heartbeat(STATE_DIR, runId, agentId);
+  } else {
+    const payload = finalizationPayload(event) ?? (reason ? { reason } : undefined);
+    appendSequencedEvent(STATE_DIR, {
+      ts: new Date().toISOString(),
+      event: event as OrcEvent['event'],
+      actor_type: 'agent',
+      actor_id: agentId,
+      run_id: runId,
+      task_ref: validatedClaim.task_ref,
+      agent_id: agentId,
+      ...(phase ? { phase } : {}),
+      ...(payload ? { payload } : {}),
+    } as OrcEvent, { lockStrategy: 'none' });
+  }
 
   console.log(`progress event accepted: ${event} run=${runId} agent=${agentId}`);
 } catch (error) {

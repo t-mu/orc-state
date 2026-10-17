@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
@@ -13,6 +13,9 @@ beforeEach(() => {
   vi.unmock('../adapters/index.ts');
   dir = createTempStateDir('orch-coordinator-policy-e2e-');
   process.env.ORC_STATE_DIR = dir;
+  process.env.ORC_BACKLOG_DIR = join(dir, 'backlog');
+  mkdirSync(process.env.ORC_BACKLOG_DIR, { recursive: true });
+  writeFileSync(join(process.env.ORC_BACKLOG_DIR, '001-task-1.md'), '---\nref: docs/task-1\nfeature: docs\nstatus: todo\n---\n\n# Task 1\n');
   vi.doMock('../lib/runWorktree.ts', () => ({
     ensureRunWorktree: vi.fn((_stateDir, { runId }) => ({
       run_id: runId,
@@ -31,6 +34,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
+  delete process.env.ORC_BACKLOG_DIR;
   delete process.env.ORC_MAX_WORKERS;
   delete process.env.ORC_WORKER_PROVIDER;
   vi.unmock('../adapters/index.ts');

@@ -6,18 +6,26 @@ single-symptom fixes, see [Troubleshooting](./troubleshooting.md).
 ## Runtime Database Upgrade and Restore
 
 The operational schema shares `.orc-state/events.db` with the event log. Before
-starting a newer binary against an existing project, make a consistent SQLite
-backup (the `sqlite3` command-line tool is required for this procedure):
+starting a newer binary against an existing project, stop the coordinator and
+workers, then back up the database and JSON state together (the `sqlite3`
+command-line tool is required for this procedure):
 
 ```bash
 sqlite3 .orc-state/events.db ".backup '.orc-state/events.db.pre-upgrade'"
+cp .orc-state/claims.json .orc-state/claims.json.pre-upgrade
+cp .orc-state/agents.json .orc-state/agents.json.pre-upgrade
+cp .orc-state/backlog.json .orc-state/backlog.json.pre-upgrade
 ```
 
-The first open applies versioned migrations in one transaction. `orc doctor`
+The first open applies each versioned migration in its own transaction. `orc doctor`
 reports the current `runtimeSchema.version` and any missing tables or migration
-records. Version 1 creates operational tables only; JSON state files remain the
-active lifecycle store. A failed migration rolls back its tables and version
-record. A database from a newer binary is refused rather than downgraded.
+records. Version 1 creates operational tables. Version 2 adds the run cutover
+schema. The first claim read or transition imports legacy claims once and
+records the `runs` row in `runtime_cutovers`; SQLite then owns run
+state and `claims.json` is a compatibility projection. Provider session IDs
+are stored separately from agent and run IDs. A failed migration rolls back
+its tables and version record. A database from a newer binary is refused
+rather than downgraded.
 
 If startup fails after an upgrade, stop the coordinator and every process using
 the database. Keep the failed database for diagnosis, then restore the backup
@@ -27,11 +35,15 @@ and run the previous binary:
 mv .orc-state/events.db .orc-state/events.db.failed
 rm -f .orc-state/events.db-wal .orc-state/events.db-shm
 cp .orc-state/events.db.pre-upgrade .orc-state/events.db
+cp .orc-state/claims.json.pre-upgrade .orc-state/claims.json
+cp .orc-state/agents.json.pre-upgrade .orc-state/agents.json
+cp .orc-state/backlog.json.pre-upgrade .orc-state/backlog.json
 orc doctor
 ```
 
 Only restore while all database users are stopped. The backup includes events;
-restoring it discards events written after the backup. Do not edit
+restoring it discards events written after the backup. Restore the JSON files
+from the same point in time. Do not edit
 `PRAGMA user_version` or remove migration records to force a downgrade.
 
 ## Finalization Failure (`blocked_finalize`)

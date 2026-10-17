@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { queryEvents } from './eventLog.ts';
-import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession } from './sessionState.ts';
+import { initEventsDb, queryEvents } from './eventLog.ts';
+import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession, restoreVolatileRuntimeStateFromSnapshot } from './sessionState.ts';
+import { readAgents } from './stateReader.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -76,6 +77,19 @@ afterEach(() => {
 });
 
 describe('resetVolatileRuntimeStateForSession', () => {
+  it('closes provider sessions on reset and restores their identities on rollback', () => {
+    initEventsDb(dir);
+    const before = readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token;
+    expect(before).toMatch(/^legacy-/);
+    const reset = resetVolatileRuntimeStateForSession(dir);
+    expect(readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token).toBeNull();
+    restoreVolatileRuntimeStateFromSnapshot(dir, reset.snapshot);
+    expect(readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token).toBe(before);
+    expect(queryEvents(dir, {}).map((event) => event.event)).toEqual([
+      'run_failed', 'run_failed', 'claim_created', 'run_started',
+    ]);
+  });
+
   it('resets active runtime state and appends a session_started event on demand', () => {
     const result = resetVolatileRuntimeStateForSession(dir);
 
@@ -109,7 +123,11 @@ describe('resetVolatileRuntimeStateForSession', () => {
     expect(result.session_id).toContain('session-');
 
     const beforeEvents = queryEvents(dir, {});
-    expect(beforeEvents).toHaveLength(0);
+    expect(beforeEvents.map((event) => event.event)).toEqual(['run_failed', 'run_failed']);
+    expect(beforeEvents.map((event) => event.payload)).toEqual([
+      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
+      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
+    ]);
 
     const seq = appendSessionStartedEvent(dir, result);
     const events = queryEvents(dir, {});

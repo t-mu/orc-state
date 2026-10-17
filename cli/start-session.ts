@@ -34,6 +34,7 @@ import { STATE_DIR }             from '../lib/paths.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
+import { recordProviderSession } from '../lib/runStore.ts';
 import {
   promptProvider,
   isInteractive,
@@ -473,6 +474,14 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       env: process.env as Record<string, string>,
     });
     const startedAt = new Date().toISOString();
+    recordProviderSession(STATE_DIR, {
+      sessionId: sessionReset.session_id,
+      runId: null,
+      agentId: master.agent_id,
+      provider: master.provider,
+      providerRef: null,
+      startedAt,
+    });
     updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'running',
       last_heartbeat_at: startedAt,

@@ -108,6 +108,16 @@ export function initEventsDb(stateDir: string): void {
   getDb(stateDir);
 }
 
+/** Run a state mutation and its event append under one SQLite write lock. */
+export function withEventDbTransaction<T>(stateDir: string, operation: (db: Database.Database) => T): T {
+  const db = getDb(stateDir);
+  return db.transaction(() => operation(db)).immediate();
+}
+
+export function withEventDb<T>(stateDir: string, operation: (db: Database.Database) => T): T {
+  return operation(getDb(stateDir));
+}
+
 /**
  * Register an external DB connection so it is covered by `closeAllDatabases()`.
  * Use a caller-chosen key (e.g. `stateDir + ':memory'`) to avoid collision.

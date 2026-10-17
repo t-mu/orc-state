@@ -5,7 +5,9 @@ import { readJson } from './stateReader.ts';
 import { selectDuplicateClaimWinner } from './lifecycleDiagnostics.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
+import type { OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
+import { commitClaims, refreshClaimsProjection } from './runStore.ts';
 
 const ACTIVE_CLAIM_STATES = new Set(['claimed', 'in_progress']);
 
@@ -19,6 +21,7 @@ export function reconcileState(stateDir: string): void {
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
     let claimsModified = false;
     let backlogModified = false;
+    const failedClaims: Array<{ claim: Claim; reason: string }> = [];
 
     const knownTaskRefs = new Set<string>();
     for (const feature of backlog.features ?? []) {
@@ -35,6 +38,7 @@ export function reconcileState(stateDir: string): void {
       if (!knownTaskRefs.has(claim.task_ref)) {
         logger.info(`[reconcile] orphan claim ${claim.run_id} for unknown task_ref ${claim.task_ref} -> failed`);
         claim.state = 'failed';
+        failedClaims.push({ claim, reason: 'reconcile_orphan_claim' });
         claimsModified = true;
         continue;
       }
@@ -51,6 +55,7 @@ export function reconcileState(stateDir: string): void {
         for (const staleClaim of staleClaims) {
           logger.info(`[reconcile] duplicate active claim ${staleClaim.run_id} for task ${taskRef} -> failed (kept ${keepClaim.run_id})`);
           staleClaim.state = 'failed';
+          failedClaims.push({ claim: staleClaim, reason: 'reconcile_duplicate_claim' });
           claimsModified = true;
         }
         activeClaimByTaskRef.set(taskRef, keepClaim);
@@ -87,8 +92,15 @@ export function reconcileState(stateDir: string): void {
       atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
     }
     if (claimsModified) {
-      atomicWriteJson(join(stateDir, 'claims.json'), claims);
+      const now = new Date().toISOString();
+      const events: OrcEventInput[] = failedClaims.map(({ claim, reason }) => ({
+        ts: now, event: 'run_failed', actor_type: 'coordinator', actor_id: 'reconcile',
+        run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
+        payload: { reason, code: 'ERR_RECONCILE', policy: 'requeue' },
+      }));
+      commitClaims(stateDir, claims, events);
     }
+    refreshClaimsProjection(stateDir);
 
     const repairCount = (backlogModified ? 1 : 0) + (claimsModified ? 1 : 0);
     if (repairCount === 0) {

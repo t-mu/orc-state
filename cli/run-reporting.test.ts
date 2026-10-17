@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
 import { queryEvents, appendSequencedEvent } from '../lib/eventLog.ts';
+import { finishRun } from '../lib/claimManager.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -83,17 +84,6 @@ function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' 
     }],
   }));
   writeFileSync(join(dir, 'events.jsonl'), '');
-}
-
-function writeInputRequestClaim(overrides: Record<string, unknown>) {
-  const existing = readClaims().claims[0];
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      ...existing,
-      ...overrides,
-    }],
-  }));
 }
 
 function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
@@ -421,16 +411,16 @@ describe('orc-run-work-complete', () => {
 });
 
 describe('orc-run-finish', () => {
-  it('appends run_finished without mutating claims or agents', () => {
+  it('commits run_finished with the completed claim', () => {
     seedInProgressRun({ runId: 'run-fin-001', agentId: 'worker-01' });
-    const before = claimSnapshot('run-fin-001');
 
     const result = runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_finished');
 
-    assertClaimUnchanged('run-fin-001', before);
+    expect(claimSnapshot('run-fin-001')).toMatchObject({ state: 'done', run_id: 'run-fin-001' });
+    expect(claimSnapshot('run-fin-001')?.finished_at).toEqual(expect.any(String));
 
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
@@ -447,9 +437,8 @@ describe('orc-run-finish', () => {
 });
 
 describe('orc-run-fail', () => {
-  it('appends run_failed with reason and policy without mutating claims or tasks', () => {
+  it('commits run_failed with the failed claim and requeues the task', () => {
     seedInProgressRun({ runId: 'run-fail-001', agentId: 'worker-01' });
-    const before = claimSnapshot('run-fail-001');
 
     const result = runCli('run-fail.ts', [
       '--run-id=run-fail-001',
@@ -460,14 +449,15 @@ describe('orc-run-fail', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_failed');
 
-    assertClaimUnchanged('run-fail-001', before);
+    expect(claimSnapshot('run-fail-001')).toMatchObject({ state: 'failed', failure_reason: 'build error' });
+    expect(claimSnapshot('run-fail-001')?.finished_at).toEqual(expect.any(String));
 
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
 
     const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
     const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
-    expect(task!.status).toBe('in_progress');
+    expect(task!.status).toBe('todo');
 
     const events = readEvents();
     expect(events.some((e) => e.event === 'run_failed' && e.run_id === 'run-fail-001')).toBe(true);
@@ -476,7 +466,7 @@ describe('orc-run-fail', () => {
     expect((failedEvent!.payload as Record<string, unknown>).policy).toBe('requeue');
   });
 
-  it('accepts --policy=block and records it only in the event payload', () => {
+  it('accepts --policy=block and blocks the task', () => {
     seedInProgressRun({ runId: 'run-fail-002', agentId: 'worker-01' });
 
     const result = runCli('run-fail.ts', [
@@ -490,7 +480,7 @@ describe('orc-run-fail', () => {
 
     const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
     const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
-    expect(task!.status).toBe('in_progress');
+    expect(task!.status).toBe('blocked');
     const events = readEvents();
     const failedEvent = events.find((e) => e.event === 'run_failed' && e.run_id === 'run-fail-002');
     expect((failedEvent!.payload as Record<string, unknown>).policy).toBe('block');
@@ -524,7 +514,7 @@ describe('orc-run-fail', () => {
     expect(result.status).toBe(0);
   });
 
-  it('worker lifecycle CLIs do not touch .lock even when it is unusable', () => {
+  it('uses the state lock for transactional transitions and leaves event-only reporting available', () => {
     const cases = [
       { script: 'run-start.ts', args: ['--run-id=run-lock-start', '--agent-id=worker-01'], seed: () => seedClaimedRun({ runId: 'run-lock-start', agentId: 'worker-01' }) },
       { script: 'run-heartbeat.ts', args: ['--run-id=run-lock-heartbeat', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-heartbeat', agentId: 'worker-01' }) },
@@ -539,7 +529,11 @@ describe('orc-run-fail', () => {
       testCase.seed();
       mkdirSync(join(dir, '.lock'));
       const result = runCli(testCase.script, testCase.args);
-      expect(result.status, `${testCase.script} stderr=${result.stderr}`).toBe(0);
+      const usesTransition = testCase.script === 'run-start.ts'
+        || testCase.script === 'run-finish.ts'
+        || testCase.script === 'run-fail.ts';
+      expect(result.status, `${testCase.script} stderr=${result.stderr}`).toBe(usesTransition ? 1 : 0);
+      if (usesTransition) expect(result.stderr).toContain('Lock already held');
     }
   });
 });
@@ -617,7 +611,7 @@ describe('orc-run-input-request', () => {
     ]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Timed out waiting for input_response');
-    expect(readClaims().claims[0].input_state).toBeUndefined();
+    expect(readClaims().claims[0].input_state).toBeNull();
 
     const timeoutFailure = readEvents().find((event) =>
       event.event === 'run_failed'
@@ -658,11 +652,7 @@ describe('orc-run-input-request', () => {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
     }
 
-    writeInputRequestClaim({
-      state: 'failed',
-      finished_at: '2026-01-01T00:02:00.000Z',
-      input_state: null,
-    });
+    finishRun(dir, 'run-input-001', 'worker-01', { success: false, failureReason: 'external_failure' });
 
     const [code] = await once(child, 'close');
     expect(code).toBe(1);
@@ -824,7 +814,7 @@ describe('orc-run-input-request', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('input_response');
-    expect(readClaims().claims[0].input_state).toBeUndefined();
+    expect(readClaims().claims[0].input_state).toBeNull();
 
     const events = readEvents();
     expect(events.some((event) =>

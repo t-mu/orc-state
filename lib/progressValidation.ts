@@ -45,9 +45,8 @@ export interface ProgressInput {
 }
 
 /**
- * Validate worker command arguments without enforcing shared-state transitions.
- * Use this on the worker side so the coordinator remains the source of truth
- * for lifecycle state transitions.
+ * Validate worker command arguments before reporting or applying a transition.
+ * The transition handler performs the authoritative state check under its lock.
  */
 export function validateProgressCommandInput(input: ProgressInput, claim: Claim | null | undefined): { claim: Claim } {
   const { event, runId, agentId, phase, reason, policy } = input;

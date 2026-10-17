@@ -8,7 +8,7 @@
 import { join } from 'node:path';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
-import { appendSequencedEvent } from '../lib/eventLog.ts';
+import { commitClaims } from '../lib/runStore.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
 import { cliError } from './shared.ts';
@@ -23,7 +23,6 @@ if (!runId) {
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
     const backlogPath = join(STATE_DIR, 'backlog.json');
-    const claimsPath = join(STATE_DIR, 'claims.json');
     const now = new Date().toISOString();
 
     const claimsState = readClaims(STATE_DIR);
@@ -54,12 +53,7 @@ try {
     task.status = 'todo';
     task.updated_at = now;
 
-    atomicWriteJson(claimsPath, claimsState);
-    atomicWriteJson(backlogPath, backlog);
-
-    appendSequencedEvent(
-      STATE_DIR,
-      {
+    commitClaims(STATE_DIR, claimsState, [{
         ts: now,
         event: 'claim_expired',
         actor_type: 'human',
@@ -68,9 +62,8 @@ try {
         task_ref: claim.task_ref,
         agent_id: claim.agent_id,
         payload: { reason: 'manual_expire', policy: 'requeue' },
-      },
-      { lockAlreadyHeld: true },
-    );
+      }]);
+    atomicWriteJson(backlogPath, backlog);
 
     console.log(`run expired: ${runId} (task ${claim.task_ref} requeued)`);
   });

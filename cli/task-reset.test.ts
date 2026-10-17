@@ -42,6 +42,9 @@ describe('cli/task-reset.ts', () => {
     expect(event).toBeDefined();
     expect((event?.payload as Record<string, unknown>)?.reset).toBe(true);
     expect((event?.payload as Record<string, unknown>)?.status).toBe('todo');
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'run_cancelled', run_id: 'run-1', task_ref: 'docs/task-1',
+    }));
   });
 
   it('outputs cancelled claim count in message', () => {

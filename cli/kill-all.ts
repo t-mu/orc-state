@@ -22,7 +22,7 @@ import { withLock }                 from '../lib/lock.ts';
 import { cleanupRunWorktree }       from '../lib/runWorktree.ts';
 import { RUN_WORKTREES_FILE }       from '../lib/paths.ts';
 import { readBacklog, readClaims }  from '../lib/stateReader.ts';
-import { appendSequencedEvent }     from '../lib/eventLog.ts';
+import { closeProviderSessionsForAgent, commitClaims } from '../lib/runStore.ts';
 import { boolFlag }                 from '../lib/args.ts';
 import { formatErrorMessage } from './shared.ts';
 
@@ -83,6 +83,7 @@ if (!keepSessions) {
 // ── Step 3: Clear agent registry ───────────────────────────────────────────
 
 if (existsSync(join(STATE_DIR, 'agents.json'))) {
+  for (const agent of agents) closeProviderSessionsForAgent(STATE_DIR, agent.agent_id, new Date().toISOString());
   atomicWriteJson(join(STATE_DIR, 'agents.json'), { version: '1', agents: [] });
 }
 console.log(`✓ Cleared ${agents.length} agent(s)`);
@@ -108,31 +109,28 @@ if (existsSync(join(STATE_DIR, 'backlog.json')) && existsSync(join(STATE_DIR, 'c
     }
 
     let cancelledClaims = 0;
+    const cancelledRuns: Array<{ run_id: string; task_ref: string; agent_id: string }> = [];
     for (const claim of claimsState.claims ?? []) {
       if (claim.state === 'claimed' || claim.state === 'in_progress') {
         claim.state = 'failed';
         claim.failure_reason = 'kill_all';
         claim.finished_at = now;
         cancelledClaims++;
+        cancelledRuns.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id });
       }
     }
 
-    atomicWriteJson(join(STATE_DIR, 'backlog.json'), backlog);
-    atomicWriteJson(join(STATE_DIR, 'claims.json'), claimsState);
-
-    if (resetCount > 0) {
-      appendSequencedEvent(
-        STATE_DIR,
-        {
+    commitClaims(STATE_DIR, claimsState, [{
           ts: now,
           event: 'coordinator_stopped',
           actor_type: 'human',
           actor_id: 'human',
           payload: { tasks_reset: resetCount, claims_cancelled: cancelledClaims },
-        },
-        { lockAlreadyHeld: true },
-      );
-    }
+        }, ...cancelledRuns.map((run) => ({
+          ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: 'human',
+          ...run, payload: { reason: 'kill_all' },
+        }))]);
+    atomicWriteJson(join(STATE_DIR, 'backlog.json'), backlog);
 
     console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)`);
   });

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
-import { appendSequencedEvent } from '../lib/eventLog.ts';
+import { commitClaims } from '../lib/runStore.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
 import { cliError } from './shared.ts';
@@ -25,7 +25,6 @@ if (!taskRef) {
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
     const backlogPath = join(STATE_DIR, 'backlog.json');
-    const claimsPath = join(STATE_DIR, 'claims.json');
     const now = new Date().toISOString();
 
     const backlog = readBacklog(STATE_DIR);
@@ -51,21 +50,19 @@ try {
       c.finished_at = now;
     }
 
-    atomicWriteJson(backlogPath, backlog);
-    atomicWriteJson(claimsPath, claimsState);
-
-    appendSequencedEvent(
-      STATE_DIR,
-      {
+    commitClaims(STATE_DIR, claimsState, [{
         ts: now,
         event: 'task_updated',
         actor_type: actorId === 'human' ? 'human' : 'agent',
         actor_id: actorId,
         task_ref: taskRef,
         payload: { reset: true, previous_status: previousStatus, status: 'todo' },
-      },
-      { lockAlreadyHeld: true },
-    );
+      }, ...activeClaims.map((claim) => ({
+        ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: actorId,
+        run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
+        payload: { reason: 'manual_reset' },
+      }))]);
+    atomicWriteJson(backlogPath, backlog);
 
     console.log(`task reset: ${taskRef} (was: ${previousStatus}, cancelled ${activeClaims.length} active claims)`);
   });

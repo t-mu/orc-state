@@ -7,6 +7,7 @@ import type { ExecutionMode, ProviderName } from './providers.ts';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { recordProviderSession } from './runStore.ts';
 import type { WorkerBootstrapProfile } from './sessionBootstrap.ts';
 
 function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
@@ -214,6 +215,14 @@ export async function launchWorkerSession(
       last_heartbeat_at: nowIso,
       last_status_change_at: nowIso,
     };
+    recordProviderSession(stateDir, {
+      sessionId: sessionToken,
+      runId,
+      agentId: agent.agent_id,
+      provider: agent.provider,
+      providerRef: provider_ref,
+      startedAt: nowIso,
+    });
     updateAgentRuntime(stateDir, agent.agent_id, updates);
     syncAgentRuntime(agent, updates);
     emit({
