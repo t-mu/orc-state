@@ -91,11 +91,12 @@ orc start-session
   orchestration root) into worker sessions so every `orc` command a worker runs
   resolves the orchestration state dir, even though the worker's working
   directory is a target-repo worktree.
-- **Sandbox mode** — when `execution_mode: sandbox`, the worker's writable
-  workspace is the orchestration-root subtree (covering its worktree, the state
-  dir, and the backlog); the target repo's `.git` write subtrees (`objects/`,
-  `refs/`, `logs/`, `worktrees/`) are additionally granted so worktree commits
-  succeed. `<target>/.git/hooks` and `<target>/.git/config` are deliberately
+- **Sandbox mode** — when `execution_mode: sandbox`, the worker starts in its
+  assigned worktree and may write only that worktree, the orchestration state
+  dir, and the target repo's `.git` write subtrees (`objects/`, `refs/`,
+  `logs/`, `worktrees/`), which worktree commits and rebases need. The
+  orchestration-root checkout (including `backlog/` and `plans/`) is not
+  writable. `<target>/.git/hooks` and `<target>/.git/config` are deliberately
   **not** granted, so a sandboxed worker cannot plant a hook or rewrite git
   config. Both Claude and Codex apply this grant (Codex's writable-root config
   override is documented but pending verification against a live Codex CLI — see

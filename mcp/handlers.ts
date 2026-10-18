@@ -886,9 +886,12 @@ export async function handleRequestScout(stateDir: string, {
   const scoutId = nextAvailableScoutId(stateDir);
   const repoRoot = process.env.ORC_REPO_ROOT ?? join(stateDir, '..');
   const worktrees = readRunWorktreesState(stateDir);
-  const linkedWorktree = typeof run_id === 'string'
+  const recordedWorktree = typeof run_id === 'string'
     ? (worktrees.runs.find((entry) => entry.run_id === run_id)?.worktree_path ?? null)
     : null;
+  // Scouts launch in their cwd (task 204); a stalled run's worktree may be
+  // gone, which is exactly when a scout is wanted — investigate from the root.
+  const linkedWorktree = recordedWorktree != null && existsSync(recordedWorktree) ? recordedWorktree : null;
   const workingDirectory = linkedWorktree ?? repoRoot;
 
   const scout = registerAgent(stateDir, {

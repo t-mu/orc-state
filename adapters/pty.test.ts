@@ -111,6 +111,26 @@ describe('pty adapter start()', () => {
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
+  it('fails clearly when a worker working directory is not a git checkout', async () => {
+    const worktree = join(dir, 'half-removed-worktree');
+    mkdirSync(worktree);
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await expect(adapter.start('bob', { working_directory: worktree, require_git_checkout: true }))
+      .rejects.toThrow(`assigned working directory is not a git worktree: ${worktree}`);
+    expect(spawnSpy).not.toHaveBeenCalled();
+
+    writeFileSync(join(worktree, '.git'), 'gitdir: /somewhere/.git/worktrees/run-1\n');
+    await adapter.start('bob', { working_directory: worktree, require_git_checkout: true });
+    expect(spawnSpy.mock.calls[0][2]).toMatchObject({ cwd: worktree });
+  });
+
+  it('fails clearly when a worker has no assigned worktree at all', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await expect(adapter.start('bob', { require_git_checkout: true, env: { ORC_REPO_ROOT: dir } }))
+      .rejects.toThrow('worker launch requires an assigned worktree');
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
   it('fails clearly when the working directory is not a directory', async () => {
     const file = join(dir, 'not-a-dir');
     writeFileSync(file, '');

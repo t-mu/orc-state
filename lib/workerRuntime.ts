@@ -44,8 +44,8 @@ export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string 
     // 186). Target-repo resolution for workers is intentionally left to git-in-cwd.
     env.ORC_REPO_ROOT = repoRoot;
     // ORC_HOME is the top-precedence orchestration-root signal (see
-    // resolveOrchestrationRoot). A worker cds into its assigned worktree, which
-    // in the sibling layout is a worktree of the TARGET repo — from that cwd
+    // resolveOrchestrationRoot). A worker is launched in its assigned worktree
+    // (task 204), which in the sibling layout is a worktree of the TARGET repo — from that cwd
     // git-based discovery would resolve to the target repo, not the
     // orchestration home. Pinning ORC_HOME makes every `orc` invocation from a
     // worker shell resolve the orchestration state dir regardless of cwd; the
@@ -134,6 +134,7 @@ interface Adapter {
     model: string | null;
     working_directory: string | null | undefined;
     read_only?: boolean;
+    require_git_checkout?: boolean;
     execution_mode?: 'full-access' | 'sandbox';
     startup_profile?: 'default' | 'real-provider-smoke';
     env: Record<string, string>;
@@ -202,6 +203,7 @@ export async function launchWorkerSession(
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
       read_only: agent.role === 'scout',
+      require_git_checkout: agent.role === 'worker',
       execution_mode: effectiveMode,
       startup_profile: workerStartupProfile,
       env: workerEnv,

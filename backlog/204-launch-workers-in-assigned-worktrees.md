@@ -3,7 +3,7 @@ ref: vnext-control-plane/204-launch-workers-in-assigned-worktrees
 feature: vnext-control-plane
 review_level: full
 priority: high
-status: todo
+status: done
 depends_on:
   - vnext-control-plane/196-pin-markdown-task-revisions
 ---

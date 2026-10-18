@@ -203,13 +203,20 @@ export function codexSandboxWritableRootArgs(opts: SandboxRootsOptions): string[
  * Resolve the provider launch cwd (task 204). An explicit working_directory —
  * the assigned worktree for task workers — is used as-is and must be an
  * existing directory; launching elsewhere would silently run the worker
- * against the wrong checkout. Without one, fall back to the orchestration root.
+ * against the wrong checkout. With `require_git_checkout` (set for task
+ * workers) it must also be a git checkout, so a half-removed worktree fails at
+ * launch instead of at the worker's first commit, and it must be present.
+ * Otherwise (scouts, tests) a missing working_directory falls back to the
+ * orchestration root.
  */
 export function resolveLaunchCwd(config: Record<string, unknown>): string {
   const workingDirectory = typeof config.working_directory === 'string' && config.working_directory
     ? config.working_directory
     : null;
   if (workingDirectory == null) {
+    // A task worker must never fall back to the orchestration root: it would
+    // run against the main checkout with a whole-root sandbox grant.
+    if (config.require_git_checkout === true) throw new Error('worker launch requires an assigned worktree; none recorded');
     return (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT ?? process.cwd();
   }
   let isDirectory = false;
@@ -219,6 +226,9 @@ export function resolveLaunchCwd(config: Record<string, unknown>): string {
     throw new Error(`assigned working directory does not exist: ${workingDirectory}`);
   }
   if (!isDirectory) throw new Error(`assigned working directory is not a directory: ${workingDirectory}`);
+  if (config.require_git_checkout === true && !existsSync(join(workingDirectory, '.git'))) {
+    throw new Error(`assigned working directory is not a git worktree: ${workingDirectory}`);
+  }
   return resolve(workingDirectory);
 }
 

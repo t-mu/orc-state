@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,9 +48,10 @@ beforeEach(() => {
       registered_at: '2026-01-01T00:00:00.000Z',
     }],
   }, null, 2));
+  mkdirSync(runWorktree());
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({
     version: '1',
-    runs: [{ run_id: 'run-1', worktree_path: '/tmp/run-1-worktree', branch: 'run-1' }],
+    runs: [{ run_id: 'run-1', worktree_path: runWorktree(), branch: 'run-1' }],
   }, null, 2));
 });
 
@@ -58,6 +59,8 @@ afterEach(() => {
   delete process.env.ORC_SCOUT_READY_TIMEOUT_MS;
   cleanupTempStateDir(dir);
 });
+
+const runWorktree = () => join(dir, 'run-1-worktree');
 
 describe('handleRequestScout', () => {
   it('registers a scout, launches a session, and sends the scout brief', async () => {
@@ -85,7 +88,7 @@ describe('handleRequestScout', () => {
     expect(launchWorkerSessionMock).toHaveBeenCalledWith(
       dir,
       expect.objectContaining({ agent_id: 'scout-1', role: 'scout', provider: 'codex' }),
-      expect.objectContaining({ workingDirectory: '/tmp/run-1-worktree' }),
+      expect.objectContaining({ workingDirectory: runWorktree() }),
     );
     expect(sendMock).toHaveBeenCalledWith('pty:scout-1', expect.stringContaining('SCOUT_BRIEF v1'));
     expect(sendMock).toHaveBeenCalledWith('pty:scout-1', expect.stringContaining('Inspect why run-1 is stalled'));
@@ -95,7 +98,7 @@ describe('handleRequestScout', () => {
       provider: 'codex',
       run_id: 'run-1',
       task_ref: 'project/investigate-stall',
-      working_directory: '/tmp/run-1-worktree',
+      working_directory: runWorktree(),
     });
   });
 
@@ -121,6 +124,32 @@ describe('handleRequestScout', () => {
       expect.objectContaining({ workingDirectory: dir }),
     );
     expect(result.working_directory).toBe(dir);
+  });
+
+  it('falls back to the repo root when the linked run worktree no longer exists (task 204)', async () => {
+    rmSync(runWorktree(), { recursive: true });
+    launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
+      agent.status = 'running';
+      agent.session_handle = createSessionHandle(agent.agent_id);
+      agent.session_token = 'scout-token-1';
+      agent.session_started_at = '2026-01-01T00:00:00.000Z';
+      agent.session_ready_at = '2026-01-01T00:00:01.000Z';
+      return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
+    });
+
+    const { handleRequestScout } = await import('./handlers.ts');
+    const result = await handleRequestScout(dir, {
+      objective: 'Inspect why run-1 lost its worktree',
+      run_id: 'run-1',
+      actor_id: 'master',
+    });
+
+    expect(launchWorkerSessionMock).toHaveBeenCalledWith(
+      dir,
+      expect.objectContaining({ agent_id: 'scout-1' }),
+      expect.objectContaining({ workingDirectory: dir }),
+    );
+    expect(result).toMatchObject({ run_id: 'run-1', working_directory: dir });
   });
 
   it('removes the scout agent when launch fails', async () => {

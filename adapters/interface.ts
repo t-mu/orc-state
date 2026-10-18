@@ -10,6 +10,8 @@
  * start(agentId, config) → Promise<{ session_handle, provider_ref }>
  *   Initialize a new provider CLI session for the agent.
  *   config: { system_prompt?, model?, working_directory?, env?, ...providerExtras }
+ *   working_directory: the provider process cwd; a task worker's assigned
+ *     worktree. With `require_git_checkout: true` it must contain `.git`.
  *   session_handle: opaque string used for subsequent operations.
  *                   Recommended format: "<provider>:<uuid>"
  *                   Example: "claude:3f2a...", "openai:7b1c...", "gemini:9e4d..."
