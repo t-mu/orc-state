@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { detectPtySupport } from '../test-fixtures/ptySupport.ts';
@@ -80,6 +80,28 @@ describe.runIf(PTY_SUPPORTED)('adapters/pty.ts integration', () => {
     await expect(adapter.stop('pty:worker-01')).resolves.toBeUndefined();
     await expect(adapter.stop('pty:worker-01')).resolves.toBeUndefined();
     expect(existsSync(pidFile)).toBe(false);
+  });
+
+  it('starts the provider in the assigned worktree with state pinned to the orchestration root (task 204)', async () => {
+    const worktree = join(stateDir, 'worktrees', 'run-1');
+    mkdirSync(worktree, { recursive: true });
+    const { createPtyAdapter } = await import('./pty.ts');
+    const adapter = createPtyAdapter({ provider: 'claude' });
+
+    await withFixturePath(() => adapter.start('worker-02', {
+      working_directory: worktree,
+      env: { ORC_STATE_DIR: stateDir, ORC_REPO_ROOT: resolve(stateDir, '..') },
+    }));
+    const logFile = join(stateDir, 'pty-logs', 'worker-02.log');
+    try {
+      await waitFor(() => readFileSync(logFile, 'utf8').includes('FIXTURE_STATE_DIR'), { message: 'fixture cwd markers not found' });
+      const log = readFileSync(logFile, 'utf8');
+      // Reported before any instruction is sent — the process was born there.
+      expect(log).toContain(`FIXTURE_CWD ${realpathSync(worktree)}`);
+      expect(log).toContain(`FIXTURE_STATE_DIR ${stateDir}`);
+    } finally {
+      await adapter.stop('pty:worker-02');
+    }
   });
 
   it('heartbeatProbe returns false for malformed handle', async () => {

@@ -241,9 +241,15 @@ The flags passed to each provider CLI differ by preset:
 | `full-access` | `--dangerously-skip-permissions` |
 | `sandbox` | `--permission-mode auto` |
 
-In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to the working directory (the orchestration root). That grant covers the assigned worktree, `backlog/`, `plans/`, and `.orc-state/`. The state directory stays writable deliberately: a sandboxed worker mutates runtime state only indirectly, by running `orc` lifecycle commands (`run-start`, `progress`, `run-work-complete`, `review-submit`, `memory-record`, …) from inside its own session, and those commands write the event log, claims, and memory store under `.orc-state/`. The sandbox therefore bounds a worker to the orchestration subtree and denies network + the rest of the filesystem; it does not isolate the worker from state it legitimately writes through the CLI.
+Task workers launch with their assigned worktree as the working directory (task 204). Scouts launch in their linked worktree or the orchestration root.
 
-In the [sibling layout](./sibling-mode.md), the settings `allowWrite` list additionally includes the specific `.git` subtrees a worktree commit/rebase/fetch writes — `objects/`, `refs/`, `logs/`, and `worktrees/` under `<target-repo>/.git` — because those commits write to the target repo's shared object store, which lies outside the orchestration-root workspace. The grant is scoped to those subtrees rather than the whole `.git` directory on purpose: `<target-repo>/.git/hooks` and `<target-repo>/.git/config` are **excluded**, so a sandboxed worker cannot plant a hook script or rewrite git config that the unsandboxed coordinator would later execute during a merge, push, or worktree operation.
+In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to an explicit list (`allowWrite`):
+
+- `.` — the launch working directory, i.e. the assigned worktree.
+- the state directory (`.orc-state/`). It stays writable deliberately: a sandboxed worker mutates runtime state only indirectly, by running `orc` lifecycle commands (`run-start`, `progress`, `run-work-complete`, `review-submit`, `memory-record`, …) from inside its own session, and those commands write the event log, claims, and memory store under `.orc-state/`.
+- the `.git` subtrees a worktree commit/rebase/fetch writes — `objects/`, `refs/`, `logs/`, and `worktrees/` — of the repo that backs the worktree: the orchestration repo in the attached layout, `<target-repo>` in the [sibling layout](./sibling-mode.md). A linked worktree shares its main repo's object store, refs and per-worktree state, all of which lie outside the worktree directory.
+
+Any of these that already lies inside the launch directory is omitted. The `.git` grant is scoped to those subtrees rather than the whole `.git` directory on purpose: `.git/hooks` and `.git/config` are **excluded**, so a sandboxed worker cannot plant a hook script or rewrite git config that the unsandboxed coordinator would later execute during a merge, push, or worktree operation. The rest of the orchestration root (main checkout, `backlog/`, `plans/`) is not writable; attached-layout workers edit the task spec copy inside their worktree. The sandbox does not isolate the worker from state it legitimately writes through the CLI.
 
 #### Codex (`codex`)
 
@@ -252,13 +258,13 @@ In the [sibling layout](./sibling-mode.md), the settings `allowWrite` list addit
 | `full-access` | `--dangerously-bypass-approvals-and-sandbox` |
 | `sandbox` | `--sandbox workspace-write --ask-for-approval never` |
 
-In the [sibling layout](./sibling-mode.md), Codex sandbox mode additionally passes a config override granting the same `<target-repo>/.git` subtrees as Claude (`objects/`, `refs/`, `logs/`, `worktrees/`) as writable roots, for the same reason (worktree commits write to the target repo's shared object store) and with the same `hooks/` + `config` exclusion. The value is JSON-encoded so paths with special characters stay well-formed:
+`workspace-write` covers the launch directory (the assigned worktree). Codex sandbox mode additionally passes a config override granting the same extra roots as Claude — the state directory and the backing repo's `.git` subtrees (`objects/`, `refs/`, `logs/`, `worktrees/`) — with the same `hooks/` + `config` exclusion. The value is JSON-encoded so paths with special characters stay well-formed:
 
 ```
--c sandbox_workspace_write.writable_roots=["<target-repo>/.git/objects","<target-repo>/.git/refs","<target-repo>/.git/logs","<target-repo>/.git/worktrees"]
+-c sandbox_workspace_write.writable_roots=["<state-dir>","<repo>/.git/objects","<repo>/.git/refs","<repo>/.git/logs","<repo>/.git/worktrees"]
 ```
 
-> **Note:** this `writable_roots` override form is documented but was not verifiable against a live Codex CLI at the time it shipped (the CLI binary was unavailable in the build environment). If Codex sandbox commits fail in the sibling layout, verify the current `writable_roots` config key against your installed `codex` version and adjust `codexSandboxWritableRootArgs` in `adapters/pty.ts`.
+> **Note:** this `writable_roots` override form is documented but was not verifiable against a live Codex CLI at the time it shipped (the CLI binary was unavailable in the build environment). If Codex sandbox commits or `orc` calls fail, verify the current `writable_roots` config key against your installed `codex` version and adjust `codexSandboxWritableRootArgs` in `adapters/pty.ts`.
 
 #### Gemini (`gemini`)
 

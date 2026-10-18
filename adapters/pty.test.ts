@@ -85,12 +85,58 @@ describe('pty adapter start()', () => {
   });
 
   it('launches the provider inside the requested working directory when provided', async () => {
+    const worktree = join(dir, 'worktree');
+    mkdirSync(worktree);
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
-    await adapter.start('bob', { working_directory: '/tmp/orc-worktree', execution_mode: 'full-access' });
+    await adapter.start('bob', { working_directory: worktree, execution_mode: 'full-access' });
 
     expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.arrayContaining(['--dangerously-skip-permissions']), expect.objectContaining({
-      cwd: '/tmp/orc-worktree',
+      cwd: worktree,
     }));
+  });
+
+  it('prefers the working directory over ORC_REPO_ROOT in the env (task 204)', async () => {
+    const worktree = join(dir, 'worktree');
+    mkdirSync(worktree);
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { working_directory: worktree, execution_mode: 'full-access', env: { ORC_REPO_ROOT: dir } });
+
+    expect(spawnSpy.mock.calls[0][2]).toMatchObject({ cwd: worktree });
+  });
+
+  it('fails clearly without spawning when the working directory is missing', async () => {
+    const missing = join(dir, 'missing-worktree');
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await expect(adapter.start('bob', { working_directory: missing })).rejects.toThrow(`assigned working directory does not exist: ${missing}`);
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('fails clearly when a worker working directory is not a git checkout', async () => {
+    const worktree = join(dir, 'half-removed-worktree');
+    mkdirSync(worktree);
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await expect(adapter.start('bob', { working_directory: worktree, require_git_checkout: true }))
+      .rejects.toThrow(`assigned working directory is not a git worktree: ${worktree}`);
+    expect(spawnSpy).not.toHaveBeenCalled();
+
+    writeFileSync(join(worktree, '.git'), 'gitdir: /somewhere/.git/worktrees/run-1\n');
+    await adapter.start('bob', { working_directory: worktree, require_git_checkout: true });
+    expect(spawnSpy.mock.calls[0][2]).toMatchObject({ cwd: worktree });
+  });
+
+  it('fails clearly when a worker has no assigned worktree at all', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await expect(adapter.start('bob', { require_git_checkout: true, env: { ORC_REPO_ROOT: dir } }))
+      .rejects.toThrow('worker launch requires an assigned worktree');
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('fails clearly when the working directory is not a directory', async () => {
+    const file = join(dir, 'not-a-dir');
+    writeFileSync(file, '');
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await expect(adapter.start('bob', { working_directory: file })).rejects.toThrow('assigned working directory is not a directory');
+    expect(spawnSpy).not.toHaveBeenCalled();
   });
 
   it('merges explicit environment overrides into the spawned provider process', async () => {
@@ -283,9 +329,10 @@ describe('buildStartArgs execution mode', () => {
         enabled: true,
         mode: 'auto-allow',
         allowUnsandboxedCommands: false,
-        filesystem: { allowWrite: ['.'] },
       },
     });
+    // cwd first, then the state dir (outside the cwd here) as an explicit root.
+    expect(settings.sandbox.filesystem.allowWrite.slice(0, 2)).toEqual(['.', dir]);
   });
 
   it('claude sandbox + read_only: settings file has no allowWrite', async () => {
@@ -359,131 +406,165 @@ describe('buildStartArgs execution mode', () => {
 
 // ─── sibling-layout sandbox scoping (task 190) ──────────────────────────────
 
-describe('claudeSandboxFilesystem', () => {
-  it('attached, writable: grants only the launch cwd (orchestration root)', async () => {
-    const { claudeSandboxFilesystem } = await import('./pty.ts');
-    expect(claudeSandboxFilesystem({ readOnly: false, siblingLayout: false, targetRepoRoot: '/target' }))
-      .toEqual({ allowWrite: ['.'] });
+describe('sandboxExtraWritableRoots', () => {
+  const opts = { readOnly: false, cwd: '/orch/.worktrees/run-1', stateDir: '/orch/.orc-state', gitRepoRoot: '/orch' };
+
+  it('worktree cwd, attached: grants the state dir and the backing repo .git write subtrees', async () => {
+    const { sandboxExtraWritableRoots } = await import('./pty.ts');
+    expect(sandboxExtraWritableRoots(opts)).toEqual([
+      '/orch/.orc-state',
+      '/orch/.git/objects',
+      '/orch/.git/refs',
+      '/orch/.git/logs',
+      '/orch/.git/worktrees',
+    ]);
   });
 
-  it('sibling, writable: grants the target repo .git write subtrees, not hooks/config', async () => {
-    const { claudeSandboxFilesystem } = await import('./pty.ts');
-    expect(claudeSandboxFilesystem({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' }))
-      .toEqual({
-        allowWrite: [
-          '.',
-          '/target/.git/objects',
-          '/target/.git/refs',
-          '/target/.git/logs',
-          '/target/.git/worktrees',
-        ],
-      });
+  it('worktree cwd, sibling: grants the target repo .git, not the orchestration repo .git', async () => {
+    const { sandboxExtraWritableRoots } = await import('./pty.ts');
+    expect(sandboxExtraWritableRoots({ ...opts, gitRepoRoot: '/target' })).toEqual([
+      '/orch/.orc-state',
+      '/target/.git/objects',
+      '/target/.git/refs',
+      '/target/.git/logs',
+      '/target/.git/worktrees',
+    ]);
   });
 
-  it('sibling grant excludes the escalation-sensitive .git/hooks and .git/config paths', async () => {
-    const { claudeSandboxFilesystem } = await import('./pty.ts');
-    const result = claudeSandboxFilesystem({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' });
-    expect(result?.allowWrite).not.toContain('/target/.git');
-    expect(result?.allowWrite).not.toContain('/target/.git/hooks');
-    expect(result?.allowWrite).not.toContain('/target/.git/config');
+  it('never grants the escalation-sensitive .git, .git/hooks or .git/config paths', async () => {
+    const { sandboxExtraWritableRoots } = await import('./pty.ts');
+    const roots = sandboxExtraWritableRoots(opts);
+    expect(roots).not.toContain('/orch/.git');
+    expect(roots).not.toContain('/orch/.git/hooks');
+    expect(roots).not.toContain('/orch/.git/config');
+    expect(roots).not.toContain('/orch');
   });
 
-  it('read-only (scouts): no writable roots in either layout', async () => {
-    const { claudeSandboxFilesystem } = await import('./pty.ts');
-    expect(claudeSandboxFilesystem({ readOnly: true, siblingLayout: false, targetRepoRoot: '/target' })).toBeUndefined();
-    expect(claudeSandboxFilesystem({ readOnly: true, siblingLayout: true, targetRepoRoot: '/target' })).toBeUndefined();
+  it('drops roots already inside the cwd (launch at the orchestration root)', async () => {
+    const { sandboxExtraWritableRoots } = await import('./pty.ts');
+    expect(sandboxExtraWritableRoots({ ...opts, cwd: '/orch' })).toEqual([]);
+  });
+
+  it('read-only (scouts): no writable roots', async () => {
+    const { sandboxExtraWritableRoots } = await import('./pty.ts');
+    expect(sandboxExtraWritableRoots({ ...opts, readOnly: true })).toEqual([]);
   });
 });
 
-describe('claude sandbox settings file in the sibling layout', () => {
-  it('allowWrite includes the target repo .git end-to-end via start()', async () => {
-    const orch = join(dir, 'orch');
-    const target = join(dir, 'target');
-    mkdirSync(join(orch, '.orc-state'), { recursive: true });
-    writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: target }));
+describe('claudeSandboxFilesystem', () => {
+  const opts = { readOnly: false, cwd: '/orch/.worktrees/run-1', stateDir: '/orch/.orc-state', gitRepoRoot: '/target' };
 
-    const savedRepoRoot = process.env.ORC_REPO_ROOT;
-    delete process.env.ORC_REPO_ROOT; // ensure target_repo (not ORC_REPO_ROOT) drives resolution
-    process.env.ORC_STATE_DIR = join(orch, '.orc-state'); // → ORCHESTRATION_ROOT = orch, sibling layout
-    try {
-      const { adapter } = await makeAdapter({ provider: 'claude' });
-      await adapter.start('bob', { execution_mode: 'sandbox' });
-      const settings = JSON.parse(readFileSync(join(orch, '.orc-state', 'pty-settings', 'bob.json'), 'utf8'));
-      expect(settings.sandbox.filesystem.allowWrite).toEqual([
+  it('writable: grants the cwd plus the extra roots', async () => {
+    const { claudeSandboxFilesystem } = await import('./pty.ts');
+    expect(claudeSandboxFilesystem(opts)).toEqual({
+      allowWrite: [
         '.',
-        join(target, '.git', 'objects'),
-        join(target, '.git', 'refs'),
-        join(target, '.git', 'logs'),
-        join(target, '.git', 'worktrees'),
-      ]);
-    } finally {
-      if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
-    }
+        '/orch/.orc-state',
+        '/target/.git/objects',
+        '/target/.git/refs',
+        '/target/.git/logs',
+        '/target/.git/worktrees',
+      ],
+    });
   });
 
-  it('codex grants the target .git writable root, and gemini stays flag-free, in the sibling layout', async () => {
-    // Task 193: codex sandbox in the sibling layout adds the target repo .git as
-    // a writable root (mirroring claude). Gemini has no sandbox flags either way.
-    const orch = join(dir, 'orch');
-    const target = join(dir, 'target');
-    mkdirSync(join(orch, '.orc-state'), { recursive: true });
-    writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: target }));
-
-    const savedRepoRoot = process.env.ORC_REPO_ROOT;
-    delete process.env.ORC_REPO_ROOT;
-    process.env.ORC_STATE_DIR = join(orch, '.orc-state');
-    try {
-      const codex = await makeAdapter({ provider: 'codex' });
-      await codex.adapter.start('c', { execution_mode: 'sandbox' });
-      const codexArgs = codex.spawnSpy.mock.calls[0][1] as string[];
-      const expectedRoots = JSON.stringify([
-        join(target, '.git', 'objects'),
-        join(target, '.git', 'refs'),
-        join(target, '.git', 'logs'),
-        join(target, '.git', 'worktrees'),
-      ]);
-      expect(codexArgs).toEqual([
-        '--sandbox', 'workspace-write', '--ask-for-approval', 'never',
-        '-c', `sandbox_workspace_write.writable_roots=${expectedRoots}`,
-        '--enable', 'multi_agent',
-      ]);
-
-      vi.resetModules();
-      const gemini = await makeAdapter({ provider: 'gemini' });
-      await gemini.adapter.start('g', { execution_mode: 'sandbox' });
-      expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
-    } finally {
-      if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
-    }
+  it('read-only (scouts): no filesystem block', async () => {
+    const { claudeSandboxFilesystem } = await import('./pty.ts');
+    expect(claudeSandboxFilesystem({ ...opts, readOnly: true })).toBeUndefined();
   });
 });
 
 describe('codexSandboxWritableRootArgs', () => {
-  it('attached, writable: no extra writable-root args', async () => {
-    const { codexSandboxWritableRootArgs } = await import('./pty.ts');
-    expect(codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: false, targetRepoRoot: '/target' })).toEqual([]);
-  });
+  const opts = { readOnly: false, cwd: '/orch/.worktrees/run-1', stateDir: '/orch/.orc-state', gitRepoRoot: '/target' };
 
-  it('sibling, writable: grants the target repo .git write subtrees via the writable_roots override', async () => {
+  it('writable: grants the extra roots via the writable_roots override', async () => {
     const { codexSandboxWritableRootArgs } = await import('./pty.ts');
-    expect(codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: true, targetRepoRoot: '/target' }))
+    expect(codexSandboxWritableRootArgs(opts))
       .toEqual(['-c', 'sandbox_workspace_write.writable_roots='
-        + '["/target/.git/objects","/target/.git/refs","/target/.git/logs","/target/.git/worktrees"]']);
+        + '["/orch/.orc-state","/target/.git/objects","/target/.git/refs","/target/.git/logs","/target/.git/worktrees"]']);
   });
 
-  it('sibling: JSON-encodes the value so a path with special characters stays well-formed', async () => {
+  it('no args when the cwd already covers every root', async () => {
     const { codexSandboxWritableRootArgs } = await import('./pty.ts');
-    const args = codexSandboxWritableRootArgs({ readOnly: false, siblingLayout: true, targetRepoRoot: '/tmp/a"b\\c' });
+    expect(codexSandboxWritableRootArgs({ ...opts, cwd: '/', gitRepoRoot: '/orch' })).toEqual([]);
+  });
+
+  it('JSON-encodes the value so a path with special characters stays well-formed', async () => {
+    const { codexSandboxWritableRootArgs } = await import('./pty.ts');
+    const args = codexSandboxWritableRootArgs({ ...opts, gitRepoRoot: '/tmp/a"b\\c' });
     // The value after the `=` must parse as JSON (raw interpolation would break here).
     const value = args[1].slice('sandbox_workspace_write.writable_roots='.length);
     expect(() => JSON.parse(value)).not.toThrow();
     expect(JSON.parse(value)).toContain('/tmp/a"b\\c/.git/objects');
   });
 
-  it('read-only (scouts): no writable-root args in either layout', async () => {
+  it('read-only (scouts): no writable-root args', async () => {
     const { codexSandboxWritableRootArgs } = await import('./pty.ts');
-    expect(codexSandboxWritableRootArgs({ readOnly: true, siblingLayout: false, targetRepoRoot: '/target' })).toEqual([]);
-    expect(codexSandboxWritableRootArgs({ readOnly: true, siblingLayout: true, targetRepoRoot: '/target' })).toEqual([]);
+    expect(codexSandboxWritableRootArgs({ ...opts, readOnly: true })).toEqual([]);
+  });
+});
+
+describe('sandbox roots end-to-end via start() (task 204)', () => {
+  function siblingLayout() {
+    const orch = join(dir, 'orch');
+    const target = join(dir, 'target');
+    const worktree = join(orch, '.worktrees', 'run-1');
+    mkdirSync(join(orch, '.orc-state'), { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: target }));
+    process.env.ORC_STATE_DIR = join(orch, '.orc-state'); // → ORCHESTRATION_ROOT = orch, sibling layout
+    return { orch, target, worktree, stateDir: join(orch, '.orc-state') };
+  }
+
+  function gitRoots(repo: string) {
+    return ['objects', 'refs', 'logs', 'worktrees'].map((sub) => join(repo, '.git', sub));
+  }
+
+  let savedRepoRoot: string | undefined;
+  beforeEach(() => {
+    savedRepoRoot = process.env.ORC_REPO_ROOT;
+    delete process.env.ORC_REPO_ROOT; // ensure target_repo (not ORC_REPO_ROOT) drives resolution
+  });
+  afterEach(() => {
+    if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
+  });
+
+  it('claude, sibling: launches in the worktree and grants state dir + target .git', async () => {
+    const { target, worktree, stateDir } = siblingLayout();
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox', working_directory: worktree });
+    expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.any(Array), expect.objectContaining({ cwd: worktree }));
+    const settings = JSON.parse(readFileSync(join(stateDir, 'pty-settings', 'bob.json'), 'utf8'));
+    expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', stateDir, ...gitRoots(target)]);
+  });
+
+  it('claude, attached: grants the orchestration repo .git subtrees, not the whole root', async () => {
+    const orch = join(dir, 'orch');
+    const worktree = join(orch, '.worktrees', 'run-1');
+    mkdirSync(join(orch, '.orc-state'), { recursive: true });
+    mkdirSync(worktree, { recursive: true });
+    process.env.ORC_STATE_DIR = join(orch, '.orc-state');
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox', working_directory: worktree });
+    const settings = JSON.parse(readFileSync(join(orch, '.orc-state', 'pty-settings', 'bob.json'), 'utf8'));
+    expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', join(orch, '.orc-state'), ...gitRoots(orch)]);
+  });
+
+  it('codex grants the same roots, and gemini stays flag-free, in the sibling layout', async () => {
+    const { target, worktree, stateDir } = siblingLayout();
+    const codex = await makeAdapter({ provider: 'codex' });
+    await codex.adapter.start('c', { execution_mode: 'sandbox', working_directory: worktree });
+    expect(codex.spawnSpy.mock.calls[0][1]).toEqual([
+      '--sandbox', 'workspace-write', '--ask-for-approval', 'never',
+      '-c', `sandbox_workspace_write.writable_roots=${JSON.stringify([stateDir, ...gitRoots(target)])}`,
+      '--enable', 'multi_agent',
+    ]);
+    expect(codex.spawnSpy.mock.calls[0][2]).toMatchObject({ cwd: worktree });
+
+    vi.resetModules();
+    const gemini = await makeAdapter({ provider: 'gemini' });
+    await gemini.adapter.start('g', { execution_mode: 'sandbox', working_directory: worktree });
+    expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.objectContaining({ cwd: worktree }));
   });
 });
 

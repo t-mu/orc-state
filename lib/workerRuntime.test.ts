@@ -222,6 +222,7 @@ interface TestAdapter {
     model: string | null;
     working_directory: string | null | undefined;
     read_only?: boolean;
+    require_git_checkout?: boolean;
     execution_mode?: 'full-access' | 'sandbox';
     startup_profile?: 'default' | 'real-provider-smoke';
     env: Record<string, string>;
@@ -279,6 +280,14 @@ describe('launchWorkerSession execution mode', () => {
       'test-worker',
       expect.objectContaining({ execution_mode: 'sandbox' }),
     );
+  });
+
+  it('requires a git checkout for workers but not scouts (task 204)', async () => {
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
+    await launchWorkerSession('/tmp/state', makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
+    expect(adapterStartSpy.mock.calls[0][1]).toMatchObject({ require_git_checkout: true });
+    expect(adapterStartSpy.mock.calls[1][1]).toMatchObject({ require_git_checkout: false });
   });
 
   it('scout override: always sandbox regardless of input', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -115,6 +115,19 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     if (existsSync('/proc/self/environ')) {
       expect(environ(first.session_handle)).toContain('ORC_PROBE=first');
       expect(environ(second.session_handle).some((entry) => entry.startsWith('ORC_PROBE='))).toBe(false);
+    }
+  }, 20_000);
+
+  it('starts the provider in the assigned worktree, not ORC_REPO_ROOT (task 204)', async () => {
+    const worktree = join(dir, 'worktrees', 'run-1');
+    mkdirSync(worktree, { recursive: true });
+    const { adapter } = await loadAdapter();
+    const started = await adapter.start('worker-1', { working_directory: worktree, env: { ORC_REPO_ROOT: dir } });
+    // Reported by the provider itself on startup, before any instruction is sent.
+    await waitFor(() => (adapter.getOutputTail(started.session_handle) ?? '').includes('FIXTURE_CWD'));
+    expect(adapter.getOutputTail(started.session_handle)).toContain(`FIXTURE_CWD ${realpathSync(worktree)}`);
+    if (existsSync('/proc/self/cwd')) {
+      expect(readlinkSync(`/proc/${adapter.inspectSession(started.session_handle).pid}/cwd`)).toBe(realpathSync(worktree));
     }
   }, 20_000);
 
