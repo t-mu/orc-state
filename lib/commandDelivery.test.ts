@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from './eventLog.ts';
 import {
-  CommandDispatcher, failTransport, getCommand,
+  CommandDispatcher, acknowledgeFromRuntime, failTransport, getCommand,
   markSendStarted, markSent, reconcileCommands, reserveCommand,
 } from './commandDelivery.ts';
 
@@ -143,5 +143,44 @@ describe('durable command delivery', () => {
     markSent(dir, exiting.command_id);
     withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-worker'").run());
     expect(reconcileCommands(dir)[0].state).toBe('outcome_unknown');
+  });
+
+  it('lets the in-process coordinator enqueue for a run without a session credential (task 203)', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const dispatcher = new CommandDispatcher(dir, { send }, authenticate);
+    const command = dispatcher.enqueueFromCoordinator({ runId, recipientSessionId: 'session-worker', idempotencyKey: 'envelope', kind: 'task_envelope', payload: { text: 'TASK_START' } });
+    expect(command).toMatchObject({ actor_id: 'coordinator', actor_session_id: null, recipient_id: 'worker-1', state: 'queued' });
+    expect(dispatcher.enqueueFromCoordinator({ runId, recipientSessionId: 'session-worker', idempotencyKey: 'envelope', kind: 'task_envelope', payload: { text: 'TASK_START' } }).command_id).toBe(command.command_id);
+    expect(() => dispatcher.enqueueFromCoordinator({ runId, recipientSessionId: 'session-master', idempotencyKey: 'other', kind: 'x', payload: {} })).toThrow('Recipient');
+
+    expect(await dispatcher.deliver(command.command_id)).toMatchObject({ state: 'sent' });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies protocol ACKs idempotently, in order, from the recipient session only (task 203)', () => {
+    const command = enqueue();
+    expect(() => acknowledgeFromRuntime(dir, command.command_id, 'session-worker', 'accepted')).toThrow('Cannot acknowledge queued');
+    reserveCommand(dir);
+    markSendStarted(dir, command.command_id);
+    expect(() => acknowledgeFromRuntime(dir, command.command_id, 'session-master', 'running')).toThrow('wrong session');
+
+    // turn/started can beat the turn/start answer: dispatching jumps through accepted to running.
+    expect(acknowledgeFromRuntime(dir, command.command_id, 'session-worker', 'running').state).toBe('running');
+    expect(acknowledgeFromRuntime(dir, command.command_id, 'session-worker', 'accepted').state).toBe('running');
+    expect(markSent(dir, command.command_id).state).toBe('running');
+    expect(acknowledgeFromRuntime(dir, command.command_id, 'session-worker', 'failed', 'provider turn failed')).toMatchObject({ state: 'failed', last_error: 'provider turn failed' });
+    expect(acknowledgeFromRuntime(dir, command.command_id, 'session-worker', 'completed').state).toBe('failed');
+    expect(queryEvents(dir, { event_type: 'command_accepted' })).toHaveLength(1);
+    expect(queryEvents(dir, { event_type: 'command_running' })).toHaveLength(1);
+    expect(queryEvents(dir, { event_type: 'command_failed' })).toHaveLength(1);
+  });
+
+  it('completes a protocol-ACKed command that jumped straight from sent to completed', () => {
+    const command = enqueue();
+    reserveCommand(dir);
+    markSendStarted(dir, command.command_id);
+    markSent(dir, command.command_id);
+    expect(acknowledgeFromRuntime(dir, command.command_id, 'session-worker', 'completed')).toMatchObject({ state: 'completed', terminal_at: expect.any(String) });
+    expect(queryEvents(dir, { event_type: 'command_accepted' })).toHaveLength(1);
   });
 });

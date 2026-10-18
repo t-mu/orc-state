@@ -452,7 +452,7 @@ function readLogTail(agentId: string) {
   return buf.slice(-OUTPUT_TAIL_BYTES).toString('utf8');
 }
 
-function resolveBinary(binary: string, env: Record<string, string>) {
+export function resolveBinary(binary: string, env: Record<string, string>) {
   if (!binary || binary.includes('/') || isAbsolute(binary)) return binary;
   const searchPath = env.PATH ?? process.env.PATH ?? '';
   for (const dir of searchPath.split(delimiter)) {

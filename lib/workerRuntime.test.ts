@@ -290,6 +290,29 @@ describe('launchWorkerSession execution mode', () => {
     expect(adapterStartSpy.mock.calls[1][1]).toMatchObject({ require_git_checkout: false });
   });
 
+  it('passes the structured runtime to workers only and trusts protocol readiness (task 203)', async () => {
+    const registry = await import('./agentRegistry.ts');
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    adapterStartSpy.mockResolvedValue({ session_handle: 'app:test-worker', provider_ref: { protocol_ready: true } });
+    const agent = makeAgent();
+    await launchWorkerSession('/tmp/state', agent, { adapter, workingDirectory: '/tmp/work', runtime: 'structured', emit: vi.fn() });
+    await launchWorkerSession('/tmp/state', makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', runtime: 'structured', emit: vi.fn() });
+
+    expect(adapterStartSpy.mock.calls[0][1]).toMatchObject({ runtime: 'structured' });
+    expect(adapterStartSpy.mock.calls[1][1]).not.toHaveProperty('runtime');
+    // No report-for-duty turn can happen before input, so the handshake marks the session ready.
+    const updates = vi.mocked(registry.updateAgentRuntime).mock.calls[0][2];
+    expect(updates.session_ready_at).toBe(updates.session_started_at);
+  });
+
+  it('leaves CLI sessions waiting for report-for-duty', async () => {
+    const registry = await import('./agentRegistry.ts');
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
+    expect(adapterStartSpy.mock.calls[0][1]).not.toHaveProperty('runtime');
+    expect(vi.mocked(registry.updateAgentRuntime).mock.calls[0][2].session_ready_at).toBeNull();
+  });
+
   it('scout override: always sandbox regardless of input', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ role: 'scout' });

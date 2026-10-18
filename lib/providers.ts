@@ -13,12 +13,22 @@ export function isSupportedExecutionMode(value: string): value is ExecutionMode 
   return EXECUTION_MODES.includes(value as ExecutionMode);
 }
 
+/**
+ * Worker runtime (task 203). `cli` drives the provider's interactive CLI in a
+ * terminal (PTY/tmux). `structured` drives a provider's structured local
+ * protocol where one is proven (Codex app-server); providers without one keep
+ * the CLI runtime as an explicit fallback.
+ */
+export type WorkerRuntime = 'cli' | 'structured';
+export const WORKER_RUNTIMES: readonly WorkerRuntime[] = ['cli', 'structured'] as const;
+
 export interface WorkerPoolConfig {
   max_workers: number;
   provider: ProviderName;
   model: string | null;
   provider_models: Partial<Record<ProviderName, string>>;
   execution_mode: ExecutionMode;
+  runtime: WorkerRuntime;
 }
 
 export interface MasterConfig {
@@ -64,6 +74,7 @@ export const DEFAULT_WORKER_POOL_CONFIG: Readonly<WorkerPoolConfig> = Object.fre
   model: null,
   provider_models: Object.freeze({}),
   execution_mode: 'full-access' as ExecutionMode,
+  runtime: 'cli' as WorkerRuntime,
 });
 
 export const DEFAULT_MASTER_CONFIG: Readonly<MasterConfig> = Object.freeze({
@@ -254,12 +265,18 @@ export function loadWorkerPoolConfig({
     }
   }
 
+  const runtimeRaw = env.ORC_WORKER_RUNTIME ?? (wp.runtime as string | null) ?? null;
+  if (runtimeRaw != null && !WORKER_RUNTIMES.includes(runtimeRaw as WorkerRuntime)) {
+    throw new Error(`Invalid worker runtime "${runtimeRaw}". Must be cli or structured.`);
+  }
+
   return {
     max_workers: maxWorkers ?? parseNonNegativeInteger(wp.max_workers, 'worker_pool.max_workers') ?? DEFAULT_WORKER_POOL_CONFIG.max_workers,
     provider,
     model: model ?? null,
     provider_models: parseProviderModels(wp.provider_models),
     execution_mode,
+    runtime: (runtimeRaw as WorkerRuntime | null) ?? DEFAULT_WORKER_POOL_CONFIG.runtime,
   };
 }
 

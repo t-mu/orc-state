@@ -32,6 +32,7 @@ describe('loadWorkerPoolConfig', () => {
       model: 'gemini-2.5-pro',
       provider_models: {},
       execution_mode: 'full-access',
+      runtime: 'cli',
     });
   });
 
@@ -58,6 +59,7 @@ describe('loadWorkerPoolConfig', () => {
       model: 'o4-mini',
       provider_models: {},
       execution_mode: 'full-access',
+      runtime: 'cli',
     });
   });
 
@@ -83,7 +85,23 @@ describe('loadWorkerPoolConfig', () => {
       configFile: configPath,
     })).toMatchObject({
       execution_mode: 'full-access',
+      runtime: 'cli',
     });
+  });
+
+  it('reads runtime from worker_pool config; env wins; default is cli (task 203)', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', runtime: 'structured' } }));
+    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).runtime).toBe('structured');
+    expect(loadWorkerPoolConfig({ env: { ORC_WORKER_RUNTIME: 'cli' }, configFile: configPath }).runtime).toBe('cli');
+    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
+    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).runtime).toBe('cli');
+  });
+
+  it('rejects an unknown worker runtime instead of guessing', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', runtime: 'api' } }));
+    expect(() => loadWorkerPoolConfig({ env: {}, configFile: configPath })).toThrow('Invalid worker runtime "api"');
   });
 
   it('defaults execution_mode to full-access when absent from config', () => {
@@ -92,6 +110,7 @@ describe('loadWorkerPoolConfig', () => {
 
     expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toMatchObject({
       execution_mode: 'full-access',
+      runtime: 'cli',
     });
   });
 
@@ -157,6 +176,7 @@ describe('resolveWorkerModel', () => {
       model: 'generic-model',
       provider_models: { claude: 'claude-sonnet-4-6', codex: 'gpt-5.4' },
       execution_mode: 'full-access',
+      runtime: 'cli',
     };
     expect(resolveWorkerModel(config)).toBe('claude-sonnet-4-6');
     expect(resolveWorkerModel(config, 'codex')).toBe('gpt-5.4');
@@ -169,6 +189,7 @@ describe('resolveWorkerModel', () => {
       model: 'generic-model',
       provider_models: {},
       execution_mode: 'full-access',
+      runtime: 'cli',
     };
     expect(resolveWorkerModel(config)).toBe('generic-model');
   });
@@ -180,6 +201,7 @@ describe('resolveWorkerModel', () => {
       model: null,
       provider_models: {},
       execution_mode: 'full-access',
+      runtime: 'cli',
     };
     expect(resolveWorkerModel(config)).toBeNull();
   });

@@ -3,7 +3,7 @@ import { resolveOrcBin } from './orcBin.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
-import type { ExecutionMode, ProviderName } from './providers.ts';
+import type { ExecutionMode, ProviderName, WorkerRuntime } from './providers.ts';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -137,6 +137,7 @@ interface Adapter {
     require_git_checkout?: boolean;
     execution_mode?: 'full-access' | 'sandbox';
     startup_profile?: 'default' | 'real-provider-smoke';
+    runtime?: WorkerRuntime;
     env: Record<string, string>;
   }): Promise<{ session_handle: string; provider_ref: unknown }>;
 }
@@ -168,6 +169,7 @@ export async function launchWorkerSession(
     taskModel = null,
     retryable = false,
     executionMode,
+    runtime,
     emit,
     sessionToken = randomUUID(),
   }: {
@@ -179,6 +181,7 @@ export async function launchWorkerSession(
     taskModel?: string | null;
     retryable?: boolean;
     executionMode?: ExecutionMode;
+    runtime?: WorkerRuntime;
     emit: (event: OrcEventInput) => void;
     sessionToken?: string;
   },
@@ -206,14 +209,19 @@ export async function launchWorkerSession(
       require_git_checkout: agent.role === 'worker',
       execution_mode: effectiveMode,
       startup_profile: workerStartupProfile,
+      // Scouts stay on the CLI; only task workers use a structured runtime.
+      ...(runtime && agent.role !== 'scout' ? { runtime } : {}),
       env: workerEnv,
     });
+    // A structured runtime proves readiness with its protocol handshake; the
+    // provider never runs a turn before input, so it cannot report for duty.
+    const protocolReady = (provider_ref as { protocol_ready?: unknown } | null)?.protocol_ready === true;
     const updates: Partial<Agent> = {
       status: 'running',
       session_handle,
       session_token: sessionToken,
       session_started_at: nowIso,
-      session_ready_at: null,
+      session_ready_at: protocolReady ? nowIso : null,
       provider_ref: provider_ref as Agent['provider_ref'],
       last_heartbeat_at: nowIso,
       last_status_change_at: nowIso,
@@ -292,6 +300,7 @@ export async function spawnEphemeralWorker(
     taskRef = null,
     taskModel = null,
     executionMode,
+    runtime,
     emit,
     sessionToken = randomUUID(),
   }: {
@@ -304,6 +313,7 @@ export async function spawnEphemeralWorker(
     taskRef?: string | null;
     taskModel?: string | null;
     executionMode?: ExecutionMode;
+    runtime?: WorkerRuntime;
     emit: (event: OrcEventInput) => void;
     sessionToken?: string;
   },
@@ -324,6 +334,7 @@ export async function spawnEphemeralWorker(
     taskModel,
     retryable: false, // ephemeral workers fail-and-requeue on launch failure, no retries
     ...(executionMode !== undefined ? { executionMode } : {}),
+    ...(runtime !== undefined ? { runtime } : {}),
     emit,
     sessionToken,
   });

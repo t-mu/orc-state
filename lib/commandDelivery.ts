@@ -86,8 +86,12 @@ function transition(stateDir: string, db: Database.Database, command: DurableCom
   return updated;
 }
 
-/** The session IDs are capabilities; caller-supplied actor/recipient names are never trusted. */
-function enqueueCommand(stateDir: string, principal: CommandPrincipal, input: EnqueueCommand): DurableCommand {
+/**
+ * The session IDs are capabilities; caller-supplied actor/recipient names are never trusted.
+ * `'coordinator'` is the in-process coordinator itself (task 203): it holds no
+ * session credential and is never reachable through the control API.
+ */
+function enqueueCommand(stateDir: string, principal: CommandPrincipal | 'coordinator', input: EnqueueCommand): DurableCommand {
   if (!input.idempotencyKey || !input.kind) throw new Error('Command key and kind are required');
   if (!Number.isInteger(input.maxAttempts ?? 3) || (input.maxAttempts ?? 3) < 1) throw new Error('maxAttempts must be positive');
   if (input.deadlineAt && !Number.isFinite(Date.parse(input.deadlineAt))) throw new Error('Invalid deadline');
@@ -96,12 +100,16 @@ function enqueueCommand(stateDir: string, principal: CommandPrincipal, input: En
   return withEventDbTransaction(stateDir, (db) => {
     const owner = run(db, input.runId);
     if (!['claimed', 'in_progress'].includes(owner.state)) throw new Error('Run is not active');
-    const actor = session(db, principal.sessionId);
-    if (actor.agent_id !== principal.agentId) throw new Error('Authenticated actor does not match session');
-    const recipient = session(db, input.recipientSessionId);
-    if (actor.agent_id !== 'master' && (actor.agent_id !== owner.agent_id || actor.run_id !== input.runId)) {
-      throw new Error('Actor is not scoped to the run');
+    let actor: { session_id: string | null; agent_id: string } = { session_id: null, agent_id: 'coordinator' };
+    if (principal !== 'coordinator') {
+      const actorSession = session(db, principal.sessionId);
+      if (actorSession.agent_id !== principal.agentId) throw new Error('Authenticated actor does not match session');
+      if (actorSession.agent_id !== 'master' && (actorSession.agent_id !== owner.agent_id || actorSession.run_id !== input.runId)) {
+        throw new Error('Actor is not scoped to the run');
+      }
+      actor = actorSession;
     }
+    const recipient = session(db, input.recipientSessionId);
     if (recipient.run_id !== input.runId || recipient.agent_id !== owner.agent_id) throw new Error('Recipient is not scoped to the run');
     const existing = db.prepare('SELECT * FROM commands WHERE run_id = ? AND idempotency_key = ?')
       .get(input.runId, input.idempotencyKey) as DurableCommand | undefined;
@@ -172,28 +180,60 @@ export function markSent(stateDir: string, commandId: string): DurableCommand {
   });
 }
 
-function acknowledgeCommand(stateDir: string, commandId: string, principal: CommandPrincipal, state: 'accepted' | 'running' | 'completed' | 'failed'): DurableCommand {
+export type AckState = 'accepted' | 'running' | 'completed' | 'failed';
+const ACK_ALLOWED: Record<AckState, string[]> = {
+  accepted: ['dispatching', 'sent', 'outcome_unknown'],
+  running: ['accepted'],
+  completed: ['accepted', 'running'],
+  failed: ['accepted', 'running'],
+};
+
+function applyAck(stateDir: string, db: Database.Database, command: DurableCommand, state: AckState, reason?: string): DurableCommand {
+  if (!ACK_ALLOWED[state].includes(command.state) || (command.state === 'dispatching' && !command.send_started_at)) {
+    throw new Error(`Cannot acknowledge ${command.state} as ${state}`);
+  }
+  const stamp = now();
+  db.prepare('UPDATE commands SET state = ?, acknowledged_at = coalesce(acknowledged_at, ?), terminal_at = ?, last_error = coalesce(?, last_error) WHERE command_id = ?')
+    .run(state, stamp, TERMINAL.has(state) ? stamp : null, reason ?? null, command.command_id);
+  const updated = row(db, command.command_id);
+  event(stateDir, db, updated, `command_${state}` as CommandEventName, reason);
+  return updated;
+}
+
+function acknowledgeCommand(stateDir: string, commandId: string, principal: CommandPrincipal, state: AckState): DurableCommand {
   return withEventDbTransaction(stateDir, (db) => {
     const command = row(db, commandId);
     const recipient = session(db, principal.sessionId);
     if (recipient.agent_id !== principal.agentId) throw new Error('Authenticated recipient does not match session');
     if (recipient.session_id !== command.session_id || recipient.run_id !== command.run_id
       || recipient.agent_id !== command.recipient_id) throw new Error('ACK from wrong recipient');
-    const allowed: Record<string, string[]> = {
-      accepted: ['dispatching', 'sent', 'outcome_unknown'],
-      running: ['accepted'],
-      completed: ['accepted', 'running'],
-      failed: ['accepted', 'running'],
-    };
-    if (!allowed[state].includes(command.state) || (command.state === 'dispatching' && !command.send_started_at)) {
+    return applyAck(stateDir, db, command, state);
+  });
+}
+
+const ACK_RANK: Record<string, number> = { dispatching: 0, sent: 0, outcome_unknown: 0, accepted: 1, running: 2, completed: 3, failed: 3, cancelled: 3 };
+
+/**
+ * Apply a state the provider PROTOCOL proved for a command delivered to a
+ * structured session (task 203): `turn/start` answered → accepted, turn
+ * started → running, turn finished → completed/failed. Only the command's own
+ * recipient session can move it. Protocol frames can arrive late, twice or out
+ * of order (turn/started before the turn/start answer), so a state at or
+ * behind the command's current one is a no-op, and a jump ahead passes
+ * through the intermediate states.
+ */
+export function acknowledgeFromRuntime(stateDir: string, commandId: string, sessionId: string, state: AckState, reason?: string): DurableCommand {
+  return withEventDbTransaction(stateDir, (db) => {
+    let command = row(db, commandId);
+    if (command.session_id !== sessionId) throw new Error('Runtime ACK from wrong session');
+    if (command.state === 'queued' || (command.state === 'dispatching' && !command.send_started_at)) {
       throw new Error(`Cannot acknowledge ${command.state} as ${state}`);
     }
-    const stamp = now();
-    db.prepare('UPDATE commands SET state = ?, acknowledged_at = coalesce(acknowledged_at, ?), terminal_at = ? WHERE command_id = ?')
-      .run(state, stamp, TERMINAL.has(state) ? stamp : null, commandId);
-    const updated = row(db, commandId);
-    event(stateDir, db, updated, `command_${state}` as CommandEventName);
-    return updated;
+    if ((ACK_RANK[command.state] ?? 0) >= ACK_RANK[state]) return command;
+    if (command.state !== 'accepted' && command.state !== 'running') command = applyAck(stateDir, db, command, 'accepted');
+    if (state === 'accepted') return command;
+    if (state === 'running') return command.state === 'running' ? command : applyAck(stateDir, db, command, 'running');
+    return applyAck(stateDir, db, command, state, reason);
   });
 }
 
@@ -312,6 +352,22 @@ export class CommandDispatcher {
     const command = enqueueCommand(this.stateDir, this.principal(credential), input);
     if (this.timer) this.wake();
     return command;
+  }
+  /** In-process coordinator enqueue; not exposed through the control API. */
+  enqueueFromCoordinator(input: EnqueueCommand): DurableCommand {
+    const command = enqueueCommand(this.stateDir, 'coordinator', input);
+    if (this.timer) this.wake();
+    return command;
+  }
+  /** Dispatch until `commandId` leaves queued/dispatching, or the timeout passes. */
+  async deliver(commandId: string, timeoutMs = this.operationTimeoutMs): Promise<DurableCommand> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      await this.tick();
+      const command = getCommand(this.stateDir, commandId);
+      if ((command.state !== 'queued' && command.state !== 'dispatching') || Date.now() >= deadline) return command;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
   acknowledge(credential: string, commandId: string, state: 'accepted' | 'running' | 'completed' | 'failed'): DurableCommand {
     return acknowledgeCommand(this.stateDir, commandId, this.principal(credential), state);

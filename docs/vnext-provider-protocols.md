@@ -168,11 +168,16 @@ connect from the host; this alternative is rejected rather than proven broken.
 ## Decision and remaining gates
 
 - **Codex:** subscription-backed structured path is app-server stdio under the
-  CLI's ChatGPT login. Approval request handling and resume after an interrupted
-  turn still need opt-in tests before an approval bridge is built.
+  CLI's ChatGPT login. Task 203 integrated it as the `structured` worker runtime
+  (`adapters/codexAppServer.ts`; see `docs/configuration.md` → Worker Runtimes).
+  Approval request handling and resume after an interrupted turn still need
+  opt-in tests before an approval bridge is built; until then the runtime
+  declines approvals and refuses steering and interrupt.
 - **Claude:** subscription-backed structured path is `claude -p` stream-json
   under the CLI's Team login, including `--resume`. Live tool approval and resume
   after interruption are untested.
+  Not yet integrated: a `structured` runtime request for Claude stays on the
+  CLI and records the fallback reason.
 - **Gemini:** not exercised; it stays on the existing CLI PTY adapter (explicit
   CLI fallback).
 - **Terminal:** tmux cross-process attach/detach works with a usable `TERM`;

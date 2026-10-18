@@ -27,6 +27,7 @@ orc-state is configured through environment variables and an optional JSON confi
 | `ORC_WORKER_PROVIDER` | Default provider for task-scoped workers (`claude`, `codex`, or `gemini`); overridden per task by `required_provider` | `codex` (or config `default_provider`) |
 | `ORC_WORKER_MODEL` | Model identifier for worker agents | Provider default |
 | `ORC_WORKER_EXECUTION_MODE` | Execution mode for worker agents (`full-access` or `sandbox`) | `full-access` |
+| `ORC_WORKER_RUNTIME` | Worker runtime (`cli` or `structured`); see [Worker Runtimes](#worker-runtimes) | `cli` |
 
 ### Master Agent
 
@@ -63,6 +64,7 @@ Location: `orc-state.config.json` in the repository root (sibling of `.orc-state
     "provider": "codex",
     "model": "o4-mini",
     "execution_mode": "full-access",
+    "runtime": "cli",
     "provider_models": {
       "claude": "claude-sonnet-4-20250514",
       "codex": "o4-mini",
@@ -147,6 +149,7 @@ otherwise from `worker_pool.provider` (or `ORC_WORKER_PROVIDER`).
 | `provider` | string | `"codex"` | Default provider for task-scoped workers. Overridden per task by the task's `required_provider` field. |
 | `model` | string | `null` | Default model for all workers |
 | `execution_mode` | string | `"full-access"` | Execution mode for worker agents (`full-access` or `sandbox`) |
+| `runtime` | string | `"cli"` | `cli` drives the provider's terminal UI; `structured` uses a proven structured protocol where one exists. See [Worker Runtimes](#worker-runtimes). |
 | `provider_models` | object | `{}` | Per-provider model overrides (keyed by provider name) |
 
 When a worker is launched, its model is resolved as: `provider_models[provider]` first, then `model`, then provider default.
@@ -185,6 +188,42 @@ All `coordinator` fields can also be passed as CLI flags to `coordinator.ts` (e.
 |-------|------|---------|-------------|
 | `default_ms` | integer | `1800000` (30 min) | Default claim lease duration |
 | `finalize_ms` | integer | `3600000` (60 min) | Extended lease for the finalize phase |
+
+## Worker Runtimes
+
+`worker_pool.runtime` (or `ORC_WORKER_RUNTIME`) selects how task workers talk to
+their provider. Any other value is rejected at config load.
+
+| Runtime | Behaviour |
+|---------|-----------|
+| `cli` (default) | The provider's interactive CLI runs in a terminal (PTY or tmux). Input is typed text with no acknowledgement from the provider. |
+| `structured` | Codex runs as `codex app-server --listen stdio://` (session handle `app:<agent_id>`). Other providers have no proven structured protocol, so they stay on the CLI and record `provider_ref.runtime_fallback` with the reason. |
+
+On the Codex app-server runtime:
+
+- **Subscription only.** API-key variables (`OPENAI_API_KEY`, `CODEX_API_KEY`, …)
+  are removed from the provider environment, and `account/read` must report a
+  ChatGPT login before a thread starts. Any other account fails the launch with
+  `unverified_auth`; it never falls back to API billing.
+- **Durable, acknowledged input.** Every coordinator message (task envelope,
+  nudges, follow-ups) is a durable command. It is `accepted` when the
+  provider answers `turn/start`, `running` when the turn starts, and
+  `completed`/`failed` when the turn ends. The task envelope is keyed per run,
+  so a retried dispatch does not resend it.
+- **Readiness.** The protocol handshake marks the session ready, so no
+  `report-for-duty` turn is needed.
+- **Declared capabilities.** The session supports structured events, command
+  ACK and thread resume. Steering, interrupt and approvals are not proven, so
+  they are refused with a typed `unsupported_capability` error: input sent
+  while a turn runs is refused rather than queued into it, and provider
+  approval requests are declined (threads run with `approvalPolicy: never`).
+- **Process ownership.** The app-server's stdio belongs to the coordinator
+  that launched it. It ends when that coordinator exits, and the run is
+  requeued by the normal liveness path.
+
+To roll back, set `runtime` to `cli`. Run history and command records are kept;
+a command whose delivery could not be confirmed stays `outcome_unknown` until
+an operator resolves it.
 
 ## Execution Modes
 
