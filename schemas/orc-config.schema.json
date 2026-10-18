@@ -35,6 +35,7 @@
         "provider": { "type": "string", "enum": ["claude", "codex", "gemini"] },
         "model": { "type": ["string", "null"] },
         "execution_mode": { "type": "string", "enum": ["full-access", "sandbox"] },
+        "runtime": { "type": "string", "enum": ["cli", "structured"] },
         "provider_models": {
           "type": "object",
           "additionalProperties": false,

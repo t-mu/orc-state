@@ -11,9 +11,10 @@
  *   SIGINT / SIGTERM — graceful shutdown after current tick
  */
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
-import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode, ProviderName } from './lib/providers.ts';
+import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode, ProviderName, WorkerRuntime } from './lib/providers.ts';
 import { resolveWorkerProvider } from './lib/providers.ts';
 import { isManagedSlot } from './lib/workerSlots.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
@@ -29,6 +30,8 @@ import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter, resolveSessionTransport } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
+import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
+import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
@@ -47,7 +50,7 @@ import { markTaskDoneRuntimeOnly, writeSpecStatusDone } from './lib/taskCompleti
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
-import { startControlServer, type ControlServer } from './lib/controlServer.ts';
+import { sessionAuthenticator, startControlServer, type ControlServer } from './lib/controlServer.ts';
 import {
   IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, UNWRITABLE_REASON, currentSessionForAgent, currentSessionOwnerId,
   identityMismatch, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession,
@@ -72,16 +75,117 @@ const adapterInstances = new Map<string, ReturnType<typeof createAdapter>>();
 function getAdapter(provider: string): ReturnType<typeof createAdapter> {
   if (!adapterInstances.has(provider)) {
     const adapter = createAdapter(provider);
+    // Duck-typed like isStructuredSession: adapters without a structured runtime may omit onEvent.
+    (adapter as { onEvent?: typeof adapter.onEvent }).onEvent?.(onRuntimeEvent);
     // Every direct write (task envelopes, nudges, PR review) passes the supervision gate.
+    // Structured sessions receive it as a durable command the provider protocol ACKs.
     adapterInstances.set(provider, {
       ...adapter,
       send: async (sessionHandle: string, text: string) => {
         await assertSessionWritable(adapter, sessionHandle);
+        if (isStructuredSession(adapter, sessionHandle)) {
+          // A nudge wakes an idle worker; one in the middle of a turn is working and would only queue a stale prompt.
+          if (isNudge(text) && adapter.turnActive(sessionHandle)) return '';
+          return deliverStructured(sessionHandle, text, 'coordinator_message', `coordinator:${randomUUID()}`);
+        }
         return adapter.send(sessionHandle, text);
       },
     });
   }
   return adapterInstances.get(provider)!;
+}
+
+// ── Durable commands for structured runtimes (task 203) ────────────────────
+// A structured session's input is a durable command: the transport submits it
+// over the provider protocol and records `accepted` only when the provider
+// answers; turn events then move it to running and completed/failed. CLI
+// sessions keep the direct PTY path and are refused by this transport. Input
+// for a session whose turn is still running waits in the queue (no attempt is
+// used) and goes out when the turn ends.
+
+const commandTransport: CommandTransport = {
+  async send(command: DurableCommand) {
+    const { adapter, sessionHandle } = structuredRecipient(command);
+    const { text } = JSON.parse(command.payload) as { text: string };
+    await adapter.submit(sessionHandle, text, { commandId: command.command_id });
+    acknowledgeFromRuntime(STATE_DIR, command.command_id, command.session_id!, 'accepted');
+  },
+  async isAlive(command: DurableCommand) {
+    const { adapter, sessionHandle } = structuredRecipient(command);
+    return adapter.heartbeatProbe(sessionHandle);
+  },
+  isBusy(command: DurableCommand) {
+    const { adapter, sessionHandle } = structuredRecipient(command);
+    return adapter.turnActive(sessionHandle);
+  },
+};
+
+function isNudge(text: string): boolean {
+  return text.startsWith('RUN_NUDGE') || text.startsWith('SESSION_NUDGE');
+}
+
+function structuredRecipient(command: DurableCommand) {
+  const agent = getAgent(STATE_DIR, command.recipient_id);
+  if (!agent?.session_handle || agent.session_token !== command.session_id) throw new Error('Recipient session is not current');
+  const adapter = adapterInstances.get(agent.provider) ?? getAdapter(agent.provider);
+  if (!isStructuredSession(adapter, agent.session_handle)) {
+    throw new CapabilityRefusal(agent.provider, 'command_ack', 'CLI sessions have no protocol acknowledgement');
+  }
+  return { adapter, sessionHandle: agent.session_handle };
+}
+
+let commandDispatcher: CommandDispatcher | null = null;
+function getCommandDispatcher(): CommandDispatcher {
+  commandDispatcher ??= new CommandDispatcher(STATE_DIR, commandTransport, sessionAuthenticator(STATE_DIR));
+  return commandDispatcher;
+}
+
+const DELIVERED_STATES = new Set(['sent', 'accepted', 'running', 'completed']);
+
+/**
+ * Enqueue `text` for a structured session's run and dispatch it now. Resolves
+ * once the provider took it or it is queued behind the running turn; throws
+ * otherwise. A run that has ended takes no commands (e.g. FINALIZE_SUCCESS
+ * after the coordinator finished the run): the session is cleaned up instead.
+ */
+async function deliverStructured(sessionHandle: string, text: string, kind: string, idempotencyKey: string): Promise<string> {
+  const agentId = sessionHandle.slice(sessionHandle.indexOf(':') + 1);
+  const session = currentSessionForAgent(STATE_DIR, agentId);
+  if (!session?.run_id) throw new Error(`structured session ${sessionHandle} has no active run to scope the command`);
+  const dispatcher = getCommandDispatcher();
+  const queued = dispatcher.enqueueFromCoordinator({
+    runId: session.run_id, recipientSessionId: session.session_id, idempotencyKey, kind, payload: { text }, maxAttempts: 1,
+  });
+  const command = await dispatcher.deliver(queued.command_id);
+  if (!DELIVERED_STATES.has(command.state) && !isDeferred(command)) {
+    throw new Error(`command ${command.command_id} ${command.state}: ${command.last_error ?? 'not delivered'}`);
+  }
+  return '';
+}
+
+const RUNTIME_ACK_STATES: Partial<Record<RuntimeEventType, AckState>> = {
+  turn_started: 'running',
+  turn_completed: 'completed',
+  turn_failed: 'failed',
+  turn_interrupted: 'failed',
+};
+
+/** Turn lifecycle proven by the provider protocol advances the command that started the turn. */
+function onRuntimeEvent(event: RuntimeEvent): void {
+  if (event.type === 'approval_refused') {
+    log(`${event.agent_id}: refused provider request ${event.provider_event} (approvals are not supported by the ${event.provider} runtime)`);
+    return;
+  }
+  const state = RUNTIME_ACK_STATES[event.type];
+  if (!state || !event.command_id) return;
+  const session = currentSessionForAgent(STATE_DIR, event.agent_id);
+  if (!session) return;
+  try {
+    acknowledgeFromRuntime(STATE_DIR, event.command_id, session.session_id, state,
+      state === 'failed' ? `provider turn ${typeof event.provider_meta.status === 'string' ? event.provider_meta.status : event.type}` : undefined);
+  } catch (error) {
+    log(`warning: could not record ${event.type} for command ${event.command_id}: ${(error as Error).message}`);
+  }
 }
 
 /**
@@ -307,6 +411,7 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
     taskModel: (launchConfig.task_model ?? null) as string | null,
     retryable: launchConfig.retryable === true,
     ...(launchConfig.execution_mode != null ? { executionMode: launchConfig.execution_mode as ExecutionMode } : {}),
+    ...(launchConfig.runtime != null ? { runtime: launchConfig.runtime as WorkerRuntime } : {}),
     emit,
   });
   if (!result.ok) {
@@ -319,10 +424,16 @@ async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, wo
   const adapter = getAdapter(agent.provider);
   const envelope = buildTaskEnvelope(taskRef, runId, agent.agent_id);
   try {
-    await adapter.send(
-      agent.session_handle!,
-      envelope,
-    );
+    if (isStructuredSession(adapter, agent.session_handle!)) {
+      // One envelope per run: a retried dispatch finds the same durable command instead of resending.
+      await assertSessionWritable(adapter, agent.session_handle!);
+      await deliverStructured(agent.session_handle!, envelope, 'task_envelope', `task-envelope:${runId}`);
+    } else {
+      await adapter.send(
+        agent.session_handle!,
+        envelope,
+      );
+    }
     log(`dispatched ${taskRef} to ${agent.agent_id}`);
     markTaskEnvelopeSent(STATE_DIR, runId, agent.agent_id, {
       actorType: 'coordinator',
@@ -404,6 +515,7 @@ async function processClaimedSessionReadiness(
         // which is correct — their sessions are managed externally.
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
         execution_mode: workerPoolConfig.execution_mode,
+        runtime: workerPoolConfig.runtime,
       });
       if (!ready.ok || !agent.session_handle) {
         if (isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
@@ -496,6 +608,7 @@ async function processManagedSessionStartRetries(
       task_model: retryTask?.model ?? null,
       retryable: true,
       execution_mode: workerPoolConfig.execution_mode,
+      runtime: workerPoolConfig.runtime,
     });
     if (ready.ok && agent.session_handle && agent.status !== 'offline') {
       setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
@@ -1692,6 +1805,7 @@ async function executeDispatchPlan(
         taskRef,
         taskModel: task?.model ?? null,
         executionMode: workerPoolConfig.execution_mode,
+        runtime: workerPoolConfig.runtime,
         emit,
       });
 
@@ -2229,12 +2343,14 @@ export async function main() {
   // The control API is additive during migration; legacy CLI/MCP paths keep working without it.
   if (process.env.ORC_CONTROL_API !== 'off') {
     try {
-      controlServer = await startControlServer(STATE_DIR);
+      controlServer = await startControlServer(STATE_DIR, { commands: getCommandDispatcher() });
       log(`control API listening on ${controlServer.endpoint.path}`);
     } catch (error) {
       log(`warning: control API unavailable: ${(error as Error).message}`);
     }
   }
+  // Sweeps queued commands and reconciles in-flight ones whose session or run ended.
+  getCommandDispatcher().start();
   emit({ event: 'coordinator_started', actor_type: 'coordinator', actor_id: 'coordinator', payload: { mode: MODE } });
 
   // First tick immediately.
@@ -2256,6 +2372,7 @@ export async function doShutdown() {
   running = false;
   // Stop accepting control requests before the databases close.
   try { void controlServer?.close(); } catch { /* best-effort */ }
+  commandDispatcher?.stop();
   if (timerHandle) {
     clearInterval(timerHandle);
     timerHandle = null;
@@ -2304,7 +2421,7 @@ export async function doShutdown() {
   process.exit(0);
 }
 
-export { tick, getAdapter as getCoordinatorAdapter };
+export { tick, getAdapter as getCoordinatorAdapter, getCommandDispatcher as getCoordinatorCommandDispatcher };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch(err => { console.error(err); process.exit(1); });

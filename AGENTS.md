@@ -390,7 +390,10 @@ coordinator clears the agent session, expires the claim, and requeues the task.
 Lease renewal is automatic — the coordinator extends the lease whenever phase
 events are processed. A coordinator restart does not kill workers: tmux
 sessions are adopted, and sessions it cannot write to are marked
-`recoverable` (see `orc sessions` and `docs/recovery.md`).
+`recoverable` (see `orc sessions` and `docs/recovery.md`). Structured-runtime
+(`app:`) sessions are the exception: their stdio belongs to the coordinator
+that launched them, so they end with it and the run is requeued (see
+`docs/configuration.md` → **Worker Runtimes**).
 
 ---
 

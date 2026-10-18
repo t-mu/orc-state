@@ -47,7 +47,7 @@
 
 /** What a supervisor can learn about a session without owning it. */
 export interface SessionInspection {
-  transport: 'pty' | 'tmux';
+  transport: 'pty' | 'tmux' | 'app-server';
   alive: boolean;
   /** True when this process can deliver input to the session. */
   writable: boolean;
