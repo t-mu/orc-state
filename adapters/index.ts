@@ -73,6 +73,7 @@ export function createAdapter(provider: string, options: Record<string, unknown>
       return structured.submit(sessionHandle, text, submitOptions);
     },
     onEvent: (listener: RuntimeEventListener) => structured?.onEvent(listener) ?? (() => {}),
+    turnActive: (sessionHandle: string) => route(sessionHandle) === structured && structured.turnActive(sessionHandle),
     send: (sessionHandle: string, text: string) => route(sessionHandle).send(sessionHandle, text),
     attach: (sessionHandle: string) => route(sessionHandle).attach(sessionHandle),
     heartbeatProbe: (sessionHandle: string) => route(sessionHandle).heartbeatProbe(sessionHandle),

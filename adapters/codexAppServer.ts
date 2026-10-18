@@ -18,7 +18,9 @@
  *
  * The app-server's stdio is owned by the coordinator process that launched it:
  * it does not survive a coordinator exit, and another process cannot write to
- * it. A coordinator that does not own a session reports it as not alive.
+ * it. Another process (a restarted coordinator, `orc worker-remove`) sees the
+ * session through its recorded PID and start time: alive but not writable, and
+ * stoppable by signal.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -26,6 +28,7 @@ import { join } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
+import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots } from './pty.ts';
 import type { SessionInspection } from './interface.ts';
@@ -68,6 +71,19 @@ const APPROVAL_DECLINES: Record<string, unknown> = {
 };
 /** Requests that also ask a human for something, but have no decline shape. */
 const HUMAN_REQUESTS = new Set(['item/permissions/requestApproval', 'item/tool/requestUserInput', 'mcpServer/elicitation/request']);
+
+/**
+ * Appended to the worker bootstrap: on this runtime input is a turn, so a
+ * worker that waits inside its turn would never see a follow-up.
+ */
+export const STRUCTURED_TURN_INSTRUCTIONS = [
+  'STRUCTURED_RUNTIME',
+  'You run as a structured app-server session, not a terminal. Each coordinator message arrives as a new turn,',
+  'and only after your current turn has ended. Never wait or poll inside a turn for follow-up messages',
+  '(FINALIZE_*, PR_REVIEW, nudges): after run-work-complete, end your turn; the follow-up starts your next turn.',
+  'Blocking commands such as run-input-request are fine inside a turn.',
+  'STRUCTURED_RUNTIME_END',
+].join('\n');
 
 export function isAppServerHandle(sessionHandle: string): boolean {
   return String(sessionHandle).startsWith(HANDLE_PREFIX);
@@ -337,7 +353,9 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
           approvalPolicy: 'never',
           ...sandboxParams(config, cwd),
           ...(typeof config.model === 'string' && config.model ? { model: config.model } : {}),
-          ...(typeof config.system_prompt === 'string' && config.system_prompt ? { developerInstructions: config.system_prompt } : {}),
+          ...(typeof config.system_prompt === 'string' && config.system_prompt
+            ? { developerInstructions: `${config.system_prompt}\n\n${STRUCTURED_TURN_INSTRUCTIONS}` }
+            : {}),
         };
         const resumeThreadId = typeof config.resume_thread_id === 'string' && config.resume_thread_id ? config.resume_thread_id : null;
         const response = resumeThreadId
@@ -397,9 +415,23 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     }
   }
 
+  /** The recorded app-server process of a session this process did not launch, if it is still that process. */
+  function recordedProcess(sessionHandle: string): { pid: number; processStart: string } | null {
+    if (!isAppServerHandle(sessionHandle)) return null;
+    const record = currentSessionForAgent(STATE_DIR, sessionHandle.slice(HANDLE_PREFIX.length));
+    if (record?.transport !== 'app-server' || record.process_pid == null || record.process_start == null) return null;
+    if (readProcessStart(record.process_pid) !== record.process_start) return null;
+    return { pid: record.process_pid, processStart: record.process_start };
+  }
+
   async function stop(sessionHandle: string): Promise<void> {
     const session = sessions.get(sessionHandle);
-    if (!session) return;
+    if (!session) {
+      // Launched by another process (the coordinator): its stdio is not ours, but the process can be signalled.
+      const recorded = recordedProcess(sessionHandle);
+      if (recorded) process.kill(recorded.pid, 'SIGTERM');
+      return;
+    }
     sessions.delete(sessionHandle);
     if (session.exited) return;
     const exited = new Promise<void>((resolve) => session.child.once('exit', () => resolve()));
@@ -424,6 +456,13 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
   function inspectSession(sessionHandle: string): SessionInspection {
     const session = sessions.get(sessionHandle);
     if (!session) {
+      const recorded = recordedProcess(sessionHandle);
+      if (recorded) {
+        return {
+          transport: 'app-server', alive: true, writable: false, pid: recorded.pid, processStart: recorded.processStart,
+          reason: 'app-server session is owned by the coordinator process that launched it; stop it with orc worker-remove',
+        };
+      }
       return {
         transport: 'app-server', alive: false, writable: false, pid: null, processStart: null,
         reason: 'app-server session is not attached to this process; its stdio closes with the coordinator that launched it',
@@ -451,6 +490,11 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
       return Promise.resolve(inspectSession(sessionHandle).alive);
     },
     stop,
+    /** True while a turn is running or being started; new input would be refused. */
+    turnActive(sessionHandle: string): boolean {
+      const session = sessions.get(sessionHandle);
+      return Boolean(session && !session.exited && (session.activeTurnId || session.submitting));
+    },
     getOutputTail,
     onEvent(listener: RuntimeEventListener): () => void {
       listeners.add(listener);

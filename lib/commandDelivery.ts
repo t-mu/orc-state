@@ -303,6 +303,31 @@ function resolveUnknownCommand(stateDir: string, commandId: string, principal: C
 export interface CommandTransport {
   send(command: DurableCommand): Promise<void>;
   isAlive?(command: DurableCommand): Promise<boolean>;
+  /** True while the recipient cannot take input yet (e.g. a provider turn is running); the command waits. */
+  isBusy?(command: DurableCommand): boolean;
+}
+
+const BUSY_RETRY_MS = 1000;
+
+/**
+ * Return a reserved command to the queue because its recipient is busy. Nothing
+ * was sent, so the attempt is not counted and the command stays deliverable.
+ */
+export function deferCommand(stateDir: string, commandId: string, reason: string, retryAt = new Date(Date.now() + BUSY_RETRY_MS).toISOString()): DurableCommand {
+  return withEventDbTransaction(stateDir, (db) => {
+    const command = row(db, commandId);
+    if (command.state !== 'dispatching' || command.send_started_at) return command;
+    db.prepare(`UPDATE commands SET state = 'queued', attempt_count = attempt_count - 1, next_attempt_at = ?, last_error = ? WHERE command_id = ?`)
+      .run(retryAt, reason, commandId);
+    const updated = row(db, commandId);
+    event(stateDir, db, updated, 'command_queued', reason);
+    return updated;
+  });
+}
+
+/** Queued behind a busy recipient: nothing was sent and the sweep retries it. */
+export function isDeferred(command: DurableCommand): boolean {
+  return command.state === 'queued' && command.last_error === 'recipient busy';
 }
 
 function bounded<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -359,13 +384,16 @@ export class CommandDispatcher {
     if (this.timer) this.wake();
     return command;
   }
-  /** Dispatch until `commandId` leaves queued/dispatching, or the timeout passes. */
+  /**
+   * Dispatch until `commandId` leaves queued/dispatching, is deferred behind a
+   * busy recipient (still `queued`, retried by the sweep), or the timeout passes.
+   */
   async deliver(commandId: string, timeoutMs = this.operationTimeoutMs): Promise<DurableCommand> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       await this.tick();
       const command = getCommand(this.stateDir, commandId);
-      if ((command.state !== 'queued' && command.state !== 'dispatching') || Date.now() >= deadline) return command;
+      if ((command.state !== 'queued' && command.state !== 'dispatching') || isDeferred(command) || Date.now() >= deadline) return command;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
@@ -384,6 +412,10 @@ export class CommandDispatcher {
       while ((command = reserveCommand(this.stateDir)) !== null) {
         if (command.state !== 'dispatching') continue;
         try {
+          if (this.transport.isBusy?.(command)) {
+            deferCommand(this.stateDir, command.command_id, 'recipient busy');
+            continue;
+          }
           if (this.transport.isAlive && !(await bounded(this.transport.isAlive(command), this.operationTimeoutMs))) {
             failTransport(this.stateDir, command.command_id, 'provider exited before send');
             continue;

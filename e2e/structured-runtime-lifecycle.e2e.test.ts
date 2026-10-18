@@ -11,7 +11,11 @@ import { closeAllDatabases, queryEvents, withEventDb } from '../lib/eventLog.ts'
 // test-fixtures/fake-codex-app-server.ts) is claimed, ACKs the task envelope
 // over its protocol, works, asks the master a question, receives the answer and
 // finishes — and every coordinator → worker message is a durable command whose
-// state follows the provider's turn lifecycle. The fake runs TURN_SCRIPT for
+// state follows the provider's turn lifecycle. The follow-up is sent through the
+// coordinator's adapter (the path finalize/PR_REVIEW messages take) while the
+// worker's turn is still running, so it must wait in the queue. (The real
+// FINALIZE_SUCCESS notice follows the coordinator's own finishRun and is not
+// delivered to an ended run; this test has the worker finish instead.) The fake runs TURN_SCRIPT for
 // each turn; the script drives the real `orc` CLI the way a worker would.
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -108,6 +112,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
 
   afterEach(async () => {
     const coordinator = await import('../coordinator.ts');
+    coordinator.getCoordinatorCommandDispatcher().stop();
     const adapter = coordinator.getCoordinatorAdapter('codex');
     for (const claim of claims(dir)) await adapter.stop(`app:${String(claim.agent_id)}`);
     closeAllDatabases();
@@ -149,6 +154,16 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     expect(claims(dir).find((entry) => entry.run_id === runId)?.state).toBe('in_progress');
     expect(commands(dir).find((command) => command.kind === 'task_envelope')?.state).toBe('running');
 
+    // Input for a session whose turn is running: a nudge is skipped outright and a
+    // follow-up waits in the queue, unsent, until the turn ends.
+    const adapter = coordinator.getCoordinatorAdapter('codex');
+    await expect(adapter.send(`app:${agentId}`, `RUN_NUDGE\nrun_id: ${runId}\nRUN_NUDGE_END`)).resolves.toBe('');
+    expect(commands(dir)).toHaveLength(1);
+    await adapter.send(`app:${agentId}`, `FINALIZE_SUCCESS\nrun_id: ${runId}\n`);
+    const held = commands(dir).find((command) => command.kind === 'coordinator_message');
+    expect(held).toMatchObject({ state: 'queued', acknowledged_at: null });
+    expect(queryEvents(dir, { run_id: runId, event_type: 'command_queued' }).some((event) => (event.payload as Record<string, unknown>).reason === 'recipient busy')).toBe(true);
+
     const respond = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'run-input-respond', `--run-id=${runId}`, `--agent-id=${agentId}`, '--response=teal'], { encoding: 'utf8' });
     expect(respond.status, respond.stderr).toBe(0);
     await waitFor(() => queryEvents(dir, { run_id: runId, event_type: 'work_complete' })[0], 'work complete');
@@ -156,9 +171,10 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     expect((request.payload as Record<string, unknown>).question).toBe('Which colour?');
     await waitFor(() => commands(dir).find((command) => command.kind === 'task_envelope' && command.state === 'completed'), 'envelope completed');
 
-    // A coordinator follow-up starts a new provider turn through the same queue.
-    const adapter = coordinator.getCoordinatorAdapter('codex');
-    await adapter.send(`app:${agentId}`, `FINALIZE_SUCCESS\nrun_id: ${runId}\n`);
+    // The dispatcher sweep delivers the held follow-up as the next turn once the
+    // envelope turn has ended. (main() starts the sweep; here the test runs it.)
+    const { getCoordinatorCommandDispatcher } = coordinator;
+    getCoordinatorCommandDispatcher().start();
     await waitFor(() => ['done', 'released'].includes(String(claims(dir).find((entry) => entry.run_id === runId)?.state)) || null, 'run finished');
 
     const followUp = await waitFor(() => commands(dir).find((command) => command.kind === 'coordinator_message' && command.state === 'completed'), 'follow-up completed');

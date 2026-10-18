@@ -91,7 +91,8 @@ describe('codex app-server runtime: session start', () => {
     expect(frames('initialize')).toHaveLength(1);
     expect(frames('account/read')).toHaveLength(1);
     expect(frames('thread/start')[0].params).toMatchObject({
-      approvalPolicy: 'never', sandbox: 'danger-full-access', developerInstructions: 'BOOTSTRAP', cwd: worktree,
+      approvalPolicy: 'never', sandbox: 'danger-full-access', cwd: worktree,
+      developerInstructions: expect.stringMatching(/^BOOTSTRAP\n\nSTRUCTURED_RUNTIME\n[\s\S]*end your turn[\s\S]*STRUCTURED_RUNTIME_END$/),
     });
     expect(events.map((event) => event.type)).toEqual(['session_ready']);
     expect(events[0].provider_meta).toMatchObject({ plan_type: 'team', resumed: false });
@@ -195,11 +196,14 @@ describe('codex app-server runtime: turns and ACKs', () => {
     const { adapter, events } = await loadAdapter();
     const { session_handle } = await startSession(adapter);
 
+    expect(adapter.turnActive(session_handle)).toBe(false);
     await adapter.submit(session_handle, 'long task');
+    expect(adapter.turnActive(session_handle)).toBe(true);
     await expect(adapter.submit(session_handle, 'nudge')).rejects.toMatchObject({ name: 'CapabilityRefusal', code: 'unsupported_capability', capability: 'steer' });
     await expect(adapter.send(session_handle, 'nudge')).rejects.toMatchObject({ capability: 'steer' });
     expect(frames('turn/start')).toHaveLength(1);
     await waitFor(() => events.some((event) => event.type === 'turn_completed'));
+    expect(adapter.turnActive(session_handle)).toBe(false);
     await expect(adapter.submit(session_handle, 'after')).resolves.toMatchObject({ mode: 'started' });
   });
 
@@ -239,5 +243,26 @@ describe('codex app-server runtime: turns and ACKs', () => {
     expect(adapter.inspectSession('app:someone-else')).toMatchObject({ alive: false, writable: false, reason: expect.stringContaining('not attached to this process') });
     expect(adapter.ownsSession('app:someone-else')).toBe(false);
     expect(adapter.survivesCoordinatorExit()).toBe(false);
+  });
+
+  it('lets another process see and stop a session through its recorded process identity', async () => {
+    const { adapter, events } = await loadAdapter();
+    const { session_handle, provider_ref } = await startSession(adapter);
+    const ref = provider_ref as { pid: number; process_start: string };
+    const { initEventsDb, withEventDbTransaction } = await import('../lib/eventLog.ts');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, process_pid, process_start, started_at, updated_at)
+        VALUES ('s-1', NULL, 'worker-1', 'codex', 'running', 'app-server', ?, ?, '2026-01-01', '2026-01-01')`).run(ref.pid, ref.process_start);
+    });
+
+    // e.g. `orc worker-remove` or a restarted coordinator: a fresh adapter that did not launch the session.
+    const other = (await import('./codexAppServer.ts')).createCodexAppServerAdapter();
+    expect(other.inspectSession(session_handle)).toMatchObject({ alive: true, writable: false, pid: ref.pid, reason: expect.stringContaining('worker-remove') });
+    expect(other.ownsSession(session_handle)).toBe(false);
+    expect(other.turnActive(session_handle)).toBe(false);
+    await other.stop(session_handle);
+    await waitFor(() => events.some((event) => event.type === 'session_exited'));
+    expect(other.inspectSession(session_handle)).toMatchObject({ alive: false });
   });
 });

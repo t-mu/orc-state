@@ -31,7 +31,7 @@ import { createAdapter, resolveSessionTransport } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
 import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
-import { CommandDispatcher, acknowledgeFromRuntime, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
+import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
@@ -83,7 +83,11 @@ function getAdapter(provider: string): ReturnType<typeof createAdapter> {
       ...adapter,
       send: async (sessionHandle: string, text: string) => {
         await assertSessionWritable(adapter, sessionHandle);
-        if (isStructuredSession(adapter, sessionHandle)) return deliverStructured(sessionHandle, text, 'coordinator_message', `coordinator:${randomUUID()}`);
+        if (isStructuredSession(adapter, sessionHandle)) {
+          // A nudge wakes an idle worker; one in the middle of a turn is working and would only queue a stale prompt.
+          if (isNudge(text) && adapter.turnActive(sessionHandle)) return '';
+          return deliverStructured(sessionHandle, text, 'coordinator_message', `coordinator:${randomUUID()}`);
+        }
         return adapter.send(sessionHandle, text);
       },
     });
@@ -95,7 +99,9 @@ function getAdapter(provider: string): ReturnType<typeof createAdapter> {
 // A structured session's input is a durable command: the transport submits it
 // over the provider protocol and records `accepted` only when the provider
 // answers; turn events then move it to running and completed/failed. CLI
-// sessions keep the direct PTY path and are refused by this transport.
+// sessions keep the direct PTY path and are refused by this transport. Input
+// for a session whose turn is still running waits in the queue (no attempt is
+// used) and goes out when the turn ends.
 
 const commandTransport: CommandTransport = {
   async send(command: DurableCommand) {
@@ -108,7 +114,15 @@ const commandTransport: CommandTransport = {
     const { adapter, sessionHandle } = structuredRecipient(command);
     return adapter.heartbeatProbe(sessionHandle);
   },
+  isBusy(command: DurableCommand) {
+    const { adapter, sessionHandle } = structuredRecipient(command);
+    return adapter.turnActive(sessionHandle);
+  },
 };
+
+function isNudge(text: string): boolean {
+  return text.startsWith('RUN_NUDGE') || text.startsWith('SESSION_NUDGE');
+}
 
 function structuredRecipient(command: DurableCommand) {
   const agent = getAgent(STATE_DIR, command.recipient_id);
@@ -128,7 +142,12 @@ function getCommandDispatcher(): CommandDispatcher {
 
 const DELIVERED_STATES = new Set(['sent', 'accepted', 'running', 'completed']);
 
-/** Enqueue `text` for a structured session's run and dispatch it now; throws unless the provider took it. */
+/**
+ * Enqueue `text` for a structured session's run and dispatch it now. Resolves
+ * once the provider took it or it is queued behind the running turn; throws
+ * otherwise. A run that has ended takes no commands (e.g. FINALIZE_SUCCESS
+ * after the coordinator finished the run): the session is cleaned up instead.
+ */
 async function deliverStructured(sessionHandle: string, text: string, kind: string, idempotencyKey: string): Promise<string> {
   const agentId = sessionHandle.slice(sessionHandle.indexOf(':') + 1);
   const session = currentSessionForAgent(STATE_DIR, agentId);
@@ -138,7 +157,7 @@ async function deliverStructured(sessionHandle: string, text: string, kind: stri
     runId: session.run_id, recipientSessionId: session.session_id, idempotencyKey, kind, payload: { text }, maxAttempts: 1,
   });
   const command = await dispatcher.deliver(queued.command_id);
-  if (!DELIVERED_STATES.has(command.state)) {
+  if (!DELIVERED_STATES.has(command.state) && !isDeferred(command)) {
     throw new Error(`command ${command.command_id} ${command.state}: ${command.last_error ?? 'not delivered'}`);
   }
   return '';
@@ -2402,7 +2421,7 @@ export async function doShutdown() {
   process.exit(0);
 }
 
-export { tick, getAdapter as getCoordinatorAdapter };
+export { tick, getAdapter as getCoordinatorAdapter, getCommandDispatcher as getCoordinatorCommandDispatcher };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main().catch(err => { console.error(err); process.exit(1); });

@@ -210,16 +210,28 @@ On the Codex app-server runtime:
   provider answers `turn/start`, `running` when the turn starts, and
   `completed`/`failed` when the turn ends. The task envelope is keyed per run,
   so a retried dispatch does not resend it.
+- **Turn-based delivery.** Input reaches the provider only between turns. A
+  message for a worker whose turn is still running (e.g. a finalize notice or
+  `PR_REVIEW` right after `run-work-complete`) waits in the queue without using
+  an attempt and goes out when the turn ends. Nudges are skipped for a worker
+  that is mid-turn. The worker bootstrap tells the agent to end its turn after
+  `run-work-complete` rather than wait inside it. The `FINALIZE_SUCCESS` notice
+  is not delivered: the coordinator has already finished the run and cleans the
+  session up.
 - **Readiness.** The protocol handshake marks the session ready, so no
   `report-for-duty` turn is needed.
 - **Declared capabilities.** The session supports structured events, command
-  ACK and thread resume. Steering, interrupt and approvals are not proven, so
+  ACK and thread resume. Resume is adapter-level (`resume_thread_id`); the
+  coordinator does not yet resume threads after a restart. Steering, interrupt
+  and approvals are not proven, so
   they are refused with a typed `unsupported_capability` error: input sent
   while a turn runs is refused rather than queued into it, and provider
   approval requests are declined (threads run with `approvalPolicy: never`).
 - **Process ownership.** The app-server's stdio belongs to the coordinator
-  that launched it. It ends when that coordinator exits, and the run is
-  requeued by the normal liveness path.
+  that launched it, and the session ends with that coordinator; the run is then
+  requeued by the normal liveness path. Other processes see the session through
+  its recorded PID and start time: alive but not writable (`recoverable` after a
+  coordinator restart), and `orc worker-remove` stops it by signal.
 
 To roll back, set `runtime` to `cli`. Run history and command records are kept;
 a command whose delivery could not be confirmed stays `outcome_unknown` until

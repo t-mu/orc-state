@@ -183,4 +183,24 @@ describe('durable command delivery', () => {
     expect(acknowledgeFromRuntime(dir, command.command_id, 'session-worker', 'completed')).toMatchObject({ state: 'completed', terminal_at: expect.any(String) });
     expect(queryEvents(dir, { event_type: 'command_accepted' })).toHaveLength(1);
   });
+
+  it('holds a command for a busy recipient without spending an attempt or marking it sent (task 203)', async () => {
+    let busy = true;
+    const send = vi.fn().mockResolvedValue(undefined);
+    const dispatcher = new CommandDispatcher(dir, { send, isBusy: () => busy }, authenticate);
+    const command = enqueue('busy', { maxAttempts: 1 });
+
+    const held = await dispatcher.deliver(command.command_id);
+    expect(held).toMatchObject({ state: 'queued', attempt_count: 0, send_started_at: null, last_error: 'recipient busy' });
+    expect(send).not.toHaveBeenCalled();
+    expect(reconcileCommands(dir)).toEqual([]);
+
+    // The sweep retries it once the retry time passes and the recipient is free.
+    busy = false;
+    await vi.waitFor(async () => {
+      await dispatcher.tick();
+      expect(getCommand(dir, command.command_id)).toMatchObject({ state: 'sent', attempt_count: 1 });
+    }, { timeout: 3000, interval: 100 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
 });
