@@ -105,6 +105,10 @@ describe('validateAgents', () => {
     expect(validateAgents({ version: '1', agents: [validAgent()] })).toEqual([]);
   });
 
+  it('accepts ephemeral worker entry', () => {
+    expect(validateAgents({ version: '1', agents: [validAgent({ ephemeral: true })] })).toEqual([]);
+  });
+
   it('accepts all valid providers', () => {
     for (const provider of ['codex', 'claude', 'gemini', 'human']) {
       expect(validateAgents({ version: '1', agents: [validAgent({ provider })] })).toEqual([]);
