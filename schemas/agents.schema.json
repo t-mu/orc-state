@@ -91,6 +91,10 @@
         "last_status_change_at": {
           "type": ["string", "null"],
           "format": "date-time"
+        },
+        "ephemeral": {
+          "type": "boolean",
+          "description": "True for coordinator-spawned task-scoped workers."
         }
       }
     }
