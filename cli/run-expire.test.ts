@@ -34,6 +34,23 @@ describe('cli/run-expire.ts', () => {
     expect(task?.status).toBe('todo');
   });
 
+  it('clears finalization state on the expired claim', () => {
+    const claimsState = JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')) as { claims: Array<Record<string, unknown>> };
+    Object.assign(claimsState.claims[0], {
+      finalization_state: 'blocked_finalize',
+      finalization_retry_count: 2,
+      finalization_blocked_reason: 'branch is not rebased onto latest main',
+    });
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify(claimsState));
+
+    expect(runCli(['run-1']).status).toBe(0);
+
+    const claim = readClaims().find((c: Record<string, unknown>) => c.run_id === 'run-1');
+    expect(claim?.finalization_state).toBeNull();
+    expect(claim?.finalization_retry_count).toBe(0);
+    expect(claim?.finalization_blocked_reason).toBeNull();
+  });
+
   it('emits claim_expired event', () => {
     runCli(['run-1']);
     const events = readEvents();

@@ -49,6 +49,9 @@ try {
     claim.state = 'failed';
     claim.failure_reason = 'manual_expire';
     claim.finished_at = now;
+    claim.finalization_state = null;
+    claim.finalization_retry_count = 0;
+    claim.finalization_blocked_reason = null;
 
     task.status = 'todo';
     task.updated_at = now;
