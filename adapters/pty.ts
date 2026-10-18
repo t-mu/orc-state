@@ -24,11 +24,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
-import { STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
+import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
+import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
@@ -131,44 +132,60 @@ function targetGitWritableRoots(targetRepoRoot: string): string[] {
   return TARGET_GIT_WRITABLE_SUBPATHS.map((sub) => join(gitDir, sub));
 }
 
-/**
- * Compute the Claude sandbox filesystem writable roots (task 190).
- *
- * `.` is the worker's launch cwd (ORC_REPO_ROOT = the orchestration root), which
- * covers the assigned worktree, the state dir, and the backlog in one grant.
- *
- * In the sibling layout, the assigned worktree is a worktree OF the target repo:
- * a worktree shares its main repo's object store, so a commit inside the
- * worktree writes objects and refs to `<target>/.git`, which lives OUTSIDE the
- * orchestration subtree. Those paths must therefore also be writable, or
- * sandboxed worker commits fail. We grant only the specific `<target>/.git`
- * subtrees a worker writes (see TARGET_GIT_WRITABLE_SUBPATHS) — NOT `.git`
- * wholesale, so the worker cannot write `hooks/` or `config`, and NOT the target
- * repo's working tree (direct-mode merges are coordinator-side; PR pushes run
- * from inside the worktree).
- *
- * Read-only (scouts) get no writable roots at all.
- */
-export function claudeSandboxFilesystem(opts: {
+function isWithin(root: string, path: string): boolean {
+  const rel = relative(resolve(root), resolve(path));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+export interface SandboxRootsOptions {
   readOnly: boolean;
-  siblingLayout: boolean;
-  targetRepoRoot: string;
-}): { allowWrite: string[] } | undefined {
-  if (opts.readOnly) return undefined;
-  const allowWrite = ['.'];
-  if (opts.siblingLayout) allowWrite.push(...targetGitWritableRoots(opts.targetRepoRoot));
-  return { allowWrite };
+  /** The provider's launch cwd — the assigned worktree for task workers. */
+  cwd: string;
+  /** Orchestration state dir; `orc` CLI calls from the worker write here. */
+  stateDir: string;
+  /** Repo whose `.git` backs the worktree (the target repo in sibling layout). */
+  gitRepoRoot: string;
 }
 
 /**
- * Extra Codex sandbox args (task 193) granting the target repo's `.git`
- * subtrees as additional writable roots in the sibling layout — the Codex
- * counterpart to claudeSandboxFilesystem. A worktree's commits write to the
- * target repo's shared object store, which sits outside the workspace-write
- * scope (the orchestration root), so those subtrees must be granted or
- * sandboxed commits fail. The grant mirrors claudeSandboxFilesystem
- * (TARGET_GIT_WRITABLE_SUBPATHS) — it excludes `hooks/` and `config`. Returns []
- * in the attached layout and for read-only scouts.
+ * Writable roots a sandboxed worker needs beyond its launch cwd (tasks 190,
+ * 193, 204).
+ *
+ * Workers launch in their assigned worktree, so the sandbox's own cwd grant
+ * covers the worktree's files. Two things the worker legitimately writes live
+ * outside it:
+ *
+ *   - the orchestration state dir, written by every `orc` lifecycle call;
+ *   - the backing repo's `.git` — a linked worktree shares its main repo's
+ *     object store, refs and per-worktree state, so commits and rebases write
+ *     there. This holds in BOTH layouts: in the attached layout the backing
+ *     repo is the orchestration repo, in the sibling layout the target repo.
+ *     We grant only TARGET_GIT_WRITABLE_SUBPATHS — never `.git` wholesale, so
+ *     the worker cannot write `hooks/` or `config`.
+ *
+ * Roots already inside the cwd are dropped (e.g. a scout launched at the
+ * orchestration root). Read-only (scouts) get no writable roots at all.
+ */
+export function sandboxExtraWritableRoots(opts: SandboxRootsOptions): string[] {
+  if (opts.readOnly) return [];
+  const roots = [opts.stateDir, ...targetGitWritableRoots(opts.gitRepoRoot)];
+  return roots.filter((root) => !isWithin(opts.cwd, root));
+}
+
+/**
+ * Compute the Claude sandbox filesystem writable roots: `.` (the launch cwd)
+ * plus sandboxExtraWritableRoots. Read-only (scouts) get no writable roots.
+ */
+export function claudeSandboxFilesystem(opts: SandboxRootsOptions): { allowWrite: string[] } | undefined {
+  if (opts.readOnly) return undefined;
+  return { allowWrite: ['.', ...sandboxExtraWritableRoots(opts)] };
+}
+
+/**
+ * Extra Codex sandbox args granting sandboxExtraWritableRoots — the Codex
+ * counterpart to claudeSandboxFilesystem. Codex workspace-write already covers
+ * the launch cwd. Returns [] when nothing beyond the cwd is needed and for
+ * read-only scouts.
  *
  * Uses Codex's `-c` config override for `writable_roots`. The value is JSON —
  * a well-formed JSON array is valid input for a Codex `-c` override, and
@@ -176,17 +193,45 @@ export function claudeSandboxFilesystem(opts: {
  * interpolation would break on a `"` or `\` in the target path). See
  * docs/configuration.md → Execution Modes → Codex.
  */
-export function codexSandboxWritableRootArgs(opts: {
-  readOnly: boolean;
-  siblingLayout: boolean;
-  targetRepoRoot: string;
-}): string[] {
-  if (opts.readOnly || !opts.siblingLayout) return [];
-  const roots = targetGitWritableRoots(opts.targetRepoRoot);
+export function codexSandboxWritableRootArgs(opts: SandboxRootsOptions): string[] {
+  const roots = sandboxExtraWritableRoots(opts);
+  if (roots.length === 0) return [];
   return ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(roots)}`];
 }
 
-function buildStartArgs(provider: string, config: Record<string, unknown>, claudeSettingsPath?: string) {
+/**
+ * Resolve the provider launch cwd (task 204). An explicit working_directory —
+ * the assigned worktree for task workers — is used as-is and must be an
+ * existing directory; launching elsewhere would silently run the worker
+ * against the wrong checkout. Without one, fall back to the orchestration root.
+ */
+export function resolveLaunchCwd(config: Record<string, unknown>): string {
+  const workingDirectory = typeof config.working_directory === 'string' && config.working_directory
+    ? config.working_directory
+    : null;
+  if (workingDirectory == null) {
+    return (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT ?? process.cwd();
+  }
+  let isDirectory = false;
+  try {
+    isDirectory = statSync(workingDirectory).isDirectory();
+  } catch {
+    throw new Error(`assigned working directory does not exist: ${workingDirectory}`);
+  }
+  if (!isDirectory) throw new Error(`assigned working directory is not a directory: ${workingDirectory}`);
+  return resolve(workingDirectory);
+}
+
+function sandboxRootsOptions(config: Record<string, unknown>, cwd: string): SandboxRootsOptions {
+  return {
+    readOnly: config.read_only === true,
+    cwd,
+    stateDir: STATE_DIR,
+    gitRepoRoot: TARGET_REPO_ROOT,
+  };
+}
+
+function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: string, claudeSettingsPath?: string) {
   // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
   // 'full-access' for backward compatibility when field is absent.
   const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
@@ -196,20 +241,12 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, claud
     const args: string[] = [];
     if (executionMode === 'sandbox') {
       // sandbox + read_only (scouts) → read-only filesystem; otherwise workspace-write.
-      // workspace-write scopes writes to the launch cwd (the orchestration root),
-      // covering the worktree, state dir, and backlog. In the sibling layout a
-      // worktree's commits also write to the target repo's shared object store,
-      // outside that scope, so grant the specific <target>/.git write subtrees
-      // (TARGET_GIT_WRITABLE_SUBPATHS — objects/refs/logs/worktrees, excluding
-      // hooks/ and config) as additional writable roots — mirroring
-      // claudeSandboxFilesystem.
+      // workspace-write scopes writes to the launch cwd (the assigned
+      // worktree); the state dir and the backing repo's .git write subtrees
+      // are granted as additional writable roots (see sandboxExtraWritableRoots).
       const sandboxScope = readOnly ? 'read-only' : 'workspace-write';
       args.push('--sandbox', sandboxScope, '--ask-for-approval', 'never');
-      args.push(...codexSandboxWritableRootArgs({
-        readOnly,
-        siblingLayout: IS_SIBLING_LAYOUT,
-        targetRepoRoot: TARGET_REPO_ROOT,
-      }));
+      args.push(...codexSandboxWritableRootArgs(sandboxRootsOptions(config, cwd)));
     } else {
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
@@ -250,6 +287,9 @@ export interface ProviderLaunch {
 export function prepareProviderLaunch(provider: string, agentId: string, config: Record<string, unknown>): ProviderLaunch {
   ensureDirs();
   const binary = PROVIDER_BINARIES[provider] ?? provider;
+  // Workers start in their assigned worktree (task 204); ORC_HOME/ORC_STATE_DIR
+  // in the worker env keep `orc` state lookup pinned to the orchestration root.
+  const cwd = resolveLaunchCwd(config);
   // For claude: write a settings file that installs a Notification hook so
   // permission_prompt events are pushed to the hook-events file in real time.
   // In sandbox mode, merge in a sandbox config block alongside the hook.
@@ -261,7 +301,6 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
     // notifications, and appends a record to the hook-events NDJSON file.
     const hookCmd = `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const e=JSON.parse(d);if(e.notification_type!=='permission_prompt')return;require('fs').appendFileSync(${JSON.stringify(eventsFile)},JSON.stringify({type:'permission',message:e.message||'',ts:new Date().toISOString()})+'\\\\n')}catch(x){}})"`;
     const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
-    const readOnly = config.read_only === true;
     const settings: Record<string, unknown> = {
       hooks: {
         Notification: [{ hooks: [{ type: 'command', command: hookCmd }] }],
@@ -273,11 +312,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
         mode: 'auto-allow',
         allowUnsandboxedCommands: false,
       };
-      const filesystem = claudeSandboxFilesystem({
-        readOnly,
-        siblingLayout: IS_SIBLING_LAYOUT,
-        targetRepoRoot: TARGET_REPO_ROOT,
-      });
+      const filesystem = claudeSandboxFilesystem(sandboxRootsOptions(config, cwd));
       if (filesystem) {
         sandboxConfig.filesystem = filesystem;
       }
@@ -286,7 +321,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
     writeFileSync(claudeSettingsFile, JSON.stringify(settings));
   }
 
-  const spawnArgs = buildStartArgs(provider, config, claudeSettingsFile);
+  const spawnArgs = buildStartArgs(provider, config, cwd, claudeSettingsFile);
 
   // Strip parent provider/session control env vars so nested worker
   // sessions start cleanly instead of inheriting the parent CLI sandbox
@@ -298,12 +333,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
     binary: resolvedBinary,
     args: spawnArgs,
     env: spawnEnv,
-    // Spawn at the repo root so the sandbox covers both the worktree and
-    // .orc-state/. Workers navigate to their assigned worktree themselves
-    // via the cd instruction in the TASK_START envelope.
-    cwd: (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT
-      ?? (config.working_directory as string)
-      ?? process.cwd(),
+    cwd,
   };
 }
 

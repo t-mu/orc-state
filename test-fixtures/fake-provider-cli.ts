@@ -11,6 +11,8 @@ if (crashOnStart) {
 }
 
 console.log(`FIXTURE_READY provider=${provider}`);
+console.log(`FIXTURE_CWD ${process.cwd()}`);
+console.log(`FIXTURE_STATE_DIR ${process.env.ORC_STATE_DIR ?? ''}`);
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 if (Number.isFinite(heartbeatMs) && heartbeatMs > 0) {

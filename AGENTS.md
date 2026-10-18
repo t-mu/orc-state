@@ -42,7 +42,7 @@ directly on the main checkout while a run is active.
 
 Worktree lifecycle commands are pre-authorized — do not stop to ask for permission before running: `git worktree add`, `git worktree remove`, `git branch -d`, `git commit`, `git rebase main`, and `git -C ../.. merge ... --no-ff`.
 
-Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). After calling `orc run-start`, `cd` into that path. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
+Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). Worker sessions start with that path as their working directory; confirm with `pwd`. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
 
 ### Worktree cleanup ordering (direct mode)
 

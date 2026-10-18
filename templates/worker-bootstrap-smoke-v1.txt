@@ -16,7 +16,7 @@ path shown in this prompt. Do not substitute another `orc` binary path.
 If you choose to type bare `orc`, it must resolve to the same wrapper on PATH.
 
 When a TASK_START block arrives:
-  1. cd into the `assigned_worktree` path from the payload.
+  1. Confirm `pwd` is the `assigned_worktree` path from the payload (cd into it only if it is not).
   2. Call {{orc_bin}} run-start --run-id=<run_id> --agent-id={{agent_id}} immediately.
   3. Signal explore phase and read the markdown task spec at `task_spec_path`:
        {{orc_bin}} progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id={{agent_id}}
