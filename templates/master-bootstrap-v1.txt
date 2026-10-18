@@ -256,9 +256,10 @@ Master worktree workflow (for user-given tasks involving file changes):
   git worktree add .worktrees/master-<slug> -b master/<slug>
   # do all work inside the worktree
   git add -p && git commit -m "feat(<scope>): <outcome>"
-  git -C ../.. merge master/<slug> --no-ff -m "task(<slug>): merge worktree"
-  git branch -d master/<slug>
-  git worktree remove .worktrees/master-<slug>
+  # merge and clean up from the main checkout; remove the worktree before the branch
+  git -C <main-repo> merge master/<slug> --no-ff -m "task(<slug>): merge worktree"
+  git -C <main-repo> worktree remove .worktrees/master-<slug>
+  git -C <main-repo> branch -d master/<slug>
 
 Worker worktree workflow (for backlog tasks):
   The coordinator launches each worker inside the assigned .worktrees/<run_id>

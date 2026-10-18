@@ -316,7 +316,7 @@ workflow:
 2. `git commit -m "feat(<feature>): spec tasks from plan <id>"` in the
    worktree.
 3. Merge the worktree to main using the AGENTS.md cleanup ordering (merge →
-   branch delete → worktree remove). In PR mode, push and let the PR
+   worktree remove → branch delete). In PR mode, push and let the PR
    reviewer land the change.
 
 Do NOT call `orc backlog-sync-check` — runtime state is the coordinator's

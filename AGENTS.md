@@ -49,15 +49,20 @@ Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). 
 This ordering applies to direct mode only. In PR mode the coordinator delegates
 merge and cleanup to the PR reviewer worker.
 
-When merging and cleaning up a worktree, **always delete the branch before removing the worktree**. Removing the worktree destroys the shell's working directory, which makes all subsequent Bash commands fail. The correct order is:
+When merging and cleaning up a worktree, run every command from the main
+checkout with `git -C <main-repo>`, and **remove the worktree before deleting
+the branch**. Git refuses to delete a branch that is still checked out in a
+worktree, and removing the worktree invalidates a shell whose cwd is inside it,
+so a relative `git` command issued afterwards from that shell fails. The
+correct order is:
 
 ```bash
 # 1. Merge from the main checkout (not from inside the worktree)
 git -C <main-repo> merge <branch> --no-ff -m "task(<ref>): merge worktree"
-# 2. Delete the branch WHILE the worktree directory still exists
-git branch -D <branch>
-# 3. Remove the worktree LAST — this invalidates the cwd
-git worktree remove <worktree-path>
+# 2. Remove the worktree — the branch is no longer checked out anywhere
+git -C <main-repo> worktree remove <worktree-path>
+# 3. Delete the merged branch
+git -C <main-repo> branch -d <branch>
 ```
 
 ## Phased Workflow

@@ -152,7 +152,7 @@ After `plan_write` returns successfully:
    worktree (or `feat`/`fix` as appropriate — use the repo's commit
    discipline; see AGENTS.md → Commit Discipline).
 3. Merge to main from the main checkout, following AGENTS.md cleanup
-   ordering (merge → branch delete → worktree remove). The plan becomes
+   ordering (merge → worktree remove → branch delete). The plan becomes
    available to any subsequent `/spec plan <plan_id>` invocation.
 
 This skill does not delegate tasks, run `/spec`, or dispatch workers — that
