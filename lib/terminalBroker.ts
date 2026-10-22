@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type Database from 'better-sqlite3';
 import { tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
 import { ControlError } from './controlProtocol.ts';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
@@ -22,7 +23,7 @@ export interface TerminalRecord {
 
 /** The broker owns all writes. Implementations must be usable from another process. */
 export interface TerminalDriver {
-  startShell(handle: string, cwd: string, logPath: string): void;
+  startShell(handle: string, cwd: string, logPath: string): boolean;
   alive(handle: string): boolean;
   capture(handle: string): string;
   input(handle: string, data: string): void;
@@ -32,6 +33,26 @@ export interface TerminalDriver {
 
 function shellName(runId: string): string {
   return `orc-shell-${createHash('sha256').update(runId).digest('hex').slice(0, 20)}`;
+}
+
+export function terminalInputTokens(data: string): Array<{ key?: string; text?: string }> {
+  const special: Record<string, string> = {
+    '\r': 'Enter', '\n': 'Enter', '\t': 'Tab', '\x1b': 'Escape', '\x7f': 'BSpace',
+    '\x1b[A': 'Up', '\x1b[B': 'Down', '\x1b[C': 'Right', '\x1b[D': 'Left',
+    '\x1b[H': 'Home', '\x1b[F': 'End', '\x1b[2~': 'Insert', '\x1b[3~': 'Delete',
+    '\x1b[5~': 'PageUp', '\x1b[6~': 'PageDown',
+    '\x1bOP': 'F1', '\x1bOQ': 'F2', '\x1bOR': 'F3', '\x1bOS': 'F4',
+    '\x1b[15~': 'F5', '\x1b[17~': 'F6', '\x1b[18~': 'F7', '\x1b[19~': 'F8',
+    '\x1b[20~': 'F9', '\x1b[21~': 'F10', '\x1b[23~': 'F11', '\x1b[24~': 'F12',
+  };
+  return data.split(/(\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO[A-Za-z]|\x1b.|[\x00-\x1f\x7f])/g)
+    .filter(Boolean).map((part) => {
+      const code = part.length === 1 ? part.charCodeAt(0) : -1;
+      const key = special[part] ?? (code >= 1 && code <= 26 ? `C-${String.fromCharCode(96 + code)}`
+        : code === 0 ? 'C-Space' : code === 28 ? 'C-\\' : code === 29 ? 'C-]'
+          : code === 30 ? 'C-^' : code === 31 ? 'C-_' : undefined);
+      return key ? { key } : { text: part };
+    });
 }
 
 /** The same private tmux server as the provider adapter, with distinct shell names. */
@@ -56,11 +77,12 @@ export class TmuxTerminalDriver implements TerminalDriver {
 
   private target(handle: string): string { return `=${this.name(handle)}:`; }
 
-  startShell(handle: string, cwd: string, logPath: string): void {
-    if (this.alive(handle)) return;
+  startShell(handle: string, cwd: string, logPath: string): boolean {
+    if (this.alive(handle)) return false;
     this.run(['new-session', '-d', '-s', this.name(handle), '-x', '100', '-y', '30', '-c', cwd, '/bin/bash']);
     try { this.run(['pipe-pane', '-o', '-t', this.target(handle), `cat >> '${logPath.replace(/'/g, `'\\''`)}'`]); }
     catch (error) { this.stop(handle); throw error; }
+    return true;
   }
 
   alive(handle: string): boolean {
@@ -75,15 +97,11 @@ export class TmuxTerminalDriver implements TerminalDriver {
 
   input(handle: string, data: string): void {
     if (!data) return;
-    for (const part of data.split(/(\r|\n|\x03|\x7f|\x1b\[[ABCD])/g)) {
-      if (!part) continue;
-      const key = part === '\r' || part === '\n' ? 'Enter'
-        : part === '\x03' ? 'C-c' : part === '\x7f' ? 'BSpace'
-          : ({ '\x1b[A': 'Up', '\x1b[B': 'Down', '\x1b[C': 'Right', '\x1b[D': 'Left' } as Record<string, string>)[part];
-      if (key) this.run(['send-keys', '-t', this.target(handle), key]);
+    for (const token of terminalInputTokens(data)) {
+      if (token.key) this.run(['send-keys', '-t', this.target(handle), token.key]);
       else {
         const buffer = `${this.name(handle)}-input`;
-        this.run(['load-buffer', '-b', buffer, '-'], part);
+        this.run(['load-buffer', '-b', buffer, '-'], token.text);
         this.run(['paste-buffer', '-d', '-p', '-b', buffer, '-t', this.target(handle)]);
       }
     }
@@ -127,6 +145,22 @@ export class TerminalBroker {
     return row;
   }
 
+  private isCurrent(db: Database.Database, terminal: TerminalRecord): boolean {
+    const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(terminal.run_id) as { state: string } | undefined;
+    if (!run || !['claimed', 'in_progress'].includes(run.state)) return false;
+    if (terminal.kind === 'shell') return true;
+    const agentId = terminal.handle.startsWith('tmux:') ? terminal.handle.slice(5) : '';
+    if (!agentId) return false;
+    const session = db.prepare(`SELECT run_id, state, transport FROM sessions WHERE agent_id = ?
+      ORDER BY rowid DESC LIMIT 1`).get(agentId) as { run_id: string; state: string; transport: string | null } | undefined;
+    return session?.run_id === terminal.run_id && session.state === 'running' && session.transport === 'tmux';
+  }
+
+  private available(terminal: TerminalRecord): boolean {
+    return terminal.state === 'running' && withEventDb(this.stateDir, (db) => this.isCurrent(db, terminal))
+      && this.driver.alive(terminal.handle);
+  }
+
   private save(runId: string, kind: TerminalKind, handle: string, logPath: string): TerminalRecord {
     const path = this.worktree(runId);
     const terminalId = `${kind}:${runId}`;
@@ -134,6 +168,8 @@ export class TerminalBroker {
     return withEventDbTransaction(this.stateDir, (db) => {
       const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(runId) as { state: string } | undefined;
       if (!run || !['claimed', 'in_progress'].includes(run.state)) throw new ControlError('conflict', 'Run is not active', 409);
+      if (kind === 'provider' && !this.isCurrent(db, { run_id: runId, kind, handle } as TerminalRecord))
+        throw new ControlError('conflict', 'Provider session no longer belongs to this run', 409);
       db.prepare(`INSERT INTO terminals (terminal_id, run_id, kind, handle, worktree_path, log_path, state, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)
         ON CONFLICT (terminal_id) DO UPDATE SET handle = excluded.handle, worktree_path = excluded.worktree_path,
@@ -148,6 +184,9 @@ export class TerminalBroker {
       WHERE run_id = ? AND state = 'running' ORDER BY rowid DESC LIMIT 1`).get(runId) as { agent_id: string; transport: string | null } | undefined);
     if (!session || session.transport !== 'tmux') throw new ControlError('conflict', 'Run has no tmux provider terminal', 409);
     const handle = `tmux:${session.agent_id}`;
+    const candidate = { run_id: runId, kind: 'provider', handle } as TerminalRecord;
+    if (!withEventDb(this.stateDir, (db) => this.isCurrent(db, candidate)))
+      throw new ControlError('conflict', 'Provider session no longer belongs to this run', 409);
     if (!this.driver.alive(handle)) throw new ControlError('unavailable', 'Provider terminal is not running', 503);
     return this.save(runId, 'provider', handle, join(this.stateDir, 'pty-logs', `${session.agent_id}.log`));
   }
@@ -161,16 +200,16 @@ export class TerminalBroker {
     const run = withEventDb(this.stateDir, (db) => db.prepare('SELECT state FROM runs WHERE run_id = ?').get(runId) as { state: string } | undefined);
     if (!run || !['claimed', 'in_progress'].includes(run.state)) throw new ControlError('conflict', 'Run is not active', 409);
     if (!this.driver.alive(handle)) this.markOffline(`shell:${runId}`);
-    this.driver.startShell(handle, path, logPath);
+    const started = this.driver.startShell(handle, path, logPath);
     if (!this.driver.alive(handle)) throw new ControlError('unavailable', 'Worktree shell did not start', 503);
     try { return this.save(runId, 'shell', handle, logPath); }
-    catch (error) { this.driver.stop(handle); throw error; }
+    catch (error) { if (started) this.driver.stop(handle); throw error; }
   }
 
   observe(terminalId: string, after = 0): { terminal: TerminalRecord; screen: string; output: string; cursor: number } {
     if (!Number.isSafeInteger(after) || after < 0) throw new ControlError('bad_request', 'after must be a non-negative integer', 400);
     const terminal = this.row(terminalId);
-    if (!this.driver.alive(terminal.handle) && terminal.state !== 'offline') {
+    if (!this.available(terminal) && terminal.state !== 'offline') {
       this.markOffline(terminalId);
       terminal.state = 'offline';
     }
@@ -197,11 +236,12 @@ export class TerminalBroker {
     if (typeof ownerId !== 'string' || !ownerId || ownerId.length > 200) throw new ControlError('bad_request', 'owner_id is required', 400);
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1000 || ttlMs > 120_000) throw new ControlError('bad_request', 'ttl_ms must be 1000–120000', 400);
     const terminal = this.row(terminalId);
-    if (!this.driver.alive(terminal.handle)) {
+    if (!this.available(terminal)) {
       this.markOffline(terminalId);
       throw new ControlError('unavailable', 'Terminal is not running', 503);
     }
     return withEventDbTransaction(this.stateDir, (db) => {
+      if (!this.isCurrent(db, terminal)) throw new ControlError('unavailable', 'Terminal run is no longer active', 503);
       const now = Date.now();
       const current = db.prepare("SELECT lease_id, owner_id, expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
         .get(terminalId) as { lease_id: string; owner_id: string; expires_at: string } | undefined;
@@ -218,11 +258,12 @@ export class TerminalBroker {
 
   private withLease<T>(terminalId: string, leaseId: string, action: (terminal: TerminalRecord) => T): T {
     const terminal = this.row(terminalId);
-    if (!this.driver.alive(terminal.handle)) {
+    if (!this.available(terminal)) {
       this.markOffline(terminalId);
       throw new ControlError('unavailable', 'Terminal is not running', 503);
     }
     return withEventDbTransaction(this.stateDir, (db) => {
+      if (!this.isCurrent(db, terminal)) throw new ControlError('unavailable', 'Terminal run is no longer active', 503);
       const lease = db.prepare("SELECT lease_id, expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
         .get(terminalId) as { lease_id: string; expires_at: string } | undefined;
       if (!lease || lease.lease_id !== leaseId || Date.parse(lease.expires_at) <= Date.now()) {
@@ -267,7 +308,7 @@ export class TerminalBroker {
     for (const row of rows) {
       const active = row.run_state === 'claimed' || row.run_state === 'in_progress';
       if (row.kind === 'shell' && !active && this.driver.alive(row.handle)) this.driver.stop(row.handle);
-      if (!this.driver.alive(row.handle) && row.state !== 'offline') this.markOffline(row.terminal_id);
+      if (!this.available(row)) this.markOffline(row.terminal_id);
     }
     withEventDbTransaction(this.stateDir, (db) => db.prepare(`DELETE FROM control_leases
       WHERE resource_type = 'terminal' AND expires_at <= ?`).run(new Date().toISOString()));

@@ -8,7 +8,7 @@ import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './event
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
-import { TerminalBroker, TmuxTerminalDriver, type TerminalDriver } from './terminalBroker.ts';
+import { TerminalBroker, TmuxTerminalDriver, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
 
 const exec = promisify(execFile);
 const repoRoot = join(import.meta.dirname, '..');
@@ -23,11 +23,13 @@ class FakeDriver implements TerminalDriver {
   writes: Array<{ handle: string; data: string }> = [];
   sizes: Array<{ handle: string; columns: number; rows: number }> = [];
   logs = new Map<string, string>();
-  startShell(handle: string, cwd: string, logPath: string): void {
+  startShell(handle: string, cwd: string, logPath: string): boolean {
+    if (this.live.has(handle)) return false;
     expect(cwd).toBe(worktree);
     this.live.add(handle);
     this.logs.set(handle, logPath);
     writeFileSync(logPath, 'shell started\n');
+    return true;
   }
   alive(handle: string): boolean { return this.live.has(handle); }
   capture(handle: string): string { return `screen:${handle}\n`; }
@@ -68,6 +70,12 @@ afterEach(async () => {
 });
 
 describe('terminal broker', () => {
+  it('passes common control and function keys as tmux keys while pasting printable text', () => {
+    expect(terminalInputTokens('abc\t\x04\x03\x1b[A\x1bOP\x1b[15~\r')).toEqual([
+      { text: 'abc' }, { key: 'Tab' }, { key: 'C-d' }, { key: 'C-c' },
+      { key: 'Up' }, { key: 'F1' }, { key: 'F5' }, { key: 'Enter' },
+    ]);
+  });
   it('lets another process observe a provider without acquiring input or ending the session', async () => {
     const observer = new ControlClient(dir);
     const terminal = (await observer.openTerminal('provider', 'run-a')).terminal;
@@ -120,6 +128,44 @@ describe('terminal broker', () => {
     expect(restarted.observe(terminal.terminal_id).terminal.state).toBe('offline');
     await expect(client.openTerminal('shell', 'run-b')).rejects.toMatchObject({ code: 'conflict' });
     expect(driver.live.has('shell:run-b')).toBe(false);
+  });
+
+  it('rejects leases and input after a run ends while its provider pane remains alive', async () => {
+    const client = new ControlClient(dir);
+    const terminal = (await client.openTerminal('provider', 'run-a')).terminal;
+    const lease = await client.acquireTerminal(terminal.terminal_id, 'writer');
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE runs SET state = 'done' WHERE run_id = 'run-a'").run());
+    expect((await client.observeTerminal(terminal.terminal_id)).terminal.state).toBe('offline');
+    await expect(client.inputTerminal(terminal.terminal_id, lease.lease_id, 'x')).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(client.acquireTerminal(terminal.terminal_id, 'next')).rejects.toMatchObject({ code: 'unavailable' });
+    expect(driver.live.has('tmux:worker-a')).toBe(true);
+    expect(driver.writes).toEqual([]);
+  });
+
+  it('does not let an old run lease the same agent pane after a new session starts', async () => {
+    const client = new ControlClient(dir);
+    const old = (await client.openTerminal('provider', 'run-a')).terminal;
+    const lease = await client.acquireTerminal(old.terminal_id, 'old-writer');
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-c', 'orch/c', 'worker-a', 'in_progress', '2026-01-02', '2026-01-02')").run();
+      db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-a'").run();
+      db.prepare("INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, started_at, updated_at) VALUES ('session-c', 'run-c', 'worker-a', 'claude', 'running', 'tmux', '2026-01-02', '2026-01-02')").run();
+    });
+    await expect(client.inputTerminal(old.terminal_id, lease.lease_id, 'x')).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(client.acquireTerminal(old.terminal_id, 'next')).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(client.openTerminal('provider', 'run-a')).rejects.toMatchObject({ code: 'conflict' });
+    const current = (await client.openTerminal('provider', 'run-c')).terminal;
+    const currentLease = await client.acquireTerminal(current.terminal_id, 'new-writer');
+    await client.inputTerminal(current.terminal_id, currentLease.lease_id, 'y');
+    expect(driver.writes).toEqual([{ handle: 'tmux:worker-a', data: 'y' }]);
+  });
+
+  it('keeps an existing shell alive if persisting a reconnect fails', () => {
+    const terminal = broker.shell('run-b');
+    const failing = new TerminalBroker(dir, { driver, worktreeForRun: () => worktree });
+    (failing as unknown as { save: () => never }).save = () => { throw new Error('database unavailable'); };
+    expect(() => failing.shell('run-b')).toThrow('database unavailable');
+    expect(driver.live.has(terminal.handle)).toBe(true);
   });
 });
 
