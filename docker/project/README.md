@@ -25,7 +25,8 @@ provider environment credentials can be supplied through a project-specific
 Compose override if needed; treat them as accessible to agents in the container.
 
 The launcher starts the coordinator as the container's main process. `master`
-starts the interactive master as another process via `docker compose exec`;
+waits for that coordinator and starts the interactive master as another process
+via `docker compose exec`; `orc start-session` reuses the running coordinator.
 workers are separate processes inside the same container. The default worker
 capacity is two (`ORC_MAX_WORKERS=2`). Set `ORC_WORKER_PROVIDER` and
 `ORC_MASTER_PROVIDER` if they differ from `orc-state.config.json`. The project
@@ -60,7 +61,7 @@ Unix socket in the state volume, protected by a 0600 token. Host operators use
 is the host authorization boundary. Nothing binds the control API to a LAN
 interface.
 
-The launcher checks host Git checkout ownership. Container preflight checks
+The launcher checks the host Git checkout and uses your host UID/GID. Container preflight checks
 UID, writable project/home/state and Git metadata, Node 24, required tools,
 and selected provider login. After startup, run `orc doctor` inside `shell`
 to inspect runtime health.

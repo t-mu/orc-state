@@ -38,6 +38,17 @@ case "${1:-}" in
     ;;
   master)
     provider="${2:-claude}"
+    "${compose[@]}" exec -T project bash -c '
+      for attempt in {1..30}; do
+        if [[ -f "$ORC_STATE_DIR/coordinator.pid" ]]; then
+          pid="$(jq -r ".pid // empty" "$ORC_STATE_DIR/coordinator.pid" 2>/dev/null || true)"
+          if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then exit 0; fi
+        fi
+        sleep 1
+      done
+      echo "Coordinator did not become ready." >&2
+      exit 1
+    '
     "${compose[@]}" exec project orc start-session "--provider=$provider"
     ;;
   *)

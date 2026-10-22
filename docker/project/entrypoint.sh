@@ -6,4 +6,5 @@ if (($#)); then
 fi
 
 /usr/local/bin/orc-project-preflight
-exec node /opt/orc-state/dist/cli/project-runtime.js
+node /opt/orc-state/dist/cli/project-init.js
+exec node /opt/orc-state/dist/coordinator.js
