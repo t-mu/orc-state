@@ -12,13 +12,15 @@
  *   pty-logs/{agentId}.log  — raw pane output via pipe-pane (truncated on each start())
  */
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
+import { withEventDbTransaction } from '../lib/eventLog.ts';
+import { logger } from '../lib/logger.ts';
 import { detectBlockingPromptFromText, prepareProviderLaunch, runStartupDialogs } from './pty.ts';
 import type { SessionInspection } from './interface.ts';
 
@@ -34,7 +36,7 @@ export function tmuxSocketName(stateDir = STATE_DIR): string {
 }
 
 /** Readable and injective: the hash keeps `a.b` and `a_b` from sharing a session. */
-function sessionName(agentId: string): string {
+export function tmuxSessionName(agentId: string): string {
   const readable = agentId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
   return `orc-${readable}-${createHash('sha256').update(agentId).digest('hex').slice(0, 8)}`;
 }
@@ -72,7 +74,7 @@ function shellQuote(value: string): string {
  * `=name:` matches the session name exactly (not by prefix) and resolves to its
  * active pane; without the colon, pane commands read `=name` as a window name.
  */
-function target(agentId: string): string { return `=${sessionName(agentId)}:`; }
+function target(agentId: string): string { return `=${tmuxSessionName(agentId)}:`; }
 
 function parseHandle(sessionHandle: unknown): string {
   const s = String(sessionHandle);
@@ -112,9 +114,39 @@ function write(agentId: string, text: string): void {
     tmuxOrThrow(['send-keys', '-t', target(agentId), 'Enter']);
     return;
   }
-  const buffer = sessionName(agentId);
+  const buffer = tmuxSessionName(agentId);
   tmuxOrThrow(['load-buffer', '-b', buffer, '-'], { input: text });
   tmuxOrThrow(['paste-buffer', '-d', '-p', '-b', buffer, '-t', target(agentId)]);
+}
+
+/** Coordinator sends and operator input share the same persisted writer lease. */
+function claimSendLease(agentId: string): { resourceId: string; leaseId: string } | null {
+  if (!existsSync(join(STATE_DIR, 'events.db'))) return null;
+  return withEventDbTransaction(STATE_DIR, (db) => {
+    const session = db.prepare(`SELECT run_id FROM sessions WHERE agent_id = ? AND state = 'running'
+      AND transport = 'tmux' ORDER BY rowid DESC LIMIT 1`).get(agentId) as { run_id: string | null } | undefined;
+    if (!session?.run_id) return null;
+    const resourceId = `provider:${session.run_id}`;
+    const current = db.prepare("SELECT expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
+      .get(resourceId) as { expires_at: string } | undefined;
+    if (current && Date.parse(current.expires_at) > Date.now()) throw new Error('Terminal already has a writer');
+    const leaseId = randomUUID();
+    db.prepare(`INSERT INTO control_leases (resource_type, resource_id, lease_id, owner_id, expires_at)
+      VALUES ('terminal', ?, ?, ?, ?) ON CONFLICT (resource_type, resource_id) DO UPDATE SET
+        lease_id = excluded.lease_id, owner_id = excluded.owner_id, expires_at = excluded.expires_at`)
+      .run(resourceId, leaseId, `coordinator:${process.pid}`, new Date(Date.now() + 30_000).toISOString());
+    return { resourceId, leaseId };
+  });
+}
+
+function releaseSendLease(lease: { resourceId: string; leaseId: string } | null): void {
+  if (!lease) return;
+  try {
+    withEventDbTransaction(STATE_DIR, (db) => db.prepare(`DELETE FROM control_leases
+      WHERE resource_type = 'terminal' AND resource_id = ? AND lease_id = ?`).run(lease.resourceId, lease.leaseId));
+  } catch (error) {
+    logger.warn(`[tmux] writer lease cleanup failed: ${(error as Error).message}`);
+  }
 }
 
 export function createTmuxAdapter({ provider = 'claude' }: { provider?: string } = {}) {
@@ -134,7 +166,7 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
         `exec ${[launch.binary, ...launch.args].map(shellQuote).join(' ')}`, ''].join('\n'), { mode: 0o700 });
       chmodSync(launcher, 0o700);
       try {
-        tmuxOrThrow(['new-session', '-d', '-s', sessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher)],
+        tmuxOrThrow(['new-session', '-d', '-s', tmuxSessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher)],
           { env: stripNestedProviderEnv(process.env) as Record<string, string> });
       } catch (error) {
         try { unlinkSync(launcher); } catch { /* already consumed */ }
@@ -150,7 +182,7 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
         session_handle: `tmux:${agentId}`,
         provider_ref: {
           pid: started.pid, provider, binary: launch.binary, transport: 'tmux',
-          process_start: started.processStart, tmux_socket: tmuxSocketName(), tmux_session: sessionName(agentId),
+          process_start: started.processStart, tmux_socket: tmuxSocketName(), tmux_session: tmuxSessionName(agentId),
         },
       };
     },
@@ -158,10 +190,15 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
     async send(sessionHandle: string, text: string) {
       const agentId = parseHandle(sessionHandle);
       if (!inspect(agentId).alive) throw new Error(`No live tmux session for agent '${agentId}'`);
-      write(agentId, String(text));
-      await new Promise((r) => setTimeout(r, SUBMIT_DELAY_MS));
-      write(agentId, '\r');
-      return '';
+      const lease = claimSendLease(agentId);
+      try {
+        write(agentId, String(text));
+        await new Promise((r) => setTimeout(r, SUBMIT_DELAY_MS));
+        write(agentId, '\r');
+        return '';
+      } finally {
+        releaseSendLease(lease);
+      }
     },
 
     /** Any process on this host user can write to the tmux session. */

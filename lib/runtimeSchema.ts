@@ -2,11 +2,11 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
-export const RUNTIME_SCHEMA_VERSION = 4;
+export const RUNTIME_SCHEMA_VERSION = 5;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
-  'input_requests', 'offsets', 'control_leases', 'runtime_cutovers',
+  'input_requests', 'offsets', 'control_leases', 'runtime_cutovers', 'terminals',
 ] as const;
 
 /** A zero-version database is the legacy event-only store. */
@@ -193,6 +193,29 @@ export function migrateRuntimeSchema(db: Database.Database): void {
       db.pragma('user_version = 4');
     }).immediate();
   }
+  currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (currentVersion === 4) {
+    db.transaction(() => {
+      if ((db.pragma('user_version', { simple: true }) as number) !== 4) return;
+      db.exec(`
+        CREATE TABLE terminals (
+          terminal_id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('provider', 'shell')),
+          handle TEXT NOT NULL,
+          worktree_path TEXT NOT NULL,
+          log_path TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('running', 'offline')),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (run_id, kind)
+        );
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (5, 'terminal_broker', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 5');
+    }).immediate();
+  }
   const health = inspectRuntimeSchemaDb(db);
   if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
 }
@@ -227,6 +250,7 @@ function inspectRuntimeSchemaDb(db: Database.Database): { ok: boolean; version: 
       if (byVersion.get(2) !== 'run_authority_cutover') messages.push('missing migration record 2');
       if (byVersion.get(3) !== 'durable_command_delivery') messages.push('missing migration record 3');
       if (byVersion.get(4) !== 'session_supervision') messages.push('missing migration record 4');
+      if (byVersion.get(5) !== 'terminal_broker') messages.push('missing migration record 5');
     }
     const violations = db.pragma('foreign_key_check') as unknown[];
     if (violations.length > 0) messages.push(`${violations.length} foreign key violation(s)`);

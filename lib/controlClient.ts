@@ -9,6 +9,7 @@ import {
 } from './controlProtocol.ts';
 import type { DurableCommand } from './commandDelivery.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
+import type { TerminalRecord } from './terminalBroker.ts';
 
 export interface EventRow { seq: number; event: unknown }
 
@@ -101,6 +102,34 @@ export class ControlClient {
 
   acknowledge(commandId: string, state: AckState): Promise<{ command: DurableCommand }> {
     return this.call('POST', `/v1/commands/${encodeURIComponent(commandId)}/ack`, { state });
+  }
+
+  openTerminal(kind: 'provider' | 'shell', runId: string): Promise<{ terminal: TerminalRecord }> {
+    return this.call('POST', `/v1/terminals/${kind}`, { run_id: runId });
+  }
+
+  observeTerminal(terminalId: string, after = 0): Promise<{ terminal: TerminalRecord; screen: string; output: string; cursor: number }> {
+    return this.call('GET', `/v1/terminals/${encodeURIComponent(terminalId)}?after=${after}`);
+  }
+
+  acquireTerminal(terminalId: string, ownerId: string): Promise<{ lease_id: string; expires_at: string }> {
+    return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/lease`, { action: 'acquire', owner_id: ownerId });
+  }
+
+  renewTerminal(terminalId: string, leaseId: string): Promise<void> {
+    return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/lease`, { action: 'renew', lease_id: leaseId });
+  }
+
+  releaseTerminal(terminalId: string, leaseId: string): Promise<void> {
+    return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/lease`, { action: 'release', lease_id: leaseId });
+  }
+
+  inputTerminal(terminalId: string, leaseId: string, data: string): Promise<void> {
+    return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/input`, { lease_id: leaseId, data });
+  }
+
+  resizeTerminal(terminalId: string, leaseId: string, columns: number, rows: number): Promise<void> {
+    return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/resize`, { lease_id: leaseId, columns, rows });
   }
 
   /**
