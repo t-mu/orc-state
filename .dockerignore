@@ -1,0 +1,15 @@
+.git
+.worktrees
+.orc-state
+node_modules
+dist
+build
+.env
+.env.*
+.codex
+.claude
+.aws
+.ssh
+.config
+.gemini
+*.log

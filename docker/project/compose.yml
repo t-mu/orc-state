@@ -1,0 +1,41 @@
+services:
+  project:
+    build:
+      context: ../..
+      dockerfile: docker/project/Dockerfile
+      args:
+        ORC_UID: ${ORC_UID:?Set by orc-project.sh}
+        ORC_GID: ${ORC_GID:?Set by orc-project.sh}
+    image: ${ORC_PROJECT_IMAGE:-orc-project:local}
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 1024
+    stop_grace_period: 45s
+    working_dir: /workspace/project
+    environment:
+      HOME: /home/node
+      ORC_PROJECT_DIR: /workspace/project
+      ORC_STATE_DIR: /workspace/project/.orc-state
+      ORC_HOME: /workspace/project
+      ORC_REPO_ROOT: /workspace/project
+      ORC_MAX_WORKERS: ${ORC_MAX_WORKERS:-2}
+      ORC_WORKER_PROVIDER: ${ORC_WORKER_PROVIDER:-}
+      ORC_MASTER_PROVIDER: ${ORC_MASTER_PROVIDER:-}
+    volumes:
+      - type: bind
+        source: ${ORC_PROJECT_DIR:?Set by orc-project.sh}
+        target: /workspace/project
+      - type: volume
+        source: project-home
+        target: /home/node
+      - type: volume
+        source: project-state
+        target: /workspace/project/.orc-state
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,mode=1777
+
+volumes:
+  project-home:
+  project-state:
