@@ -32,7 +32,7 @@ describe('runtime schema migration', () => {
     try {
       db.pragma('foreign_keys = ON');
       const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
-      for (const name of ['events', 'schema_migrations', 'runs', 'sessions', 'commands', 'messages', 'input_requests', 'offsets', 'control_leases']) {
+      for (const name of ['events', 'schema_migrations', 'runs', 'sessions', 'commands', 'messages', 'input_requests', 'offsets', 'control_leases', 'terminals']) {
         expect(names.has(name)).toBe(true);
       }
       db.prepare("INSERT INTO runs (run_id, task_ref, state, created_at, updated_at) VALUES ('run-1', 'project/task', 'claimed', 'now', 'now')").run();
@@ -49,7 +49,7 @@ describe('runtime schema migration', () => {
     initEventsDb(dir);
     const repeated = new Database(join(dir, 'events.db'), { readonly: true });
     try {
-      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 4 });
+      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 5 });
     } finally {
       repeated.close();
     }
@@ -118,8 +118,8 @@ describe('runtime schema migration', () => {
       db.prepare("INSERT INTO commands (command_id, run_id, session_id, actor_id, recipient_id, idempotency_key, kind, payload, state, created_at) VALUES ('cmd-old', 'run-old', 'session-old', 'master', 'agent-old', 'key-old', 'send', '{}', 'queued', 'now')").run();
       db.prepare("INSERT INTO control_leases (resource_type, resource_id, lease_id, session_id, owner_id, expires_at) VALUES ('run', 'run-old', 'lease-old', 'session-old', 'agent-old', 'later')").run();
       migrateRuntimeSchema(db);
-      expect(db.pragma('user_version', { simple: true })).toBe(4);
-      expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
+      expect(db.pragma('user_version', { simple: true })).toBe(5);
+      expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
       expect((db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name))
         .toEqual(expect.arrayContaining(['transport', 'process_pid', 'process_start', 'owner_id', 'owner_expires_at', 'state_reason']));
       expect(db.prepare("SELECT session_id, run_id FROM sessions WHERE session_id = 'session-old'").get()).toEqual({ session_id: 'session-old', run_id: 'run-old' });
@@ -133,13 +133,13 @@ describe('runtime schema migration', () => {
 
   it('refuses a future version before touching its schema', () => {
     const db = new Database(join(dir, 'events.db'));
-    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 5');
+    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 6');
     db.close();
     expect(() => initEventsDb(dir)).toThrow('newer than supported version');
     const check = new Database(join(dir, 'events.db'), { readonly: true });
     try {
       expect(check.prepare("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeUndefined();
-      expect(check.pragma('user_version', { simple: true })).toBe(5);
+      expect(check.pragma('user_version', { simple: true })).toBe(6);
     } finally {
       check.close();
     }
@@ -147,6 +147,6 @@ describe('runtime schema migration', () => {
     const result = doctor(dir);
     expect(result.status).toBe(1);
     expect((JSON.parse(result.stdout) as { checks: { runtimeSchema: { version: number; ok: boolean } } }).checks.runtimeSchema)
-      .toMatchObject({ version: 5, ok: false });
+      .toMatchObject({ version: 6, ok: false });
   });
 });

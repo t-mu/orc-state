@@ -149,6 +149,16 @@ commands are for when you need to intervene manually.
 | `worker-clearall` | Remove all offline and stale workers. |
 | `worker-status [agent_id]` | Show worker state, active task, and session info. |
 
+For a live run, `orc terminal provider <run_id>` observes its tmux provider
+terminal. `orc terminal shell <run_id>` opens a separate shell in the assigned
+worktree, including when the provider uses a structured runtime. Both commands
+are read-only by default; add `--write` to acquire the exclusive input lease.
+Press Ctrl-] to detach a writer or Ctrl-C to detach an observer. `--once` prints
+the current output and exits. The shell survives detach and daemon restart;
+its output is retained in `.orc-state/terminal-logs/`.
+Terminals require the local control daemon and tmux. A legacy `pty:` provider
+has only its log tail through `orc attach`.
+
 **Flags:**
 
 | Command | Flags |

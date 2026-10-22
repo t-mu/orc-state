@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { classifySession, type SupervisedSession } from '../lib/sessionSupervisor.ts';
+import { closeAllDatabases, initEventsDb, withEventDbTransaction } from '../lib/eventLog.ts';
+import { TerminalBroker } from '../lib/terminalBroker.ts';
 
 const exec = promisify(execFile);
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
@@ -63,6 +65,7 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
   afterEach(async () => {
     const { module } = await loadAdapter();
     spawnSync('tmux', ['-L', module.tmuxSocketName(dir), 'kill-server']);
+    closeAllDatabases();
     process.env.PATH = originalPath;
     if (originalStateDir === undefined) delete process.env.ORC_STATE_DIR;
     else process.env.ORC_STATE_DIR = originalStateDir;
@@ -84,6 +87,28 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     await adapter.send(launched.session_handle, 'PING');
     await waitFor(() => (adapter.getOutputTail(launched.session_handle) ?? '').includes('FIXTURE_PONG'));
     await expect(adapter.heartbeatProbe(launched.session_handle)).resolves.toBe(true);
+  }, 20_000);
+
+  it('shares the provider writer lease with the coordinator send path', async () => {
+    const { adapter } = await loadAdapter();
+    const started = await adapter.start('worker-1', { working_directory: dir });
+    writeFileSync(join(dir, '.git'), 'gitdir: dummy');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at)
+        VALUES ('run-1', 'orch/task', 'worker-1', 'in_progress', 'now', 'now')`).run();
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, started_at, updated_at)
+        VALUES ('session-1', 'run-1', 'worker-1', 'gemini', 'running', 'tmux', 'now', 'now')`).run();
+    });
+    const broker = new TerminalBroker(dir, { worktreeForRun: () => dir });
+    const terminal = broker.provider('run-1');
+    const human = broker.acquire(terminal.terminal_id, 'human');
+    await expect(adapter.send(started.session_handle, 'PING')).rejects.toThrow('Terminal already has a writer');
+    broker.release(terminal.terminal_id, human.lease_id);
+    const sending = adapter.send(started.session_handle, 'PING');
+    expect(() => broker.acquire(terminal.terminal_id, 'human')).toThrow('Terminal already has a writer');
+    await sending;
+    expect(() => broker.acquire(terminal.terminal_id, 'human')).not.toThrow();
   }, 20_000);
 
   it('reports provider exit and supervisor loss as offline', async () => {

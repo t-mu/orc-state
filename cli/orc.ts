@@ -53,6 +53,7 @@ const COMMANDS: Record<string, string> = {
   'events-tail':        'events-tail.ts',
   'event-cursor':       'event-cursor.ts',
   'control':            'control.ts',
+  'terminal':           'terminal.ts',
   'sessions':           'sessions.ts',
   'run-start':          'run-start.ts',
   'report-for-duty':    'report-for-duty.ts',
@@ -133,6 +134,7 @@ const RECOVERY_DEBUG = [
 
 const INSPECTION = [
   'watch',
+  'terminal',
   'runs-active',
   'sessions',
   'events-tail',

@@ -12,6 +12,7 @@ import {
 } from './controlProtocol.ts';
 import { readEventBatch, withEventDb } from './eventLog.ts';
 import { readControlSnapshot } from './statusProjection.ts';
+import { TerminalBroker } from './terminalBroker.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
@@ -22,6 +23,7 @@ export interface ControlServerOptions {
   commands?: CommandDispatcher;
   pollMs?: number;
   heartbeatMs?: number;
+  terminals?: TerminalBroker;
 }
 
 export interface ControlServer {
@@ -131,6 +133,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
   const commands = options.commands ?? new CommandDispatcher(stateDir, {
     send: () => Promise.reject(new Error('Command transport is not configured')),
   }, sessionAuthenticator(stateDir));
+  const terminals = options.terminals ?? new TerminalBroker(stateDir);
   const token = randomBytes(32).toString('hex');
   const tokenDigest = digest(token);
   const streams = new Set<ServerResponse>();
@@ -205,6 +208,35 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return ok({ events: rows, cursor: rows.at(-1)?.seq ?? after });
     }
     if (req.method === 'GET' && url.pathname === '/v1/events/stream') return stream(res, seqParam(url, 'after'));
+    if (req.method === 'POST' && url.pathname === '/v1/terminals/provider') {
+      const body = await readBody(req);
+      if (typeof body.run_id !== 'string' || !body.run_id) throw new ControlError('bad_request', 'run_id is required', 400);
+      return ok({ terminal: terminals.provider(body.run_id) });
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/terminals/shell') {
+      const body = await readBody(req);
+      if (typeof body.run_id !== 'string' || !body.run_id) throw new ControlError('bad_request', 'run_id is required', 400);
+      return ok({ terminal: terminals.shell(body.run_id) });
+    }
+    const terminalRoute = /^\/v1\/terminals\/([^/]+)(?:\/(lease|input|resize))?$/.exec(url.pathname);
+    if (terminalRoute) {
+      const terminalId = decodeURIComponent(terminalRoute[1]);
+      const action = terminalRoute[2];
+      if (req.method === 'GET' && !action) return ok(terminals.observe(terminalId, seqParam(url, 'after')));
+      if (req.method === 'POST' && action) {
+        const body = await readBody(req);
+        if (action === 'lease') {
+          if (body.action === 'acquire') return ok(terminals.acquire(terminalId, body.owner_id as string, body.ttl_ms === undefined ? undefined : Number(body.ttl_ms)));
+          if (typeof body.lease_id !== 'string') throw new ControlError('bad_request', 'lease_id is required', 400);
+          if (body.action === 'renew') { terminals.renew(terminalId, body.lease_id); return ok({}); }
+          if (body.action === 'release') { terminals.release(terminalId, body.lease_id); return ok({}); }
+          throw new ControlError('bad_request', 'Invalid lease action', 400);
+        }
+        if (typeof body.lease_id !== 'string') throw new ControlError('bad_request', 'lease_id is required', 400);
+        if (action === 'input') { terminals.input(terminalId, body.lease_id, body.data as string); return ok({}); }
+        if (action === 'resize') { terminals.resize(terminalId, body.lease_id, Number(body.columns), Number(body.rows)); return ok({}); }
+      }
+    }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
       const credential = actorCredential(req);
       const body = await readBody(req) as unknown as SubmitCommandRequest;
@@ -244,6 +276,10 @@ export async function startControlServer(stateDir: string, options: ControlServe
     server.once('error', reject);
     server.listen(socketPath, () => { server.off('error', reject); resolve(); });
   });
+  const terminalSweep = setInterval(() => {
+    try { terminals.reconcile(); } catch { /* next sweep retries; requests still report errors */ }
+  }, 5_000);
+  terminalSweep.unref();
   chmodSync(socketPath, 0o600);
   const tokenPath = join(stateDir, CONTROL_TOKEN_FILE);
   writeFileSync(tokenPath, token, { mode: 0o600 });
@@ -260,6 +296,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     // Endpoint cleanup is synchronous so a caller that exits right away leaves no stale descriptor.
     close: () => {
       closing = true;
+      clearInterval(terminalSweep);
       for (const res of streams) res.destroy();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       let ours = true;
