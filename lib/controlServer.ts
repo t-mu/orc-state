@@ -13,6 +13,7 @@ import {
 import { readEventBatch, withEventDb } from './eventLog.ts';
 import { readControlSnapshot } from './statusProjection.ts';
 import { TerminalBroker } from './terminalBroker.ts';
+import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
@@ -52,6 +53,18 @@ function digest(value: string): Buffer { return createHash('sha256').update(valu
 
 // Exact command-delivery failure messages; anything else is an internal error.
 const DOMAIN_ERRORS: Array<[string | RegExp, ControlErrorCode, number]> = [
+  [/^Message (sender is not scoped|recipient does not match|actor does not match|reply is not scoped)/, 'forbidden', 403],
+  [/^Message (session is not running|run is not active or owned|recipient has no active run)/, 'forbidden', 403],
+  ['Master message must target its run', 'forbidden', 403],
+  ['Review requires two worker sessions', 'bad_request', 400],
+  ['Review request requires artifact references', 'bad_request', 400],
+  ['Invalid semantic message', 'bad_request', 400],
+  ['Invalid artifact references', 'bad_request', 400],
+  ['Invalid parent message', 'bad_request', 400],
+  ['Result requires a parent message', 'bad_request', 400],
+  ['Review result requires a review request', 'bad_request', 400],
+  ['Message idempotency key conflicts', 'conflict', 409],
+  ['Message not found', 'not_found', 404],
   ['Command caller is not authenticated', 'unauthenticated', 401],
   ['Authenticated session is not running', 'forbidden', 403],
   ['Authenticated actor does not match session', 'forbidden', 403],
@@ -200,6 +213,28 @@ export async function startControlServer(stateDir: string, options: ControlServe
     const url = new URL(req.url ?? '/', 'http://orc.local');
     const ok = (result: unknown, status = 200) => send(res, status, { protocol_version: CONTROL_PROTOCOL_VERSION, ok: true, result });
     if (req.method === 'GET' && url.pathname === '/v1/snapshot') return ok(readControlSnapshot(stateDir));
+    if (url.pathname === '/v1/messages') {
+      const principal = sessionAuthenticator(stateDir)(actorCredential(req));
+      if (!principal) throw new ControlError('unauthenticated', 'Message caller is not authenticated', 401);
+      if (req.method === 'GET') return ok({ messages: listMessages(stateDir, principal, url.searchParams.get('include_consumed') === '1') });
+      if (req.method === 'POST') {
+        const body = await readBody(req);
+        if (typeof body.run_id !== 'string' || typeof body.recipient_session_id !== 'string' || typeof body.idempotency_key !== 'string'
+          || typeof body.kind !== 'string' || typeof body.text !== 'string') throw new ControlError('bad_request', 'Message fields are required', 400);
+        const input: SendMessageInput = { runId: body.run_id, recipientSessionId: body.recipient_session_id,
+          idempotencyKey: body.idempotency_key, kind: body.kind as SendMessageInput['kind'], text: body.text,
+          ...(body.artifact_refs === undefined ? {} : { artifactRefs: body.artifact_refs as string[] }),
+          ...(body.parent_message_id === undefined ? {} : { parentMessageId: body.parent_message_id as string }),
+        };
+        return ok({ message: sendMessage(stateDir, principal, input, commands) }, 202);
+      }
+    }
+    const messageAck = /^\/v1\/messages\/([^/]+)\/consume$/.exec(url.pathname);
+    if (req.method === 'POST' && messageAck) {
+      const principal = sessionAuthenticator(stateDir)(actorCredential(req));
+      if (!principal) throw new ControlError('unauthenticated', 'Message caller is not authenticated', 401);
+      return ok({ message: consumeMessage(stateDir, principal, decodeURIComponent(messageAck[1])) });
+    }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       const after = seqParam(url, 'after');
       const limit = Number(url.searchParams.get('limit') ?? '100');

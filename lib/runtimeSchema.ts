@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
-export const RUNTIME_SCHEMA_VERSION = 5;
+export const RUNTIME_SCHEMA_VERSION = 6;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
@@ -216,6 +216,26 @@ export function migrateRuntimeSchema(db: Database.Database): void {
       db.pragma('user_version = 5');
     }).immediate();
   }
+  currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (currentVersion === 5) {
+    db.transaction(() => {
+      if ((db.pragma('user_version', { simple: true }) as number) !== 5) return;
+      db.exec(`
+        ALTER TABLE messages ADD COLUMN sender_id TEXT;
+        ALTER TABLE messages ADD COLUMN sender_session_id TEXT;
+        ALTER TABLE messages ADD COLUMN recipient_id TEXT;
+        ALTER TABLE messages ADD COLUMN recipient_session_id TEXT;
+        ALTER TABLE messages ADD COLUMN recipient_run_id TEXT REFERENCES runs(run_id) ON DELETE SET NULL;
+        ALTER TABLE messages ADD COLUMN parent_message_id TEXT REFERENCES messages(message_id) ON DELETE SET NULL;
+        ALTER TABLE messages ADD COLUMN state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'consumed'));
+        ALTER TABLE messages ADD COLUMN consumed_at TEXT;
+        CREATE INDEX messages_recipient_idx ON messages(recipient_session_id, state, created_at);
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (6, 'semantic_message_routing', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 6');
+    }).immediate();
+  }
   const health = inspectRuntimeSchemaDb(db);
   if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
 }
@@ -251,6 +271,7 @@ function inspectRuntimeSchemaDb(db: Database.Database): { ok: boolean; version: 
       if (byVersion.get(3) !== 'durable_command_delivery') messages.push('missing migration record 3');
       if (byVersion.get(4) !== 'session_supervision') messages.push('missing migration record 4');
       if (byVersion.get(5) !== 'terminal_broker') messages.push('missing migration record 5');
+      if (byVersion.get(6) !== 'semantic_message_routing') messages.push('missing migration record 6');
     }
     const violations = db.pragma('foreign_key_check') as unknown[];
     if (violations.length > 0) messages.push(`${violations.length} foreign key violation(s)`);

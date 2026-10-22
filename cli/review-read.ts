@@ -11,6 +11,7 @@ import { queryEvents } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { boolFlag, flag } from '../lib/args.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
+import { readBridgedReviewFeedback } from '../lib/messageBridge.ts';
 
 const runId = flag('run-id');
 const asJson = boolFlag('json');
@@ -30,6 +31,17 @@ const events = queryEvents(STATE_DIR, {
 const byAgent = new Map<string, ReviewSubmittedEvent>();
 for (const e of events) {
   byAgent.set(e.agent_id, e);
+}
+const eventMessageIds = new Set(events.map((event) => event.payload.message_id).filter((id): id is string => typeof id === 'string'));
+for (const message of readBridgedReviewFeedback(STATE_DIR, runId)) {
+  if (eventMessageIds.has(message.messageId)) continue;
+  const current = byAgent.get(message.agentId);
+  if (current && current.ts > message.createdAt) continue;
+  byAgent.set(message.agentId, {
+    seq: 0, ts: message.createdAt, event: 'review_submitted', actor_type: 'agent', actor_id: message.agentId,
+    run_id: runId, agent_id: message.agentId,
+    payload: { outcome: message.outcome, findings: message.findings, message_id: message.messageId },
+  });
 }
 const reviews = [...byAgent.values()];
 

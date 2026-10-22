@@ -295,7 +295,7 @@ Commands for digging into active runs and the event stream.
 | `events-tail` | Print the last N events. |
 | `events-filter` | Query events by run, agent, or event type. |
 | `event-cursor` | Inspect a durable consumer offset; reset it for replay while the coordinator is stopped. |
-| `control` | Client for the local daemon control API: `snapshot`, `events`, `command`, `ack`. |
+| `control` | Client for the local daemon control API: `snapshot`, `events`, `command`, `ack`, `message`, `messages`, `consume`. |
 
 **Flags:**
 
@@ -311,6 +311,9 @@ Commands for digging into active runs and the event stream.
 | `control events` | `[--after=<seq>]` `[--limit=<N>]` `[--follow]` `[--max-events=<N>]` |
 | `control command` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<kind>` `--idempotency-key=<key>` `[--payload=<json>]` `[--session-token=<id>]` |
 | `control ack` | `<command_id>` `--state=<accepted\|running\|completed\|failed>` `[--session-token=<id>]` |
+| `control message` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<message\|question\|review_request\|feedback\|result>` `--text=<text>` `--idempotency-key=<key>` `[--artifact-ref=<ref>]` `[--parent-message=<id>]` `[--session-token=<id>]` |
+| `control messages` | `[--include-consumed]` `[--session-token=<id>]` |
+| `control consume` | `<message_id>` `[--session-token=<id>]` |
 | `waiting-input` | `[--json]` |
 
 The coordinator reads at most 128 event rows per tick and records its cursor in

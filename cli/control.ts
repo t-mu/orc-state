@@ -9,6 +9,10 @@
  *   orc control command --run-id=<id> --recipient-session=<id> --kind=<kind>
  *     --idempotency-key=<key> [--payload=<json>] [--session-token=<id>]
  *   orc control ack <command_id> --state=<accepted|running|completed|failed> [--session-token=<id>]
+ *   orc control message --run-id=<id> --recipient-session=<id> --kind=<message|question|review_request|feedback|result>
+ *     --text=<text> --idempotency-key=<key> [--artifact-ref=<ref>] [--parent-message=<id>]
+ *   orc control messages [--include-consumed]
+ *   orc control consume <message_id>
  *
  * Mutations authenticate with the caller's running provider session ID, taken
  * from --session-token or ORC_SESSION_TOKEN.
@@ -17,6 +21,7 @@ import { boolFlag, flag } from '../lib/args.ts';
 import { ControlClient } from '../lib/controlClient.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import type { AckState } from '../lib/controlProtocol.ts';
+import type { MessageKind } from '../lib/messageRouter.ts';
 import { cliError } from './shared.ts';
 
 const [subcommand, ...positional] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
@@ -70,8 +75,22 @@ try {
     if (!positional[0]) throw new Error('Usage: orc control ack <command_id> --state=<state>');
     const result = await client.acknowledge(positional[0], required('state') as AckState);
     console.log(JSON.stringify(result.command));
+  } else if (subcommand === 'message') {
+    const refs = process.argv.slice(2).filter((arg) => arg.startsWith('--artifact-ref=')).map((arg) => arg.slice('--artifact-ref='.length));
+    const result = await client.sendMessage({
+      runId: required('run-id'), recipientSessionId: required('recipient-session'),
+      idempotencyKey: required('idempotency-key'), kind: required('kind') as MessageKind, text: required('text'),
+      ...(refs.length ? { artifactRefs: refs } : {}),
+      ...(flag('parent-message') ? { parentMessageId: flag('parent-message')! } : {}),
+    });
+    console.log(JSON.stringify(result.message));
+  } else if (subcommand === 'messages') {
+    console.log(JSON.stringify(await client.messages(boolFlag('include-consumed'))));
+  } else if (subcommand === 'consume') {
+    if (!positional[0]) throw new Error('Usage: orc control consume <message_id>');
+    console.log(JSON.stringify((await client.consumeMessage(positional[0])).message));
   } else {
-    throw new Error('Usage: orc control <snapshot|events|command|ack> [flags]');
+    throw new Error('Usage: orc control <snapshot|events|command|ack|message|messages|consume> [flags]');
   }
 } catch (error) {
   cliError(error);

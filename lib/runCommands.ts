@@ -10,6 +10,7 @@ import { INPUT_REQUEST_HEARTBEAT_INTERVAL_MS } from './constants.ts';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from './inputRequestConfig.ts';
 import type { Claim } from '../types/claims.ts';
 import { logger } from './logger.ts';
+import { bridgeInputRequest, readDurableInputResponse } from './messageBridge.ts';
 
 const INPUT_REQUEST_TIMEOUT_GRACE_MS = 250;
 
@@ -155,6 +156,7 @@ export async function executeRunInputRequest(
     agent_id: agentId,
     payload: { question, request_id: requestId },
   });
+  bridgeInputRequest(STATE_DIR, runId, agentId, requestId, question);
 
   function readLatestInputResponse() {
     const events = readEventsSince(EVENTS_FILE, 0);
@@ -182,6 +184,11 @@ export async function executeRunInputRequest(
   let lastHeartbeatAt = Date.now();
 
   while (true) {
+    const durableResponse = readDurableInputResponse(STATE_DIR, requestId);
+    if (durableResponse !== null) {
+      process.stdout.write(`${durableResponse}\n`);
+      process.exit(0);
+    }
     const responseEvent = readLatestInputResponse();
     if (responseEvent) {
       process.stdout.write(`${String((responseEvent.payload as Record<string, unknown>).response)}\n`);
@@ -212,6 +219,11 @@ export async function executeRunInputRequest(
 
   const timeoutGraceDeadline = Date.now() + INPUT_REQUEST_TIMEOUT_GRACE_MS;
   while (Date.now() < timeoutGraceDeadline) {
+    const durableResponse = readDurableInputResponse(STATE_DIR, requestId);
+    if (durableResponse !== null) {
+      process.stdout.write(`${durableResponse}\n`);
+      process.exit(0);
+    }
     const finalResponseEvent = readLatestInputResponse();
     if (finalResponseEvent) {
       process.stdout.write(`${String((finalResponseEvent.payload as Record<string, unknown>).response)}\n`);

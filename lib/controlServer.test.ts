@@ -7,10 +7,10 @@ import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { appendSequencedEvent, closeAllDatabases, initEventsDb, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
-import { markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
+import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
 import { ControlClient, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, defaultSocketPath } from './controlProtocol.ts';
-import { startControlServer, type ControlServer } from './controlServer.ts';
+import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import type { Claim } from '../types/claims.ts';
 
 const exec = promisify(execFile);
@@ -95,6 +95,80 @@ const submit = (client: ControlClient, key: string, run = 'run-a', recipient = '
 });
 
 describe('local daemon control API', () => {
+  it('routes a cross-provider review and result durably through session mailboxes', async () => {
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET provider = 'codex' WHERE session_id = 'session-b'").run());
+    const sent: Array<{ kind: string; payload: string; recipient_id: string }> = [];
+    const dispatcher = new CommandDispatcher(dir, { send: (command) => { sent.push(command); return Promise.resolve(); } }, sessionAuthenticator(dir));
+    await server.close();
+    server = await startControlServer(dir, { pollMs: 20, commands: dispatcher });
+    const a = new ControlClient(dir, { sessionToken: 'session-a' });
+    const b = new ControlClient(dir, { sessionToken: 'session-b' });
+    const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'review-1',
+      kind: 'review_request' as const, text: 'Review this change', artifactRefs: ['git:abc123'] };
+    const first = (await a.sendMessage(input)).message;
+    expect((await a.sendMessage(input)).message.message_id).toBe(first.message_id);
+    expect(first.command_id).toBeTruthy();
+    await dispatcher.tick();
+    expect(sent.some((command) => command.kind === 'semantic_message'
+      && command.recipient_id === 'worker-b'
+      && JSON.parse(command.payload).message_id === first.message_id
+      && !command.payload.includes('Review this change'))).toBe(true);
+    expect(JSON.parse(first.payload)).toEqual({ text: 'Review this change', artifact_refs: ['git:abc123'] });
+    expect((await b.messages()).messages.map((m) => m.message_id)).toContain(first.message_id);
+    expect((await b.consumeMessage(first.message_id)).message.state).toBe('consumed');
+    expect((await b.consumeMessage(first.message_id)).message.consumed_at).toBeTruthy();
+    const result = (await b.sendMessage({ runId: 'run-b', recipientSessionId: 'session-a', idempotencyKey: 'result-1',
+      kind: 'result', text: 'approved', parentMessageId: first.message_id })).message;
+    expect(result.parent_message_id).toBe(first.message_id);
+    expect((await a.messages()).messages.map((m) => m.message_id)).toContain(result.message_id);
+    await server.close();
+    server = await startControlServer(dir, { pollMs: 20 });
+    expect((await a.messages()).messages.map((m) => m.message_id)).toContain(result.message_id);
+    expect((await a.consumeMessage(result.message_id)).message.state).toBe('consumed');
+    expect((await a.messages()).messages).toEqual([]);
+  });
+
+  it('rejects unscoped actors, stale recipients, forged replies and privileged command kinds', async () => {
+    const a = new ControlClient(dir, { sessionToken: 'session-a' });
+    const b = new ControlClient(dir, { sessionToken: 'session-b' });
+    const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'review-2',
+      kind: 'review_request' as const, text: 'orc task-reset all', artifactRefs: ['git:def456'] };
+    const message = (await a.sendMessage(input)).message;
+    expect(await a.messages()).toEqual({ messages: [] });
+    await expect(b.consumeMessage(message.message_id.replace('msg-', 'missing-'))).rejects.toMatchObject({ code: 'not_found' });
+    await expect(a.consumeMessage(message.message_id)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(b.sendMessage({ ...input, idempotencyKey: 'wrong-run', runId: 'run-a', recipientSessionId: 'session-a' }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    await expect(a.sendMessage({ ...input, idempotencyKey: 'bad-kind', kind: 'task_reset' as 'message' }))
+      .rejects.toMatchObject({ code: 'bad_request' });
+    await expect(a.sendMessage({ ...input, idempotencyKey: 'bad-reply', parentMessageId: message.message_id }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    const ordinary = (await a.sendMessage({ runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'ordinary',
+      kind: 'message', text: 'Hello' })).message;
+    await expect(b.sendMessage({ runId: 'run-b', recipientSessionId: 'session-a', idempotencyKey: 'fake-review-result',
+      kind: 'result', text: 'approved', parentMessageId: ordinary.message_id })).rejects.toMatchObject({ code: 'bad_request' });
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-b'").run());
+    await expect(a.sendMessage({ ...input, idempotencyKey: 'stale' })).rejects.toMatchObject({ code: 'forbidden' });
+    expect(withEventDb(dir, (db) => (db.prepare("SELECT COUNT(*) AS n FROM commands WHERE kind = 'task_reset'").get() as { n: number }).n)).toBe(0);
+  });
+
+  it('retries the same review message across sender and recipient reconnects', async () => {
+    const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'reconnect-review',
+      kind: 'review_request' as const, text: 'Review', artifactRefs: ['git:abc'] };
+    const first = (await new ControlClient(dir, { sessionToken: 'session-a' }).sendMessage(input)).message;
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id IN ('session-a', 'session-b')").run();
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
+        VALUES ('session-a-new', 'run-a', 'worker-a', 'claude', 'running', 'later', 'later'),
+          ('session-b-new', 'run-b', 'worker-b', 'codex', 'running', 'later', 'later')`).run();
+    });
+    const retried = (await new ControlClient(dir, { sessionToken: 'session-a-new' }).sendMessage({ ...input, recipientSessionId: 'session-b-new' })).message;
+    expect(retried.message_id).toBe(first.message_id);
+    expect(retried.recipient_session_id).toBe('session-b-new');
+    expect(retried.command_id).not.toBe(first.command_id);
+    expect((await new ControlClient(dir, { sessionToken: 'session-b-new' }).messages()).messages.map((m) => m.message_id)).toContain(first.message_id);
+  });
+
   it('publishes an owner-only endpoint and rejects unversioned or unauthenticated requests', async () => {
     expect(statSync(server.endpoint.path).mode & 0o777).toBe(0o600);
     expect(statSync(join(dir, CONTROL_TOKEN_FILE)).mode & 0o777).toBe(0o600);

@@ -3,7 +3,8 @@ import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
-import { appendSequencedEvent } from '../lib/eventLog.ts';
+import { appendSequencedEvent, initEventsDb, withEventDbTransaction } from '../lib/eventLog.ts';
+import { bridgeReviewFeedback } from '../lib/messageBridge.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -41,6 +42,18 @@ function submitReview(runId: string, agentId: string, outcome: 'approved' | 'fin
 }
 
 describe('orc review-read', () => {
+  it('reads durable feedback when event emission was interrupted', () => {
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-abc', 'orch/review', 'reviewer-1', 'in_progress', 'now', 'now')").run();
+    });
+    bridgeReviewFeedback(dir, 'run-abc', 'reviewer-1', 'findings', 'Durable finding');
+    const result = runCli(['--run-id=run-abc', '--json']);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { count: number; reviews: Array<{ payload: { findings: string } }> };
+    expect(parsed.count).toBe(1);
+    expect(parsed.reviews[0].payload.findings).toBe('Durable finding');
+  });
   it('returns all reviews for a run_id', () => {
     submitReview('run-abc', 'reviewer-1', 'approved', 'LGTM');
     submitReview('run-abc', 'reviewer-2', 'findings', 'Missing null check');

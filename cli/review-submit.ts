@@ -5,6 +5,7 @@ import { flag } from '../lib/args.ts';
 import { cliError } from './shared.ts';
 import { storeDrawer, wingFromTaskRef } from '../lib/memoryStore.ts';
 import { readClaims } from '../lib/stateReader.ts';
+import { bridgeReviewFeedback } from '../lib/messageBridge.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -29,6 +30,7 @@ if (!reason?.trim()) {
 }
 
 try {
+  const messageId = bridgeReviewFeedback(STATE_DIR, runId, agentId, outcome as 'approved' | 'findings', reason);
   appendSequencedEvent(STATE_DIR, {
     ts: new Date().toISOString(),
     event: 'review_submitted',
@@ -36,7 +38,7 @@ try {
     actor_id: agentId,
     run_id: runId,
     agent_id: agentId,
-    payload: { outcome: outcome as 'approved' | 'findings', findings: reason },
+    payload: { outcome: outcome as 'approved' | 'findings', findings: reason, message_id: messageId },
   });
   console.log(`review_submitted: run=${runId} agent=${agentId} outcome=${outcome}`);
 } catch (error) {
