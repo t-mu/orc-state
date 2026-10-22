@@ -41,7 +41,11 @@ export function bridgeInputRequest(stateDir: string, runId: string, agentId: str
 export function bridgeInputResponse(stateDir: string, runId: string, agentId: string, response: string, requestId?: string | null,
   authority: { sessionId?: string | null | undefined; trustedMaster?: boolean } = {}): string | null {
   return withEventDbTransaction(stateDir, (db) => {
-    if (!activeRun(db, runId, agentId)) return null;
+    const run = db.prepare('SELECT agent_id, state FROM runs WHERE run_id = ?').get(runId) as Pick<Run, 'agent_id' | 'state'> | undefined;
+    if (!run) return null;
+    if (run.agent_id !== agentId) throw new Error('Message actor is not scoped to an active run');
+    // A run that already ended has no live recipient; keep the legacy event-only answer.
+    if (!['claimed', 'in_progress'].includes(run.state)) return null;
     const request = db.prepare(`SELECT request_id, message_id, state, response FROM input_requests WHERE run_id = ?
       ${requestId ? 'AND request_id = ?' : ''} ORDER BY created_at DESC, rowid DESC LIMIT 1`)
       .get(...(requestId ? [runId, requestId] : [runId])) as { request_id: string; message_id: string | null; state: string; response: string | null } | undefined;

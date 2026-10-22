@@ -20,6 +20,13 @@ beforeEach(() => {
 afterEach(() => { closeAllDatabases(); cleanupTempStateDir(dir); });
 
 describe('legacy input and review message bridge', () => {
+  it('keeps late answers to an ended run on the legacy event path but rejects another agent', () => {
+    bridgeInputRequest(dir, 'run-a', 'worker-a', 'request-1', 'Choose A?');
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE runs SET state = 'failed' WHERE run_id = 'run-a'").run());
+    expect(bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', null, { trustedMaster: true })).toBeNull();
+    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-b', 'yes', null, { trustedMaster: true })).toThrow('not scoped');
+  });
+
   it('binds a human answer to one pending request and preserves it after reconnect', () => {
     const first = bridgeInputRequest(dir, 'run-a', 'worker-a', 'request-1', 'Choose A?');
     bridgeInputRequest(dir, 'run-b', 'worker-b', 'request-2', 'Choose B?');
