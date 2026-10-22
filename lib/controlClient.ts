@@ -8,6 +8,7 @@ import {
   type AckState, type ControlEndpoint, type ControlResponse, type StreamFrame, type SubmitCommandRequest,
 } from './controlProtocol.ts';
 import type { DurableCommand } from './commandDelivery.ts';
+import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 
@@ -91,6 +92,22 @@ export class ControlClient {
   }
 
   snapshot(): Promise<ControlSnapshot> { return this.call('GET', '/v1/snapshot'); }
+
+  messages(includeConsumed = false): Promise<{ messages: SemanticMessage[] }> {
+    return this.call('GET', `/v1/messages${includeConsumed ? '?include_consumed=1' : ''}`);
+  }
+
+  sendMessage(input: SendMessageInput): Promise<{ message: SemanticMessage }> {
+    return this.call('POST', '/v1/messages', {
+      run_id: input.runId, recipient_session_id: input.recipientSessionId,
+      idempotency_key: input.idempotencyKey, kind: input.kind, text: input.text,
+      artifact_refs: input.artifactRefs, parent_message_id: input.parentMessageId,
+    });
+  }
+
+  consumeMessage(messageId: string): Promise<{ message: SemanticMessage }> {
+    return this.call('POST', `/v1/messages/${encodeURIComponent(messageId)}/consume`);
+  }
 
   events(after: number, limit = 100): Promise<{ events: EventRow[]; cursor: number }> {
     return this.call('GET', `/v1/events?after=${after}&limit=${limit}`);

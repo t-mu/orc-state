@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory, storeDrawer } from '../lib/memoryStore.ts';
 
 import { createAdapter } from '../adapters/index.ts';
+import { bridgeInputResponse } from '../lib/messageBridge.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { PlanAuthoringError, writePlan, type WritePlanInput } from '../lib/planAuthoring.ts';
 import { PLANS_DIR } from '../lib/paths.ts';
@@ -1114,6 +1115,9 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
   const latestRequest = inputRequests.length > 0
     ? inputRequests.at(-1) as unknown as Record<string, unknown>
     : null;
+  const latestRequestId = (latestRequest?.payload as Record<string, unknown> | undefined)?.request_id;
+  const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
+    typeof latestRequestId === 'string' ? latestRequestId : null);
 
   try {
     setRunInputState(stateDir, run_id as string, agent_id as string, { inputState: null });
@@ -1132,6 +1136,8 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
     payload: {
       response,
       question: (latestRequest?.payload as Record<string, unknown> | undefined)?.question ?? null,
+      request_id: typeof latestRequestId === 'string' ? latestRequestId : null,
+      message_id: messageId,
     },
   } as import('../types/events.ts').OrcEventInput);
 

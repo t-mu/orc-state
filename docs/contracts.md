@@ -564,6 +564,20 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 | `GET` | `/v1/events/stream?after=<seq>` | NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
 | `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |
 | `POST` | `/v1/commands/<id>/ack` | Recipient ACK `{ state: accepted\|running\|completed\|failed }` -> `{ command }` |
+| `POST` | `/v1/messages` | Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |
+| `GET` | `/v1/messages?include_consumed=1` | Caller mailbox `{ messages }`; consumed messages are omitted by default |
+| `POST` | `/v1/messages/<id>/consume` | Idempotently acknowledge a mailbox item -> `{ message }` |
+
+Message kinds are `message`, `question`, `review_request`, `feedback`, and
+`result`. A review request needs explicit artifact refs; a result needs a
+parent message ID. The daemon checks both runs and both sessions when routing
+between workers. It queues a non-side-effecting `semantic_message` command to
+the recipient provider with only the message ID. Text is stored as data in
+SQLite and cannot select a control command kind. A recipient can reconnect
+with a new session on the same run and read or consume its queued mailbox items.
+`run-input-request`, `run-input-respond`, and `review-submit` continue emitting
+their existing events while writing corresponding message records for active
+runs; legacy event readers remain supported.
 
 **Snapshot then subscribe.** Read `/v1/snapshot`, then stream from
 `after=cursor`. Every event committed after the snapshot has `seq > cursor`. To
