@@ -3,7 +3,7 @@ ref: vnext-control-plane/206-package-one-project-container
 feature: vnext-control-plane
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - vnext-control-plane/195-prove-provider-and-terminal-protocols
   - vnext-control-plane/201-add-local-daemon-control-api
