@@ -62,6 +62,7 @@ const DOMAIN_ERRORS: Array<[string | RegExp, ControlErrorCode, number]> = [
   ['Invalid artifact references', 'bad_request', 400],
   ['Invalid parent message', 'bad_request', 400],
   ['Result requires a parent message', 'bad_request', 400],
+  ['Review result requires a review request', 'bad_request', 400],
   ['Message idempotency key conflicts', 'conflict', 409],
   ['Message not found', 'not_found', 404],
   ['Command caller is not authenticated', 'unauthenticated', 401],

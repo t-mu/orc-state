@@ -1117,7 +1117,7 @@ export function handleRespondInput(stateDir: string, { run_id, agent_id, respons
     : null;
   const latestRequestId = (latestRequest?.payload as Record<string, unknown> | undefined)?.request_id;
   const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
-    typeof latestRequestId === 'string' ? latestRequestId : null);
+    typeof latestRequestId === 'string' ? latestRequestId : null, { trustedMaster: true });
 
   try {
     setRunInputState(stateDir, run_id as string, agent_id as string, { inputState: null });

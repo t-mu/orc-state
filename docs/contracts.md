@@ -577,7 +577,10 @@ SQLite and cannot select a control command kind. A recipient can reconnect
 with a new session on the same run and read or consume its queued mailbox items.
 `run-input-request`, `run-input-respond`, and `review-submit` continue emitting
 their existing events while writing corresponding message records for active
-runs; legacy event readers remain supported.
+runs; legacy event readers remain supported. For a durable input request,
+`run-input-respond` requires the running master session ID via
+`--session-token` or `ORC_SESSION_TOKEN`. Review feedback is queued for the
+worker's run mailbox.
 
 **Snapshot then subscribe.** Read `/v1/snapshot`, then stream from
 `after=cursor`. Every event committed after the snapshot has `seq > cursor`. To

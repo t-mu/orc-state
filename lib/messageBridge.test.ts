@@ -24,10 +24,13 @@ describe('legacy input and review message bridge', () => {
     const first = bridgeInputRequest(dir, 'run-a', 'worker-a', 'request-1', 'Choose A?');
     bridgeInputRequest(dir, 'run-b', 'worker-b', 'request-2', 'Choose B?');
     expect(first).toBeTruthy();
-    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'wrong request', 'request-2')).toThrow('not pending');
+    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'wrong request', 'request-2', { trustedMaster: true })).toThrow('not pending');
+    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1')).toThrow('running master session');
     expect(readDurableInputResponse(dir, 'request-1')).toBeNull();
-    const answer = bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1');
+    const answer = bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1', { sessionId: 'master-1' });
     expect(answer).toBeTruthy();
+    expect(bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1', { sessionId: 'master-1' })).toBe(answer);
+    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'no', 'request-1', { sessionId: 'master-1' })).toThrow('different response');
     expect(readDurableInputResponse(dir, 'request-1')).toBe('yes');
     expect(readDurableInputResponse(dir, 'request-2')).toBeNull();
     expect(withEventDb(dir, (db) => db.prepare('SELECT parent_message_id FROM messages WHERE message_id = ?').get(answer)))
@@ -45,7 +48,7 @@ describe('legacy input and review message bridge', () => {
   it('keeps legacy review feedback addressable as a durable message', () => {
     const id = bridgeReviewFeedback(dir, 'run-a', 'worker-a', 'findings', 'Fix line 3');
     expect(id).toBeTruthy();
-    const mailbox = listMessages(dir, { agentId: 'master', sessionId: 'master-1' });
+    const mailbox = listMessages(dir, { agentId: 'worker-a', sessionId: 'worker-a-1' });
     expect(mailbox.find((message) => message.message_id === id)).toMatchObject({ kind: 'feedback', state: 'queued' });
     expect(JSON.parse(mailbox.find((message) => message.message_id === id)!.payload)).toEqual({ text: 'Fix line 3', outcome: 'findings' });
   });

@@ -143,9 +143,30 @@ describe('local daemon control API', () => {
       .rejects.toMatchObject({ code: 'bad_request' });
     await expect(a.sendMessage({ ...input, idempotencyKey: 'bad-reply', parentMessageId: message.message_id }))
       .rejects.toMatchObject({ code: 'forbidden' });
+    const ordinary = (await a.sendMessage({ runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'ordinary',
+      kind: 'message', text: 'Hello' })).message;
+    await expect(b.sendMessage({ runId: 'run-b', recipientSessionId: 'session-a', idempotencyKey: 'fake-review-result',
+      kind: 'result', text: 'approved', parentMessageId: ordinary.message_id })).rejects.toMatchObject({ code: 'bad_request' });
     withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-b'").run());
     await expect(a.sendMessage({ ...input, idempotencyKey: 'stale' })).rejects.toMatchObject({ code: 'forbidden' });
     expect(withEventDb(dir, (db) => (db.prepare("SELECT COUNT(*) AS n FROM commands WHERE kind = 'task_reset'").get() as { n: number }).n)).toBe(0);
+  });
+
+  it('retries the same review message across sender and recipient reconnects', async () => {
+    const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'reconnect-review',
+      kind: 'review_request' as const, text: 'Review', artifactRefs: ['git:abc'] };
+    const first = (await new ControlClient(dir, { sessionToken: 'session-a' }).sendMessage(input)).message;
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id IN ('session-a', 'session-b')").run();
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
+        VALUES ('session-a-new', 'run-a', 'worker-a', 'claude', 'running', 'later', 'later'),
+          ('session-b-new', 'run-b', 'worker-b', 'codex', 'running', 'later', 'later')`).run();
+    });
+    const retried = (await new ControlClient(dir, { sessionToken: 'session-a-new' }).sendMessage({ ...input, recipientSessionId: 'session-b-new' })).message;
+    expect(retried.message_id).toBe(first.message_id);
+    expect(retried.recipient_session_id).toBe('session-b-new');
+    expect(retried.command_id).not.toBe(first.command_id);
+    expect((await new ControlClient(dir, { sessionToken: 'session-b-new' }).messages()).messages.map((m) => m.message_id)).toContain(first.message_id);
   });
 
   it('publishes an owner-only endpoint and rejects unversioned or unauthenticated requests', async () => {

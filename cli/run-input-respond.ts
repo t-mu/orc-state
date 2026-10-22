@@ -39,7 +39,8 @@ const latestRequestId = typeof latestPayload?.request_id === 'string' ? latestPa
 
 let messageId: string | null;
 try {
-  messageId = bridgeInputResponse(STATE_DIR, runId, agentId, response, requestedId ?? latestRequestId);
+  messageId = bridgeInputResponse(STATE_DIR, runId, agentId, response, requestedId ?? latestRequestId,
+    { sessionId: flag('session-token') ?? process.env.ORC_SESSION_TOKEN });
   if (requestedId && !messageId) throw new Error('Input request is not pending for this run');
 } catch (error) {
   console.error((error as Error).message);

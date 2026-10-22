@@ -73,6 +73,7 @@ export function sendMessage(stateDir: string, principal: CommandPrincipal, input
     if (input.kind === 'result' && !input.parentMessageId) throw new Error('Result requires a parent message');
     if (input.parentMessageId) {
       const parent = read(db, input.parentMessageId);
+      if (input.kind === 'result' && parent.kind !== 'review_request') throw new Error('Review result requires a review request');
       if (parent.sender_id !== recipient.agent_id || parent.recipient_id !== sender.agent_id
         || parent.run_id !== (recipient.run_id ?? input.runId) || parent.recipient_run_id !== sender.run_id) {
         throw new Error('Message reply is not scoped to its request');
@@ -80,8 +81,13 @@ export function sendMessage(stateDir: string, principal: CommandPrincipal, input
     }
     const existing = db.prepare('SELECT * FROM messages WHERE idempotency_key = ?').get(input.idempotencyKey) as SemanticMessage | undefined;
     if (existing) {
-      if (existing.run_id !== input.runId || existing.sender_session_id !== sender.session_id || existing.recipient_session_id !== recipient.session_id
+      if (existing.run_id !== input.runId || existing.sender_id !== sender.agent_id || existing.recipient_id !== recipient.agent_id
+        || existing.recipient_run_id !== recipient.run_id
         || existing.kind !== input.kind || existing.payload !== payload || existing.parent_message_id !== (input.parentMessageId ?? null)) throw new Error('Message idempotency key conflicts');
+      if (existing.recipient_session_id !== recipient.session_id && existing.state === 'queued') {
+        db.prepare('UPDATE messages SET recipient_session_id = ?, command_id = NULL WHERE message_id = ?').run(recipient.session_id, existing.message_id);
+        return read(db, existing.message_id);
+      }
       return existing;
     }
     const id = `msg-${randomUUID()}`;
@@ -94,7 +100,7 @@ export function sendMessage(stateDir: string, principal: CommandPrincipal, input
   });
   if (message.recipient_run_id && commands && !message.command_id) {
     const command = commands.enqueueFromCoordinator({ runId: message.recipient_run_id, recipientSessionId: message.recipient_session_id,
-      idempotencyKey: `message:${message.message_id}`, kind: 'semantic_message', payload: { message_id: message.message_id }, sideEffecting: false });
+      idempotencyKey: `message:${message.message_id}:${message.recipient_session_id}`, kind: 'semantic_message', payload: { message_id: message.message_id }, sideEffecting: false });
     return withEventDbTransaction(stateDir, (db) => {
       db.prepare('UPDATE messages SET command_id = ? WHERE message_id = ? AND command_id IS NULL').run(command.command_id, message.message_id);
       return read(db, message.message_id);

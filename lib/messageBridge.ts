@@ -37,17 +37,29 @@ export function bridgeInputRequest(stateDir: string, runId: string, agentId: str
   });
 }
 
-/** Returns null for legacy event-only requests; otherwise binds response to one pending request. */
-export function bridgeInputResponse(stateDir: string, runId: string, agentId: string, response: string, requestId?: string | null): string | null {
+/** Returns null for legacy event-only requests; otherwise binds response to one request. */
+export function bridgeInputResponse(stateDir: string, runId: string, agentId: string, response: string, requestId?: string | null,
+  authority: { sessionId?: string | null | undefined; trustedMaster?: boolean } = {}): string | null {
   return withEventDbTransaction(stateDir, (db) => {
     if (!activeRun(db, runId, agentId)) return null;
-    const request = db.prepare(`SELECT request_id, message_id FROM input_requests WHERE run_id = ? AND state = 'pending'
+    const request = db.prepare(`SELECT request_id, message_id, state, response FROM input_requests WHERE run_id = ?
       ${requestId ? 'AND request_id = ?' : ''} ORDER BY created_at DESC, rowid DESC LIMIT 1`)
-      .get(...(requestId ? [runId, requestId] : [runId])) as { request_id: string; message_id: string | null } | undefined;
+      .get(...(requestId ? [runId, requestId] : [runId])) as { request_id: string; message_id: string | null; state: string; response: string | null } | undefined;
     if (!request) {
       if (requestId && db.prepare('SELECT 1 FROM input_requests WHERE run_id = ?').get(runId)) throw new Error('Input request is not pending for this run');
       return null;
     }
+    if (!authority.trustedMaster) {
+      const master = authority.sessionId ? runningSession(db, 'master', null) : null;
+      if (!master || master.session_id !== authority.sessionId) throw new Error('Input response requires a running master session');
+    }
+    if (request.state === 'answered') {
+      if (request.response !== response) throw new Error('Input request already has a different response');
+      const existing = db.prepare('SELECT message_id FROM messages WHERE idempotency_key = ?')
+        .get(`input-response:${request.request_id}`) as { message_id: string } | undefined;
+      return existing?.message_id ?? null;
+    }
+    if (request.state !== 'pending') throw new Error('Input request is not pending for this run');
     const recipient = runningSession(db, agentId, runId);
     const id = `msg-${randomUUID()}`;
     db.prepare(`INSERT INTO messages
@@ -72,15 +84,28 @@ export function readDurableInputResponse(stateDir: string, requestId: string): s
 export function bridgeReviewFeedback(stateDir: string, runId: string, agentId: string, outcome: 'approved' | 'findings', reason: string): string | null {
   return withEventDbTransaction(stateDir, (db) => {
     if (!activeRun(db, runId, agentId)) return null;
-    const sender = runningSession(db, agentId, runId);
-    const master = runningSession(db, 'master', null);
+    const recipient = runningSession(db, agentId, runId);
     const id = `msg-${randomUUID()}`;
     db.prepare(`INSERT INTO messages
       (message_id, run_id, idempotency_key, direction, kind, payload, created_at, sender_id, sender_session_id,
        recipient_id, recipient_session_id, recipient_run_id)
-      VALUES (?, ?, ?, 'outbound', 'feedback', ?, ?, ?, ?, 'master', ?, NULL)`)
+      VALUES (?, ?, ?, 'inbound', 'feedback', ?, ?, 'reviewer', NULL, ?, ?, ?)`)
       .run(id, runId, `review:${id}`, JSON.stringify({ text: reason, outcome }), new Date().toISOString(),
-        agentId, sender?.session_id ?? null, master?.session_id ?? null);
+        agentId, recipient?.session_id ?? null, runId);
     return id;
+  });
+}
+
+export function readBridgedReviewFeedback(stateDir: string, runId: string): Array<{
+  messageId: string; agentId: string; outcome: 'approved' | 'findings'; findings: string; createdAt: string;
+}> {
+  return withEventDb(stateDir, (db) => {
+    const rows = db.prepare("SELECT message_id, recipient_id, payload, created_at FROM messages WHERE run_id = ? AND kind = 'feedback' AND sender_id = 'reviewer' ORDER BY created_at, rowid")
+      .all(runId) as Array<{ message_id: string; recipient_id: string; payload: string; created_at: string }>;
+    return rows.flatMap((row) => {
+      const payload = JSON.parse(row.payload) as { text?: unknown; outcome?: unknown };
+      if ((payload.outcome !== 'approved' && payload.outcome !== 'findings') || typeof payload.text !== 'string') return [];
+      return [{ messageId: row.message_id, agentId: row.recipient_id, outcome: payload.outcome, findings: payload.text, createdAt: row.created_at }];
+    });
   });
 }
