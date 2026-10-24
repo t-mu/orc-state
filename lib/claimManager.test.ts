@@ -339,6 +339,27 @@ describe('setRunInputState', () => {
 // ── finishRun ──────────────────────────────────────────────────────────────
 
 describe('finishRun', () => {
+  it('repairs stale finalization fields on a matching terminal retry without changing the task', () => {
+    seed(dir, {
+      tasks: [makeTask('orch/init', 'done')],
+      claims: [{
+        run_id: 'run-old', task_ref: 'orch/init', agent_id: 'agent-01', state: 'failed',
+        claimed_at: pastDate(), lease_expires_at: pastDate(), finished_at: pastDate(),
+        finalization_state: 'blocked_finalize', finalization_retry_count: 3,
+        finalization_blocked_reason: 'old retry timeout',
+      }],
+    });
+
+    finishRun(dir, 'run-old', 'agent-01', { success: false });
+
+    expect(readClaims(dir).claims[0]).toMatchObject({
+      state: 'failed', finalization_state: null, finalization_retry_count: 0,
+      finalization_blocked_reason: null,
+    });
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
+    expect(readEvents(dir)).toHaveLength(0);
+  });
+
   it('sets claim to done and task to done on success', () => {
     seed(dir);
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');

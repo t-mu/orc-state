@@ -6,6 +6,7 @@ import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateH
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { closeAllDatabases, queryEvents, withEventDb } from '../lib/eventLog.ts';
+import { recordProviderSession } from '../lib/runStore.ts';
 
 // Task 203 acceptance: a structured provider (Codex app-server, played by
 // test-fixtures/fake-codex-app-server.ts) is claimed, ACKs the task envelope
@@ -116,7 +117,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     const adapter = coordinator.getCoordinatorAdapter('codex');
     for (const claim of claims(dir)) await adapter.stop(`app:${String(claim.agent_id)}`);
     closeAllDatabases();
-    vi.unmock('../lib/runWorktree.ts');
+    vi.doUnmock('../lib/runWorktree.ts');
     for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
     Object.assign(process.env, savedEnv);
     cleanupTempStateDir(dir);
@@ -131,10 +132,14 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
       version: '1',
       agents: [{
         agent_id: 'master', provider: 'claude', role: 'master', capabilities: [], model: null, dispatch_mode: null,
-        status: 'running', session_handle: 'pty:master', provider_ref: null, last_heartbeat_at: null,
+        status: 'running', session_handle: 'pty:master', session_token: 'master-e2e', provider_ref: null, last_heartbeat_at: null,
         registered_at: new Date().toISOString(),
       }],
     }));
+    recordProviderSession(dir, {
+      sessionId: 'master-e2e', runId: null, agentId: 'master', provider: 'claude',
+      providerRef: null, startedAt: new Date().toISOString(),
+    });
 
     const coordinator = await import('../coordinator.ts');
 
@@ -164,7 +169,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     expect(held).toMatchObject({ state: 'queued', acknowledged_at: null });
     expect(queryEvents(dir, { run_id: runId, event_type: 'command_queued' }).some((event) => (event.payload as Record<string, unknown>).reason === 'recipient busy')).toBe(true);
 
-    const respond = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'run-input-respond', `--run-id=${runId}`, `--agent-id=${agentId}`, '--response=teal'], { encoding: 'utf8' });
+    const respond = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'run-input-respond', `--run-id=${runId}`, `--agent-id=${agentId}`, '--response=teal', '--session-token=master-e2e'], { encoding: 'utf8' });
     expect(respond.status, respond.stderr).toBe(0);
     await waitFor(() => queryEvents(dir, { run_id: runId, event_type: 'work_complete' })[0], 'work complete');
     expect(readFileSync(join(dir, 'answer.txt'), 'utf8').trim()).toBe('teal');
