@@ -2,6 +2,23 @@
 
 orc-state is configured through environment variables and an optional JSON config file. Environment variables take precedence over config file values.
 
+## Global project registry (new project API)
+
+`orc project` stores registered Git repositories and non-secret settings in a global `registry.db`. Set `ORC_DATA_HOME` to choose its directory. By default it uses `~/Library/Application Support/orc-state` on macOS or `${XDG_DATA_HOME:-~/.local/share}/orc-state` on Linux. Each project receives a stable id and an external `projects/<id>` state directory. No config file or orc files are needed in the target repository to register it.
+
+```bash
+orc project add /path/to/repo --name=my-project
+orc project list
+orc project select <project-id>
+orc project show --project=<project-id>
+orc project config set worker_pool.max_workers 2 --project=<project-id>
+orc project config get worker_pool.max_workers --project=<project-id>
+orc project config list --global
+orc project config unset worker_pool.max_workers --project=<project-id>
+```
+
+Project lookup uses `--project`, then `ORC_PROJECT_ID`, then the current repository's canonical Git root, then the selected project only outside a Git repository. An unknown or ambiguous match is an error. Settings are validated against known non-secret config keys. Effective values resolve from CLI overrides, environment, project settings, then global settings. `project config list` shows effective values; `--global` shows stored global values. This registry is available now; existing coordinator commands still use the legacy config and state layout until the subsequent project-store integration tasks switch them.
+
 ## Environment Variables
 
 ### Core Paths
