@@ -67,6 +67,8 @@ describe('project task SQLite schema', () => {
     store.createTask({ ref: 'feature/1', title: 'First', bodyMarkdown: '# First' });
     store.withDatabase((db) => {
       db.prepare("INSERT INTO task_runs (run_id, task_ref, spec_revision, state, created_at, updated_at) VALUES ('run-1','feature/1',1,'claimed','now','now')").run();
+      expect(() => db.prepare("UPDATE task_runs SET spec_revision = 2 WHERE run_id = 'run-1'").run()).toThrow('immutable');
+      expect(() => db.prepare("UPDATE task_runs SET task_ref = 'feature/other' WHERE run_id = 'run-1'").run()).toThrow('immutable');
       expect(() => db.prepare("INSERT INTO task_runs (run_id, task_ref, spec_revision, state, created_at, updated_at) VALUES ('run-2','feature/1',1,'claimed','now','now')").run()).toThrow();
       expect(() => db.prepare("INSERT INTO task_runs (run_id, task_ref, spec_revision, state, created_at, updated_at) VALUES ('run-3','feature/1',2,'failed','now','now')").run()).toThrow();
       db.prepare("UPDATE task_runs SET state = 'failed' WHERE run_id = 'run-1'").run();

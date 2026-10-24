@@ -73,6 +73,8 @@ export function migrateProjectTaskSchema(db: Database.Database): void {
         );
         CREATE UNIQUE INDEX task_runs_one_active_task_idx ON task_runs(task_ref)
           WHERE state IN ('claimed','in_progress','work_complete');
+        CREATE TRIGGER task_runs_binding_immutable BEFORE UPDATE OF task_ref, spec_revision ON task_runs
+          BEGIN SELECT RAISE(ABORT, 'run task and revision are immutable'); END;
         CREATE TRIGGER tasks_ref_immutable BEFORE UPDATE OF ref ON tasks BEGIN SELECT RAISE(ABORT, 'task ref is immutable'); END;
         CREATE TRIGGER revisions_immutable_update BEFORE UPDATE ON task_spec_revisions BEGIN SELECT RAISE(ABORT, 'spec revision is immutable'); END;
         CREATE TRIGGER revisions_immutable_delete BEFORE DELETE ON task_spec_revisions BEGIN SELECT RAISE(ABORT, 'spec revision is immutable'); END;
