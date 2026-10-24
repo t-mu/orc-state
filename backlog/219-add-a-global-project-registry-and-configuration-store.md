@@ -3,7 +3,7 @@ ref: global-project-state/219-add-a-global-project-registry-and-configuration-st
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/218-freeze-the-project-and-task-ownership-contracts
 ---
