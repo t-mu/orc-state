@@ -4,6 +4,10 @@ Runtime contracts, state schemas, and lifecycle invariants for the orc-state
 orchestration framework. This is a reference for people building on, extending,
 or debugging the system.
 
+The future global-project ownership contract is in
+[Global project and task ownership contract](./global-project-contract.md).
+The current file describes the active attached and sibling implementations.
+
 ---
 
 ## State Directory
