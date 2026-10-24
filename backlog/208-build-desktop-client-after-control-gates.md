@@ -10,11 +10,13 @@ depends_on:
   - vnext-control-plane/203-integrate-structured-provider-runtimes
   - vnext-control-plane/205-add-terminal-broker-and-worktree-shell
   - vnext-control-plane/206-package-one-project-container
+  - vnext-control-plane/207-route-peer-review-and-human-messages
+  - isolagent-worker-runtime/217-prove-the-cli-tui-isolation-gate-and-block-desktop-until-it-passes
 ---
 
 # Task 208 — Build desktop client after control gates
 
-Depends on Tasks 201, 202, 203, 205 and 206. Do not start before those gates pass.
+Depends on Tasks 201, 202, 203, 205, 206, 207 and 217. Do not start before the isolated CLI/TUI gate in Task 217 passes.
 
 ## Scope
 
@@ -32,7 +34,7 @@ Ink TUI and CLI exist. There is no desktop app or stable daemon client contract.
 
 ### Desired state
 
-An optional desktop client reconnects to the daemon, observes runs and intervenes while CLI/TUI remain functional.
+An optional desktop client reconnects to the daemon, observes isolated VM runs and intervenes while CLI/TUI remain fully functional without the desktop.
 
 ### Start here
 
@@ -48,6 +50,7 @@ An optional desktop client reconnects to the daemon, observes runs and intervene
 1. Must render snapshot plus cursor events without lost updates on reconnect.
 2. Must keep privileged Docker/filesystem operations in main process or daemon.
 3. Must preserve CLI/TUI workflow when app is closed.
+4. Must use the proven isolagent worker and scoped message APIs; an isolated run cannot silently fall back to an unsandboxed host worker.
 
 ## Implementation
 
@@ -60,6 +63,7 @@ An optional desktop client reconnects to the daemon, observes runs and intervene
 - [ ] Existing run is visible and controllable after GUI restart.
 - [ ] Renderer has no raw Docker, filesystem or SQLite privilege.
 - [ ] CLI remains usable throughout desktop disconnect.
+- [ ] Task 217 has passed its two-worker isolated CLI/TUI smoke before desktop implementation begins.
 
 ## Tests
 

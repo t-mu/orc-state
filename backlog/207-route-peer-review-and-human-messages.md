@@ -18,7 +18,7 @@ Depends on Tasks 199, 201 and 203.
 
 **In scope:** Master/worker/peer/human semantic messages, question, review request, feedback and result types with delivery state.
 
-**Out of scope:** Provider-private context sharing or huge transcript copying.
+**Out of scope:** Provider-private context sharing, huge transcript copying, and VM guest transport (Task 215).
 
 ---
 
@@ -30,7 +30,7 @@ Input requests and reviews exist as CLI/event workflows; peer messages are not d
 
 ### Desired state
 
-Actors exchange scoped, acknowledged messages through daemon/SQLite, optionally referring to Git refs and artifacts.
+Actors exchange scoped, acknowledged messages through daemon/SQLite, optionally referring to Git refs and artifacts. This remains usable by host workers and supplies the message store consumed by isolated VM workers in Task 215.
 
 ### Start here
 
@@ -46,18 +46,21 @@ Actors exchange scoped, acknowledged messages through daemon/SQLite, optionally 
 1. Must preserve existing blocker and review lifecycle while adding message IDs and consumption state.
 2. Must enforce sender/recipient/run authorization.
 3. Must support cross-provider worker review with explicit artifact references.
+4. Must support peer messages between separate active runs without granting either worker control over the other's run.
 
 ## Implementation
 
 1. Add typed message records and route through command delivery.
 2. Bridge existing input/review commands to message records behind compatibility readers.
 3. Test duplicate delivery, stale recipient, unauthorized actor and two-provider review.
+4. Bind each message to sender and recipient identities, source and destination runs, correlation ID, and idempotency key; authorize cross-run peer delivery separately from privileged run commands.
 
 ## Acceptance criteria
 
 - [ ] Worker A requests review from Worker B and receives durable result after reconnect.
 - [ ] Human response is bound to the correct request and run.
 - [ ] Untrusted text cannot trigger a privileged control action.
+- [ ] Two workers on separate runs exchange a correlated review request and result without cross-run command authority.
 
 ## Tests
 
