@@ -39,6 +39,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.doUnmock('node:child_process');
   closeMemoryDb();
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;

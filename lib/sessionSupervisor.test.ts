@@ -170,6 +170,9 @@ describe('PID reuse with real processes', () => {
     const recorded = processIdentity(original.pid!)!;
     original.kill('SIGKILL');
     await new Promise((resolve) => original.once('exit', resolve));
+    // macOS ps reports lstart only to the nearest second. Keep the replacement
+    // outside that second so the test actually exercises an identity mismatch.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const other = await spawnSleeper();
     const previousStateDir = process.env.ORC_STATE_DIR;
     try {

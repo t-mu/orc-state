@@ -155,8 +155,9 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     delete process.env.ORC_MAX_WORKERS;
     delete process.env.ORC_WORKER_PROVIDER;
     delete process.env.ORC_WORKER_MODEL;
-    vi.unmock('../adapters/index.ts');
-    vi.unmock('../lib/runWorktree.ts');
+    vi.doUnmock('../adapters/index.ts');
+    vi.doUnmock('../lib/runWorktree.ts');
+    vi.doUnmock('node:child_process');
   });
 
   it('dispatches task and records run_started/run_finished from agent CLI calls', async () => {
