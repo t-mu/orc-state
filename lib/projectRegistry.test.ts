@@ -52,6 +52,20 @@ describe('global project registry', () => {
     expect(registry.resolve({ cwd: worktree, env: {} })).toEqual(project);
   });
 
+  it('registers the working tree when Git metadata is stored separately', () => {
+    const root = join(temp, 'product');
+    execFileSync('git', ['init', '-q', `--separate-git-dir=${join(temp, 'metadata.git')}`, root]);
+    expect(canonicalProjectGitRoot(root)).toBe(realpathSync(root));
+    expect(registry.add(root).canonicalGitRoot).toBe(realpathSync(root));
+  });
+
+  it('does not persist a project if its external state directory cannot be created', () => {
+    const root = gitRepo('product');
+    writeFileSync(join(temp, 'data', 'projects'), 'not a directory');
+    expect(() => registry.add(root)).toThrow();
+    expect(registry.list()).toEqual([]);
+  });
+
   it('applies explicit, environment, cwd, then outside-repo selection and rejects unknown ids', () => {
     const a = registry.add(gitRepo('a'));
     const b = registry.add(gitRepo('b'));

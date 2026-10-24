@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { selectProject } from './projectContract.ts';
 
@@ -106,13 +106,25 @@ export function projectDataHome(env: NodeJS.ProcessEnv = process.env): string {
 /** Worktrees and symlinks resolve to the owning repository's canonical root. */
 export function canonicalProjectGitRoot(path: string): string {
   const cwd = realpathSync(resolve(path));
-  const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  const canonicalTop = realpathSync(top);
-  const canonicalCommon = realpathSync(common);
-  return canonicalCommon === join(canonicalTop, '.git') ? canonicalTop :
-    canonicalCommon.endsWith('/.git') ? dirname(canonicalCommon) : canonicalTop;
+  let top: string;
+  try {
+    top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch (error) {
+    if (String((error as { stderr?: Buffer }).stderr).includes('not a git repository')) throw new OutsideGitRepositoryError();
+    throw error;
+  }
+  const gitDir = realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-dir'], { cwd, encoding: 'utf8' }).trim());
+  const commonDir = realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, encoding: 'utf8' }).trim());
+  if (gitDir === commonDir) return realpathSync(top);
+  const worktrees = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const first = worktrees.split('\n', 1)[0];
+  if (!first.startsWith('worktree ')) throw new Error(`Cannot identify canonical Git worktree for ${path}`);
+  const main = realpathSync(first.slice('worktree '.length));
+  if (main === commonDir) throw new Error(`Cannot identify the main worktree for a repository with separate Git metadata: ${path}; pass --project explicitly`);
+  return main;
 }
+
+class OutsideGitRepositoryError extends Error {}
 
 function mapProject(row: Record<string, string>): ProjectRecord {
   return { id: row.id, name: row.name, canonicalGitRoot: row.git_root, stateDir: row.state_dir, createdAt: row.created_at };
@@ -162,14 +174,15 @@ export class ProjectRegistry {
     const id = randomUUID();
     const stateDir = join(this.dataHome, 'projects', id);
     const project: ProjectRecord = { id, name: name?.trim() || gitRoot.split('/').at(-1) || id, canonicalGitRoot: gitRoot, stateDir, createdAt: new Date().toISOString() };
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     try {
       this.db.prepare('INSERT INTO projects (id, name, git_root, state_dir, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(id, project.name, gitRoot, stateDir, project.createdAt);
     } catch (error) {
+      rmSync(stateDir, { recursive: true, force: true });
       if ((error as Error).message.includes('UNIQUE constraint failed: projects.git_root')) throw new Error(`Git repository is already registered: ${gitRoot}`);
       throw error;
     }
-    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     return project;
   }
 
@@ -197,7 +210,10 @@ export class ProjectRegistry {
   resolve({ explicitProjectId, env = process.env, cwd = process.cwd() }: { explicitProjectId?: string | null; env?: NodeJS.ProcessEnv; cwd?: string } = {}): ProjectRecord {
     let cwdGitRoot: string | null = null;
     try { cwdGitRoot = canonicalProjectGitRoot(cwd); }
-    catch { /* Outside a Git repository, the selected project may apply. */ }
+    catch (error) {
+      if (!(error instanceof OutsideGitRepositoryError)) throw error;
+      // Outside a Git repository, the selected project may apply.
+    }
     const { projectId } = selectProject({ projects: this.list(), explicitProjectId: explicitProjectId ?? null, environmentProjectId: env.ORC_PROJECT_ID ?? null, cwdGitRoot, selectedProjectId: this.selectedId() });
     return this.get(projectId)!;
   }
