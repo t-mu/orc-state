@@ -12,11 +12,12 @@ depends_on:
   - vnext-control-plane/206-package-one-project-container
   - vnext-control-plane/207-route-peer-review-and-human-messages
   - isolagent-worker-runtime/217-prove-the-cli-tui-isolation-gate-and-block-desktop-until-it-passes
+  - global-project-state/228-prove-the-clean-repo-cli-and-tui-workflow
 ---
 
 # Task 208 — Build desktop client after control gates
 
-Depends on Tasks 201, 202, 203, 205, 206, 207 and 217. Do not start before the isolated CLI/TUI gate in Task 217 passes.
+Depends on Tasks 201, 202, 203, 205, 206, 207, 217 and 228. Do not start before both the isolated CLI/TUI gate in Task 217 and the clean-repo project-state gate in Task 228 pass.
 
 ## Scope
 
@@ -64,6 +65,7 @@ An optional desktop client reconnects to the daemon, observes isolated VM runs a
 - [ ] Renderer has no raw Docker, filesystem or SQLite privilege.
 - [ ] CLI remains usable throughout desktop disconnect.
 - [ ] Task 217 has passed its two-worker isolated CLI/TUI smoke before desktop implementation begins.
+- [ ] Task 228 has proved database-owned task state and project-aware CLI/TUI against a clean target repo before desktop implementation begins.
 
 ## Tests
 

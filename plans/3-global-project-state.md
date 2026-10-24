@@ -4,7 +4,18 @@ name: global-project-state
 title: Global project state and sibling-mode retirement
 created_at: 2026-10-24T19:49:28Z
 updated_at: 2026-10-24T19:49:28Z
-derived_task_refs: []
+derived_task_refs:
+  - global-project-state/218-freeze-the-project-and-task-ownership-contracts
+  - global-project-state/219-add-a-global-project-registry-and-configuration-store
+  - global-project-state/220-put-task-definitions-and-lifecycle-state-in-project-sqlite
+  - global-project-state/221-make-task-creation-and-revision-apis-storage-neutral
+  - global-project-state/222-make-markdown-an-explicit-portable-interface
+  - global-project-state/223-move-dispatch-and-completion-into-sqlite-transactions
+  - global-project-state/224-run-workers-against-a-registered-target-without-repo-local-framework-files
+  - global-project-state/225-expose-project-aware-operations-in-cli-and-tui
+  - global-project-state/226-migrate-attached-and-sibling-installations-safely
+  - global-project-state/227-retire-sibling-specific-behavior-and-the-status-mirror
+  - global-project-state/228-prove-the-clean-repo-cli-and-tui-workflow
 ---
 
 # Global project state and sibling-mode retirement
