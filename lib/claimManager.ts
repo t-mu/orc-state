@@ -230,7 +230,20 @@ export function finishRun(
     if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
 
     assertValidTimestamp(at, 'finishRun');
-    if (claim.state === 'done' || claim.state === 'failed') return;
+    if (claim.state === 'done' || claim.state === 'failed') {
+      // A retry is normally a no-op. Older terminal claims can retain stale
+      // finalization fields; repair those through the same lifecycle command
+      // without changing the task or emitting another terminal event.
+      if (claim.state === (success ? 'done' : 'failed') &&
+          (claim.finalization_state != null || claim.finalization_retry_count != null && claim.finalization_retry_count !== 0 ||
+           claim.finalization_blocked_reason != null)) {
+        claim.finalization_state = null;
+        claim.finalization_retry_count = 0;
+        claim.finalization_blocked_reason = null;
+        commitClaims(stateDir, claims);
+      }
+      return;
+    }
     claim.state       = success ? 'done' : 'failed';
     claim.finished_at = at;
     if (!success && failureReason) claim.failure_reason = failureReason;
