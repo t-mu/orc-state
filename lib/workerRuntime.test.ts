@@ -389,6 +389,7 @@ describe('launchWorkerSession execution mode', () => {
     vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
     const buildSessionBootstrapSpy = vi.fn(() => 'BOOTSTRAP');
     vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
+    vi.resetModules();
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ provider: 'codex' });
     await launchWorkerSession('/tmp/state', agent, {
