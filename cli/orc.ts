@@ -49,6 +49,7 @@ const COMMANDS: Record<string, string> = {
   'doctor':             'doctor.ts',
   'preflight':          'preflight.ts',
   'init':               'init.ts',
+  'project':            'project.ts',
   'runs-active':        'runs-active.ts',
   'events-tail':        'events-tail.ts',
   'event-cursor':       'event-cursor.ts',
