@@ -3,7 +3,7 @@ ref: global-project-state/218-freeze-the-project-and-task-ownership-contracts
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 ---
 
 # Task 218 — Freeze the project and task ownership contracts
