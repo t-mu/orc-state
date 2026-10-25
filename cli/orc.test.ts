@@ -57,13 +57,12 @@ describe('cli/orc.ts', () => {
     expect(result.status).toBe(0);
   });
 
-  it('dispatches watch with tsx/esm when running from source', () => {
-    expect(buildNodeArgs('watch', '/tmp/watch.ts', ['--once'])).toEqual([
-      '--import',
-      'tsx/esm',
-      '/tmp/watch.ts',
-      '--once',
-    ]);
+  it('dispatches watch with tsx/esm from orc\'s own install when running from source', () => {
+    const args = buildNodeArgs('watch', '/tmp/watch.ts', ['--once']);
+    expect(args[0]).toBe('--import');
+    // An absolute URL, so a caller's cwd (a project's target repository) never has to provide tsx.
+    expect(args[1]).toMatch(/^file:\/\/.*\/node_modules\/tsx\//);
+    expect(args.slice(2)).toEqual(['/tmp/watch.ts', '--once']);
   });
 
   it('dispatches watch without tsx/esm when running compiled', () => {
