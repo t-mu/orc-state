@@ -19,6 +19,17 @@ orc project config unset worker_pool.max_workers --project=<project-id>
 
 Project lookup uses `--project`, then `ORC_PROJECT_ID`, then the current repository's canonical Git root, then the selected project only outside a Git repository. An unknown or ambiguous match is an error. Settings are validated against known non-secret config keys. Effective values resolve from CLI overrides, environment, project settings, then global settings. `project config list` shows effective values; `--global` shows stored global values. This registry is available now; existing coordinator commands still use the legacy config and state layout until the subsequent project-store integration tasks switch them.
 
+### Running against a registered project
+
+An orc command runs in **project mode** when `ORC_PROJECT_ID` names a registered project, or when no legacy override (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE`) is set and the current directory's canonical Git root is a registered project. A repository that still has a legacy `.orc-state/` or `orc-state.config.json` stays in legacy mode until it is migrated; `ORC_PROJECT_ID` overrides that.
+
+In project mode:
+
+- State, run worktrees (`<state>/worktrees/<run_id>`), PTY logs, provider settings, plans and exports live under the project's state directory in the data home. Git operations (worktrees, branches, merges) run against the registered target repository; only Git's own worktree metadata lands in the target's `.git`.
+- Settings come from the registry (`orc project config`), project over global, with environment and CLI overrides on top. No `orc-state.config.json` is read or needed.
+- Workers receive `ORC_PROJECT_ID`, their session id as `ORC_SESSION_TOKEN`, and the control socket as `ORC_CONTROL_SOCKET`. `ORC_STATE_DIR` is still set as a temporary bridge, and `ORC_HOME`/`ORC_REPO_ROOT`/`ORC_CONFIG_FILE` are blanked so an inherited legacy value cannot redirect them.
+- Sandboxed workers may write their worktree, the project state directory, the control socket directory (when a long path moves it out of the state directory), and the target's `.git` object, ref and worktree-metadata subtrees — never the target working tree itself. Claude, Codex, and the Codex app-server runtime get the same grants.
+
 ### Project tasks
 
 A registered project's state directory holds `runtime.db`, the SQLite task store. A state directory with `runtime.db` is SQLite-authoritative for task definitions: `backlog.json` there is a read-only projection, and Markdown files under `backlog/` are not synced into it. Tasks are created and edited through the store, with no Markdown file in any repository:

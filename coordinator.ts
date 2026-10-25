@@ -35,7 +35,7 @@ import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, t
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
-import { STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
+import { ACTIVE_PROJECT, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
@@ -237,7 +237,8 @@ const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 // This stays resolveRepoRoot() (an orchestration-root consumer); the git ops
 // below use the imported TARGET_REPO_ROOT. See the authoritative repo-root
 // call-site classification table in lib/paths.ts (task 185).
-const REPO_ROOT = resolveRepoRoot();
+// A project has no orchestration repository; its workers find orc through the installation.
+const REPO_ROOT = ACTIVE_PROJECT ? ORC_PACKAGE_ROOT : resolveRepoRoot();
 
 // ── State ──────────────────────────────────────────────────────────────────
 

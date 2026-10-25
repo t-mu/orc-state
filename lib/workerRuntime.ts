@@ -8,6 +8,8 @@ import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { recordProviderSession } from './runStore.ts';
+import { ACTIVE_PROJECT } from './paths.ts';
+import { defaultSocketPath } from './controlProtocol.ts';
 import { SESSION_OWNER_TTL_MS, currentSessionOwnerId } from './sessionSupervisor.ts';
 import type { WorkerBootstrapProfile } from './sessionBootstrap.ts';
 
@@ -21,7 +23,11 @@ function withPrependedPath(pathValue: string | undefined, entry: string): string
   return [entry, ...segments].join(delimiter);
 }
 
-export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string | null = null): Record<string, string> {
+export function normalizeWorkerEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  repoRoot: string | null = null,
+  project: { id: string; stateDir: string; sessionToken?: string } | null = null,
+): Record<string, string> {
   const env = { ...baseEnv } as Record<string, string>;
   const localBin = repoRoot ? join(repoRoot, 'node_modules', '.bin') : '';
   if (localBin && existsSync(localBin)) {
@@ -34,7 +40,20 @@ export function normalizeWorkerEnv(baseEnv: NodeJS.ProcessEnv, repoRoot: string 
   } else if (env.PATH == null && process.env.PATH) {
     env.PATH = process.env.PATH;
   }
-  if (repoRoot) {
+  if (project) {
+    // Project mode: the worker finds its state through the project identity
+    // and talks to the coordinator over the local control endpoint. Legacy
+    // discovery variables are blanked so a value inherited from the
+    // coordinator's environment cannot redirect it.
+    env.ORC_PROJECT_ID = project.id;
+    env.ORC_STATE_DIR = project.stateDir; // temporary bridge for readers that predate project identity
+    env.ORC_CONTROL_SOCKET = defaultSocketPath(project.stateDir);
+    // The session id is the worker's credential for `orc control` calls on that socket.
+    if (project.sessionToken) env.ORC_SESSION_TOKEN = project.sessionToken;
+    env.ORC_HOME = '';
+    env.ORC_REPO_ROOT = '';
+    env.ORC_CONFIG_FILE = '';
+  } else if (repoRoot) {
     // NB: ORC_REPO_ROOT is the orchestration root here. In the sibling layout it
     // is therefore NOT the target repo, and per resolveTargetRepoRoot's
     // precedence (ORC_REPO_ROOT wins) a worker that resolved TARGET_REPO_ROOT
@@ -191,7 +210,7 @@ export async function launchWorkerSession(
     const effectiveMode: ExecutionMode = agent.role === 'scout' ? 'sandbox' : (executionMode ?? 'full-access');
     const workerEnv = stripWorkerProfileControlEnv(normalizeWorkerEnv({
       ORC_STATE_DIR: stateDir,
-    }, repoRoot));
+    }, repoRoot, ACTIVE_PROJECT ? { id: ACTIVE_PROJECT.id, stateDir, sessionToken } : null));
     const workerBootstrapProfile = resolveWorkerBootstrapProfile();
     const workerStartupProfile = resolveWorkerStartupProfile();
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {

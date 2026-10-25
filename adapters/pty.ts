@@ -28,7 +28,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { defaultSocketPath } from '../lib/controlProtocol.ts';
 import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
@@ -168,7 +169,9 @@ export interface SandboxRootsOptions {
  */
 export function sandboxExtraWritableRoots(opts: SandboxRootsOptions): string[] {
   if (opts.readOnly) return [];
-  const roots = [opts.stateDir, ...targetGitWritableRoots(opts.gitRepoRoot)];
+  // A long state path puts the control socket in a private per-user directory instead.
+  const socketDir = dirname(defaultSocketPath(opts.stateDir));
+  const roots = [opts.stateDir, ...(isWithin(opts.stateDir, socketDir) ? [] : [socketDir]), ...targetGitWritableRoots(opts.gitRepoRoot)];
   return roots.filter((root) => !isWithin(opts.cwd, root));
 }
 
@@ -217,7 +220,8 @@ export function resolveLaunchCwd(config: Record<string, unknown>): string {
     // A task worker must never fall back to the orchestration root: it would
     // run against the main checkout with a whole-root sandbox grant.
     if (config.require_git_checkout === true) throw new Error('worker launch requires an assigned worktree; none recorded');
-    return (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT ?? process.cwd();
+    // A blank ORC_REPO_ROOT (project-mode workers) means "not set".
+    return (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT || process.cwd();
   }
   let isDirectory = false;
   try {

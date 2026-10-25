@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { ORC_CONFIG_FILE } from './paths.ts';
+import { ACTIVE_PROJECT, ORC_CONFIG_FILE } from './paths.ts';
+import { projectConfigObject } from './projectContext.ts';
 import { logger } from './logger.ts';
 import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
 
@@ -145,13 +146,17 @@ interface RawConfigFile {
 }
 
 function parseRawConfigFile(configFile: string = ORC_CONFIG_FILE): RawConfigFile {
-  if (!existsSync(configFile)) return {};
-
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(configFile, 'utf8'));
-  } catch (error) {
-    throw new Error(`Invalid orchestrator config at ${configFile}: ${(error as Error).message}`);
+  if (!existsSync(configFile)) {
+    // A project has no config file: its stored registry settings take the file's place.
+    if (!ACTIVE_PROJECT || configFile !== ORC_CONFIG_FILE) return {};
+    parsed = projectConfigObject(ACTIVE_PROJECT);
+  } else {
+    try {
+      parsed = JSON.parse(readFileSync(configFile, 'utf8'));
+    } catch (error) {
+      throw new Error(`Invalid orchestrator config at ${configFile}: ${(error as Error).message}`);
+    }
   }
 
   const topLevel = parsed as Record<string, unknown>;
