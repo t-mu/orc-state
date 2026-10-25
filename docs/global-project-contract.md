@@ -1,6 +1,6 @@
 # Global project and task ownership contract
 
-This is the target contract for [plan 3](../plans/3-global-project-state.md). Task definitions, revisions, Markdown import/export and transactional lifecycle state are implemented for project state directories (see `docs/configuration.md` → Project tasks). The current attached and sibling layouts continue to operate until the later migration tasks switch their storage and command paths. This document defines the behavior those tasks must preserve and prove.
+This is the target contract for [plan 3](../plans/3-global-project-state.md). Task definitions, revisions, Markdown import/export and transactional lifecycle state are implemented for project state directories (see `docs/configuration.md` → Project tasks). The current attached and sibling layouts continue to operate until `orc project migrate` cuts them over (see `docs/configuration.md` → Migrating an existing installation). This document defines the behavior those tasks must preserve and prove.
 
 ## Project identity and storage
 
@@ -40,6 +40,7 @@ Markdown import and export carry task instructions and metadata. They do not car
 | `todo → blocked` and `blocked → todo` | An operator explicitly blocks or unblocks a task. |
 | `non-todo → todo` | An operator explicitly resets a task, including a completed one. Stale import or migration replay cannot do this. |
 | `todo/claimed/in_progress/blocked → cancelled` | An authorized cancellation ends pending work. |
+| `todo → blocked/done/released/cancelled` | Installation migration carries a task's legacy runtime status, only as the task's first transition (`migration_import`). |
 
 `blocked` means an explicit decision or execution failure. A `todo` task with an unfinished or missing dependency remains `todo` and is reported as waiting for that dependency. Dependencies are satisfied only by `done` or `released` tasks in the same project. Scheduler policy may additionally filter by retry delay, planning state, provider, owner, and capacity. Completion and failure retries are idempotent and cannot append a second terminal event or silently change a completed task's status.
 

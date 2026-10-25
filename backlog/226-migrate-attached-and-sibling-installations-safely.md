@@ -3,7 +3,7 @@ ref: global-project-state/226-migrate-attached-and-sibling-installations-safely
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/222-make-markdown-an-explicit-portable-interface
   - global-project-state/223-move-dispatch-and-completion-into-sqlite-transactions

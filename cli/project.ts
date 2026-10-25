@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { createProjectTask, describeProjectTask, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
+import { migrateLegacyInstallation, migrationCleanupReport } from '../lib/projectMigration.ts';
 import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
 
@@ -18,7 +19,7 @@ function positionals(args: string[]): string[] {
 }
 
 function usage(): never {
-  throw new Error('Usage: orc project add <git-path> [--name=N] | list | select <id> | show [--project=id] | config <list|get|set|unset> [key] [value] [--global] [--project=id] | task <list|show|revisions|create|edit|import|export> [ref|path] [--project=id] | plan <list|show|import|export> [id|path] [--project=id]');
+  throw new Error('Usage: orc project add <git-path> [--name=N] | list | select <id> | show [--project=id] | config <list|get|set|unset> [key] [value] [--global] [--project=id] | task <list|show|revisions|create|edit|import|export> [ref|path] [--project=id] | plan <list|show|import|export> [id|path] [--project=id] | migrate [legacy-path] [--execute [--name=N] | --cleanup-report]');
 }
 
 const TASK_FIELD_FLAGS: Record<string, string> = {
@@ -97,6 +98,17 @@ export function runProjectCommand(args: string[], registry: ProjectRegistry, env
     initProjectTaskStore(project.stateDir);
     return project;
   }
+  if (action === 'migrate') {
+    // Dry run by default; the legacy installation is found from the path (default: cwd).
+    if (values.length > 1 || rest.some((arg) => arg.startsWith('--') && !['--execute', '--cleanup-report'].includes(arg) && !arg.startsWith('--name='))) usage();
+    const source = values[0] ?? cwd;
+    if (rest.includes('--cleanup-report')) {
+      if (rest.length !== values.length + 1) usage();
+      return migrationCleanupReport(source, registry);
+    }
+    if (option(rest, 'name') !== undefined && !rest.includes('--execute')) usage();
+    return migrateLegacyInstallation(source, registry, { execute: rest.includes('--execute'), name: option(rest, 'name') });
+  }
   if (action === 'list') {
     if (values.length || rest.length) usage();
     return registry.list();
@@ -156,7 +168,11 @@ if (isMainModule(process.argv[1], import.meta.url)) {
   let registry: ProjectRegistry | undefined;
   try {
     registry = new ProjectRegistry();
-    console.log(JSON.stringify(runProjectCommand(process.argv.slice(2), registry), null, 2));
+    const result = runProjectCommand(process.argv.slice(2), registry);
+    console.log(JSON.stringify(result, null, 2));
+    // A migration that was refused or failed verification changed nothing it would cut over.
+    const status = (result as { status?: unknown } | null)?.status;
+    if (status === 'blocked' || status === 'verification_failed') process.exitCode = 1;
   } catch (error) {
     console.error((error as Error).message);
     process.exitCode = 1;

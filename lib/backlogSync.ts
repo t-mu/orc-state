@@ -159,7 +159,8 @@ export interface SyncResult {
   added_features: number;
 }
 
-function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncResult {
+/** Apply the spec-to-runtime merge rules to a loaded backlog in place (also used to plan a migration). */
+export function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncResult {
   let changed = false;
   let addedTasks = 0;
   let updatedTasks = 0;

@@ -6,7 +6,7 @@ import { appendSequencedEvent } from './eventLog.ts';
 import { logger } from './logger.ts';
 import {
   parseBodyAcceptanceCriteria, ProjectTaskStore,
-  type ProjectTask, type TaskPriority, type TaskProvider, type TaskSpecChanges,
+  type ProjectTask, type TaskPriority, type TaskProvider, type TaskSpecChanges, type TaskSpecInput,
 } from './projectTaskStore.ts';
 import { isSupportedProvider } from './providers.ts';
 import type { Backlog, Feature, Task } from '../types/backlog.ts';
@@ -352,10 +352,12 @@ function assertActor(actorId: string): void {
   if (!AGENT_ID_RE.test(actorId)) throw new TaskInputError(`Invalid actor-id: ${actorId}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 }
 
-/** Create a database-only task. No Markdown file or repo-local artifact is read or written. */
-export function createProjectTask(stateDir: string, input: TaskAuthoringInput, actorId = 'human'): ProjectTask {
+/**
+ * Validate authoring input and build the new task's revision-1 spec, without
+ * writing anything. Shared by task creation and installation migration.
+ */
+export function prepareProjectTask(store: Pick<ProjectTaskStore, 'getTask'>, input: TaskAuthoringInput, actorId = 'human'): { spec: TaskSpecInput; owner: string | null } {
   assertActor(actorId);
-  const store = requireProjectTaskStore(stateDir);
   const feature = optionalString(input.feature, 'feature')?.trim() || 'general';
   const description = optionalString(input.description, 'description');
   const acceptanceCriteria = optionalStringArray(input.acceptance_criteria, 'acceptance_criteria');
@@ -378,18 +380,29 @@ export function createProjectTask(stateDir: string, input: TaskAuthoringInput, a
   const metadata = definitionMetadata(input, { feature, task_type: 'implementation' }, bodyMarkdown);
   // A body rendered from fields is re-rendered when those fields are edited.
   if (!explicitBody) metadata.body_source = 'rendered';
-  const task = store.inTransaction(() => {
-    store.createTask({
+  return {
+    spec: {
       ref, ...(explicitTitle ? { title: explicitTitle } : {}), bodyMarkdown, metadata,
       ...(priority ? { priority } : {}), requiredProvider: requiredProvider as TaskProvider | null, dependsOn: dependsOn ?? [],
-    });
-    store.setDispatchState(ref, { planningState: 'ready_for_dispatch', delegatedBy: actorId, owner: owner ?? null });
+    },
+    owner: owner ?? null,
+  };
+}
+
+/** Create a database-only task. No Markdown file or repo-local artifact is read or written. */
+export function createProjectTask(stateDir: string, input: TaskAuthoringInput, actorId = 'human'): ProjectTask {
+  const store = requireProjectTaskStore(stateDir);
+  const { spec, owner } = prepareProjectTask(store, input, actorId);
+  const ref = spec.ref;
+  const task = store.inTransaction(() => {
+    store.createTask(spec);
+    store.setDispatchState(ref, { planningState: 'ready_for_dispatch', delegatedBy: actorId, owner });
     return store.getTask(ref)!;
   });
   notify(stateDir, () => appendSequencedEvent(stateDir, {
     ts: task.createdAt, event: 'task_added',
     actor_type: actorId === 'human' ? 'human' : 'agent', actor_id: actorId, task_ref: ref,
-    payload: { title: task.title, task_type: metadata.task_type, feature_ref: feature, spec_revision: task.revision, content_hash: task.contentHash },
+    payload: { title: task.title, task_type: spec.metadata!.task_type, feature_ref: spec.metadata!.feature, spec_revision: task.revision, content_hash: task.contentHash },
   }));
   return task;
 }
