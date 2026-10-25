@@ -3,7 +3,7 @@ ref: global-project-state/224-run-workers-against-a-registered-target-without-re
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/219-add-a-global-project-registry-and-configuration-store
   - global-project-state/223-move-dispatch-and-completion-into-sqlite-transactions
