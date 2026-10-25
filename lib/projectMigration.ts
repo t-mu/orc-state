@@ -400,6 +400,8 @@ export function planMigration(path: string, registry: ProjectRegistry): Migratio
   const markedProject = marker ? registry.get(marker.project_id) : null;
   const existing = markedProject ?? registry.list().find((project) => project.canonicalGitRoot === installation.targetRepoRoot) ?? null;
   const existingStatus = existing ? projectMigrationStatus(existing.stateDir) : null;
+  const projectCoordinator = existing && !markedProject ? coordinatorRunning(existing.stateDir) : null;
+  if (projectCoordinator) blocking('project_coordinator_running', `project ${existing!.name} (${existing!.id}) has a running coordinator (PID ${projectCoordinator}); stop it first`);
   if (existing && !markedProject) {
     const record = readMigrationRecord(existing.stateDir);
     if (existingStatus === null) {
@@ -503,7 +505,9 @@ function backupInstallation(installation: LegacyInstallation, backupDir: string)
   const state = join(backupDir, 'state');
   cpSync(installation.stateDir, state, {
     recursive: true,
-    filter: (source) => !/\.db-(wal|shm)$/.test(source) && !SQLITE_FILES.some((name) => source === join(installation.stateDir, name)),
+    // The migration's own coordinator lock is not part of the installation.
+    filter: (source) => !/\.db-(wal|shm)$/.test(source) && source !== join(installation.stateDir, 'coordinator.pid')
+      && !SQLITE_FILES.some((name) => source === join(installation.stateDir, name)),
   });
   for (const name of SQLITE_FILES) {
     if (existsSync(join(installation.stateDir, name))) copySqlite(join(installation.stateDir, name), join(state, name));
@@ -613,23 +617,35 @@ export function migrateLegacyInstallation(path: string, registry: ProjectRegistr
   if (!execute) return { status: 'dry_run', project: plan.existing, inventory };
   if (inventory.blocking > 0) return { status: 'blocked', project: plan.existing, inventory };
 
-  // Hold the legacy coordinator lock so a legacy coordinator cannot start while its state is copied.
-  const lockFile = join(installation.stateDir, 'coordinator.pid');
+  // Hold the coordinator locks of the legacy installation and of an already-registered target project,
+  // so no coordinator can start on either state directory while it is copied and rebuilt.
+  const locks = [join(installation.stateDir, 'coordinator.pid'), ...(plan.existing ? [join(plan.existing.stateDir, 'coordinator.pid')] : [])];
+  const held: string[] = [];
   try {
-    writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), migration: true }), { flag: 'wx' });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || coordinatorRunning(installation.stateDir)) {
-      inventory.issues.push({ severity: 'blocking', code: 'coordinator_running', message: 'the legacy coordinator lock is held; stop the coordinator and retry' });
-      inventory.blocking += 1;
-      return { status: 'blocked', project: plan.existing, inventory };
+    for (const lockFile of locks) {
+      if (!acquireMigrationLock(lockFile)) {
+        inventory.issues.push({ severity: 'blocking', code: 'coordinator_running', message: `a coordinator lock is held (${lockFile}); stop the coordinator and retry` });
+        inventory.blocking += 1;
+        return { status: 'blocked', project: plan.existing, inventory };
+      }
+      held.push(lockFile);
     }
-    // A stale lock from a dead coordinator.
-    writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), migration: true }));
-  }
-  try {
     return executeMigration(plan, registry, name);
   } finally {
-    rmSync(lockFile, { force: true });
+    for (const lockFile of held) rmSync(lockFile, { force: true });
+  }
+}
+
+/** Take a coordinator pid lock for this process; a lock left by a dead process is replaced. */
+function acquireMigrationLock(lockFile: string): boolean {
+  const payload = JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), migration: true });
+  try {
+    writeFileSync(lockFile, payload, { flag: 'wx' });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || coordinatorRunning(dirname(lockFile))) return false;
+    writeFileSync(lockFile, payload);
+    return true;
   }
 }
 

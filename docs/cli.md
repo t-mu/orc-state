@@ -26,6 +26,12 @@ orc init --provider=claude,codex   # multiple providers
 orc init --force                   # reinitialize (backs up existing state)
 ```
 
+Inside a registered project (`orc project add`), `orc init` writes nothing into the
+repository: it records the provider choices as project settings in the registry
+(`default_provider`, `worker_pool.provider`, and `worker_pool.max_workers` when unset),
+completes the external state directory, and points at `orc install --global --skip-mcp`
+for skills and agents (`orc start-session` wires the MCP server). `--force` is refused there.
+
 **Flags:** `[--provider=<providers>]` `[--worker-provider=<name>]` `[--feature=<ref>]` `[--feature-title=<title>]` `[--skip-skills]` `[--skip-agents]` `[--skip-mcp]` `[--force]`
 
 ### `orc start-session`

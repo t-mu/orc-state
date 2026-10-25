@@ -74,7 +74,8 @@ Do NOT skip phases. Do NOT reorder phases.
 ### Phase 1 — Explore
 
 Signal phase: `orc progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id=<agent_id>`
-Read the full task spec in `backlog/<N>-<slug>.md`. Identify all affected files.
+Read the full task spec at `task_spec_path` from TASK_START (the pinned revision; in a legacy installation it
+mirrors `backlog/<N>-<slug>.md`). Identify all affected files.
 Check existing patterns in those files before writing any code.
 
 **Gate:** Run `orc run-start --run-id=<run_id> --agent-id=<agent_id>`.
@@ -295,11 +296,9 @@ orc memory-record --content="..." [--wing=X] [--hall=Y] \
 **For agents:** use `orc` CLI commands or MCP tools for all state changes. Never call `withLock`, `atomicWriteJson`, or other internal library functions directly — those are for code authors implementing new handlers, not for agents operating the system.
 
 Normal task-authoring path:
-- edit the markdown spec in `backlog/`
-- the coordinator registers new `todo` spec definitions on each tick (legacy installations; a project uses `orc project task …`)
-- no explicit sync-check call is needed; `orc backlog-sync-check` remains available as an ad-hoc operator inspection tool
-
-Do not treat generic runtime mutation as a substitute for backlog markdown edits.
+- Registered project: `orc project task create|edit|import` or the MCP `create_task`/`update_task` tools; no `backlog/` file is written anywhere.
+- Legacy installation: edit the markdown spec in `backlog/`; the coordinator registers new `todo` spec definitions on each tick. No explicit sync-check call is needed; `orc backlog-sync-check` remains an ad-hoc operator inspection tool. Do not treat generic runtime mutation as a substitute for backlog markdown edits there.
+- In both, task status is runtime-owned: change it only through lifecycle commands, never through a spec's `status:`.
 
 ### Artifact directories
 
@@ -362,6 +361,7 @@ See `docs/configuration.md` → **Execution Modes** for full details including p
 todo → claimed → in_progress → done → released
                      ↓
                   blocked
+(todo/claimed/in_progress/blocked → cancelled)
 ```
 A task is eligible to claim when `status == "todo"` and all `depends_on` refs are `done`/`released`.
 
@@ -371,8 +371,10 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 | `claimed → in_progress` | Worker (`orc run-start`) |
 | `in_progress → done` | Coordinator (`orc task-mark-done <ref>` after merge) |
 | `done → released` | Coordinator (after merge) |
-| `any → blocked` | Worker (`orc run-fail --policy=block`) |
-| `blocked/claimed/in_progress → todo` | Operator (`orc task-reset <ref>`) |
+| `claimed/in_progress → blocked` | Worker (`orc run-fail --policy=block`) |
+| `todo/claimed/in_progress/blocked → cancelled` | Master (`cancel_task`); a registered project only — a legacy installation records cancellation as `blocked` |
+| `blocked → todo` | Operator (`orc task-unblock <ref>`) |
+| any non-`todo` status `→ todo` | Operator (`orc task-reset <ref>`), including a completed or cancelled task |
 
 ### Worker liveness
 
@@ -456,11 +458,11 @@ Follow the **Phased Workflow** above. The five phases are:
 4. **Complete** — rebase (direct mode) or skip rebase (PR mode), `orc run-work-complete` (gate: run-work-complete exits 0); never edit a spec's `status:`
 5. **Finalize** — direct mode: coordinator follow-up + `orc run-finish`; PR mode: remain in session, handle PR_REVIEW, then run-work-complete + run-finish (gate: terminal success)
 
-New task specs follow `backlog/TASK_TEMPLATE.md`.
+New task specs follow `backlog/TASK_TEMPLATE.md` (the body of a project task uses the same sections).
 
 ### Task Creation Completion
-- When creating or updating backlog task specs, save the markdown spec under the backlog directory.
-- In a legacy installation the coordinator registers the new spec's definition on its next tick; treat saving the file as the completion of the authoring turn. In a registered project, create the task with `orc project task create` or `create_task` instead.
+- Registered project: the turn is complete when `orc project task create` or `create_task` returns; no file is written.
+- Legacy installation: save the markdown spec under the backlog directory; the coordinator registers the new spec's definition on its next tick, so saving the file completes the authoring turn.
 - `orc backlog-sync-check` remains available as an ad-hoc operator inspection tool, but is not part of the normal task-creation flow.
 
 ---

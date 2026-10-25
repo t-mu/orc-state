@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
-import { canonicalProjectGitRoot, projectDataHome, ProjectRegistry, PROJECT_DESCRIPTOR as DESCRIPTOR, type ProjectRecord } from './projectRegistry.ts';
+import { canonicalProjectGitRoot, OutsideGitRepositoryError, projectDataHome, ProjectRegistry, PROJECT_DESCRIPTOR as DESCRIPTOR, type ProjectRecord } from './projectRegistry.ts';
 
 export { writeProjectDescriptor } from './projectRegistry.ts';
 
@@ -164,7 +164,11 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
   let gitRoot: string | null;
   try {
     gitRoot = canonicalProjectGitRoot(cwd);
-  } catch {
+  } catch (error) {
+    // Only "not a repository" means outside Git; any other Git failure must not fall back to the selected project.
+    if (!(error instanceof OutsideGitRepositoryError)) {
+      throw new Error(`Cannot identify the Git repository at ${cwd} (${(error as Error).message.split('\n')[0]}); fix it or pass --project`);
+    }
     gitRoot = null;
   }
   const legacyDir = findLegacyLayout(cwd, gitRoot);

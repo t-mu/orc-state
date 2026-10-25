@@ -21,7 +21,9 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
-import { STATE_DIR, BACKLOG_DOCS_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, STATE_DIR, BACKLOG_DOCS_DIR } from '../lib/paths.ts';
+import { ProjectRegistry } from '../lib/projectRegistry.ts';
+import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { boolFlag, flag } from '../lib/args.ts';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { ensureGitignore } from '../lib/gitignore.ts';
@@ -41,6 +43,12 @@ if (flag('sibling') !== null) {
   cliError('orc init --sibling is retired. Register the target repository as a project instead: orc project add <target-repo-path> (migrate an existing sibling home with orc project migrate).');
 }
 
+// A registered project keeps everything outside its repository: init only records
+// settings in the registry and completes the external state directory.
+if (ACTIVE_PROJECT && force) {
+  cliError(`orc init --force would reset the live state of project ${ACTIVE_PROJECT.name}; reset tasks with orc task-reset instead.`);
+}
+
 // Validate git repo before anything else.
 try {
   execSync('git rev-parse --git-dir', { stdio: 'pipe' });
@@ -48,14 +56,19 @@ try {
   cliError('Must run inside a git repository. Run `git init` first.');
 }
 
-ensureGitignore();
-mkdirSync(BACKLOG_DOCS_DIR, { recursive: true });
+if (!ACTIVE_PROJECT) {
+  ensureGitignore();
+  mkdirSync(BACKLOG_DOCS_DIR, { recursive: true });
+}
 
 // Step 1: State initialization (idempotent)
 const existing = stateFiles.filter((name) => existsSync(join(STATE_DIR, name)));
 const stateExists = existing.length > 0;
 
-if (stateExists && !force) {
+if (ACTIVE_PROJECT) {
+  ensureStateInitialized(STATE_DIR);
+  initProjectTaskStore(STATE_DIR);
+} else if (stateExists && !force) {
   console.log('State directory already exists, skipping initialization.');
 } else {
   if (force) {
@@ -153,6 +166,27 @@ for (const provider of providers) {
   if (!isBinaryAvailable(binary)) {
     console.warn(`⚠️  Warning: '${provider}' binary not found on PATH. Install it before running orc start-session.`);
   }
+}
+
+if (ACTIVE_PROJECT) {
+  // Settings go to the registry; nothing is written into the target repository.
+  const registry = new ProjectRegistry();
+  try {
+    registry.setSetting('default_provider', providers[0], ACTIVE_PROJECT.id);
+    if (workerProvider) registry.setSetting('worker_pool.provider', workerProvider, ACTIVE_PROJECT.id);
+    if (!('worker_pool.max_workers' in registry.effectiveSettings(ACTIVE_PROJECT.id))) registry.setSetting('worker_pool.max_workers', 1, ACTIVE_PROJECT.id);
+  } finally {
+    registry.close();
+  }
+  console.log('');
+  console.log(`Project ${ACTIVE_PROJECT.name} (${ACTIVE_PROJECT.id}) configured; settings are in the project registry (orc project config list).`);
+  console.log('Nothing was written into the target repository. orc start-session wires the orchestrator MCP server;');
+  console.log(`install skills and agents for your user with: orc install --global --skip-mcp --provider=${providers.join(',')}`);
+  console.log('');
+  console.log('Next steps:');
+  console.log('  orc start-session');
+  console.log('  orc project task create --feature=project --title="First task" --ac="Done"');
+  process.exit(0);
 }
 
 // Step 3: Write orc-state.config.json

@@ -98,6 +98,8 @@ describe('global project registry', () => {
     registry.unsetSetting('worker_pool.provider', project.id);
     expect(registry.effectiveSettings(project.id)['worker_pool.provider']).toBe('codex');
     expect(() => registry.setSetting('provider_token', 'secret')).toThrow('Unknown or secret-bearing');
+    expect(() => registry.setSetting('coordinator.pr_push_remote', 'https://x-access-token:ghp_abc@github.com/o/r.git')).toThrow('must not embed credentials');
+    expect(() => registry.setSetting('coordinator.pr_push_remote', 'git@github.com:o/r.git')).not.toThrow();
     expect(() => registry.setSetting('worker_pool.max_workers', -1)).toThrow('non-negative');
     expect(() => validateProjectSetting('master.provider', 'unknown')).toThrow('Invalid');
   });
