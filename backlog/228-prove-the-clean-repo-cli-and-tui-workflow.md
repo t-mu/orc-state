@@ -3,7 +3,7 @@ ref: global-project-state/228-prove-the-clean-repo-cli-and-tui-workflow
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/225-expose-project-aware-operations-in-cli-and-tui
   - global-project-state/226-migrate-attached-and-sibling-installations-safely
