@@ -55,6 +55,7 @@ export interface TuiRecentEvent {
 }
 
 export interface TuiStatus {
+  project?: { id: string; name: string; target_repo_root: string } | null;
   worker_capacity: {
     configured_slots: number;
     used_slots: number;

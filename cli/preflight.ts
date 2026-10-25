@@ -5,7 +5,8 @@
  */
 import { execSync } from 'node:child_process';
 import { validateStateDir } from '../lib/stateValidation.ts';
-import { STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
+import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag } from '../lib/args.ts';
 import { checkSiblingLayout } from '../lib/siblingLayoutCheck.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
@@ -16,7 +17,8 @@ import type { Agent } from '../types/agents.ts';
 const asJson = boolFlag('json');
 
 const stateErrors = validateStateDir(STATE_DIR);
-const gitRepo = isGitRepo();
+const gitRepo = isGitRepo(ACTIVE_PROJECT ? TARGET_REPO_ROOT : undefined);
+const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR) : null;
 const agentsRaw = readAgentsFromLib(STATE_DIR).agents ?? [];
 const claimsRaw = readClaimsFromLib(STATE_DIR).claims ?? [];
 const agents = agentsRaw;
@@ -34,6 +36,7 @@ const checks = {
   has_online_workers: agents.some((a) => a.status !== 'offline'),
   orphaned_active_claims: getOrphanedClaims(agents, claims),
   sibling_layout_ok: siblingLayout.ok,
+  project_ok: projectHealth?.ok ?? true,
 };
 const providerBinaries = getProviderBinaries(agents);
 const allBinariesPresent = Object.values(providerBinaries).every(Boolean);
@@ -42,10 +45,12 @@ const ok = checks.state_valid
   && checks.has_registered_workers
   && checks.orphaned_active_claims.length === 0
   && allBinariesPresent
-  && siblingLayout.ok;
+  && siblingLayout.ok
+  && checks.project_ok;
 
 const result = {
   ok,
+  project: projectHealth?.project ?? null,
   checks: {
     ...checks,
     provider_binaries: providerBinaries,
@@ -60,6 +65,8 @@ const result = {
       : []),
     ...siblingLayout.errors.map((e) => `sibling layout error (fails preflight): ${e}`),
     ...siblingLayout.warnings.map((w) => `sibling layout warning: ${w}`),
+    ...(projectHealth?.errors ?? []).map((e) => `project error (fails preflight): ${e}`),
+    ...(projectHealth?.warnings ?? []).map((w) => `project warning: ${w}`),
   ],
   details: {
     state_errors: stateErrors,
@@ -74,6 +81,7 @@ if (asJson) {
 
 console.log('Orchestrator Preflight');
 console.log('----------------------');
+console.log(formatProjectIdentity(projectHealth?.project ?? null));
 console.log(`state_valid:            ${checks.state_valid}`);
 console.log(`has_registered_workers: ${checks.has_registered_workers}`);
 console.log(`has_online_workers:     ${checks.has_online_workers}`);
@@ -125,9 +133,9 @@ console.log('');
 console.log('Preflight passed.');
 
 
-function isGitRepo(): boolean {
+function isGitRepo(cwd?: string): boolean {
   try {
-    execSync('git rev-parse --git-dir', { stdio: 'pipe' });
+    execSync('git rev-parse --git-dir', { stdio: 'pipe', ...(cwd ? { cwd } : {}) });
     return true;
   } catch {
     return false;

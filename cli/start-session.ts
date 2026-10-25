@@ -30,7 +30,8 @@ import {
   removeAgent,
   updateAgentRuntime,
 } from '../lib/agentRegistry.ts';
-import { STATE_DIR }             from '../lib/paths.ts';
+import { ACTIVE_PROJECT, STATE_DIR } from '../lib/paths.ts';
+import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
@@ -124,7 +125,7 @@ function coordinatorStatus() {
 
 async function spawnCoordinator() {
   const child = spawn(process.execPath, [COORDINATOR_SCRIPT_PATH], {
-    env:      { ...process.env, ORC_STATE_DIR: STATE_DIR },
+    env:      { ...process.env, ...orcStateEnv() },
     detached: true,
     stdio:    'ignore',
   });
@@ -173,6 +174,11 @@ async function stopCoordinator(pid: number) {
   return false;
 }
 
+/** How child processes find this session's state: the project identity in project mode. */
+function orcStateEnv(): Record<string, string> {
+  return ACTIVE_PROJECT ? { ORC_PROJECT_ID: ACTIVE_PROJECT.id, ORC_STATE_DIR: STATE_DIR } : { ORC_STATE_DIR: STATE_DIR };
+}
+
 function writeMcpConfig() {
   const serverPath = runtimeModulePath('../mcp/server.ts', '../mcp/server.js');
   const config = {
@@ -180,7 +186,7 @@ function writeMcpConfig() {
       orchestrator: {
         command: process.execPath,
         args: [serverPath],
-        env: { ORC_STATE_DIR: STATE_DIR },
+        env: orcStateEnv(),
       },
     },
   };
@@ -418,11 +424,14 @@ try {
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    const codexConfigPath = writeCodexProjectMcpConfig(checkoutRoot);
+    const codexMcpArgs = ACTIVE_PROJECT
+      ? codexMcpOverrideArgs(runtimeModulePath('../mcp/server.ts', '../mcp/server.js'), orcStateEnv())
+      : [];
+    const codexConfigPath = ACTIVE_PROJECT ? 'command-line overrides' : writeCodexProjectMcpConfig(checkoutRoot);
     const codexModeArgs = masterConfig.execution_mode === 'sandbox'
       ? ['--sandbox', 'workspace-write', '--ask-for-approval', 'never']
       : ['--dangerously-bypass-approvals-and-sandbox'];
-    spawnArgs = [...codexModeArgs, ...masterModelArgs, bootstrap];
+    spawnArgs = [...codexModeArgs, ...codexMcpArgs, ...masterModelArgs, bootstrap];
     console.log(`  MCP server: orchestrator tools available via ${codexConfigPath}.`);
     console.log('  Master bootstrap loaded via initial prompt.');
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);

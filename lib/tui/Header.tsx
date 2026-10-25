@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import { renderBanner } from '../banner.ts';
 import type { TuiStatus } from './status.ts';
+import { formatProjectIdentity } from '../projectHealth.ts';
 
 export function Header({ status }: { status: TuiStatus }) {
   const taskCounts = status.tasks.counts;
@@ -8,6 +9,7 @@ export function Header({ status }: { status: TuiStatus }) {
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text>{renderBanner()}</Text>
+      <Text bold>{formatProjectIdentity(status.project ?? null)}</Text>
       <Text dimColor>
         capacity: {status.worker_capacity.used_slots}/{status.worker_capacity.configured_slots}
         {' | '}todo: {taskCounts.todo ?? 0}

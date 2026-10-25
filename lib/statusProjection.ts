@@ -4,6 +4,8 @@ import { claimedRunStartupAnchor, latestRunActivityDetailMap } from './runActivi
 import { readClaims } from './stateReader.ts';
 import type { RunActivityDetail } from './runActivity.ts';
 import type { Claim } from '../types/claims.ts';
+import { readProjectDescriptor } from './projectContext.ts';
+import { projectTaskStoreFor } from './projectTasks.ts';
 
 export interface ActiveRunRow {
   run_id: string;
@@ -16,9 +18,14 @@ export interface ActiveRunRow {
   last_activity_at: string | null;
   last_activity_source: string | null;
   lease_expires_at: string | null;
+  /** Project state directories only: the task's SQLite status and the revision this run is pinned to. */
+  task_status?: string;
+  spec_revision?: number;
 }
 
 export interface ControlSnapshot {
+  /** The project this daemon serves (null for a legacy layout). */
+  project: { id: string; name: string; target_repo_root: string } | null;
   /** Highest event seq visible to this snapshot; subscribe with `after=cursor`. */
   cursor: number;
   generated_at: string;
@@ -67,7 +74,7 @@ export function projectActiveRuns(claims: Claim[], runActivity: Map<string, RunA
 export function readControlSnapshot(stateDir: string, now = Date.now()): ControlSnapshot {
   // A first read may import legacy claims; do that write outside the snapshot.
   readClaims(stateDir);
-  return withEventDb(stateDir, (db) => db.transaction(() => {
+  const snapshot = withEventDb(stateDir, (db) => db.transaction(() => {
     const { cursor } = db.prepare('SELECT COALESCE(MAX(seq), 0) AS cursor FROM events').get() as { cursor: number };
     const claims = readClaims(stateDir).claims;
     const activeIds = claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).map((c) => c.run_id);
@@ -77,4 +84,21 @@ export function readControlSnapshot(stateDir: string, now = Date.now()): Control
       .all() as ControlSnapshot['sessions'];
     return { cursor, generated_at: new Date(now).toISOString(), runs: projectActiveRuns(claims, activity, now), sessions };
   })());
+  return withProjectTaskState(stateDir, snapshot);
+}
+
+/** Overlay project SQLite task status and pinned revisions onto the run rows. */
+function withProjectTaskState(stateDir: string, snapshot: Omit<ControlSnapshot, 'project'>): ControlSnapshot {
+  const descriptor = readProjectDescriptor(stateDir);
+  const store = projectTaskStoreFor(stateDir);
+  const runs = store ? snapshot.runs.map((run) => {
+    const pinned = store.getRunSpec(run.run_id);
+    const task = store.getTask(run.task_ref);
+    return { ...run, ...(task ? { task_status: task.status } : {}), ...(pinned ? { spec_revision: pinned.revision } : {}) };
+  }) : snapshot.runs;
+  return {
+    project: descriptor ? { id: descriptor.id, name: descriptor.name, target_repo_root: descriptor.target_repo_root } : null,
+    ...snapshot,
+    runs,
+  };
 }

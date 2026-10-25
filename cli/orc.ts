@@ -156,8 +156,40 @@ export function buildNodeArgs(subcommand: string, scriptPath: string, rest: stri
   return [scriptPath, ...rest];
 }
 
+/**
+ * Strip the global `--project=<id>` / `--project <id>` selector. It may come
+ * before the subcommand or among its arguments; `orc project` parses its own.
+ */
+export function extractProjectSelector(argv: string[]): { argv: string[]; projectId: string | null } {
+  const out: string[] = [];
+  let projectId: string | null = null;
+  const subcommandIndex = argv.findIndex((arg, index) => !arg.startsWith('-') && argv[index - 1] !== '--project');
+  const ownsFlag = argv[subcommandIndex] === 'project';
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (ownsFlag && index > subcommandIndex) { out.push(arg); continue; }
+    if (arg === '--project') {
+      projectId = argv[index + 1] ?? '';
+      index += 1;
+    } else if (arg.startsWith('--project=')) {
+      projectId = arg.slice('--project='.length);
+    } else {
+      out.push(arg);
+    }
+  }
+  if (projectId !== null && !projectId.trim()) throw new Error('--project requires a project id');
+  return { argv: out, projectId };
+}
+
 export function main(argv: string[]): number {
-  const [subcommand, ...rest] = argv;
+  let selector: ReturnType<typeof extractProjectSelector>;
+  try {
+    selector = extractProjectSelector(argv);
+  } catch (error) {
+    console.error((error as Error).message);
+    return 1;
+  }
+  const [subcommand, ...rest] = selector.argv;
 
   if (subcommand === '--version' || subcommand === '-v') {
     console.log(readVersion());
@@ -166,6 +198,7 @@ export function main(argv: string[]): number {
 
   if (!subcommand || subcommand === '--help' || subcommand === '-h') {
     console.log('Usage: orc <subcommand> [args...]');
+    console.log('  --project=<id> (before or after the subcommand) selects a registered project.');
     console.log('\nBlessed workflow commands:');
     for (const name of BLESSED) {
       console.log(`  ${name}`);
@@ -193,7 +226,9 @@ export function main(argv: string[]): number {
   }
 
   const scriptPath = resolveScript(script);
-  const result = spawnSync(process.execPath, buildNodeArgs(subcommand, scriptPath, rest), { stdio: 'inherit' });
+  // `--project` is the highest-precedence selector: it becomes the child's ORC_PROJECT_ID.
+  const env = selector.projectId ? { ...process.env, ORC_PROJECT_ID: selector.projectId } : process.env;
+  const result = spawnSync(process.execPath, buildNodeArgs(subcommand, scriptPath, rest), { stdio: 'inherit', env });
   return result.status ?? 1;
 }
 

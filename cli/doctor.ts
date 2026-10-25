@@ -4,7 +4,8 @@
  * Usage: node cli/doctor.ts [--json]
  */
 import { execSync } from 'node:child_process';
-import { STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
+import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { checkSiblingLayout } from '../lib/siblingLayoutCheck.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
@@ -24,12 +25,17 @@ const staleStartThresholdMs = intFlag('stale-start-ms', 5 * 60 * 1000);
 const staleProgressThresholdMs = intFlag('stale-progress-ms', 20 * 60 * 1000);
 const nowMs = Date.now();
 
-const gitRepo = isGitRepo();
+// A project's Git checks run against its registered target, wherever the command is invoked.
+const gitRepo = isGitRepo(ACTIVE_PROJECT ? TARGET_REPO_ROOT : undefined);
 const stateErrors = validateStateDir(STATE_DIR);
-const backlogSync = safeRead(
-  () => validateBacklogSync(process.env.ORC_BACKLOG_DIR || `${process.env.ORC_REPO_ROOT || process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
-  { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [] },
-);
+const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR) : null;
+// Project SQLite owns task definitions; there is no Markdown backlog to compare.
+const backlogSync = ACTIVE_PROJECT
+  ? { ok: true, skipped: 'project state directory: SQLite owns task definitions', spec_count: 0, filtered: false, missing: [], mismatches: [] }
+  : safeRead(
+    () => validateBacklogSync(process.env.ORC_BACKLOG_DIR || `${process.env.ORC_REPO_ROOT || process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
+    { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [] },
+  );
 const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
 const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
 const providers = new Set(agents.map((a) => a.provider));
@@ -44,6 +50,7 @@ const siblingLayout = checkSiblingLayout({
 });
 
 const checks: Record<string, unknown> = {
+  project: projectHealth,
   gitRepo,
   providerBinaries: {} as Record<string, unknown>,
   staleLinkedWorkers: [] as unknown[],
@@ -119,7 +126,8 @@ const summary = {
     sandboxDeps.ok &&
     memoryHealth.ok &&
     runtimeSchema.ok &&
-    siblingLayout.ok,
+    siblingLayout.ok &&
+    (projectHealth?.ok ?? true),
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
@@ -132,6 +140,9 @@ if (asJson) {
 
 console.log('Orchestrator Doctor');
 console.log('-------------------');
+console.log(formatProjectIdentity(projectHealth?.project ?? null));
+for (const error of projectHealth?.errors ?? []) console.log(`  error: ${error}`);
+for (const warning of projectHealth?.warnings ?? []) console.log(`  warning: ${warning}`);
 console.log(`registered_workers: ${summary.registered_workers}`);
 console.log(`active_claims: ${summary.active_claims}`);
 console.log(`git_repo: ${String(gitRepo)}`);
@@ -244,9 +255,9 @@ if (!summary.ok) {
 console.log('');
 console.log('All checks passed.');
 
-function isGitRepo(): boolean {
+function isGitRepo(cwd?: string): boolean {
   try {
-    execSync('git rev-parse --git-dir', { stdio: 'pipe' });
+    execSync('git rev-parse --git-dir', { stdio: 'pipe', ...(cwd ? { cwd } : {}) });
     return true;
   } catch {
     return false;
