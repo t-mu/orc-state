@@ -17,6 +17,8 @@ export interface TaskSpecSnapshot {
   source_path: string;
   snapshot_path: string;
   sha256: string;
+  /** Pinned project SQLite revision; source_path is then `project-task:<ref>@<revision>`. */
+  task_revision?: number;
 }
 
 export interface Claim {

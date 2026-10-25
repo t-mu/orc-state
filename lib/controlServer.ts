@@ -14,6 +14,9 @@ import { readEventBatch, withEventDb } from './eventLog.ts';
 import { readControlSnapshot } from './statusProjection.ts';
 import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
+import { listAgents } from './agentRegistry.ts';
+import { RevisionConflictError } from './projectTaskStore.ts';
+import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
@@ -47,6 +50,25 @@ export function sessionAuthenticator(stateDir: string): CommandAuthenticator {
       return row ? { agentId: row.agent_id, sessionId: row.session_id } : null;
     });
   };
+}
+
+/** Task authoring is an operator action: only the master's running session may create or revise tasks. */
+function taskAuthor(stateDir: string, credential: string): string {
+  const principal = sessionAuthenticator(stateDir)(credential);
+  if (!principal) throw new ControlError('unauthenticated', 'Command caller is not authenticated', 401);
+  const agent = listAgents(stateDir).find((entry) => entry.agent_id === principal.agentId);
+  if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session may author tasks', 403);
+  return principal.agentId;
+}
+
+/** Map storage-neutral task API failures to protocol errors; anything unexpected is internal. */
+function taskError(error: unknown): ControlError {
+  if (error instanceof ControlError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof RevisionConflictError || message.startsWith('Task already exists')) return new ControlError('conflict', message, 409);
+  if (message.startsWith('Task not found')) return new ControlError('not_found', message, 404);
+  if (error instanceof TaskInputError) return new ControlError('bad_request', message, 400);
+  return classify(error);
 }
 
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
@@ -271,6 +293,39 @@ export async function startControlServer(stateDir: string, options: ControlServe
         if (action === 'input') { terminals.input(terminalId, body.lease_id, body.data as string); return ok({}); }
         if (action === 'resize') { terminals.resize(terminalId, body.lease_id, Number(body.columns), Number(body.rows)); return ok({}); }
       }
+    }
+    if (url.pathname === '/v1/tasks' || url.pathname.startsWith('/v1/tasks/')) {
+      const store = projectTaskStoreFor(stateDir);
+      if (!store) throw new ControlError('not_found', 'Task API requires a project state directory', 404);
+      const match = /^\/v1\/tasks(?:\/([^/]+)(\/revisions)?)?$/.exec(url.pathname);
+      if (!match) throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
+      const ref = match[1] === undefined ? null : decodeURIComponent(match[1]);
+      try {
+        if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
+        if (req.method === 'GET' && !match[2]) {
+          const task = store.getTask(ref!);
+          if (!task) throw new Error(`Task not found: ${ref}`);
+          return ok({ task: describeProjectTask(task) });
+        }
+        if (req.method === 'GET') {
+          if (!store.getTask(ref!)) throw new Error(`Task not found: ${ref}`);
+          return ok({ revisions: store.listRevisions(ref!) });
+        }
+        if (req.method === 'POST') {
+          const actor = taskAuthor(stateDir, actorCredential(req));
+          const body = await readBody(req);
+          assertOpen();
+          if (ref === null) return ok({ task: describeProjectTask(createProjectTask(stateDir, body, actor)) }, 201);
+          if (match[2]) {
+            const { expected_revision: expectedRevision, ...changes } = body;
+            const { task, changed } = reviseProjectTask(stateDir, ref, expectedRevision, changes, actor);
+            return ok({ task: describeProjectTask(task), changed });
+          }
+        }
+      } catch (error) {
+        throw taskError(error);
+      }
+      throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
     }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
       const credential = actorCredential(req);

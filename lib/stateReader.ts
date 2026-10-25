@@ -5,6 +5,7 @@ import type { AgentsState } from '../types/agents.ts';
 import type { ClaimsState } from '../types/claims.ts';
 import { logger } from './logger.ts';
 import { readAuthoritativeClaims, withAuthoritativeAgentSessions } from './runStore.ts';
+import { projectTaskStoreFor, readProjectBacklog } from './projectTasks.ts';
 
 const TASK_SEQ_RE = /(?:^|\/)task-(\d+)(?:-|$)/;
 
@@ -12,6 +13,10 @@ export function readJson(stateDir: string, file: string): unknown {
   if (file === 'claims.json') {
     const authoritative = readAuthoritativeClaims(stateDir);
     if (authoritative) return authoritative;
+  }
+  if (file === 'backlog.json') {
+    const store = projectTaskStoreFor(stateDir);
+    if (store) return readProjectBacklog(store);
   }
   return JSON.parse(readFileSync(join(stateDir, file), 'utf8'));
 }

@@ -1888,6 +1888,8 @@ export function buildTaskEnvelope(taskRef: string, runId: string, agentId: strin
   const taskSpec = snapshot ? null : readTaskSpecSections(taskRef);
   const runWorktree = getRunWorktree(STATE_DIR, runId);
   const taskSpecWorktreePath = (() => {
+    // A project SQLite revision has no repository file; the pinned snapshot is the spec.
+    if (snapshot?.task_revision !== undefined) return snapshot.snapshot_path;
     const sourcePath = snapshot?.source_path ?? taskSpec?.source_path;
     if (!sourcePath) return '(task spec not found)';
     if (!runWorktree?.worktree_path) return sourcePath;
@@ -1903,7 +1905,7 @@ export function buildTaskEnvelope(taskRef: string, runId: string, agentId: strin
     task_spec_path: snapshot?.snapshot_path ?? taskSpecWorktreePath,
     task_spec_worktree_path: taskSpecWorktreePath,
     task_spec_sha256: snapshot?.sha256 ?? '(not pinned)',
-    task_spec_revision_status: snapshot ? taskSnapshotStatus(snapshot) : 'unknown',
+    task_spec_revision_status: snapshot ? taskSnapshotStatus(snapshot, STATE_DIR) : 'unknown',
     assigned_worktree: runWorktree?.worktree_path ?? join(WORKTREES_DIR, runId),
     orc_bin: resolveOrcBinSh(REPO_ROOT),
   });

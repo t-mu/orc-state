@@ -53,7 +53,7 @@ const idleAnchor = claim.last_heartbeat_at
   ?? claim.started_at
   ?? (claim.state === 'claimed' ? claimedRunStartupAnchor(claim) : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null));
 const idleSec = idleAnchor ? Math.round((now - new Date(idleAnchor).getTime()) / 1000) : null;
-const taskSpecRevisionStatus = claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot) : 'unknown';
+const taskSpecRevisionStatus = claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot, STATE_DIR) : 'unknown';
 
 if (asJson) {
   console.log(JSON.stringify({ ...claim, task_title: taskTitle, worktree_path: worktreePath,
