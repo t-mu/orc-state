@@ -14,7 +14,7 @@ function claim(state: Claim['state']): Claim {
   };
 }
 
-function session(state: 'running' | 'offline'): void {
+function session(state: 'running' | 'recoverable' | 'unknown' | 'offline'): void {
   withEventDbTransaction(dir, (db) => {
     db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
       VALUES ('session-a', 'run-a', 'worker-a', 'claude', ?, '2026-01-01', '2026-01-01')`).run(state);
@@ -61,6 +61,15 @@ describe('authorizeLifecycle', () => {
     // Nothing else is accepted from a session that has ended.
     expect(() => authorizeLifecycle(dir, 'session-a', { op: 'run-work-complete', run_id: 'run-a', agent_id: 'worker-a' }))
       .toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+  });
+
+  it('accepts a recoverable session (a pty worker after a coordinator restart) but not an unknown one', () => {
+    commitClaims(dir, { version: '1', claims: [claim('in_progress')] });
+    session('recoverable');
+    const complete = { op: 'run-work-complete', run_id: 'run-a', agent_id: 'worker-a' } as const;
+    expect(() => authorizeLifecycle(dir, 'session-a', complete)).not.toThrow();
+    withEventDbTransaction(dir, (db) => { db.prepare("UPDATE sessions SET state = 'unknown' WHERE session_id = 'session-a'").run(); });
+    expect(() => authorizeLifecycle(dir, 'session-a', complete)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
   });
 
   it('refuses derived legacy credentials', () => {

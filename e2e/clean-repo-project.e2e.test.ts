@@ -20,8 +20,9 @@
  * Workers run sandboxed (Task 229): their sandbox settings never grant the
  * project state directory, and each worker `orc` call runs under Node's
  * permission model with write access only to the worktrees and the target's
- * `.git` write subtrees, so every lifecycle step must reach the coordinator
- * through its control socket.
+ * `.git` write subtrees and with native addons disabled, so it cannot open
+ * SQLite at all. Every lifecycle step must reach the coordinator through its
+ * control socket.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -83,9 +84,13 @@ function orcAsync(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<
   });
 }
 
-/** Node's permission model as a stand-in sandbox: read anything, write only `writable`. */
+/**
+ * Node's permission model as a stand-in sandbox: read anything, write only
+ * `writable`. Leaving out --allow-addons also blocks better-sqlite3, whose
+ * native writes the fs permissions would not see.
+ */
 function sandboxNodeOptions(writable: string[]): string {
-  return ['--permission', '--allow-fs-read=*', '--allow-addons', '--allow-child-process', '--allow-worker',
+  return ['--permission', '--allow-fs-read=*', '--allow-child-process', '--allow-worker',
     ...writable.map((path) => `--allow-fs-write=${path}`)].join(' ');
 }
 

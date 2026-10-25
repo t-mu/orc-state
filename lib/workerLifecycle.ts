@@ -85,7 +85,8 @@ function command(event: string, request: { run_id: string; agent_id: string }, e
 function latestInputResponse(stateDir: string, request: { run_id: string; agent_id: string; request_id: string; request_seq: number }): string | null {
   const durable = readDurableInputResponse(stateDir, request.request_id);
   if (durable !== null) return durable;
-  const events = readEventsSince(join(stateDir, 'events.db'), 0);
+  // Any answer follows its request, so the scan starts there rather than at the start of the log.
+  const events = readEventsSince(join(stateDir, 'events.db'), request.request_seq);
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -263,7 +264,9 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
 }
 
 /**
- * Scope a request to its caller: the authenticated session must be running,
+ * Scope a request to its caller: the authenticated session must be live —
+ * `running`, or `recoverable` (a verified process this coordinator cannot type
+ * into, e.g. a pty worker after a restart, which still reports its lifecycle) —
  * belong to the named agent, and — for run ops — be the session launched for
  * that run. The `--agent-id` a worker passes is no longer trusted on its own.
  */
@@ -273,9 +276,10 @@ export function authorizeLifecycle(stateDir: string, sessionId: string, request:
     .get(sessionId) as { agent_id: string; run_id: string | null; state: string } | undefined);
   // After the merge the coordinator finishes the run and closes its session; the
   // worker's own run-finish may still follow, and repeats a finished run as a no-op.
-  const finishedRun = session?.state !== 'running' && request.op === 'run-finish' && session?.run_id === request.run_id
+  const live = session?.state === 'running' || session?.state === 'recoverable';
+  const finishedRun = !live && request.op === 'run-finish' && session?.run_id === request.run_id
     && loadClaim(stateDir, request.run_id)?.state === 'done';
-  if (!session || (session.state !== 'running' && !finishedRun)) {
+  if (!session || (!live && !finishedRun)) {
     throw new ControlError('unauthenticated', 'Lifecycle caller is not an authenticated running session', 401);
   }
   // A memory belongs to the project, not a run: any running session may record one.
