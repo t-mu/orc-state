@@ -3,7 +3,7 @@ ref: global-project-state/222-make-markdown-an-explicit-portable-interface
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/221-make-task-creation-and-revision-apis-storage-neutral
 ---
