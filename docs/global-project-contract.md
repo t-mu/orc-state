@@ -8,7 +8,7 @@ A project has a generated, opaque, stable `project_id`, a display name, and one 
 
 `ORC_DATA_HOME` overrides the harness data home. Its default is the platform's per-user application data directory: `~/Library/Application Support/orc-state` on macOS and `${XDG_DATA_HOME:-~/.local/share}/orc-state` on Linux. The data home contains `registry.db` for project identities and non-secret configuration. Each project has `projects/<project_id>/runtime.db`, plus external worktree, log, provider-settings, and export directories as needed. No harness file or `.gitignore` entry is required in the target working tree. Git's own worktree metadata still lives under the target repository's `.git` directory.
 
-Provider credentials remain with the provider's login store or a dedicated secret store. The registry may record a provider choice or model but must not contain access tokens. One coordinator owns a project's write transactions at a time; workers and clients use an authorized project-scoped command API.
+Provider credentials remain with the provider's login store or a dedicated secret store. The registry may record a provider choice or model but must not contain access tokens. One coordinator owns a project's write transactions at a time; workers and clients use an authorized project-scoped command API. **Current deviation (tracked by task 229):** worker lifecycle commands (`orc run-start`, `run-fail`, `run-work-complete`, …) still write the project state directory in the worker's own process, checked only against the claim's agent id, and sandboxed workers are granted that directory. Only the coordinator dispatches, merges and records `done`, and status changes are still validated transactions, but the authenticated worker API is not in place yet.
 
 ## Project selection
 
@@ -23,7 +23,7 @@ The selection order is `--project` identifier, `ORC_PROJECT_ID`, a unique regist
 | Task status | Project SQLite | Current lifecycle state, attempt count, block reason, and timestamps. Only lifecycle commands change it. |
 | Run | Project SQLite | One attempt, worker binding, pinned revision, phase, finalization, and terminal outcome. A task may have several runs. |
 | Dispatch readiness | Derived at read or claim time | Combines task status, dependency states, retry delay, planning state, agent compatibility, and capacity. It is not another persisted status. |
-| Event | Project SQLite | Auditable transition record appended in the same transaction as the corresponding run and task changes. |
+| Event | Project SQLite | Auditable transition record (`task_transitions`) appended in the same transaction as the task and run-binding change. The `events.db` notification stream and `claims.json` are written in a separate step; startup reconciliation repairs a crash between the two. |
 
 Markdown import and export carry task instructions and metadata. They do not carry an authoritative lifecycle `status`. Ordinary imports cannot complete, block, or reopen a task. An imported file may be edited later, but no implicit two-way sync is performed; a new explicit import creates a new revision. A run continues with its pinned revision.
 

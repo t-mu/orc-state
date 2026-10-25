@@ -265,6 +265,18 @@ describe('legacy installation migration', () => {
     expect(resolveActiveProject({ ORC_DATA_HOME: dataHome, ORC_STATE_DIR: join(temp, 'other') }, temp)).toBeNull();
   });
 
+  it('refuses to rebuild a registered project whose own coordinator is running', () => {
+    const root = gitRepo('product');
+    legacyInstallation(root);
+    const project = registry.add(root);
+    writeFileSync(join(project.stateDir, 'coordinator.pid'), JSON.stringify({ pid: process.pid }));
+    const result = migrateLegacyInstallation(root, registry, { execute: true });
+    expect(result.status).toBe('blocked');
+    expect(result.inventory.issues.map((issue) => issue.code)).toContain('project_coordinator_running');
+    expect(existsSync(join(project.stateDir, 'runtime.db'))).toBe(false);
+    expect(existsSync(join(root, '.orc-state', MIGRATION_MARKER))).toBe(false);
+  });
+
   it('refuses to execute while the legacy coordinator lock is held', () => {
     const root = gitRepo('product');
     const legacyState = legacyInstallation(root);

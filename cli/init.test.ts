@@ -236,3 +236,28 @@ describe('cli/init.ts --sibling', () => {
     expect(existsSync(join(orch, '.orc-state'))).toBe(false);
   });
 });
+
+describe('cli/init.ts in a registered project', () => {
+  it('records settings in the registry, completes the external state and writes nothing into the target', () => {
+    const target = join(dir, 'product');
+    mkdirSync(target, { recursive: true });
+    spawnSync('git', ['init', '-q'], { cwd: target });
+    const env: NodeJS.ProcessEnv = { ...process.env, ORC_DATA_HOME: join(dir, 'data') };
+    for (const key of ['ORC_STATE_DIR', 'ORC_BACKLOG_DIR', 'ORC_PLANS_DIR', 'ORC_REPO_ROOT', 'ORC_HOME', 'ORC_CONFIG_FILE', 'ORC_PROJECT_ID']) delete env[key];
+    const added = spawnSync('node', [resolve(repoRoot, 'cli/orc.ts'), 'project', 'add', target, '--name=demo'], { cwd: dir, env, encoding: 'utf8' });
+    expect(added.status, added.stderr).toBe(0);
+    const project = JSON.parse(added.stdout) as { id: string; stateDir: string };
+
+    const result = spawnSync('node', [resolve(repoRoot, 'cli/init.ts'), '--provider=claude,codex'], { cwd: target, env, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Nothing was written into the target repository');
+    expect(spawnSync('ls', ['-A', target], { encoding: 'utf8' }).stdout.trim()).toBe('.git');
+    const settings = spawnSync('node', [resolve(repoRoot, 'cli/orc.ts'), 'project', 'config', 'list'], { cwd: target, env, encoding: 'utf8' });
+    expect(JSON.parse(settings.stdout)).toMatchObject({ default_provider: 'claude', 'worker_pool.provider': 'codex', 'worker_pool.max_workers': 1 });
+    expect(existsSync(join(project.stateDir, 'runtime.db'))).toBe(true);
+
+    const forced = spawnSync('node', [resolve(repoRoot, 'cli/init.ts'), '--provider=claude', '--force'], { cwd: target, env, encoding: 'utf8' });
+    expect(forced.status).toBe(1);
+    expect(forced.stderr).toContain('would reset the live state of project demo');
+  });
+});

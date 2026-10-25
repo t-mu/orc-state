@@ -83,6 +83,8 @@ export function validateProjectSetting(key: string, value: unknown): SettingValu
     return value;
   }
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${key} must be a non-empty string`);
+  // The registry holds no credentials: a URL with user info (https://user:token@host/…) is refused.
+  if (/[a-z][a-z0-9+.-]*:\/\/[^/\s]*@/i.test(value)) throw new Error(`${key} must not embed credentials; configure them in the provider's or Git's credential store`);
   const choices: Partial<Record<SettingKind, readonly string[]>> = {
     provider: ['codex', 'claude', 'gemini'],
     execution_mode: ['full-access', 'sandbox'],
@@ -124,7 +126,8 @@ export function canonicalProjectGitRoot(path: string): string {
   return main;
 }
 
-class OutsideGitRepositoryError extends Error {}
+/** `path` is not inside any Git repository (as opposed to a Git failure inside one). */
+export class OutsideGitRepositoryError extends Error {}
 
 export const PROJECT_DESCRIPTOR = 'project.json';
 
