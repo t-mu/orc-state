@@ -141,7 +141,9 @@ One review round only.
 ### Phase 4 — Complete
 
 Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=<agent_id>`
-1. Update the task markdown in your assigned worktree to `status: done`.
+1. Do NOT edit any task spec's `status:` field. Task status is runtime-owned:
+   the coordinator records `done` after merge. Commit only the changes the task
+   asks for, never orchestration state.
 2. Rebase onto main (direct mode only): `git rebase main`
    In PR mode, skip the rebase — the PR reviewer handles rebasing.
    If conflicts arise: resolve each conflicted file, then `git add <file> && git rebase --continue`.
@@ -149,22 +151,12 @@ Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run
 3. Verify `npm test` passes, then signal the coordinator:
    `orc run-work-complete --run-id=<run_id> --agent-id=<agent_id>`
 
-**Gate:** `run-work-complete` MUST exit 0 after the task markdown in the assigned worktree has been updated to `status: done`.
+**Gate:** `run-work-complete` MUST exit 0.
 Do NOT call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge.
 
-**Sibling layout:** When orchestration runs against a separate target repo (a
-`target_repo` is configured, so the orchestration home and product repo are
-different directories), Phase 4 changes:
-- Do NOT edit the task spec `status:` field. Product-code merges land in the
-  target repo, which never carries spec files; the coordinator writes
-  `status: done` back into the orchestration backlog after merge.
-- Commit ONLY product code in your worktree. Never commit framework files
-  (task specs, plans, `.orc-state`, or other orchestration artifacts) into the
-  target repo.
-- Steps 2–3 (rebase, `run-work-complete`) are unchanged.
-
-The worker bootstrap emits the correct Phase 4 instructions for the active
-layout automatically; this callout documents the contract.
+The worker bootstrap emits the same Phase 4 instructions in every layout. In a
+registered project there is no task spec file at all; the sibling layout is
+retired (`orc project migrate` moves an old orchestration home).
 
 ### Phase 5 — Finalize
 
@@ -207,10 +199,10 @@ Do NOT clean up the worktree or branch yourself.
 Use these as the default workflow. Treat everything else as recovery/debug unless the task explicitly requires it.
 
 1. Session startup: `orc start-session`
-2. Task authoring: edit `backlog/<N>-<slug>.md`
-3. Task registration/sync: automatic — the coordinator syncs specs to runtime state on each tick. No explicit verification step is required from the authoring agent.
+2. Task authoring: in a registered project, `orc project task create|edit|import` (or the MCP `create_task`/`update_task` tools) — no file in the repository. In a legacy installation, edit `backlog/<N>-<slug>.md`.
+3. Task registration: a project's tasks live in its SQLite store. A legacy coordinator registers new `todo` spec definitions on each tick; status is never read from or written to a spec.
 4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`), unique among currently-active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
-5. Task completion: worker updates task markdown in its worktree; coordinator calls `orc task-mark-done <task-ref>` after merge to update shared runtime state
+5. Task completion: coordinator calls `orc task-mark-done <task-ref>` after merge; task status is runtime-owned and no spec is edited
 6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
 7. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
 8. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
@@ -304,7 +296,7 @@ orc memory-record --content="..." [--wing=X] [--hall=Y] \
 
 Normal task-authoring path:
 - edit the markdown spec in `backlog/`
-- the coordinator auto-syncs specs to runtime state on each tick
+- the coordinator registers new `todo` spec definitions on each tick (legacy installations; a project uses `orc project task …`)
 - no explicit sync-check call is needed; `orc backlog-sync-check` remains available as an ad-hoc operator inspection tool
 
 Do not treat generic runtime mutation as a substitute for backlog markdown edits.
@@ -461,14 +453,14 @@ Follow the **Phased Workflow** above. The five phases are:
 1. **Explore** — read spec, identify files (gate: `orc run-start`)
 2. **Implement** — code + tests (gate: `npm test`)
 3. **Review** — commit, sub-agent review, fix findings (gate: reviewers accept)
-4. **Complete** — update task markdown to done, rebase (direct mode) or skip rebase (PR mode), `orc run-work-complete` (gate: run-work-complete exits 0)
+4. **Complete** — rebase (direct mode) or skip rebase (PR mode), `orc run-work-complete` (gate: run-work-complete exits 0); never edit a spec's `status:`
 5. **Finalize** — direct mode: coordinator follow-up + `orc run-finish`; PR mode: remain in session, handle PR_REVIEW, then run-work-complete + run-finish (gate: terminal success)
 
 New task specs follow `backlog/TASK_TEMPLATE.md`.
 
 ### Task Creation Completion
 - When creating or updating backlog task specs, save the markdown spec under the backlog directory.
-- The coordinator auto-syncs specs to runtime state on each tick. No explicit sync step is required; treat saving the file as the completion of the authoring turn.
+- In a legacy installation the coordinator registers the new spec's definition on its next tick; treat saving the file as the completion of the authoring turn. In a registered project, create the task with `orc project task create` or `create_task` instead.
 - `orc backlog-sync-check` remains available as an ad-hoc operator inspection tool, but is not part of the normal task-creation flow.
 
 ---

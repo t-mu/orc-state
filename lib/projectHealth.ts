@@ -1,4 +1,5 @@
-import { checkSiblingLayout } from './siblingLayoutCheck.ts';
+import { checkProjectLayout } from './projectLayoutCheck.ts';
+import { projectDataHome } from './projectRegistry.ts';
 import { projectTaskStoreFor } from './projectTasks.ts';
 import type { ActiveProject } from './projectContext.ts';
 
@@ -11,14 +12,16 @@ export interface ProjectHealth {
 
 /**
  * Health of the selected project: the target repository is a reachable Git
- * repository, the external state directory is writable, the project task
- * store opens at the current schema, and no orc artifacts sit in the target
- * working tree (a warning: an unmigrated legacy layout).
+ * repository with writable metadata, the external state directory and data
+ * home are writable, run worktrees live outside the target working tree, the
+ * project task store opens at the current schema, and no orc artifacts sit in
+ * the target working tree (a warning: a legacy layout not yet cleaned up).
  */
-export function checkProjectHealth(project: ActiveProject, stateDir: string): ProjectHealth {
-  // The two-root checks are the sibling layout's; a project is always two-rooted.
-  const layout = checkSiblingLayout({ isSibling: true, targetRepoRoot: project.targetRepoRoot, stateDir });
-  const errors = layout.errors.map((error) => error.replace('target_repo', 'target repository'));
+export function checkProjectHealth(project: ActiveProject, stateDir: string, { worktreesDir, env = process.env }: { worktreesDir?: string; env?: NodeJS.ProcessEnv } = {}): ProjectHealth {
+  let dataHome: string | undefined;
+  try { dataHome = projectDataHome(env); } catch { dataHome = undefined; }
+  const layout = checkProjectLayout({ targetRepoRoot: project.targetRepoRoot, stateDir, dataHome, worktreesDir });
+  const errors = [...layout.errors];
   try {
     if (!projectTaskStoreFor(stateDir)) errors.push(`project task store is missing: ${stateDir}/runtime.db`);
   } catch (error) {

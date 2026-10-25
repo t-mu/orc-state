@@ -1,6 +1,6 @@
 # Global project and task ownership contract
 
-This is the target contract for [plan 3](../plans/3-global-project-state.md). Task definitions, revisions, Markdown import/export and transactional lifecycle state are implemented for project state directories (see `docs/configuration.md` → Project tasks). The current attached and sibling layouts continue to operate until `orc project migrate` cuts them over (see `docs/configuration.md` → Migrating an existing installation). This document defines the behavior those tasks must preserve and prove.
+This is the target contract for [plan 3](../plans/3-global-project-state.md). Task definitions, revisions, Markdown import/export and transactional lifecycle state are implemented for project state directories (see `docs/configuration.md` → Project tasks). A legacy attached installation continues to operate, with status owned by its runtime and spec definitions only registered from Markdown, until `orc project migrate` cuts it over (see `docs/configuration.md` → Migrating an existing installation). The sibling layout is retired and must be migrated before it runs. This document defines the behavior those tasks must preserve and prove.
 
 ## Project identity and storage
 

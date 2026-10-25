@@ -72,10 +72,10 @@ controls Docker directly.
    tmux or a dedicated broker provides cross-process attachment. A lease grants
    exclusive input, while observers remain read-only. A lease does not pause
    an active provider turn.
-5. **Existing two-root layout:** The brief depicts one project repo. The code
-   supports attached and sibling target repos; both remain supported. Task
-   Markdown lives in the orchestration root, while worktrees may belong to a
-   separate target repo.
+5. **Existing two-root layout:** The brief depicts one project repo. A
+   registered project keeps its state outside the target repo, whose
+   worktrees it creates; legacy attached installations run until migrated, and
+   the sibling layout is retired (plan 3).
 6. **Existing finalization:** The brief says the daemon resolves conflicts;
    current direct mode can ask a worker for a finalize rebase. Preserve this
    behavior initially and model it explicitly in the run state. A separate

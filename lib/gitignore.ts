@@ -2,22 +2,20 @@ import { readFileSync, appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { logger } from './logger.ts';
-import { IS_SIBLING_LAYOUT } from './paths.ts';
+import { ACTIVE_PROJECT } from './paths.ts';
 
 const ENTRY = '.orc-state/';
 const COMMENT = '# orc-state runtime data';
 
 /**
- * Ensures `.orc-state/` is present in the project's `.gitignore`.
- * Silently skips if not inside a git repository.
+ * Ensures `.orc-state/` is present in a legacy attached installation's
+ * `.gitignore`. Silently skips if not inside a git repository.
  *
- * No-op in the sibling layout: the process cwd there is not the product repo,
- * and the target repo must never receive framework ignores. The orchestration
- * repo's `.orc-state/` and `.worktrees/` ignores are owned by the
- * `orc init --sibling` scaffolding (task 191), not by this helper.
+ * No-op for a registered project: its state lives outside the target
+ * repository, which must never receive framework ignores.
  */
-export function ensureGitignore({ siblingLayout = IS_SIBLING_LAYOUT }: { siblingLayout?: boolean } = {}): void {
-  if (siblingLayout) return;
+export function ensureGitignore({ project = ACTIVE_PROJECT !== null }: { project?: boolean } = {}): void {
+  if (project) return;
   try {
     const root = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
     const gitignorePath = join(root, '.gitignore');

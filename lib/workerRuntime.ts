@@ -54,19 +54,13 @@ export function normalizeWorkerEnv(
     env.ORC_REPO_ROOT = '';
     env.ORC_CONFIG_FILE = '';
   } else if (repoRoot) {
-    // NB: ORC_REPO_ROOT is the orchestration root here. In the sibling layout it
-    // is therefore NOT the target repo, and per resolveTargetRepoRoot's
-    // precedence (ORC_REPO_ROOT wins) a worker that resolved TARGET_REPO_ROOT
-    // would get the orchestration root. That is harmless because no
-    // worker-invoked orc path consumes TARGET_REPO_ROOT — workers run git in
-    // their worktree cwd, and the PR adapter defaults to process.cwd() (task
-    // 186). Target-repo resolution for workers is intentionally left to git-in-cwd.
+    // A legacy attached installation: ORC_REPO_ROOT is its root, which is
+    // also its target repository. Workers run git in their worktree cwd, and
+    // the PR adapter defaults to process.cwd() (task 186).
     env.ORC_REPO_ROOT = repoRoot;
     // ORC_HOME is the top-precedence orchestration-root signal (see
     // resolveOrchestrationRoot). A worker is launched in its assigned worktree
-    // (task 204), which in the sibling layout is a worktree of the TARGET repo — from that cwd
-    // git-based discovery would resolve to the target repo, not the
-    // orchestration home. Pinning ORC_HOME makes every `orc` invocation from a
+    // (task 204). Pinning ORC_HOME makes every `orc` invocation from a
     // worker shell resolve the orchestration state dir regardless of cwd; the
     // walk-up fallback (worktrees live under the orchestration root) covers the
     // case where ORC_HOME is somehow unset.

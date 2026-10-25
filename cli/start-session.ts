@@ -30,7 +30,7 @@ import {
   removeAgent,
   updateAgentRuntime,
 } from '../lib/agentRegistry.ts';
-import { ACTIVE_PROJECT, STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
 import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
@@ -304,6 +304,13 @@ if (deprecatedWorkerId || deprecatedWorkerProvider) {
 }
 
 // ── Startup wizard ─────────────────────────────────────────────────────────
+
+try {
+  assertSupportedLayout();
+} catch (error) {
+  console.error((error as Error).message);
+  process.exit(1);
+}
 
 const { running: coordinatorRunning, pid: coordinatorPid } = coordinatorStatus();
 const coordinatorAction = await promptCoordinatorAction(coordinatorRunning ? coordinatorPid : null);

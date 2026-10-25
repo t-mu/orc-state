@@ -95,35 +95,21 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toContain('WORKER_BOOTSTRAP');
   });
 
-  it('emits attached-mode Phase 4 (worker edits the spec) when siblingLayout is false', () => {
-    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token', { siblingLayout: false });
-    // Attached mode edits the worktree copy, never the pinned run snapshot.
+  it('emits one runtime-owned Phase 4 step: no worker edits a spec status', () => {
+    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token');
     const expectedStep7 = [
-      '  7. Signal complete phase and update the task markdown in this assigned worktree to `status: done`:',
+      '  7. Signal complete phase. Task status is runtime-owned — the coordinator records `done` after merge:',
       '       orc progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=bob',
-      '       - Edit the task spec file referenced by `task_spec_worktree_path` (the pinned `task_spec_path` is read-only)',
-      '       - Change its frontmatter `status:` field to `done`',
-      '       - Do not call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge',
+      '       - Do NOT edit the `status:` field of any task spec; commit only the changes the task asks for, never orchestration state',
+      '       - Do not call `orc task-mark-done` from the worker session',
     ].join('\n');
     expect(rendered).toContain(expectedStep7);
-    // No placeholder leaks and no sibling-only prohibition.
     expect(rendered).not.toContain('{{phase_complete_step}}');
-    expect(rendered).not.toContain('Never commit framework files');
-  });
-
-  it('emits sibling-mode Phase 4 (coordinator writes back; no spec edit) when siblingLayout is true', () => {
-    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token', { siblingLayout: true });
-    expect(rendered).toContain('the coordinator records completion after merge — do NOT edit the task spec');
-    expect(rendered).toContain('Never commit framework files');
-    expect(rendered).toContain('coordinator writes `status: done` back into the orchestration backlog after merge');
-    // Sibling mode omits the worker-edits-spec instructions.
-    expect(rendered).not.toContain('Edit the task spec file referenced by `task_spec_path`');
     expect(rendered).not.toContain('Change its frontmatter `status:` field to `done`');
-    expect(rendered).not.toContain('{{phase_complete_step}}');
   });
 
   it('interpolates orc_bin into the injected Phase 4 step (no leftover placeholder)', () => {
-    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', '/custom/orc', 'token', { siblingLayout: true });
+    const rendered = buildSessionBootstrap('bob', 'claude', 'worker', '/custom/orc', 'token');
     expect(rendered).toContain('/custom/orc progress --event=phase_started --phase=complete');
     expect(rendered).not.toContain('{{orc_bin}}');
   });
@@ -144,12 +130,9 @@ describe('buildSessionBootstrap', () => {
     expect(content).toContain('MAX_DEPTH=1');
   });
 
-  it('rendered worker bootstrap keeps the task-mark-done prohibition in both layouts', () => {
+  it('rendered worker bootstrap keeps the task-mark-done prohibition', () => {
     // The prohibition moved from the raw template into the injected Phase 4 step.
-    for (const siblingLayout of [false, true]) {
-      const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'tok', { siblingLayout });
-      expect(rendered).toContain('Do not call `orc task-mark-done`');
-    }
+    expect(buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'tok')).toContain('Do not call `orc task-mark-done`');
   });
 
   it('rendered bootstrap contains memory-wake-up call', () => {

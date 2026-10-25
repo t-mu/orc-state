@@ -30,6 +30,10 @@ In project mode:
 - Workers receive `ORC_PROJECT_ID`, their session id as `ORC_SESSION_TOKEN` (their actor credential), and the control socket as `ORC_CONTROL_SOCKET`, which `orc control` uses in place of the recorded endpoint path; the daemon's bearer token is still read from `<state>/control.token`. `ORC_STATE_DIR` is still set as a temporary bridge, and `ORC_HOME`/`ORC_REPO_ROOT`/`ORC_CONFIG_FILE` are blanked (a blank value counts as unset) so an inherited legacy value cannot redirect them. A sandboxed worker that cannot open the registry runs on environment settings and defaults.
 - Sandboxed workers may write their worktree, the project state directory, the target's `.git` object, ref and worktree-metadata subtrees, and — when a long state path moves it out of the state directory — the control socket itself; never the target working tree. Claude, Codex, and the Codex app-server runtime get the same writable roots, and Claude's sandbox also allows connecting to that socket (`network.allowUnixSockets`).
 
+### Legacy attached installations
+
+An installation that keeps `.orc-state/`, `backlog/` and `orc-state.config.json` inside its repository still runs until it is migrated, and `orc doctor`/`orc preflight` remind you to migrate it. Its coordinator registers task **definitions** from `backlog/` specs (a new spec is added as `todo`; titles, dependencies, review level and merge strategy follow their specs). Status is never read from a spec and never written back: runtime commands own it (`run-fail`, `task-reset`, `task-unblock`, the coordinator's merge), workers do not edit `status:`, and a new spec whose `status:` is not `todo` is not registered (`orc backlog-sync-check` lists it as skipped; `orc project migrate` carries such tasks with their status). The sibling layout is retired: a config with a separate `target_repo` is refused until migrated.
+
 ### Selecting and switching projects
 
 Every `orc` command accepts `--project=<id>` (or `--project <id>`), before or after the subcommand; it is the highest-precedence selector and an unknown id is an error. Inside a registered repository the repository selects its project; outside every repository `orc project select <id>` sets the default. Switching changes only the registry selection or the flag — no repository file is written, and provider logins are untouched because they live in the providers' own stores.
@@ -114,8 +118,8 @@ After the cutover, running orc in the legacy root (Git checkout or not), its lin
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ORC_STATE_DIR` | Root directory for all state files (backlog.json, agents.json, claims.json, events.db) | `<orchestration-root>/.orc-state` |
-| `ORC_HOME` | Force the orchestration root (where state, backlog, plans, and config live). Top precedence for orchestration-root resolution; the coordinator propagates it into worker sessions so `orc` resolves the orchestration state dir from inside a target-repo worktree. See [Sibling Mode](./sibling-mode.md). | Walk-up to `orc-state.config.json`, else git root |
-| `ORC_REPO_ROOT` | Force the repository root path instead of auto-detecting via `git rev-parse`. Also forces the target repo root for git operations. A forcing/recovery override — it does **not** by itself enable sibling mode (that is driven by the `target_repo` config key). | Auto-detected from cwd |
+| `ORC_HOME` | Force the orchestration root (where state, backlog, plans, and config live). Top precedence for orchestration-root resolution; the coordinator propagates it into a legacy installation's worker sessions so `orc` resolves the orchestration state dir from inside a worktree. | Walk-up to `orc-state.config.json`, else git root |
+| `ORC_REPO_ROOT` | Force the repository root path instead of auto-detecting via `git rev-parse`. Also forces the target repo root for git operations of a legacy installation. A forcing/recovery override. | Auto-detected from cwd |
 | `ORC_CONFIG_FILE` | Path to the config file | `<orchestration-root>/orc-state.config.json` |
 | `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<orchestration-root>/.worktrees` |
 | `ORC_BACKLOG_DIR` | Directory containing backlog task spec markdown files | `<orchestration-root>/backlog` |
@@ -219,18 +223,14 @@ Sets the fallback provider for both master and worker pool when neither a sectio
 
 Sets the fallback execution mode for both master and worker pool when neither a section-specific `execution_mode` nor an environment variable is set. Must be `full-access` or `sandbox`. Defaults to `full-access`.
 
-### `target_repo`
+### `target_repo` (retired)
 
-Path to the product repository that orc operates on, enabling the **sibling
-layout**. When set, orc runs from the orchestration root (which holds state,
-backlog, plans, and config) while all product-code git operations target this
-repo, so no framework files land in the product repo. A relative path resolves
-against the config file's directory (the orchestration root); an absolute path
-is used as-is. Absent (the default), the orchestration root and target repo are
-the same directory — the attached, single-repo layout.
-
-Set this with `orc init --sibling=<target-repo-path>` rather than by hand. See
-[Sibling Mode](./sibling-mode.md) for the full model and operating contract.
+The sibling layout this key enabled is retired. A legacy config that still
+names a separate `target_repo` is refused by `orc start-session`, the
+coordinator and the MCP server, and reported by `orc doctor`/`orc preflight`;
+migrate it with `orc project migrate <orchestration-home> --execute`, which
+registers the target repository as a project. See
+[Sibling Mode](./sibling-mode.md).
 
 ### `master`
 
@@ -403,9 +403,9 @@ In `sandbox` mode, a Claude settings file is also written that sets `allowUnsand
 
 - `.` — the launch working directory, i.e. the assigned worktree.
 - the state directory (`.orc-state/`). It stays writable deliberately: a sandboxed worker mutates runtime state only indirectly, by running `orc` lifecycle commands (`run-start`, `progress`, `run-work-complete`, `review-submit`, `memory-record`, …) from inside its own session, and those commands write the event log, claims, and memory store under `.orc-state/`.
-- the `.git` subtrees a worktree commit/rebase/fetch writes — `objects/`, `refs/`, `logs/`, and `worktrees/` — of the repo that backs the worktree: the orchestration repo in the attached layout, `<target-repo>` in the [sibling layout](./sibling-mode.md). A linked worktree shares its main repo's object store, refs and per-worktree state, all of which lie outside the worktree directory.
+- the `.git` subtrees a worktree commit/rebase/fetch writes — `objects/`, `refs/`, `logs/`, and `worktrees/` — of the repo that backs the worktree: the installation's own repository in a legacy attached installation, the registered target repository for a project. A linked worktree shares its main repo's object store, refs and per-worktree state, all of which lie outside the worktree directory.
 
-Any of these that already lies inside the launch directory is omitted. The `.git` grant is scoped to those subtrees rather than the whole `.git` directory on purpose: `.git/hooks` and `.git/config` are **excluded**, so a sandboxed worker cannot plant a hook script or rewrite git config that the unsandboxed coordinator would later execute during a merge, push, or worktree operation. The rest of the orchestration root (main checkout, `backlog/`, `plans/`) is not writable; attached-layout workers edit the task spec copy inside their worktree. The sandbox does not isolate the worker from state it legitimately writes through the CLI.
+Any of these that already lies inside the launch directory is omitted. The `.git` grant is scoped to those subtrees rather than the whole `.git` directory on purpose: `.git/hooks` and `.git/config` are **excluded**, so a sandboxed worker cannot plant a hook script or rewrite git config that the unsandboxed coordinator would later execute during a merge, push, or worktree operation. The rest of the orchestration root (main checkout, `backlog/`, `plans/`) is not writable. Workers never edit a task spec's `status:`; task status is runtime-owned. The sandbox does not isolate the worker from state it legitimately writes through the CLI.
 
 #### Codex (`codex`)
 

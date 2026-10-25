@@ -264,7 +264,7 @@ export function planMigration(path: string, registry: ProjectRegistry): Migratio
     else specsByRef.set(spec.ref, spec);
   }
   const effective = structuredClone(backlog);
-  syncBacklogFromSpecsLoaded(effective, [...specsByRef.values()]);
+  syncBacklogFromSpecsLoaded(effective, [...specsByRef.values()], { mirrorStatus: true });
   const archived = archivedSpecs(installation.backlogDir, issues);
 
   const tasks: PlannedTask[] = [];

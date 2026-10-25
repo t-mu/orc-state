@@ -28,14 +28,10 @@ When a TASK_START block arrives:
        git add .
        git commit -m "feat(smoke): complete {{agent_id}} task"
      Do NOT spawn sub-agents in this smoke profile.
-  6. Signal complete phase and update the task markdown in this assigned worktree to `status: done`:
+  6. Signal complete phase. Task status is runtime-owned — the coordinator records `done` after merge:
        {{orc_bin}} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id={{agent_id}}
-       - Edit the task spec file referenced by `task_spec_worktree_path` (the pinned `task_spec_path` is read-only)
-       - Change its frontmatter `status:` field to `done`
-       - Stage that spec change and fold it into the task commit:
-           git add <task_spec_worktree_path>
-           git commit --amend --no-edit
-       - Do not call `{{orc_bin}} task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge
+       - Do NOT edit the `status:` field of any task spec
+       - Do not call `{{orc_bin}} task-mark-done` from the worker session
   7. Emit a heartbeat, rebase onto main, then emit another heartbeat and hand off:
        {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id={{agent_id}}
        git rebase main

@@ -2026,14 +2026,6 @@ describe('processTerminalRunEvents', () => {
         worktree_path: '/tmp/orc-worktrees/run-finalize-success',
       }),
     }));
-    // Spy the sibling spec writeback while keeping markTaskDoneRuntimeOnly real,
-    // to prove the direct-merge finalization path actually invokes it.
-    const writeSpecStatusDone = vi.fn().mockReturnValue({ written: false, committed: false });
-    vi.doMock('./lib/taskCompletion.ts', async () => {
-      const actual = await vi.importActual<typeof import('./lib/taskCompletion.ts')>('./lib/taskCompletion.ts');
-      return { ...actual, writeSpecStatusDone };
-    });
-
     const { processTerminalRunEvents } = await import('./coordinator.ts');
     await processTerminalRunEvents([{
       event: 'work_complete',
@@ -2074,9 +2066,6 @@ describe('processTerminalRunEvents', () => {
     const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBeNull();
-    // The finalization path invokes the sibling spec writeback with the task ref
-    // (it no-ops in this attached-layout test env, but the wiring must exist).
-    expect(writeSpecStatusDone).toHaveBeenCalledWith('orch/task-151');
   });
 
   it('keeps merged runs done when cleanup is deferred after a successful merge', async () => {

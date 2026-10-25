@@ -505,14 +505,15 @@ describe('codexSandboxWritableRootArgs', () => {
 });
 
 describe('sandbox roots end-to-end via start() (task 204)', () => {
-  function siblingLayout() {
+  // State and product repository in different roots (as in project mode), forced with ORC_REPO_ROOT.
+  function twoRootLayout() {
     const orch = join(dir, 'orch');
     const target = join(dir, 'target');
     const worktree = join(orch, '.worktrees', 'run-1');
     mkdirSync(join(orch, '.orc-state'), { recursive: true });
     mkdirSync(worktree, { recursive: true });
-    writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: target }));
-    process.env.ORC_STATE_DIR = join(orch, '.orc-state'); // → ORCHESTRATION_ROOT = orch, sibling layout
+    process.env.ORC_STATE_DIR = join(orch, '.orc-state'); // → ORCHESTRATION_ROOT = orch
+    process.env.ORC_REPO_ROOT = target; // → TARGET_REPO_ROOT = target
     return { orch, target, worktree, stateDir: join(orch, '.orc-state') };
   }
 
@@ -523,14 +524,15 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
   let savedRepoRoot: string | undefined;
   beforeEach(() => {
     savedRepoRoot = process.env.ORC_REPO_ROOT;
-    delete process.env.ORC_REPO_ROOT; // ensure target_repo (not ORC_REPO_ROOT) drives resolution
+    delete process.env.ORC_REPO_ROOT;
   });
   afterEach(() => {
     if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
+    else delete process.env.ORC_REPO_ROOT;
   });
 
-  it('claude, sibling: launches in the worktree and grants state dir + target .git', async () => {
-    const { target, worktree, stateDir } = siblingLayout();
+  it('claude, two roots: launches in the worktree and grants state dir + target .git', async () => {
+    const { target, worktree, stateDir } = twoRootLayout();
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', { execution_mode: 'sandbox', working_directory: worktree });
     expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.any(Array), expect.objectContaining({ cwd: worktree }));
@@ -550,8 +552,8 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', join(orch, '.orc-state'), ...gitRoots(orch)]);
   });
 
-  it('codex grants the same roots, and gemini stays flag-free, in the sibling layout', async () => {
-    const { target, worktree, stateDir } = siblingLayout();
+  it('codex grants the same roots, and gemini stays flag-free, with two roots', async () => {
+    const { target, worktree, stateDir } = twoRootLayout();
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', { execution_mode: 'sandbox', working_directory: worktree });
     expect(codex.spawnSpy.mock.calls[0][1]).toEqual([

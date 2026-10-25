@@ -211,8 +211,8 @@ describe('project status authority', () => {
   });
 
   it('tells project workers not to edit any status field', () => {
-    const text = buildSessionBootstrap('worker-a', 'claude', 'worker', 'orc', 'token', { projectState: true });
-    expect(text).toContain('there is no task spec file to edit');
+    const text = buildSessionBootstrap('worker-a', 'claude', 'worker', 'orc', 'token');
+    expect(text).toContain('Task status is runtime-owned');
     expect(text).not.toContain('Change its frontmatter `status:` field');
   });
 });

@@ -5,10 +5,9 @@
  */
 import { execSync } from 'node:child_process';
 import { validateStateDir } from '../lib/stateValidation.ts';
-import { ACTIVE_PROJECT, STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, LEGACY_SIBLING_TARGET, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag } from '../lib/args.ts';
-import { checkSiblingLayout } from '../lib/siblingLayoutCheck.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
@@ -18,24 +17,21 @@ const asJson = boolFlag('json');
 
 const stateErrors = validateStateDir(STATE_DIR);
 const gitRepo = isGitRepo(ACTIVE_PROJECT ? TARGET_REPO_ROOT : undefined);
-const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR) : null;
+const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR, { worktreesDir: WORKTREES_DIR }) : null;
 const agentsRaw = readAgentsFromLib(STATE_DIR).agents ?? [];
 const claimsRaw = readClaimsFromLib(STATE_DIR).claims ?? [];
 const agents = agentsRaw;
 const claims = claimsRaw;
 
-const siblingLayout = checkSiblingLayout({
-  isSibling: IS_SIBLING_LAYOUT,
-  targetRepoRoot: TARGET_REPO_ROOT,
-  stateDir: STATE_DIR,
-});
+// A retired sibling layout fails preflight; it must be migrated before it runs.
+const siblingRetired = LEGACY_SIBLING_TARGET !== null;
 
 const checks = {
   state_valid: stateErrors.length === 0,
   has_registered_workers: agents.length > 0,
   has_online_workers: agents.some((a) => a.status !== 'offline'),
   orphaned_active_claims: getOrphanedClaims(agents, claims),
-  sibling_layout_ok: siblingLayout.ok,
+  legacy_layout_supported: !siblingRetired,
   project_ok: projectHealth?.ok ?? true,
 };
 const providerBinaries = getProviderBinaries(agents);
@@ -45,7 +41,7 @@ const ok = checks.state_valid
   && checks.has_registered_workers
   && checks.orphaned_active_claims.length === 0
   && allBinariesPresent
-  && siblingLayout.ok
+  && !siblingRetired
   && checks.project_ok;
 
 const result = {
@@ -63,8 +59,10 @@ const result = {
     ...(!gitRepo
       ? ['Not inside a git repository — worktree isolation will not work']
       : []),
-    ...siblingLayout.errors.map((e) => `sibling layout error (fails preflight): ${e}`),
-    ...siblingLayout.warnings.map((w) => `sibling layout warning: ${w}`),
+    ...(siblingRetired
+      ? [`sibling layout error (fails preflight): target_repo ${LEGACY_SIBLING_TARGET} is retired; run orc project migrate ${ORCHESTRATION_ROOT} --execute`]
+      : []),
+    ...(!ACTIVE_PROJECT && !siblingRetired ? [`legacy installation at ${ORCHESTRATION_ROOT}; migrate it into a project with orc project migrate`] : []),
     ...(projectHealth?.errors ?? []).map((e) => `project error (fails preflight): ${e}`),
     ...(projectHealth?.warnings ?? []).map((w) => `project warning: ${w}`),
   ],
@@ -86,9 +84,7 @@ console.log(`state_valid:            ${checks.state_valid}`);
 console.log(`has_registered_workers: ${checks.has_registered_workers}`);
 console.log(`has_online_workers:     ${checks.has_online_workers}`);
 console.log(`orphaned_active_claims: ${checks.orphaned_active_claims.length}`);
-if (!siblingLayout.skipped) {
-  console.log(`sibling_layout_ok:      ${siblingLayout.ok}`);
-}
+if (siblingRetired) console.log('sibling_layout:         retired (run orc project migrate)');
 console.log('provider_binaries:');
 for (const [provider, available] of Object.entries(providerBinaries)) {
   const packageName = (PROVIDER_PACKAGES)[provider] ?? '';

@@ -7,10 +7,7 @@ function mockRepoRoot(root: string, { targetRepoRoot }: { targetRepoRoot?: strin
   vi.doMock('./repoRoot.ts', () => ({
     resolveRepoRoot: vi.fn().mockReturnValue(root),
     resolveOrchestrationRoot: vi.fn().mockReturnValue(root),
-    resolveTargetRepoRoot: vi.fn(
-      (_configFile: string, orchestrationRoot: string) => targetRepoRoot ?? orchestrationRoot,
-    ),
-    isSiblingLayout: vi.fn().mockReturnValue(targetRepoRoot !== undefined),
+    legacySiblingTarget: vi.fn().mockReturnValue(targetRepoRoot ?? null),
   }));
 }
 
@@ -61,25 +58,22 @@ describe('paths', () => {
     expect(TARGET_REPO_ROOT).toBe(ORCHESTRATION_ROOT);
   });
 
-  it('TARGET_REPO_ROOT diverges from the orchestration root when configured', async () => {
+  it('never targets a configured sibling target_repo; it is detected and refused instead', async () => {
     mockRepoRoot('/tmp/orch-root', { targetRepoRoot: '/tmp/product-repo' });
 
-    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT } = await import('./paths.ts');
-    expect(ORCHESTRATION_ROOT).toBe('/tmp/orch-root');
-    expect(TARGET_REPO_ROOT).toBe('/tmp/product-repo');
+    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT, LEGACY_SIBLING_TARGET, assertSupportedLayout } = await import('./paths.ts');
+    expect(TARGET_REPO_ROOT).toBe(ORCHESTRATION_ROOT);
+    expect(LEGACY_SIBLING_TARGET).toBe('/tmp/product-repo');
+    expect(() => assertSupportedLayout()).toThrow('orc project migrate /tmp/orch-root --execute');
   });
 
-  it('resolves TARGET_REPO_ROOT against the effective config file path', async () => {
-    const resolveTargetRepoRoot = vi.fn().mockReturnValue('/tmp/product-repo');
-    vi.doMock('./repoRoot.ts', () => ({
-      resolveRepoRoot: vi.fn().mockReturnValue('/tmp/orch-root'),
-      resolveOrchestrationRoot: vi.fn().mockReturnValue('/tmp/orch-root'),
-      resolveTargetRepoRoot,
-      isSiblingLayout: vi.fn().mockReturnValue(false),
-    }));
+  it('ORC_REPO_ROOT forces the target root of a legacy installation', async () => {
+    mockRepoRoot('/tmp/orch-root');
+    vi.stubEnv('ORC_REPO_ROOT', '/tmp/forced');
 
-    const { ORC_CONFIG_FILE } = await import('./paths.ts');
-    expect(resolveTargetRepoRoot).toHaveBeenCalledWith(ORC_CONFIG_FILE, '/tmp/orch-root');
+    const { TARGET_REPO_ROOT, assertSupportedLayout } = await import('./paths.ts');
+    expect(TARGET_REPO_ROOT).toBe('/tmp/forced');
+    expect(() => assertSupportedLayout()).not.toThrow();
   });
 
   it('still honors ORC_STATE_DIR overrides explicitly', async () => {
@@ -95,10 +89,7 @@ describe('paths', () => {
     vi.doMock('./repoRoot.ts', () => ({
       resolveRepoRoot: vi.fn().mockReturnValue('/tmp/should-not-be-used'),
       resolveOrchestrationRoot,
-      resolveTargetRepoRoot: vi.fn(
-        (_configFile: string, orchestrationRoot: string) => orchestrationRoot,
-      ),
-      isSiblingLayout: vi.fn().mockReturnValue(false),
+      legacySiblingTarget: vi.fn().mockReturnValue(null),
     }));
     vi.stubEnv('ORC_STATE_DIR', '/tmp/orch-home/.orc-state');
 

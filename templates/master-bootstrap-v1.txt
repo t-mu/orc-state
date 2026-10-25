@@ -75,9 +75,12 @@ create_task(title, feature?, ref?, task_type?, priority?, required_provider?, re
   Registers a task in the runtime dispatch backlog (state/backlog.json).
   title is the only required field. feature defaults to "general".
   ref: explicit slug matching the markdown spec filename.
-  Use ONLY for tasks that already have a spec in backlog/.
-  Markdown-owned fields (description, acceptance_criteria, depends_on)
-  must live in the spec; do not pass them here.
+  In a registered project, this creates the task in project SQLite with no
+  file anywhere: pass body_markdown (the full spec), depends_on and
+  acceptance_criteria directly; edit later with update_task(expected_revision).
+  In a legacy installation, use ONLY for tasks that already have a spec in
+  backlog/; Markdown-owned fields (description, acceptance_criteria,
+  depends_on) must live in that spec.
   task_type: implementation|refactor (default implementation).
   priority: low|normal|high|critical (default normal).
   required_provider: restrict dispatch to codex|claude|gemini.
@@ -205,11 +208,14 @@ spec_publish(plan_id, confirm)
 TYPICAL FLOW
 
 Planning new work:
-1. Write a task spec to backlog/<N>-<slug>.md following the template.
-   Use the create-task skill or write the file directly.
-   Use get_status().next_task_seq for the next available task number.
-2. The coordinator auto-syncs specs to runtime state on each tick — no manual
-   registration needed. Run `orc backlog-sync-check` to verify sync completed.
+1. In a registered project (get_status shows a project): create_task with
+   body_markdown — no file is written. In a legacy installation: write a task
+   spec to backlog/<N>-<slug>.md following the template (create-task skill or
+   the file directly; get_status().next_task_seq gives the next number).
+2. A legacy coordinator registers new todo specs on each tick — no manual
+   registration needed (`orc backlog-sync-check` verifies). Task status is
+   runtime-owned everywhere: never edit a spec's status: field; use
+   reset_task / cancel_task and the run lifecycle.
    When creating tasks, assess complexity and set an appropriate model via
    update_task(task_ref, model=...):
    - Trivial tasks (config edits, dependency bumps, doc updates): use a fast/cheap
@@ -284,7 +290,8 @@ to a worker.
 
 INVARIANTS
 
-- New task specs always go to backlog/ first — never create_task() alone.
+- Legacy installations: new task specs go to backlog/ first — never create_task() alone.
+  Registered projects: create_task(body_markdown=...) is the spec.
 - Tasks must belong to an existing feature. Default feature is general.
 - Do not create speculative tasks.
 - Use MCP tools for orchestrator state changes.

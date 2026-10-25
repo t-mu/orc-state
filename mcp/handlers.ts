@@ -77,8 +77,8 @@ function backlogDocsDirForState(stateDir: string) {
 function plansDirForState(stateDir: string) {
   const colocatedPlansDir = join(stateDir, 'plans');
   if (existsSync(colocatedPlansDir)) return colocatedPlansDir;
-  const siblingPlansDir = join(stateDir, '..', 'plans');
-  if (existsSync(siblingPlansDir)) return siblingPlansDir;
+  const parentPlansDir = join(stateDir, '..', 'plans');
+  if (existsSync(parentPlansDir)) return parentPlansDir;
   return PLANS_DIR;
 }
 

@@ -30,8 +30,10 @@ function findConfigDirUpwards(cwd: string): string | null {
 }
 
 /**
- * Resolve the orchestration root — the directory that owns
- * orc-state.config.json, .orc-state/, backlog/, plans/, and .worktrees/.
+ * Resolve the orchestration root of a legacy (unmigrated) installation — the
+ * directory that owns orc-state.config.json, .orc-state/, backlog/, plans/,
+ * and .worktrees/. This is a fallback: a registered project (lib/projectContext.ts)
+ * is selected first, and a legacy root is only used when none applies.
  *
  * Precedence: ORC_HOME, then the existing ORC_REPO_ROOT override, then
  * directory walk-up locating orc-state.config.json, then git-based
@@ -41,12 +43,6 @@ function findConfigDirUpwards(cwd: string): string | null {
  * also carries a config file: in the attached layout the config is checked
  * in, so a worker whose cwd is .worktrees/<run>/ would otherwise resolve
  * state paths to its own worktree copy instead of the shared main checkout.
- *
- * Caveat: when the TARGET repo itself carries a committed config file
- * (e.g. orchestrating this repo from a sibling orch home), the walk-up
- * finds the target's config first and resolves into the target repo.
- * Sibling-layout worker sessions must therefore be launched with ORC_HOME
- * (or ORC_STATE_DIR) set rather than rely on walk-up discovery.
  */
 export function resolveOrchestrationRoot(cwd: string = process.cwd()): string {
   const home = process.env.ORC_HOME;
@@ -81,29 +77,14 @@ function readTargetRepoFromConfig(configFile: string): string | null {
 }
 
 /**
- * Resolve the target repo root — the repository whose product code runs
- * operate on. `target_repo` from the config file is resolved against the
- * config file's directory when relative; absent, the target repo is the
- * orchestration root itself (single-repo layout).
+ * The separate target repository a retired sibling layout configures with
+ * `target_repo`, or null for an attached layout. Sibling layouts no longer
+ * run; they are detected only so they can be refused and pointed at
+ * `orc project migrate` instead of silently operating on the wrong repository.
  */
-export function resolveTargetRepoRoot(configFile: string, orchestrationRoot: string): string {
-  const forced = process.env.ORC_REPO_ROOT;
-  if (forced) return resolve(forced);
+export function legacySiblingTarget(configFile: string, orchestrationRoot: string): string | null {
   const targetRepo = readTargetRepoFromConfig(configFile);
-  if (!targetRepo) return orchestrationRoot;
-  return resolve(dirname(configFile), targetRepo);
-}
-
-/**
- * Whether the sibling layout is active: the operator has configured a
- * `target_repo` that resolves to a directory different from the orchestration
- * root. This is the explicit config opt-in — deliberately NOT inferred from
- * ORC_REPO_ROOT (a forcing override for git-op targeting) or from incidental
- * divergence between ORC_STATE_DIR's parent and ORC_REPO_ROOT, both of which
- * can differ in tests/overrides without a real sibling target being present.
- */
-export function isSiblingLayout(configFile: string, orchestrationRoot: string): boolean {
-  const targetRepo = readTargetRepoFromConfig(configFile);
-  if (!targetRepo) return false;
-  return resolve(dirname(configFile), targetRepo) !== resolve(orchestrationRoot);
+  if (!targetRepo) return null;
+  const target = resolve(dirname(configFile), targetRepo);
+  return target === resolve(orchestrationRoot) ? null : target;
 }

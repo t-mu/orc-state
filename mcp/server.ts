@@ -14,7 +14,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
-import { STATE_DIR } from '../lib/paths.ts';
+import { assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -182,6 +182,7 @@ function isEntryPoint() {
 }
 
 export async function startServer() {
+  assertSupportedLayout();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write('[orc-mcp] server started\n');

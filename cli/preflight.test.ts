@@ -80,6 +80,20 @@ describe('cli/preflight.ts', () => {
     expect(json.details.state_errors.length).toBeGreaterThan(0);
   });
 
+  it('fails a retired sibling layout and points at the migration', () => {
+    seedValidState({
+      agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+    });
+    createFakeBinary('codex');
+    const config = join(dir, 'orc-state.config.json');
+    writeFileSync(config, JSON.stringify({ target_repo: '/tmp/some-product' }));
+    const result = runPreflight(['--json'], { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}`, ORC_CONFIG_FILE: config });
+    expect(result.status).toBe(1);
+    const json = JSON.parse(result.stdout);
+    expect(json.checks.legacy_layout_supported).toBe(false);
+    expect(json.warnings.some((w: string) => w.includes('orc project migrate'))).toBe(true);
+  });
+
   it('warns when not inside a git repository', () => {
     seedValidState({
       agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],

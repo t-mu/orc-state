@@ -6,7 +6,7 @@ or debugging the system.
 
 The future global-project ownership contract is in
 [Global project and task ownership contract](./global-project-contract.md).
-The current file describes the active attached and sibling implementations.
+The current file describes the active implementation: registered projects and legacy attached installations (the sibling layout is retired).
 
 ---
 
@@ -316,9 +316,6 @@ during task execution. These commands mutate claim state and emit events.
          |
          v
   [implement + test + review]
-         |
-         v
-  worker updates task markdown in worktree to status: done
          |
          v
   orc run-work-complete          finalization_state -> awaiting_finalize

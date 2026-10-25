@@ -7,7 +7,7 @@
  *
  *  - core.hooksPath=/dev/null — do not run the target repo's hooks. Automated
  *    merges / pushes / worktree operations must not execute product-repo hook
- *    scripts. In the sibling layout this also closes a privilege-escalation
+ *    scripts. In project mode this also closes a privilege-escalation
  *    vector: a sandboxed worker cannot get a hook it planted executed by the
  *    UNSANDBOXED coordinator. The worker's `<target>/.git` sandbox grant
  *    already excludes `hooks/` (see adapters/pty.ts), so this is defense in

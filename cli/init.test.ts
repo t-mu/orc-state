@@ -50,7 +50,7 @@ function runInCwd(cwd: string, args: string[] = []) {
 
 // Run init in a fresh orchestration cwd with the ambient ORC_* path overrides
 // cleared, so state/backlog/plans/config resolve under that cwd (as they would
-// for a real `orc init --sibling` in a new orchestration home).
+// for a real `orc init` in a new directory).
 function runSibling(cwd: string, args: string[]) {
   const env = { ...process.env };
   delete env.ORC_STATE_DIR;
@@ -225,63 +225,14 @@ describe('cli/init.ts', () => {
 });
 
 describe('cli/init.ts --sibling', () => {
-  it('scaffolds an orchestration home targeting a separate git repo', () => {
+  it('is retired and points at project registration, writing nothing', () => {
     const orch = join(dir, 'orch');
-    const target = join(dir, 'target');
     mkdirSync(orch, { recursive: true });
-    mkdirSync(target, { recursive: true });
-    spawnSync('git', ['init'], { cwd: target });
-
     const result = runSibling(orch, ['--sibling=../target', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
-    expect(result.status).toBe(0);
-
-    // Config carries target_repo as a path relative to the orchestration home.
-    const config = JSON.parse(readFileSync(join(orch, 'orc-state.config.json'), 'utf8'));
-    expect(config.target_repo).toBe('../target');
-
-    // Orchestration .gitignore ignores both runtime dirs.
-    const gitignore = readFileSync(join(orch, '.gitignore'), 'utf8');
-    expect(gitignore).toContain('.orc-state/');
-    expect(gitignore).toContain('.worktrees/');
-
-    // backlog/ and plans/ scaffolded, orch git-initialized, state under orch.
-    expect(existsSync(join(orch, 'backlog'))).toBe(true);
-    expect(existsSync(join(orch, 'plans'))).toBe(true);
-    expect(existsSync(join(orch, '.git'))).toBe(true);
-    expect(existsSync(join(orch, '.orc-state', 'backlog.json'))).toBe(true);
-
-    // The target repo is never polluted with framework files.
-    expect(existsSync(join(target, 'orc-state.config.json'))).toBe(false);
-    expect(existsSync(join(target, '.orc-state'))).toBe(false);
-    expect(existsSync(join(target, 'backlog'))).toBe(false);
-  });
-
-  it('errors when the --sibling target is not a git repository', () => {
-    const orch = join(dir, 'orch2');
-    const plain = join(dir, 'plain-target');
-    mkdirSync(orch, { recursive: true });
-    mkdirSync(plain, { recursive: true });
-
-    const result = runSibling(orch, ['--sibling=../plain-target', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('not a git repository');
-  });
-
-  it('errors when the --sibling target does not exist', () => {
-    const orch = join(dir, 'orch3');
-    mkdirSync(orch, { recursive: true });
-
-    const result = runSibling(orch, ['--sibling=../does-not-exist', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('does not exist');
-  });
-
-  it('errors when --sibling resolves to the orchestration home itself', () => {
-    const orch = join(dir, 'orch4');
-    mkdirSync(orch, { recursive: true });
-
-    const result = runSibling(orch, ['--sibling=.', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('different directory');
+    expect(result.stderr).toContain('orc init --sibling is retired');
+    expect(result.stderr).toContain('orc project add');
+    expect(existsSync(join(orch, 'orc-state.config.json'))).toBe(false);
+    expect(existsSync(join(orch, '.orc-state'))).toBe(false);
   });
 });

@@ -4,23 +4,17 @@
  * Usage: orc backlog-sync-check
  *
  * Verify that active backlog markdown specs and orchestrator state agree on
- * authoritative task metadata. Exits 1 if any spec refs are unregistered or
- * any authoritative metadata has drifted.
+ * task definitions (feature, title) in a legacy installation. Exits 1 if any
+ * todo spec is unregistered or a definition has drifted. Status is
+ * runtime-owned and is not compared; a non-todo spec that was never
+ * registered is listed as skipped (migrate the installation to carry it).
  */
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { TaskStatus } from '../types/backlog.ts';
 import { discoverActiveTaskSpecs, type SpecEntry } from '../lib/backlogSync.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { formatErrorMessage } from './shared.ts';
-
-const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
-// Mirror backlogSync: a terminal runtime status is never demoted by a spec, so
-// a done/released runtime task with a stale (e.g. still-todo) spec is not an
-// actionable mismatch — reporting it would flag the benign sibling-writeback
-// lag window as a fixable drift.
-const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'released']);
 
 interface RegisteredTaskEntry {
   feature: string;
@@ -30,7 +24,7 @@ interface RegisteredTaskEntry {
 export interface BacklogSyncMismatch {
   file: string;
   ref: string;
-  field: 'feature' | 'title' | 'status';
+  field: 'feature' | 'title';
   expected: string;
   actual: string;
 }
@@ -70,8 +64,6 @@ function findMetadataMismatches(specs: SpecEntry[], registered: Map<string, Regi
   for (const spec of specs) {
     const entry = registered.get(spec.ref);
     if (!entry) continue;
-    const actualStatus = typeof entry.task.status === 'string' ? entry.task.status : '';
-
     if (entry.feature !== spec.feature) {
       mismatches.push({
         file: spec.file,
@@ -92,20 +84,6 @@ function findMetadataMismatches(specs: SpecEntry[], registered: Map<string, Regi
         actual: actualTitle,
       });
     }
-
-    if (
-      !ACTIVE_STATUSES.has(actualStatus as TaskStatus) &&
-      !TERMINAL_STATUSES.has(actualStatus as TaskStatus) &&
-      actualStatus !== spec.status
-    ) {
-      mismatches.push({
-        file: spec.file,
-        ref: spec.ref,
-        field: 'status',
-        expected: spec.status,
-        actual: actualStatus,
-      });
-    }
   }
   return mismatches;
 }
@@ -121,9 +99,10 @@ export function validateBacklogSync(
   }
   const registeredRefs = extractRegisteredTaskRefs(stateBacklogPath);
   const registeredEntries = readRegisteredTaskEntries(stateBacklogPath);
-  const missing = specs
-    .filter((spec) => !registeredRefs.has(spec.ref))
-    .map(({ file, ref }) => ({ file, ref }));
+  const unregistered = specs.filter((spec) => !registeredRefs.has(spec.ref));
+  // Sync registers only todo specs; the others need a migration, not a re-sync.
+  const missing = unregistered.filter((spec) => spec.status === 'todo').map(({ file, ref }) => ({ file, ref }));
+  const skipped = unregistered.filter((spec) => spec.status !== 'todo').map(({ file, ref, status }) => ({ file, ref, status }));
   const mismatches = findMetadataMismatches(specs, registeredEntries);
   return {
     ok: missing.length === 0 && mismatches.length === 0,
@@ -131,6 +110,7 @@ export function validateBacklogSync(
     filtered: filterRefs !== undefined && filterRefs.size > 0,
     missing,
     mismatches,
+    skipped,
   };
 }
 
@@ -140,18 +120,24 @@ export function formatBacklogSyncResult(result: {
   filtered?: boolean;
   missing: Array<{ file: string; ref: string }>;
   mismatches: BacklogSyncMismatch[];
+  skipped?: Array<{ file: string; ref: string; status: string }>;
 }) {
   const scope = result.filtered
     ? `${result.spec_count} ref(s)`
     : `${result.spec_count} specs`;
+  const skipped = (result.skipped ?? []).length > 0
+    ? [`${result.skipped!.length} unregistered non-todo spec(s) skipped; run orc project migrate to carry their status:`,
+      ...result.skipped!.map((entry) => `- ${entry.ref} (${entry.file}): status ${entry.status}`)]
+    : [];
   if (result.ok) {
-    return `backlog sync OK: ${scope} matched orchestrator state`;
+    return [`backlog sync OK: ${scope} matched orchestrator state`, ...skipped].join('\n');
   }
   return [
     `backlog sync FAILED: ${result.missing.length} missing ref(s), ${result.mismatches.length} metadata mismatch(es)`,
     ...result.missing.map((entry) => `- ${entry.ref} (${entry.file})`),
     ...result.mismatches.map((entry) =>
       `- ${entry.ref} (${entry.file}): ${entry.field} expected "${entry.expected}" but found "${entry.actual}"`),
+    ...skipped,
   ].join('\n');
 }
 

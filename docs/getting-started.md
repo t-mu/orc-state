@@ -102,7 +102,7 @@ Register it with the orchestrator:
 
 ```bash
 orc task-create
-orc backlog-sync-check   # verify state matches markdown
+orc backlog-sync-check   # legacy installations: verify spec definitions are registered
 ```
 
 ## Dispatch work
