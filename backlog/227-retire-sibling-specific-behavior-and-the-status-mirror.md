@@ -3,7 +3,7 @@ ref: global-project-state/227-retire-sibling-specific-behavior-and-the-status-mi
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/226-migrate-attached-and-sibling-installations-safely
 ---
