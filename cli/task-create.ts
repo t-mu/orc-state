@@ -25,7 +25,7 @@ import { flag, flagAll } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { findTask, getNextTaskSeq, readBacklog } from '../lib/stateReader.ts';
 import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
@@ -107,7 +107,7 @@ if (projectTaskStoreFor(STATE_DIR)) {
       ...(requiredProvider ? { required_provider: requiredProvider } : {}),
       ...(owner ? { owner } : {}),
     }, actorId);
-    console.log(`task created: ${task.ref} (revision ${task.revision})`);
+    console.log(`task created: ${task.ref} (revision ${task.revision})${ACTIVE_PROJECT ? ` in project ${ACTIVE_PROJECT.name} (${ACTIVE_PROJECT.id})` : ''}`);
   } catch (err) {
     cliError(err);
   }

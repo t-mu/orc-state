@@ -17,14 +17,16 @@ export const ACTIVE_PROJECT: ActiveProject | null = resolveActiveProject();
 // calls when the ambient dir overrides are present (worker sessions, tests
 // that mock node:child_process). In project mode it is the project state dir.
 export const ORCHESTRATION_ROOT = ACTIVE_PROJECT
-  ? (process.env.ORC_STATE_DIR ? resolve(process.env.ORC_STATE_DIR) : ACTIVE_PROJECT.stateDir)
+  ? ACTIVE_PROJECT.stateDir
   : process.env.ORC_STATE_DIR
     ? resolve(process.env.ORC_STATE_DIR, '..')
     : resolveOrchestrationRoot();
 
-export const STATE_DIR = process.env.ORC_STATE_DIR
-  ? resolve(process.env.ORC_STATE_DIR)
-  : ACTIVE_PROJECT ? ACTIVE_PROJECT.stateDir : resolve(ORCHESTRATION_ROOT, '.orc-state');
+// A selected project always uses its own state directory; an ORC_STATE_DIR
+// bridge only counts when it is that directory (see resolveActiveProject).
+export const STATE_DIR = ACTIVE_PROJECT
+  ? ACTIVE_PROJECT.stateDir
+  : process.env.ORC_STATE_DIR ? resolve(process.env.ORC_STATE_DIR) : resolve(ORCHESTRATION_ROOT, '.orc-state');
 
 export const EVENTS_FILE = resolve(STATE_DIR, 'events.db');
 

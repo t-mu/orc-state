@@ -62,3 +62,17 @@ export function mergeMcpConfig(
 export function defaultServerPath(): string {
   return runtimeModulePath('../mcp/server.ts', '../mcp/server.js');
 }
+
+/**
+ * Codex MCP configuration as `-c` overrides, so a project master does not
+ * write `.codex/config.toml` into the target repository. Values are JSON
+ * literals, which Codex parses as TOML strings, arrays and inline tables.
+ */
+export function codexMcpOverrideArgs(serverPath: string, env: Record<string, string>, nodePath = process.execPath): string[] {
+  const table = Object.entries(env).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ');
+  return [
+    '-c', `mcp_servers.orchestrator.command=${JSON.stringify(nodePath)}`,
+    '-c', `mcp_servers.orchestrator.args=${JSON.stringify([serverPath])}`,
+    '-c', `mcp_servers.orchestrator.env={${table}}`,
+  ];
+}

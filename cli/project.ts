@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
+import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { createProjectTask, describeProjectTask, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
 import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
@@ -91,7 +92,8 @@ export function runProjectCommand(args: string[], registry: ProjectRegistry, env
   if (action === 'add') {
     if (values.length !== 1 || rest.some((arg) => arg.startsWith('--') && !arg.startsWith('--name='))) usage();
     const project = registry.add(values[0], option(rest, 'name'));
-    // A registered project's tasks live in its own SQLite store from the start.
+    // A registered project's state directory is complete, and its tasks live in its own SQLite store, from the start.
+    ensureStateInitialized(project.stateDir);
     initProjectTaskStore(project.stateDir);
     return project;
   }

@@ -10,6 +10,8 @@ import type { Claim } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 import { computeWorkerCapacity } from './workerCapacity.ts';
+import { readProjectDescriptor } from './projectContext.ts';
+import { formatProjectIdentity } from './projectHealth.ts';
 const STARTUP_FAILURE_LIMIT = 5;
 const LIFECYCLE_FAILURE_LIMIT = 5;
 
@@ -323,7 +325,10 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
     }));
   const blockedFinalizationRuns = finalizationRuns.filter((claim) => claim.finalization_state === 'blocked_finalize');
 
+  const descriptor = readProjectDescriptor(stateDir);
   return {
+    // The project this state directory belongs to (null for a legacy layout).
+    project: descriptor ? { id: descriptor.id, name: descriptor.name, target_repo_root: descriptor.target_repo_root } : null,
     agents: {
       total: agents.length,
       masters: agents.filter((a) => a.role === 'master').length,
@@ -484,6 +489,7 @@ export function formatStatus(status: Record<string, unknown>): string {
   const eventReadError = status['eventReadError'] as string;
 
   lines.push('Orchestrator Status');
+  lines.push(formatProjectIdentity(status['project'] as { id: string; name: string; target_repo_root: string } | null ?? null));
   lines.push('─'.repeat(40));
   lines.push('');
   lines.push('Master:');

@@ -563,7 +563,7 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 
 | Method | Path | Result |
 |--------|------|--------|
-| `GET` | `/v1/snapshot` | `{ cursor, generated_at, runs, sessions }`; all fields come from one SQLite read transaction. `sessions` lists running sessions so callers can find a run's recipient session |
+| `GET` | `/v1/snapshot` | `{ project, cursor, generated_at, runs, sessions }`; cursor, runs and sessions come from one SQLite read transaction. `sessions` lists running sessions so callers can find a run's recipient session. In a project state directory `project` is `{ id, name, target_repo_root }` and each run carries `task_status` and `spec_revision` from project SQLite; otherwise `project` is null |
 | `GET` | `/v1/events?after=<seq>&limit=<n>` | `{ events: [{ seq, event }], cursor }` (`limit` 1-1000) |
 | `GET` | `/v1/events/stream?after=<seq>` | NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
 | `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |

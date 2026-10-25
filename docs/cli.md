@@ -5,6 +5,10 @@ Run `orc --help` for the full list.
 
 ---
 
+## Global options
+
+`--project=<id>` (or `--project <id>`) selects a registered project for any subcommand. It may appear before or after the subcommand (not after a `--` separator), takes precedence over `ORC_PROJECT_ID`, the current repository and `orc project select`, and an unknown id is an error rather than a fallback. Inherited legacy path variables (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE`) are ignored for that command. Commands that show state print the project they act on. See `docs/configuration.md` → Selecting and switching projects.
+
 ## Session management
 
 These are the commands you'll use to start and stop the orchestrator.
