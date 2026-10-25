@@ -17,6 +17,7 @@ import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from
 import { listAgents } from './agentRegistry.ts';
 import { RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
+import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
@@ -326,6 +327,19 @@ export async function startControlServer(stateDir: string, options: ControlServe
         throw taskError(error);
       }
       throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/lifecycle') {
+      const credential = actorCredential(req);
+      const request = parseLifecycleRequest(await readBody(req));
+      assertOpen();
+      authorizeLifecycle(stateDir, credential, request);
+      try {
+        return ok(applyLifecycle(stateDir, request));
+      } catch (error) {
+        // A rejected transition (wrong state, wrong owner) is the caller's conflict, reported verbatim.
+        if (error instanceof ControlError) throw error;
+        throw new ControlError('conflict', error instanceof Error ? error.message : String(error), 409);
+      }
     }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
       const credential = actorCredential(req);

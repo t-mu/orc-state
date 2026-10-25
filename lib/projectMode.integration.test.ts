@@ -115,16 +115,19 @@ describe('project mode against a registered target repository', () => {
     expect(String((launch.env as Record<string, string>).ORC_CONTROL_SOCKET)).toMatch(/\.sock$/);
     expect(launch.claudeCwd).toBe(worktreePath);
     expect(String(launch.claudeSettingsPath).startsWith(project.stateDir)).toBe(true);
-    // Sandbox grants: the state dir and the target's .git write subtrees, never the target working tree.
+    // Sandbox grants (task 229): the control socket and the target's .git write subtrees — never the
+    // state dir, whose lifecycle writes the coordinator applies, nor the target working tree.
     const sandbox = launch.claudeSandbox as { filesystem: { allowWrite: string[] }; network?: { allowUnixSockets?: string[] } };
     const allowWrite = sandbox.filesystem.allowWrite;
+    const socket = (launch.env as Record<string, string>).ORC_CONTROL_SOCKET;
     expect(allowWrite[0]).toBe('.');
-    expect(allowWrite).toContain(project.stateDir);
+    expect(allowWrite[1]).toBe(socket);
+    expect(allowWrite).not.toContain(project.stateDir);
     expect(allowWrite.some((root) => root.startsWith(join(repo, '.git')))).toBe(true);
     expect(allowWrite).not.toContain(repo);
-    const socket = (launch.env as Record<string, string>).ORC_CONTROL_SOCKET;
     expect(sandbox.network?.allowUnixSockets).toEqual([socket]);
-    expect((launch.codexArgs as string[]).join(' ')).toContain(project.stateDir);
+    expect((launch.codexArgs as string[]).join(' ')).toContain(socket);
+    expect((launch.codexArgs as string[]).join(' ')).not.toContain(`"${project.stateDir}"`);
     expect(launch.structured).toEqual({ sandbox: 'workspace-write', config: { 'sandbox_workspace_write.writable_roots': allowWrite.slice(1) } });
     expect(launch.maxWorkers).toBe(3);
     // Nothing was written into the target working tree.

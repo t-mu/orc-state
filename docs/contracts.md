@@ -529,9 +529,10 @@ search. Results are capped at 500 per query.
 
 ## Local Control API
 
-The coordinator serves a versioned control API while it runs (disable with
-`ORC_CONTROL_API=off`). Legacy CLI and MCP paths keep reading and writing state
-directly during migration; the API is additive.
+The coordinator serves a versioned control API while it runs. A legacy
+installation can disable it with `ORC_CONTROL_API=off`, and its CLI and MCP paths
+keep reading and writing state directly; a registered project requires it, because
+its workers' lifecycle commands go through `POST /v1/lifecycle`.
 
 **Transport.** HTTP/JSON over the Unix socket named in `control.json`. Host to
 container transport is still open (Task 195); the descriptor's `transport` field
@@ -563,6 +564,7 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 | `GET` | `/v1/snapshot` | `{ project, cursor, generated_at, runs, sessions }`; cursor, runs and sessions come from one SQLite read transaction. `sessions` lists running sessions so callers can find a run's recipient session. In a project state directory `project` is `{ id, name, target_repo_root }` and each run carries `task_status` and `spec_revision` from project SQLite; otherwise `project` is null |
 | `GET` | `/v1/events?after=<seq>&limit=<n>` | `{ events: [{ seq, event }], cursor }` (`limit` 1-1000) |
 | `GET` | `/v1/events/stream?after=<seq>` | NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
+| `POST` | `/v1/lifecycle` | Worker lifecycle request `{ op, agent_id, run_id?, ... }`, applied by the coordinator. `op` is `run-start`, `run-fail` (`reason`, `code`, `policy`), `run-finish`, `run-work-complete`, `progress` (`event`, `phase?`, `reason?`, `policy?`), `review-submit` (`outcome`, `reason`), `input-request` (`question`) -> `{ request_id, request_seq, active }`, `input-poll` (`request_id`, `request_seq`, `heartbeat?`) -> `{ response, active }`, `input-timeout`, `memory-record` (`content`, `wing?`, `hall?`, `room?`, `importance?`; no `agent_id`) or `report-for-duty` (`session_token`). Result `{ message, ... }`. The session must be running and launched for that agent and run (else `403 forbidden`; unknown session `401`); a finished run accepts its own repeated `run-finish` after the coordinator closed the session. A rejected transition is `409 conflict` with the CLI's error text |
 | `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |
 | `POST` | `/v1/commands/<id>/ack` | Recipient ACK `{ state: accepted\|running\|completed\|failed }` -> `{ command }` |
 | `POST` | `/v1/messages` | Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |

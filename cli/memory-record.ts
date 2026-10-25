@@ -3,12 +3,14 @@
  * cli/memory-record.ts
  * Usage: orc memory-record --content="..." [--wing=X] [--hall=Y] [--room=Z] [--importance=N]
  */
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STATE_DIR } from '../lib/paths.ts';
-import { closeMemoryDb, storeDrawer } from '../lib/memoryStore.ts';
+import { ACTIVE_PROJECT, STATE_DIR } from '../lib/paths.ts';
+import { closeMemoryDb } from '../lib/memoryStore.ts';
 import { flag, intFlag } from '../lib/args.ts';
+import { applyLifecycle } from '../lib/workerLifecycle.ts';
+import { submitLifecycle } from '../lib/lifecycleDispatch.ts';
+import { cliError } from './shared.ts';
 
 export function recordMemory(stateDir: string, opts: {
   content: string;
@@ -17,19 +19,7 @@ export function recordMemory(stateDir: string, opts: {
   room?: string | null;
   importance?: number;
 }): number {
-  const dbPath = join(stateDir, 'memory.db');
-  if (!existsSync(dbPath)) {
-    console.log('Memory store not initialized (memory.db not found).');
-    return 0;
-  }
-  const id = storeDrawer(stateDir, {
-    content: opts.content,
-    wing: opts.wing ?? 'general',
-    hall: opts.hall ?? 'default',
-    room: opts.room ?? 'default',
-    ...(opts.importance !== undefined ? { importance: opts.importance } : {}),
-  });
-  console.log(`stored: drawer ${id}`);
+  console.log(applyLifecycle(stateDir, { op: 'memory-record', ...opts }).message);
   closeMemoryDb();
   return 0;
 }
@@ -40,9 +30,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     console.error('Usage: orc memory-record --content="..." [--wing=X] [--hall=Y] [--room=Z] [--importance=N]');
     process.exit(1);
   }
-  const wing = flag('wing');
-  const hall = flag('hall');
-  const room = flag('room');
-  const importance = intFlag('importance', 5);
-  process.exit(recordMemory(STATE_DIR, { content, wing, hall, room, importance }));
+  const opts = { content, wing: flag('wing'), hall: flag('hall'), room: flag('room'), importance: intFlag('importance', 5) };
+  // A session (worker or master) records through its coordinator; an operator shell writes directly.
+  if (ACTIVE_PROJECT && process.env.ORC_SESSION_TOKEN?.trim()) {
+    try {
+      console.log((await submitLifecycle({ op: 'memory-record', ...opts })).message);
+    } catch (error) {
+      cliError(error);
+    }
+  } else {
+    process.exit(recordMemory(STATE_DIR, opts));
+  }
 }

@@ -12,7 +12,7 @@ if (!runId || !agentId) {
 }
 
 try {
-  executeRunWorkComplete(runId, agentId);
+  await executeRunWorkComplete(runId, agentId);
 } catch (error) {
   cliError(error);
 }

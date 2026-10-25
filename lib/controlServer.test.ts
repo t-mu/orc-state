@@ -257,6 +257,33 @@ describe('local daemon control API', () => {
     await expect(new ControlClient(dir).acknowledge(command.command_id, 'accepted')).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 
+  it('applies worker lifecycle requests only for the caller\'s own session and run (task 229)', async () => {
+    const workerA = new ControlClient(dir, { sessionToken: 'session-a' });
+    const phase = { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'phase_started', phase: 'explore' } as const;
+    await expect(workerA.lifecycle(phase)).resolves.toMatchObject({ message: 'progress event accepted: phase_started run=run-a agent=worker-a' });
+    const lifecycleEvents = () => withEventDb(dir, (db) => db.prepare("SELECT COUNT(*) AS n FROM events WHERE event = 'phase_started'").get() as { n: number }).n;
+    expect(lifecycleEvents()).toBe(1);
+
+    // The self-asserted --agent-id is no longer enough: the credential must own the run.
+    await expect(workerA.lifecycle({ ...phase, run_id: 'run-b', agent_id: 'worker-b' })).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    await expect(workerA.lifecycle({ ...phase, run_id: 'run-b' })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(new ControlClient(dir, { sessionToken: 'session-master' }).lifecycle(phase)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(new ControlClient(dir, { sessionToken: 'forged' }).lifecycle(phase)).rejects.toMatchObject({ code: 'unauthenticated' });
+    await expect(new ControlClient(dir).lifecycle(phase)).rejects.toMatchObject({ code: 'unauthenticated' });
+    await expect(workerA.lifecycle({ op: 'report-for-duty', agent_id: 'worker-a', session_token: 'session-b' })).rejects.toMatchObject({ code: 'forbidden' });
+    expect(lifecycleEvents()).toBe(1);
+
+    // Malformed requests and rejected transitions are reported, not applied.
+    await expect(workerA.lifecycle({ op: 'nope' } as never)).rejects.toMatchObject({ code: 'bad_request' });
+    await expect(workerA.lifecycle({ ...phase, event: 'bogus' })).rejects.toMatchObject({ code: 'conflict', message: 'Unsupported event: bogus' });
+
+    // The input-request wait loop runs over the same API.
+    const asked = await workerA.lifecycle({ op: 'input-request', run_id: 'run-a', agent_id: 'worker-a', question: 'which way?' });
+    expect(asked).toMatchObject({ active: true, request_id: expect.any(String) });
+    await expect(workerA.lifecycle({ op: 'input-poll', run_id: 'run-a', agent_id: 'worker-a', request_id: asked.request_id!, request_seq: asked.request_seq! }))
+      .resolves.toMatchObject({ response: null, active: true });
+  });
+
   it('resumes after the snapshot cursor across a disconnect and a daemon restart without gaps', async () => {
     const master = new ControlClient(dir, { sessionToken: 'session-master' });
     const { cursor } = await master.snapshot();

@@ -16,7 +16,7 @@ if (!runId || !agentId || !question) {
 }
 
 try {
-  await executeRunInputRequest(runId, agentId, question, timeoutMs, pollMs);
+  process.exit(await executeRunInputRequest(runId, agentId, question, timeoutMs, pollMs));
 } catch (error) {
   cliError(error);
 }
