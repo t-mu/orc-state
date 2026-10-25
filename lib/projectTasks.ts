@@ -117,6 +117,39 @@ export function requireProjectTaskStore(stateDir: string): ProjectTaskStore {
 
 // ── Storage-neutral authoring API (CLI, MCP and control API) ────────────────
 
+let pendingNotifications: Array<() => void> | null = null;
+
+/** Emit an authoring event and refresh the projection, or defer both until the enclosing batch commits. */
+function notify(stateDir: string, emit: () => void): void {
+  if (pendingNotifications) {
+    pendingNotifications.push(emit);
+    return;
+  }
+  emit();
+  refreshBacklogProjection(stateDir);
+}
+
+/**
+ * Run several authoring calls as one SQLite transaction: either every task
+ * change commits or none does, and events are emitted only after the commit.
+ */
+export function withTaskAuthoringBatch<T>(stateDir: string, operation: () => T): T {
+  if (pendingNotifications) throw new Error('Task authoring batches cannot be nested');
+  const store = requireProjectTaskStore(stateDir);
+  pendingNotifications = [];
+  let emits: Array<() => void>;
+  let result: T;
+  try {
+    result = store.withDatabase((db) => db.transaction(operation).immediate());
+    emits = pendingNotifications;
+  } finally {
+    pendingNotifications = null;
+  }
+  for (const emit of emits) emit();
+  if (emits.length > 0) refreshBacklogProjection(stateDir);
+  return result;
+}
+
 /** A rejected caller input, as opposed to a storage failure. */
 export class TaskInputError extends Error {
   constructor(message: string) {
@@ -183,7 +216,8 @@ function definitionMetadata(input: TaskAuthoringInput, base: Record<string, unkn
   const metadata: Record<string, unknown> = { ...base };
   const set = (key: string, value: unknown) => {
     if (value === undefined) return;
-    if (value === null) delete metadata[key];
+    // Null clears a field; an empty list is stored as absent so both spellings are one revision.
+    if (value === null || (Array.isArray(value) && value.length === 0)) delete metadata[key];
     else metadata[key] = value;
   };
   set('task_type', optionalChoice(input.task_type, 'task_type', TASK_TYPES));
@@ -237,12 +271,11 @@ export function createProjectTask(stateDir: string, input: TaskAuthoringInput, a
     ref, ...(explicitTitle ? { title: explicitTitle } : {}), bodyMarkdown, metadata,
     ...(priority ? { priority } : {}), requiredProvider: requiredProvider as TaskProvider | null, dependsOn: dependsOn ?? [],
   });
-  appendSequencedEvent(stateDir, {
+  notify(stateDir, () => appendSequencedEvent(stateDir, {
     ts: task.createdAt, event: 'task_added',
     actor_type: actorId === 'human' ? 'human' : 'agent', actor_id: actorId, task_ref: ref,
     payload: { title: task.title, task_type: metadata.task_type, feature_ref: feature, spec_revision: task.revision, content_hash: task.contentHash },
-  });
-  refreshBacklogProjection(stateDir);
+  }));
   return task;
 }
 
@@ -277,8 +310,8 @@ export function reviseProjectTask(
   const metadata = definitionMetadata(input, baseMetadata, bodyMarkdown ?? current.bodyMarkdown);
   const title = optionalString(input.title, 'title');
   let nextBody = bodyMarkdown;
-  if (bodyMarkdown !== undefined) delete metadata.body_source;
-  else if (metadata.body_source === 'rendered') {
+  if (bodyMarkdown !== undefined && bodyMarkdown !== current.bodyMarkdown) delete metadata.body_source;
+  else if (bodyMarkdown === undefined && metadata.body_source === 'rendered') {
     nextBody = renderTaskBody(title ?? current.title,
       typeof metadata.description === 'string' ? metadata.description : undefined,
       Array.isArray(metadata.acceptance_criteria) ? metadata.acceptance_criteria as string[] : []);
@@ -293,7 +326,7 @@ export function reviseProjectTask(
   };
   const result = store.reviseTask(ref, expectedRevision, changes);
   if (result.changed) {
-    appendSequencedEvent(stateDir, {
+    notify(stateDir, () => appendSequencedEvent(stateDir, {
       ts: result.task.updatedAt, event: 'task_updated',
       actor_type: actorId === 'human' ? 'human' : 'agent', actor_id: actorId, task_ref: ref,
       payload: {
@@ -301,8 +334,7 @@ export function reviseProjectTask(
         fields: Object.keys(input).filter((key) => input[key] !== undefined),
         spec_revision: result.task.revision, previous_revision: expectedRevision, content_hash: result.task.contentHash,
       },
-    });
-    refreshBacklogProjection(stateDir);
+    }));
   }
   return result;
 }

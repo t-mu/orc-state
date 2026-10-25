@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { createProjectTask, describeProjectTask, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
+import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
 
 function option(args: string[], name: string): string | undefined {
@@ -16,7 +17,7 @@ function positionals(args: string[]): string[] {
 }
 
 function usage(): never {
-  throw new Error('Usage: orc project add <git-path> [--name=N] | list | select <id> | show [--project=id] | config <list|get|set|unset> [key] [value] [--global] [--project=id] | task <list|show|revisions|create|edit> [ref] [--project=id]');
+  throw new Error('Usage: orc project add <git-path> [--name=N] | list | select <id> | show [--project=id] | config <list|get|set|unset> [key] [value] [--global] [--project=id] | task <list|show|revisions|create|edit|import|export> [ref|path] [--project=id] | plan <list|show|import|export> [id|path] [--project=id]');
 }
 
 const TASK_FIELD_FLAGS: Record<string, string> = {
@@ -65,6 +66,13 @@ function runTaskCommand(args: string[], stateDir: string): unknown {
     if (!store.getTask(values[0])) throw new Error(`Task not found: ${values[0]}`);
     return store.listRevisions(values[0]);
   }
+  if (verb === 'import' && values.length === 1 && rest.every((arg) => !arg.startsWith('--') || ['--strict'].includes(arg) || /^--(project|actor-id)=/.test(arg))) {
+    return importTaskMarkdown(stateDir, values[0], { strict: rest.includes('--strict'), actorId: actor });
+  }
+  if (verb === 'export' && values.length === 1 && rest.every((arg) => !arg.startsWith('--') || /^--(project|ref)=/.test(arg))) {
+    const refs = rest.filter((arg) => arg.startsWith('--ref=')).flatMap((arg) => arg.slice(6).split(',')).filter(Boolean);
+    return exportTaskMarkdown(stateDir, values[0], { refs });
+  }
   const fieldFlags = [...Object.keys(TASK_FIELD_FLAGS), 'body-file', 'depends-on', 'ac', 'project', 'actor-id'];
   if (verb === 'create' && values.length === 0) return describeProjectTask(createProjectTask(stateDir, taskInput(rest, fieldFlags), actor));
   if (verb === 'edit' && values.length === 1) {
@@ -98,6 +106,21 @@ export function runProjectCommand(args: string[], registry: ProjectRegistry, env
   if (action === 'show') {
     if (values.length || rest.some((arg) => !arg.startsWith('--project='))) usage();
     return registry.resolve({ explicitProjectId: projectFlag ?? null, env, cwd });
+  }
+  if (action === 'plan') {
+    const stateDir = registry.resolve({ explicitProjectId: projectFlag ?? null, env, cwd }).stateDir;
+    const [verb, target, destination, ...extra] = values;
+    if (extra.length || rest.some((arg) => arg.startsWith('--') && !arg.startsWith('--project='))) usage();
+    const store = initProjectTaskStore(stateDir);
+    if (verb === 'list' && target === undefined) return store.listPlans();
+    if (verb === 'show' && target !== undefined && destination === undefined) {
+      const plan = store.getPlan(Number(target));
+      if (!plan) throw new Error(`Plan not found: ${target}`);
+      return plan;
+    }
+    if (verb === 'import' && target !== undefined && destination === undefined) return importPlanMarkdown(stateDir, target);
+    if (verb === 'export' && target !== undefined && destination !== undefined) return { path: exportPlanMarkdown(stateDir, Number(target), destination) };
+    usage();
   }
   if (action === 'task') {
     return runTaskCommand(rest, registry.resolve({ explicitProjectId: projectFlag ?? null, env, cwd }).stateDir);
