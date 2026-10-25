@@ -29,6 +29,24 @@ describe('resolveActiveProject', () => {
     expect(resolveActiveProject(env, other)).toBeNull();
     expect(resolveActiveProject(env, temp)).toMatchObject({ id: selected.id, source: 'selected' });
     appendFileSync(join(other, '.git', 'config'), '\n[broken\n');
-    expect(() => resolveActiveProject(env, other)).toThrow(`Cannot identify the Git repository at ${other}`);
+    expect(() => resolveActiveProject(env, other)).toThrow(`Cannot identify the Git repository at ${other} (fatal: `);
+  });
+
+  it('recognises "outside Git" under a translated Git locale', () => {
+    const registry = new ProjectRegistry(join(temp, 'data'));
+    const selected = registry.add(gitRepo('a'));
+    registry.select(selected.id);
+    registry.close();
+    const saved = { LC_ALL: process.env.LC_ALL, LANGUAGE: process.env.LANGUAGE };
+    process.env.LC_ALL = 'de_DE.UTF-8';
+    process.env.LANGUAGE = 'de';
+    try {
+      expect(resolveActiveProject({ ORC_DATA_HOME: join(temp, 'data') }, temp)).toMatchObject({ id: selected.id, source: 'selected' });
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });

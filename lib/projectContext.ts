@@ -167,7 +167,10 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
   } catch (error) {
     // Only "not a repository" means outside Git; any other Git failure must not fall back to the selected project.
     if (!(error instanceof OutsideGitRepositoryError)) {
-      throw new Error(`Cannot identify the Git repository at ${cwd} (${(error as Error).message.split('\n')[0]}); fix it or pass --project`);
+      const raw = (error as { stderr?: Buffer | string }).stderr;
+      const stderr = typeof raw === 'string' ? raw : raw?.toString('utf8') ?? '';
+      const cause = /^(?:fatal|error): .*$/m.exec(stderr)?.[0] ?? (error as Error).message.split('\n')[0];
+      throw new Error(`Cannot identify the Git repository at ${cwd} (${cause}); fix it or pass --project`);
     }
     gitRoot = null;
   }

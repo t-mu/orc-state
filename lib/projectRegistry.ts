@@ -83,8 +83,9 @@ export function validateProjectSetting(key: string, value: unknown): SettingValu
     return value;
   }
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${key} must be a non-empty string`);
-  // The registry holds no credentials: a URL with user info (https://user:token@host/…) is refused.
-  if (/[a-z][a-z0-9+.-]*:\/\/[^/\s]*@/i.test(value)) throw new Error(`${key} must not embed credentials; configure them in the provider's or Git's credential store`);
+  // The registry holds no credentials: a URL with a password or token in its user info is refused
+  // (https://user:token@host/…, https://token@host/…); an ssh:// user name such as git@ is not a credential.
+  if (/[a-z][a-z0-9+.-]*:\/\/[^/\s@]*:[^/\s@]*@/i.test(value) || /https?:\/\/[^/\s]*@/i.test(value)) throw new Error(`${key} must not embed credentials; configure them in the provider's or Git's credential store`);
   const choices: Partial<Record<SettingKind, readonly string[]>> = {
     provider: ['codex', 'claude', 'gemini'],
     execution_mode: ['full-access', 'sandbox'],
@@ -108,17 +109,19 @@ export function projectDataHome(env: NodeJS.ProcessEnv = process.env): string {
 /** Worktrees and symlinks resolve to the owning repository's canonical root. */
 export function canonicalProjectGitRoot(path: string): string {
   const cwd = realpathSync(resolve(path));
+  // Untranslated messages: "not a git repository" is recognised by its text.
+  const env = { ...process.env, LC_ALL: 'C', LANGUAGE: '' };
   let top: string;
   try {
-    top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   } catch (error) {
     if (String((error as { stderr?: Buffer }).stderr).includes('not a git repository')) throw new OutsideGitRepositoryError();
     throw error;
   }
-  const gitDir = realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-dir'], { cwd, encoding: 'utf8' }).trim());
-  const commonDir = realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, encoding: 'utf8' }).trim());
+  const gitDir = realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-dir'], { cwd, env, encoding: 'utf8' }).trim());
+  const commonDir = realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, env, encoding: 'utf8' }).trim());
   if (gitDir === commonDir) return realpathSync(top);
-  const worktrees = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const worktrees = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const first = worktrees.split('\n', 1)[0];
   if (!first.startsWith('worktree ')) throw new Error(`Cannot identify canonical Git worktree for ${path}`);
   const main = realpathSync(first.slice('worktree '.length));

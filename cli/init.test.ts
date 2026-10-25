@@ -256,6 +256,11 @@ describe('cli/init.ts in a registered project', () => {
     expect(JSON.parse(settings.stdout)).toMatchObject({ default_provider: 'claude', 'worker_pool.provider': 'codex', 'worker_pool.max_workers': 1 });
     expect(existsSync(join(project.stateDir, 'runtime.db'))).toBe(true);
 
+    // Selected with --project from outside any checkout: no Git check in the cwd; repo-install options are noted as ignored.
+    const outside = spawnSync('node', [resolve(repoRoot, 'cli/orc.ts'), `--project=${project.id}`, 'init', '--provider=claude', '--skip-mcp'], { cwd: dir, env, encoding: 'utf8' });
+    expect(outside.status, outside.stderr).toBe(0);
+    expect(outside.stderr).toContain('--skip-mcp has no effect in a registered project');
+
     const forced = spawnSync('node', [resolve(repoRoot, 'cli/init.ts'), '--provider=claude', '--force'], { cwd: target, env, encoding: 'utf8' });
     expect(forced.status).toBe(1);
     expect(forced.stderr).toContain('would reset the live state of project demo');
