@@ -7,7 +7,7 @@ import { createAdapter } from '../adapters/index.ts';
 import { bridgeInputResponse } from '../lib/messageBridge.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { PlanAuthoringError, writePlan, type WritePlanInput } from '../lib/planAuthoring.ts';
-import { PLANS_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, PLANS_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
@@ -914,7 +914,8 @@ export async function handleRequestScout(stateDir: string, {
   }
   const resolvedProvider = (typeof provider === 'string' ? provider : actor?.provider ?? 'codex');
   const scoutId = nextAvailableScoutId(stateDir);
-  const repoRoot = process.env.ORC_REPO_ROOT ?? join(stateDir, '..');
+  // Blank means unset (project workers blank it); a project's scouts start in the target repository.
+  const repoRoot = process.env.ORC_REPO_ROOT || (ACTIVE_PROJECT ? TARGET_REPO_ROOT : join(stateDir, '..'));
   const worktrees = readRunWorktreesState(stateDir);
   const recordedWorktree = typeof run_id === 'string'
     ? (worktrees.runs.find((entry) => entry.run_id === run_id)?.worktree_path ?? null)

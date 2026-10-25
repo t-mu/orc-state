@@ -28,8 +28,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { defaultSocketPath } from '../lib/controlProtocol.ts';
+import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
@@ -146,6 +145,8 @@ export interface SandboxRootsOptions {
   stateDir: string;
   /** Repo whose `.git` backs the worktree (the target repo in sibling layout). */
   gitRepoRoot: string;
+  /** Project mode: the coordinator's control socket the worker may connect to. */
+  controlSocket?: string | null;
 }
 
 /**
@@ -167,11 +168,16 @@ export interface SandboxRootsOptions {
  * Roots already inside the cwd are dropped (e.g. a scout launched at the
  * orchestration root). Read-only (scouts) get no writable roots at all.
  */
+/** The control socket a project-mode worker was given (blank or absent in legacy mode). */
+export function controlSocketOf(config: Record<string, unknown>): string | null {
+  return (config.env as Record<string, string> | undefined)?.ORC_CONTROL_SOCKET || null;
+}
+
 export function sandboxExtraWritableRoots(opts: SandboxRootsOptions): string[] {
   if (opts.readOnly) return [];
-  // A long state path puts the control socket in a private per-user directory instead.
-  const socketDir = dirname(defaultSocketPath(opts.stateDir));
-  const roots = [opts.stateDir, ...(isWithin(opts.stateDir, socketDir) ? [] : [socketDir]), ...targetGitWritableRoots(opts.gitRepoRoot)];
+  // Only the socket itself, and only when it lies outside the state dir (a long state path).
+  const socket = opts.controlSocket && !isWithin(opts.stateDir, opts.controlSocket) ? [opts.controlSocket] : [];
+  const roots = [opts.stateDir, ...socket, ...targetGitWritableRoots(opts.gitRepoRoot)];
   return roots.filter((root) => !isWithin(opts.cwd, root));
 }
 
@@ -242,6 +248,7 @@ function sandboxRootsOptions(config: Record<string, unknown>, cwd: string): Sand
     cwd,
     stateDir: STATE_DIR,
     gitRepoRoot: TARGET_REPO_ROOT,
+    controlSocket: controlSocketOf(config),
   };
 }
 
@@ -326,9 +333,14 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
         mode: 'auto-allow',
         allowUnsandboxedCommands: false,
       };
-      const filesystem = claudeSandboxFilesystem(sandboxRootsOptions(config, cwd));
+      const rootsOptions = sandboxRootsOptions(config, cwd);
+      const filesystem = claudeSandboxFilesystem(rootsOptions);
       if (filesystem) {
         sandboxConfig.filesystem = filesystem;
+      }
+      // Connecting to a Unix socket is a network permission in Claude's sandbox.
+      if (filesystem && rootsOptions.controlSocket) {
+        sandboxConfig.network = { allowUnixSockets: [rootsOptions.controlSocket] };
       }
       settings.sandbox = sandboxConfig;
     }

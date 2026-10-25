@@ -16,7 +16,8 @@ const result: Record<string, unknown> = {
 if (action === 'launch') {
   const { ensureRunWorktree } = await import('../lib/runWorktree.ts');
   const { normalizeWorkerEnv } = await import('../lib/workerRuntime.ts');
-  const { prepareProviderLaunch, sandboxExtraWritableRoots } = await import('../adapters/pty.ts');
+  const { prepareProviderLaunch } = await import('../adapters/pty.ts');
+  const { codexAppServerSandboxParams } = await import('../adapters/codexAppServer.ts');
   const { loadWorkerPoolConfig } = await import('../lib/providers.ts');
   const worktree = ensureRunWorktree(paths.STATE_DIR, { runId: 'run-probe', taskRef: 'app/probe', agentId: 'worker-a' });
   const project = paths.ACTIVE_PROJECT!;
@@ -31,9 +32,9 @@ if (action === 'launch') {
     env: { ORC_PROJECT_ID: env.ORC_PROJECT_ID, ORC_HOME: env.ORC_HOME, ORC_REPO_ROOT: env.ORC_REPO_ROOT, ORC_STATE_DIR: env.ORC_STATE_DIR, ORC_SESSION_TOKEN: env.ORC_SESSION_TOKEN, ORC_CONTROL_SOCKET: env.ORC_CONTROL_SOCKET },
     claudeCwd: claude.cwd,
     claudeSettingsPath: settingsArg,
-    claudeAllowWrite: (JSON.parse(readFileSync(settingsArg, 'utf8')) as { sandbox?: { filesystem?: { allowWrite?: string[] } } }).sandbox?.filesystem?.allowWrite,
+    claudeSandbox: (JSON.parse(readFileSync(settingsArg, 'utf8')) as { sandbox?: unknown }).sandbox,
     codexArgs: codex.args,
-    structuredRoots: sandboxExtraWritableRoots({ readOnly: false, cwd: worktree.worktree_path, stateDir: paths.STATE_DIR, gitRepoRoot: paths.TARGET_REPO_ROOT }),
+    structured: codexAppServerSandboxParams({ execution_mode: 'sandbox', env }, worktree.worktree_path),
     maxWorkers: loadWorkerPoolConfig().max_workers,
   });
 }

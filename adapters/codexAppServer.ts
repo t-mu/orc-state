@@ -30,7 +30,7 @@ import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import { resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots } from './pty.ts';
+import { controlSocketOf, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots } from './pty.ts';
 import type { SessionInspection } from './interface.ts';
 import {
   CapabilityRefusal,
@@ -151,6 +151,17 @@ function appendLog(agentId: string, text: string): void {
 function stringField(value: unknown, key: string): string | undefined {
   const field = (value as Record<string, unknown> | null | undefined)?.[key];
   return typeof field === 'string' ? field : undefined;
+}
+
+/** Thread sandbox parameters for the structured runtime; the same grants as the CLI runtime. */
+export function codexAppServerSandboxParams(config: Record<string, unknown>, cwd: string): Record<string, unknown> {
+  if (config.read_only === true) return { sandbox: 'read-only' };
+  if (config.execution_mode !== 'sandbox') return { sandbox: 'danger-full-access' };
+  const roots = sandboxExtraWritableRoots({ readOnly: false, cwd, stateDir: STATE_DIR, gitRepoRoot: TARGET_REPO_ROOT, controlSocket: controlSocketOf(config) });
+  return {
+    sandbox: 'workspace-write',
+    ...(roots.length ? { config: { 'sandbox_workspace_write.writable_roots': roots } } : {}),
+  };
 }
 
 export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?: string } = {}) {
@@ -290,16 +301,6 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     }
   }
 
-  function sandboxParams(config: Record<string, unknown>, cwd: string): Record<string, unknown> {
-    if (config.read_only === true) return { sandbox: 'read-only' };
-    if (config.execution_mode !== 'sandbox') return { sandbox: 'danger-full-access' };
-    const roots = sandboxExtraWritableRoots({ readOnly: false, cwd, stateDir: STATE_DIR, gitRepoRoot: TARGET_REPO_ROOT });
-    return {
-      sandbox: 'workspace-write',
-      ...(roots.length ? { config: { 'sandbox_workspace_write.writable_roots': roots } } : {}),
-    };
-  }
-
   async function verifySubscription(session: CodexSession): Promise<string> {
     const response = await rpc(session, 'account/read', { refreshToken: false });
     const account = response.account as { type?: unknown; planType?: unknown } | null | undefined;
@@ -351,7 +352,7 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
         const threadParams = {
           cwd,
           approvalPolicy: 'never',
-          ...sandboxParams(config, cwd),
+          ...codexAppServerSandboxParams(config, cwd),
           ...(typeof config.model === 'string' && config.model ? { model: config.model } : {}),
           ...(typeof config.system_prompt === 'string' && config.system_prompt
             ? { developerInstructions: `${config.system_prompt}\n\n${STRUCTURED_TURN_INSTRUCTIONS}` }

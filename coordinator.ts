@@ -66,6 +66,7 @@ import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } f
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
 import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
 import type { Backlog } from './types/backlog.ts';
+import { writeProjectDescriptor } from './lib/projectContext.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -2285,6 +2286,8 @@ async function reconcileSupervisedSessions() {
 
 export async function main() {
   acquireCoordinatorLock();
+  // Workers resolve the project from its state directory without the global registry.
+  if (ACTIVE_PROJECT) writeProjectDescriptor(ACTIVE_PROJECT);
   getEventCursor();
   process.on('exit', releaseCoordinatorLock);
   function shutdown() {

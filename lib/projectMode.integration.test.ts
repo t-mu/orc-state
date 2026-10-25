@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ProjectRegistry, type ProjectRecord } from './projectRegistry.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
@@ -68,6 +68,38 @@ describe('project mode against a registered target repository', () => {
     expect(probe(repo, { ORC_PROJECT_ID: project.id })).toMatchObject({ project: { id: project.id } });
   });
 
+  it('resolves a worker from its state-dir descriptor without opening the registry', () => {
+    probe(repo, {}, 'launch');
+    rmSync(join(dataHome, 'registry.db'));
+    expect(probe(join(project.stateDir, 'worktrees'), { ORC_PROJECT_ID: project.id, ORC_STATE_DIR: project.stateDir }))
+      .toMatchObject({ project: { id: project.id, targetRepoRoot: repo }, stateDir: project.stateDir, targetRepoRoot: repo });
+  });
+
+  it('uses the selected project outside every repository and rejects an ambiguous repository', () => {
+    const registry = new ProjectRegistry(dataHome);
+    try { registry.select(project.id); } finally { registry.close(); }
+    const outside = join(temp, 'outside');
+    mkdirSync(outside);
+    expect(probe(outside)).toMatchObject({ project: { id: project.id, source: 'selected' } });
+  });
+
+  it('grants a project socket outside a long state path, and only that socket', () => {
+    const longHome = join(temp, 'd'.repeat(90));
+    const registry = new ProjectRegistry(longHome);
+    let longProject: ProjectRecord;
+    try { longProject = registry.add(repo, 'long'); } catch (error) { registry.close(); throw error; }
+    registry.close();
+    initProjectTaskStore(longProject.stateDir);
+    closeProjectTaskStores();
+    dataHome = longHome;
+    const launch = probe(repo, {}, 'launch');
+    const socket = (launch.env as Record<string, string>).ORC_CONTROL_SOCKET;
+    expect(socket.startsWith(longProject.stateDir)).toBe(false);
+    const allowWrite = (launch.claudeSandbox as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite;
+    expect(allowWrite).toContain(socket);
+    expect(allowWrite).not.toContain(dirname(socket));
+  });
+
   it('fails clearly for an unregistered explicit project id', () => {
     expect(() => probe(repo, { ORC_PROJECT_ID: 'missing' })).toThrow('not a registered project');
   });
@@ -84,13 +116,16 @@ describe('project mode against a registered target repository', () => {
     expect(launch.claudeCwd).toBe(worktreePath);
     expect(String(launch.claudeSettingsPath).startsWith(project.stateDir)).toBe(true);
     // Sandbox grants: the state dir and the target's .git write subtrees, never the target working tree.
-    const allowWrite = launch.claudeAllowWrite as string[];
+    const sandbox = launch.claudeSandbox as { filesystem: { allowWrite: string[] }; network?: { allowUnixSockets?: string[] } };
+    const allowWrite = sandbox.filesystem.allowWrite;
     expect(allowWrite[0]).toBe('.');
     expect(allowWrite).toContain(project.stateDir);
     expect(allowWrite.some((root) => root.startsWith(join(repo, '.git')))).toBe(true);
     expect(allowWrite).not.toContain(repo);
+    const socket = (launch.env as Record<string, string>).ORC_CONTROL_SOCKET;
+    expect(sandbox.network?.allowUnixSockets).toEqual([socket]);
     expect((launch.codexArgs as string[]).join(' ')).toContain(project.stateDir);
-    expect(launch.structuredRoots).toEqual(allowWrite.slice(1));
+    expect(launch.structured).toEqual({ sandbox: 'workspace-write', config: { 'sandbox_workspace_write.writable_roots': allowWrite.slice(1) } });
     expect(launch.maxWorkers).toBe(3);
     // Nothing was written into the target working tree.
     expect(readdirSync(repo).sort()).toEqual(['.git', 'README.md']);

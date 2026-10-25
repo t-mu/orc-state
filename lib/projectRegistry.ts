@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
@@ -126,6 +126,17 @@ export function canonicalProjectGitRoot(path: string): string {
 
 class OutsideGitRepositoryError extends Error {}
 
+export const PROJECT_DESCRIPTOR = 'project.json';
+
+/**
+ * A project state directory describes its own identity, so a worker launched
+ * with `ORC_PROJECT_ID` and the state-dir bridge never needs the global
+ * registry (which its sandbox may not let it open).
+ */
+export function writeProjectDescriptor(project: { id: string; name: string; stateDir: string; targetRepoRoot: string }): void {
+  writeFileSync(join(project.stateDir, PROJECT_DESCRIPTOR), `${JSON.stringify({ id: project.id, name: project.name, target_repo_root: project.targetRepoRoot }, null, 2)}\n`);
+}
+
 function mapProject(row: Record<string, string>): ProjectRecord {
   return { id: row.id, name: row.name, canonicalGitRoot: row.git_root, stateDir: row.state_dir, createdAt: row.created_at };
 }
@@ -178,6 +189,7 @@ export class ProjectRegistry {
     try {
       this.db.prepare('INSERT INTO projects (id, name, git_root, state_dir, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(id, project.name, gitRoot, stateDir, project.createdAt);
+      writeProjectDescriptor({ ...project, targetRepoRoot: gitRoot });
     } catch (error) {
       rmSync(stateDir, { recursive: true, force: true });
       if ((error as Error).message.includes('UNIQUE constraint failed: projects.git_root')) throw new Error(`Git repository is already registered: ${gitRoot}`);
@@ -214,7 +226,7 @@ export class ProjectRegistry {
       if (!(error instanceof OutsideGitRepositoryError)) throw error;
       // Outside a Git repository, the selected project may apply.
     }
-    const { projectId } = selectProject({ projects: this.list(), explicitProjectId: explicitProjectId ?? null, environmentProjectId: env.ORC_PROJECT_ID ?? null, cwdGitRoot, selectedProjectId: this.selectedId() });
+    const { projectId } = selectProject({ projects: this.list(), explicitProjectId: explicitProjectId ?? null, environmentProjectId: env.ORC_PROJECT_ID?.trim() || null, cwdGitRoot, selectedProjectId: this.selectedId() });
     return this.get(projectId)!;
   }
 
