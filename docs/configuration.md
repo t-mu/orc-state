@@ -19,6 +19,22 @@ orc project config unset worker_pool.max_workers --project=<project-id>
 
 Project lookup uses `--project`, then `ORC_PROJECT_ID`, then the current repository's canonical Git root, then the selected project only outside a Git repository. An unknown or ambiguous match is an error. Settings are validated against known non-secret config keys. Effective values resolve from CLI overrides, environment, project settings, then global settings. `project config list` shows effective values; `--global` shows stored global values. This registry is available now; existing coordinator commands still use the legacy config and state layout until the subsequent project-store integration tasks switch them.
 
+### Project tasks
+
+A registered project's state directory holds `runtime.db`, the SQLite task store. A state directory with `runtime.db` is SQLite-authoritative for task definitions: `backlog.json` there is a read-only projection, and Markdown files under `backlog/` are not synced into it. Tasks are created and edited through the store, with no Markdown file in any repository:
+
+```bash
+orc project task create --feature=app --title="Add login" [--body-file=/any/path.md] [--depends-on=app/setup,app/db] [--priority=high]
+orc project task list
+orc project task show app/add-login [--revision=1]
+orc project task revisions app/add-login
+orc project task edit app/add-login --expected-revision=1 [--body-file=...] [--title=...] [--priority=...]
+```
+
+All commands accept `--project=<id>`. Every accepted edit creates a new immutable revision with a SHA-256 content hash of its body and parsed metadata (title from the first `# ` heading and acceptance criteria from an `Acceptance criteria` checklist unless stated explicitly). `--expected-revision` must name the current revision; a stale value fails instead of overwriting a concurrent edit, and an edit that changes nothing creates no revision. Status is never editable this way. When a run is claimed it is pinned to the task's latest revision, and the worker receives that exact body as its read-only run spec; later edits only affect future runs.
+
+The same API is available as the MCP `create_task`/`update_task`/`get_task` tools (`body_markdown`, `expected_revision`, `spec_revision`) and on the control daemon as `GET /v1/tasks`, `GET /v1/tasks/<ref>`, `GET /v1/tasks/<ref>/revisions`, `POST /v1/tasks` and `POST /v1/tasks/<ref>/revisions` (mutations require the master session credential; a stale `expected_revision` returns `409 conflict`). `orc task-create` creates a database-only task when `ORC_STATE_DIR` is a project state directory.
+
 ## Environment Variables
 
 ### Core Paths

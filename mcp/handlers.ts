@@ -25,6 +25,7 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
+import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
@@ -173,6 +174,11 @@ export function handleListStalledRuns(stateDir: string, { stale_after_ms = 600_0
 
 export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unknown } = {}) {
   if (!task_ref) throw new Error('task_ref is required');
+  const store = projectTaskStoreFor(stateDir);
+  if (store) {
+    const projectTask = store.getTask(task_ref as string);
+    return projectTask ? describeProjectTask(projectTask) : { error: 'not_found', task_ref };
+  }
   const backlog = readBacklogFresh(stateDir);
   const task = findTask(backlog, task_ref as string);
   if (!task) return { error: 'not_found', task_ref };
@@ -370,6 +376,14 @@ export function handleReadAgents(stateDir: string) {
 }
 
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
+  if (projectTaskStoreFor(stateDir)) {
+    // Project tasks are database-only: no Markdown spec is required or written.
+    const { actor_id = defaultActorId(stateDir), ...input } = args;
+    assertActorId(stateDir, actor_id);
+    // Project refs carry no numeric sequence.
+    return { ...describeProjectTask(createProjectTask(stateDir, input, actor_id as string)), next_task_seq: undefined };
+  }
+  if (args.body_markdown !== undefined) throw new Error('body_markdown requires a project state directory; edit the backlog markdown spec instead.');
   const {
     feature,
     title,
@@ -470,6 +484,19 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
 }
 
 export function handleUpdateTask(stateDir: string, args: Record<string, unknown> = {}) {
+  if (projectTaskStoreFor(stateDir)) {
+    const { task_ref, expected_revision, actor_id = defaultActorId(stateDir), ...changes } = args;
+    if (typeof task_ref !== 'string' || !task_ref) throw new Error('task_ref is required');
+    if (changes.status !== undefined) {
+      throw new Error('update_task cannot change status directly. Use lifecycle commands such as task-mark-done, task-reset, task-unblock, delegate_task, or coordinator-owned transitions.');
+    }
+    assertActorId(stateDir, actor_id);
+    const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
+    return { ...describeProjectTask(task), changed };
+  }
+  if (args.body_markdown !== undefined || args.expected_revision !== undefined) {
+    throw new Error('body_markdown and expected_revision require a project state directory; edit the backlog markdown spec instead.');
+  }
   const {
     task_ref,
     title,
@@ -855,7 +882,7 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
   const worktreePath = wtEntry?.worktree_path ?? null;
 
   return { ...claim, task_title: taskTitle, worktree_path: worktreePath,
-    task_spec_revision_status: claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot) : 'unknown' };
+    task_spec_revision_status: claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot, stateDir) : 'unknown' };
 }
 
 export async function handleRequestScout(stateDir: string, {

@@ -8,6 +8,8 @@ import { scanForInjection } from './promptInjectionScan.ts';
 import { InjectionScanError } from './taskSpecReader.ts';
 import type { TaskSpecSnapshot } from '../types/claims.ts';
 import { readClaims } from './stateReader.ts';
+import { projectTaskStoreFor } from './projectTasks.ts';
+import type { TaskSpecRevision } from './projectTaskStore.ts';
 
 export interface DocumentIndexEntry {
   kind: 'task' | 'plan';
@@ -100,7 +102,29 @@ export function writeRunTaskSnapshot(stateDir: string, runId: string, taskRef: s
   return { source_path: source.path, snapshot_path: path, sha256: source.sha256 };
 }
 
-export function taskSnapshotStatus(snapshot: TaskSpecSnapshot): 'current' | 'stale' | 'missing' {
+/** Write the exact body of a pinned project revision as the run's read-only spec. */
+export function writeRunRevisionSnapshot(stateDir: string, runId: string, revision: TaskSpecRevision): TaskSpecSnapshot {
+  const scan = scanForInjection(revision.bodyMarkdown);
+  if (!scan.safe) throw new InjectionScanError(scan.findings);
+  const directory = join(stateDir, 'run-specs');
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, `${runId}.md`);
+  writeFileSync(path, revision.bodyMarkdown, { flag: 'wx' });
+  chmodSync(path, 0o444);
+  return {
+    source_path: `project-task:${revision.taskRef}@${revision.revision}`,
+    snapshot_path: path, sha256: documentHash(revision.bodyMarkdown), task_revision: revision.revision,
+  };
+}
+
+/** A pinned project revision is stale once a newer revision exists; a file source once its content changes. */
+export function taskSnapshotStatus(snapshot: TaskSpecSnapshot, stateDir?: string): 'current' | 'stale' | 'missing' {
+  if (snapshot.task_revision !== undefined) {
+    const taskRef = snapshot.source_path.replace(/^project-task:/, '').replace(/@\d+$/, '');
+    const latest = stateDir ? projectTaskStoreFor(stateDir)?.getTask(taskRef) : null;
+    if (!latest) return 'missing';
+    return latest.revision === snapshot.task_revision ? 'current' : 'stale';
+  }
   if (!existsSync(snapshot.source_path)) return 'missing';
   return documentHash(readFileSync(snapshot.source_path, 'utf8')) === snapshot.sha256 ? 'current' : 'stale';
 }

@@ -9,7 +9,8 @@ import type { ClaimsState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
-import { writeRunTaskSnapshot } from './documentIndex.ts';
+import { writeRunRevisionSnapshot, writeRunTaskSnapshot } from './documentIndex.ts';
+import { projectTaskStoreFor } from './projectTasks.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 
@@ -73,12 +74,23 @@ export function claimTask(
     const run_id = makeRunId();
     const now    = new Date();
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
+    // A project task pins its latest SQLite revision; the worker receives that exact body.
+    const projectStore = projectTaskStoreFor(stateDir);
     // Older in-memory test states have no Markdown directory. Real orchestration
     // roots do; a missing or invalid spec there must block a new claim.
-    if (requireSpec && !existsSync(docsDir)) throw new Error(`Markdown spec directory not found: ${docsDir}`);
-    const taskSpecSnapshot = existsSync(docsDir)
-      ? writeRunTaskSnapshot(stateDir, run_id, taskRef, docsDir)
-      : undefined;
+    if (!projectStore && requireSpec && !existsSync(docsDir)) throw new Error(`Markdown spec directory not found: ${docsDir}`);
+    let taskSpecSnapshot;
+    if (projectStore) {
+      const revision = projectStore.bindRun(run_id, taskRef, agentId);
+      try {
+        taskSpecSnapshot = writeRunRevisionSnapshot(stateDir, run_id, revision);
+      } catch (error) {
+        projectStore.withDatabase((db) => db.prepare("UPDATE task_runs SET state = 'failed', updated_at = ? WHERE run_id = ?").run(new Date().toISOString(), run_id));
+        throw error;
+      }
+    } else if (existsSync(docsDir)) {
+      taskSpecSnapshot = writeRunTaskSnapshot(stateDir, run_id, taskRef, docsDir);
+    }
 
     task.status = 'claimed';
 

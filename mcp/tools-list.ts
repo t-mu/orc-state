@@ -131,7 +131,7 @@ export const TOOLS = [
   },
   {
     name: 'create_task',
-    description: 'Register a task from an existing markdown backlog spec. Markdown-owned fields must already live in the spec.',
+    description: 'Register a task. In a project state directory the task is stored only in project SQLite (revision 1) and may carry body_markdown, description, acceptance_criteria and depends_on; no Markdown file is needed. In a legacy state directory it registers an existing markdown backlog spec and Markdown-owned fields must already live in the spec.',
     inputSchema: {
       type: 'object',
       required: ['title'],
@@ -140,8 +140,14 @@ export const TOOLS = [
           type: 'string',
           description: 'Feature ref. Defaults to "general" if omitted; the "general" feature is created automatically.',
         },
-        title: { type: 'string', description: 'Task title; must match the markdown spec' },
+        title: { type: 'string', description: 'Task title; must match the markdown spec (legacy). Project tasks default it to the body heading.' },
         ref: { type: 'string', description: 'Explicit slug; must match the markdown spec if provided' },
+        body_markdown: { type: 'string', description: 'Project tasks only: full Markdown instructions delivered to the worker.' },
+        description: { type: 'string', description: 'Project tasks only.' },
+        acceptance_criteria: { type: 'array', items: { type: 'string' }, description: 'Project tasks only. Parsed from body_markdown when omitted.' },
+        depends_on: { type: 'array', items: { type: 'string' }, description: 'Project tasks only: refs that must be done or released first.' },
+        review_level: { type: 'string', enum: ['none', 'light', 'full'], description: 'Project tasks only.' },
+        merge_strategy: { type: 'string', enum: ['direct', 'pr'], description: 'Project tasks only.' },
         task_type: {
           type: 'string',
           enum: ['implementation', 'refactor'],
@@ -174,7 +180,7 @@ export const TOOLS = [
   },
   {
     name: 'update_task',
-    description: 'Update runtime-owned mutable fields on an existing task. Markdown-authoritative fields are rejected.',
+    description: 'Update an existing task. In a project state directory every accepted edit becomes a new immutable spec revision and expected_revision (from get_task spec_revision) is required; a stale value fails instead of overwriting. Legacy state directories reject Markdown-authoritative fields. Status is never editable.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -197,6 +203,14 @@ export const TOOLS = [
           type: ['string', 'null'],
           description: 'Model override for the worker session. Pass null to clear.',
         },
+        expected_revision: { type: 'integer', minimum: 1, description: 'Project tasks only (required): the spec_revision this edit is based on.' },
+        title: { type: 'string', description: 'Project tasks only.' },
+        body_markdown: { type: 'string', description: 'Project tasks only: replacement Markdown instructions.' },
+        description: { type: ['string', 'null'], description: 'Project tasks only.' },
+        acceptance_criteria: { type: 'array', items: { type: 'string' }, description: 'Project tasks only.' },
+        depends_on: { type: ['array', 'null'], items: { type: 'string' }, description: 'Project tasks only.' },
+        review_level: { type: ['string', 'null'], enum: ['none', 'light', 'full', null], description: 'Project tasks only.' },
+        merge_strategy: { type: ['string', 'null'], enum: ['direct', 'pr', null], description: 'Project tasks only.' },
         actor_id: { type: 'string', description: 'Defaults to master agent_id' },
       },
       additionalProperties: false,

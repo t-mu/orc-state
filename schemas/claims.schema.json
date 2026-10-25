@@ -141,7 +141,8 @@
           "properties": {
             "source_path": { "type": "string", "minLength": 1 },
             "snapshot_path": { "type": "string", "minLength": 1 },
-            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "task_revision": { "type": "integer", "minimum": 1 }
           }
         }
       }

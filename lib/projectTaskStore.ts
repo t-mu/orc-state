@@ -122,13 +122,108 @@ export function migrateProjectTaskSchema(db: Database.Database): void {
 
 export interface TaskSpecInput {
   ref: string;
-  title: string;
+  /** Defaults to the body's first `# ` heading. */
+  title?: string;
   bodyMarkdown: string;
-  priority?: 'low' | 'normal' | 'high' | 'critical';
-  requiredProvider?: 'codex' | 'claude' | 'gemini' | null;
+  priority?: TaskPriority;
+  requiredProvider?: TaskProvider | null;
   metadata?: Record<string, unknown>;
   dependsOn?: string[];
 }
+
+export type TaskPriority = 'low' | 'normal' | 'high' | 'critical';
+export type TaskProvider = 'codex' | 'claude' | 'gemini';
+export type TaskSpecChanges = Partial<Omit<TaskSpecInput, 'ref'>>;
+
+export interface ProjectTask {
+  ref: string;
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  requiredProvider: TaskProvider | null;
+  attemptCount: number;
+  blockedReason: string | null;
+  bodyMarkdown: string;
+  revision: number;
+  contentHash: string;
+  /** Parsed revision metadata; includes the indexed priority, provider and dependencies. */
+  metadata: Record<string, unknown>;
+  dependsOn: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskSpecRevision {
+  taskRef: string;
+  revision: number;
+  contentHash: string;
+  bodyMarkdown: string;
+  title: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** Thrown when an edit names a revision that is no longer the latest. */
+export class RevisionConflictError extends Error {
+  readonly taskRef: string;
+  readonly expectedRevision: number;
+  readonly currentRevision: number;
+  constructor(taskRef: string, expectedRevision: number, currentRevision: number) {
+    super(`Task ${taskRef} revision conflict: expected revision ${expectedRevision}, current revision is ${currentRevision}`);
+    this.name = 'RevisionConflictError';
+    this.taskRef = taskRef;
+    this.expectedRevision = expectedRevision;
+    this.currentRevision = currentRevision;
+  }
+}
+
+/** Indexed fields live in their own columns; they are copied into revision metadata so each revision is self-describing. */
+const INDEXED_METADATA_KEYS = ['priority', 'required_provider', 'depends_on'] as const;
+
+export function contentHash(body: string): string {
+  return createHash('sha256').update(body, 'utf8').digest('hex');
+}
+
+/** First level-one heading, ignoring frontmatter. */
+export function parseBodyTitle(body: string): string | null {
+  const text = body.replace(/^---\s*\n[\s\S]*?\n---\s*(?:\n|$)/, '');
+  const match = /^#\s+(.+?)\s*#*\s*$/m.exec(text);
+  return match ? match[1].trim() : null;
+}
+
+/** Checklist items under an "Acceptance criteria" heading. */
+export function parseBodyAcceptanceCriteria(body: string): string[] {
+  const lines = body.split('\n');
+  const start = lines.findIndex((line) => /^#{1,6}\s+acceptance criteria\s*$/i.test(line.trim()));
+  if (start === -1) return [];
+  const criteria: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,6}\s/.test(line)) break;
+    const item = /^\s*[-*]\s+(?:\[[ xX]\]\s+)?(.+?)\s*$/.exec(line);
+    if (item) criteria.push(item[1]);
+  }
+  return criteria;
+}
+
+function normalizeDependencies(ref: string, dependsOn: readonly unknown[]): string[] {
+  const unique = [...new Set(dependsOn)];
+  for (const dependency of unique) {
+    if (typeof dependency !== 'string' || !dependency.trim()) throw new Error('Task dependencies must be non-empty strings');
+    if (dependency === ref) throw new Error(`Task ${ref} cannot depend on itself`);
+  }
+  return (unique as string[]).sort();
+}
+
+interface TaskRow {
+  ref: string; title: string; status: TaskStatus; priority: TaskPriority; required_provider: TaskProvider | null;
+  attempt_count: number; blocked_reason: string | null; created_at: string; updated_at: string;
+  body_markdown: string; revision: number; content_hash: string; metadata_json: string;
+}
+
+const TASK_SELECT = `SELECT t.ref, t.title, t.status, t.priority, t.required_provider, t.attempt_count, t.blocked_reason,
+  t.created_at, t.updated_at, r.body_markdown, r.revision, r.content_hash, r.metadata_json
+  FROM tasks t JOIN task_spec_revisions r ON r.task_ref = t.ref
+    AND r.revision = (SELECT MAX(revision) FROM task_spec_revisions WHERE task_ref = t.ref)`;
 
 export class ProjectTaskStore {
   private readonly db: Database.Database;
@@ -148,33 +243,103 @@ export class ProjectTaskStore {
 
   close(): void { this.db.close(); }
 
-  createTask(input: TaskSpecInput): void {
-    if (!input.ref.trim() || !input.title.trim()) throw new Error('Task ref and title are required');
+  createTask(input: TaskSpecInput): ProjectTask {
+    const title = input.title ?? parseBodyTitle(input.bodyMarkdown);
+    if (!input.ref.trim() || !title?.trim()) throw new Error('Task ref and title are required');
     const now = new Date().toISOString();
-    const body = input.bodyMarkdown;
-    const hash = createHash('sha256').update(body).digest('hex');
+    const dependsOn = normalizeDependencies(input.ref, input.dependsOn ?? []);
+    const priority = input.priority ?? 'normal';
+    const requiredProvider = input.requiredProvider ?? null;
     this.db.transaction(() => {
       this.db.prepare('INSERT INTO tasks (ref, title, priority, required_provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(input.ref, input.title, input.priority ?? 'normal', input.requiredProvider ?? null, now, now);
-      this.db.prepare('INSERT INTO task_spec_revisions (task_ref, revision, content_hash, body_markdown, title, metadata_json, created_at) VALUES (?, 1, ?, ?, ?, ?, ?)')
-        .run(input.ref, hash, body, input.title, JSON.stringify(input.metadata ?? {}), now);
-      for (const dependency of new Set(input.dependsOn ?? [])) {
-        this.db.prepare('INSERT INTO task_dependencies (task_ref, depends_on_ref) VALUES (?, ?)').run(input.ref, dependency);
-      }
+        .run(input.ref, title, priority, requiredProvider, now, now);
+      this.insertRevision(input.ref, 1, { title, bodyMarkdown: input.bodyMarkdown, metadata: input.metadata ?? {}, priority, requiredProvider, dependsOn }, now);
+      this.replaceDependencies(input.ref, dependsOn);
+    }).immediate();
+    return this.getTask(input.ref)!;
+  }
+
+  /**
+   * Save an edit as a new immutable revision. `expectedRevision` must be the
+   * latest revision, so concurrent editors cannot overwrite each other. An
+   * edit that changes nothing returns the current revision unchanged.
+   */
+  reviseTask(ref: string, expectedRevision: number, changes: TaskSpecChanges): { task: ProjectTask; changed: boolean } {
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new Error('expected revision must be a positive integer');
+    const changed = this.db.transaction(() => {
+      const current = this.getTask(ref);
+      if (!current) throw new Error(`Task not found: ${ref}`);
+      if (current.revision !== expectedRevision) throw new RevisionConflictError(ref, expectedRevision, current.revision);
+      const bodyMarkdown = changes.bodyMarkdown ?? current.bodyMarkdown;
+      const title = changes.title ?? (changes.bodyMarkdown !== undefined ? parseBodyTitle(bodyMarkdown) : null) ?? current.title;
+      if (!title.trim()) throw new Error('Task title is required');
+      const baseMetadata = Object.fromEntries(Object.entries(current.metadata).filter(([key]) => !(INDEXED_METADATA_KEYS as readonly string[]).includes(key)));
+      const metadata = changes.metadata ?? baseMetadata;
+      const priority = changes.priority ?? current.priority;
+      const requiredProvider = changes.requiredProvider !== undefined ? changes.requiredProvider : current.requiredProvider;
+      const dependsOn = changes.dependsOn !== undefined ? normalizeDependencies(ref, changes.dependsOn) : current.dependsOn;
+      const next = { title, bodyMarkdown, metadata, priority, requiredProvider, dependsOn };
+      if (JSON.stringify(this.revisionMetadata(next)) === JSON.stringify(current.metadata)
+        && title === current.title && bodyMarkdown === current.bodyMarkdown) return false;
+      const now = new Date().toISOString();
+      this.insertRevision(ref, current.revision + 1, next, now);
+      this.db.prepare('UPDATE tasks SET title = ?, priority = ?, required_provider = ?, updated_at = ? WHERE ref = ?')
+        .run(title, priority, requiredProvider, now, ref);
+      this.replaceDependencies(ref, dependsOn);
+      return true;
+    }).immediate();
+    return { task: this.getTask(ref)!, changed };
+  }
+
+  getTask(ref: string): ProjectTask | null {
+    const row = this.db.prepare(`${TASK_SELECT} WHERE t.ref = ?`).get(ref) as TaskRow | undefined;
+    return row ? this.toTask(row, this.dependencies(ref)) : null;
+  }
+
+  listTasks(): ProjectTask[] {
+    const rows = this.db.prepare(`${TASK_SELECT} ORDER BY t.created_at, t.ref`).all() as TaskRow[];
+    const dependencies = new Map<string, string[]>();
+    for (const row of this.db.prepare('SELECT task_ref, depends_on_ref FROM task_dependencies ORDER BY depends_on_ref').all() as Array<{ task_ref: string; depends_on_ref: string }>) {
+      dependencies.set(row.task_ref, [...(dependencies.get(row.task_ref) ?? []), row.depends_on_ref]);
+    }
+    return rows.map((row) => this.toTask(row, dependencies.get(row.ref) ?? []));
+  }
+
+  getRevision(ref: string, revision: number): TaskSpecRevision | null {
+    const row = this.db.prepare('SELECT * FROM task_spec_revisions WHERE task_ref = ? AND revision = ?').get(ref, revision) as {
+      task_ref: string; revision: number; content_hash: string; body_markdown: string; title: string; metadata_json: string; created_at: string;
+    } | undefined;
+    if (!row) return null;
+    return {
+      taskRef: row.task_ref, revision: row.revision, contentHash: row.content_hash, bodyMarkdown: row.body_markdown,
+      title: row.title, metadata: JSON.parse(row.metadata_json) as Record<string, unknown>, createdAt: row.created_at,
+    };
+  }
+
+  listRevisions(ref: string): Array<Omit<TaskSpecRevision, 'bodyMarkdown'>> {
+    return (this.db.prepare('SELECT revision FROM task_spec_revisions WHERE task_ref = ? ORDER BY revision').all(ref) as Array<{ revision: number }>)
+      .map(({ revision }) => {
+        const { bodyMarkdown: _body, ...rest } = this.getRevision(ref, revision)!;
+        return rest;
+      });
+  }
+
+  /** Pin a new run to the task's latest revision (or an explicit one) and return that exact revision. */
+  bindRun(runId: string, ref: string, agentId: string | null, revision?: number): TaskSpecRevision {
+    return this.db.transaction(() => {
+      const pinned = revision ?? this.getTask(ref)?.revision;
+      if (pinned === undefined) throw new Error(`Task not found: ${ref}`);
+      const now = new Date().toISOString();
+      this.db.prepare("INSERT INTO task_runs (run_id, task_ref, spec_revision, agent_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'claimed', ?, ?)")
+        .run(runId, ref, pinned, agentId, now, now);
+      return this.getRevision(ref, pinned)!;
     }).immediate();
   }
 
-  getTask(ref: string): { ref: string; title: string; status: TaskStatus; attemptCount: number; blockedReason: string | null; bodyMarkdown: string; revision: number; contentHash: string; metadata: Record<string, unknown>; dependsOn: string[] } | null {
-    const row = this.db.prepare(`SELECT t.ref, t.title, t.status, t.attempt_count, t.blocked_reason,
-      r.body_markdown, r.revision, r.content_hash, r.metadata_json
-      FROM tasks t JOIN task_spec_revisions r ON r.task_ref = t.ref
-      WHERE t.ref = ? ORDER BY r.revision DESC LIMIT 1`).get(ref) as {
-      ref: string; title: string; status: TaskStatus; attempt_count: number; blocked_reason: string | null;
-      body_markdown: string; revision: number; content_hash: string; metadata_json: string;
-    } | undefined;
-    if (!row) return null;
-    const dependencies = this.db.prepare('SELECT depends_on_ref FROM task_dependencies WHERE task_ref = ? ORDER BY depends_on_ref').all(ref) as Array<{ depends_on_ref: string }>;
-    return { ref: row.ref, title: row.title, status: row.status, attemptCount: row.attempt_count, blockedReason: row.blocked_reason, bodyMarkdown: row.body_markdown, revision: row.revision, contentHash: row.content_hash, metadata: JSON.parse(row.metadata_json) as Record<string, unknown>, dependsOn: dependencies.map((item) => item.depends_on_ref) };
+  /** The revision a run was bound to when claimed; later edits never change it. */
+  getRunSpec(runId: string): TaskSpecRevision | null {
+    const run = this.db.prepare('SELECT task_ref, spec_revision FROM task_runs WHERE run_id = ?').get(runId) as { task_ref: string; spec_revision: number } | undefined;
+    return run ? this.getRevision(run.task_ref, run.spec_revision) : null;
   }
 
   transition(ref: string, cause: TaskTransitionCause, to: TaskStatus, reason?: string, idempotencyKey?: string): void {
@@ -185,4 +350,33 @@ export class ProjectTaskStore {
   }
 
   withDatabase<T>(operation: (db: Database.Database) => T): T { return operation(this.db); }
+
+  private revisionMetadata(spec: { metadata: Record<string, unknown>; priority: TaskPriority; requiredProvider: TaskProvider | null; dependsOn: string[] }): Record<string, unknown> {
+    return { ...spec.metadata, priority: spec.priority, required_provider: spec.requiredProvider, depends_on: spec.dependsOn };
+  }
+
+  private insertRevision(ref: string, revision: number, spec: { title: string; bodyMarkdown: string; metadata: Record<string, unknown>; priority: TaskPriority; requiredProvider: TaskProvider | null; dependsOn: string[] }, now: string): void {
+    this.db.prepare('INSERT INTO task_spec_revisions (task_ref, revision, content_hash, body_markdown, title, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(ref, revision, contentHash(spec.bodyMarkdown), spec.bodyMarkdown, spec.title, JSON.stringify(this.revisionMetadata(spec)), now);
+  }
+
+  private replaceDependencies(ref: string, dependsOn: string[]): void {
+    this.db.prepare('DELETE FROM task_dependencies WHERE task_ref = ?').run(ref);
+    const insert = this.db.prepare('INSERT INTO task_dependencies (task_ref, depends_on_ref) VALUES (?, ?)');
+    for (const dependency of dependsOn) insert.run(ref, dependency);
+  }
+
+  private dependencies(ref: string): string[] {
+    return (this.db.prepare('SELECT depends_on_ref FROM task_dependencies WHERE task_ref = ? ORDER BY depends_on_ref').all(ref) as Array<{ depends_on_ref: string }>)
+      .map((row) => row.depends_on_ref);
+  }
+
+  private toTask(row: TaskRow, dependsOn: string[]): ProjectTask {
+    return {
+      ref: row.ref, title: row.title, status: row.status, priority: row.priority, requiredProvider: row.required_provider,
+      attemptCount: row.attempt_count, blockedReason: row.blocked_reason, bodyMarkdown: row.body_markdown,
+      revision: row.revision, contentHash: row.content_hash, metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
+      dependsOn, createdAt: row.created_at, updatedAt: row.updated_at,
+    };
+  }
 }

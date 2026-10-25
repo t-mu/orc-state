@@ -21,6 +21,8 @@ export interface Task {
   review_level?: 'none' | 'light' | 'full' | undefined;
   merge_strategy?: 'direct' | 'pr' | undefined;
   attempt_count?: number | undefined;
+  /** Latest immutable spec revision (project SQLite tasks only). */
+  spec_revision?: number | undefined;
   requeue_eligible_after?: string | undefined;
   blocked_reason?: string | undefined;
   owner?: string | undefined;

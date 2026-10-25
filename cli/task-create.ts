@@ -12,9 +12,15 @@
  *     [--owner=<agent_id>] \
  *     [--required-capabilities=<cap>] \  (repeatable)
  *     [--required-provider=<codex|claude|gemini>] \
- *     [--actor-id=<agent_id>]
+ *     [--actor-id=<agent_id>] \
+ *     [--body-file=<path>]           (project state directories only)
+ *
+ * In a project state directory (one with runtime.db) the task is created in
+ * project SQLite only; description, acceptance criteria and dependencies are
+ * accepted and no Markdown spec is read.
  */
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { flag, flagAll } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
@@ -25,6 +31,7 @@ import { TASK_TYPES, AGENT_ID_RE, TASK_REF_RE } from '../lib/constants.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
+import { createProjectTask, projectTaskStoreFor } from '../lib/projectTasks.ts';
 import type { Task } from '../types/backlog.ts';
 import { cliError } from './shared.ts';
 
@@ -84,6 +91,28 @@ if (requiredProvider && !isSupportedProvider(requiredProvider)) {
 }
 
 const requiredCapabilities = flagAll('required-capabilities');
+
+if (projectTaskStoreFor(STATE_DIR)) {
+  try {
+    const bodyFile = flag('body-file');
+    const acceptanceCriteria = flagAll('ac');
+    const dependsOn = flagAll('depends-on');
+    const task = createProjectTask(STATE_DIR, {
+      feature: featureRef, title, ref: taskSlug, task_type: taskType,
+      description: flag('description'),
+      ...(bodyFile ? { body_markdown: readFileSync(resolve(bodyFile), 'utf8') } : {}),
+      ...(acceptanceCriteria.length > 0 ? { acceptance_criteria: acceptanceCriteria } : {}),
+      ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
+      ...(requiredCapabilities.length > 0 ? { required_capabilities: requiredCapabilities } : {}),
+      ...(requiredProvider ? { required_provider: requiredProvider } : {}),
+      ...(owner ? { owner } : {}),
+    }, actorId);
+    console.log(`task created: ${task.ref} (revision ${task.revision})`);
+  } catch (err) {
+    cliError(err);
+  }
+  process.exit(0);
+}
 
 try {
   assertTaskRegistrationFieldsAllowed({

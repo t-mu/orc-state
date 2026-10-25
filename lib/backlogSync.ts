@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { withLock } from './lock.ts';
+import { isProjectStateDir } from './projectTasks.ts';
 import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
 
 const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
@@ -254,6 +255,8 @@ function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncR
 }
 
 export function syncBacklogFromSpecs(stateDir: string, docsDir: string, { lockAlreadyHeld = false }: { lockAlreadyHeld?: boolean } = {}): SyncResult {
+  // Project SQLite owns task definitions; Markdown reaches it only by explicit import.
+  if (isProjectStateDir(stateDir)) return { updated: false, added_tasks: 0, updated_tasks: 0, added_features: 0 };
   const specs = discoverActiveTaskSpecs(docsDir);
   if (specs.length === 0) {
     return { updated: false, added_tasks: 0, updated_tasks: 0, added_features: 0 };

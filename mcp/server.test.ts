@@ -74,11 +74,13 @@ describe('orchestrator mcp server foundation', () => {
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title' }).ok).toBe(true);
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', priority: 'high' }).ok).toBe(true);
     expect(validateToolArguments('create_task', { title: 'Valid title' }).ok).toBe(true);
-    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', description: 'Nope' }).ok).toBe(false);
-    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', acceptance_criteria: ['x'] }).ok).toBe(false);
-    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', depends_on: ['project/one'] }).ok).toBe(false);
+    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', description: 'Nope' }).ok).toBe(true);
+    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', acceptance_criteria: ['x'] }).ok).toBe(true);
+    expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', depends_on: ['project/one'] }).ok).toBe(true);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', priority: 'critical' }).ok).toBe(true);
-    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', title: 'Updated title' }).ok).toBe(false);
+    // Definition fields are schema-valid for project tasks; legacy handlers reject them as Markdown-owned.
+    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', title: 'Updated title', expected_revision: 1 }).ok).toBe(true);
+    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', expected_revision: 0 }).ok).toBe(false);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', status: 'done' }).ok).toBe(false);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', owner: 'orc-1' }).ok).toBe(false);
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Bad', priority: 'urgent' }).ok).toBe(false);

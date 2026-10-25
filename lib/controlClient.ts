@@ -121,6 +121,23 @@ export class ControlClient {
     return this.call('POST', `/v1/commands/${encodeURIComponent(commandId)}/ack`, { state });
   }
 
+  listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {
+    return this.call('GET', '/v1/tasks');
+  }
+
+  getTask(ref: string): Promise<{ task: Record<string, unknown> }> {
+    return this.call('GET', `/v1/tasks/${encodeURIComponent(ref)}`);
+  }
+
+  createTask(input: Record<string, unknown>): Promise<{ task: Record<string, unknown> }> {
+    return this.call('POST', '/v1/tasks', input);
+  }
+
+  /** Fails with `conflict` when `expectedRevision` is no longer the latest revision. */
+  reviseTask(ref: string, expectedRevision: number, changes: Record<string, unknown>): Promise<{ task: Record<string, unknown>; changed: boolean }> {
+    return this.call('POST', `/v1/tasks/${encodeURIComponent(ref)}/revisions`, { ...changes, expected_revision: expectedRevision });
+  }
+
   openTerminal(kind: 'provider' | 'shell', runId: string): Promise<{ terminal: TerminalRecord }> {
     return this.call('POST', `/v1/terminals/${kind}`, { run_id: runId });
   }

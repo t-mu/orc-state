@@ -103,6 +103,11 @@
           "minimum": 0,
           "description": "Number of times this task has been dispatched and subsequently failed or expired. Auto-blocked after reaching MAX_ATTEMPTS."
         },
+        "spec_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Latest immutable spec revision of a project SQLite task. Edits must name it as their expected revision."
+        },
         "requeue_eligible_after": {
           "type": "string",
           "format": "date-time",

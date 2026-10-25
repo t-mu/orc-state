@@ -1,0 +1,123 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
+import { claimTask } from './claimManager.ts';
+import { taskSnapshotStatus } from './documentIndex.ts';
+import { closeAllDatabases, queryEvents } from './eventLog.ts';
+import { syncBacklogFromSpecs } from './backlogSync.ts';
+import { parseBodyAcceptanceCriteria, parseBodyTitle, RevisionConflictError } from './projectTaskStore.ts';
+import {
+  closeProjectTaskStores, createProjectTask, initProjectTaskStore, isProjectStateDir, reviseProjectTask,
+} from './projectTasks.ts';
+import { ProjectRegistry } from './projectRegistry.ts';
+import { readBacklog, readClaims } from './stateReader.ts';
+import { handleCreateTask, handleGetTask, handleUpdateTask } from '../mcp/handlers.ts';
+import { runProjectCommand } from '../cli/project.ts';
+
+let dir: string;
+
+beforeEach(() => {
+  dir = createTempStateDir('orc-project-tasks-api-');
+  seedState(dir, { agents: [{ agent_id: 'master', provider: 'claude', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' }] });
+  initProjectTaskStore(dir);
+});
+
+afterEach(() => {
+  closeProjectTaskStores();
+  closeAllDatabases();
+  cleanupTempStateDir(dir);
+});
+
+describe('storage-neutral task authoring', () => {
+  it('parses title and acceptance criteria from a Markdown body', () => {
+    const body = '---\nref: x\n---\n# Heading title\n\n## Acceptance criteria\n\n- [ ] One\n- [x] Two\n\n## Notes\n- not a criterion\n';
+    expect(parseBodyTitle(body)).toBe('Heading title');
+    expect(parseBodyAcceptanceCriteria(body)).toEqual(['One', 'Two']);
+  });
+
+  it('creates a database-only task without any Markdown file and projects it into the backlog', () => {
+    const task = createProjectTask(dir, { feature: 'app', title: 'Add login', description: 'Use OAuth.', acceptance_criteria: ['Login works'], depends_on: ['app/setup'], priority: 'high' }, 'master');
+    expect(task).toMatchObject({ ref: 'app/add-login', revision: 1, status: 'todo', priority: 'high', dependsOn: ['app/setup'] });
+    expect(task.bodyMarkdown).toBe('# Add login\n\nUse OAuth.\n\n## Acceptance criteria\n\n- [ ] Login works\n');
+    expect(readdirSync(dir).filter((name) => name.endsWith('.md'))).toEqual([]);
+    expect(existsSync(join(dir, 'backlog'))).toBe(false);
+    const projected = readBacklog(dir).features.find((feature) => feature.ref === 'app')!.tasks[0];
+    expect(projected).toMatchObject({ ref: 'app/add-login', status: 'todo', spec_revision: 1, depends_on: ['app/setup'], acceptance_criteria: ['Login works'], description: 'Use OAuth.', planning_state: 'ready_for_dispatch', delegated_by: 'master' });
+    expect(JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')).features[0].tasks[0].ref).toBe('app/add-login');
+    expect(queryEvents(dir, { event_type: 'task_added' })).toHaveLength(1);
+    expect(() => createProjectTask(dir, { feature: 'app', title: 'Add login' })).toThrow('already exists');
+  });
+
+  it('saves each edit as an immutable revision and rejects stale expected revisions', () => {
+    createProjectTask(dir, { feature: 'app', ref: 'edit', body_markdown: '# Edit me\n\nv1\n' });
+    expect(() => reviseProjectTask(dir, 'app/edit', undefined, { title: 'x' })).toThrow('expected_revision is required');
+    const second = reviseProjectTask(dir, 'app/edit', 1, { body_markdown: '# Edited\n\nv2\n\n## Acceptance criteria\n- Works\n' });
+    expect(second).toMatchObject({ changed: true, task: { revision: 2, title: 'Edited', metadata: { acceptance_criteria: ['Works'] } } });
+    expect(() => reviseProjectTask(dir, 'app/edit', 1, { priority: 'low' })).toThrow(RevisionConflictError);
+    expect(reviseProjectTask(dir, 'app/edit', 2, { body_markdown: '# Edited\n\nv2\n\n## Acceptance criteria\n- Works\n' }).changed).toBe(false);
+    expect(() => reviseProjectTask(dir, 'app/edit', 2, { status: 'done' })).toThrow('cannot change: status');
+    const store = initProjectTaskStore(dir);
+    expect(store.listRevisions('app/edit').map((revision) => revision.revision)).toEqual([1, 2]);
+    expect(store.getRevision('app/edit', 1)?.bodyMarkdown).toBe('# Edit me\n\nv1\n');
+    expect(store.getTask('app/edit')?.contentHash).not.toBe(store.getRevision('app/edit', 1)?.contentHash);
+  });
+
+  it('ignores Markdown backlog sync in a project state directory', () => {
+    mkdirSync(join(dir, 'backlog'));
+    writeFileSync(join(dir, 'backlog', '1-file.md'), '---\nref: app/file\nfeature: app\nstatus: todo\n---\n# File task\n');
+    expect(isProjectStateDir(dir)).toBe(true);
+    expect(syncBacklogFromSpecs(dir, join(dir, 'backlog')).updated).toBe(false);
+    expect(readBacklog(dir).features).toEqual([]);
+  });
+
+  it('pins a claimed run to its revision and delivers that exact body even after later edits', () => {
+    createProjectTask(dir, { feature: 'app', ref: 'pin', body_markdown: '# Pin\n\nOriginal body.\n' });
+    const { run_id } = claimTask(dir, 'app/pin', 'worker-a');
+    const snapshot = readClaims(dir).claims.find((claim) => claim.run_id === run_id)!.task_spec_snapshot!;
+    expect(snapshot).toMatchObject({ source_path: 'project-task:app/pin@1', task_revision: 1 });
+    expect(readFileSync(snapshot.snapshot_path, 'utf8')).toBe('# Pin\n\nOriginal body.\n');
+    expect(taskSnapshotStatus(snapshot, dir)).toBe('current');
+    reviseProjectTask(dir, 'app/pin', 1, { body_markdown: '# Pin\n\nChanged body.\n' });
+    expect(taskSnapshotStatus(snapshot, dir)).toBe('stale');
+    expect(readFileSync(snapshot.snapshot_path, 'utf8')).toBe('# Pin\n\nOriginal body.\n');
+    expect(initProjectTaskStore(dir).getRunSpec(run_id)).toMatchObject({ revision: 1, bodyMarkdown: '# Pin\n\nOriginal body.\n' });
+  });
+});
+
+describe('MCP task tools in a project state directory', () => {
+  it('creates, reads and revises tasks with compare-and-swap', () => {
+    const created = handleCreateTask(dir, { feature: 'app', title: 'Via MCP', body_markdown: '# Via MCP\n\nBody.\n', depends_on: ['app/other'] });
+    expect(created).toMatchObject({ ref: 'app/via-mcp', spec_revision: 1, body_markdown: '# Via MCP\n\nBody.\n', depends_on: ['app/other'] });
+    expect(handleGetTask(dir, { task_ref: 'app/via-mcp' })).toMatchObject({ spec_revision: 1, feature_ref: 'app' });
+    expect(handleUpdateTask(dir, { task_ref: 'app/via-mcp', expected_revision: 1, description: 'More' })).toMatchObject({ spec_revision: 2, description: 'More', changed: true });
+    expect(() => handleUpdateTask(dir, { task_ref: 'app/via-mcp', expected_revision: 1, priority: 'low' })).toThrow('revision conflict');
+    expect(() => handleUpdateTask(dir, { task_ref: 'app/via-mcp', expected_revision: 2, status: 'done' })).toThrow('cannot change status');
+  });
+});
+
+describe('orc project task', () => {
+  it('creates and edits tasks of the selected registered project from an external Markdown file', () => {
+    const repo = join(dir, 'product');
+    mkdirSync(repo);
+    execFileSync('git', ['init', '-q', repo]);
+    const registry = new ProjectRegistry(join(dir, 'data'));
+    try {
+      const project = runProjectCommand(['add', realpathSync(repo)], registry) as { id: string; stateDir: string };
+      expect(isProjectStateDir(project.stateDir)).toBe(true);
+      const bodyFile = join(dir, 'outside.md');
+      writeFileSync(bodyFile, '# External\n\nFrom a file outside the repo.\n');
+      const flag = `--project=${project.id}`;
+      expect(runProjectCommand(['task', 'create', '--feature=app', `--body-file=${bodyFile}`, '--depends-on=app/a,app/b', flag], registry))
+        .toMatchObject({ ref: 'app/external', spec_revision: 1, depends_on: ['app/a', 'app/b'] });
+      expect(runProjectCommand(['task', 'edit', 'app/external', '--expected-revision=1', '--priority=high', flag], registry))
+        .toMatchObject({ spec_revision: 2, priority: 'high', changed: true });
+      expect(() => runProjectCommand(['task', 'edit', 'app/external', '--expected-revision=1', '--priority=low', flag], registry)).toThrow('revision conflict');
+      expect(runProjectCommand(['task', 'list', flag], registry)).toEqual([{ ref: 'app/external', title: 'External', status: 'todo', spec_revision: 2 }]);
+      expect(readdirSync(repo)).toEqual(['.git']);
+    } finally {
+      registry.close();
+    }
+  });
+});

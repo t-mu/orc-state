@@ -11,6 +11,7 @@ import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './
 import { ControlClient, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
+import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
 import type { Claim } from '../types/claims.ts';
 
 const exec = promisify(execFile);
@@ -42,6 +43,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.close();
+  closeProjectTaskStores();
   closeAllDatabases();
   cleanupTempStateDir(dir);
 });
@@ -95,6 +97,25 @@ const submit = (client: ControlClient, key: string, run = 'run-a', recipient = '
 });
 
 describe('local daemon control API', () => {
+  it('creates and revises project tasks with revision checks and master-only authoring', async () => {
+    const master = new ControlClient(dir, { sessionToken: 'session-master' });
+    await expect(master.listTasks()).rejects.toMatchObject({ code: 'not_found' });
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    initProjectTaskStore(dir);
+    const { task } = await master.createTask({ feature: 'app', title: 'Remote task', body_markdown: '# Remote task\n\nDo it.\n' });
+    expect(task).toMatchObject({ ref: 'app/remote-task', spec_revision: 1, body_markdown: '# Remote task\n\nDo it.\n' });
+    expect((await master.getTask('app/remote-task')).task).toMatchObject({ spec_revision: 1 });
+    expect(await master.reviseTask('app/remote-task', 1, { priority: 'high' })).toMatchObject({ changed: true, task: { spec_revision: 2, priority: 'high' } });
+    await expect(master.reviseTask('app/remote-task', 1, { priority: 'low' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
+    await expect(master.getTask('app/missing')).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).createTask({ feature: 'app', title: 'Worker task' }))
+      .rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);
+  });
+
   it('routes a cross-provider review and result durably through session mailboxes', async () => {
     withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET provider = 'codex' WHERE session_id = 'session-b'").run());
     const sent: Array<{ kind: string; payload: string; recipient_id: string }> = [];
