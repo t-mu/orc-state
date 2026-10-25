@@ -277,8 +277,8 @@ export function reviseProjectTask(
   const metadata = definitionMetadata(input, baseMetadata, bodyMarkdown ?? current.bodyMarkdown);
   const title = optionalString(input.title, 'title');
   let nextBody = bodyMarkdown;
-  if (bodyMarkdown !== undefined) delete metadata.body_source;
-  else if (metadata.body_source === 'rendered') {
+  if (bodyMarkdown !== undefined && bodyMarkdown !== current.bodyMarkdown) delete metadata.body_source;
+  else if (bodyMarkdown === undefined && metadata.body_source === 'rendered') {
     nextBody = renderTaskBody(title ?? current.title,
       typeof metadata.description === 'string' ? metadata.description : undefined,
       Array.isArray(metadata.acceptance_criteria) ? metadata.acceptance_criteria as string[] : []);

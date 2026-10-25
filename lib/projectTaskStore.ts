@@ -5,9 +5,9 @@ import Database from 'better-sqlite3';
 import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
 
-export const PROJECT_TASK_SCHEMA_VERSION = 1;
+export const PROJECT_TASK_SCHEMA_VERSION = 2;
 
-const REQUIRED_TABLES = ['schema_migrations', 'tasks', 'task_spec_revisions', 'task_dependencies', 'task_transitions', 'task_runs'];
+const REQUIRED_TABLES = ['schema_migrations', 'tasks', 'task_spec_revisions', 'task_dependencies', 'task_transitions', 'task_runs', 'task_imports', 'plan_documents'];
 
 /** A separate project database: legacy events.db remains untouched until cutover. */
 export function migrateProjectTaskSchema(db: Database.Database): void {
@@ -114,10 +114,43 @@ export function migrateProjectTaskSchema(db: Database.Database): void {
       db.pragma('user_version = 1');
     }).immediate();
   }
+  if ((db.pragma('user_version', { simple: true }) as number) === 1) {
+    db.transaction(() => {
+      db.exec(`
+        -- Diagnostic provenance of explicit Markdown imports; never consulted for status.
+        CREATE TABLE task_imports (
+          import_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_ref TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          source_path TEXT NOT NULL,
+          file_sha256 TEXT NOT NULL CHECK (length(file_sha256) = 64),
+          imported_at TEXT NOT NULL,
+          FOREIGN KEY (task_ref, revision) REFERENCES task_spec_revisions(task_ref, revision) ON DELETE RESTRICT
+        );
+        CREATE INDEX task_imports_ref_idx ON task_imports(task_ref, import_id);
+        CREATE TABLE plan_documents (
+          plan_id INTEGER PRIMARY KEY CHECK (plan_id >= 0),
+          name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+          title TEXT NOT NULL,
+          body_markdown TEXT NOT NULL,
+          content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
+          metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
+          source_path TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO schema_migrations (version, name, applied_at)
+          VALUES (2, 'markdown_imports_and_plans', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 2');
+    }).immediate();
+  }
   const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
   for (const name of REQUIRED_TABLES) if (!names.has(name)) throw new Error(`runtime.db missing table ${name}`);
   const migration = db.prepare('SELECT name FROM schema_migrations WHERE version = 1').get() as { name: string } | undefined;
   if (migration?.name !== 'project_tasks') throw new Error('runtime.db missing project task migration');
+  const v2 = db.prepare('SELECT name FROM schema_migrations WHERE version = 2').get() as { name: string } | undefined;
+  if (v2?.name !== 'markdown_imports_and_plans') throw new Error('runtime.db missing markdown import migration');
 }
 
 export interface TaskSpecInput {
@@ -363,6 +396,48 @@ export class ProjectTaskStore {
     if (!task) throw new Error(`Task not found: ${ref}`);
     this.db.prepare('INSERT INTO task_transitions (task_ref, from_status, to_status, cause, reason, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(ref, task.status, to, cause, reason ?? null, idempotencyKey ?? null, new Date().toISOString());
+  }
+
+  recordImport(ref: string, revision: number, sourcePath: string, fileSha256: string): void {
+    this.db.prepare('INSERT INTO task_imports (task_ref, revision, source_path, file_sha256, imported_at) VALUES (?, ?, ?, ?, ?)')
+      .run(ref, revision, sourcePath, fileSha256, new Date().toISOString());
+  }
+
+  listImports(ref: string): Array<{ revision: number; sourcePath: string; fileSha256: string; importedAt: string }> {
+    return (this.db.prepare('SELECT revision, source_path, file_sha256, imported_at FROM task_imports WHERE task_ref = ? ORDER BY import_id').all(ref) as Array<{
+      revision: number; source_path: string; file_sha256: string; imported_at: string;
+    }>).map((row) => ({ revision: row.revision, sourcePath: row.source_path, fileSha256: row.file_sha256, importedAt: row.imported_at }));
+  }
+
+  /** Insert or replace a plan's content; returns whether anything changed. */
+  savePlan(plan: { planId: number; name: string; title: string; bodyMarkdown: string; metadata: Record<string, unknown>; sourcePath: string | null }): boolean {
+    return this.db.transaction(() => {
+      const hash = contentHash(plan.bodyMarkdown);
+      const existing = this.db.prepare('SELECT content_hash, metadata_json FROM plan_documents WHERE plan_id = ?').get(plan.planId) as { content_hash: string; metadata_json: string } | undefined;
+      const metadataJson = JSON.stringify(plan.metadata);
+      if (existing?.content_hash === hash && existing.metadata_json === metadataJson) return false;
+      const now = new Date().toISOString();
+      this.db.prepare(`INSERT INTO plan_documents (plan_id, name, title, body_markdown, content_hash, metadata_json, source_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(plan_id) DO UPDATE SET name = excluded.name, title = excluded.title, body_markdown = excluded.body_markdown,
+          content_hash = excluded.content_hash, metadata_json = excluded.metadata_json, source_path = excluded.source_path, updated_at = excluded.updated_at`)
+        .run(plan.planId, plan.name, plan.title, plan.bodyMarkdown, hash, metadataJson, plan.sourcePath, now, now);
+      return true;
+    }).immediate();
+  }
+
+  getPlan(planId: number): { planId: number; name: string; title: string; bodyMarkdown: string; contentHash: string; metadata: Record<string, unknown>; sourcePath: string | null; updatedAt: string } | null {
+    const row = this.db.prepare('SELECT * FROM plan_documents WHERE plan_id = ?').get(planId) as {
+      plan_id: number; name: string; title: string; body_markdown: string; content_hash: string; metadata_json: string; source_path: string | null; updated_at: string;
+    } | undefined;
+    if (!row) return null;
+    return { planId: row.plan_id, name: row.name, title: row.title, bodyMarkdown: row.body_markdown, contentHash: row.content_hash,
+      metadata: JSON.parse(row.metadata_json) as Record<string, unknown>, sourcePath: row.source_path, updatedAt: row.updated_at };
+  }
+
+  listPlans(): Array<{ planId: number; name: string; title: string; updatedAt: string }> {
+    return (this.db.prepare('SELECT plan_id, name, title, updated_at FROM plan_documents ORDER BY plan_id').all() as Array<{ plan_id: number; name: string; title: string; updated_at: string }>)
+      .map((row) => ({ planId: row.plan_id, name: row.name, title: row.title, updatedAt: row.updated_at }));
   }
 
   withDatabase<T>(operation: (db: Database.Database) => T): T { return operation(this.db); }
