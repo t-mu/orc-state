@@ -49,11 +49,19 @@ if (ACTIVE_PROJECT && force) {
   cliError(`orc init --force would reset the live state of project ${ACTIVE_PROJECT.name}; reset tasks with orc task-reset instead.`);
 }
 
-// Validate git repo before anything else.
-try {
-  execSync('git rev-parse --git-dir', { stdio: 'pipe' });
-} catch {
-  cliError('Must run inside a git repository. Run `git init` first.');
+// Validate git repo before anything else (a registered project's repository was checked at registration).
+if (!ACTIVE_PROJECT) {
+  try {
+    execSync('git rev-parse --git-dir', { stdio: 'pipe' });
+  } catch {
+    cliError('Must run inside a git repository. Run `git init` first.');
+  }
+}
+
+// In a registered project init installs nothing into the repository; these options do not apply there.
+if (ACTIVE_PROJECT) {
+  const ignored = ['skip-skills', 'skip-agents', 'skip-mcp', 'feature', 'feature-title'].filter((name) => flag(name) !== null || boolFlag(name));
+  if (ignored.length > 0) console.warn(`Note: ${ignored.map((name) => `--${name}`).join(', ')} has no effect in a registered project.`);
 }
 
 if (!ACTIVE_PROJECT) {
@@ -147,9 +155,10 @@ if (providerFlag) {
     default: providers.length > 1 ? providers[1] : providers[0],
   });
 
-  const installSkills = await confirm({ message: 'Install skills? (recommended)', default: true });
-  const installAgents = await confirm({ message: 'Install agents? (recommended)', default: true });
-  const installMcp = await confirm({ message: 'Configure MCP? (recommended)', default: true });
+  // A registered project installs nothing into its repository (see the project branch below).
+  const installSkills = ACTIVE_PROJECT ? false : await confirm({ message: 'Install skills? (recommended)', default: true });
+  const installAgents = ACTIVE_PROJECT ? false : await confirm({ message: 'Install agents? (recommended)', default: true });
+  const installMcp = ACTIVE_PROJECT ? false : await confirm({ message: 'Configure MCP? (recommended)', default: true });
 
   skipSkills = !installSkills;
   skipAgents = !installAgents;
