@@ -5,7 +5,7 @@ import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixt
 import { syncBacklogFromSpecs } from './backlogSync.ts';
 import { claimTask, expireStaleLeases, finishRun, startRun } from './claimManager.ts';
 import { closeAllDatabases, queryEvents } from './eventLog.ts';
-import { closeProjectTaskStores, commitBacklog, createProjectTask, initProjectTaskStore } from './projectTasks.ts';
+import { assertRunMayFinish, closeProjectTaskStores, commitBacklog, createProjectTask, initProjectTaskStore } from './projectTasks.ts';
 import { reconcileState } from './reconcile.ts';
 import { commitClaims } from './runStore.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
@@ -126,10 +126,44 @@ describe('project run lifecycle', () => {
     expect(transitions('app/base').at(-1)).toMatchObject({ cause: 'failure_requeue', reason: 'ERR_LEASE_EXPIRED', run_id });
   });
 
-  it('cancels into blocked with the matching cause', () => {
-    handleCancelTask(dir, { task_ref: 'app/next', reason: 'not needed', actor_id: 'human' });
-    expect(task('app/next')).toMatchObject({ status: 'blocked', blockedReason: 'not needed' });
-    expect(transitions('app/next')).toMatchObject([{ cause: 'manual_block' }]);
+  it('cancels into the terminal cancelled status and closes the run as cancelled', () => {
+    const { run_id } = claimTask(dir, 'app/base', 'worker-a');
+    handleCancelTask(dir, { task_ref: 'app/base', reason: 'not needed', actor_id: 'human' });
+    expect(task('app/base').status).toBe('cancelled');
+    expect(transitions('app/base').at(-1)).toMatchObject({ cause: 'cancel', reason: 'not needed' });
+    expect(runs('app/base')).toEqual([{ run_id, state: 'cancelled' }]);
+  });
+
+  it('does not record done when a worker reports run-finish before the merge', () => {
+    const { run_id } = claimTask(dir, 'app/base', 'worker-a');
+    startRun(dir, run_id, 'worker-a');
+    expect(() => assertRunMayFinish(dir, 'app/base')).toThrow('must wait until the coordinator records the merge');
+    finishRun(dir, run_id, 'worker-a', { success: true });
+    expect(task('app/base').status).toBe('in_progress');
+    expect(transitions('app/base').map((row) => row.cause)).toEqual(['claim', 'run_start']);
+  });
+
+  it('records done again after a completed task is reset and rerun, naming the merged run', () => {
+    const first = claimTask(dir, 'app/base', 'worker-a');
+    startRun(dir, first.run_id, 'worker-a');
+    markTaskDoneRuntimeOnly('app/base', 'coordinator', dir);
+    finishRun(dir, first.run_id, 'worker-a', { success: true });
+    handleResetTask(dir, { task_ref: 'app/base' });
+    const second = claimTask(dir, 'app/base', 'worker-b');
+    startRun(dir, second.run_id, 'worker-b');
+    markTaskDoneRuntimeOnly('app/base', 'coordinator', dir);
+    expect(task('app/base').status).toBe('done');
+    expect(transitions('app/base').filter((row) => row.cause === 'merge_succeeded').map((row) => row.run_id)).toEqual([first.run_id, second.run_id]);
+  });
+
+  it('leaves a merged run in its finalize window to finalization, not to reconcile or lease expiry', () => {
+    const { run_id } = claimTask(dir, 'app/base', 'worker-a', { leaseDurationMs: -1 });
+    startRun(dir, run_id, 'worker-a');
+    markTaskDoneRuntimeOnly('app/base', 'coordinator', dir);
+    reconcileState(dir);
+    expect(expireStaleLeases(dir)).toEqual([]);
+    expect(readClaims(dir).claims[0]).toMatchObject({ run_id, state: 'in_progress' });
+    expect(task('app/base').status).toBe('done');
   });
 });
 

@@ -31,6 +31,7 @@ function _expireLeasesCore(
   const now     = new Date();
   const expired: Array<{ run_id: string; task_ref: string; agent_id: string; code: string }> = [];
   const changes: Record<string, TaskStatusChange> = {};
+  const projectMode = projectTaskStoreFor(stateDir) !== null;
 
   for (const claim of claims.claims) {
     if (!['claimed', 'in_progress'].includes(claim.state)) continue;
@@ -45,6 +46,10 @@ function _expireLeasesCore(
       continue;
     }
 
+    // A merged project task is in its finalize window: its run succeeded, so the lease must not fail it.
+    const taskStatus = findTask(backlog, claim.task_ref)?.status;
+    if (projectMode && (taskStatus === 'done' || taskStatus === 'released')) continue;
+
     const code = claim.input_state === 'awaiting_input' ? 'ERR_INPUT_TIMEOUT' : 'ERR_LEASE_EXPIRED';
     claim.state       = 'failed';
     claim.finished_at = now.toISOString();
@@ -54,7 +59,7 @@ function _expireLeasesCore(
 
     const task = findTask(backlog, claim.task_ref);
     // In project SQLite a task an operator already moved off this run keeps its status.
-    if (task && (!projectTaskStoreFor(stateDir) || ['claimed', 'in_progress'].includes(task.status))) {
+    if (task && (!projectMode || ['claimed', 'in_progress'].includes(task.status))) {
       if (policy === 'block') {
         task.status = 'blocked';
       } else {

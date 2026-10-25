@@ -195,9 +195,14 @@ describe('project task schema v2', () => {
       db.exec(`INSERT INTO tasks (ref, title, created_at, updated_at) VALUES ('app/old', 'Old', 'now', 'now');
         INSERT INTO task_transitions (task_ref, from_status, to_status, cause, created_at) VALUES ('app/old', 'todo', 'claimed', 'claim', 'now');`);
       expect(db.prepare("SELECT attempt_count FROM tasks WHERE ref = 'app/old'").get()).toEqual({ attempt_count: 1 });
+      migrateProjectTaskSchema(db, 2);
+      db.exec(`INSERT INTO task_spec_revisions (task_ref, revision, content_hash, body_markdown, title, metadata_json, created_at)
+        VALUES ('app/old', 1, '${'0'.repeat(64)}', '# Old', 'Old', '{"owner":"worker-z","planning_state":"ready_for_dispatch","delegated_by":"master"}', 'now');`);
       migrateProjectTaskSchema(db);
       expect(db.pragma('user_version', { simple: true })).toBe(3);
-      expect(db.prepare("SELECT status, attempt_count, owner FROM tasks WHERE ref = 'app/old'").get()).toEqual({ status: 'claimed', attempt_count: 1, owner: null });
+      // Owner moves from revision metadata to its column; the version 2 claim no longer counts as an attempt.
+      expect(db.prepare("SELECT status, attempt_count, owner, planning_state, delegated_by FROM tasks WHERE ref = 'app/old'").get())
+        .toEqual({ status: 'claimed', attempt_count: 0, owner: 'worker-z', planning_state: 'ready_for_dispatch', delegated_by: 'master' });
       expect(db.prepare("SELECT name FROM sqlite_master WHERE name IN ('task_imports','plan_documents') ORDER BY name").all())
         .toEqual([{ name: 'plan_documents' }, { name: 'task_imports' }]);
     } finally { db.close(); }

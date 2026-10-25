@@ -74,6 +74,8 @@ export function reconcileState(stateDir: string): void {
         const activeClaim = activeClaimByTaskRef.get(taskRef);
         if (activeClaim) {
           const expectedStatus = activeClaim.state === 'in_progress' ? 'in_progress' : 'claimed';
+          // A merged task whose run has not finished yet is in the finalize window; finalize retries own it.
+          if (projectMode && (task.status === 'done' || task.status === 'released')) continue;
           if (projectMode && task.status !== expectedStatus && !(task.status === 'claimed' && expectedStatus === 'in_progress')) {
             // Project SQLite is authoritative: a claim its task row does not reflect is the orphan.
             logger.info(`[reconcile] claim ${activeClaim.run_id} does not match task ${taskRef} status ${task.status} -> failed`);

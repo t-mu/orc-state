@@ -25,7 +25,7 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
-import { blockCause, commitBacklog, createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { commitBacklog, createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
 import { commitClaims } from '../lib/runStore.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
@@ -775,13 +775,17 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
       })));
     }
 
-    const previousStatus = task.status;
-    task.status = 'blocked';
-    task.updated_at = now;
-    task.blocked_reason = (reason as string | null) ?? 'cancelled';
-    commitBacklog(stateDir, backlog, previousStatus === 'blocked' ? {} : {
-      [task_ref as string]: { cause: blockCause(previousStatus), actorId: actor_id as string, reason: task.blocked_reason },
-    });
+    if (projectTaskStoreFor(stateDir)) {
+      // Project SQLite follows the contract: cancellation is its own terminal status.
+      task.status = 'cancelled';
+      delete task.blocked_reason;
+      commitBacklog(stateDir, backlog, { [task_ref as string]: { cause: 'cancel', actorId: actor_id as string, reason: (reason as string | null) ?? null } });
+    } else {
+      task.status = 'blocked';
+      task.updated_at = now;
+      task.blocked_reason = (reason as string | null) ?? 'cancelled';
+      commitBacklog(stateDir, backlog);
+    }
 
     appendSequencedEvent(
       stateDir,

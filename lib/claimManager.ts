@@ -274,7 +274,8 @@ export function finishRun(
     const previousStatus = task?.status;
     if (task) {
       if (success) {
-        task.status = 'done';
+        // Project SQLite records done only from the coordinator's merge confirmation (markTaskDoneRuntimeOnly).
+        if (!projectTaskStoreFor(stateDir)) task.status = 'done';
       } else if (policy === 'block') {
         task.status = 'blocked';
       } else {

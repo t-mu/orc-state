@@ -157,6 +157,14 @@ export function migrateProjectTaskSchema(db: Database.Database, targetVersion = 
         ALTER TABLE tasks ADD COLUMN requeue_eligible_after TEXT;
         ALTER TABLE task_transitions ADD COLUMN actor_id TEXT;
         -- Attempts follow the failure policy (infrastructure failures do not count), so lifecycle writers set them.
+        -- Version 2 kept these in revision metadata; carry them into their columns.
+        UPDATE tasks SET
+          owner = (SELECT json_extract(r.metadata_json, '$.owner') FROM task_spec_revisions r WHERE r.task_ref = tasks.ref ORDER BY r.revision DESC LIMIT 1),
+          planning_state = (SELECT json_extract(r.metadata_json, '$.planning_state') FROM task_spec_revisions r WHERE r.task_ref = tasks.ref ORDER BY r.revision DESC LIMIT 1),
+          delegated_by = (SELECT json_extract(r.metadata_json, '$.delegated_by') FROM task_spec_revisions r WHERE r.task_ref = tasks.ref ORDER BY r.revision DESC LIMIT 1);
+        -- Version 2 counted every claim as an attempt; attempts now count failures only.
+        UPDATE tasks SET attempt_count = MAX(0, attempt_count
+          - (SELECT count(*) FROM task_transitions t WHERE t.task_ref = tasks.ref AND t.cause = 'claim'));
         DROP TRIGGER transitions_apply;
         CREATE TRIGGER transitions_apply AFTER INSERT ON task_transitions BEGIN
           UPDATE tasks SET status = NEW.to_status,
@@ -433,6 +441,11 @@ export class ProjectTaskStore {
         .run(runId, ref, pinned, agentId, now, now);
       return this.getRevision(ref, pinned)!;
     });
+  }
+
+  activeRunId(ref: string): string | null {
+    const row = this.db.prepare("SELECT run_id FROM task_runs WHERE task_ref = ? AND state IN ('claimed','in_progress','work_complete')").get(ref) as { run_id: string } | undefined;
+    return row?.run_id ?? null;
   }
 
   /** Reopen a binding whose cancellation is being rolled back. */

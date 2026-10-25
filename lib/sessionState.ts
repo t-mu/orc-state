@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { withLock } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
-import { readClaims } from './stateReader.ts';
+import { readBacklog, readClaims } from './stateReader.ts';
 import { closeProviderSessionsForAgent, commitClaims, restoreProviderSessionsForAgents } from './runStore.ts';
 import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState, Agent } from '../types/agents.ts';
@@ -13,7 +13,8 @@ import type { OrcEventInput } from '../types/events.ts';
 import { commitBacklog, restoreBacklogStatuses, type TaskStatusChange } from './projectTasks.ts';
 
 function readBacklogState(stateDir: string): Backlog {
-  return JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8')) as Backlog;
+  // Through readBacklog so a project state directory reads SQLite, not a possibly stale projection file.
+  return readBacklog(stateDir);
 }
 
 function readAgentsState(stateDir: string): AgentsState {
@@ -101,7 +102,8 @@ export function resetVolatileRuntimeStateForSession(
       for (const task of feature.tasks ?? []) {
         if (resetTask(task, now)) {
           resetTasks += 1;
-          changes[task.ref] = { cause: 'operator_reset', actorId: 'human', reason: 'session_reset' };
+          // Matches the run_failed (requeue) events emitted for the same runs below.
+          changes[task.ref] = { cause: 'failure_requeue', actorId: 'human', reason: 'session_reset' };
         }
       }
     }

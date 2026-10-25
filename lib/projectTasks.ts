@@ -136,11 +136,6 @@ function normalizedDefinition(task: Task): string {
   }));
 }
 
-/** `cancel` blocks a task in this runtime: from todo it is a manual block, from an active run a failure block. */
-export function blockCause(from: Task['status']): TaskTransitionCause {
-  return from === 'todo' ? 'manual_block' : 'failure_block';
-}
-
 /**
  * Commit a mutated backlog. A legacy state directory rewrites backlog.json.
  * A project state directory applies the changes to SQLite in one transaction:
@@ -211,6 +206,19 @@ export function restoreBacklogStatuses(stateDir: string, backlog: Backlog, claim
     }
   });
   refreshBacklogProjection(stateDir);
+}
+
+/**
+ * A worker's run-finish is a success signal only after the coordinator has
+ * recorded the merge; in a project state directory an earlier one is refused
+ * instead of completing unmerged work.
+ */
+export function assertRunMayFinish(stateDir: string, taskRef: string): void {
+  const store = projectTaskStoreFor(stateDir);
+  const status = store?.getTask(taskRef)?.status;
+  if (store && status !== 'done' && status !== 'released') {
+    throw new Error(`run-finish for ${taskRef} must wait until the coordinator records the merge (task status: ${status ?? 'missing'}); run run-work-complete and wait for FINALIZE_SUCCESS`);
+  }
 }
 
 export function requireProjectTaskStore(stateDir: string): ProjectTaskStore {

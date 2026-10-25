@@ -11,6 +11,7 @@ import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from './inputRequestConfig.ts';
 import type { Claim } from '../types/claims.ts';
 import { logger } from './logger.ts';
 import { bridgeInputRequest, readDurableInputResponse } from './messageBridge.ts';
+import { assertRunMayFinish } from './projectTasks.ts';
 
 const INPUT_REQUEST_TIMEOUT_GRACE_MS = 250;
 
@@ -80,6 +81,7 @@ export function executeRunFinish(runId: string, agentId: string): void {
     policy: null,
   }, claim);
 
+  assertRunMayFinish(STATE_DIR, claim!.task_ref);
   finishRun(STATE_DIR, runId, agentId, { success: true, at: new Date().toISOString() });
   console.log(`run_finished: ${runId} (${agentId})`);
 }

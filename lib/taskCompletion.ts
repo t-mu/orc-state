@@ -7,7 +7,7 @@ import { readBacklog, findTask } from './stateReader.ts';
 import { discoverActiveTaskSpecs } from './backlogSync.ts';
 import { BACKLOG_DOCS_DIR, IS_SIBLING_LAYOUT, ORCHESTRATION_ROOT, STATE_DIR } from './paths.ts';
 import { logger } from './logger.ts';
-import { commitBacklog, isProjectStateDir } from './projectTasks.ts';
+import { commitBacklog, isProjectStateDir, projectTaskStoreFor } from './projectTasks.ts';
 
 const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'released', 'cancelled']);
 
@@ -33,8 +33,9 @@ export function markTaskDoneRuntimeOnly(
       task.status = 'done';
       task.updated_at = now;
       delete task.blocked_reason;
-      // Recorded once: a repeated merge confirmation for the same task is a no-op.
-      commitBacklog(stateDir, backlog, { [taskRef]: { cause: 'merge_succeeded', actorId, idempotencyKey: `merge:${taskRef}` } });
+      // Recorded once per completion: the status guard above makes a repeated confirmation a no-op.
+      const runId = projectTaskStoreFor(stateDir)?.activeRunId(taskRef) ?? null;
+      commitBacklog(stateDir, backlog, { [taskRef]: { cause: 'merge_succeeded', actorId, runId } });
     }
 
     appendSequencedEvent(
