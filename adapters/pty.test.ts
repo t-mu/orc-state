@@ -431,6 +431,14 @@ describe('sandboxExtraWritableRoots', () => {
     ]);
   });
 
+  it('project worker (task 229): grants the control socket, never the state dir', async () => {
+    const { sandboxExtraWritableRoots } = await import('./pty.ts');
+    const socket = '/orch/.orc-state/control.sock';
+    const roots = sandboxExtraWritableRoots({ ...opts, gitRepoRoot: '/target', controlSocket: socket });
+    expect(roots).toEqual([socket, '/target/.git/objects', '/target/.git/refs', '/target/.git/logs', '/target/.git/worktrees']);
+    expect(roots).not.toContain('/orch/.orc-state');
+  });
+
   it('never grants the escalation-sensitive .git, .git/hooks or .git/config paths', async () => {
     const { sandboxExtraWritableRoots } = await import('./pty.ts');
     const roots = sandboxExtraWritableRoots(opts);
@@ -538,6 +546,17 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.any(Array), expect.objectContaining({ cwd: worktree }));
     const settings = JSON.parse(readFileSync(join(stateDir, 'pty-settings', 'bob.json'), 'utf8'));
     expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', stateDir, ...gitRoots(target)]);
+  });
+
+  it('claude, project worker (task 229): no state dir grant; the socket is the only lifecycle path', async () => {
+    const { target, worktree, stateDir } = twoRootLayout();
+    const socket = join(stateDir, 'control.sock');
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { execution_mode: 'sandbox', working_directory: worktree, env: { ORC_CONTROL_SOCKET: socket } });
+    const settings = JSON.parse(readFileSync(join(stateDir, 'pty-settings', 'bob.json'), 'utf8'));
+    expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', socket, ...gitRoots(target)]);
+    expect(settings.sandbox.filesystem.allowWrite).not.toContain(stateDir);
+    expect(settings.sandbox.network).toEqual({ allowUnixSockets: [socket] });
   });
 
   it('claude, attached: grants the orchestration repo .git subtrees, not the whole root', async () => {

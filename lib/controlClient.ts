@@ -11,6 +11,7 @@ import type { DurableCommand } from './commandDelivery.ts';
 import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
+import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
 
 export interface EventRow { seq: number; event: unknown }
 
@@ -121,6 +122,11 @@ export class ControlClient {
 
   acknowledge(commandId: string, state: AckState): Promise<{ command: DurableCommand }> {
     return this.call('POST', `/v1/commands/${encodeURIComponent(commandId)}/ack`, { state });
+  }
+
+  /** Apply a worker lifecycle request in the coordinator, scoped to this client's session. */
+  lifecycle(request: LifecycleRequest): Promise<LifecycleResult> {
+    return this.call('POST', '/v1/lifecycle', request);
   }
 
   listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {

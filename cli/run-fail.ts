@@ -21,7 +21,7 @@ if (!runId || !agentId) {
 }
 
 try {
-  executeRunFail(runId, agentId, failureReason, failureCode, policy);
+  await executeRunFail(runId, agentId, failureReason, failureCode, policy);
 } catch (error) {
   cliError(error);
 }

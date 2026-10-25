@@ -16,12 +16,20 @@
  * step is a real `orc` CLI subprocess run with the environment the coordinator
  * handed to that session. The product change is a real commit in the
  * assigned worktree.
+ *
+ * Workers run sandboxed (Task 229): their sandbox settings never grant the
+ * project state directory, and each worker `orc` call runs under Node's
+ * permission model with write access only to the worktrees and the target's
+ * `.git` write subtrees and with native addons disabled, so it cannot open
+ * SQLite at all. Every lifecycle step must reach the coordinator through its
+ * control socket.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { defaultSocketPath } from '../lib/controlProtocol.ts';
 
 const ORC = resolve(import.meta.dirname, '..', 'cli', 'orc.ts');
 const ORC_ENV_KEYS = ['ORC_STATE_DIR', 'ORC_HOME', 'ORC_REPO_ROOT', 'ORC_CONFIG_FILE', 'ORC_PROJECT_ID', 'ORC_DATA_HOME',
@@ -41,7 +49,7 @@ function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   for (const key of ORC_ENV_KEYS) delete env[key];
   return {
     ...env, PATH: `${join(temp, 'bin')}:${savedEnv.PATH ?? ''}`,
-    ORC_DATA_HOME: dataHome, ORC_CONTROL_API: 'off', ORC_SESSION_TRANSPORT: 'tmux', ...extra,
+    ORC_DATA_HOME: dataHome, ORC_SESSION_TRANSPORT: 'tmux', ...extra,
   };
 }
 
@@ -54,6 +62,36 @@ function orcOk(args: string[], options?: Parameters<typeof orc>[1]): string {
   const result = orc(args, options);
   if (result.status !== 0) throw new Error(`orc ${args.join(' ')} failed (${result.status}): ${result.stderr}${result.stdout}`);
   return result.stdout;
+}
+
+/**
+ * A worker `orc` call. It runs asynchronously because the coordinator — and its
+ * control socket — lives in this test process; a synchronous child would block
+ * the socket it is waiting on.
+ */
+function orcAsync(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [ORC, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+    child.on('error', reject);
+    child.on('close', (status) => {
+      if (status === 0) resolvePromise(stdout);
+      else reject(new Error(`orc ${args.join(' ')} failed (${status}): ${stderr}${stdout}`));
+    });
+  });
+}
+
+/**
+ * Node's permission model as a stand-in sandbox: read anything, write only
+ * `writable`. Leaving out --allow-addons also blocks better-sqlite3, whose
+ * native writes the fs permissions would not see.
+ */
+function sandboxNodeOptions(writable: string[]): string {
+  return ['--permission', '--allow-fs-read=*', '--allow-child-process', '--allow-worker',
+    ...writable.map((path) => `--allow-fs-write=${path}`)].join(' ');
 }
 
 function git(cwd: string, ...args: string[]): string {
@@ -78,10 +116,12 @@ interface Pending { agentId: string; kind: 'report' | 'task' | 'rebase' | 'rebas
  * transport unchanged, and the resulting worker actions are queued here and
  * performed between ticks, after the coordinator has written its state.
  */
-function makeWorkers() {
+function makeWorkers(writable: string[]) {
   const envs = new Map<string, NodeJS.ProcessEnv>();
+  const settings = new Map<string, { allowWrite: string[]; unixSockets: string[] }>();
   const pending: Pending[] = [];
-  const workerOrc = (agentId: string, args: string[], cwd: string) => orcOk(args, { cwd, env: { ...cleanEnv(), ...envs.get(agentId) } });
+  const workerOrc = (agentId: string, args: string[], cwd: string) => orcAsync(args, cwd,
+    { ...cleanEnv(), ...envs.get(agentId), NODE_OPTIONS: sandboxNodeOptions(writable) });
 
   function wrap(real: Adapter): Adapter {
     return {
@@ -89,6 +129,11 @@ function makeWorkers() {
       async start(agentId: string, config: Record<string, unknown>) {
         const result = await real.start(agentId, config);
         envs.set(agentId, config.env as NodeJS.ProcessEnv);
+        // The sandbox the provider was launched with (removed again when the session stops).
+        const { STATE_DIR } = await import('../lib/paths.ts');
+        const launched = json<{ sandbox?: { filesystem: { allowWrite: string[] }; network?: { allowUnixSockets: string[] } } }>(
+          readFileSync(join(STATE_DIR, 'pty-settings', `${agentId}.json`), 'utf8'));
+        settings.set(agentId, { allowWrite: launched.sandbox?.filesystem.allowWrite ?? [], unixSockets: launched.sandbox?.network?.allowUnixSockets ?? [] });
         // The provider reads its bootstrap once running, after the coordinator has recorded the session.
         pending.push({ agentId, kind: 'report', runId: '', token: /session-token=(\S+)/.exec(String(config.system_prompt))![1] });
         return result;
@@ -116,46 +161,51 @@ function makeWorkers() {
     return items;
   }
 
-  function reportForDuty() {
+  async function reportForDuty() {
     for (const item of take('report')) {
-      workerOrc(item.agentId, ['report-for-duty', `--agent-id=${item.agentId}`, `--session-token=${item.token}`], tmpdir());
+      await workerOrc(item.agentId, ['report-for-duty', `--agent-id=${item.agentId}`, `--session-token=${item.token}`], tmpdir());
     }
   }
 
   /** Start every delivered task (both workers are in progress before either completes). */
-  function startTasks(): Array<Required<Pending>> {
-    reportForDuty();
+  async function startTasks(): Promise<Array<Required<Pending>>> {
+    await reportForDuty();
     const started = take('task') as Array<Required<Pending>>;
-    for (const item of started) workerOrc(item.agentId, ['run-start', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], item.worktree);
+    for (const item of started) {
+      await workerOrc(item.agentId, ['run-start', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], item.worktree);
+      await workerOrc(item.agentId, ['progress', '--event=phase_started', '--phase=implement', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], item.worktree);
+    }
     return started;
   }
 
   /** The product change: a file named after the task, holding its pinned spec's title. */
-  function completeTask(item: Required<Pending>) {
+  async function completeTask(item: Required<Pending>) {
     const title = /^#\s+(.+)$/m.exec(readFileSync(item.specPath, 'utf8'))![1];
     const file = `${title.toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '')}.txt`;
     writeFileSync(join(item.worktree, file), `${title}\n`);
     git(item.worktree, 'add', file);
     git(item.worktree, 'commit', '-qm', `feat: ${title}`);
-    workerOrc(item.agentId, ['run-work-complete', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], item.worktree);
+    await workerOrc(item.agentId, ['review-submit', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`, '--outcome=approved', '--reason=looks right'], item.worktree);
+    await workerOrc(item.agentId, ['memory-record', `--content=${title} lives in its own file`], item.worktree);
+    await workerOrc(item.agentId, ['run-work-complete', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], item.worktree);
   }
 
   /** Follow-ups the coordinator asked for: a finalize rebase, or the terminal run-finish. */
-  function handleFollowUps(worktrees: Map<string, string>) {
-    reportForDuty();
-    for (const item of take('rebased')) workerOrc(item.agentId, ['run-work-complete', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], worktrees.get(item.runId)!);
+  async function handleFollowUps(worktrees: Map<string, string>) {
+    await reportForDuty();
+    for (const item of take('rebased')) await workerOrc(item.agentId, ['run-work-complete', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], worktrees.get(item.runId)!);
     for (const item of take('rebase')) {
       const worktree = worktrees.get(item.runId)!;
-      workerOrc(item.agentId, ['progress', '--event=finalize_rebase_started', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], worktree);
+      await workerOrc(item.agentId, ['progress', '--event=finalize_rebase_started', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], worktree);
       git(worktree, 'rebase', '-q', 'main');
       // Reported after the coordinator has seen the rebase start (a real rebase spans ticks).
       pending.push({ ...item, kind: 'rebased' });
     }
     // The coordinator removes the worktree once merged; the worker's env still names its project.
-    for (const item of take('finish')) workerOrc(item.agentId, ['run-finish', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], tmpdir());
+    for (const item of take('finish')) await workerOrc(item.agentId, ['run-finish', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], tmpdir());
   }
 
-  return { wrap, startTasks, completeTask, handleFollowUps };
+  return { wrap, settings, workerOrc, startTasks, completeTask, handleFollowUps };
 }
 
 beforeEach(() => {
@@ -195,6 +245,7 @@ describe('clean-repository project workflow', () => {
     const project = json<{ id: string; stateDir: string }>(orcOk(['project', 'add', target, '--name=demo'], { cwd: temp }));
     orcOk(['project', 'config', 'set', 'worker_pool.max_workers', '2']);
     orcOk(['project', 'config', 'set', 'worker_pool.provider', 'claude']);
+    orcOk(['project', 'config', 'set', 'worker_pool.execution_mode', 'sandbox']);
     // The test drives ticks itself; the coordinator's own timer never fires.
     orcOk(['project', 'config', 'set', 'coordinator.tick_interval_ms', '3600000']);
 
@@ -212,7 +263,8 @@ describe('clean-repository project workflow', () => {
 
     // ── Start the real coordinator in project mode. ─────────────────────────
     process.env = cleanEnv({ ORC_PROJECT_ID: project.id });
-    const workers = makeWorkers();
+    const gitWritable = ['objects', 'refs', 'logs', 'worktrees'].map((sub) => join(target, '.git', sub));
+    const workers = makeWorkers([join(project.stateDir, 'worktrees'), ...gitWritable]);
     vi.doMock('../adapters/index.ts', async (importOriginal) => {
       const actual = await importOriginal<typeof import('../adapters/index.ts')>();
       return { ...actual, createAdapter: (provider: string) => workers.wrap(actual.createAdapter(provider) as unknown as Adapter) };
@@ -230,10 +282,10 @@ describe('clean-repository project workflow', () => {
 
       const claims = () => json<{ claims: Array<{ run_id: string; task_ref: string; agent_id: string; state: string }> }>(readFileSync(join(STATE_DIR, 'claims.json'), 'utf8')).claims;
       const events = async () => (await import('../lib/eventLog.ts')).readEvents(join(STATE_DIR, 'events.db')).map((event) => event.event);
-      let started = workers.startTasks();
+      let started = await workers.startTasks();
       for (let i = 0; i < 10 && started.length < 2; i += 1) {
         await coordinator.tick();
-        started = [...started, ...workers.startTasks()];
+        started = [...started, ...await workers.startTasks()];
       }
       expect(started).toHaveLength(2);
       expect(claims().filter((claim) => claim.state === 'in_progress').map((claim) => claim.task_ref).sort()).toEqual(['app/alpha', 'app/beta']);
@@ -244,7 +296,19 @@ describe('clean-repository project workflow', () => {
         expect(realpathSync(git(item.worktree, 'rev-parse', '--path-format=absolute', '--git-common-dir'))).toBe(join(target, '.git'));
         // The worker received the pinned revision body, not a repository file.
         expect(item.specPath.startsWith(join(project.stateDir, 'run-specs'))).toBe(true);
+        // Sandboxed without the state directory: only the control socket and the target's .git write subtrees.
+        const sandbox = workers.settings.get(item.agentId)!;
+        expect(sandbox.allowWrite).toEqual(['.', defaultSocketPath(project.stateDir), ...gitWritable]);
+        expect(sandbox.unixSockets).toEqual([defaultSocketPath(project.stateDir)]);
       }
+      // The credential must own the run: a worker cannot act on its peer's run, even naming the peer's agent.
+      const [first, second] = started;
+      await expect(workers.workerOrc(first.agentId, ['progress', '--event=phase_started', '--phase=review', `--run-id=${second.runId}`, `--agent-id=${second.agentId}`], first.worktree))
+        .rejects.toThrow(/Session belongs to/);
+      await expect(workers.workerOrc(first.agentId, ['run-fail', `--run-id=${second.runId}`, `--agent-id=${first.agentId}`], first.worktree))
+        .rejects.toThrow(/not scoped to run/);
+      // Without a session credential a project lifecycle command is refused outright.
+      expect(orc(['run-start', `--run-id=${first.runId}`, `--agent-id=${first.agentId}`]).stderr).toContain('ORC_SESSION_TOKEN is not set');
 
       // ── Inspect and attach through the CLI and the TUI while both runs are active. ──
       const status = json<{ project: { id: string } }>(orcOk(['status', '--json']));
@@ -264,7 +328,7 @@ describe('clean-repository project workflow', () => {
       expect(orcOk(['run-info', started[0].runId])).toContain(started[0].runId);
 
       // ── Restart the coordinator mid-run: shut down, start again, adopt the live sessions. ──
-      workers.completeTask(started[0]);
+      await workers.completeTask(started[0]);
       await coordinator.doShutdown();
       expect(await events()).toContain('coordinator_stopped');
       for (const item of started) {
@@ -289,13 +353,18 @@ describe('clean-repository project workflow', () => {
       expect(sessionOf(started[0].agentId)).toMatchObject({ state: 'offline' });
       expect(claims().find((claim) => claim.run_id === started[0].runId)?.state).toBe('done');
 
-      workers.completeTask(started[1]);
+      await workers.completeTask(started[1]);
       for (let i = 0; i < 20 && !claims().every((claim) => claim.state === 'done'); i += 1) {
         await coordinator.tick();
-        workers.handleFollowUps(worktrees);
+        await workers.handleFollowUps(worktrees);
       }
       // No run was redispatched across the restart; both finished through the merge.
       expect(claims().map((claim) => [claim.run_id, claim.state]).sort()).toEqual(started.map((item) => [item.runId, 'done']).sort());
+      // Every worker step was applied by the coordinator on their behalf.
+      const recorded = await events();
+      for (const name of ['reported_for_duty', 'run_started', 'phase_started', 'review_submitted', 'work_complete', 'run_finished']) {
+        expect(recorded, name).toContain(name);
+      }
 
       // ── Only the intended product commits reached the target. ────────────────
       expect(git(target, 'status', '--porcelain')).toBe('');
@@ -308,6 +377,8 @@ describe('clean-repository project workflow', () => {
       const tasks = json<Array<{ ref: string; status: string }>>(orcOk(['project', 'task', 'list']));
       expect(tasks.map((task) => [task.ref, task.status]).sort()).toEqual([['app/alpha', 'done'], ['app/beta', 'done']]);
       expect(json<{ value: number }>(orcOk(['project', 'config', 'get', 'worker_pool.max_workers'])).value).toBe(2);
+      // Doctor checks the host's real sandbox prerequisites, which a test container may lack.
+      orcOk(['project', 'config', 'set', 'worker_pool.execution_mode', 'full-access']);
       const doctor = orc(['doctor', '--json']);
       expect(doctor.status, doctor.stdout).toBe(0);
       expect(json<{ ok: boolean }>(doctor.stdout).ok).toBe(true);

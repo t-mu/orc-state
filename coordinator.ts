@@ -2285,6 +2285,11 @@ export async function main() {
     console.error(`[coordinator] ERROR: ${STATE_DIR} was migrated to project ${migrated.project_name} (${migrated.project_id}); run orc with --project=${migrated.project_id}. Aborting.`);
     process.exit(1);
   }
+  // Project workers report their lifecycle only through the control API (Task 229).
+  if (ACTIVE_PROJECT && process.env.ORC_CONTROL_API === 'off') {
+    console.error('[coordinator] ERROR: ORC_CONTROL_API=off is not supported for a registered project: its workers report lifecycle through the control API. Aborting.');
+    process.exit(1);
+  }
   acquireCoordinatorLock();
   // Workers resolve the project from its state directory without the global registry.
   if (ACTIVE_PROJECT) writeProjectDescriptor(ACTIVE_PROJECT);
@@ -2351,12 +2356,16 @@ export async function main() {
     log(`warning: ${(error as Error).message}`);
   }
   await reconcileSupervisedSessions();
-  // The control API is additive during migration; legacy CLI/MCP paths keep working without it.
+  // A legacy installation keeps working without the control API; a project's workers cannot.
   if (process.env.ORC_CONTROL_API !== 'off') {
     try {
       controlServer = await startControlServer(STATE_DIR, { commands: getCommandDispatcher() });
       log(`control API listening on ${controlServer.endpoint.path}`);
     } catch (error) {
+      if (ACTIVE_PROJECT) {
+        console.error(`[coordinator] ERROR: control API unavailable: ${(error as Error).message}; project workers could not report. Aborting.`);
+        process.exit(1);
+      }
       log(`warning: control API unavailable: ${(error as Error).message}`);
     }
   }

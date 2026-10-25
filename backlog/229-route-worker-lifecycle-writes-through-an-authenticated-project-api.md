@@ -3,7 +3,7 @@ ref: global-project-state/229-route-worker-lifecycle-writes-through-an-authentic
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/228-prove-the-clean-repo-cli-and-tui-workflow
 ---

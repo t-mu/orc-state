@@ -141,7 +141,7 @@ export interface SandboxRootsOptions {
   readOnly: boolean;
   /** The provider's launch cwd — the assigned worktree for task workers. */
   cwd: string;
-  /** Orchestration state dir; `orc` CLI calls from the worker write here. */
+  /** Orchestration state dir; a legacy worker's `orc` CLI calls write here. */
   stateDir: string;
   /** Repo whose `.git` backs the worktree (the registered target repo in project mode). */
   gitRepoRoot: string;
@@ -157,7 +157,11 @@ export interface SandboxRootsOptions {
  * covers the worktree's files. Two things the worker legitimately writes live
  * outside it:
  *
- *   - the orchestration state dir, written by every `orc` lifecycle call;
+ *   - its lifecycle state. A legacy installation's `orc` calls write the
+ *     orchestration state dir directly, so it is granted. A project worker
+ *     (one handed a control socket) sends them to the coordinator instead
+ *     (Task 229): it gets only the socket, never the state dir, so it cannot
+ *     write the project's SQLite or claims;
  *   - the backing repo's `.git` — a linked worktree shares its main repo's
  *     object store, refs and per-worktree state, so commits and rebases write
  *     there. This holds in BOTH layouts: in the attached layout the backing
@@ -175,9 +179,9 @@ export function controlSocketOf(config: Record<string, unknown>): string | null 
 
 export function sandboxExtraWritableRoots(opts: SandboxRootsOptions): string[] {
   if (opts.readOnly) return [];
-  // Only the socket itself, and only when it lies outside the state dir (a long state path).
-  const socket = opts.controlSocket && !isWithin(opts.stateDir, opts.controlSocket) ? [opts.controlSocket] : [];
-  const roots = [opts.stateDir, ...socket, ...targetGitWritableRoots(opts.gitRepoRoot)];
+  // A project worker reaches its state only through the socket itself.
+  const lifecycle = opts.controlSocket ? [opts.controlSocket] : [opts.stateDir];
+  const roots = [...lifecycle, ...targetGitWritableRoots(opts.gitRepoRoot)];
   return roots.filter((root) => !isWithin(opts.cwd, root));
 }
 

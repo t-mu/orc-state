@@ -1,11 +1,7 @@
 #!/usr/bin/env node
-import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { STATE_DIR } from '../lib/paths.ts';
 import { flag } from '../lib/args.ts';
+import { submitLifecycle } from '../lib/lifecycleDispatch.ts';
 import { cliError } from './shared.ts';
-import { storeDrawer, wingFromTaskRef } from '../lib/memoryStore.ts';
-import { readClaims } from '../lib/stateReader.ts';
-import { bridgeReviewFeedback } from '../lib/messageBridge.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -30,29 +26,10 @@ if (!reason?.trim()) {
 }
 
 try {
-  const messageId = bridgeReviewFeedback(STATE_DIR, runId, agentId, outcome as 'approved' | 'findings', reason);
-  appendSequencedEvent(STATE_DIR, {
-    ts: new Date().toISOString(),
-    event: 'review_submitted',
-    actor_type: 'agent',
-    actor_id: agentId,
-    run_id: runId,
-    agent_id: agentId,
-    payload: { outcome: outcome as 'approved' | 'findings', findings: reason, message_id: messageId },
+  const result = await submitLifecycle({
+    op: 'review-submit', run_id: runId, agent_id: agentId, outcome: outcome as 'approved' | 'findings', reason,
   });
-  console.log(`review_submitted: run=${runId} agent=${agentId} outcome=${outcome}`);
+  console.log(result.message);
 } catch (error) {
   cliError(error);
-}
-
-if (outcome === 'findings' && reason) {
-  try {
-    const claim = readClaims(STATE_DIR).claims.find((c) => c.run_id === runId);
-    storeDrawer(STATE_DIR, {
-      wing: wingFromTaskRef(claim?.task_ref ?? ''),
-      hall: 'reviews', room: 'review-findings',
-      content: reason,
-      importance: 6, sourceType: 'review', sourceRef: runId,
-    });
-  } catch { /* memory system not initialized — silently skip */ }
 }
