@@ -21,14 +21,28 @@ worker bootstrap overhead significantly.
 
 The output target is task-spec markdown only.
 
-## Completion
+## Registered projects
 
-A task-creation turn is complete when the `backlog/<N>-<slug>.md` file is saved.
+If `mcp__orchestrator__get_status` reports a `project`, tasks live in the
+project's SQLite store and **no file is written anywhere** — not in `backlog/`,
+not in the target repository. Draft the spec exactly as below, then call
+`mcp__orchestrator__create_task` with `feature`, `ref` (the slug), `title` and
+`body_markdown` (the full spec body, without frontmatter), plus `depends_on`,
+`priority` and `review_level` as needed. The turn is complete when
+`create_task` returns. Edit later with `update_task(task_ref, expected_revision, …)`.
+Never set a `status:`; status is runtime-owned.
 
-The coordinator auto-syncs specs to runtime state on each tick. Manual registration
+## Completion (legacy installations)
+
+A task-creation turn is complete when the `backlog/<N>-<slug>.md` file is saved
+with `status: todo`.
+
+The coordinator registers new `todo` spec definitions on each tick. Manual registration
 via `create_task` MCP is not required, and no explicit `orc backlog-sync-check` call
 is part of this skill's flow. The command remains available as an ad-hoc operator
 inspection tool if a human wants to verify, but agents should not treat it as a gate.
+Status is never read from a spec after registration: use the runtime commands
+(`reset_task`, `cancel_task`, `orc task-unblock`) to change it.
 
 ## Step 0 — Orient Before Drafting
 
@@ -86,13 +100,12 @@ Before writing any file, determine the feature for this task:
    Enter the new feature name (lowercase, hyphen-separated, e.g. "my-feature"):
    ```
 
-   Use the entered value as the feature ref. The coordinator's auto-sync creates
-   any unknown feature referenced by a backlog spec on its next tick — no explicit
-   feature-creation call is required from the agent.
+   Use the entered value as the feature ref. Unknown features are created when
+   the task is registered (by `create_task` in a project, or by the legacy
+   coordinator's next tick) — no explicit feature-creation call is required.
 
 5. **Store the resolved feature** and use it for the `feature:` frontmatter field
-   in every .md file written during this skill invocation. The coordinator picks
-   it up from the markdown on its next auto-sync tick.
+   in every task created during this skill invocation.
 
 ## Required Inputs Before Drafting
 

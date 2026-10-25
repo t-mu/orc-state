@@ -102,7 +102,7 @@ export function validateBacklogSync(
   const unregistered = specs.filter((spec) => !registeredRefs.has(spec.ref));
   // Sync registers only todo specs; the others need a migration, not a re-sync.
   const missing = unregistered.filter((spec) => spec.status === 'todo').map(({ file, ref }) => ({ file, ref }));
-  const skipped = unregistered.filter((spec) => spec.status !== 'todo').map(({ file, ref, status }) => ({ file, ref, status }));
+  const skippedSpecs = unregistered.filter((spec) => spec.status !== 'todo').map(({ file, ref, status }) => ({ file, ref, status }));
   const mismatches = findMetadataMismatches(specs, registeredEntries);
   return {
     ok: missing.length === 0 && mismatches.length === 0,
@@ -110,8 +110,15 @@ export function validateBacklogSync(
     filtered: filterRefs !== undefined && filterRefs.size > 0,
     missing,
     mismatches,
-    skipped,
+    skipped_specs: skippedSpecs,
   };
+}
+
+/** Lines naming unregistered non-todo specs, which only a migration can carry with their status. */
+export function formatSkippedSpecs(specs: Array<{ ref: string; status: string; file?: string }>): string[] {
+  if (specs.length === 0) return [];
+  return [`${specs.length} unregistered non-todo spec(s) skipped; run orc project migrate to carry their status:`,
+    ...specs.map((entry) => `- ${entry.ref}${entry.file ? ` (${entry.file})` : ''}: status ${entry.status}`)];
 }
 
 export function formatBacklogSyncResult(result: {
@@ -120,15 +127,12 @@ export function formatBacklogSyncResult(result: {
   filtered?: boolean;
   missing: Array<{ file: string; ref: string }>;
   mismatches: BacklogSyncMismatch[];
-  skipped?: Array<{ file: string; ref: string; status: string }>;
+  skipped_specs?: Array<{ file: string; ref: string; status: string }>;
 }) {
   const scope = result.filtered
     ? `${result.spec_count} ref(s)`
     : `${result.spec_count} specs`;
-  const skipped = (result.skipped ?? []).length > 0
-    ? [`${result.skipped!.length} unregistered non-todo spec(s) skipped; run orc project migrate to carry their status:`,
-      ...result.skipped!.map((entry) => `- ${entry.ref} (${entry.file}): status ${entry.status}`)]
-    : [];
+  const skipped = formatSkippedSpecs(result.skipped_specs ?? []);
   if (result.ok) {
     return [`backlog sync OK: ${scope} matched orchestrator state`, ...skipped].join('\n');
   }

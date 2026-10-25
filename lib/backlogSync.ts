@@ -13,9 +13,10 @@ const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
 // it. Project state directories do not sync at all.
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
 // The retired status mirror, still applied when planning a migration
-// (`mirrorStatus`): it reproduces the status an installation that ran under the
-// mirror would have reached. Terminal runtime states are never demoted by it,
-// so a stale spec that still says `todo` cannot re-open completed work.
+// (`mirrorStatus`): a spec edited under the old mirror may hold a newer
+// completion than a stale runtime. It may only make a task less dispatchable
+// (todo → blocked/done/cancelled, blocked → done/cancelled): a spec that still
+// says `todo` never re-opens blocked, cancelled or completed work.
 const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'released']);
 const VALID_SPEC_STATUSES = new Set<string>(['todo', 'blocked', 'done', 'released', 'cancelled']);
 const LEGACY_DIR_RE = /^legacy\//;
@@ -231,8 +232,10 @@ export function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[],
 
     if (
       mirrorStatus &&
+      spec.status !== 'todo' &&
       !ACTIVE_STATUSES.has(existingEntry.task.status) &&
       !TERMINAL_STATUSES.has(existingEntry.task.status) &&
+      existingEntry.task.status !== 'cancelled' &&
       existingEntry.task.status !== spec.status
     ) {
       existingEntry.task.status = spec.status as TaskStatus;

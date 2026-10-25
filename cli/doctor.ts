@@ -14,7 +14,7 @@ import { validateStateDir, validateMemoryDb } from '../lib/stateValidation.ts';
 import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
-import { validateBacklogSync } from './backlog-sync-check.ts';
+import { formatSkippedSpecs, validateBacklogSync } from './backlog-sync-check.ts';
 import { checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import type { Agent } from '../types/agents.ts';
@@ -34,7 +34,7 @@ const backlogSync = ACTIVE_PROJECT
   ? { ok: true, skipped: 'project state directory: SQLite owns task definitions', spec_count: 0, filtered: false, missing: [], mismatches: [], skipped_specs: [] }
   : safeRead(
     () => validateBacklogSync(process.env.ORC_BACKLOG_DIR || `${process.env.ORC_REPO_ROOT || process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
-    { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [], skipped: [] },
+    { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [], skipped_specs: [] },
   );
 const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
 const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
@@ -205,6 +205,7 @@ for (const missing of backlogSync.missing) {
 for (const mismatch of backlogSync.mismatches) {
   console.log(`  mismatch ${mismatch.ref} ${mismatch.field}: expected "${mismatch.expected}" got "${mismatch.actual}"`);
 }
+for (const line of formatSkippedSpecs(backlogSync.skipped_specs)) console.log(`  ${line}`);
 
 console.log('');
 const lifecycleIssues = checks.lifecycleIssues as LifecycleIssue[];

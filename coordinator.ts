@@ -2175,6 +2175,9 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
   }
 }
 
+// Legacy specs whose non-todo status kept them out of the runtime; each is logged once.
+const reportedSkippedSpecs = new Set<string>();
+
 // ── Coordinator presence lock ──────────────────────────────────────────────
 // Prevents two coordinator processes from running against the same state dir.
 
@@ -2329,7 +2332,12 @@ export async function main() {
   } catch { /* memory system not initialized */ }
 
   try {
-    syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);
+    const synced = syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);
+    for (const spec of synced.skipped_specs ?? []) {
+      if (reportedSkippedSpecs.has(spec.ref)) continue;
+      reportedSkippedSpecs.add(spec.ref);
+      log(`spec ${spec.ref} has status ${spec.status}; not registered (status is runtime-owned) — run orc project migrate to carry it`);
+    }
     rebuildDocumentIndex(STATE_DIR, BACKLOG_DOCS_DIR, PLANS_DIR);
     pruneOrphanRunTaskSnapshots(STATE_DIR);
   } catch (error) {

@@ -50,7 +50,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -65,7 +65,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [{ file: '131-example.md', ref: 'orch/task-131-example' }],
       mismatches: [],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -80,7 +80,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -111,7 +111,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -141,7 +141,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -164,7 +164,7 @@ describe('validateBacklogSync', () => {
       filtered: true,
       missing: [],
       mismatches: [],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -179,7 +179,7 @@ describe('validateBacklogSync', () => {
       filtered: true,
       missing: [{ file: '131-example.md', ref: 'orch/task-131-example' }],
       mismatches: [],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -231,7 +231,7 @@ describe('validateBacklogSync', () => {
           actual: 'Wrong Title',
         },
       ],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -275,7 +275,7 @@ describe('validateBacklogSync', () => {
           actual: 'Wrong Title',
         },
       ],
-      skipped: [],
+      skipped_specs: [],
     });
   });
 
@@ -284,7 +284,7 @@ describe('validateBacklogSync', () => {
       '---\nref: orch/task-130-example\nfeature: orch\nstatus: done\n---\n\n# Task 130 — Example\n');
     writeState(dir, []);
     const result = validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'));
-    expect(result).toMatchObject({ ok: true, missing: [], skipped: [{ file: '130-example.md', ref: 'orch/task-130-example', status: 'done' }] });
+    expect(result).toMatchObject({ ok: true, missing: [], skipped_specs: [{ file: '130-example.md', ref: 'orch/task-130-example', status: 'done' }] });
     expect(formatBacklogSyncResult(result)).toContain('run orc project migrate');
   });
 });

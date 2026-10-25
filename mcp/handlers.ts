@@ -19,6 +19,7 @@ import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateR
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
 import { isSupportedProvider } from '../lib/providers.ts';
 import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
+import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
@@ -277,6 +278,11 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     last_notification_seq: getLastNotificationSeq(stateDir),
     stalled_runs: handleListStalledRuns(stateDir).length,
     next_task_seq: getNextTaskSeq(backlog),
+    // The registered project this state belongs to; null for a legacy installation (author tasks as backlog/ specs there).
+    project: (() => {
+      const descriptor = readProjectDescriptor(stateDir);
+      return descriptor ? { id: descriptor.id, name: descriptor.name, target_repo_root: descriptor.target_repo_root } : null;
+    })(),
   };
 }
 
