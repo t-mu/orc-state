@@ -301,14 +301,14 @@ export class ProjectTaskStore {
   /**
    * Save an edit as a new immutable revision. `expectedRevision` must be the
    * latest revision, so concurrent editors cannot overwrite each other. An
-   * edit that changes nothing returns the current revision unchanged.
+   * edit that changes nothing returns the current revision unchanged, even
+   * when it was based on an older revision.
    */
   reviseTask(ref: string, expectedRevision: number, changes: TaskSpecChanges): { task: ProjectTask; changed: boolean } {
     if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new Error('expected revision must be a positive integer');
     const changed = this.db.transaction(() => {
       const current = this.getTask(ref);
       if (!current) throw new Error(`Task not found: ${ref}`);
-      if (current.revision !== expectedRevision) throw new RevisionConflictError(ref, expectedRevision, current.revision);
       const bodyMarkdown = changes.bodyMarkdown ?? current.bodyMarkdown;
       const title = changes.title ?? (changes.bodyMarkdown !== undefined ? parseBodyTitle(bodyMarkdown) : null) ?? current.title;
       if (!title.trim()) throw new Error('Task title is required');
@@ -320,6 +320,8 @@ export class ProjectTaskStore {
       const next = { title, bodyMarkdown, metadata, priority, requiredProvider, dependsOn };
       if (JSON.stringify(this.revisionMetadata(next)) === JSON.stringify(current.metadata)
         && title === current.title && bodyMarkdown === current.bodyMarkdown) return false;
+      // An edit that matches the current content is a no-op whatever its base; any real change must name the latest revision.
+      if (current.revision !== expectedRevision) throw new RevisionConflictError(ref, expectedRevision, current.revision);
       const now = new Date().toISOString();
       this.insertRevision(ref, current.revision + 1, next, now);
       this.db.prepare('UPDATE tasks SET title = ?, priority = ?, required_provider = ?, updated_at = ? WHERE ref = ?')

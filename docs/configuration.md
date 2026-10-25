@@ -41,7 +41,7 @@ Markdown is an explicit, one-way interface to project tasks and plans. Nothing i
 
 ```bash
 orc project task import ~/specs/login.md          # one file; it must be a task spec
-orc project task import ~/old-orc/backlog [--strict]  # a directory, recursively
+orc project task import ~/specs/ [--strict]        # a directory, recursively (skips legacy/)
 orc project task export ~/exports/                 # every task as <feature>/<slug>.md
 orc project task export ~/login.md --ref=app/login # one task to an exact file
 orc project plan import ~/old-orc/plans/3-global-project-state.md
@@ -49,9 +49,11 @@ orc project plan export 3 ~/exports/plans/
 orc project plan list | show <id>
 ```
 
-Import reads the spec frontmatter subset (`ref`, `feature`, `title`, `priority`, `required_provider`, `review_level`, `merge_strategy`, `task_type`, `model`, `depends_on`, `required_capabilities`). The title comes from `title:`, else a `# Task N — Title` or first `# ` heading. The body after the frontmatter is stored as the revision body. Every file is validated before anything is written. In a directory, files without a valid `ref` (templates, notes) are skipped. A new ref creates revision 1. An existing ref gets a new revision, or nothing when the content is unchanged. Each import records its source path and file hash for diagnostics (`task_imports`).
+Import reads the spec frontmatter subset (`ref`, `feature`, `title`, `priority`, `required_provider`, `review_level`, `merge_strategy`, `task_type`, `model`, `depends_on`, `required_capabilities`). The title comes from `title:`, else a `# Task N — Title` or first `# ` heading. The body after the frontmatter is stored as the revision body. In a directory, files without a valid `ref` (templates, notes) and anything under `legacy/` are skipped; a named file must be a task spec. A new ref creates revision 1. An existing ref gets a new revision, or nothing when the content is unchanged. Each import records its source path and file hash for diagnostics (`task_imports`).
 
-Lifecycle fields (`status`, `attempt_count`, `blocked_reason`, `owner`, `planning_state`, …) are ignored and reported in `ignored_fields`; `--strict` rejects them instead. An import therefore cannot complete, block, or reopen a task. Status is only imported by the installation migration (plan 3, step 9).
+Lifecycle fields (`status`, `attempt_count`, `blocked_reason`, `owner`, `planning_state`, …) are ignored and reported in `ignored_fields`; `--strict` rejects them instead. An import therefore cannot complete, block, or reopen a task. A file whose `status` is anything other than `todo` cannot create a new task, because it would start as dispatchable work: bring an existing installation's finished and blocked tasks over with the installation migration (plan 3, step 9), which carries runtime status, or remove the field to import the spec as new work.
+
+For an existing task the file is the whole definition: an omitted field is cleared (dependencies, review level, provider) rather than kept, and `depends_on: []` is valid. The whole import runs in one transaction, so a file that fails any check leaves the project unchanged. Unlike backlog sync, the title falls back to the first `# ` heading rather than the slug, and duplicate dependencies are merged rather than rejected.
 
 Export writes frontmatter for the definition fields plus `spec_revision` and `content_hash`, followed by the stored body. It never writes `status`. Re-importing an exported file uses its `spec_revision` as the expected revision, so editing a stale export fails with a revision conflict instead of overwriting newer work. Plans are stored whole in `plan_documents` after `parsePlan` validation and export byte-for-byte.
 

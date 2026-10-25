@@ -184,7 +184,7 @@ These are available for manual intervention and debugging.
 | `task-reset <task-ref>` | Reset a task to `todo`, cancelling any active claims. |
 | `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
 | `delegate` | Dispatch a task to an available worker agent. |
-| `project task <list\|show\|revisions\|create\|edit\|import\|export>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`, `import <file-or-dir> [--strict]`, `export <dir-or-file.md> [--ref=a,b]`; `project plan <list\|show\|import\|export>` stores and renders plans. All accept `--project=<id>` and `--actor-id=<id>`. See configuration.md → Project tasks. |
+| `project task <list\|show\|revisions\|create\|edit\|import\|export>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`, `import <file-or-dir> [--strict]`, `export <dir-or-file.md> [--ref=a,b]`; `project plan <list\|show\|import\|export>` stores and renders plans. All accept `--project=<id>`; `create`, `edit` and `import` also accept `--actor-id=<id>`. See configuration.md → Project tasks. |
 | `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
 **Flags:**

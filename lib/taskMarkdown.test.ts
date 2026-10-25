@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { closeAllDatabases } from './eventLog.ts';
+import { closeAllDatabases, queryEvents } from './eventLog.ts';
 import { closeProjectTaskStores, createProjectTask, initProjectTaskStore } from './projectTasks.ts';
 import { migrateProjectTaskSchema, RevisionConflictError } from './projectTaskStore.ts';
 import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, parseFrontmatter, renderTaskMarkdown } from './taskMarkdown.ts';
@@ -14,7 +14,7 @@ let outside: string;
 const SPEC = `---
 ref: app/12-login
 feature: app
-status: done
+status: todo
 priority: high
 review_level: light
 depends_on:
@@ -64,6 +64,28 @@ describe('Markdown task import', () => {
     expect(() => importTaskMarkdown(dir, file, { strict: true })).toThrow('lifecycle field(s) status');
   });
 
+  it('refuses to create a todo task from a spec that is already finished or blocked', () => {
+    const file = join(outside, 'done.md');
+    writeFileSync(file, SPEC.replace('status: todo', 'status: done'));
+    expect(() => importTaskMarkdown(dir, file)).toThrow('has status done');
+    expect(initProjectTaskStore(dir).getTask('app/12-login')).toBeNull();
+  });
+
+  it('rejects a named file that is not a task spec', () => {
+    writeFileSync(join(outside, 'notes.md'), '# Notes\n');
+    expect(() => importTaskMarkdown(dir, join(outside, 'notes.md'))).toThrow('not a task spec');
+  });
+
+  it('rolls back the whole import when a later file fails validation', () => {
+    const backlog = join(outside, 'mixed');
+    mkdirSync(backlog);
+    writeFileSync(join(backlog, '1-good.md'), '---\nref: app/1-good\nfeature: app\n---\n# Good\n');
+    writeFileSync(join(backlog, '2-bad.md'), '---\nref: app/2-bad\nfeature: app\npriority: urgent\n---\n# Bad\n');
+    expect(() => importTaskMarkdown(dir, backlog)).toThrow('Invalid priority');
+    expect(initProjectTaskStore(dir).listTasks()).toEqual([]);
+    expect(queryEvents(dir, { event_type: 'task_added' })).toHaveLength(0);
+  });
+
   it('never resets or completes runtime status on re-import', () => {
     const file = join(outside, 'login.md');
     writeFileSync(file, SPEC);
@@ -83,10 +105,13 @@ describe('Markdown task import', () => {
     writeFileSync(join(backlog, '12-login.md'), SPEC);
     writeFileSync(join(backlog, 'TASK_TEMPLATE.md'), '---\nref: <feature>/<slug>\n---\n# Template\n');
     writeFileSync(join(backlog, 'notes.md'), '# Just notes\n');
+    writeFileSync(join(backlog, 'plan-notes.md'), '---\ndescription: >\n  folded text\n---\n# Not a spec\n');
+    mkdirSync(join(backlog, 'legacy'));
+    writeFileSync(join(backlog, 'legacy', '1-old.md'), '---\nref: app/1-old\nfeature: app\n---\n# Archived\n');
     writeFileSync(join(backlog, 'nested', '13-logout.md'), '---\nref: app/13-logout\nfeature: app\n---\n# Logout\n');
     const result = importTaskMarkdown(dir, backlog);
     expect(result.imported.map((entry) => entry.ref)).toEqual(['app/12-login', 'app/13-logout']);
-    expect(result.skipped).toHaveLength(2);
+    expect(result.skipped).toHaveLength(3);
 
     writeFileSync(join(backlog, 'zz-bad.md'), '---\nref: app/bad\nfeature: other\n---\n# Bad\n');
     writeFileSync(join(backlog, '12-login.md'), SPEC.replace('Implement it.', 'Changed.'));
@@ -103,7 +128,7 @@ describe('Markdown task export', () => {
     const text = readFileSync(written.path, 'utf8');
     expect(text).toContain('ref: app/database-task\nfeature: app\ntitle: Database task\n');
     expect(text).toContain('depends_on:\n  - app/other\n');
-    expect(text).toContain('required_provider: codex\ndepends_on:\n  - app/other\nspec_revision: 1\n');
+    expect(text).toContain('required_provider: codex\ndepends_on:\n  - app/other\nrequired_capabilities: []\nspec_revision: 1\n');
     expect(text).not.toMatch(/^status:/m);
     expect(text).toContain('# Database task\n\nFrom SQLite only.\n');
     expect(importTaskMarkdown(dir, join(outside, 'export')).imported[0]).toMatchObject({ action: 'unchanged', revision: 1 });
@@ -124,6 +149,21 @@ describe('Markdown task export', () => {
     writeFileSync(path, readFileSync(path, 'utf8').replace('v1', 'my edit'));
     expect(() => importTaskMarkdown(dir, path)).toThrow(RevisionConflictError);
     expect(renderTaskMarkdown(initProjectTaskStore(dir).getTask('app/stale')!)).toContain('v2 by someone else');
+  });
+});
+
+describe('Markdown round trips', () => {
+  it('treats an edited export as the full definition and stays idempotent when re-imported', () => {
+    createProjectTask(dir, { feature: 'app', ref: 'edit', title: '"Fast" path: #1', body_markdown: '# Edit\n', depends_on: ['app/dep'], review_level: 'light' });
+    const [{ path }] = exportTaskMarkdown(dir, join(outside, 'edit.md'), { refs: ['app/edit'] });
+    expect(importTaskMarkdown(dir, path).imported[0]).toMatchObject({ action: 'unchanged', revision: 1 });
+    const edited = readFileSync(path, 'utf8').replace('depends_on:\n  - app/dep\n', 'depends_on: []\n').replace('review_level: light\n', '');
+    writeFileSync(path, edited);
+    expect(importTaskMarkdown(dir, path).imported[0]).toMatchObject({ action: 'revised', revision: 2 });
+    expect(importTaskMarkdown(dir, path).imported[0]).toMatchObject({ action: 'unchanged', revision: 2 });
+    const task = initProjectTaskStore(dir).getTask('app/edit')!;
+    expect(task).toMatchObject({ title: '"Fast" path: #1', dependsOn: [] });
+    expect(task.metadata.review_level).toBeUndefined();
   });
 });
 
