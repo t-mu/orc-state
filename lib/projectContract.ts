@@ -48,7 +48,7 @@ export function selectProject(
 export type TaskTransitionCause =
   | 'claim' | 'run_start' | 'merge_succeeded' | 'post_merge_release'
   | 'failure_requeue' | 'failure_block' | 'manual_block' | 'unblock'
-  | 'operator_reset' | 'cancel';
+  | 'operator_reset' | 'cancel' | 'migration_import';
 
 /** Lifecycle authority, independent of where task definitions are stored. */
 export function canTransitionTaskStatus(from: TaskStatus, to: TaskStatus, cause: TaskTransitionCause): boolean {
@@ -63,6 +63,8 @@ export function canTransitionTaskStatus(from: TaskStatus, to: TaskStatus, cause:
     case 'unblock': return from === 'blocked' && to === 'todo';
     case 'operator_reset': return from !== 'todo' && to === 'todo';
     case 'cancel': return !['done', 'released', 'cancelled'].includes(from) && to === 'cancelled';
+    // Only as a migrated task's first transition; the store enforces that.
+    case 'migration_import': return from === 'todo' && ['blocked', 'done', 'released', 'cancelled'].includes(to);
   }
 }
 

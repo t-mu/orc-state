@@ -189,6 +189,7 @@ These are available for manual intervention and debugging.
 | `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
 | `delegate` | Dispatch a task to an available worker agent. |
 | `project task <list\|show\|revisions\|create\|edit\|import\|export>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`, `import <file-or-dir> [--strict]`, `export <dir-or-file.md> [--ref=a,b]`; `project plan <list\|show\|import\|export>` stores and renders plans. All accept `--project=<id>`; `create`, `edit` and `import` also accept `--actor-id=<id>`. See configuration.md → Project tasks. |
+| `project migrate [legacy-path] [--execute [--name=N] \| --cleanup-report]` | Move an attached or sibling installation into a registered project. Without flags it is a dry run (inventory, conflicts, blockers; nothing is written). `--execute` backs up, imports tasks with their effective runtime status, copies history, imports plans and settings, verifies parity, and cuts over; a retry is safe. `--cleanup-report` lists leftover legacy files after the cutover; nothing is deleted. See configuration.md → Migrating an existing installation. |
 | `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
 **Flags:**

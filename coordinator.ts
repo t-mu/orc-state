@@ -66,7 +66,7 @@ import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } f
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
 import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
 import type { Backlog } from './types/backlog.ts';
-import { writeProjectDescriptor } from './lib/projectContext.ts';
+import { readMigrationMarker, writeProjectDescriptor } from './lib/projectContext.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -2285,6 +2285,12 @@ async function reconcileSupervisedSessions() {
 // ── Main loop ──────────────────────────────────────────────────────────────
 
 export async function main() {
+  // A migrated legacy state directory is history; running it again would fork the project's state.
+  const migrated = ACTIVE_PROJECT ? null : readMigrationMarker(STATE_DIR);
+  if (migrated) {
+    console.error(`[coordinator] ERROR: ${STATE_DIR} was migrated to project ${migrated.project_name} (${migrated.project_id}); run orc with --project=${migrated.project_id}. Aborting.`);
+    process.exit(1);
+  }
   acquireCoordinatorLock();
   // Workers resolve the project from its state directory without the global registry.
   if (ACTIVE_PROJECT) writeProjectDescriptor(ACTIVE_PROJECT);

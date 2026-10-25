@@ -64,6 +64,19 @@ describe('project task SQLite schema', () => {
     });
   });
 
+  it('carries a migrated status only as a task\'s first transition', () => {
+    store.createTask({ ref: 'feature/1', title: 'First', bodyMarkdown: '# First' });
+    store.transition('feature/1', 'migration_import', 'done');
+    expect(store.getTask('feature/1')?.status).toBe('done');
+    store.transition('feature/1', 'operator_reset', 'todo');
+    // Replaying a migration cannot complete the reopened task again.
+    expect(() => store.transition('feature/1', 'migration_import', 'done')).toThrow('invalid task transition');
+    store.createTask({ ref: 'feature/2', title: 'Second', bodyMarkdown: '# Second' });
+    expect(() => store.transition('feature/2', 'migration_import', 'claimed')).toThrow('invalid task transition');
+    store.createTask({ ref: 'feature/3', title: 'Third', bodyMarkdown: '# Third' });
+    expect(() => store.transition('feature/3', 'migration_import', 'blocked')).toThrow();
+  });
+
   it('pins runs to revisions and prevents two active claims for one task', () => {
     store.createTask({ ref: 'feature/1', title: 'First', bodyMarkdown: '# First' });
     store.withDatabase((db) => {
@@ -84,8 +97,8 @@ describe('project task SQLite schema', () => {
     try {
       expect(db.pragma('user_version', { simple: true })).toBe(PROJECT_TASK_SCHEMA_VERSION);
       migrateProjectTaskSchema(db);
-      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 3 });
-      db.pragma('user_version = 4');
+      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 4 });
+      db.pragma('user_version = 5');
       expect(() => migrateProjectTaskSchema(db)).toThrow('newer');
     } finally { db.close(); }
     const broken = new Database(join(dir, 'broken.db'));

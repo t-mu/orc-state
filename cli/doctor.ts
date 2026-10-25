@@ -5,6 +5,7 @@
  */
 import { execSync } from 'node:child_process';
 import { ACTIVE_PROJECT, STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
+import { readMigrationMarker } from '../lib/projectContext.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { checkSiblingLayout } from '../lib/siblingLayoutCheck.ts';
@@ -49,8 +50,12 @@ const siblingLayout = checkSiblingLayout({
   stateDir: STATE_DIR,
 });
 
+// A legacy state directory that was migrated must not be run again; the project owns its state now.
+const migratedTo = ACTIVE_PROJECT ? null : readMigrationMarker(STATE_DIR);
+
 const checks: Record<string, unknown> = {
   project: projectHealth,
+  migratedTo,
   gitRepo,
   providerBinaries: {} as Record<string, unknown>,
   staleLinkedWorkers: [] as unknown[],
@@ -127,7 +132,8 @@ const summary = {
     memoryHealth.ok &&
     runtimeSchema.ok &&
     siblingLayout.ok &&
-    (projectHealth?.ok ?? true),
+    (projectHealth?.ok ?? true) &&
+    migratedTo === null,
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
@@ -143,6 +149,7 @@ console.log('-------------------');
 console.log(formatProjectIdentity(projectHealth?.project ?? null));
 for (const error of projectHealth?.errors ?? []) console.log(`  error: ${error}`);
 for (const warning of projectHealth?.warnings ?? []) console.log(`  warning: ${warning}`);
+if (migratedTo) console.log(`  error: this legacy state was migrated to project ${migratedTo.project_name} (${migratedTo.project_id}); use --project=${migratedTo.project_id}`);
 console.log(`registered_workers: ${summary.registered_workers}`);
 console.log(`active_claims: ${summary.active_claims}`);
 console.log(`git_repo: ${String(gitRepo)}`);

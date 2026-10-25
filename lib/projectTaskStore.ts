@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
 
-export const PROJECT_TASK_SCHEMA_VERSION = 3;
+export const PROJECT_TASK_SCHEMA_VERSION = 4;
 
 const REQUIRED_TABLES = ['schema_migrations', 'tasks', 'task_spec_revisions', 'task_dependencies', 'task_transitions', 'task_runs', 'task_imports', 'plan_documents'];
 
@@ -177,6 +177,35 @@ export function migrateProjectTaskSchema(db: Database.Database, targetVersion = 
       db.pragma('user_version = 3');
     }).immediate();
   }
+  if (targetVersion >= 4 && (db.pragma('user_version', { simple: true }) as number) === 3) {
+    db.transaction(() => {
+      db.exec(`
+        -- A migrated task carries its legacy runtime status once, as its first transition.
+        DROP TRIGGER transitions_validate;
+        CREATE TRIGGER transitions_validate BEFORE INSERT ON task_transitions BEGIN
+          SELECT CASE WHEN (SELECT status FROM tasks WHERE ref = NEW.task_ref) <> NEW.from_status
+            THEN RAISE(ABORT, 'stale task status') END;
+          SELECT CASE WHEN NOT (
+            (NEW.cause = 'claim' AND NEW.from_status = 'todo' AND NEW.to_status = 'claimed') OR
+            (NEW.cause = 'run_start' AND NEW.from_status = 'claimed' AND NEW.to_status = 'in_progress') OR
+            (NEW.cause = 'merge_succeeded' AND NEW.from_status = 'in_progress' AND NEW.to_status = 'done') OR
+            (NEW.cause = 'post_merge_release' AND NEW.from_status = 'done' AND NEW.to_status = 'released') OR
+            (NEW.cause = 'failure_requeue' AND NEW.from_status IN ('claimed','in_progress') AND NEW.to_status = 'todo') OR
+            (NEW.cause = 'failure_block' AND NEW.from_status IN ('claimed','in_progress') AND NEW.to_status = 'blocked') OR
+            (NEW.cause = 'manual_block' AND NEW.from_status = 'todo' AND NEW.to_status = 'blocked') OR
+            (NEW.cause = 'unblock' AND NEW.from_status = 'blocked' AND NEW.to_status = 'todo') OR
+            (NEW.cause = 'operator_reset' AND NEW.from_status <> 'todo' AND NEW.to_status = 'todo') OR
+            (NEW.cause = 'cancel' AND NEW.from_status IN ('todo','claimed','in_progress','blocked') AND NEW.to_status = 'cancelled') OR
+            (NEW.cause = 'migration_import' AND NEW.from_status = 'todo' AND NEW.to_status IN ('blocked','done','released','cancelled')
+              AND NOT EXISTS (SELECT 1 FROM task_transitions WHERE task_ref = NEW.task_ref))
+          ) THEN RAISE(ABORT, 'invalid task transition') END;
+        END;
+        INSERT INTO schema_migrations (version, name, applied_at)
+          VALUES (4, 'migration_import', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 4');
+    }).immediate();
+  }
   if (targetVersion < PROJECT_TASK_SCHEMA_VERSION) return;
   const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
   for (const name of REQUIRED_TABLES) if (!names.has(name)) throw new Error(`runtime.db missing table ${name}`);
@@ -186,6 +215,8 @@ export function migrateProjectTaskSchema(db: Database.Database, targetVersion = 
   if (v2?.name !== 'markdown_imports_and_plans') throw new Error('runtime.db missing markdown import migration');
   const v3 = db.prepare('SELECT name FROM schema_migrations WHERE version = 3').get() as { name: string } | undefined;
   if (v3?.name !== 'sqlite_lifecycle') throw new Error('runtime.db missing lifecycle migration');
+  const v4 = db.prepare('SELECT name FROM schema_migrations WHERE version = 4').get() as { name: string } | undefined;
+  if (v4?.name !== 'migration_import') throw new Error('runtime.db missing migration import migration');
 }
 
 export interface TaskSpecInput {
@@ -197,6 +228,8 @@ export interface TaskSpecInput {
   requiredProvider?: TaskProvider | null;
   metadata?: Record<string, unknown>;
   dependsOn?: string[];
+  /** Kept from an older store when a task is migrated; defaults to now. */
+  createdAt?: string;
 }
 
 export type TaskPriority = 'low' | 'normal' | 'high' | 'critical';
@@ -346,7 +379,7 @@ export class ProjectTaskStore {
   createTask(input: TaskSpecInput): ProjectTask {
     const title = input.title ?? parseBodyTitle(input.bodyMarkdown);
     if (!input.ref.trim() || !title?.trim()) throw new Error('Task ref and title are required');
-    const now = new Date().toISOString();
+    const now = input.createdAt ?? new Date().toISOString();
     const dependsOn = normalizeDependencies(input.ref, input.dependsOn ?? []);
     const priority = input.priority ?? 'normal';
     const requiredProvider = input.requiredProvider ?? null;
