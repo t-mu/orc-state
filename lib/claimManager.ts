@@ -10,7 +10,7 @@ import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
 import { writeRunRevisionSnapshot, writeRunTaskSnapshot } from './documentIndex.ts';
-import { projectTaskStoreFor } from './projectTasks.ts';
+import { commitBacklog, projectTaskStoreFor, refreshBacklogProjection } from './projectTasks.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 
@@ -79,7 +79,8 @@ export function claimTask(
     // Older in-memory test states have no Markdown directory. Real orchestration
     // roots do; a missing or invalid spec there must block a new claim.
     if (!projectStore && requireSpec && !existsSync(docsDir)) throw new Error(`Markdown spec directory not found: ${docsDir}`);
-    const revision = projectStore?.bindRun(run_id, taskRef, agentId);
+    // Project SQLite verifies status and dependencies, records the claim and binds the run in one transaction.
+    const revision = projectStore?.claimTask(taskRef, run_id, agentId);
     try {
       let taskSpecSnapshot;
       if (revision) taskSpecSnapshot = writeRunRevisionSnapshot(stateDir, run_id, revision);
@@ -104,10 +105,16 @@ export function claimTask(
         payload: { lease_expires_at },
       }]);
     } catch (error) {
-      projectStore?.abandonRun(run_id);
+      // The claim never became a live run: return the task to the queue without counting an attempt.
+      projectStore?.inTransaction(() => {
+        projectStore.applyTransition(taskRef, { cause: 'failure_requeue', to: 'todo', runId: run_id, reason: 'claim_not_committed', actorId: agentId });
+        projectStore.abandonRun(run_id);
+      });
+      if (projectStore) refreshBacklogProjection(stateDir);
       throw error;
     }
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    if (projectStore) refreshBacklogProjection(stateDir);
+    else atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
 
     return { run_id, lease_expires_at };
   });
@@ -149,7 +156,7 @@ export function startRun(
         actor_type: actorType, actor_id: actorId ?? agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
       }] : []);
-    if (task) atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    if (task) commitBacklog(stateDir, backlog, { [claim.task_ref]: { cause: 'run_start', runId, actorId: actorId ?? agentId } });
   });
 }
 
@@ -261,10 +268,14 @@ export function finishRun(
     claim.finalization_retry_count = 0;
     claim.finalization_blocked_reason = null;
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
-    const task    = findTask(backlog, claim.task_ref);
+    const found   = findTask(backlog, claim.task_ref);
+    // In project SQLite a task an operator already moved off this run (reset, cancel, done) keeps its status.
+    const task    = found && (!projectTaskStoreFor(stateDir) || ['claimed', 'in_progress'].includes(found.status)) ? found : null;
+    const previousStatus = task?.status;
     if (task) {
       if (success) {
-        task.status = 'done';
+        // Project SQLite records done only from the coordinator's merge confirmation (markTaskDoneRuntimeOnly).
+        if (!projectTaskStoreFor(stateDir)) task.status = 'done';
       } else if (policy === 'block') {
         task.status = 'blocked';
       } else {
@@ -309,6 +320,11 @@ export function finishRun(
       }
     }
     commitClaims(stateDir, claims, events);
-    if (task) atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    if (task) {
+      const cause = task.status === 'done' ? 'merge_succeeded' : task.status === 'blocked' ? 'failure_block' : 'failure_requeue';
+      commitBacklog(stateDir, backlog, task.status === previousStatus ? {} : {
+        [claim.task_ref]: { cause, runId, actorId: agentId, reason: task.blocked_reason ?? failureReason ?? (policy === 'block' ? 'run failed with block policy' : null) },
+      });
+    }
   });
 }

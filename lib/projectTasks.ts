@@ -10,6 +10,8 @@ import {
 } from './projectTaskStore.ts';
 import { isSupportedProvider } from './providers.ts';
 import type { Backlog, Feature, Task } from '../types/backlog.ts';
+import type { TaskTransitionCause } from './projectContract.ts';
+import type { Claim } from '../types/claims.ts';
 
 /**
  * Project task authority. A state directory whose `runtime.db` exists is a
@@ -56,8 +58,6 @@ export const PROJECT_ONLY_TASK_FIELDS = ['body_markdown', 'expected_revision', '
 
 /** Definition fields kept in revision metadata, beyond the indexed priority/provider/dependencies. */
 const DEFINITION_FIELDS = ['feature', 'task_type', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'required_capabilities', 'model'] as const;
-/** Dispatch fields set when a task is registered; they do not create revisions. */
-const DISPATCH_FIELDS = ['owner', 'planning_state', 'delegated_by'] as const;
 
 export function featureRefOf(task: Pick<ProjectTask, 'ref' | 'metadata'>): string {
   return typeof task.metadata.feature === 'string' ? task.metadata.feature : task.ref.split('/')[0];
@@ -69,7 +69,7 @@ export function projectTaskToBacklogTask(task: ProjectTask): Task {
     title: task.title,
     status: task.status,
     priority: task.priority,
-    task_type: task.metadata.task_type ?? 'implementation',
+    task_type: task.dispatch.taskType ?? task.metadata.task_type ?? 'implementation',
     spec_revision: task.revision,
     attempt_count: task.attemptCount,
     created_at: task.createdAt,
@@ -78,7 +78,11 @@ export function projectTaskToBacklogTask(task: ProjectTask): Task {
   if (task.requiredProvider) projected.required_provider = task.requiredProvider;
   if (task.dependsOn.length > 0) projected.depends_on = task.dependsOn;
   if (task.blockedReason) projected.blocked_reason = task.blockedReason;
-  for (const field of [...DEFINITION_FIELDS, ...DISPATCH_FIELDS]) {
+  if (task.dispatch.owner) projected.owner = task.dispatch.owner;
+  if (task.dispatch.planningState) projected.planning_state = task.dispatch.planningState;
+  if (task.dispatch.delegatedBy) projected.delegated_by = task.dispatch.delegatedBy;
+  if (task.dispatch.requeueEligibleAfter) projected.requeue_eligible_after = task.dispatch.requeueEligibleAfter;
+  for (const field of DEFINITION_FIELDS) {
     if (field === 'feature' || field === 'task_type') continue;
     const value = task.metadata[field];
     if (value !== undefined && value !== null && !(Array.isArray(value) && value.length === 0)) projected[field] = value;
@@ -106,6 +110,114 @@ export function refreshBacklogProjection(stateDir: string): void {
     atomicWriteJson(join(stateDir, 'backlog.json'), readProjectBacklog(store));
   } catch (error) {
     logger.error('[projectTasks] backlog.json projection failed; SQLite remains authoritative:', error);
+  }
+}
+
+// ── Lifecycle writes ──────────────────────────────────────────────────────
+
+/** Why a task's status changed. Every status change in a project state directory needs one. */
+export interface TaskStatusChange {
+  cause: TaskTransitionCause;
+  reason?: string | null;
+  runId?: string | null;
+  actorId?: string | null;
+  idempotencyKey?: string | null;
+}
+
+/** Fields owned by spec revisions; lifecycle writers must not change them. */
+const DEFINITION_KEYS = ['title', 'priority', 'required_provider', 'depends_on', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'required_capabilities', 'model'] as const;
+
+function normalizedDefinition(task: Task): string {
+  const record = task as unknown as Record<string, unknown>;
+  return JSON.stringify(DEFINITION_KEYS.map((key) => {
+    const value = record[key];
+    if (value === undefined || value === null || (Array.isArray(value) && value.length === 0)) return null;
+    return Array.isArray(value) ? [...value as unknown[]].map(String).sort() : value;
+  }));
+}
+
+/**
+ * Commit a mutated backlog. A legacy state directory rewrites backlog.json.
+ * A project state directory applies the changes to SQLite in one transaction:
+ * each status change becomes a transition (with its run binding update) and
+ * must name its cause in `changes`; dispatch fields and attempt counts are
+ * stored; definition fields must not change here (edit through revisions).
+ * The backlog.json projection is refreshed afterwards.
+ */
+export function commitBacklog(stateDir: string, backlog: Backlog, changes: Record<string, TaskStatusChange> = {}): void {
+  const store = projectTaskStoreFor(stateDir);
+  if (!store) {
+    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    return;
+  }
+  store.inTransaction(() => {
+    for (const task of backlog.features.flatMap((feature) => feature.tasks ?? [])) {
+      const current = store.getTask(task.ref);
+      if (!current) throw new Error(`Task ${task.ref} is not in project SQLite; create it through the task API`);
+      if (normalizedDefinition(task) !== normalizedDefinition(projectTaskToBacklogTask(current))) {
+        throw new Error(`Task ${task.ref} definition fields change only through a spec revision`);
+      }
+      if (task.status !== current.status) {
+        const change = changes[task.ref];
+        if (!change) throw new Error(`Task ${task.ref} status change ${current.status} -> ${task.status} has no lifecycle cause`);
+        // A run can be reported finished before its start was acknowledged; record the start first.
+        if (change.cause === 'merge_succeeded' && current.status === 'claimed') {
+          store.applyTransition(task.ref, { cause: 'run_start', to: 'in_progress', runId: change.runId ?? null, actorId: change.actorId ?? null });
+        }
+        store.applyTransition(task.ref, {
+          cause: change.cause, to: task.status, runId: change.runId ?? null, actorId: change.actorId ?? null,
+          idempotencyKey: change.idempotencyKey ?? null,
+          reason: task.status === 'blocked' ? (change.reason ?? task.blocked_reason ?? change.cause) : (change.reason ?? null),
+        });
+      }
+      store.setDispatchState(task.ref, {
+        owner: task.owner ?? null,
+        planningState: task.planning_state ?? null,
+        delegatedBy: task.delegated_by ?? null,
+        taskType: task.task_type && task.task_type !== (current.metadata.task_type ?? 'implementation') ? task.task_type : current.dispatch.taskType,
+        requeueEligibleAfter: task.requeue_eligible_after ?? null,
+        attemptCount: task.attempt_count ?? 0,
+      });
+    }
+  });
+  refreshBacklogProjection(stateDir);
+}
+
+/**
+ * Roll a session reset back: tasks the reset returned to todo are claimed
+ * again by the runs restored with them. A legacy state directory rewrites
+ * backlog.json from the snapshot.
+ */
+export function restoreBacklogStatuses(stateDir: string, backlog: Backlog, claims: readonly Claim[]): void {
+  const store = projectTaskStoreFor(stateDir);
+  if (!store) {
+    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    return;
+  }
+  store.inTransaction(() => {
+    for (const task of backlog.features.flatMap((feature) => feature.tasks ?? [])) {
+      if (task.status !== 'claimed' && task.status !== 'in_progress') continue;
+      if (store.getTask(task.ref)?.status !== 'todo') continue;
+      const claim = claims.find((entry) => entry.task_ref === task.ref && (entry.state === 'claimed' || entry.state === 'in_progress'));
+      if (!claim) continue;
+      store.applyTransition(task.ref, { cause: 'claim', to: 'claimed', runId: claim.run_id, actorId: 'human', reason: 'session_reset_rollback' });
+      store.reactivateRun(claim.run_id);
+      if (task.status === 'in_progress') store.applyTransition(task.ref, { cause: 'run_start', to: 'in_progress', runId: claim.run_id, actorId: 'human' });
+    }
+  });
+  refreshBacklogProjection(stateDir);
+}
+
+/**
+ * A worker's run-finish is a success signal only after the coordinator has
+ * recorded the merge; in a project state directory an earlier one is refused
+ * instead of completing unmerged work.
+ */
+export function assertRunMayFinish(stateDir: string, taskRef: string): void {
+  const store = projectTaskStoreFor(stateDir);
+  const status = store?.getTask(taskRef)?.status;
+  if (store && status !== 'done' && status !== 'released') {
+    throw new Error(`run-finish for ${taskRef} must wait until the coordinator records the merge (task status: ${status ?? 'missing'}); run run-work-complete and wait for FINALIZE_SUCCESS`);
   }
 }
 
@@ -263,13 +375,16 @@ export function createProjectTask(stateDir: string, input: TaskAuthoringInput, a
   if (owner !== undefined && !AGENT_ID_RE.test(owner)) throw new TaskInputError(`Invalid owner: ${owner}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   if (store.getTask(ref)) throw new TaskInputError(`Task already exists: ${ref}`);
 
-  const metadata = definitionMetadata(input, { feature, task_type: 'implementation', planning_state: 'ready_for_dispatch', delegated_by: actorId }, bodyMarkdown);
+  const metadata = definitionMetadata(input, { feature, task_type: 'implementation' }, bodyMarkdown);
   // A body rendered from fields is re-rendered when those fields are edited.
   if (!explicitBody) metadata.body_source = 'rendered';
-  if (owner) metadata.owner = owner;
-  const task = store.createTask({
-    ref, ...(explicitTitle ? { title: explicitTitle } : {}), bodyMarkdown, metadata,
-    ...(priority ? { priority } : {}), requiredProvider: requiredProvider as TaskProvider | null, dependsOn: dependsOn ?? [],
+  const task = store.inTransaction(() => {
+    store.createTask({
+      ref, ...(explicitTitle ? { title: explicitTitle } : {}), bodyMarkdown, metadata,
+      ...(priority ? { priority } : {}), requiredProvider: requiredProvider as TaskProvider | null, dependsOn: dependsOn ?? [],
+    });
+    store.setDispatchState(ref, { planningState: 'ready_for_dispatch', delegatedBy: actorId, owner: owner ?? null });
+    return store.getTask(ref)!;
   });
   notify(stateDir, () => appendSequencedEvent(stateDir, {
     ts: task.createdAt, event: 'task_added',

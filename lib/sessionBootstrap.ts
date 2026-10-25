@@ -1,6 +1,7 @@
 import { renderTemplate } from './templateRender.ts';
 import { isSupportedProvider, type ProviderName } from './providers.ts';
-import { IS_SIBLING_LAYOUT } from './paths.ts';
+import { IS_SIBLING_LAYOUT, STATE_DIR } from './paths.ts';
+import { isProjectStateDir } from './projectTasks.ts';
 
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
 const WORKER_BOOTSTRAP_SMOKE_TEMPLATE = 'worker-bootstrap-smoke-v1.txt';
@@ -25,7 +26,15 @@ function assertProvider(provider: string): ProviderName {
  * renderTemplate makes a single pass and will not re-expand placeholders inside
  * an injected value.
  */
-function phaseCompleteStep(orcBin: string, agentId: string, sibling: boolean): string {
+function phaseCompleteStep(orcBin: string, agentId: string, sibling: boolean, project = false): string {
+  if (project) {
+    return [
+      '  7. Signal complete phase. Task status lives in project SQLite and the coordinator records `done` after merge — there is no task spec file to edit:',
+      `       ${orcBin} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id=${agentId}`,
+      '       - Do NOT create or edit any task spec or `status:` field; commit ONLY product code',
+      `       - Do not call \`${orcBin} task-mark-done\` from the worker session`,
+    ].join('\n');
+  }
   if (sibling) {
     return [
       '  7. Signal complete phase. In this sibling layout the coordinator records completion after merge — do NOT edit the task spec:',
@@ -50,7 +59,7 @@ function renderBootstrap(template: string, provider: string, agentId: string): s
     orc_bin: 'orc',
     provider,
     session_token: 'session-token-unset',
-    phase_complete_step: phaseCompleteStep('orc', agentId, IS_SIBLING_LAYOUT),
+    phase_complete_step: phaseCompleteStep('orc', agentId, IS_SIBLING_LAYOUT, isProjectStateDir(STATE_DIR)),
   });
 }
 
@@ -98,14 +107,14 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string): string;
-export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile; siblingLayout?: boolean }): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile; siblingLayout?: boolean; projectState?: boolean }): string;
 export function buildSessionBootstrap(
   agentId: string,
   provider: string,
   role: string,
   orcBin: string = 'orc',
   sessionToken: string = 'session-token-unset',
-  options: { workerBootstrapProfile?: WorkerBootstrapProfile; siblingLayout?: boolean } = {},
+  options: { workerBootstrapProfile?: WorkerBootstrapProfile; siblingLayout?: boolean; projectState?: boolean } = {},
 ): string {
   if (role === 'master') return getMasterBootstrap(provider, agentId);
   if (role === 'scout') {
@@ -122,6 +131,6 @@ export function buildSessionBootstrap(
     orc_bin: orcBin,
     provider,
     session_token: sessionToken,
-    phase_complete_step: phaseCompleteStep(orcBin, agentId, sibling),
+    phase_complete_step: phaseCompleteStep(orcBin, agentId, sibling, options.projectState ?? isProjectStateDir(STATE_DIR)),
   });
 }

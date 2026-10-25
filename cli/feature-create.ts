@@ -13,6 +13,7 @@ import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
 import { cliError } from './shared.ts';
+import { isProjectStateDir } from '../lib/projectTasks.ts';
 
 const featureRef = process.argv[2];
 if (!featureRef || featureRef.startsWith('--')) {
@@ -27,6 +28,12 @@ if (!/^[a-z0-9][a-z0-9-]*$/.test(featureRef)) {
 }
 
 const title = flag('title') ?? featureRef.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+if (isProjectStateDir(STATE_DIR)) {
+  // Project features are the ref prefixes of their tasks; there is no separate feature record.
+  console.error('feature-create is not needed in a project state directory: create a task with --feature=<ref> instead.');
+  process.exit(1);
+}
 
 try {
   withLock(lockPath(STATE_DIR), () => {

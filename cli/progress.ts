@@ -11,6 +11,7 @@ import { validateProgressCommandInput, validateProgressInput } from '../lib/prog
 import { STATE_DIR } from '../lib/paths.ts';
 import { loadClaim, cliError } from './shared.ts';
 import type { EventFinalizationStatus, OrcEvent } from '../types/events.ts';
+import { assertRunMayFinish } from '../lib/projectTasks.ts';
 
 const event = flag('event');
 const runId = flag('run-id');
@@ -58,6 +59,7 @@ try {
   if (event === 'run_started') {
     startRun(STATE_DIR, runId, agentId);
   } else if (event === 'run_finished') {
+    assertRunMayFinish(STATE_DIR, claim!.task_ref);
     finishRun(STATE_DIR, runId, agentId, { success: true });
   } else if (event === 'run_failed') {
     finishRun(STATE_DIR, runId, agentId, {

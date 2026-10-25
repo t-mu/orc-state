@@ -5,12 +5,13 @@ import Database from 'better-sqlite3';
 import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
 
-export const PROJECT_TASK_SCHEMA_VERSION = 2;
+export const PROJECT_TASK_SCHEMA_VERSION = 3;
 
 const REQUIRED_TABLES = ['schema_migrations', 'tasks', 'task_spec_revisions', 'task_dependencies', 'task_transitions', 'task_runs', 'task_imports', 'plan_documents'];
 
 /** A separate project database: legacy events.db remains untouched until cutover. */
-export function migrateProjectTaskSchema(db: Database.Database): void {
+/** `targetVersion` exists for upgrade tests; production callers always migrate to the latest version. */
+export function migrateProjectTaskSchema(db: Database.Database, targetVersion = PROJECT_TASK_SCHEMA_VERSION): void {
   db.pragma('foreign_keys = ON');
   const version = db.pragma('user_version', { simple: true }) as number;
   if (version > PROJECT_TASK_SCHEMA_VERSION) throw new Error(`runtime.db schema version ${version} is newer than supported version ${PROJECT_TASK_SCHEMA_VERSION}`);
@@ -114,7 +115,7 @@ export function migrateProjectTaskSchema(db: Database.Database): void {
       db.pragma('user_version = 1');
     }).immediate();
   }
-  if ((db.pragma('user_version', { simple: true }) as number) === 1) {
+  if (targetVersion >= 2 && (db.pragma('user_version', { simple: true }) as number) === 1) {
     db.transaction(() => {
       db.exec(`
         -- Diagnostic provenance of explicit Markdown imports; never consulted for status.
@@ -145,12 +146,46 @@ export function migrateProjectTaskSchema(db: Database.Database): void {
       db.pragma('user_version = 2');
     }).immediate();
   }
+  if (targetVersion >= 3 && (db.pragma('user_version', { simple: true }) as number) === 2) {
+    db.transaction(() => {
+      db.exec(`
+        -- Dispatch state owned by lifecycle commands, not by spec revisions.
+        ALTER TABLE tasks ADD COLUMN owner TEXT;
+        ALTER TABLE tasks ADD COLUMN planning_state TEXT CHECK (planning_state IS NULL OR planning_state IN ('ready_for_dispatch','archived'));
+        ALTER TABLE tasks ADD COLUMN delegated_by TEXT;
+        ALTER TABLE tasks ADD COLUMN task_type TEXT CHECK (task_type IS NULL OR task_type IN ('implementation','refactor'));
+        ALTER TABLE tasks ADD COLUMN requeue_eligible_after TEXT;
+        ALTER TABLE task_transitions ADD COLUMN actor_id TEXT;
+        -- Attempts follow the failure policy (infrastructure failures do not count), so lifecycle writers set them.
+        -- Version 2 kept these in revision metadata; carry them into their columns.
+        UPDATE tasks SET
+          owner = (SELECT json_extract(r.metadata_json, '$.owner') FROM task_spec_revisions r WHERE r.task_ref = tasks.ref ORDER BY r.revision DESC LIMIT 1),
+          planning_state = (SELECT json_extract(r.metadata_json, '$.planning_state') FROM task_spec_revisions r WHERE r.task_ref = tasks.ref ORDER BY r.revision DESC LIMIT 1),
+          delegated_by = (SELECT json_extract(r.metadata_json, '$.delegated_by') FROM task_spec_revisions r WHERE r.task_ref = tasks.ref ORDER BY r.revision DESC LIMIT 1);
+        -- Version 2 counted every claim as an attempt; attempts now count failures only.
+        UPDATE tasks SET attempt_count = MAX(0, attempt_count
+          - (SELECT count(*) FROM task_transitions t WHERE t.task_ref = tasks.ref AND t.cause = 'claim'));
+        DROP TRIGGER transitions_apply;
+        CREATE TRIGGER transitions_apply AFTER INSERT ON task_transitions BEGIN
+          UPDATE tasks SET status = NEW.to_status,
+            blocked_reason = CASE WHEN NEW.to_status = 'blocked' THEN NEW.reason ELSE NULL END,
+            updated_at = NEW.created_at WHERE ref = NEW.task_ref;
+        END;
+        INSERT INTO schema_migrations (version, name, applied_at)
+          VALUES (3, 'sqlite_lifecycle', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 3');
+    }).immediate();
+  }
+  if (targetVersion < PROJECT_TASK_SCHEMA_VERSION) return;
   const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
   for (const name of REQUIRED_TABLES) if (!names.has(name)) throw new Error(`runtime.db missing table ${name}`);
   const migration = db.prepare('SELECT name FROM schema_migrations WHERE version = 1').get() as { name: string } | undefined;
   if (migration?.name !== 'project_tasks') throw new Error('runtime.db missing project task migration');
   const v2 = db.prepare('SELECT name FROM schema_migrations WHERE version = 2').get() as { name: string } | undefined;
   if (v2?.name !== 'markdown_imports_and_plans') throw new Error('runtime.db missing markdown import migration');
+  const v3 = db.prepare('SELECT name FROM schema_migrations WHERE version = 3').get() as { name: string } | undefined;
+  if (v3?.name !== 'sqlite_lifecycle') throw new Error('runtime.db missing lifecycle migration');
 }
 
 export interface TaskSpecInput {
@@ -184,7 +219,31 @@ export interface ProjectTask {
   dependsOn: string[];
   createdAt: string;
   updatedAt: string;
+  dispatch: TaskDispatchState;
 }
+
+/** Runtime dispatch fields; lifecycle commands change them without creating a spec revision. */
+export interface TaskDispatchState {
+  owner: string | null;
+  planningState: 'ready_for_dispatch' | 'archived' | null;
+  delegatedBy: string | null;
+  taskType: 'implementation' | 'refactor' | null;
+  requeueEligibleAfter: string | null;
+}
+
+export interface TaskTransitionInput {
+  cause: TaskTransitionCause;
+  to: TaskStatus;
+  reason?: string | null;
+  runId?: string | null;
+  actorId?: string | null;
+  idempotencyKey?: string | null;
+}
+
+/** The run state a binding takes when its task leaves claimed/in_progress for this cause. */
+const RUN_STATE_FOR_CAUSE: Partial<Record<TaskTransitionCause, string>> = {
+  merge_succeeded: 'finished', failure_requeue: 'failed', failure_block: 'failed', operator_reset: 'cancelled', cancel: 'cancelled',
+};
 
 export interface TaskSpecRevision {
   taskRef: string;
@@ -256,10 +315,13 @@ interface TaskRow {
   ref: string; title: string; status: TaskStatus; priority: TaskPriority; required_provider: TaskProvider | null;
   attempt_count: number; blocked_reason: string | null; created_at: string; updated_at: string;
   body_markdown: string; revision: number; content_hash: string; metadata_json: string;
+  owner: string | null; planning_state: TaskDispatchState['planningState']; delegated_by: string | null;
+  task_type: TaskDispatchState['taskType']; requeue_eligible_after: string | null;
 }
 
 const TASK_SELECT = `SELECT t.ref, t.title, t.status, t.priority, t.required_provider, t.attempt_count, t.blocked_reason,
-  t.created_at, t.updated_at, r.body_markdown, r.revision, r.content_hash, r.metadata_json
+  t.created_at, t.updated_at, r.body_markdown, r.revision, r.content_hash, r.metadata_json,
+  t.owner, t.planning_state, t.delegated_by, t.task_type, t.requeue_eligible_after
   FROM tasks t JOIN task_spec_revisions r ON r.task_ref = t.ref
     AND r.revision = (SELECT MAX(revision) FROM task_spec_revisions WHERE task_ref = t.ref)`;
 
@@ -288,13 +350,13 @@ export class ProjectTaskStore {
     const dependsOn = normalizeDependencies(input.ref, input.dependsOn ?? []);
     const priority = input.priority ?? 'normal';
     const requiredProvider = input.requiredProvider ?? null;
-    this.db.transaction(() => {
+    this.inTransaction(() => {
       if (this.db.prepare('SELECT 1 FROM tasks WHERE ref = ?').get(input.ref)) throw new Error(`Task already exists: ${input.ref}`);
       this.db.prepare('INSERT INTO tasks (ref, title, priority, required_provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(input.ref, title, priority, requiredProvider, now, now);
       this.insertRevision(input.ref, 1, { title, bodyMarkdown: input.bodyMarkdown, metadata: input.metadata ?? {}, priority, requiredProvider, dependsOn }, now);
       this.replaceDependencies(input.ref, dependsOn);
-    }).immediate();
+    });
     return this.getTask(input.ref)!;
   }
 
@@ -367,7 +429,7 @@ export class ProjectTaskStore {
 
   /** Pin a new run to the task's latest revision (or an explicit one) and return that exact revision. */
   bindRun(runId: string, ref: string, agentId: string | null, revision?: number): TaskSpecRevision {
-    return this.db.transaction(() => {
+    return this.inTransaction(() => {
       const pinned = revision ?? this.getTask(ref)?.revision;
       if (pinned === undefined) throw new Error(`Task not found: ${ref}`);
       const now = new Date().toISOString();
@@ -378,7 +440,17 @@ export class ProjectTaskStore {
       this.db.prepare("INSERT INTO task_runs (run_id, task_ref, spec_revision, agent_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'claimed', ?, ?)")
         .run(runId, ref, pinned, agentId, now, now);
       return this.getRevision(ref, pinned)!;
-    }).immediate();
+    });
+  }
+
+  activeRunId(ref: string): string | null {
+    const row = this.db.prepare("SELECT run_id FROM task_runs WHERE task_ref = ? AND state IN ('claimed','in_progress','work_complete')").get(ref) as { run_id: string } | undefined;
+    return row?.run_id ?? null;
+  }
+
+  /** Reopen a binding whose cancellation is being rolled back. */
+  reactivateRun(runId: string): void {
+    this.db.prepare("UPDATE task_runs SET state = 'claimed', updated_at = ? WHERE run_id = ?").run(new Date().toISOString(), runId);
   }
 
   /** Close a run binding that never became a live claim. */
@@ -394,10 +466,70 @@ export class ProjectTaskStore {
   }
 
   transition(ref: string, cause: TaskTransitionCause, to: TaskStatus, reason?: string, idempotencyKey?: string): void {
+    this.db.transaction(() => this.applyTransition(ref, { cause, to, reason: reason ?? null, idempotencyKey: idempotencyKey ?? null })).immediate();
+  }
+
+  /**
+   * Record one lifecycle transition and move the task's run binding with it.
+   * Callers run this inside a transaction that also carries their other writes.
+   * A repeated idempotency key is a no-op.
+   */
+  applyTransition(ref: string, input: TaskTransitionInput): void {
     const task = this.getTask(ref);
     if (!task) throw new Error(`Task not found: ${ref}`);
-    this.db.prepare('INSERT INTO task_transitions (task_ref, from_status, to_status, cause, reason, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(ref, task.status, to, cause, reason ?? null, idempotencyKey ?? null, new Date().toISOString());
+    if (input.idempotencyKey && this.db.prepare('SELECT 1 FROM task_transitions WHERE task_ref = ? AND idempotency_key = ?').get(ref, input.idempotencyKey)) return;
+    const now = new Date().toISOString();
+    this.db.prepare('INSERT INTO task_transitions (task_ref, from_status, to_status, cause, reason, run_id, actor_id, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(ref, task.status, input.to, input.cause, input.reason ?? null, input.runId ?? null, input.actorId ?? null, input.idempotencyKey ?? null, now);
+    if (input.cause === 'run_start') {
+      this.db.prepare("UPDATE task_runs SET state = 'in_progress', updated_at = ? WHERE task_ref = ? AND state = 'claimed'").run(now, ref);
+    }
+    const runState = RUN_STATE_FOR_CAUSE[input.cause];
+    if (runState && (task.status === 'claimed' || task.status === 'in_progress')) {
+      this.db.prepare("UPDATE task_runs SET state = ?, updated_at = ? WHERE task_ref = ? AND state IN ('claimed','in_progress','work_complete')")
+        .run(runState, now, ref);
+    }
+  }
+
+  /**
+   * Atomically claim a task: verify it is `todo`, unowned or owned by the
+   * agent, and that every dependency is done or released in this project;
+   * record the claim transition; and bind the run to the latest revision.
+   */
+  claimTask(ref: string, runId: string, agentId: string): TaskSpecRevision {
+    return this.db.transaction(() => {
+      const task = this.getTask(ref);
+      if (!task) throw new Error(`Task not found: ${ref}`);
+      if (task.status !== 'todo') throw new Error(`Task not claimable (status: ${task.status}): ${ref}`);
+      if (task.dispatch.owner && task.dispatch.owner !== agentId) {
+        throw new Error(`Task ${ref} is reserved for agent "${task.dispatch.owner}" - claiming agent "${agentId}" is not the owner`);
+      }
+      const waiting = (this.db.prepare(`SELECT d.depends_on_ref FROM task_dependencies d LEFT JOIN tasks t ON t.ref = d.depends_on_ref
+        WHERE d.task_ref = ? AND (t.status IS NULL OR t.status NOT IN ('done','released')) ORDER BY d.depends_on_ref`).all(ref) as Array<{ depends_on_ref: string }>)
+        .map((row) => row.depends_on_ref);
+      if (waiting.length > 0) throw new Error(`Task ${ref} is waiting for dependencies: ${waiting.join(', ')}`);
+      this.applyTransition(ref, { cause: 'claim', to: 'claimed', runId, actorId: agentId });
+      return this.bindRun(runId, ref, agentId);
+    }).immediate();
+  }
+
+  /** Update dispatch fields and the attempt counter; status changes go through transitions. */
+  setDispatchState(ref: string, state: Partial<TaskDispatchState> & { attemptCount?: number }): void {
+    const columns: Array<[string, unknown]> = [];
+    if (state.owner !== undefined) columns.push(['owner', state.owner]);
+    if (state.planningState !== undefined) columns.push(['planning_state', state.planningState]);
+    if (state.delegatedBy !== undefined) columns.push(['delegated_by', state.delegatedBy]);
+    if (state.taskType !== undefined) columns.push(['task_type', state.taskType]);
+    if (state.requeueEligibleAfter !== undefined) columns.push(['requeue_eligible_after', state.requeueEligibleAfter]);
+    if (state.attemptCount !== undefined) columns.push(['attempt_count', state.attemptCount]);
+    if (columns.length === 0) return;
+    this.db.prepare(`UPDATE tasks SET ${columns.map(([name]) => `${name} = ?`).join(', ')} WHERE ref = ?`)
+      .run(...columns.map(([, value]) => value), ref);
+  }
+
+  /** Run several store operations in one immediate transaction (nested calls become savepoints). */
+  inTransaction<T>(operation: () => T): T {
+    return this.db.inTransaction ? this.db.transaction(operation)() : this.db.transaction(operation).immediate();
   }
 
   recordImport(ref: string, revision: number, sourcePath: string, fileSha256: string): void {
@@ -470,6 +602,10 @@ export class ProjectTaskStore {
       attemptCount: row.attempt_count, blockedReason: row.blocked_reason, bodyMarkdown: row.body_markdown,
       revision: row.revision, contentHash: row.content_hash, metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
       dependsOn, createdAt: row.created_at, updatedAt: row.updated_at,
+      dispatch: {
+        owner: row.owner, planningState: row.planning_state, delegatedBy: row.delegated_by,
+        taskType: row.task_type, requeueEligibleAfter: row.requeue_eligible_after,
+      },
     };
   }
 }

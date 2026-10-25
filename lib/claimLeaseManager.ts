@@ -1,7 +1,6 @@
-import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
 import { INPUT_WAIT_TIMEOUT_MS } from './constants.ts';
-import { atomicWriteJson } from './atomicWrite.ts';
+import { commitBacklog, projectTaskStoreFor, type TaskStatusChange } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
 import { readJson, findTask } from './stateReader.ts';
 import type { Claim, ClaimsState } from '../types/claims.ts';
@@ -31,6 +30,8 @@ function _expireLeasesCore(
   const backlog = readJson(stateDir, 'backlog.json') as Backlog;
   const now     = new Date();
   const expired: Array<{ run_id: string; task_ref: string; agent_id: string; code: string }> = [];
+  const changes: Record<string, TaskStatusChange> = {};
+  const projectMode = projectTaskStoreFor(stateDir) !== null;
 
   for (const claim of claims.claims) {
     if (!['claimed', 'in_progress'].includes(claim.state)) continue;
@@ -45,6 +46,10 @@ function _expireLeasesCore(
       continue;
     }
 
+    // A merged project task is in its finalize window: its run succeeded, so the lease must not fail it.
+    const taskStatus = findTask(backlog, claim.task_ref)?.status;
+    if (projectMode && (taskStatus === 'done' || taskStatus === 'released')) continue;
+
     const code = claim.input_state === 'awaiting_input' ? 'ERR_INPUT_TIMEOUT' : 'ERR_LEASE_EXPIRED';
     claim.state       = 'failed';
     claim.finished_at = now.toISOString();
@@ -53,7 +58,8 @@ function _expireLeasesCore(
     expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id, code });
 
     const task = findTask(backlog, claim.task_ref);
-    if (task) {
+    // In project SQLite a task an operator already moved off this run keeps its status.
+    if (task && (!projectMode || ['claimed', 'in_progress'].includes(task.status))) {
       if (policy === 'block') {
         task.status = 'blocked';
       } else {
@@ -67,6 +73,10 @@ function _expireLeasesCore(
           task.requeue_eligible_after = new Date(now.getTime() + requeueBackoffMs(attempts)).toISOString();
         }
       }
+      changes[claim.task_ref] = {
+        cause: task.status === 'blocked' ? 'failure_block' : 'failure_requeue',
+        runId: claim.run_id, actorId, reason: task.blocked_reason ?? code,
+      };
     }
   }
 
@@ -76,7 +86,7 @@ function _expireLeasesCore(
         actor_type: 'coordinator', actor_id: actorId,
         run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code },
       })));
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    commitBacklog(stateDir, backlog, changes);
   }
 
   return expired;

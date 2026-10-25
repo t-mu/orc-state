@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { withLock } from './lock.ts';
-import { atomicWriteJson } from './atomicWrite.ts';
 import { readJson } from './stateReader.ts';
 import { selectDuplicateClaimWinner } from './lifecycleDiagnostics.ts';
 import type { Backlog } from '../types/backlog.ts';
@@ -8,6 +7,7 @@ import type { ClaimsState, Claim } from '../types/claims.ts';
 import type { OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { commitClaims, refreshClaimsProjection } from './runStore.ts';
+import { commitBacklog, projectTaskStoreFor, type TaskStatusChange } from './projectTasks.ts';
 
 const ACTIVE_CLAIM_STATES = new Set(['claimed', 'in_progress']);
 
@@ -22,6 +22,8 @@ export function reconcileState(stateDir: string): void {
     let claimsModified = false;
     let backlogModified = false;
     const failedClaims: Array<{ claim: Claim; reason: string }> = [];
+    const changes: Record<string, TaskStatusChange> = {};
+    const projectMode = projectTaskStoreFor(stateDir) !== null;
 
     const knownTaskRefs = new Set<string>();
     for (const feature of backlog.features ?? []) {
@@ -72,7 +74,18 @@ export function reconcileState(stateDir: string): void {
         const activeClaim = activeClaimByTaskRef.get(taskRef);
         if (activeClaim) {
           const expectedStatus = activeClaim.state === 'in_progress' ? 'in_progress' : 'claimed';
+          // A merged task whose run has not finished yet is in the finalize window; finalize retries own it.
+          if (projectMode && (task.status === 'done' || task.status === 'released')) continue;
+          if (projectMode && task.status !== expectedStatus && !(task.status === 'claimed' && expectedStatus === 'in_progress')) {
+            // Project SQLite is authoritative: a claim its task row does not reflect is the orphan.
+            logger.info(`[reconcile] claim ${activeClaim.run_id} does not match task ${taskRef} status ${task.status} -> failed`);
+            activeClaim.state = 'failed';
+            failedClaims.push({ claim: activeClaim, reason: 'reconcile_status_mismatch' });
+            claimsModified = true;
+            continue;
+          }
           if (task.status !== expectedStatus) {
+            changes[taskRef] = { cause: 'run_start', runId: activeClaim.run_id, actorId: 'reconcile' };
             logger.info(`[reconcile] repaired task ${taskRef}: status ${task.status} -> ${expectedStatus} (active claim ${activeClaim.run_id} state=${activeClaim.state})`);
             task.status = expectedStatus;
             backlogModified = true;
@@ -83,13 +96,14 @@ export function reconcileState(stateDir: string): void {
         if (task.status === 'claimed' || task.status === 'in_progress') {
           logger.info(`[reconcile] repaired task ${taskRef}: status ${task.status} -> todo (no active claim found)`);
           task.status = 'todo';
+          changes[taskRef] = { cause: 'failure_requeue', actorId: 'reconcile', reason: 'reconcile_missing_claim' };
           backlogModified = true;
         }
       }
     }
 
     if (backlogModified) {
-      atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+      commitBacklog(stateDir, backlog, changes);
     }
     if (claimsModified) {
       const now = new Date().toISOString();
