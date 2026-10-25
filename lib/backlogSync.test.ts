@@ -129,7 +129,7 @@ describe('syncBacklogFromSpecs', () => {
     ]);
   });
 
-  it('accepts cancelled as a valid spec status and syncs it into runtime backlog', async () => {
+  it('does not register a new spec whose status is not todo, and reports it', async () => {
     writeSpec(dir, '156-cancelled.md', {
       ref: 'orch/task-156-cancelled',
       feature: 'orch',
@@ -141,15 +141,16 @@ describe('syncBacklogFromSpecs', () => {
     const { syncBacklogFromSpecs } = await import('./backlogSync.ts');
     const result = syncBacklogFromSpecs(join(dir, '.orc-state'), join(dir, 'backlog'));
 
-    expect(result.added_tasks).toBe(1);
-    expect(readBacklog(dir).features[0].tasks[0].status).toBe('cancelled');
+    expect(result.added_tasks).toBe(0);
+    expect(result.skipped_specs).toEqual([{ ref: 'orch/task-156-cancelled', status: 'cancelled' }]);
+    expect(readBacklog(dir).features[0].tasks).toEqual([]);
   });
 
   it('adds a missing feature when a spec references an unknown feature', async () => {
     writeSpec(dir, '200-other.md', {
       ref: 'other/task-200-example',
       feature: 'other',
-      status: 'done',
+      status: 'todo',
       title: 'Other Work',
     });
     writeBacklog(dir, { version: '1', features: [] });
@@ -167,7 +168,7 @@ describe('syncBacklogFromSpecs', () => {
           {
             ref: 'other/task-200-example',
             title: 'Other Work',
-            status: 'done',
+            status: 'todo',
             task_type: 'implementation',
           },
         ],
@@ -214,7 +215,7 @@ describe('syncBacklogFromSpecs', () => {
     });
   });
 
-  it('updates an existing todo task to match the spec status', async () => {
+  it('never takes an existing task\'s status from its spec (only the migration planner mirrors it)', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
       feature: 'orch',
@@ -244,10 +245,15 @@ describe('syncBacklogFromSpecs', () => {
       updated_tasks: 1,
       added_features: 0,
     });
-    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
+    expect(readBacklog(dir).features[0].tasks[0]).toMatchObject({ status: 'todo', title: 'Spec Wants Done' });
+
+    const { syncBacklogFromSpecsLoaded, discoverActiveTaskSpecs } = await import('./backlogSync.ts');
+    const backlog = readBacklog(dir);
+    syncBacklogFromSpecsLoaded(backlog as unknown as Parameters<typeof syncBacklogFromSpecsLoaded>[0], discoverActiveTaskSpecs(join(dir, 'backlog')), { mirrorStatus: true });
+    expect(backlog.features[0].tasks[0].status).toBe('done');
   });
 
-  it('updates a blocked task to match the spec status', async () => {
+  it('keeps a blocked task blocked whatever its spec says', async () => {
     writeSpec(dir, '155-example.md', {
       ref: 'orch/task-155-example',
       feature: 'orch',
@@ -277,7 +283,7 @@ describe('syncBacklogFromSpecs', () => {
       updated_tasks: 1,
       added_features: 0,
     });
-    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('blocked');
   });
 
   it('does NOT demote a done runtime task from a stale (todo) spec', async () => {
@@ -434,7 +440,7 @@ describe('syncBacklogFromSpecs', () => {
       {
         ref: 'orch/task-155-example',
         title: 'Spec Wants Orch',
-        status: 'done',
+        status: 'blocked',
         task_type: 'implementation',
       },
     ]);

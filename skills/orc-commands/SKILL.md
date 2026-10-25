@@ -31,8 +31,8 @@ clears all agents.
 Normal workflow:
 
 1. `orc start-session`
-2. write/edit the backlog markdown spec
-3. coordinator auto-syncs specs to runtime state on each tick (no explicit verify step needed)
+2. author the task: in a registered project, `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository); in a legacy installation, write/edit the backlog markdown spec
+3. a legacy coordinator registers new `todo` spec definitions on each tick; task status is runtime-owned and never read from or written to a spec
 4. `orc delegate`
 5. worker lifecycle via `run-start` -> `run-work-complete` -> `run-finish`
 6. inspect with `orc status` / `orc doctor`; `orc backlog-sync-check` is available ad-hoc if you want to double-check state
@@ -85,12 +85,12 @@ These commands are for observability. They are supported, but they are not alter
 
 | Command | Usage | Notes |
 |---------|-------|-------|
-| `task-create` | `orc task-create --feature=<ref> --title=<text> [options]` | Add a task to backlog. Recovery path only — the normal path is to save a `backlog/<N>-<slug>.md` spec and let the coordinator auto-sync on its next tick. |
-| `task-mark-done` | `orc task-mark-done <feature/task>` | Mark a task done in runtime state after the markdown spec has already been updated. |
+| `task-create` | `orc task-create --feature=<ref> --title=<text> [options]` | Add a task to backlog. In a project state directory it creates a database-only task. In a legacy installation it is a recovery path — the normal path is to save a `backlog/<N>-<slug>.md` spec, whose definition the coordinator registers on its next tick. |
+| `task-mark-done` | `orc task-mark-done <feature/task>` | Mark a task done in runtime state (the coordinator does this after merge). No spec is edited; status is runtime-owned. |
 | `task-reset` | `orc task-reset <feature/task>` | Reset a task to `todo`, cancelling any active claim. Use when a blocked or stuck task needs another attempt. |
 | `task-unblock` | `orc task-unblock <feature/task>` | Transition a blocked task back to `todo`. |
-| `backlog-sync` | `orc backlog-sync` | Repair runtime backlog metadata from authoritative markdown specs. |
-| `backlog-sync-check` | `orc backlog-sync-check` | Validate that runtime backlog metadata matches active markdown specs. Ad-hoc only — not part of the task-creation flow. |
+| `backlog-sync` | `orc backlog-sync` | Legacy installations: register spec definitions (new `todo` specs, titles, dependencies) into runtime state. Never changes status; lists unregistered non-todo specs as skipped. |
+| `backlog-sync-check` | `orc backlog-sync-check` | Legacy installations: validate that todo specs are registered and titles/features match (status is not compared). Ad-hoc only — not part of the task-creation flow. |
 | `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
 
 ### Run Lifecycle (Worker Commands)

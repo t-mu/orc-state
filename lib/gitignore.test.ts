@@ -21,23 +21,23 @@ afterEach(() => {
 });
 
 describe('ensureGitignore', () => {
-  it('adds .orc-state/ to .gitignore in the attached layout', () => {
-    ensureGitignore({ siblingLayout: false });
+  it('adds .orc-state/ to .gitignore in a legacy attached installation', () => {
+    ensureGitignore({ project: false });
     const gitignore = join(repo, '.gitignore');
     expect(existsSync(gitignore)).toBe(true);
     expect(readFileSync(gitignore, 'utf8')).toContain('.orc-state/');
   });
 
   it('is idempotent — does not duplicate the entry', () => {
-    ensureGitignore({ siblingLayout: false });
-    ensureGitignore({ siblingLayout: false });
+    ensureGitignore({ project: false });
+    ensureGitignore({ project: false });
     const contents = readFileSync(join(repo, '.gitignore'), 'utf8');
     expect(contents.match(/\.orc-state\//g)?.length).toBe(1);
   });
 
-  it('is a no-op in the sibling layout — never touches the repo .gitignore', () => {
-    ensureGitignore({ siblingLayout: true });
-    // No .gitignore created in the (would-be target) repo.
+  it('is a no-op for a registered project — never touches the target .gitignore', () => {
+    ensureGitignore({ project: true });
+    // No .gitignore created in the target repo.
     expect(existsSync(join(repo, '.gitignore'))).toBe(false);
   });
 });

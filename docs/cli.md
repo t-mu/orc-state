@@ -184,7 +184,7 @@ These are available for manual intervention and debugging.
 | Command | Description |
 |---------|-------------|
 | `task-create` | Register a task from an existing markdown spec in `backlog/`. In a project state directory (one with `runtime.db`) it creates a database-only task instead, and no spec file is read. |
-| `task-mark-done <task-ref>` | Mark a task done. Updates spec frontmatter and runtime state. |
+| `task-mark-done <task-ref>` | Mark a task done in runtime state (coordinator, after merge). No spec file is changed. |
 | `task-reset <task-ref>` | Reset a task to `todo`, cancelling any active claims. |
 | `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
 | `delegate` | Dispatch a task to an available worker agent. |
@@ -213,7 +213,7 @@ specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
 | Command | Description |
 |---------|-------------|
 | `backlog-sync` | Repair runtime state from markdown specs. |
-| `backlog-sync-check` | Validate specs match runtime state. Exits 1 on mismatch. |
+| `backlog-sync-check` | Legacy installations: check that todo specs are registered and titles/features match runtime state (status is never compared). Unregistered non-todo specs are listed as skipped. Exits 1 on mismatch. |
 | `backlog-ready` | List tasks eligible for dispatch (todo + deps satisfied). |
 | `backlog-blocked` | List blocked tasks with reasons. |
 | `backlog-orient` | Print backlog summary: next task seq, features, task counts. |

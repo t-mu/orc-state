@@ -148,17 +148,19 @@ like an HTTP API or remote SSH session._
 
 ### Orchestration root vs target repo
 
-The **orchestration root** is orc's home: it holds `orc-state.config.json`,
-`.orc-state/`, `backlog/`, `plans/`, and `.worktrees/`. The **target repo** is the
-repository whose product code the runs operate on.
+The **orchestration root** is orc's home: it holds state, worktrees and
+settings. The **target repo** is the repository whose product code the runs
+operate on.
 
-By default these are the same directory (the *attached* layout). Configuring a
-`target_repo` splits them (the *sibling* layout), so orc can drive a product repo
-that must stay free of framework files — orchestration state lives in the
-orchestration root, and only product-code commits land in the target repo.
+For a registered project (`orc project add`) the orchestration root is an
+external state directory, so the target repo stays free of framework files and
+receives only product-code commits. A legacy attached installation keeps both
+in the same directory (`.orc-state/`, `backlog/`, `plans/`,
+`orc-state.config.json` inside the repository) until `orc project migrate`
+moves it.
 
-_You'll encounter this when setting up `orc init --sibling` or reading
-`target_repo` in `orc-state.config.json`._
+_You'll encounter this when registering a project or migrating an older
+installation._
 
 ---
 
@@ -166,5 +168,5 @@ _You'll encounter this when setting up `orc init --sibling` or reading
 
 - [Getting started](./getting-started.md)
 - [Architecture overview](./architecture.md)
-- [Sibling mode](./sibling-mode.md)
+- [Sibling mode (retired)](./sibling-mode.md)
 - [Contracts & invariants](./contracts.md)

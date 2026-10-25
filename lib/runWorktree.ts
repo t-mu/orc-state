@@ -18,9 +18,9 @@ function readRunWorktrees(_stateDir: string): RunWorktreesState {
 
 // Worktrees are worktrees OF the target repo (root = TARGET_REPO_ROOT, the cwd
 // of `git worktree add`) but are PLACED under the orchestration root's
-// WORKTREES_DIR. In the single-repo layout the two roots coincide; in the
-// sibling layout the product branch lives in the target repo while the working
-// files sit beside the orchestration state.
+// WORKTREES_DIR. In a legacy attached installation the two roots coincide; in
+// project mode the product branch lives in the registered target repo while the
+// working files sit in the external project state directory.
 function ensureGitWorktree({ root, path, branch, createBranch }: {
   root: string;
   path: string;

@@ -402,11 +402,16 @@ describe('mcp read handlers', () => {
     expect(() => handleGetRecentEvents(dir, { run_id: 123 as unknown as string })).toThrow(/run_id/);
   });
 
+  it('handleGetStatus names the registered project a state directory belongs to', () => {
+    writeFileSync(join(dir, 'project.json'), JSON.stringify({ id: 'p-1', name: 'demo', target_repo_root: '/tmp/demo' }));
+    expect(handleGetStatus(dir).project).toEqual({ id: 'p-1', name: 'demo', target_repo_root: '/tmp/demo' });
+  });
+
   it('handleGetStatus returns aggregate keys and expected value shapes', () => {
     const status = handleGetStatus(dir);
 
     expect(Object.keys(status).sort()).toEqual(
-      ['active_tasks', 'agents', 'last_notification_seq', 'next_task_seq', 'stalled_runs', 'task_counts'].sort(),
+      ['active_tasks', 'agents', 'last_notification_seq', 'next_task_seq', 'project', 'stalled_runs', 'task_counts'].sort(),
     );
     expect((status.agents as Array<Record<string, unknown>>).every((agent) =>
       ['agent_id', 'role', 'status', 'provider', 'active_task_ref'].every((key) => Object.hasOwn(agent, key)))).toBe(true);
@@ -423,6 +428,7 @@ describe('mcp read handlers', () => {
     expect(status.last_notification_seq).toBe(0);
     expect(status.stalled_runs).toBe(3);
     expect(status.next_task_seq).toBe(1);
+    expect(status.project).toBeNull();
   });
 
   it('handleGetStatus includes done and released counts when include_done_count=true', () => {

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isSiblingLayout, resolveOrchestrationRoot, resolveRepoRoot, resolveTargetRepoRoot } from './repoRoot.ts';
+import { legacySiblingTarget, resolveOrchestrationRoot, resolveRepoRoot } from './repoRoot.ts';
 
 const CONFIG = 'orc-state.config.json';
 
@@ -124,90 +124,35 @@ describe('repoRoot', () => {
     });
   });
 
-  describe('resolveTargetRepoRoot', () => {
-    it('returns the orchestration root when no config file exists', () => {
-      expect(resolveTargetRepoRoot(join(tmp, CONFIG), tmp)).toBe(tmp);
-    });
-
-    it('returns the orchestration root when target_repo is absent', () => {
+  describe('legacySiblingTarget', () => {
+    it('is null when no config file exists or target_repo is absent', () => {
+      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
       writeFileSync(join(tmp, CONFIG), JSON.stringify({ default_provider: 'claude' }));
-      expect(resolveTargetRepoRoot(join(tmp, CONFIG), tmp)).toBe(tmp);
+      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
     });
 
-    it('resolves a relative target_repo against the config file directory', () => {
-      const orch = join(tmp, 'orch');
-      const target = join(tmp, 'product');
-      mkdirSync(orch, { recursive: true });
-      mkdirSync(target, { recursive: true });
-      writeFileSync(join(orch, CONFIG), JSON.stringify({ target_repo: '../product' }));
-
-      expect(resolveTargetRepoRoot(join(orch, CONFIG), orch)).toBe(target);
-    });
-
-    it('accepts an absolute target_repo as-is', () => {
-      const target = join(tmp, 'product');
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: target }));
-
-      expect(resolveTargetRepoRoot(join(tmp, CONFIG), tmp)).toBe(target);
-    });
-
-    it('ORC_REPO_ROOT keeps precedence over a configured target_repo', () => {
-      const forced = join(tmp, 'forced');
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: '../product' }));
-      vi.stubEnv('ORC_REPO_ROOT', forced);
-
-      expect(resolveTargetRepoRoot(join(tmp, CONFIG), tmp)).toBe(forced);
-    });
-
-    it('tolerates malformed config without crashing path resolution', () => {
-      writeFileSync(join(tmp, CONFIG), 'NOT-JSON');
-      expect(resolveTargetRepoRoot(join(tmp, CONFIG), tmp)).toBe(tmp);
-    });
-
-    it('ignores a non-string target_repo value', () => {
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: 42 }));
-      expect(resolveTargetRepoRoot(join(tmp, CONFIG), tmp)).toBe(tmp);
-    });
-  });
-
-  describe('isSiblingLayout', () => {
-    it('is false when no config file exists', () => {
-      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
-    });
-
-    it('is false when target_repo is absent', () => {
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ default_provider: 'claude' }));
-      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
-    });
-
-    it('is true when target_repo resolves to a different directory', () => {
+    it('names a target_repo that resolves to a different directory, relative to the config file', () => {
       const orch = join(tmp, 'orch');
       mkdirSync(orch, { recursive: true });
       writeFileSync(join(orch, CONFIG), JSON.stringify({ target_repo: '../product' }));
-      expect(isSiblingLayout(join(orch, CONFIG), orch)).toBe(true);
+      expect(legacySiblingTarget(join(orch, CONFIG), orch)).toBe(join(tmp, 'product'));
     });
 
-    it('is false when target_repo resolves to the orchestration root itself', () => {
+    it('is null when target_repo is the orchestration root itself, malformed, or not a string', () => {
       writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: '.' }));
-      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
+      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
+      writeFileSync(join(tmp, CONFIG), 'NOT-JSON');
+      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
+      writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: 42 }));
+      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
     });
 
-    it('depends only on config, never on ORC_REPO_ROOT (forcing override)', () => {
-      // Without target_repo: false regardless of ORC_REPO_ROOT.
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ default_provider: 'claude' }));
-      vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
-      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
-      vi.stubEnv('ORC_REPO_ROOT', join(tmp, 'forced'));
-      expect(isSiblingLayout(join(tmp, CONFIG), tmp)).toBe(false);
-
-      // With target_repo: true regardless of ORC_REPO_ROOT (env does not change it).
+    it('depends only on config, never on ORC_REPO_ROOT', () => {
       const orch = join(tmp, 'orch');
       mkdirSync(orch, { recursive: true });
       writeFileSync(join(orch, CONFIG), JSON.stringify({ target_repo: '../product' }));
-      vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
-      expect(isSiblingLayout(join(orch, CONFIG), orch)).toBe(true);
       vi.stubEnv('ORC_REPO_ROOT', join(tmp, 'forced'));
-      expect(isSiblingLayout(join(orch, CONFIG), orch)).toBe(true);
+      expect(legacySiblingTarget(join(orch, CONFIG), orch)).toBe(join(tmp, 'product'));
     });
   });
 });

@@ -143,7 +143,7 @@ export interface SandboxRootsOptions {
   cwd: string;
   /** Orchestration state dir; `orc` CLI calls from the worker write here. */
   stateDir: string;
-  /** Repo whose `.git` backs the worktree (the target repo in sibling layout). */
+  /** Repo whose `.git` backs the worktree (the registered target repo in project mode). */
   gitRepoRoot: string;
   /** Project mode: the coordinator's control socket the worker may connect to. */
   controlSocket?: string | null;
@@ -161,7 +161,7 @@ export interface SandboxRootsOptions {
  *   - the backing repo's `.git` — a linked worktree shares its main repo's
  *     object store, refs and per-worktree state, so commits and rebases write
  *     there. This holds in BOTH layouts: in the attached layout the backing
- *     repo is the orchestration repo, in the sibling layout the target repo.
+ *     repo is the installation's own repo, in project mode the registered target repo.
  *     We grant only TARGET_GIT_WRITABLE_SUBPATHS — never `.git` wholesale, so
  *     the worker cannot write `hooks/` or `config`.
  *

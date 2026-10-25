@@ -6,16 +6,17 @@ import { isProjectStateDir } from './projectTasks.ts';
 import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
 
 const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
+// Legacy (unmigrated) installations register task *definitions* from Markdown:
+// a new spec is added as `todo`, and titles, dependencies, review level and
+// merge strategy follow their specs. Status is runtime-owned and never read
+// from a spec — runtime commands (`orc task-reset`, `run-fail`, merge) change
+// it. Project state directories do not sync at all.
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
-// Terminal runtime states are never demoted by a spec sync. Once a task is done
-// or released, the runtime is authoritative and the spec is a mirror: a stale
-// spec that still says `todo` (e.g. a sibling-mode writeback that has not landed
-// yet, or failed) must NOT drag a merged task back to todo, which would make it
-// eligible for claiming again and re-run completed work.
-//
-// Consequence (intended): a done/released task can only be re-opened via a
-// runtime command (e.g. `orc task-reset`), NOT by editing the spec status back
-// to todo — spec sync can advance a task's status but never un-complete it.
+// The retired status mirror, still applied when planning a migration
+// (`mirrorStatus`): a spec edited under the old mirror may hold a newer
+// completion than a stale runtime. It may only make a task less dispatchable
+// (todo → blocked/done/cancelled, blocked → done/cancelled): a spec that still
+// says `todo` never re-opens blocked, cancelled or completed work.
 const TERMINAL_STATUSES = new Set<TaskStatus>(['done', 'released']);
 const VALID_SPEC_STATUSES = new Set<string>(['todo', 'blocked', 'done', 'released', 'cancelled']);
 const LEGACY_DIR_RE = /^legacy\//;
@@ -157,16 +158,27 @@ export interface SyncResult {
   added_tasks: number;
   updated_tasks: number;
   added_features: number;
+  /** New specs not registered because their `status:` is not todo (migrate the installation to carry them). */
+  skipped_specs?: Array<{ ref: string; status: string }>;
 }
 
-/** Apply the spec-to-runtime merge rules to a loaded backlog in place (also used to plan a migration). */
-export function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[]): SyncResult {
+/**
+ * Apply the spec-to-runtime definition merge to a loaded backlog in place.
+ * `mirrorStatus` applies the retired status mirror; only migration planning uses it.
+ */
+export function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[], { mirrorStatus = false }: { mirrorStatus?: boolean } = {}): SyncResult {
   let changed = false;
+  const skippedSpecs: Array<{ ref: string; status: string }> = [];
   let addedTasks = 0;
   let updatedTasks = 0;
   let addedFeatures = 0;
 
   for (const spec of specs) {
+    // A finished, blocked or cancelled spec cannot become new dispatchable work, and its status is not imported.
+    if (!mirrorStatus && spec.status !== 'todo' && !findTaskEntry(backlog, spec.ref)) {
+      skippedSpecs.push({ ref: spec.ref, status: spec.status });
+      continue;
+    }
     const ensured = ensureFeature(backlog, spec.feature);
     if (ensured.created) {
       changed = true;
@@ -219,8 +231,11 @@ export function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[])
     }
 
     if (
+      mirrorStatus &&
+      spec.status !== 'todo' &&
       !ACTIVE_STATUSES.has(existingEntry.task.status) &&
       !TERMINAL_STATUSES.has(existingEntry.task.status) &&
+      existingEntry.task.status !== 'cancelled' &&
       existingEntry.task.status !== spec.status
     ) {
       existingEntry.task.status = spec.status as TaskStatus;
@@ -252,6 +267,7 @@ export function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[])
     added_tasks: addedTasks,
     updated_tasks: updatedTasks,
     added_features: addedFeatures,
+    ...(skippedSpecs.length > 0 ? { skipped_specs: skippedSpecs } : {}),
   };
 }
 

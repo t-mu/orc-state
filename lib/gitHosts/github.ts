@@ -3,11 +3,11 @@ import type { GitHostAdapter } from './interface.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from '../gitPlumbing.ts';
 
 export class GitHubAdapter implements GitHostAdapter {
-  // cwd scopes every gh/git invocation to a specific checkout. In the sibling
-  // layout the coordinator runs from the orchestration root, so it passes the
+  // cwd scopes every gh/git invocation to a specific checkout. In project mode
+  // the coordinator does not run inside the target repo, so it passes the
   // target repo root here; otherwise cwd is undefined and spawnSync falls back
-  // to process.cwd() (the pre-sibling behavior, and correct for worker-invoked
-  // PR CLIs whose cwd is already the target-repo worktree).
+  // to process.cwd() (correct for worker-invoked PR CLIs whose cwd is already
+  // the target-repo worktree).
   // NB: explicit field + assignment, not a TS parameter property — Node 24
   // strip-only type stripping (no build step) rejects parameter properties.
   private readonly cwd: string | undefined;
@@ -31,8 +31,7 @@ export class GitHubAdapter implements GitHostAdapter {
   }
 
   pushBranch(remote: string, branch: string): void {
-    // Coordinator-side push against the target repo (cwd = TARGET_REPO_ROOT in
-    // the sibling layout). Run it hermetically — matching pushMain and the
+    // Coordinator-side push against the target repo (cwd = TARGET_REPO_ROOT). Run it hermetically — matching pushMain and the
     // other coordinator git ops — so the product repo's pre-push hook does not
     // fire and no fsmonitor daemon is spawned during automated PR pushes.
     const result = spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, 'push', '--set-upstream', remote, branch], {

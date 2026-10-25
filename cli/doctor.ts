@@ -4,18 +4,17 @@
  * Usage: node cli/doctor.ts [--json]
  */
 import { execSync } from 'node:child_process';
-import { ACTIVE_PROJECT, STATE_DIR, TARGET_REPO_ROOT, IS_SIBLING_LAYOUT } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, LEGACY_SIBLING_TARGET, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
 import { readMigrationMarker } from '../lib/projectContext.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
-import { checkSiblingLayout } from '../lib/siblingLayoutCheck.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
 import { validateStateDir, validateMemoryDb } from '../lib/stateValidation.ts';
 import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
-import { validateBacklogSync } from './backlog-sync-check.ts';
+import { formatSkippedSpecs, validateBacklogSync } from './backlog-sync-check.ts';
 import { checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import type { Agent } from '../types/agents.ts';
@@ -29,13 +28,13 @@ const nowMs = Date.now();
 // A project's Git checks run against its registered target, wherever the command is invoked.
 const gitRepo = isGitRepo(ACTIVE_PROJECT ? TARGET_REPO_ROOT : undefined);
 const stateErrors = validateStateDir(STATE_DIR);
-const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR) : null;
+const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR, { worktreesDir: WORKTREES_DIR }) : null;
 // Project SQLite owns task definitions; there is no Markdown backlog to compare.
 const backlogSync = ACTIVE_PROJECT
-  ? { ok: true, skipped: 'project state directory: SQLite owns task definitions', spec_count: 0, filtered: false, missing: [], mismatches: [] }
+  ? { ok: true, skipped: 'project state directory: SQLite owns task definitions', spec_count: 0, filtered: false, missing: [], mismatches: [], skipped_specs: [] }
   : safeRead(
     () => validateBacklogSync(process.env.ORC_BACKLOG_DIR || `${process.env.ORC_REPO_ROOT || process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
-    { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [] },
+    { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [], skipped_specs: [] },
   );
 const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
 const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
@@ -44,11 +43,15 @@ const providers = new Set(agents.map((a) => a.provider));
 const sandboxDeps = checkSandboxDependencies();
 const memoryHealth = validateMemoryDb(STATE_DIR);
 const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
-const siblingLayout = checkSiblingLayout({
-  isSibling: IS_SIBLING_LAYOUT,
-  targetRepoRoot: TARGET_REPO_ROOT,
-  stateDir: STATE_DIR,
-});
+// Legacy installations still run until migrated; a sibling layout no longer does.
+const legacyLayout = ACTIVE_PROJECT ? null : {
+  ok: LEGACY_SIBLING_TARGET === null,
+  root: ORCHESTRATION_ROOT,
+  sibling_target: LEGACY_SIBLING_TARGET,
+  message: LEGACY_SIBLING_TARGET
+    ? `sibling layout (target_repo: ${LEGACY_SIBLING_TARGET}) is retired; run orc project migrate ${ORCHESTRATION_ROOT} --execute`
+    : `legacy installation at ${ORCHESTRATION_ROOT}; migrate it into a project with orc project migrate`,
+};
 
 // A legacy state directory that was migrated must not be run again; the project owns its state now.
 const migratedTo = ACTIVE_PROJECT ? null : readMigrationMarker(STATE_DIR);
@@ -67,7 +70,7 @@ const checks: Record<string, unknown> = {
   sandboxDependencies: sandboxDeps,
   memoryHealth,
   runtimeSchema,
-  siblingLayout,
+  legacyLayout,
 };
 
 for (const provider of providers) {
@@ -131,7 +134,7 @@ const summary = {
     sandboxDeps.ok &&
     memoryHealth.ok &&
     runtimeSchema.ok &&
-    siblingLayout.ok &&
+    (legacyLayout?.ok ?? true) &&
     (projectHealth?.ok ?? true) &&
     migratedTo === null,
   registered_workers: agents.length,
@@ -202,6 +205,7 @@ for (const missing of backlogSync.missing) {
 for (const mismatch of backlogSync.mismatches) {
   console.log(`  mismatch ${mismatch.ref} ${mismatch.field}: expected "${mismatch.expected}" got "${mismatch.actual}"`);
 }
+for (const line of formatSkippedSpecs(backlogSync.skipped_specs)) console.log(`  ${line}`);
 
 console.log('');
 const lifecycleIssues = checks.lifecycleIssues as LifecycleIssue[];
@@ -235,17 +239,9 @@ console.log('');
 console.log(`runtime schema: ok=${String(runtimeSchema.ok)} version=${String(runtimeSchema.version)}`);
 for (const message of runtimeSchema.messages) console.log(`  ${message}`);
 
-// Only surface the sibling layout in doctor when it is active — keeps the
-// default attached-layout output unchanged (matches preflight's suppression).
-if (!siblingLayout.skipped) {
+if (legacyLayout) {
   console.log('');
-  console.log(`sibling layout: ok=${String(siblingLayout.ok)} target=${TARGET_REPO_ROOT}`);
-  for (const error of siblingLayout.errors) {
-    console.log(`  error: ${error}`);
-  }
-  for (const warning of siblingLayout.warnings) {
-    console.log(`  warning: ${warning}`);
-  }
+  console.log(`${legacyLayout.ok ? 'warning' : 'error'}: ${legacyLayout.message}`);
 }
 
 if (!summary.ok) {

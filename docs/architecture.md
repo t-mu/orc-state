@@ -119,24 +119,24 @@ For field-level schemas and concurrency guarantees, see [Contracts & invariants]
 
 ---
 
-## Two-root model (attached vs sibling)
+## Two-root model (project vs legacy attached)
 
 orc resolves two roots:
 
-- **Orchestration root** — owns `orc-state.config.json`, `.orc-state/`,
-  `backlog/`, `plans/`, and `.worktrees/`. The coordinator runs here.
+- **Orchestration root** — owns state, worktrees, settings and (in a legacy
+  installation) `backlog/`, `plans/` and `orc-state.config.json`. The
+  coordinator runs against it.
 - **Target repo root** — the repository whose product code the runs operate on.
   All product-code git operations (worktree creation, branch delete, merge, PR
   push) target this repo.
 
-By default the two roots are the **same directory** (the *attached*,
-single-repo layout) and everything above describes that case. When a
-`target_repo` is configured (the *sibling* layout), the roots differ: worktrees
-are still placed under the orchestration root's `.worktrees/` but are git
-worktrees **of the target repo**, and the target repo receives only product-code
-commits — never framework files. Completion status is written back into the
-orchestration `backlog/` spec by the coordinator after merge. See
-[Sibling Mode](./sibling-mode.md).
+For a **registered project** the roots differ: the orchestration root is the
+project's external state directory in the data home, and the target is the
+registered Git repository. Worktrees are placed under the state directory but
+are git worktrees **of the target repo**, which receives only product-code
+commits. A **legacy attached** installation keeps both roots in the same
+directory until it is migrated. The sibling layout (a separate orchestration
+repository with `target_repo`) is retired; see [Sibling Mode](./sibling-mode.md).
 
 ---
 

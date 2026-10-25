@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { extractTaskSpecRefs, validateBacklogSync } from './backlog-sync-check.ts';
+import { extractTaskSpecRefs, formatBacklogSyncResult, validateBacklogSync } from './backlog-sync-check.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -50,6 +50,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
+      skipped_specs: [],
     });
   });
 
@@ -64,6 +65,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [{ file: '131-example.md', ref: 'orch/task-131-example' }],
       mismatches: [],
+      skipped_specs: [],
     });
   });
 
@@ -78,6 +80,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
+      skipped_specs: [],
     });
   });
 
@@ -108,6 +111,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
+      skipped_specs: [],
     });
   });
 
@@ -137,6 +141,7 @@ describe('validateBacklogSync', () => {
       filtered: false,
       missing: [],
       mismatches: [],
+      skipped_specs: [],
     });
   });
 
@@ -159,6 +164,7 @@ describe('validateBacklogSync', () => {
       filtered: true,
       missing: [],
       mismatches: [],
+      skipped_specs: [],
     });
   });
 
@@ -173,6 +179,7 @@ describe('validateBacklogSync', () => {
       filtered: true,
       missing: [{ file: '131-example.md', ref: 'orch/task-131-example' }],
       mismatches: [],
+      skipped_specs: [],
     });
   });
 
@@ -184,7 +191,7 @@ describe('validateBacklogSync', () => {
     expect(result.filtered).toBe(false);
   });
 
-  it('reports metadata drift for feature, title, and inactive status', () => {
+  it('reports definition drift for feature and title, never status', () => {
     writeFileSync(join(dir, 'backlog', '130-example.md'),
       '---\nref: orch/task-130-example\nfeature: orch\nstatus: done\n---\n\n# Task 130 — Expected Title\n');
     writeFileSync(
@@ -223,14 +230,8 @@ describe('validateBacklogSync', () => {
           expected: 'Expected Title',
           actual: 'Wrong Title',
         },
-        {
-          file: '130-example.md',
-          ref: 'orch/task-130-example',
-          field: 'status',
-          expected: 'done',
-          actual: 'todo',
-        },
       ],
+      skipped_specs: [],
     });
   });
 
@@ -274,6 +275,16 @@ describe('validateBacklogSync', () => {
           actual: 'Wrong Title',
         },
       ],
+      skipped_specs: [],
     });
+  });
+
+  it('lists an unregistered non-todo spec as skipped (it needs a migration) without failing', () => {
+    writeFileSync(join(dir, 'backlog', '130-example.md'),
+      '---\nref: orch/task-130-example\nfeature: orch\nstatus: done\n---\n\n# Task 130 — Example\n');
+    writeState(dir, []);
+    const result = validateBacklogSync(join(dir, 'backlog'), join(dir, 'orc-state', 'backlog.json'));
+    expect(result).toMatchObject({ ok: true, missing: [], skipped_specs: [{ file: '130-example.md', ref: 'orch/task-130-example', status: 'done' }] });
+    expect(formatBacklogSyncResult(result)).toContain('run orc project migrate');
   });
 });

@@ -205,6 +205,23 @@ describe('legacy installation migration', () => {
     expect(registry.list()).toHaveLength(1);
   });
 
+  it('never lets a stale todo spec reopen blocked or cancelled work, but carries a newer spec completion', () => {
+    const root = gitRepo('product');
+    const legacyState = legacyInstallation(root);
+    const backlog = JSON.parse(readFileSync(join(legacyState, 'backlog.json'), 'utf8'));
+    backlog.features[0].tasks.push(
+      { ref: 'alpha/4-cancelled', title: 'cancelled', status: 'cancelled', task_type: 'implementation' },
+      { ref: 'alpha/5-stale', title: 'stale', status: 'todo', task_type: 'implementation' },
+    );
+    writeFileSync(join(legacyState, 'backlog.json'), JSON.stringify(backlog));
+    writeFileSync(join(root, 'backlog', '2-second.md'), spec('alpha/2-second', 'todo', 'depends_on:\n  - alpha/1-first\n'));
+    writeFileSync(join(root, 'backlog', '4-cancelled.md'), spec('alpha/4-cancelled', 'todo'));
+    // Completed under the old mirror after the runtime file was last written.
+    writeFileSync(join(root, 'backlog', '5-stale.md'), spec('alpha/5-stale', 'done'));
+    const tasks = Object.fromEntries(planMigration(root, registry).tasks.map((task) => [task.ref, task.status]));
+    expect(tasks).toMatchObject({ 'alpha/2-second': 'blocked', 'alpha/4-cancelled': 'cancelled', 'alpha/5-stale': 'done' });
+  });
+
   it('refuses to execute while a run is active or a definition conflicts', () => {
     const root = gitRepo('product');
     legacyInstallation(root, { claims: [{ run_id: 'run-2', task_ref: 'alpha/3-third', agent_id: 'orc-1', state: 'in_progress' }] });

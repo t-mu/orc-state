@@ -8,7 +8,7 @@ describe('formatBacklogRepairResult', () => {
       added_tasks: 0,
       updated_tasks: 0,
       added_features: 0,
-    })).toBe('backlog sync OK: state already matched authoritative markdown specs');
+    })).toBe('backlog sync OK: state already matched the spec definitions');
   });
 
   it('reports repaired task and feature counts', () => {

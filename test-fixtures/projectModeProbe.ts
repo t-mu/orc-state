@@ -11,7 +11,7 @@ const result: Record<string, unknown> = {
   targetRepoRoot: paths.TARGET_REPO_ROOT,
   worktreesDir: paths.WORKTREES_DIR,
   configFile: paths.ORC_CONFIG_FILE,
-  sibling: paths.IS_SIBLING_LAYOUT,
+  sibling: paths.LEGACY_SIBLING_TARGET !== null,
 };
 if (action === 'launch') {
   const { ensureRunWorktree } = await import('../lib/runWorktree.ts');
