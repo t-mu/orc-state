@@ -3,7 +3,7 @@ ref: global-project-state/225-expose-project-aware-operations-in-cli-and-tui
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/221-make-task-creation-and-revision-apis-storage-neutral
   - global-project-state/223-move-dispatch-and-completion-into-sqlite-transactions
