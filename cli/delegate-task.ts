@@ -8,7 +8,6 @@ import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { cliError } from './shared.ts';
 import { withLock } from '../lib/lock.ts';
-import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
@@ -18,6 +17,7 @@ import { canAgentExecuteTask } from '../lib/taskRouting.ts';
 import { readBacklog, readClaims } from '../lib/stateReader.ts';
 import { TASK_TYPES, AGENT_ID_RE } from '../lib/constants.ts';
 import type { Task } from '../types/backlog.ts';
+import { commitBacklog } from '../lib/projectTasks.ts';
 
 const taskRef = flag('task-ref');
 const targetAgentId = flag('target-agent-id');
@@ -55,7 +55,6 @@ const now = new Date().toISOString();
 
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
-    const backlogPath = join(STATE_DIR, 'backlog.json');
     const backlog = readBacklog(STATE_DIR);
     const claims = readClaims(STATE_DIR).claims ?? [];
     let task: Task | null = null;
@@ -101,9 +100,10 @@ try {
     } else if (task.owner) {
       delete task.owner;
     }
-    if (task.status === 'blocked') task.status = 'todo';
+    const unblocked = task.status === 'blocked';
+    if (unblocked) task.status = 'todo';
     task.updated_at = now;
-    atomicWriteJson(backlogPath, backlog);
+    commitBacklog(STATE_DIR, backlog, unblocked ? { [taskRef]: { cause: 'unblock', actorId } } : {});
 
     appendSequencedEvent(
       STATE_DIR,

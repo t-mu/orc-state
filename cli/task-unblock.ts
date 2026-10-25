@@ -8,11 +8,11 @@
 import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
-import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, findTask } from '../lib/stateReader.ts';
 import { cliError } from './shared.ts';
+import { commitBacklog } from '../lib/projectTasks.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const reason = flag('reason');
@@ -24,7 +24,6 @@ if (!taskRef) {
 
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
-    const backlogPath = join(STATE_DIR, 'backlog.json');
     const now = new Date().toISOString();
 
     const backlog = readBacklog(STATE_DIR);
@@ -41,7 +40,7 @@ try {
     delete task.blocked_reason;
     task.updated_at = now;
 
-    atomicWriteJson(backlogPath, backlog);
+    commitBacklog(STATE_DIR, backlog, { [taskRef]: { cause: 'unblock', actorId: 'human', reason: reason ?? null } });
 
     appendSequencedEvent(
       STATE_DIR,

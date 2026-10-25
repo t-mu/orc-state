@@ -25,7 +25,8 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
-import { createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { blockCause, commitBacklog, createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { commitClaims } from '../lib/runStore.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
@@ -441,7 +442,6 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
       }
     }
 
-    const backlogPath = join(stateDir, 'backlog.json');
     const backlog = readBacklog(stateDir);
 
     const existing = findTask(backlog, taskRef);
@@ -471,7 +471,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     if (model != null) newTask.model = model;
 
     syncedBacklog.next_task_seq = currentNextTaskSeq + 1;
-    atomicWriteJson(backlogPath, syncedBacklog);
+    atomicWriteJson(join(stateDir, 'backlog.json'), syncedBacklog);
 
     appendSequencedEvent(
       stateDir,
@@ -536,7 +536,6 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   const changedFields: string[] = [];
 
   return withLock(join(stateDir, '.lock'), () => {
-    const backlogPath = join(stateDir, 'backlog.json');
     const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
@@ -590,7 +589,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     }
 
     task.updated_at = now;
-    atomicWriteJson(backlogPath, backlog);
+    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
 
     appendSequencedEvent(
       stateDir,
@@ -625,7 +624,6 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
   const now = new Date().toISOString();
 
   return withLock(join(stateDir, '.lock'), () => {
-    const backlogPath = join(stateDir, 'backlog.json');
     const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const claims = readClaims(stateDir).claims;
     const allAgents = listAgents(stateDir);
@@ -681,9 +679,10 @@ export function handleDelegateTask(stateDir: string, args: Record<string, unknow
     } else if (task.owner) {
       delete task.owner;
     }
-    if (task.status === 'blocked') task.status = 'todo';
+    const unblocked = task.status === 'blocked';
+    if (unblocked) task.status = 'todo';
     task.updated_at = now;
-    atomicWriteJson(backlogPath, backlog);
+    commitBacklog(stateDir, backlog, unblocked ? { [task_ref as string]: { cause: 'unblock', actorId: actor_id as string } } : {});
 
     appendSequencedEvent(
       stateDir,
@@ -737,8 +736,6 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
   let cancelledRuns: Claim[] = [];
 
   const result = withLock(join(stateDir, '.lock'), () => {
-    const backlogPath = join(stateDir, 'backlog.json');
-    const claimsPath = join(stateDir, 'claims.json');
     const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const claimsData = readClaims(stateDir);
     const claims = claimsData.claims;
@@ -766,29 +763,25 @@ export function handleCancelTask(stateDir: string, args: Record<string, unknown>
         !(claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state)),
       );
       cancelledRuns = activeClaims;
-      atomicWriteJson(claimsPath, claimsData);
-      for (const removed of activeClaims) {
-        appendSequencedEvent(
-          stateDir,
-          {
-            ts: now,
-            event: 'run_cancelled',
-            actor_type: actor_id === 'human' ? 'human' : 'agent',
-            actor_id: actor_id as string,
-            run_id: removed.run_id,
-            task_ref: task_ref as string,
-            agent_id: removed.agent_id,
-            payload: { reason },
-          },
-          { lockAlreadyHeld: true },
-        );
-      }
+      commitClaims(stateDir, claimsData, activeClaims.map((removed) => ({
+        ts: now,
+        event: 'run_cancelled' as const,
+        actor_type: actor_id === 'human' ? 'human' as const : 'agent' as const,
+        actor_id: actor_id as string,
+        run_id: removed.run_id,
+        task_ref: task_ref as string,
+        agent_id: removed.agent_id,
+        payload: { reason },
+      })));
     }
 
+    const previousStatus = task.status;
     task.status = 'blocked';
     task.updated_at = now;
     task.blocked_reason = (reason as string | null) ?? 'cancelled';
-    atomicWriteJson(backlogPath, backlog);
+    commitBacklog(stateDir, backlog, previousStatus === 'blocked' ? {} : {
+      [task_ref as string]: { cause: blockCause(previousStatus), actorId: actor_id as string, reason: task.blocked_reason },
+    });
 
     appendSequencedEvent(
       stateDir,
@@ -1054,8 +1047,6 @@ export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human'
   }
 
   return withLock(join(stateDir, '.lock'), () => {
-    const backlogPath = join(stateDir, 'backlog.json');
-    const claimsPath = join(stateDir, 'claims.json');
     const now = new Date().toISOString();
 
     const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
@@ -1078,21 +1069,15 @@ export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human'
       c.finished_at = now;
     }
 
-    atomicWriteJson(backlogPath, backlog);
-    atomicWriteJson(claimsPath, claimsState);
-
-    appendSequencedEvent(
-      stateDir,
-      {
-        ts: now,
-        event: 'task_updated',
-        actor_type: actor_id === 'human' ? 'human' : 'agent',
-        actor_id,
-        task_ref: task_ref as string,
-        payload: { reset: true, previous_status: previousStatus, status: 'todo' },
-      },
-      { lockAlreadyHeld: true },
-    );
+    commitClaims(stateDir, claimsState, [{
+      ts: now,
+      event: 'task_updated',
+      actor_type: actor_id === 'human' ? 'human' : 'agent',
+      actor_id,
+      task_ref: task_ref as string,
+      payload: { reset: true, previous_status: previousStatus, status: 'todo' },
+    }]);
+    commitBacklog(stateDir, backlog, previousStatus === 'todo' ? {} : { [task_ref as string]: { cause: 'operator_reset', actorId: actor_id } });
 
     return {
       reset: true,

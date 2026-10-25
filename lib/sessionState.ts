@@ -10,6 +10,7 @@ import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState, Agent } from '../types/agents.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
 import type { OrcEventInput } from '../types/events.ts';
+import { commitBacklog, restoreBacklogStatuses, type TaskStatusChange } from './projectTasks.ts';
 
 function readBacklogState(stateDir: string): Backlog {
   return JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8')) as Backlog;
@@ -95,9 +96,13 @@ export function resetVolatileRuntimeStateForSession(
     };
 
     let resetTasks = 0;
+    const changes: Record<string, TaskStatusChange> = {};
     for (const feature of backlog.features ?? []) {
       for (const task of feature.tasks ?? []) {
-        if (resetTask(task, now)) resetTasks += 1;
+        if (resetTask(task, now)) {
+          resetTasks += 1;
+          changes[task.ref] = { cause: 'operator_reset', actorId: 'human', reason: 'session_reset' };
+        }
       }
     }
 
@@ -115,7 +120,7 @@ export function resetVolatileRuntimeStateForSession(
       if (resetAgent(agent, now)) resetAgents += 1;
     }
 
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    commitBacklog(stateDir, backlog, changes);
     const events: OrcEventInput[] = failedClaims.map((claim) => ({
       ts: now, event: 'run_failed', actor_type: 'human', actor_id: 'human',
       run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
@@ -181,7 +186,7 @@ export function restoreVolatileRuntimeStateFromSnapshot(
       }];
       return [];
     });
-    atomicWriteJson(join(stateDir, 'backlog.json'), snapshot.backlog);
+    restoreBacklogStatuses(stateDir, snapshot.backlog, snapshot.claims.claims);
     commitClaims(stateDir, snapshot.claims, events);
     restoreProviderSessionsForAgents(stateDir, snapshot.agents.agents, now);
     atomicWriteJson(join(stateDir, 'agents.json'), snapshot.agents);

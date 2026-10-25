@@ -25,6 +25,7 @@ import { readBacklog, readClaims }  from '../lib/stateReader.ts';
 import { closeProviderSessionsForAgent, commitClaims } from '../lib/runStore.ts';
 import { boolFlag }                 from '../lib/args.ts';
 import { formatErrorMessage } from './shared.ts';
+import { commitBacklog } from '../lib/projectTasks.ts';
 
 const keepSessions = boolFlag('keep-sessions');
 
@@ -97,12 +98,14 @@ if (existsSync(join(STATE_DIR, 'backlog.json')) && existsSync(join(STATE_DIR, 'c
     const claimsState = readClaims(STATE_DIR);
 
     let resetCount = 0;
+    const changes: Record<string, { cause: 'operator_reset'; actorId: string; reason: string }> = {};
     for (const feature of backlog.features ?? []) {
       for (const task of feature.tasks ?? []) {
         if (task.status === 'claimed' || task.status === 'in_progress') {
           task.status = 'todo';
           delete task.blocked_reason;
           task.updated_at = now;
+          changes[task.ref] = { cause: 'operator_reset', actorId: 'human', reason: 'kill_all' };
           resetCount++;
         }
       }
@@ -130,7 +133,7 @@ if (existsSync(join(STATE_DIR, 'backlog.json')) && existsSync(join(STATE_DIR, 'c
           ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: 'human',
           ...run, payload: { reason: 'kill_all' },
         }))]);
-    atomicWriteJson(join(STATE_DIR, 'backlog.json'), backlog);
+    commitBacklog(STATE_DIR, backlog, changes);
 
     console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)`);
   });

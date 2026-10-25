@@ -186,16 +186,18 @@ describe('plan documents in project state', () => {
 });
 
 describe('project task schema v2', () => {
-  it('upgrades a version 1 database in place', () => {
+  it('upgrades a version 1 database in place, keeping its tasks', () => {
     const path = join(outside, 'v1.db');
     const db = new Database(path);
     try {
+      migrateProjectTaskSchema(db, 1);
+      expect(db.pragma('user_version', { simple: true })).toBe(1);
+      db.exec(`INSERT INTO tasks (ref, title, created_at, updated_at) VALUES ('app/old', 'Old', 'now', 'now');
+        INSERT INTO task_transitions (task_ref, from_status, to_status, cause, created_at) VALUES ('app/old', 'todo', 'claimed', 'claim', 'now');`);
+      expect(db.prepare("SELECT attempt_count FROM tasks WHERE ref = 'app/old'").get()).toEqual({ attempt_count: 1 });
       migrateProjectTaskSchema(db);
-      // Rewind to the version 1 layout, then migrate again.
-      db.exec('DROP TABLE task_imports; DROP TABLE plan_documents; DELETE FROM schema_migrations WHERE version = 2;');
-      db.pragma('user_version = 1');
-      migrateProjectTaskSchema(db);
-      expect(db.pragma('user_version', { simple: true })).toBe(2);
+      expect(db.pragma('user_version', { simple: true })).toBe(3);
+      expect(db.prepare("SELECT status, attempt_count, owner FROM tasks WHERE ref = 'app/old'").get()).toEqual({ status: 'claimed', attempt_count: 1, owner: null });
       expect(db.prepare("SELECT name FROM sqlite_master WHERE name IN ('task_imports','plan_documents') ORDER BY name").all())
         .toEqual([{ name: 'plan_documents' }, { name: 'task_imports' }]);
     } finally { db.close(); }

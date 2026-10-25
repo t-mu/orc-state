@@ -1,6 +1,6 @@
 # Global project and task ownership contract
 
-This is the target contract for [plan 3](../plans/3-global-project-state.md). The current attached and sibling layouts continue to operate until the later migration tasks switch their storage and command paths. This document defines the behavior those tasks must preserve and prove.
+This is the target contract for [plan 3](../plans/3-global-project-state.md). Task definitions, revisions, Markdown import/export and transactional lifecycle state are implemented for project state directories (see `docs/configuration.md` → Project tasks). The current attached and sibling layouts continue to operate until the later migration tasks switch their storage and command paths. This document defines the behavior those tasks must preserve and prove.
 
 ## Project identity and storage
 

@@ -2,12 +2,12 @@ import { isAbsolute, join, relative } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { withLock } from './lock.ts';
-import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { readBacklog, findTask } from './stateReader.ts';
 import { discoverActiveTaskSpecs } from './backlogSync.ts';
 import { BACKLOG_DOCS_DIR, IS_SIBLING_LAYOUT, ORCHESTRATION_ROOT, STATE_DIR } from './paths.ts';
 import { logger } from './logger.ts';
+import { commitBacklog, isProjectStateDir } from './projectTasks.ts';
 
 const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'released', 'cancelled']);
 
@@ -18,7 +18,6 @@ export function markTaskDoneRuntimeOnly(
 ): void {
   withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
-    const backlogPath = join(stateDir, 'backlog.json');
 
     const backlog = readBacklog(stateDir);
     const task = findTask(backlog, taskRef);
@@ -34,7 +33,8 @@ export function markTaskDoneRuntimeOnly(
       task.status = 'done';
       task.updated_at = now;
       delete task.blocked_reason;
-      atomicWriteJson(backlogPath, backlog);
+      // Recorded once: a repeated merge confirmation for the same task is a no-op.
+      commitBacklog(stateDir, backlog, { [taskRef]: { cause: 'merge_succeeded', actorId, idempotencyKey: `merge:${taskRef}` } });
     }
 
     appendSequencedEvent(
@@ -113,9 +113,11 @@ export function writeSpecStatusDone(
     docsDir = BACKLOG_DOCS_DIR,
     orchestrationRoot = ORCHESTRATION_ROOT,
     isSibling = IS_SIBLING_LAYOUT,
-  }: { docsDir?: string; orchestrationRoot?: string; isSibling?: boolean } = {},
+    stateDir = STATE_DIR,
+  }: { docsDir?: string; orchestrationRoot?: string; isSibling?: boolean; stateDir?: string } = {},
 ): { written: boolean; committed: boolean } {
-  if (!isSibling) return { written: false, committed: false };
+  // Project SQLite owns status; no Markdown file mirrors it.
+  if (!isSibling || isProjectStateDir(stateDir)) return { written: false, committed: false };
 
   let entry;
   try {

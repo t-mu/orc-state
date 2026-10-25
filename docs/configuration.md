@@ -35,6 +35,18 @@ All commands accept `--project=<id>`. Every accepted edit creates a new immutabl
 
 The same API is available as the MCP `create_task`/`update_task`/`get_task` tools (`body_markdown`, `expected_revision`, `spec_revision`) and on the control daemon as `GET /v1/tasks`, `GET /v1/tasks/<ref>`, `GET /v1/tasks/<ref>/revisions`, `POST /v1/tasks` and `POST /v1/tasks/<ref>/revisions` (mutations require the master session credential; a stale `expected_revision` returns `409 conflict`). `orc task-create` creates a database-only task when `ORC_STATE_DIR` is a project state directory.
 
+### Task lifecycle in project SQLite
+
+In a project state directory, task status, attempts, dispatch fields (`owner`, `planning_state`, `delegated_by`, `requeue_eligible_after`) and run bindings live in `runtime.db`, and every status change is an immutable `task_transitions` row naming its cause, run and actor. The scheduler, status views, MCP and CLI read these rows through the `backlog.json` projection; nothing writes status into a Markdown file, and workers never edit a spec's `status:`.
+
+- **Claim** verifies in one transaction that the task is `todo`, that its owner (if any) is the claiming agent, and that every dependency is `done` or `released` in the same project; then it records the `claim` transition and binds the run to the latest revision. If the operational claim cannot be committed afterwards, the task returns to `todo` without counting an attempt.
+- **Run start, failure, lease expiry, reset, unblock and cancel** each update the task status, its run binding and the transition row in one transaction. Execution failures count an attempt and set a requeue backoff; infrastructure failures (dispatch, session start, run-start timeout) do not. A run that ends after an operator already reset or cancelled its task leaves the task alone.
+- **Work-complete** changes only the run's finalization state; the task stays `in_progress`. **`done`** is recorded once, by the coordinator after a successful merge (`merge_succeeded`, idempotent); a repeated `run-finish` or `task-mark-done` adds nothing.
+- A status change without a lifecycle cause, or a definition change outside a revision, is rejected. A stale Markdown file cannot requeue a completed task: backlog sync is off and ordinary imports never apply status.
+- `reconcile` returns a task left `claimed`/`in_progress` without an operational claim to `todo`, and fails an operational claim its task row does not reflect.
+
+The `events.db` stream still receives the usual lifecycle events after each commit; the authoritative audit record is the transition row written in the same transaction as the status and run change.
+
 ### Markdown import and export
 
 Markdown is an explicit, one-way interface to project tasks and plans. Nothing is watched or synced back, and lifecycle status never travels through Markdown.

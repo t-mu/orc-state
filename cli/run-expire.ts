@@ -7,11 +7,11 @@
  */
 import { join } from 'node:path';
 import { withLock } from '../lib/lock.ts';
-import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { commitClaims } from '../lib/runStore.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
 import { cliError } from './shared.ts';
+import { commitBacklog } from '../lib/projectTasks.ts';
 
 const runId = process.argv.slice(2).find((a) => !a.startsWith('-'));
 
@@ -22,7 +22,6 @@ if (!runId) {
 
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
-    const backlogPath = join(STATE_DIR, 'backlog.json');
     const now = new Date().toISOString();
 
     const claimsState = readClaims(STATE_DIR);
@@ -66,7 +65,7 @@ try {
         agent_id: claim.agent_id,
         payload: { reason: 'manual_expire', policy: 'requeue' },
       }]);
-    atomicWriteJson(backlogPath, backlog);
+    commitBacklog(STATE_DIR, backlog, { [claim.task_ref]: { cause: 'failure_requeue', runId, actorId: 'human', reason: 'manual_expire' } });
 
     console.log(`run expired: ${runId} (task ${claim.task_ref} requeued)`);
   });

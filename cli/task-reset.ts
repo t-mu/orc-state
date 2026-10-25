@@ -8,11 +8,11 @@
 import { join } from 'node:path';
 import { flag } from '../lib/args.ts';
 import { withLock } from '../lib/lock.ts';
-import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { commitClaims } from '../lib/runStore.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog, readClaims, findTask } from '../lib/stateReader.ts';
 import { cliError } from './shared.ts';
+import { commitBacklog } from '../lib/projectTasks.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const actorId = flag('actor-id') ?? 'human';
@@ -24,7 +24,6 @@ if (!taskRef) {
 
 try {
   withLock(join(STATE_DIR, '.lock'), () => {
-    const backlogPath = join(STATE_DIR, 'backlog.json');
     const now = new Date().toISOString();
 
     const backlog = readBacklog(STATE_DIR);
@@ -62,7 +61,7 @@ try {
         run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
         payload: { reason: 'manual_reset' },
       }))]);
-    atomicWriteJson(backlogPath, backlog);
+    commitBacklog(STATE_DIR, backlog, previousStatus === 'todo' ? {} : { [taskRef]: { cause: 'operator_reset', actorId } });
 
     console.log(`task reset: ${taskRef} (was: ${previousStatus}, cancelled ${activeClaims.length} active claims)`);
   });

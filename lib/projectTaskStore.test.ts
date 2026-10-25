@@ -50,7 +50,8 @@ describe('project task SQLite schema', () => {
     expect(() => store.transition('feature/1', 'merge_succeeded', 'done')).toThrow('invalid task transition');
     expect(() => store.transition('feature/1', 'manual_block', 'blocked')).toThrow();
     store.transition('feature/1', 'claim', 'claimed');
-    expect(store.getTask('feature/1')).toMatchObject({ status: 'claimed', attemptCount: 1 });
+    // Attempts follow the failure policy and are set by lifecycle writers, not by the claim itself.
+    expect(store.getTask('feature/1')).toMatchObject({ status: 'claimed', attemptCount: 0 });
     store.transition('feature/1', 'run_start', 'in_progress');
     expect(() => store.transition('feature/1', 'failure_block', 'blocked', '')).toThrow();
     store.transition('feature/1', 'failure_block', 'blocked', 'Needs credential');
@@ -83,8 +84,8 @@ describe('project task SQLite schema', () => {
     try {
       expect(db.pragma('user_version', { simple: true })).toBe(PROJECT_TASK_SCHEMA_VERSION);
       migrateProjectTaskSchema(db);
-      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 2 });
-      db.pragma('user_version = 3');
+      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 3 });
+      db.pragma('user_version = 4');
       expect(() => migrateProjectTaskSchema(db)).toThrow('newer');
     } finally { db.close(); }
     const broken = new Database(join(dir, 'broken.db'));
