@@ -25,7 +25,7 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
-import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
 import type { Claim } from '../types/claims.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
@@ -58,6 +58,13 @@ function assertActorId(stateDir: string, actorId: unknown) {
   const actorExists = allAgents.some((agent) => agent.agent_id === actorId);
   if (!actorExists) {
     throw new Error(`Actor agent not found: ${String(actorId)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
+  }
+}
+
+function assertNoProjectOnlyFields(args: Record<string, unknown>) {
+  const fields = PROJECT_ONLY_TASK_FIELDS.filter((field) => args[field] !== undefined);
+  if (fields.length > 0) {
+    throw new Error(`${fields.join(', ')} require(s) a project state directory; edit the backlog markdown spec instead.`);
   }
 }
 
@@ -383,7 +390,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     // Project refs carry no numeric sequence.
     return { ...describeProjectTask(createProjectTask(stateDir, input, actor_id as string)), next_task_seq: undefined };
   }
-  if (args.body_markdown !== undefined) throw new Error('body_markdown requires a project state directory; edit the backlog markdown spec instead.');
+  assertNoProjectOnlyFields(args);
   const {
     feature,
     title,
@@ -494,9 +501,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
     return { ...describeProjectTask(task), changed };
   }
-  if (args.body_markdown !== undefined || args.expected_revision !== undefined) {
-    throw new Error('body_markdown and expected_revision require a project state directory; edit the backlog markdown spec instead.');
-  }
+  assertNoProjectOnlyFields(args);
   const {
     task_ref,
     title,

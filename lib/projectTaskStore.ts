@@ -184,6 +184,11 @@ export function contentHash(body: string): string {
   return createHash('sha256').update(body, 'utf8').digest('hex');
 }
 
+/** A revision's hash covers everything it pins: title, body and parsed metadata. */
+export function revisionContentHash(title: string, body: string, metadata: Record<string, unknown>): string {
+  return contentHash(JSON.stringify({ title, body, metadata }));
+}
+
 /** First level-one heading, ignoring frontmatter. */
 export function parseBodyTitle(body: string): string | null {
   const text = body.replace(/^---\s*\n[\s\S]*?\n---\s*(?:\n|$)/, '');
@@ -251,6 +256,7 @@ export class ProjectTaskStore {
     const priority = input.priority ?? 'normal';
     const requiredProvider = input.requiredProvider ?? null;
     this.db.transaction(() => {
+      if (this.db.prepare('SELECT 1 FROM tasks WHERE ref = ?').get(input.ref)) throw new Error(`Task already exists: ${input.ref}`);
       this.db.prepare('INSERT INTO tasks (ref, title, priority, required_provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(input.ref, title, priority, requiredProvider, now, now);
       this.insertRevision(input.ref, 1, { title, bodyMarkdown: input.bodyMarkdown, metadata: input.metadata ?? {}, priority, requiredProvider, dependsOn }, now);
@@ -330,10 +336,20 @@ export class ProjectTaskStore {
       const pinned = revision ?? this.getTask(ref)?.revision;
       if (pinned === undefined) throw new Error(`Task not found: ${ref}`);
       const now = new Date().toISOString();
+      // Callers bind only after verifying the task has no active claim, so an
+      // active binding left here belongs to a run that already ended.
+      this.db.prepare("UPDATE task_runs SET state = 'failed', updated_at = ? WHERE task_ref = ? AND state IN ('claimed','in_progress','work_complete')")
+        .run(now, ref);
       this.db.prepare("INSERT INTO task_runs (run_id, task_ref, spec_revision, agent_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, 'claimed', ?, ?)")
         .run(runId, ref, pinned, agentId, now, now);
       return this.getRevision(ref, pinned)!;
     }).immediate();
+  }
+
+  /** Close a run binding that never became a live claim. */
+  abandonRun(runId: string): void {
+    this.db.prepare("UPDATE task_runs SET state = 'failed', updated_at = ? WHERE run_id = ? AND state IN ('claimed','in_progress','work_complete')")
+      .run(new Date().toISOString(), runId);
   }
 
   /** The revision a run was bound to when claimed; later edits never change it. */
@@ -357,7 +373,7 @@ export class ProjectTaskStore {
 
   private insertRevision(ref: string, revision: number, spec: { title: string; bodyMarkdown: string; metadata: Record<string, unknown>; priority: TaskPriority; requiredProvider: TaskProvider | null; dependsOn: string[] }, now: string): void {
     this.db.prepare('INSERT INTO task_spec_revisions (task_ref, revision, content_hash, body_markdown, title, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(ref, revision, contentHash(spec.bodyMarkdown), spec.bodyMarkdown, spec.title, JSON.stringify(this.revisionMetadata(spec)), now);
+      .run(ref, revision, revisionContentHash(spec.title, spec.bodyMarkdown, this.revisionMetadata(spec)), spec.bodyMarkdown, spec.title, JSON.stringify(this.revisionMetadata(spec)), now);
   }
 
   private replaceDependencies(ref: string, dependsOn: string[]): void {

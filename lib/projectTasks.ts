@@ -51,6 +51,9 @@ export function closeProjectTaskStores(): void {
   stores.clear();
 }
 
+/** Authoring fields accepted only for project tasks; legacy handlers reject them. */
+export const PROJECT_ONLY_TASK_FIELDS = ['body_markdown', 'expected_revision', 'review_level', 'merge_strategy'] as const;
+
 /** Definition fields kept in revision metadata, beyond the indexed priority/provider/dependencies. */
 const DEFINITION_FIELDS = ['feature', 'task_type', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'required_capabilities', 'model'] as const;
 /** Dispatch fields set when a task is registered; they do not create revisions. */
@@ -114,6 +117,14 @@ export function requireProjectTaskStore(stateDir: string): ProjectTaskStore {
 
 // ── Storage-neutral authoring API (CLI, MCP and control API) ────────────────
 
+/** A rejected caller input, as opposed to a storage failure. */
+export class TaskInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TaskInputError';
+  }
+}
+
 export interface TaskAuthoringInput {
   feature?: unknown;
   ref?: unknown;
@@ -138,25 +149,25 @@ function slugify(text: string): string {
 
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') throw new Error(`${field} must be a string`);
+  if (typeof value !== 'string') throw new TaskInputError(`${field} must be a string`);
   return value;
 }
 
 function optionalStringArray(value: unknown, field: string): string[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) throw new Error(`${field} must be an array of strings`);
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) throw new TaskInputError(`${field} must be an array of strings`);
   return value as string[];
 }
 
 function optionalChoice(value: unknown, field: string, choices: readonly string[]): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string' || !choices.includes(value)) throw new Error(`Invalid ${field}: ${JSON.stringify(value)}`);
+  if (typeof value !== 'string' || !choices.includes(value)) throw new TaskInputError(`Invalid ${field}: ${JSON.stringify(value)}`);
   return value;
 }
 
 function validateDependencyRefs(dependsOn: string[] | undefined): void {
   for (const dependency of dependsOn ?? []) {
-    if (!TASK_REF_RE.test(dependency)) throw new Error(`Invalid depends_on ref: ${dependency}`);
+    if (!TASK_REF_RE.test(dependency)) throw new TaskInputError(`Invalid depends_on ref: ${dependency}`);
   }
 }
 
@@ -192,7 +203,7 @@ function definitionMetadata(input: TaskAuthoringInput, base: Record<string, unkn
 }
 
 function assertActor(actorId: string): void {
-  if (!AGENT_ID_RE.test(actorId)) throw new Error(`Invalid actor-id: ${actorId}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!AGENT_ID_RE.test(actorId)) throw new TaskInputError(`Invalid actor-id: ${actorId}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 }
 
 /** Create a database-only task. No Markdown file or repo-local artifact is read or written. */
@@ -204,21 +215,23 @@ export function createProjectTask(stateDir: string, input: TaskAuthoringInput, a
   const acceptanceCriteria = optionalStringArray(input.acceptance_criteria, 'acceptance_criteria');
   const explicitTitle = optionalString(input.title, 'title');
   const explicitBody = optionalString(input.body_markdown, 'body_markdown');
-  if (!explicitTitle && !explicitBody) throw new Error('title or body_markdown is required');
+  if (!explicitTitle && !explicitBody) throw new TaskInputError('title or body_markdown is required');
   const bodyMarkdown = explicitBody ?? renderTaskBody(explicitTitle!, description, acceptanceCriteria);
   const slug = optionalString(input.ref, 'ref') ?? slugify(explicitTitle ?? bodyMarkdown.split('\n').find((line) => line.startsWith('# '))?.slice(2) ?? '');
   const ref = `${feature}/${slug}`;
-  if (!slug || !TASK_REF_RE.test(ref)) throw new Error(`Invalid task ref: ${ref}`);
+  if (!slug || !TASK_REF_RE.test(ref)) throw new TaskInputError(`Invalid task ref: ${ref}`);
   const dependsOn = optionalStringArray(input.depends_on, 'depends_on');
   validateDependencyRefs(dependsOn);
   const priority = optionalChoice(input.priority, 'priority', TASK_PRIORITIES) as TaskPriority | undefined;
   const requiredProvider = input.required_provider == null ? null : input.required_provider;
-  if (requiredProvider !== null && !isSupportedProvider(requiredProvider)) throw new Error(`Invalid required_provider: ${JSON.stringify(requiredProvider)}. Must be codex, claude, or gemini.`);
+  if (requiredProvider !== null && !isSupportedProvider(requiredProvider)) throw new TaskInputError(`Invalid required_provider: ${JSON.stringify(requiredProvider)}. Must be codex, claude, or gemini.`);
   const owner = optionalString(input.owner, 'owner');
-  if (owner !== undefined && !AGENT_ID_RE.test(owner)) throw new Error(`Invalid owner: ${owner}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (store.getTask(ref)) throw new Error(`Task already exists: ${ref}`);
+  if (owner !== undefined && !AGENT_ID_RE.test(owner)) throw new TaskInputError(`Invalid owner: ${owner}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (store.getTask(ref)) throw new TaskInputError(`Task already exists: ${ref}`);
 
   const metadata = definitionMetadata(input, { feature, task_type: 'implementation', planning_state: 'ready_for_dispatch', delegated_by: actorId }, bodyMarkdown);
+  // A body rendered from fields is re-rendered when those fields are edited.
+  if (!explicitBody) metadata.body_source = 'rendered';
   if (owner) metadata.owner = owner;
   const task = store.createTask({
     ref, ...(explicitTitle ? { title: explicitTitle } : {}), bodyMarkdown, metadata,
@@ -247,24 +260,33 @@ export function reviseProjectTask(
   assertActor(actorId);
   const store = requireProjectTaskStore(stateDir);
   if (typeof expectedRevision !== 'number' || !Number.isInteger(expectedRevision)) {
-    throw new Error('expected_revision is required for project task edits');
+    throw new TaskInputError('expected_revision is required for project task edits');
   }
   const rejected = Object.keys(input).filter((key) => input[key] !== undefined && !REVISABLE_FIELDS.has(key));
-  if (rejected.length > 0) throw new Error(`Task edits cannot change: ${rejected.join(', ')}`);
+  if (rejected.length > 0) throw new TaskInputError(`Task edits cannot change: ${rejected.join(', ')}`);
   const current = store.getTask(ref);
-  if (!current) throw new Error(`Task not found: ${ref}`);
+  if (!current) throw new TaskInputError(`Task not found: ${ref}`);
   const bodyMarkdown = optionalString(input.body_markdown, 'body_markdown');
   const dependsOn = input.depends_on === null ? [] : optionalStringArray(input.depends_on, 'depends_on');
   validateDependencyRefs(dependsOn);
   const priority = optionalChoice(input.priority, 'priority', TASK_PRIORITIES) as TaskPriority | undefined;
   if (input.required_provider != null && !isSupportedProvider(input.required_provider)) {
-    throw new Error(`Invalid required_provider: ${JSON.stringify(input.required_provider)}. Must be codex, claude, or gemini.`);
+    throw new TaskInputError(`Invalid required_provider: ${JSON.stringify(input.required_provider)}. Must be codex, claude, or gemini.`);
   }
   const { priority: _p, required_provider: _r, depends_on: _d, ...baseMetadata } = current.metadata;
+  const metadata = definitionMetadata(input, baseMetadata, bodyMarkdown ?? current.bodyMarkdown);
+  const title = optionalString(input.title, 'title');
+  let nextBody = bodyMarkdown;
+  if (bodyMarkdown !== undefined) delete metadata.body_source;
+  else if (metadata.body_source === 'rendered') {
+    nextBody = renderTaskBody(title ?? current.title,
+      typeof metadata.description === 'string' ? metadata.description : undefined,
+      Array.isArray(metadata.acceptance_criteria) ? metadata.acceptance_criteria as string[] : []);
+  }
   const changes: TaskSpecChanges = {
-    metadata: definitionMetadata(input, baseMetadata, bodyMarkdown ?? current.bodyMarkdown),
-    ...(optionalString(input.title, 'title') !== undefined ? { title: input.title as string } : {}),
-    ...(bodyMarkdown !== undefined ? { bodyMarkdown } : {}),
+    metadata,
+    ...(title !== undefined ? { title } : {}),
+    ...(nextBody !== undefined ? { bodyMarkdown: nextBody } : {}),
     ...(priority ? { priority } : {}),
     ...(input.required_provider !== undefined ? { requiredProvider: (input.required_provider ?? null) as TaskProvider | null } : {}),
     ...(dependsOn !== undefined ? { dependsOn } : {}),

@@ -79,37 +79,34 @@ export function claimTask(
     // Older in-memory test states have no Markdown directory. Real orchestration
     // roots do; a missing or invalid spec there must block a new claim.
     if (!projectStore && requireSpec && !existsSync(docsDir)) throw new Error(`Markdown spec directory not found: ${docsDir}`);
-    let taskSpecSnapshot;
-    if (projectStore) {
-      const revision = projectStore.bindRun(run_id, taskRef, agentId);
-      try {
-        taskSpecSnapshot = writeRunRevisionSnapshot(stateDir, run_id, revision);
-      } catch (error) {
-        projectStore.withDatabase((db) => db.prepare("UPDATE task_runs SET state = 'failed', updated_at = ? WHERE run_id = ?").run(new Date().toISOString(), run_id));
-        throw error;
-      }
-    } else if (existsSync(docsDir)) {
-      taskSpecSnapshot = writeRunTaskSnapshot(stateDir, run_id, taskRef, docsDir);
+    const revision = projectStore?.bindRun(run_id, taskRef, agentId);
+    try {
+      let taskSpecSnapshot;
+      if (revision) taskSpecSnapshot = writeRunRevisionSnapshot(stateDir, run_id, revision);
+      else if (existsSync(docsDir)) taskSpecSnapshot = writeRunTaskSnapshot(stateDir, run_id, taskRef, docsDir);
+
+      task.status = 'claimed';
+
+      claims.claims.push({
+        run_id, task_ref: taskRef, agent_id: agentId,
+        state: 'claimed', claimed_at: now.toISOString(), lease_expires_at,
+        task_envelope_sent_at: null,
+        last_heartbeat_at: null, started_at: null, finished_at: null,
+        finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
+        input_state: null, input_requested_at: null,
+        session_start_retry_count: 0, session_start_retry_next_at: null, session_start_last_error: null,
+        ...(taskSpecSnapshot ? { task_spec_snapshot: taskSpecSnapshot } : {}),
+      });
+      commitClaims(stateDir, claims, [{
+        ts: now.toISOString(), event: 'claim_created',
+        actor_type: 'agent', actor_id: agentId,
+        run_id, task_ref: taskRef, agent_id: agentId,
+        payload: { lease_expires_at },
+      }]);
+    } catch (error) {
+      projectStore?.abandonRun(run_id);
+      throw error;
     }
-
-    task.status = 'claimed';
-
-    claims.claims.push({
-      run_id, task_ref: taskRef, agent_id: agentId,
-      state: 'claimed', claimed_at: now.toISOString(), lease_expires_at,
-      task_envelope_sent_at: null,
-      last_heartbeat_at: null, started_at: null, finished_at: null,
-      finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
-      input_state: null, input_requested_at: null,
-      session_start_retry_count: 0, session_start_retry_next_at: null, session_start_last_error: null,
-      ...(taskSpecSnapshot ? { task_spec_snapshot: taskSpecSnapshot } : {}),
-    });
-    commitClaims(stateDir, claims, [{
-      ts: now.toISOString(), event: 'claim_created',
-      actor_type: 'agent', actor_id: agentId,
-      run_id, task_ref: taskRef, agent_id: agentId,
-      payload: { lease_expires_at },
-    }]);
     atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
 
     return { run_id, lease_expires_at };

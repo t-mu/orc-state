@@ -111,6 +111,8 @@ describe('local daemon control API', () => {
     expect(await master.reviseTask('app/remote-task', 1, { priority: 'high' })).toMatchObject({ changed: true, task: { spec_revision: 2, priority: 'high' } });
     await expect(master.reviseTask('app/remote-task', 1, { priority: 'low' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
     await expect(master.getTask('app/missing')).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    await expect(master.createTask({ feature: 'app', title: 'Remote task' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
+    await expect(master.createTask({ feature: 'app', title: 'Bad', priority: 'urgent' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(new ControlClient(dir, { sessionToken: 'session-a' }).createTask({ feature: 'app', title: 'Worker task' }))
       .rejects.toMatchObject({ code: 'forbidden', status: 403 });
     expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);

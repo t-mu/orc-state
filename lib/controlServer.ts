@@ -16,7 +16,7 @@ import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
 import { listAgents } from './agentRegistry.ts';
 import { RevisionConflictError } from './projectTaskStore.ts';
-import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask } from './projectTasks.ts';
+import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
@@ -61,13 +61,14 @@ function taskAuthor(stateDir: string, credential: string): string {
   return principal.agentId;
 }
 
-/** Map storage-neutral task API failures to protocol errors. */
+/** Map storage-neutral task API failures to protocol errors; anything unexpected is internal. */
 function taskError(error: unknown): ControlError {
   if (error instanceof ControlError) return error;
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof RevisionConflictError || message.startsWith('Task already exists')) return new ControlError('conflict', message, 409);
   if (message.startsWith('Task not found')) return new ControlError('not_found', message, 404);
-  return new ControlError('bad_request', message, 400);
+  if (error instanceof TaskInputError) return new ControlError('bad_request', message, 400);
+  return classify(error);
 }
 
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
@@ -306,7 +307,10 @@ export async function startControlServer(stateDir: string, options: ControlServe
           if (!task) throw new Error(`Task not found: ${ref}`);
           return ok({ task: describeProjectTask(task) });
         }
-        if (req.method === 'GET') return ok({ revisions: store.listRevisions(ref!) });
+        if (req.method === 'GET') {
+          if (!store.getTask(ref!)) throw new Error(`Task not found: ${ref}`);
+          return ok({ revisions: store.listRevisions(ref!) });
+        }
         if (req.method === 'POST') {
           const actor = taskAuthor(stateDir, actorCredential(req));
           const body = await readBody(req);

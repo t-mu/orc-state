@@ -179,18 +179,19 @@ These are available for manual intervention and debugging.
 
 | Command | Description |
 |---------|-------------|
-| `task-create` | Register a task from an existing markdown spec in `backlog/`. |
+| `task-create` | Register a task from an existing markdown spec in `backlog/`. In a project state directory (one with `runtime.db`) it creates a database-only task instead, and no spec file is read. |
 | `task-mark-done <task-ref>` | Mark a task done. Updates spec frontmatter and runtime state. |
 | `task-reset <task-ref>` | Reset a task to `todo`, cancelling any active claims. |
 | `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
 | `delegate` | Dispatch a task to an available worker agent. |
+| `project task <list\|show\|revisions\|create\|edit>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`. All accept `--project=<id>` and `--actor-id=<id>`. See configuration.md → Project tasks. |
 | `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
 **Flags:**
 
 | Command | Flags |
 |---------|-------|
-| `task-create` | `--feature=<ref>` `--title=<text>` `[--ref=<slug>]` `[--task-type=implementation\|refactor]` `[--description=<text>]` `[--ac=<criterion>]` `[--depends-on=<task-ref>]` `[--owner=<agent_id>]` `[--required-capabilities=<cap>]` `[--required-provider=<provider>]` |
+| `task-create` | `--feature=<ref>` `--title=<text>` `[--ref=<slug>]` `[--task-type=implementation\|refactor]` `[--description=<text>]` `[--ac=<criterion>]` `[--depends-on=<task-ref>]` `[--owner=<agent_id>]` `[--required-capabilities=<cap>]` `[--required-provider=<provider>]` `[--body-file=<path>]` (project state directories only) |
 | `task-mark-done` | `<task-ref>` `[--actor-id=<id>]` |
 | `task-reset` | `<task-ref>` `[--actor-id=<id>]` |
 | `task-unblock` | `<task-ref>` `[--reason=<text>]` |

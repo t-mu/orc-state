@@ -571,6 +571,11 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 | `POST` | `/v1/messages` | Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |
 | `GET` | `/v1/messages?include_consumed=1` | Caller mailbox `{ messages }`; consumed messages are omitted by default |
 | `POST` | `/v1/messages/<id>/consume` | Idempotently acknowledge a mailbox item -> `{ message }` |
+| `GET` | `/v1/tasks` | Project state directories only (else `404 not_found`): `{ tasks }`, each with `spec_revision`, `content_hash` and `body_markdown` |
+| `GET` | `/v1/tasks/<ref>` | `{ task }`; unknown ref -> `404 not_found`. Encode the ref (`app%2Flogin`) |
+| `GET` | `/v1/tasks/<ref>/revisions` | `{ revisions }` (immutable, oldest first, without bodies); unknown ref -> `404` |
+| `POST` | `/v1/tasks` | Master session only (else `403 forbidden`). Create a database-only task `{ feature?, ref?, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, required_provider?, ... }` -> `201 { task }`; existing ref -> `409 conflict`; invalid field -> `400 bad_request` |
+| `POST` | `/v1/tasks/<ref>/revisions` | Master session only. Edit `{ expected_revision, ...fields }` -> `{ task, changed }`; a stale `expected_revision` -> `409 conflict`; `status` is never editable |
 
 Message kinds are `message`, `question`, `review_request`, `feedback`, and
 `result`. A review request needs explicit artifact refs; a result needs a

@@ -61,7 +61,10 @@ function runTaskCommand(args: string[], stateDir: string): unknown {
     if (!task) throw new Error(`Task not found: ${values[0]}`);
     return describeProjectTask(task);
   }
-  if (verb === 'revisions' && values.length === 1) return store.listRevisions(values[0]);
+  if (verb === 'revisions' && values.length === 1) {
+    if (!store.getTask(values[0])) throw new Error(`Task not found: ${values[0]}`);
+    return store.listRevisions(values[0]);
+  }
   const fieldFlags = [...Object.keys(TASK_FIELD_FLAGS), 'body-file', 'depends-on', 'ac', 'project', 'actor-id'];
   if (verb === 'create' && values.length === 0) return describeProjectTask(createProjectTask(stateDir, taskInput(rest, fieldFlags), actor));
   if (verb === 'edit' && values.length === 1) {
