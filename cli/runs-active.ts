@@ -14,7 +14,9 @@ import { boolFlag } from '../lib/args.ts';
 import { cliError, formatErrorMessage } from './shared.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { ControlClient } from '../lib/controlClient.ts';
-import { projectActiveRuns, type ActiveRunRow } from '../lib/statusProjection.ts';
+import { projectActiveRuns, withProjectTaskState, type ActiveRunRow } from '../lib/statusProjection.ts';
+import { readProjectDescriptor } from '../lib/projectContext.ts';
+import { formatProjectIdentity } from '../lib/projectHealth.ts';
 import type { RunActivityDetail } from '../lib/runActivity.ts';
 
 const asJson = boolFlag('json');
@@ -30,14 +32,17 @@ if (boolFlag('via-control')) {
 } else {
   const activity = readRunActivity();
   eventReadError = activity.eventReadError;
-  rows = projectActiveRuns(readClaims(STATE_DIR).claims, activity.runActivity);
+  // Same overlay as the control snapshot, so both paths return the same row shape.
+  rows = withProjectTaskState(STATE_DIR, { cursor: 0, generated_at: new Date().toISOString(), runs: projectActiveRuns(readClaims(STATE_DIR).claims, activity.runActivity), sessions: [] }).runs;
 }
+const project = readProjectDescriptor(STATE_DIR);
 
 if (asJson) {
-  console.log(JSON.stringify({ total: rows.length, runs: rows, event_read_error: eventReadError || null }, null, 2));
+  console.log(JSON.stringify({ project: project ? { id: project.id, name: project.name, target_repo_root: project.target_repo_root } : null, total: rows.length, runs: rows, event_read_error: eventReadError || null }, null, 2));
   process.exit(0);
 }
 
+console.log(formatProjectIdentity(project));
 console.log(`Active runs: ${rows.length}`);
 if (rows.length === 0) {
   console.log('(none)');
@@ -46,7 +51,7 @@ if (rows.length === 0) {
 
 for (const r of rows) {
   console.log(
-    `${r.run_id} ${r.task_ref} ${r.agent_id} state=${r.state} awaiting_start=${String(r.awaiting_run_started)} age=${r.age_seconds ?? '?'}s idle=${r.idle_seconds ?? '?'}s source=${r.last_activity_source ?? 'n/a'}`,
+    `${r.run_id} ${r.task_ref} ${r.agent_id} state=${r.state}${r.task_status ? ` task=${r.task_status}` : ''}${r.spec_revision ? ` rev=${r.spec_revision}` : ''} awaiting_start=${String(r.awaiting_run_started)} age=${r.age_seconds ?? '?'}s idle=${r.idle_seconds ?? '?'}s source=${r.last_activity_source ?? 'n/a'}`,
   );
 }
 

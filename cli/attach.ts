@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { getAgent } from '../lib/agentRegistry.ts';
 import { createAdapter } from '../adapters/index.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { readProjectDescriptor } from '../lib/projectContext.ts';
+import { formatProjectIdentity } from '../lib/projectHealth.ts';
 
 const agentId = process.argv[2];
 
@@ -34,6 +36,7 @@ if (!agent.session_handle) {
 }
 
 const adapter = createAdapter(agent.provider);
+console.error(formatProjectIdentity(readProjectDescriptor(STATE_DIR)));
 console.error(`Reading output log for ${agentId} ...`);
 const alive = await adapter.heartbeatProbe(agent.session_handle);
 if (!alive) {

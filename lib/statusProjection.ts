@@ -88,7 +88,7 @@ export function readControlSnapshot(stateDir: string, now = Date.now()): Control
 }
 
 /** Overlay project SQLite task status and pinned revisions onto the run rows. */
-function withProjectTaskState(stateDir: string, snapshot: Omit<ControlSnapshot, 'project'>): ControlSnapshot {
+export function withProjectTaskState(stateDir: string, snapshot: Omit<ControlSnapshot, 'project'>): ControlSnapshot {
   const descriptor = readProjectDescriptor(stateDir);
   const store = projectTaskStoreFor(stateDir);
   const runs = store ? snapshot.runs.map((run) => {

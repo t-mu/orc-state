@@ -158,26 +158,33 @@ export function buildNodeArgs(subcommand: string, scriptPath: string, rest: stri
 
 /**
  * Strip the global `--project=<id>` / `--project <id>` selector. It may come
- * before the subcommand or among its arguments; `orc project` parses its own.
+ * before the subcommand or among its arguments, but not after a `--`
+ * separator. `orc project` parses its own `--project=<id>`, so for it the
+ * selector is passed through in that form.
  */
 export function extractProjectSelector(argv: string[]): { argv: string[]; projectId: string | null } {
   const out: string[] = [];
   let projectId: string | null = null;
-  const subcommandIndex = argv.findIndex((arg, index) => !arg.startsWith('-') && argv[index - 1] !== '--project');
-  const ownsFlag = argv[subcommandIndex] === 'project';
+  let subcommand: string | null = null;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (ownsFlag && index > subcommandIndex) { out.push(arg); continue; }
+    if (arg === '--') { out.push(...argv.slice(index)); break; }
+    let value: string | null = null;
     if (arg === '--project') {
-      projectId = argv[index + 1] ?? '';
+      value = argv[index + 1] ?? '';
       index += 1;
     } else if (arg.startsWith('--project=')) {
-      projectId = arg.slice('--project='.length);
-    } else {
-      out.push(arg);
+      value = arg.slice('--project='.length);
     }
+    if (value === null) {
+      if (subcommand === null && !arg.startsWith('-')) subcommand = arg;
+      out.push(arg);
+      continue;
+    }
+    if (!value.trim() || value.startsWith('-')) throw new Error('--project requires a project id');
+    if (subcommand === 'project') out.push(`--project=${value}`);
+    else projectId = value;
   }
-  if (projectId !== null && !projectId.trim()) throw new Error('--project requires a project id');
   return { argv: out, projectId };
 }
 
@@ -190,6 +197,10 @@ export function main(argv: string[]): number {
     return 1;
   }
   const [subcommand, ...rest] = selector.argv;
+  if (selector.projectId && !subcommand) {
+    console.error('--project needs a subcommand, e.g. orc --project=<id> status');
+    return 1;
+  }
 
   if (subcommand === '--version' || subcommand === '-v') {
     console.log(readVersion());
@@ -227,7 +238,10 @@ export function main(argv: string[]): number {
 
   const scriptPath = resolveScript(script);
   // `--project` is the highest-precedence selector: it becomes the child's ORC_PROJECT_ID.
-  const env = selector.projectId ? { ...process.env, ORC_PROJECT_ID: selector.projectId } : process.env;
+  // Inherited legacy paths (a worker's ORC_STATE_DIR bridge, an operator's ORC_HOME) must not redirect it.
+  const env = selector.projectId
+    ? { ...process.env, ORC_PROJECT_ID: selector.projectId, ORC_STATE_DIR: '', ORC_HOME: '', ORC_REPO_ROOT: '', ORC_CONFIG_FILE: '' }
+    : process.env;
   const result = spawnSync(process.execPath, buildNodeArgs(subcommand, scriptPath, rest), { stdio: 'inherit', env });
   return result.status ?? 1;
 }

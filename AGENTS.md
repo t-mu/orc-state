@@ -220,6 +220,8 @@ Outside the blessed workflow, commands are for observability, setup, or recovery
 ### Orchestrator
 
 ```bash
+# Any command: --project=<id> selects a registered project (highest precedence)
+
 # Blessed status / health
 orc status                                        # print agent/task/claim table
 orc doctor                                        # validate state files, check provider keys/binaries

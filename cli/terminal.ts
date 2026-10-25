@@ -5,6 +5,8 @@ import { boolFlag } from '../lib/args.ts';
 import { ControlClient } from '../lib/controlClient.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { cliError } from './shared.ts';
+import { readProjectDescriptor } from '../lib/projectContext.ts';
+import { formatProjectIdentity } from '../lib/projectHealth.ts';
 
 const [kind, runId] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 if ((kind !== 'provider' && kind !== 'shell') || !runId) {
@@ -13,6 +15,8 @@ if ((kind !== 'provider' && kind !== 'shell') || !runId) {
 }
 
 const client = new ControlClient(STATE_DIR);
+// Identity on stderr: stdout carries the raw terminal stream.
+console.error(formatProjectIdentity(readProjectDescriptor(STATE_DIR)));
 const writable = boolFlag('write');
 let leaseId: string | null = null;
 let raw = false;

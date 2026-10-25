@@ -43,7 +43,12 @@ describe('global --project selector', () => {
     expect(extractProjectSelector(['--project=a', 'status', '--json'])).toEqual({ argv: ['status', '--json'], projectId: 'a' });
     expect(extractProjectSelector(['status', '--project', 'b', '--json'])).toEqual({ argv: ['status', '--json'], projectId: 'b' });
     expect(extractProjectSelector(['project', 'show', '--project=c'])).toEqual({ argv: ['project', 'show', '--project=c'], projectId: null });
+    // orc project only parses the `=` form, so the space form is normalized for it.
+    expect(extractProjectSelector(['project', 'show', '--project', 'c'])).toEqual({ argv: ['project', 'show', '--project=c'], projectId: null });
+    expect(extractProjectSelector(['run-fail', '--', '--project', 'x'])).toEqual({ argv: ['run-fail', '--', '--project', 'x'], projectId: null });
     expect(() => extractProjectSelector(['status', '--project='])).toThrow('requires a project id');
+    expect(() => extractProjectSelector(['status', '--project', '--json'])).toThrow('requires a project id');
+    expect(() => extractProjectSelector(['status', '--project'])).toThrow('requires a project id');
   });
 
   it('builds Codex MCP overrides that carry the project identity', () => {
@@ -91,6 +96,18 @@ describe('switching between registered projects', () => {
       expect(readdirSync(root).sort()).toEqual(['.git', 'README.md']);
       expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe('');
     }
+  });
+
+  it('lets --project override an inherited state-dir bridge from another project', () => {
+    const alpha = repo('alpha');
+    const beta = repo('beta');
+    const a = JSON.parse(orc(temp, ['project', 'add', alpha]).stdout) as { id: string; stateDir: string };
+    const b = JSON.parse(orc(temp, ['project', 'add', beta]).stdout) as { id: string };
+    const status = orc(temp, ['--project', b.id, 'status', '--json'], { ORC_STATE_DIR: a.stateDir, ORC_PROJECT_ID: a.id });
+    expect((JSON.parse(status.stdout) as { project: { id: string } }).project.id).toBe(b.id);
+    expect(orc(temp, ['--project', b.id]).status).toBe(1);
+    const runs = JSON.parse(orc(beta, ['runs-active', '--json']).stdout) as { project: { id: string }; runs: unknown[] };
+    expect(runs).toMatchObject({ project: { id: b.id }, runs: [] });
   });
 
   it('rejects an unknown --project instead of falling back to another project', () => {

@@ -12,6 +12,8 @@ import { readClaims, readBacklog, findTask } from '../lib/stateReader.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { boolFlag } from '../lib/args.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
+import { readProjectDescriptor } from '../lib/projectContext.ts';
+import { formatProjectIdentity } from '../lib/projectHealth.ts';
 
 const asJson = boolFlag('json');
 const runId = process.argv.slice(2).find((a) => !a.startsWith('-'));
@@ -61,6 +63,7 @@ if (asJson) {
   process.exit(0);
 }
 
+console.log(formatProjectIdentity(readProjectDescriptor(STATE_DIR)));
 console.log(`Run: ${claim.run_id}`);
 console.log(`  task:        ${claim.task_ref}${taskTitle ? ` — ${taskTitle}` : ''}`);
 console.log(`  agent:       ${claim.agent_id}`);
