@@ -60,7 +60,7 @@ describe('cli/orc.ts', () => {
   it('dispatches watch with tsx/esm when running from source', () => {
     expect(buildNodeArgs('watch', '/tmp/watch.ts', ['--once'])).toEqual([
       '--import',
-      'tsx/esm',
+      import.meta.resolve('tsx/esm'),
       '/tmp/watch.ts',
       '--once',
     ]);

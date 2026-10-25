@@ -151,7 +151,9 @@ const INSPECTION = [
 
 export function buildNodeArgs(subcommand: string, scriptPath: string, rest: string[]): string[] {
   if (subcommand === 'watch' && scriptPath.endsWith('.ts')) {
-    return ['--import', 'tsx/esm', scriptPath, ...rest];
+    // Resolved from orc's own install: a bare `tsx/esm` would resolve from the
+    // caller's cwd, which for a registered project is the target repository.
+    return ['--import', import.meta.resolve('tsx/esm'), scriptPath, ...rest];
   }
   return [scriptPath, ...rest];
 }
