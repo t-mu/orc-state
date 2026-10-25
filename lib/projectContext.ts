@@ -53,14 +53,20 @@ export function readMigrationMarker(legacyStateDir: string): MigrationMarker | n
   }
 }
 
-/** The status of a project's migration from a legacy installation, or null when it was not migrated. */
-export function projectMigrationStatus(stateDir: string): string | null {
+/** A project's migration record, or null when the project was not migrated (or the record is unreadable). */
+export function readMigrationRecord(stateDir: string): { status: string; source_root?: string; source_state_dir?: string } | null {
   try {
     const parsed = JSON.parse(readFileSync(join(stateDir, MIGRATION_RECORD), 'utf8')) as Record<string, unknown>;
-    return typeof parsed.status === 'string' ? parsed.status : 'unknown';
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unknown';
+    return { ...parsed, status: typeof parsed.status === 'string' ? parsed.status : 'unknown' } as { status: string; source_root?: string; source_state_dir?: string };
+  } catch {
+    return null;
   }
+}
+
+/** The status of a project's migration from a legacy installation, or null when it was not migrated. */
+export function projectMigrationStatus(stateDir: string): string | null {
+  if (!existsSync(join(stateDir, MIGRATION_RECORD))) return null;
+  return readMigrationRecord(stateDir)?.status ?? 'unknown';
 }
 
 function isActivatable(record: ProjectRecord): boolean {
@@ -68,15 +74,40 @@ function isActivatable(record: ProjectRecord): boolean {
   return status === null || status === 'cut_over';
 }
 
-/** The nearest legacy attached or sibling layout between cwd and the repository root. */
-function findLegacyLayout(cwd: string, gitRoot: string): string | null {
+/** The nearest legacy attached or sibling layout from cwd up to `top` (the repository root, or the filesystem root). */
+function findLegacyLayout(cwd: string, top: string | null): string | null {
   let dir = resolve(cwd);
-  if (!within(gitRoot, dir)) dir = gitRoot;
+  if (top && !within(top, dir)) dir = top;
   for (;;) {
     if (existsSync(join(dir, '.orc-state')) || existsSync(join(dir, LEGACY_CONFIG))) return dir;
-    if (dir === gitRoot || dirname(dir) === dir) return null;
+    if (dir === top || dirname(dir) === dir) return null;
     dir = dirname(dir);
   }
+}
+
+/**
+ * The cut-over project a legacy installation root was migrated to: named by
+ * the marker in its state directory, or, once that directory has been
+ * cleaned up, by the project's own migration record.
+ */
+function migratedProject(registry: ProjectRegistry, legacyRoot: string): ProjectRecord | null {
+  const marker = readMigrationMarker(join(legacyRoot, '.orc-state'));
+  if (marker) {
+    const record = registry.get(marker.project_id);
+    if (record && isActivatable(record)) return record;
+  }
+  return registry.list().find((project) => {
+    const migration = readMigrationRecord(project.stateDir);
+    return migration?.status === 'cut_over' && migration.source_root === legacyRoot;
+  }) ?? null;
+}
+
+/** The legacy state directory an explicit legacy override points at. */
+function legacyOverrideStateDir(env: NodeJS.ProcessEnv): string {
+  if (env.ORC_STATE_DIR) return resolve(env.ORC_STATE_DIR);
+  if (env.ORC_HOME) return join(resolve(env.ORC_HOME), '.orc-state');
+  if (env.ORC_CONFIG_FILE) return join(dirname(resolve(env.ORC_CONFIG_FILE)), '.orc-state');
+  return join(resolve(env.ORC_REPO_ROOT!), '.orc-state');
 }
 
 function toActive(record: ProjectRecord, source: ActiveProject['source']): ActiveProject {
@@ -97,7 +128,8 @@ function withRegistry<T>(env: NodeJS.ProcessEnv, operation: (registry: ProjectRe
  * an explicit `ORC_PROJECT_ID` (set by `--project`, by an operator, or by the
  * coordinator for its workers) wins and must be registered; explicit legacy
  * path overrides (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`,
- * `ORC_CONFIG_FILE`) keep legacy mode; inside a Git repository its canonical
+ * `ORC_CONFIG_FILE`) keep legacy mode unless they name a migrated legacy
+ * state directory, which selects its project; inside a Git repository its canonical
  * root selects the registered project (an ambiguous match is an error), unless
  * the repository still carries a legacy orc layout (which selects its project
  * only once migrated); outside every repository the selected project applies.
@@ -118,7 +150,16 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
     if (!isActivatable(record)) throw new Error(`Project ${explicitId} is still being migrated; rerun orc project migrate --execute to finish`);
     return toActive(record, 'environment');
   }
-  if (env.ORC_STATE_DIR || env.ORC_HOME || env.ORC_REPO_ROOT || env.ORC_CONFIG_FILE) return null;
+  if (env.ORC_STATE_DIR || env.ORC_HOME || env.ORC_REPO_ROOT || env.ORC_CONFIG_FILE) {
+    // An override naming a migrated legacy state directory (a stale MCP config, an old shell) reaches its project instead.
+    const legacyState = legacyOverrideStateDir(env);
+    const marker = readMigrationMarker(legacyState);
+    if (!marker || !existsSync(registryFile)) return null;
+    return withRegistry(env, (registry) => {
+      const record = registry.get(marker.project_id);
+      return record && isActivatable(record) ? toActive(record, 'environment') : null;
+    });
+  }
   if (!existsSync(registryFile)) return null;
   let gitRoot: string | null;
   try {
@@ -126,13 +167,14 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
   } catch {
     gitRoot = null;
   }
-  const legacyDir = gitRoot ? findLegacyLayout(cwd, gitRoot) : null;
+  const legacyDir = findLegacyLayout(cwd, gitRoot);
   return withRegistry(env, (registry) => {
     // A legacy layout keeps legacy mode until its migration is cut over; then it names its project.
     if (legacyDir) {
-      const marker = readMigrationMarker(join(legacyDir, '.orc-state'));
-      const record = marker ? registry.get(marker.project_id) : null;
-      return record && isActivatable(record) ? toActive(record, 'cwd') : null;
+      // From a linked worktree the layout found may be the worktree's checked-in config; the main checkout migrated.
+      const record = migratedProject(registry, legacyDir) ?? (gitRoot && gitRoot !== legacyDir ? migratedProject(registry, gitRoot) : null);
+      if (record) return toActive(record, 'cwd');
+      if (gitRoot) return null;
     }
     if (gitRoot == null) {
       const selected = registry.selectedId();

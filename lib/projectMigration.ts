@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,7 +12,7 @@ import { isPidAlive } from './processIdentity.ts';
 import { MIGRATION_MARKER, MIGRATION_RECORD, projectMigrationStatus, readMigrationMarker, type MigrationMarker } from './projectContext.ts';
 import { canonicalProjectGitRoot, validateProjectSetting, type ProjectRecord, type ProjectRegistry, type SettingValue } from './projectRegistry.ts';
 import { closeProjectTaskStores, initProjectTaskStore, prepareProjectTask, refreshBacklogProjection, type TaskAuthoringInput } from './projectTasks.ts';
-import { parseBodyTitle, ProjectTaskStore, type TaskDispatchState } from './projectTaskStore.ts';
+import { parseBodyTitle, ProjectTaskStore, revisionContentHash, type TaskDispatchState } from './projectTaskStore.ts';
 import { ensureStateInitialized } from './stateInit.ts';
 import { importPlanMarkdown, parseTaskMarkdown } from './taskMarkdown.ts';
 import type { Backlog, Task, TaskStatus } from '../types/backlog.ts';
@@ -86,6 +87,7 @@ interface MigrationPlan {
   tasks: PlannedTask[];
   plans: string[];
   existing: ProjectRecord | null;
+  fingerprint: string;
 }
 
 function within(root: string, path: string): boolean {
@@ -201,6 +203,36 @@ function coordinatorRunning(stateDir: string): number | null {
   } catch {
     return null;
   }
+}
+
+/** Tasks plus plans in a project's runtime.db, read without migrating its schema. */
+function projectContentCount(stateDir: string): number {
+  const counts = tableCounts(join(stateDir, 'runtime.db'));
+  return (counts?.tasks ?? 0) + (counts?.plan_documents ?? 0);
+}
+
+/** A digest of everything the migration reads, to detect a legacy installation that changed mid-migration. */
+function sourceFingerprint(installation: LegacyInstallation): string {
+  const hash = createHash('sha256');
+  const add = (path: string) => {
+    if (!existsSync(path)) return;
+    if (statSync(path).isDirectory()) {
+      for (const name of (readdirSync(path, { recursive: true }) as string[]).sort()) {
+        const file = join(path, name);
+        if (statSync(file).isFile()) { hash.update(file); hash.update(readFileSync(file)); }
+      }
+      return;
+    }
+    hash.update(path);
+    hash.update(readFileSync(path));
+  };
+  for (const name of ['backlog.json', ...JSON_FILES]) add(join(installation.stateDir, name));
+  for (const name of [...HISTORY_DIRS]) add(join(installation.stateDir, name));
+  if (installation.configFile) add(installation.configFile);
+  add(installation.backlogDir);
+  add(installation.plansDir);
+  for (const name of SQLITE_FILES) hash.update(JSON.stringify(tableCounts(join(installation.stateDir, name))));
+  return hash.digest('hex');
 }
 
 /** Read-only inventory of a legacy installation, with the task import it would perform. */
@@ -371,10 +403,7 @@ export function planMigration(path: string, registry: ProjectRegistry): Migratio
   if (existing && !markedProject) {
     const record = readMigrationRecord(existing.stateDir);
     if (existingStatus === null) {
-      const store = existsSync(join(existing.stateDir, 'runtime.db')) ? new ProjectTaskStore(existing.stateDir) : null;
-      const used = store ? store.listTasks().length + store.listPlans().length : 0;
-      store?.close();
-      if (used > 0) blocking('project_in_use', `project ${existing.name} (${existing.id}) is already registered for ${existing.canonicalGitRoot} and has its own tasks or plans`);
+      if (projectContentCount(existing.stateDir) > 0) blocking('project_in_use', `project ${existing.name} (${existing.id}) is already registered for ${existing.canonicalGitRoot} and has its own tasks or plans`);
     } else if (record?.source_state_dir !== installation.stateDir) {
       blocking('project_in_use', `project ${existing.name} (${existing.id}) was migrated from another installation (${String(record?.source_state_dir)})`);
     }
@@ -403,7 +432,7 @@ export function planMigration(path: string, registry: ProjectRegistry): Migratio
     issues,
     blocking: issues.filter((issue) => issue.severity === 'blocking').length,
   };
-  return { installation, inventory, tasks, plans, existing };
+  return { installation, inventory, tasks, plans, existing, fingerprint: sourceFingerprint(installation) };
 }
 
 /** Create every planned task, with its runtime status as its first transition, in one transaction. */
@@ -437,6 +466,8 @@ interface MigrationRecord {
   updated_at: string;
   cut_over_at?: string;
   mismatches?: string[];
+  /** Project-scoped setting keys this migration imported; a retry replaces them. */
+  settings?: string[];
 }
 
 function readMigrationRecord(stateDir: string): MigrationRecord | null {
@@ -516,7 +547,11 @@ function verifyParity(plan: MigrationPlan, stateDir: string, registry: ProjectRe
     const task = imported.get(expected.ref);
     if (!task) { mismatches.push(`${expected.ref}: missing`); continue; }
     const { spec } = prepareProjectTask({ getTask: () => null }, expected.input, 'human');
+    const title = spec.title ?? parseBodyTitle(spec.bodyMarkdown);
+    // The revision hash covers the whole definition: title, body, metadata, priority, provider and dependencies.
+    const metadata = { ...spec.metadata, priority: spec.priority ?? 'normal', required_provider: spec.requiredProvider ?? null, depends_on: [...new Set(spec.dependsOn ?? [])].sort() };
     const checks: Array<[string, unknown, unknown]> = [
+      ['definition', revisionContentHash(title ?? '', spec.bodyMarkdown, metadata), task.contentHash],
       ['status', expected.status, task.status],
       ['title', spec.title ?? parseBodyTitle(spec.bodyMarkdown), task.title],
       ['body', spec.bodyMarkdown, task.bodyMarkdown],
@@ -524,6 +559,9 @@ function verifyParity(plan: MigrationPlan, stateDir: string, registry: ProjectRe
       ['attempt_count', expected.dispatch.attemptCount, task.attemptCount],
       ['owner', expected.dispatch.owner, task.dispatch.owner],
       ['planning_state', expected.dispatch.planningState, task.dispatch.planningState],
+      ['delegated_by', expected.dispatch.delegatedBy, task.dispatch.delegatedBy],
+      ['task_type', expected.dispatch.taskType, task.dispatch.taskType],
+      ['requeue_eligible_after', expected.dispatch.requeueEligibleAfter, task.dispatch.requeueEligibleAfter],
       ['blocked_reason', expected.blockedReason, task.blockedReason],
     ];
     for (const [field, want, got] of checks) if (want !== got) mismatches.push(`${expected.ref}: ${field} expected ${JSON.stringify(want)}, found ${JSON.stringify(got)}`);
@@ -541,9 +579,11 @@ function verifyParity(plan: MigrationPlan, stateDir: string, registry: ProjectRe
     if (store.getPlan(planId)?.bodyMarkdown !== readFileSync(file, 'utf8')) mismatches.push(`plan ${planId}: content differs from ${file}`);
   }
   const settings = registry.settings(projectId);
-  for (const [key, value] of Object.entries(plan.inventory.settings.importable)) {
-    if (settings[key] !== value) mismatches.push(`setting ${key}: expected ${JSON.stringify(value)}, found ${JSON.stringify(settings[key])}`);
+  for (const key of new Set([...Object.keys(settings), ...Object.keys(plan.inventory.settings.importable)])) {
+    const want = plan.inventory.settings.importable[key];
+    if (settings[key] !== want) mismatches.push(`setting ${key}: expected ${JSON.stringify(want)}, found ${JSON.stringify(settings[key])}`);
   }
+  if (sourceFingerprint(plan.installation) !== plan.fingerprint) mismatches.push('the legacy installation changed during the migration; rerun it once nothing is writing to it');
   return mismatches;
 }
 
@@ -573,18 +613,42 @@ export function migrateLegacyInstallation(path: string, registry: ProjectRegistr
   if (!execute) return { status: 'dry_run', project: plan.existing, inventory };
   if (inventory.blocking > 0) return { status: 'blocked', project: plan.existing, inventory };
 
+  // Hold the legacy coordinator lock so a legacy coordinator cannot start while its state is copied.
+  const lockFile = join(installation.stateDir, 'coordinator.pid');
+  try {
+    writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), migration: true }), { flag: 'wx' });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || coordinatorRunning(installation.stateDir)) {
+      inventory.issues.push({ severity: 'blocking', code: 'coordinator_running', message: 'the legacy coordinator lock is held; stop the coordinator and retry' });
+      inventory.blocking += 1;
+      return { status: 'blocked', project: plan.existing, inventory };
+    }
+    // A stale lock from a dead coordinator.
+    writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), migration: true }));
+  }
+  try {
+    return executeMigration(plan, registry, name);
+  } finally {
+    rmSync(lockFile, { force: true });
+  }
+}
+
+function executeMigration(plan: MigrationPlan, registry: ProjectRegistry, name: string | undefined): MigrationResult {
+  const { installation, inventory } = plan;
   closeProjectTaskStores();
   closeAllDatabases();
   closeMemoryDb();
-  const project = plan.existing ?? registry.add(installation.targetRepoRoot, name);
   const now = new Date().toISOString();
-  const previous = readMigrationRecord(project.stateDir);
-  const record: MigrationRecord = {
+  const recordFor = (project: ProjectRecord, previous: MigrationRecord | null): MigrationRecord => ({
     status: 'importing', project_id: project.id, source_root: installation.root, source_state_dir: installation.stateDir,
     layout: installation.layout, target_repo_root: installation.targetRepoRoot,
     backup_dir: previous?.backup_dir && existsSync(previous.backup_dir) ? previous.backup_dir : null,
     attempts: (previous?.attempts ?? 0) + 1, started_at: previous?.started_at ?? now, updated_at: now,
-  };
+    ...(previous?.settings ? { settings: previous.settings } : {}),
+  });
+  // A new project carries its migration record before it is registered, so it is never active half-imported.
+  const project = plan.existing ?? registry.add(installation.targetRepoRoot, name, (created) => writeMigrationRecord(created.stateDir, recordFor(created, null)));
+  const record = plan.existing ? recordFor(project, readMigrationRecord(project.stateDir)) : recordFor(project, null);
   writeMigrationRecord(project.stateDir, record);
   if (!record.backup_dir) {
     record.backup_dir = join(project.stateDir, 'migration-backup', now.replace(/[:.]/g, '-'));
@@ -602,7 +666,10 @@ export function migrateLegacyInstallation(path: string, registry: ProjectRegistr
   const store = initProjectTaskStore(project.stateDir);
   importPlannedTasks(store, plan.tasks);
   for (const file of plan.plans) importPlanMarkdown(project.stateDir, file);
+  for (const key of record.settings ?? []) registry.unsetSetting(key, project.id);
   for (const [key, value] of Object.entries(inventory.settings.importable)) registry.setSetting(key, value, project.id);
+  record.settings = Object.keys(inventory.settings.importable);
+  writeMigrationRecord(project.stateDir, record);
   refreshBacklogProjection(project.stateDir);
 
   const mismatches = verifyParity(plan, project.stateDir, registry, project.id);
@@ -651,12 +718,13 @@ export function migrationCleanupReport(path: string, registry: ProjectRegistry):
     items.push({ path: installation.worktreesDir, kind: 'worktrees_dir', note: 'legacy run worktrees; new runs use the project state directory' });
     commands.push(`git -C ${quote(installation.targetRepoRoot)} worktree prune`, `rm -r ${quote(installation.worktreesDir)}`);
   }
+  // Specs, plans and config go before the state directory that holds the migration marker.
   const owned: Array<[string, string, string]> = [
-    [installation.stateDir, 'state_dir', 'legacy state; copied into the project and backed up'],
     [installation.backlogDir, 'backlog_dir', 'task specs; imported into project SQLite (export with orc project task export)'],
     [installation.plansDir, 'plans_dir', 'plans; imported into project SQLite (export with orc project plan export)'],
   ];
   if (installation.configFile) owned.push([installation.configFile, 'config_file', 'settings; imported into the project registry']);
+  owned.push([installation.stateDir, 'state_dir', 'legacy state; copied into the project and backed up']);
   for (const [target, kind, note] of owned) {
     if (!existsSync(target)) continue;
     items.push({ path: target, kind, note });

@@ -168,7 +168,11 @@ if (isMainModule(process.argv[1], import.meta.url)) {
   let registry: ProjectRegistry | undefined;
   try {
     registry = new ProjectRegistry();
-    console.log(JSON.stringify(runProjectCommand(process.argv.slice(2), registry), null, 2));
+    const result = runProjectCommand(process.argv.slice(2), registry);
+    console.log(JSON.stringify(result, null, 2));
+    // A migration that was refused or failed verification changed nothing it would cut over.
+    const status = (result as { status?: unknown } | null)?.status;
+    if (status === 'blocked' || status === 'verification_failed') process.exitCode = 1;
   } catch (error) {
     console.error((error as Error).message);
     process.exitCode = 1;

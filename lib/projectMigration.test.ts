@@ -220,7 +220,8 @@ describe('legacy installation migration', () => {
     legacyInstallation(root);
     // An earlier attempt registered the project and stopped mid-import.
     const project = registry.add(root);
-    writeFileSync(join(project.stateDir, MIGRATION_RECORD), JSON.stringify({ status: 'importing', project_id: project.id, source_state_dir: join(root, '.orc-state'), attempts: 1, backup_dir: null }));
+    writeFileSync(join(project.stateDir, MIGRATION_RECORD), JSON.stringify({ status: 'importing', project_id: project.id, source_state_dir: join(root, '.orc-state'), attempts: 1, backup_dir: null, settings: ['master.provider'] }));
+    registry.setSetting('master.provider', 'codex', project.id);
     expect(resolveActiveProject({ ORC_DATA_HOME: dataHome }, temp)).toBeNull();
     expect(() => resolveActiveProject({ ORC_DATA_HOME: dataHome, ORC_PROJECT_ID: project.id }, temp)).toThrow('still being migrated');
 
@@ -229,6 +230,33 @@ describe('legacy installation migration', () => {
     expect(result.project!.id).toBe(project.id);
     expect(projectTaskStoreFor(project.stateDir)!.listTasks()).toHaveLength(4);
     expect(JSON.parse(readFileSync(join(project.stateDir, MIGRATION_RECORD), 'utf8'))).toMatchObject({ status: 'cut_over', attempts: 2 });
+    // The earlier attempt's setting, no longer in the legacy config, is replaced.
+    expect(registry.settings(project.id)).toEqual({ default_provider: 'claude', 'worker_pool.max_workers': 3 });
+  });
+
+  it('keeps selecting the project after cleanup starts and through legacy overrides', () => {
+    const root = gitRepo('product');
+    const legacyState = legacyInstallation(root);
+    const { project } = migrateLegacyInstallation(root, registry, { execute: true });
+    // A stale MCP config or shell still naming the legacy state reaches the project.
+    expect(resolveActiveProject({ ORC_DATA_HOME: dataHome, ORC_STATE_DIR: legacyState }, temp)).toMatchObject({ id: project!.id, source: 'environment' });
+    expect(resolveActiveProject({ ORC_DATA_HOME: dataHome, ORC_HOME: root }, temp)).toMatchObject({ id: project!.id });
+    // The state directory (and its marker) removed first, config still present: never back to legacy mode.
+    rmSync(legacyState, { recursive: true });
+    expect(resolveActiveProject({ ORC_DATA_HOME: dataHome }, root)).toMatchObject({ id: project!.id });
+    // An unmigrated override keeps legacy mode.
+    expect(resolveActiveProject({ ORC_DATA_HOME: dataHome, ORC_STATE_DIR: join(temp, 'other') }, temp)).toBeNull();
+  });
+
+  it('refuses to execute while the legacy coordinator lock is held', () => {
+    const root = gitRepo('product');
+    const legacyState = legacyInstallation(root);
+    writeFileSync(join(legacyState, 'coordinator.pid'), JSON.stringify({ pid: process.pid }));
+    const result = migrateLegacyInstallation(root, registry, { execute: true });
+    expect(result.status).toBe('blocked');
+    expect(result.inventory.issues.map((issue) => issue.code)).toContain('coordinator_running');
+    expect(registry.list()).toEqual([]);
+    expect(existsSync(join(legacyState, 'coordinator.pid'))).toBe(true);
   });
 
   it('refuses to merge into a registered project that already has its own tasks', () => {
@@ -257,6 +285,18 @@ describe('legacy installation migration', () => {
     expect(readdirSync(target).sort()).toEqual(['.git', 'README.md']);
   });
 
+  it('selects the project from a sibling home that is not a Git checkout', () => {
+    const target = gitRepo('product');
+    const home = join(temp, 'plain-home');
+    mkdirSync(home);
+    legacyInstallation(home);
+    writeFileSync(join(home, 'orc-state.config.json'), JSON.stringify({ target_repo: '../product' }));
+    const result = migrateLegacyInstallation(home, registry, { execute: true });
+    expect(result.status).toBe('migrated');
+    expect(result.project!.canonicalGitRoot).toBe(target);
+    expect(resolveActiveProject({ ORC_DATA_HOME: dataHome }, join(home, 'backlog'))).toMatchObject({ id: result.project!.id, source: 'cwd' });
+  });
+
   it('reports what is left to clean up only after the cutover, and deletes nothing', () => {
     const root = gitRepo('product');
     legacyInstallation(root);
@@ -266,7 +306,7 @@ describe('legacy installation migration', () => {
     expect(() => migrationCleanupReport(root, registry)).toThrow('has not been migrated');
     migrateLegacyInstallation(root, registry, { execute: true });
     const report = migrationCleanupReport(root, registry);
-    expect(report.items.map((item) => item.kind)).toEqual(['git_worktree', 'worktrees_dir', 'state_dir', 'backlog_dir', 'plans_dir', 'config_file', 'gitignore_entry']);
+    expect(report.items.map((item) => item.kind)).toEqual(['git_worktree', 'worktrees_dir', 'backlog_dir', 'plans_dir', 'config_file', 'state_dir', 'gitignore_entry']);
     expect(report.commands[0]).toBe(`git -C '${root}' worktree remove '${join(root, '.worktrees', 'run-1')}'`);
     expect(existsSync(join(root, '.orc-state'))).toBe(true);
     expect(existsSync(join(root, '.worktrees', 'run-1'))).toBe(true);

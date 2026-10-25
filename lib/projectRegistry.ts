@@ -180,13 +180,15 @@ export class ProjectRegistry {
 
   close(): void { this.db.close(); }
 
-  add(path: string, name?: string): ProjectRecord {
+  /** `prepare` runs on the new state directory before the project becomes visible in the registry. */
+  add(path: string, name?: string, prepare?: (project: ProjectRecord) => void): ProjectRecord {
     const gitRoot = canonicalProjectGitRoot(path);
     const id = randomUUID();
     const stateDir = join(this.dataHome, 'projects', id);
     const project: ProjectRecord = { id, name: name?.trim() || gitRoot.split('/').at(-1) || id, canonicalGitRoot: gitRoot, stateDir, createdAt: new Date().toISOString() };
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     try {
+      prepare?.(project);
       this.db.prepare('INSERT INTO projects (id, name, git_root, state_dir, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(id, project.name, gitRoot, stateDir, project.createdAt);
       writeProjectDescriptor({ ...project, targetRepoRoot: gitRoot });
