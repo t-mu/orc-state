@@ -1,40 +1,57 @@
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveOrchestrationRoot, resolveTargetRepoRoot, isSiblingLayout } from './repoRoot.ts';
 import { logger } from './logger.ts';
+import { resolveActiveProject, type ActiveProject } from './projectContext.ts';
+
+// Project mode (plan 3): a registered project keeps every harness artifact in
+// its external state directory and runs Git against its registered target
+// repository. Null in the legacy attached and sibling layouts.
+export const ACTIVE_PROJECT: ActiveProject | null = resolveActiveProject();
 
 // Orchestration root: owns the config, state dir, backlog, plans, and
 // worktrees. In the single-repo (attached) layout this is the repo root.
 // With ORC_STATE_DIR set, the root is its parent — mirroring the
 // ORC_CONFIG_FILE convention below — so importing this module makes no git
 // calls when the ambient dir overrides are present (worker sessions, tests
-// that mock node:child_process).
-export const ORCHESTRATION_ROOT = process.env.ORC_STATE_DIR
-  ? resolve(process.env.ORC_STATE_DIR, '..')
-  : resolveOrchestrationRoot();
+// that mock node:child_process). In project mode it is the project state dir.
+export const ORCHESTRATION_ROOT = ACTIVE_PROJECT
+  ? (process.env.ORC_STATE_DIR ? resolve(process.env.ORC_STATE_DIR) : ACTIVE_PROJECT.stateDir)
+  : process.env.ORC_STATE_DIR
+    ? resolve(process.env.ORC_STATE_DIR, '..')
+    : resolveOrchestrationRoot();
 
 export const STATE_DIR = process.env.ORC_STATE_DIR
   ? resolve(process.env.ORC_STATE_DIR)
-  : resolve(ORCHESTRATION_ROOT, '.orc-state');
+  : ACTIVE_PROJECT ? ACTIVE_PROJECT.stateDir : resolve(ORCHESTRATION_ROOT, '.orc-state');
 
 export const EVENTS_FILE = resolve(STATE_DIR, 'events.db');
+
+// The orc installation itself (for locating its binary). In project mode the
+// coordinator has no orchestration repository to find it in.
+export const ORC_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Config lives at the orchestration root (parent of .orc-state/), not inside
-// the state dir. Use ORC_CONFIG_FILE to override the path explicitly.
+// the state dir. Use ORC_CONFIG_FILE to override the path explicitly. A
+// project has no config file; its settings come from the global registry.
 export const ORC_CONFIG_FILE = process.env.ORC_CONFIG_FILE
   ? resolve(process.env.ORC_CONFIG_FILE)
-  : resolve(STATE_DIR, '..', 'orc-state.config.json');
+  : ACTIVE_PROJECT ? resolve(STATE_DIR, 'orc-state.config.json') : resolve(STATE_DIR, '..', 'orc-state.config.json');
 export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 
 // Target repo root: the repository whose product code runs operate on.
-// Equals ORCHESTRATION_ROOT unless the config sets target_repo (sibling layout).
-export const TARGET_REPO_ROOT = resolveTargetRepoRoot(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
+// Equals ORCHESTRATION_ROOT unless the config sets target_repo (sibling
+// layout); in project mode it is the registered canonical Git root.
+export const TARGET_REPO_ROOT = ACTIVE_PROJECT
+  ? ACTIVE_PROJECT.targetRepoRoot
+  : resolveTargetRepoRoot(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
 
 // Sibling layout is active when the operator has configured a `target_repo`
 // (in orc-state.config.json) that resolves to a different directory from the
 // orchestration home. This is config-driven, NOT inferred from root divergence
 // — ORC_REPO_ROOT (a forcing override) and ORC_STATE_DIR can make the roots
 // differ without a real sibling target, which must not enable sibling mode.
-export const IS_SIBLING_LAYOUT = isSiblingLayout(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
+export const IS_SIBLING_LAYOUT = ACTIVE_PROJECT ? false : isSiblingLayout(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
 
 // ─── Repo-root call-site classification (authoritative; task 185) ────────────
 // Every consumer of a "repo root" is one of two kinds. This table is the
@@ -77,9 +94,10 @@ export const IS_SIBLING_LAYOUT = isSiblingLayout(ORC_CONFIG_FILE, ORCHESTRATION_
 // single-repo mode) and are handed to the tasks that own their test rewrites.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// In project mode these all live in the external project state directory.
 export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)
-  : resolve(ORCHESTRATION_ROOT, '.worktrees');
+  : resolve(ORCHESTRATION_ROOT, ACTIVE_PROJECT ? 'worktrees' : '.worktrees');
 
 export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
   ? resolve(process.env.ORC_BACKLOG_DIR)

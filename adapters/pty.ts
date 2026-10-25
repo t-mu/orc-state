@@ -145,6 +145,8 @@ export interface SandboxRootsOptions {
   stateDir: string;
   /** Repo whose `.git` backs the worktree (the target repo in sibling layout). */
   gitRepoRoot: string;
+  /** Project mode: the coordinator's control socket the worker may connect to. */
+  controlSocket?: string | null;
 }
 
 /**
@@ -166,9 +168,16 @@ export interface SandboxRootsOptions {
  * Roots already inside the cwd are dropped (e.g. a scout launched at the
  * orchestration root). Read-only (scouts) get no writable roots at all.
  */
+/** The control socket a project-mode worker was given (blank or absent in legacy mode). */
+export function controlSocketOf(config: Record<string, unknown>): string | null {
+  return (config.env as Record<string, string> | undefined)?.ORC_CONTROL_SOCKET || null;
+}
+
 export function sandboxExtraWritableRoots(opts: SandboxRootsOptions): string[] {
   if (opts.readOnly) return [];
-  const roots = [opts.stateDir, ...targetGitWritableRoots(opts.gitRepoRoot)];
+  // Only the socket itself, and only when it lies outside the state dir (a long state path).
+  const socket = opts.controlSocket && !isWithin(opts.stateDir, opts.controlSocket) ? [opts.controlSocket] : [];
+  const roots = [opts.stateDir, ...socket, ...targetGitWritableRoots(opts.gitRepoRoot)];
   return roots.filter((root) => !isWithin(opts.cwd, root));
 }
 
@@ -217,7 +226,8 @@ export function resolveLaunchCwd(config: Record<string, unknown>): string {
     // A task worker must never fall back to the orchestration root: it would
     // run against the main checkout with a whole-root sandbox grant.
     if (config.require_git_checkout === true) throw new Error('worker launch requires an assigned worktree; none recorded');
-    return (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT ?? process.cwd();
+    // A blank ORC_REPO_ROOT (project-mode workers) means "not set".
+    return (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT || process.cwd();
   }
   let isDirectory = false;
   try {
@@ -238,6 +248,7 @@ function sandboxRootsOptions(config: Record<string, unknown>, cwd: string): Sand
     cwd,
     stateDir: STATE_DIR,
     gitRepoRoot: TARGET_REPO_ROOT,
+    controlSocket: controlSocketOf(config),
   };
 }
 
@@ -322,9 +333,14 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
         mode: 'auto-allow',
         allowUnsandboxedCommands: false,
       };
-      const filesystem = claudeSandboxFilesystem(sandboxRootsOptions(config, cwd));
+      const rootsOptions = sandboxRootsOptions(config, cwd);
+      const filesystem = claudeSandboxFilesystem(rootsOptions);
       if (filesystem) {
         sandboxConfig.filesystem = filesystem;
+      }
+      // Connecting to a Unix socket is a network permission in Claude's sandbox.
+      if (filesystem && rootsOptions.controlSocket) {
+        sandboxConfig.network = { allowUnixSockets: [rootsOptions.controlSocket] };
       }
       settings.sandbox = sandboxConfig;
     }

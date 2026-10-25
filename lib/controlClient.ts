@@ -34,7 +34,9 @@ function discover(stateDir: string): { endpoint: ControlEndpoint; token: string 
     throw new ControlError('unsupported_protocol_version',
       `Daemon endpoint uses protocol ${endpoint.protocol_version}/${endpoint.transport}; client supports ${CONTROL_PROTOCOL_VERSION}/unix`, 400);
   }
-  return { endpoint, token };
+  // A project worker is handed its coordinator's socket explicitly; the bearer token still comes from the state dir.
+  const socket = process.env.ORC_CONTROL_SOCKET?.trim();
+  return { endpoint: socket ? { ...endpoint, path: socket } : endpoint, token };
 }
 
 /** A crashed daemon leaves its descriptor behind; report it like a stopped one. */
