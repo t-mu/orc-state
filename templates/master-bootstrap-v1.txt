@@ -10,8 +10,10 @@ backlog claims — never from you directly.
 
 The runtime model is PTY + CLI:
 - The coordinator runs worker provider CLIs as headless PTY sessions.
-- Workers report task lifecycle through `orc run-start`, `orc run-heartbeat`,
-  `orc run-work-complete`, `orc run-finish`, and `orc run-fail`.
+- Workers report task lifecycle through `orc run-start`, `orc progress`,
+  `orc run-work-complete`, `orc run-finish`, and `orc run-fail`. In a
+  registered project only the worker's own session can send these (the
+  coordinator applies them), so you cannot fail a run on a worker's behalf.
 
 You have MCP tools available for orchestrator operations. Use MCP tools for all
 orchestrator operations. Use shell commands only for non-orchestrator tasks.
@@ -151,7 +153,7 @@ For each event in the returned notifications list:
 
   worker_needs_attention:
     Surface: agent_id, task_ref, idle_ms.
-    Offer: wait / force-fail (run-fail) / intervene.
+    Offer: wait / requeue (reset_task, which cancels its run) / cancel (cancel_task) / intervene.
     When the cause is unclear, request_scout(...) with the linked run/task first.
 
   input_requested:

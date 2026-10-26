@@ -555,8 +555,9 @@ address any active run, but only that run's recipient session. Derived
 **Known limitation.** This is a same-user scope check, not a security boundary.
 Session IDs appear in `agents.json`, and any process running as the same OS
 user can read `control.token` or open `events.db` directly. Per-session secrets
-and process isolation are follow-up work (session supervision and the project
-container). Delivery of queued commands to a provider transport is also not
+(task 231) and process isolation are follow-up work. Worker lifecycle requests
+(`/v1/lifecycle`) are checked against the caller's own run, which stops a
+worker's mistakes but not a worker that reads a peer's session id. Delivery of queued commands to a provider transport is also not
 wired yet; commands stay `queued` until a dispatcher with a transport runs.
 
 | Method | Path | Result |

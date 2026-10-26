@@ -374,6 +374,16 @@ are also available for manual inspection.
 Worker agents call these commands from inside their PTY sessions to report
 progress through the task lifecycle. Not for human use.
 
+In a registered project these commands do not write the state directory: each
+is sent to the coordinator over `ORC_CONTROL_SOCKET` with the worker's session
+credential (`ORC_SESSION_TOKEN`), and the coordinator applies it for that
+session's own run. Outside a worker session they are refused, except
+`memory-record`, which an operator shell still writes directly. While the
+coordinator is stopped or restarting they retry for up to
+`ORC_CONTROL_RETRY_MS` (two minutes). To stop a run from outside, use
+`orc task-reset <ref>` or the master's `reset_task`/`cancel_task`. See
+[configuration.md → Global project registry](configuration.md#global-project-registry-new-project-api).
+
 | Command | Description |
 |---------|-------------|
 | `report-for-duty` | Worker announces session is ready after bootstrap. |

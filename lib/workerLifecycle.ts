@@ -83,7 +83,10 @@ function command(event: string, request: { run_id: string; agent_id: string }, e
 }
 
 function latestInputResponse(stateDir: string, request: { run_id: string; agent_id: string; request_id: string; request_seq: number }): string | null {
-  const durable = readDurableInputResponse(stateDir, request.request_id);
+  // Only this run's own request: a request id from another run reads nothing.
+  const owned = withEventDb(stateDir, (db) => db.prepare('SELECT 1 FROM input_requests WHERE request_id = ? AND run_id = ?')
+    .get(request.request_id, request.run_id));
+  const durable = owned ? readDurableInputResponse(stateDir, request.request_id) : null;
   if (durable !== null) return durable;
   // Any answer follows its request, so the scan starts there rather than at the start of the log.
   const events = readEventsSince(join(stateDir, 'events.db'), request.request_seq);
@@ -143,7 +146,8 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       const validator = event === 'heartbeat' ? validateProgressInput : validateProgressCommandInput;
       const { claim: validatedClaim } = validator({ event, runId, agentId, phase, reason, policy }, claim);
       if (event === 'run_started') {
-        startRun(stateDir, runId, agentId);
+        // Idempotent like run-start: the coordinator may already have acknowledged the run.
+        if (validatedClaim.state !== 'in_progress') startRun(stateDir, runId, agentId, { at });
       } else if (event === 'run_finished') {
         assertRunMayFinish(stateDir, validatedClaim.task_ref);
         finishRun(stateDir, runId, agentId, { success: true });
@@ -264,22 +268,27 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
 }
 
 /**
- * Scope a request to its caller: the authenticated session must be live —
- * `running`, or `recoverable` (a verified process this coordinator cannot type
- * into, e.g. a pty worker after a restart, which still reports its lifecycle) —
- * belong to the named agent, and — for run ops — be the session launched for
- * that run. The `--agent-id` a worker passes is no longer trusted on its own.
+ * Scope a request to its caller: the authenticated session must not be
+ * offline, must belong to the named agent, and — for run ops — be the session
+ * launched for that run. The `--agent-id` a worker passes is no longer trusted
+ * on its own. A `recoverable` or `unknown` session (one the coordinator cannot
+ * type into, or whose process identity it could not confirm after a restart)
+ * still reports its lifecycle: the session id it presents is the credential,
+ * not its PID.
  */
 export function authorizeLifecycle(stateDir: string, sessionId: string, request: LifecycleRequest): void {
   const session = sessionId.startsWith('legacy-') ? undefined : withEventDb(stateDir, (db) => db
     .prepare('SELECT agent_id, run_id, state FROM sessions WHERE session_id = ?')
     .get(sessionId) as { agent_id: string; run_id: string | null; state: string } | undefined);
-  // After the merge the coordinator finishes the run and closes its session; the
-  // worker's own run-finish may still follow, and repeats a finished run as a no-op.
-  const live = session?.state === 'running' || session?.state === 'recoverable';
-  const finishedRun = !live && request.op === 'run-finish' && session?.run_id === request.run_id
-    && loadClaim(stateDir, request.run_id)?.state === 'done';
-  if (!session || (!live && !finishedRun)) {
+  // After the merge the coordinator finishes the run and closes its session. The
+  // worker's own run-finish may still follow and repeats a finished run as a
+  // no-op; a waiting input request learns from its poll that the run ended.
+  const live = session !== undefined && session.state !== 'offline';
+  const ownRun = session !== undefined && 'run_id' in request && session.run_id === request.run_id;
+  const finishing = request.op === 'run-finish' || (request.op === 'progress' && request.event === 'run_finished');
+  const endedRunAllowed = ownRun && (request.op === 'input-poll'
+    || (finishing && loadClaim(stateDir, request.run_id)?.state === 'done'));
+  if (!session || (!live && !endedRunAllowed)) {
     throw new ControlError('unauthenticated', 'Lifecycle caller is not an authenticated running session', 401);
   }
   // A memory belongs to the project, not a run: any running session may record one.

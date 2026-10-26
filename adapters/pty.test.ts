@@ -345,6 +345,15 @@ describe('buildStartArgs execution mode', () => {
     expect(settings.sandbox.filesystem).toBeUndefined();
   });
 
+  it('claude sandbox + read_only in a project: may still connect to the control socket', async () => {
+    const socket = join(dir, 'control.sock');
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('scout-1', { execution_mode: 'sandbox', read_only: true, env: { ORC_CONTROL_SOCKET: socket } });
+    const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'scout-1.json'), 'utf8'));
+    expect(settings.sandbox.filesystem).toBeUndefined();
+    expect(settings.sandbox.network).toEqual({ allowUnixSockets: [socket] });
+  });
+
   it('codex full-access: --dangerously-bypass-approvals-and-sandbox', async () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
     await adapter.start('c', { execution_mode: 'full-access' });

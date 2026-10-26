@@ -343,7 +343,8 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
         sandboxConfig.filesystem = filesystem;
       }
       // Connecting to a Unix socket is a network permission in Claude's sandbox.
-      if (filesystem && rootsOptions.controlSocket) {
+      // Read-only scouts need it too: their report-for-duty goes through the coordinator.
+      if (rootsOptions.controlSocket) {
         sandboxConfig.network = { allowUnixSockets: [rootsOptions.controlSocket] };
       }
       settings.sandbox = sandboxConfig;
