@@ -17,6 +17,7 @@ Depends on Task 229.
 **In scope:**
 - The read commands a project worker runs (`review-read`, `memory-wake-up`, `status`, `runs-active`, `run-info`) work in a sandbox that cannot write the project state directory, whether or not the coordinator is running.
 - Verify, and configure if needed, that a sandboxed Codex worker (CLI and app-server runtime) can connect to `ORC_CONTROL_SOCKET`.
+- Verify that Claude's Linux sandbox honours `network.allowUnixSockets` for that socket, for workers and for read-only scouts (their `report-for-duty`).
 
 **Out of scope:**
 - Legacy (unmigrated) installations.
@@ -51,7 +52,7 @@ Worker reads go through the control API (snapshot, events, messages) or open the
 
 - [ ] With the project state directory not writable and the coordinator stopped, `review-read` and `memory-wake-up` return their results (or a clear retryable error) instead of `attempt to write a readonly database`.
 - [ ] The clean-repo e2e runs `review-read` under its stand-in sandbox.
-- [ ] A sandboxed Codex worker's lifecycle command reaches the control socket, or the docs state the supported configuration.
+- [ ] A sandboxed Codex worker's lifecycle command, and a sandboxed Claude worker's and scout's on Linux, reaches the control socket, or the docs state the supported configuration.
 - [ ] The task-230 references in `docs/configuration.md` are removed.
 - [ ] No changes to files outside the stated scope.
 

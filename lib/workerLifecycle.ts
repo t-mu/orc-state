@@ -6,7 +6,7 @@ import { appendSequencedEvent, readEventsSince, withEventDb } from './eventLog.t
 import { validateProgressCommandInput, validateProgressInput } from './progressValidation.ts';
 import { finishRun, heartbeat, startRun } from './claimManager.ts';
 import { readClaims } from './stateReader.ts';
-import { bridgeInputRequest, bridgeReviewFeedback, readDurableInputResponse } from './messageBridge.ts';
+import { bridgeInputRequest, bridgeReviewFeedback } from './messageBridge.ts';
 import { assertRunMayFinish } from './projectTasks.ts';
 import { storeDrawer, wingFromTaskRef } from './memoryStore.ts';
 import { getAgent, updateAgentRuntime } from './agentRegistry.ts';
@@ -84,10 +84,10 @@ function command(event: string, request: { run_id: string; agent_id: string }, e
 
 function latestInputResponse(stateDir: string, request: { run_id: string; agent_id: string; request_id: string; request_seq: number }): string | null {
   // Only this run's own request: a request id from another run reads nothing.
-  const owned = withEventDb(stateDir, (db) => db.prepare('SELECT 1 FROM input_requests WHERE request_id = ? AND run_id = ?')
-    .get(request.request_id, request.run_id));
-  const durable = owned ? readDurableInputResponse(stateDir, request.request_id) : null;
-  if (durable !== null) return durable;
+  const durable = withEventDb(stateDir, (db) => db
+    .prepare("SELECT response FROM input_requests WHERE request_id = ? AND run_id = ? AND state = 'answered'")
+    .get(request.request_id, request.run_id) as { response: string | null } | undefined);
+  if (durable?.response != null) return durable.response;
   // Any answer follows its request, so the scan starts there rather than at the start of the log.
   const events = readEventsSince(join(stateDir, 'events.db'), request.request_seq);
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -276,7 +276,7 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
  * still reports its lifecycle: the session id it presents is the credential,
  * not its PID.
  */
-export function authorizeLifecycle(stateDir: string, sessionId: string, request: LifecycleRequest): void {
+export function authorizeLifecycle(stateDir: string, sessionId: string, request: LifecycleRequest): { live: boolean } {
   const session = sessionId.startsWith('legacy-') ? undefined : withEventDb(stateDir, (db) => db
     .prepare('SELECT agent_id, run_id, state FROM sessions WHERE session_id = ?')
     .get(sessionId) as { agent_id: string; run_id: string | null; state: string } | undefined);
@@ -292,7 +292,7 @@ export function authorizeLifecycle(stateDir: string, sessionId: string, request:
     throw new ControlError('unauthenticated', 'Lifecycle caller is not an authenticated running session', 401);
   }
   // A memory belongs to the project, not a run: any running session may record one.
-  if (request.op === 'memory-record') return;
+  if (request.op === 'memory-record') return { live };
   if (session.agent_id !== request.agent_id) {
     throw new ControlError('forbidden', `Session belongs to ${session.agent_id}, not ${request.agent_id}`, 403);
   }
@@ -302,4 +302,5 @@ export function authorizeLifecycle(stateDir: string, sessionId: string, request:
   if (request.op === 'report-for-duty' && request.session_token !== sessionId) {
     throw new ControlError('forbidden', 'report-for-duty must present the caller\'s own session token', 403);
   }
+  return { live };
 }
