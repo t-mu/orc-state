@@ -63,13 +63,47 @@ describe('authorizeLifecycle', () => {
       .toThrow(expect.objectContaining({ code: 'unauthenticated' }));
   });
 
-  it('accepts a recoverable session (a pty worker after a coordinator restart) but not an unknown one', () => {
+  it('accepts recoverable and unknown sessions after a coordinator restart, but not offline ones', () => {
     commitClaims(dir, { version: '1', claims: [claim('in_progress')] });
     session('recoverable');
     const complete = { op: 'run-work-complete', run_id: 'run-a', agent_id: 'worker-a' } as const;
+    const setState = (state: string) => withEventDbTransaction(dir, (db) => {
+      db.prepare('UPDATE sessions SET state = ? WHERE session_id = ?').run(state, 'session-a');
+    });
     expect(() => authorizeLifecycle(dir, 'session-a', complete)).not.toThrow();
-    withEventDbTransaction(dir, (db) => { db.prepare("UPDATE sessions SET state = 'unknown' WHERE session_id = 'session-a'").run(); });
+    setState('unknown');
+    expect(() => authorizeLifecycle(dir, 'session-a', complete)).not.toThrow();
+    setState('offline');
     expect(() => authorizeLifecycle(dir, 'session-a', complete)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+    // A reaped session may still poll its own input request and learn the run ended.
+    const poll = { op: 'input-poll', run_id: 'run-a', agent_id: 'worker-a', request_id: 'q-1', request_seq: 0 } as const;
+    expect(() => authorizeLifecycle(dir, 'session-a', poll)).not.toThrow();
+    expect(() => authorizeLifecycle(dir, 'session-a', { ...poll, run_id: 'run-b' })).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+  });
+
+  it('accepts progress run_finished from an ended session once the run is done', () => {
+    commitClaims(dir, { version: '1', claims: [claim('done')] });
+    session('offline');
+    expect(() => authorizeLifecycle(dir, 'session-a', { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'run_finished' })).not.toThrow();
+    expect(() => authorizeLifecycle(dir, 'session-a', { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'phase_started', phase: 'x' }))
+      .toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+  });
+
+  it('does not let a run read another run\'s input answer by request id', () => {
+    commitClaims(dir, { version: '1', claims: [claim('in_progress'), { ...claim('in_progress'), run_id: 'run-b', agent_id: 'worker-b', task_ref: 'orch/task-b' }] });
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO input_requests (request_id, run_id, idempotency_key, question, state, response, created_at)
+        VALUES ('q-b', 'run-b', 'input:q-b', 'secret?', 'answered', 'the answer', '2026-01-01')`).run();
+    });
+    const poll = (runId: string, agentId: string) => applyLifecycle(dir, { op: 'input-poll', run_id: runId, agent_id: agentId, request_id: 'q-b', request_seq: 0 });
+    expect(poll('run-a', 'worker-a').response).toBeNull();
+    expect(poll('run-b', 'worker-b').response).toBe('the answer');
+  });
+
+  it('treats progress run_started as idempotent once the run is in progress', () => {
+    commitClaims(dir, { version: '1', claims: [claim('in_progress')] });
+    expect(applyLifecycle(dir, { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'run_started' }).message)
+      .toBe('progress event accepted: run_started run=run-a agent=worker-a');
   });
 
   it('refuses derived legacy credentials', () => {

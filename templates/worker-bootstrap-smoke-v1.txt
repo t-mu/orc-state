@@ -32,10 +32,8 @@ When a TASK_START block arrives:
        {{orc_bin}} progress --event=phase_started --phase=complete --run-id=<run_id> --agent-id={{agent_id}}
        - Do NOT edit the `status:` field of any task spec
        - Do not call `{{orc_bin}} task-mark-done` from the worker session
-  7. Emit a heartbeat, rebase onto main, then emit another heartbeat and hand off:
-       {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id={{agent_id}}
+  7. Rebase onto main and hand off:
        git rebase main
-       {{orc_bin}} run-heartbeat --run-id=<run_id> --agent-id={{agent_id}}
        {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id={{agent_id}}
   8. Signal finalize phase and wait for coordinator follow-up when it exists:
        {{orc_bin}} progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id={{agent_id}}

@@ -42,7 +42,9 @@ describe('renderTemplate', () => {
       provider: 'claude',
     });
     expect(rendered).toContain('orc run-start');
-    expect(rendered).toContain('orc run-heartbeat');
+    expect(rendered).toContain('orc progress');
+    expect(rendered).not.toContain('orc run-heartbeat');
+    expect(rendered).toContain('reset_task, which cancels its run');
     expect(rendered).toContain('orc run-work-complete');
     expect(rendered).toContain('orc run-finish');
     expect(rendered).toContain('orc run-fail');
