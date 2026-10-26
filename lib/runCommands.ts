@@ -56,6 +56,8 @@ export async function executeRunInputRequest(
 
   const deadline = Date.now() + timeoutMs;
   let lastHeartbeatAt = Date.now();
+  // Once the run has ended there is nothing to fail: the coordinator finished or reaped it.
+  let ended = false;
   for (;;) {
     const now = Date.now();
     const heartbeat = (now - lastHeartbeatAt) >= INPUT_REQUEST_HEARTBEAT_INTERVAL_MS;
@@ -65,7 +67,8 @@ export async function executeRunInputRequest(
       process.stdout.write(`${state.response}\n`);
       return 0;
     }
-    if (!state.active || Date.now() >= deadline) break;
+    ended = !state.active;
+    if (ended || Date.now() >= deadline) break;
     await delay(Math.max(1, Math.min(pollMs, deadline - Date.now())));
   }
 
@@ -76,10 +79,11 @@ export async function executeRunInputRequest(
       process.stdout.write(`${state.response}\n`);
       return 0;
     }
-    if (!state.active) break;
+    ended = !state.active;
+    if (ended) break;
     await delay(Math.max(5, Math.min(25, graceDeadline - Date.now())));
   }
 
-  await submit({ op: 'input-timeout', run_id: runId, agent_id: agentId });
+  if (!ended) await submit({ op: 'input-timeout', run_id: runId, agent_id: agentId });
   return timedOut();
 }

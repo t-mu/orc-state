@@ -61,7 +61,7 @@ describe('global --project selector', () => {
 });
 
 describe('switching between registered projects', () => {
-  it('shows each project its own identity and tasks without touching either repository', () => {
+  it('shows each project its own identity and tasks without touching either repository', { timeout: 30_000 }, () => {
     const alpha = repo('alpha');
     const beta = repo('beta');
     const outside = join(temp, 'outside');

@@ -77,7 +77,8 @@ describe('authorizeLifecycle', () => {
     expect(() => authorizeLifecycle(dir, 'session-a', complete)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
     // A reaped session may still poll its own input request and learn the run ended.
     const poll = { op: 'input-poll', run_id: 'run-a', agent_id: 'worker-a', request_id: 'q-1', request_seq: 0 } as const;
-    expect(() => authorizeLifecycle(dir, 'session-a', poll)).not.toThrow();
+    // Reported as not live, so the control server drops its heartbeat.
+    expect(authorizeLifecycle(dir, 'session-a', poll)).toEqual({ live: false });
     expect(() => authorizeLifecycle(dir, 'session-a', { ...poll, run_id: 'run-b' })).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
   });
 

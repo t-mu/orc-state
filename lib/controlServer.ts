@@ -332,9 +332,11 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const credential = actorCredential(req);
       const request = parseLifecycleRequest(await readBody(req));
       assertOpen();
-      authorizeLifecycle(stateDir, credential, request);
+      const { live } = authorizeLifecycle(stateDir, credential, request);
+      // An ended session may still poll, but never renews a lease (a superseded session's run may be someone else's now).
+      const scoped = !live && request.op === 'input-poll' ? { ...request, heartbeat: false } : request;
       try {
-        return ok(applyLifecycle(stateDir, request));
+        return ok(applyLifecycle(stateDir, scoped));
       } catch (error) {
         // A rejected transition (wrong state, wrong owner) is the caller's conflict, reported verbatim.
         if (error instanceof ControlError) throw error;
