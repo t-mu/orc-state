@@ -27,6 +27,13 @@ are stored separately from agent and run IDs. A failed migration rolls back
 its tables and version record. A database from a newer binary is refused
 rather than downgraded.
 
+Version 7 adds per-session credentials (task 231). In a registered project,
+workers launched before it hold no session secret, so after the upgrade their
+lifecycle commands fail with `ORC_SESSION_SECRET is not set`. Drain running work
+before upgrading, or reset each in-flight task afterwards with
+`orc task-reset <ref>` so it is redispatched to a worker that has one. Restart
+`orc start-session` too, so the master gets its secret.
+
 If startup fails after an upgrade, stop the coordinator and every process using
 the database. Keep the failed database for diagnosis, then restore the backup
 and run the previous binary:

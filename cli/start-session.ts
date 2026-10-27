@@ -503,6 +503,9 @@ for (const [signal, code] of [['SIGHUP', 129], ['SIGTERM', 143]] as const) {
   process.once(signal, () => {
     markMasterOffline();
     try { masterPty?.kill(); } catch { /* already gone */ }
+    // The normal teardown below never runs after process.exit: restore the terminal and drop the pid file here.
+    if (stdinRawEnabled && process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') process.stdin.setRawMode(false);
+    try { unlinkSync(masterPidPath); } catch { /* already gone */ }
     process.exit(code);
   });
 }
