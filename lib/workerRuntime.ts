@@ -224,8 +224,7 @@ export async function launchWorkerSession(
       read_only: agent.role === 'scout',
       require_git_checkout: agent.role === 'worker',
       execution_mode: effectiveMode,
-      // Scouts never get the open network: they are read-only investigators.
-      ...(sandboxNetwork && agent.role !== 'scout' ? { sandbox_network: sandboxNetwork } : {}),
+      ...(sandboxNetwork ? { sandbox_network: sandboxNetwork } : {}),
       startup_profile: workerStartupProfile,
       // Scouts stay on the CLI; only task workers use a structured runtime.
       ...(runtime && agent.role !== 'scout' ? { runtime } : {}),

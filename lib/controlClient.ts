@@ -50,7 +50,7 @@ function connectionError(error: unknown): Error {
   // A sandbox that does not allow the control socket refuses the connect itself.
   if (code === 'EACCES' || code === 'EPERM') {
     return new ControlError('forbidden',
-      `Connecting to the control socket was refused (${code}); in a sandboxed project session this needs worker_pool.sandbox_network=open (see docs/configuration.md → Execution Modes)`, 403);
+      `Connecting to the control socket was refused (${code}); a sandboxed project worker or Claude scout needs worker_pool.sandbox_network=open (see docs/configuration.md → Execution Modes)`, 403);
   }
   return error as Error;
 }

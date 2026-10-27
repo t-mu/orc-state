@@ -73,7 +73,8 @@ export function checkSandboxControlSocket({
   if (workerConfig.provider !== 'codex' && !(workerConfig.provider === 'claude' && platform === 'linux')) return { warning: null };
   const sandbox = workerConfig.provider === 'codex' ? 'the Codex sandbox' : "Claude's Linux sandbox";
   return {
-    warning: `sandboxed ${workerConfig.provider} workers cannot reach the coordinator's control socket under ${sandbox}, so their lifecycle commands fail; `
+    warning: `sandboxed ${workerConfig.provider} workers (the default worker provider; a task's required_provider is not checked) cannot reach the coordinator's `
+      + `control socket under ${sandbox}, so their lifecycle commands fail; `
       + 'set worker_pool.sandbox_network to open (it widens the sandbox network, see docs/configuration.md → Execution Modes) or use full-access',
   };
 }

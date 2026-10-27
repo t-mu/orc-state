@@ -39,6 +39,7 @@ import { ACTIVE_PROJECT, assertSupportedLayout, ORC_PACKAGE_ROOT, STATE_DIR, EVE
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
+import { checkSandboxControlSocket } from './lib/sandboxDeps.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
@@ -2373,6 +2374,9 @@ export async function main() {
       log(`warning: control API unavailable: ${(error as Error).message}`);
     }
   }
+  // Sandboxed project workers that cannot reach the control socket would fail every run (task 230).
+  const sandboxSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE_PROJECT) });
+  if (sandboxSocket.warning) log(`warning: ${sandboxSocket.warning}`);
   // Sweeps queued commands and reconciles in-flight ones whose session or run ended.
   getCommandDispatcher().start();
   emit({ event: 'coordinator_started', actor_type: 'coordinator', actor_id: 'coordinator', payload: { mode: MODE } });

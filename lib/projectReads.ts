@@ -23,16 +23,22 @@ export async function readViaCoordinator<T>(
   { project = ACTIVE_PROJECT, client = () => new ControlClient(STATE_DIR) }: { project?: unknown; client?: () => ControlClient } = {},
 ): Promise<T> {
   if (!project) return local();
+  let unanswered: ControlError;
   try {
     return await remote(client());
   } catch (error) {
+    // `not_found` is a coordinator older than the read routes; a route that can legitimately
+    // answer 404 must not be read through this helper, or its 404 would turn into a direct read.
     if (!(error instanceof ControlError) || (error.code !== 'unavailable' && error.code !== 'not_found')) throw error;
+    unanswered = error;
   }
   try {
     return local();
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`The coordinator is not running and the project state could not be read directly (${reason}); retry once the coordinator is running`);
+    throw new Error(unanswered.code === 'not_found'
+      ? `The running coordinator does not serve this read and the project state could not be read directly (${reason}); restart the coordinator on this orc version`
+      : `The coordinator is not running and the project state could not be read directly (${reason}); retry once the coordinator is running`);
   }
 }
 

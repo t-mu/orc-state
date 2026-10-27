@@ -17,7 +17,7 @@ import { withLock } from '../lib/lock.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
-import { isSupportedProvider } from '../lib/providers.ts';
+import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
@@ -942,6 +942,8 @@ export async function handleRequestScout(stateDir: string, {
     adapter,
     workingDirectory,
     repoRoot,
+    // A project scout reports for duty over the control socket, under the same opt-in as workers.
+    ...(ACTIVE_PROJECT ? { sandboxNetwork: loadWorkerPoolConfig().sandbox_network } : {}),
     emit: (event) => appendSequencedEvent(stateDir, event),
   });
   if (!launchResult.ok || !launchResult.session_handle) {
@@ -961,7 +963,11 @@ export async function handleRequestScout(stateDir: string, {
   if (!ready) {
     await adapter.stop(launchResult.session_handle);
     removeAgent(stateDir, scout.agent_id);
-    throw new Error(`Failed to brief scout ${scoutId}: scout did not report for duty in time`);
+    // A sandboxed project scout that cannot reach the control socket never reports (task 230).
+    const hint = ACTIVE_PROJECT
+      ? '; in a project a sandboxed scout reports through the control socket, which Codex scouts and Claude scouts on Linux without worker_pool.sandbox_network=open cannot reach (see docs/configuration.md → Execution Modes)'
+      : '';
+    throw new Error(`Failed to brief scout ${scoutId}: scout did not report for duty in time${hint}`);
   }
   const contextLines = [
     typeof run_id === 'string' ? `linked_run_id: ${run_id}` : null,

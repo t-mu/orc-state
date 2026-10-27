@@ -39,6 +39,12 @@ describe('readViaCoordinator (task 230)', () => {
     );
   });
 
+  it('tells a stale coordinator apart from a stopped one when the direct read fails too', async () => {
+    const stale = () => Promise.reject(new ControlError('not_found', 'No route', 404));
+    const local = () => { throw new Error('locked'); };
+    await expect(readViaCoordinator(stale, local, { project: 'p', client })).rejects.toThrow('restart the coordinator on this orc version');
+  });
+
   it('validates the wake-up budget the same way on every path', () => {
     expect(() => readMemoryWakeUp('/nonexistent', { budget: 0 })).toThrow('budget must be a positive integer');
     expect(readMemoryWakeUp('/nonexistent', { budget: 1 })).toEqual({ initialized: false, text: '' });

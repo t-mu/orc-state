@@ -305,10 +305,10 @@ describe('launchWorkerSession execution mode', () => {
     expect(updates.session_ready_at).toBe(updates.session_started_at);
   });
 
-  it('passes the sandbox network opt-in to workers, never to scouts (task 230)', async () => {
+  it('passes the sandbox network opt-in to the adapter (task 230)', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', sandboxNetwork: 'open', emit: vi.fn() });
-    await launchWorkerSession('/tmp/state', makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', sandboxNetwork: 'open', emit: vi.fn() });
+    await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
     expect(adapterStartSpy.mock.calls[0][1]).toMatchObject({ sandbox_network: 'open' });
     expect(adapterStartSpy.mock.calls[1][1]).not.toHaveProperty('sandbox_network');
   });
