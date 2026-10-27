@@ -68,7 +68,7 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toContain('assigned worktree');
     expect(rendered).toContain('/tmp/node_modules/.bin/orc run-work-complete');
     expect(rendered).toContain('/tmp/node_modules/.bin/orc run-input-request');
-    expect(rendered).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-token=token-123');
+    expect(rendered).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-id=token-123');
     expect(rendered).toContain('Do not merge to main');
     expect(rendered).not.toContain('git worktree add .worktrees/<run_id>');
   });
@@ -77,7 +77,7 @@ describe('buildSessionBootstrap', () => {
     const rendered = buildSessionBootstrap('carol', 'codex', 'reviewer', '/usr/local/bin/orc', 'token-456');
     expect(rendered).toContain('provider: codex');
     expect(rendered).toContain('/usr/local/bin/orc run-work-complete');
-    expect(rendered).toContain('session_token: token-456');
+    expect(rendered).toContain('session_id: token-456');
   });
 
   it('uses smoke worker bootstrap when requested explicitly', () => {
@@ -119,7 +119,7 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toContain('SCOUT_BOOTSTRAP');
     expect(rendered).toContain('agent_id: scout-1');
     expect(rendered).toContain('investigation-only agent');
-    expect(rendered).toContain('orc report-for-duty --agent-id=scout-1 --session-token=scout-token');
+    expect(rendered).toContain('orc report-for-duty --agent-id=scout-1 --session-id=scout-token');
     expect(rendered).not.toContain('orc run-work-complete');
   });
 

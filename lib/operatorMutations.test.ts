@@ -119,12 +119,12 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     await expect(operator.operator({ op: 'unblock-task', task_ref: 'orch/blocked' })).resolves.toEqual({ unblocked: true, task_ref: 'orch/blocked' });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'human', task_ref: 'orch/blocked' });
 
-    const master = new ControlClient(dir, { sessionToken: 'session-master' });
+    const master = new ControlClient(dir, { credential: 'session-master' });
     await expect(master.operator({ op: 'reset-task', task_ref: 'orch/active' })).resolves.toMatchObject({ reset: true });
     expect(queryEvents(dir, { event_type: 'run_cancelled' })).toEqual([expect.objectContaining({ actor_id: 'master' })]);
 
     // A worker session is neither; failures carry the CLI's text with a status.
-    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).operator({ op: 'cancel-task', task_ref: 'orch/todo' }))
+    await expect(new ControlClient(dir, { credential: 'session-a' }).operator({ op: 'cancel-task', task_ref: 'orch/todo' }))
       .rejects.toMatchObject({ code: 'forbidden', status: 403 });
     await expect(operator.operator({ op: 'reset-task', task_ref: 'orch/missing' })).rejects.toMatchObject({ code: 'not_found', status: 404 });
     await expect(operator.operator({ op: 'unblock-task', task_ref: 'orch/todo' })).rejects.toMatchObject({ code: 'conflict', status: 409 });

@@ -258,7 +258,7 @@ describe('orc-report-for-duty', () => {
   it('records readiness for the current session token', () => {
     seedClaimedRun({ runId: 'run-duty-001', agentId: 'worker-01' });
 
-    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-token=session-token-1']);
+    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-id=session-token-1']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('reported_for_duty');
@@ -274,10 +274,10 @@ describe('orc-report-for-duty', () => {
   it('rejects a stale or mismatched session token', () => {
     seedClaimedRun({ runId: 'run-duty-002', agentId: 'worker-01' });
 
-    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-token=wrong-token']);
+    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-id=wrong-token']);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Session token mismatch');
+    expect(result.stderr).toContain('Session id mismatch');
   });
 });
 

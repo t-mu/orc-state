@@ -97,6 +97,14 @@ describe('normalizeWorkerEnv', () => {
     expect(env.ORC_BIN).toBe('/repo/root/cli/orc.ts');
   });
 
+  it('gives a project worker its session id as ORC_SESSION_ID and blanks inherited ids and master secrets', async () => {
+    const { normalizeWorkerEnv } = await import('./workerRuntime.ts');
+    const env = normalizeWorkerEnv({ ORC_SESSION_TOKEN: 'stale-id', ORC_MASTER_SECRET: 'master-secret' }, null,
+      { id: 'p1', stateDir: '/tmp/state', sessionId: 'session-new', sessionSecret: 'secret-new' });
+
+    expect(env).toMatchObject({ ORC_SESSION_ID: 'session-new', ORC_SESSION_TOKEN: '', ORC_SESSION_SECRET: 'secret-new', ORC_MASTER_SECRET: '' });
+  });
+
   it('sets neither ORC_HOME nor ORC_REPO_ROOT when no repo root is given', async () => {
     const { normalizeWorkerEnv } = await import('./workerRuntime.ts');
     const env = normalizeWorkerEnv({});

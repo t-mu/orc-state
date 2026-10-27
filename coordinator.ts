@@ -470,10 +470,10 @@ function buildReportForDutyNudge(agent: Agent) {
   return [
     'SESSION_NUDGE',
     `agent_id: ${agent.agent_id}`,
-    `session_token: ${agent.session_token ?? '(missing)'}`,
+    `session_id: ${agent.session_token ?? '(missing)'}`,
     'Missing required reported_for_duty acknowledgement for this PTY session.',
     'Call this command immediately via your Bash tool:',
-    `${resolveOrcBinSh(REPO_ROOT)} report-for-duty --agent-id=${agent.agent_id} --session-token=${agent.session_token ?? ''}`,
+    `${resolveOrcBinSh(REPO_ROOT)} report-for-duty --agent-id=${agent.agent_id} --session-id=${agent.session_token ?? ''}`,
     'SESSION_NUDGE_END',
   ].join('\n');
 }

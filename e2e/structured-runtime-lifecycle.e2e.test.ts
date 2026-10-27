@@ -169,7 +169,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     expect(held).toMatchObject({ state: 'queued', acknowledged_at: null });
     expect(queryEvents(dir, { run_id: runId, event_type: 'command_queued' }).some((event) => (event.payload as Record<string, unknown>).reason === 'recipient busy')).toBe(true);
 
-    const respond = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'run-input-respond', `--run-id=${runId}`, `--agent-id=${agentId}`, '--response=teal', '--session-token=master-e2e'], { encoding: 'utf8' });
+    const respond = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'run-input-respond', `--run-id=${runId}`, `--agent-id=${agentId}`, '--response=teal', '--session-id=master-e2e'], { encoding: 'utf8' });
     expect(respond.status, respond.stderr).toBe(0);
     await waitFor(() => queryEvents(dir, { run_id: runId, event_type: 'work_complete' })[0], 'work complete');
     expect(readFileSync(join(dir, 'answer.txt'), 'utf8').trim()).toBe('teal');

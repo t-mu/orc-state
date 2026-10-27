@@ -135,7 +135,7 @@ describe('consumer lifecycle e2e', () => {
     const adapter = {
       start: vi.fn().mockImplementation((agentId: string, { system_prompt }: { system_prompt: string }) => {
         spawnedAgentId = agentId;
-        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        const sessionToken = /session_id: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
         const sessionHandle = createSessionHandle(agentId);
         // Simulate the fake provider calling report-for-duty after receiving the bootstrap
         if (sessionToken) {

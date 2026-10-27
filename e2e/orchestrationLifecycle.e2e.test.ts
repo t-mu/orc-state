@@ -36,7 +36,7 @@ function makeDynamicMockAdapter() {
     spawnedAgentIds,
     start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
       spawnedAgentIds.push(_agentId);
-      const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+      const sessionToken = /session_id: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
       const sessionHandle = createSessionHandle(_agentId);
       agentsByHandle.set(sessionHandle, _agentId);
       if (sessionToken) {

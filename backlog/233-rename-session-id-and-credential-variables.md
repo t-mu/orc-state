@@ -3,7 +3,7 @@ ref: global-project-state/233-rename-session-id-and-credential-variables
 feature: global-project-state
 review_level: light
 priority: low
-status: todo
+status: done
 depends_on:
   - global-project-state/231-authenticate-sessions-with-per-session-secrets
 ---

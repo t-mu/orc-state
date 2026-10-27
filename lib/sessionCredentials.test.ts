@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './eventLog.ts';
-import { clientCredential, credentialHash, newSessionSecret, sessionForCredential } from './sessionCredentials.ts';
+import { clientCredential, credentialHash, newSessionSecret, sessionForCredential, sessionIdFromEnv } from './sessionCredentials.ts';
 
 let dir: string;
 
@@ -53,7 +53,13 @@ describe('session credentials (task 231)', () => {
   it('clients present the master\'s secret, else the session\'s own', () => {
     expect(clientCredential({ ORC_MASTER_SECRET: 'm', ORC_SESSION_SECRET: 's' })).toBe('m');
     expect(clientCredential({ ORC_MASTER_SECRET: '', ORC_SESSION_SECRET: 's' })).toBe('s');
-    expect(clientCredential({ ORC_SESSION_TOKEN: 'session-a' })).toBeNull();
+    expect(clientCredential({ ORC_SESSION_ID: 'session-a', ORC_SESSION_TOKEN: 'session-a' })).toBeNull();
+  });
+
+  it('the session id comes from ORC_SESSION_ID, else the legacy ORC_SESSION_TOKEN', () => {
+    expect(sessionIdFromEnv({ ORC_SESSION_ID: 'id-new', ORC_SESSION_TOKEN: 'id-old' })).toBe('id-new');
+    expect(sessionIdFromEnv({ ORC_SESSION_ID: '', ORC_SESSION_TOKEN: 'id-old' })).toBe('id-old');
+    expect(sessionIdFromEnv({ ORC_SESSION_ID: ' ', ORC_SESSION_TOKEN: '' })).toBeNull();
   });
 
   it('a relaunch of the same session keeps its hash unless it brings a new one', async () => {

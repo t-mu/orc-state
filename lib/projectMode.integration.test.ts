@@ -110,7 +110,7 @@ describe('project mode against a registered target repository', () => {
     expect(launch.worktree).toMatchObject({ worktree_path: worktreePath, branch: 'task/run-probe' });
     expect(git(repo, 'branch', '--list', 'task/run-probe').trim()).toContain('task/run-probe');
     expect(launch.env).toMatchObject({
-      ORC_PROJECT_ID: project.id, ORC_HOME: '', ORC_REPO_ROOT: '', ORC_STATE_DIR: project.stateDir, ORC_SESSION_TOKEN: 'session-probe',
+      ORC_PROJECT_ID: project.id, ORC_HOME: '', ORC_REPO_ROOT: '', ORC_STATE_DIR: project.stateDir, ORC_SESSION_ID: 'session-probe', ORC_SESSION_TOKEN: '',
       // The secret is the credential; a master secret inherited from the coordinator is blanked (task 231).
       ORC_SESSION_SECRET: 'secret-probe', ORC_MASTER_SECRET: '',
     });

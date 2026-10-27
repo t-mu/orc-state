@@ -2,13 +2,14 @@
 /**
  * cli/run-input-respond.ts
  * Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>]
+ *   [--session-id=<master session id, legacy only>]
  *
  * Answer a worker's input request, as the running master session
- * (its ORC_MASTER_SECRET; --session-token in a legacy installation). In a registered project the
+ * (its ORC_MASTER_SECRET; its session id, --session-id or ORC_SESSION_ID, in a legacy installation). In a registered project the
  * running coordinator applies it.
  */
 import { flag } from '../lib/args.ts';
-import { clientCredential } from '../lib/sessionCredentials.ts';
+import { clientCredential, sessionIdFromEnv } from '../lib/sessionCredentials.ts';
 import { ACTIVE_PROJECT } from '../lib/paths.ts';
 import { submitOperatorMutation } from '../lib/operatorMutations.ts';
 
@@ -20,18 +21,19 @@ const actorId = flag('actor-id') ?? (ACTIVE_PROJECT ? null : 'master');
 const requestedId = flag('request-id');
 
 if (!runId || !agentId || !response) {
-  console.error('Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]');
+  console.error('Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>] [--session-id=<master session id, legacy only>]');
   process.exit(1);
 }
 
 // A project authenticates the master by its secret; a legacy installation by the master's session id.
-const legacySession = flag('session-token') ?? process.env.ORC_SESSION_TOKEN ?? null;
-const sessionToken = clientCredential() ?? legacySession;
+// --session-token is the older name of --session-id. A session id is a credential only in a legacy installation.
+const legacySession = flag('session-id') ?? flag('session-token') ?? sessionIdFromEnv();
+const credential = clientCredential() ?? (ACTIVE_PROJECT ? null : legacySession);
 try {
   await submitOperatorMutation({
     op: 'respond-input', run_id: runId, agent_id: agentId, response, record_memory: true, ...(actorId ? { actor_id: actorId } : {}),
     ...(requestedId ? { request_id: requestedId } : {}),
-  }, { sessionToken, direct: { sessionId: legacySession } });
+  }, { credential, direct: { sessionId: legacySession } });
 } catch (error) {
   console.error((error as Error).message);
   process.exit(1);

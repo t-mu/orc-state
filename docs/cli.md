@@ -197,7 +197,7 @@ with the master's session, and a shell inside a worker session (one with
 `ORC_SESSION_SECRET`) is refused. `run-input-respond` answers as the master and
 needs the master's credential in every case: in a project its `ORC_MASTER_SECRET`
 (so it runs from the master's own shell), in a legacy installation its session id
-(`--session-token`). When no coordinator is
+(`--session-id`, or `ORC_SESSION_ID`). When no coordinator is
 running they apply the change directly and print `coordinator is not running;
 applying <op> directly`, so operator recovery works with the coordinator stopped.
 
@@ -345,11 +345,11 @@ Commands for digging into active runs and the event stream.
 | `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` |
 | `control snapshot` | — |
 | `control events` | `[--after=<seq>]` `[--limit=<N>]` `[--follow]` `[--max-events=<N>]` |
-| `control command` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<kind>` `--idempotency-key=<key>` `[--payload=<json>]` `[--session-token=<id>]` |
-| `control ack` | `<command_id>` `--state=<accepted\|running\|completed\|failed>` `[--session-token=<id>]` |
-| `control message` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<message\|question\|review_request\|feedback\|result>` `--text=<text>` `--idempotency-key=<key>` `[--artifact-ref=<ref>]` `[--parent-message=<id>]` `[--session-token=<id>]` |
-| `control messages` | `[--include-consumed]` `[--session-token=<id>]` |
-| `control consume` | `<message_id>` `[--session-token=<id>]` |
+| `control command` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<kind>` `--idempotency-key=<key>` `[--payload=<json>]` `[--credential=<secret>]` |
+| `control ack` | `<command_id>` `--state=<accepted\|running\|completed\|failed>` `[--credential=<secret>]` |
+| `control message` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<message\|question\|review_request\|feedback\|result>` `--text=<text>` `--idempotency-key=<key>` `[--artifact-ref=<ref>]` `[--parent-message=<id>]` `[--credential=<secret>]` |
+| `control messages` | `[--include-consumed]` `[--credential=<secret>]` |
+| `control consume` | `<message_id>` `[--credential=<secret>]` |
 | `waiting-input` | `[--json]` |
 
 The coordinator reads at most 128 event rows per tick and records its cursor in
@@ -362,8 +362,9 @@ control API (see `docs/contracts.md` → **Local Control API**). They fail with
 "Control daemon is not running" when the coordinator is stopped or has crashed;
 the plain `runs-active` path still works then. Mutations authenticate with the
 caller's session secret (`ORC_MASTER_SECRET` or `ORC_SESSION_SECRET`, which
-launched sessions receive; `--session-token` overrides it). A legacy
-installation also accepts `ORC_SESSION_TOKEN`, the session id. `orc control
+launched sessions receive; `--credential` overrides it, and `--session-token`
+is its older name). A legacy installation also accepts the session id,
+`ORC_SESSION_ID` (or the legacy `ORC_SESSION_TOKEN`). `orc control
 snapshot` lists running sessions (caller and recipient IDs).
 Queued commands are not yet delivered to workers.
 
@@ -422,14 +423,14 @@ coordinator is stopped or restarting they retry for up to
 
 | Command | Flags |
 |---------|-------|
-| `report-for-duty` | `--agent-id=<id>` `--session-token=<token>` |
+| `report-for-duty` | `--agent-id=<id>` `--session-id=<id>` (`--session-token` is its older name) |
 | `run-start` | `--run-id=<id>` `--agent-id=<id>` |
 | `run-work-complete` | `--run-id=<id>` `--agent-id=<id>` |
 | `run-finish` | `--run-id=<id>` `--agent-id=<id>` |
 | `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=requeue\|block]` |
 | `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` |
 | `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` |
-| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` `[--session-token=<master session id, legacy only>]` |
+| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` `[--session-id=<master session id, legacy only>]` (`--session-token` is its older name) |
 
 ---
 

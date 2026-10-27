@@ -36,7 +36,7 @@ function renderBootstrap(template: string, provider: string, agentId: string): s
     agent_id: agentId,
     orc_bin: 'orc',
     provider,
-    session_token: 'session-token-unset',
+    session_id: 'session-id-unset',
     phase_complete_step: phaseCompleteStep('orc', agentId),
   });
 }
@@ -82,14 +82,14 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
  */
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string): string;
-export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string): string;
-export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionToken: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile }): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionId: string): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionId: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile }): string;
 export function buildSessionBootstrap(
   agentId: string,
   provider: string,
   role: string,
   orcBin: string = 'orc',
-  sessionToken: string = 'session-token-unset',
+  sessionId: string = 'session-id-unset',
   options: { workerBootstrapProfile?: WorkerBootstrapProfile } = {},
 ): string {
   if (role === 'master') return getMasterBootstrap(provider, agentId);
@@ -98,14 +98,14 @@ export function buildSessionBootstrap(
       agent_id: agentId,
       orc_bin: orcBin,
       provider,
-      session_token: sessionToken,
+      session_id: sessionId,
     });
   }
   return renderTemplate(resolveWorkerTemplate(role, options.workerBootstrapProfile ?? 'default'), {
     agent_id: agentId,
     orc_bin: orcBin,
     provider,
-    session_token: sessionToken,
+    session_id: sessionId,
     phase_complete_step: phaseCompleteStep(orcBin, agentId),
   });
 }

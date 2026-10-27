@@ -34,7 +34,7 @@ import { defaultSocketPath } from '../lib/controlProtocol.ts';
 const ORC = resolve(import.meta.dirname, '..', 'cli', 'orc.ts');
 const ORC_ENV_KEYS = ['ORC_STATE_DIR', 'ORC_HOME', 'ORC_REPO_ROOT', 'ORC_CONFIG_FILE', 'ORC_PROJECT_ID', 'ORC_DATA_HOME',
   'ORC_BACKLOG_DIR', 'ORC_PLANS_DIR', 'ORC_WORKTREES_DIR', 'ORC_MAX_WORKERS', 'ORC_WORKER_PROVIDER', 'ORC_WORKER_MODEL',
-  'ORC_SESSION_TOKEN', 'ORC_SESSION_SECRET', 'ORC_MASTER_SECRET', 'ORC_CONTROL_SOCKET', 'ORC_CONTROL_API', 'ORC_SESSION_TRANSPORT'];
+  'ORC_SESSION_ID', 'ORC_SESSION_TOKEN', 'ORC_SESSION_SECRET', 'ORC_MASTER_SECRET', 'ORC_CONTROL_SOCKET', 'ORC_CONTROL_API', 'ORC_SESSION_TRANSPORT'];
 const PROCESS_EVENTS = ['SIGINT', 'SIGTERM', 'exit', 'unhandledRejection', 'uncaughtException'] as const;
 
 let temp: string;
@@ -135,7 +135,7 @@ function makeWorkers(writable: string[]) {
           readFileSync(join(STATE_DIR, 'pty-settings', `${agentId}.json`), 'utf8'));
         settings.set(agentId, { allowWrite: launched.sandbox?.filesystem.allowWrite ?? [], unixSockets: launched.sandbox?.network?.allowUnixSockets ?? [] });
         // The provider reads its bootstrap once running, after the coordinator has recorded the session.
-        pending.push({ agentId, kind: 'report', runId: '', token: /session-token=(\S+)/.exec(String(config.system_prompt))![1] });
+        pending.push({ agentId, kind: 'report', runId: '', token: /session-id=(\S+)/.exec(String(config.system_prompt))![1] });
         return result;
       },
       async send(handle: string, text: string) {
@@ -163,7 +163,7 @@ function makeWorkers(writable: string[]) {
 
   async function reportForDuty() {
     for (const item of take('report')) {
-      await workerOrc(item.agentId, ['report-for-duty', `--agent-id=${item.agentId}`, `--session-token=${item.token}`], tmpdir());
+      await workerOrc(item.agentId, ['report-for-duty', `--agent-id=${item.agentId}`, `--session-id=${item.token}`], tmpdir());
     }
   }
 
@@ -312,7 +312,7 @@ describe('clean-repository project workflow', () => {
       await expect(workers.workerOrc(first.agentId, ['run-fail', `--run-id=${second.runId}`, `--agent-id=${first.agentId}`], first.worktree))
         .rejects.toThrow(/not scoped to run/);
       // A peer's session id, recorded in the state directory, proves nothing: only its secret would (task 231).
-      const peerSessionId = workers.envs.get(second.agentId)!.ORC_SESSION_TOKEN!;
+      const peerSessionId = workers.envs.get(second.agentId)!.ORC_SESSION_ID!;
       expect(readFileSync(join(project.stateDir, 'agents.json'), 'utf8')).toContain(peerSessionId);
       await expect(workers.workerOrc(first.agentId, ['progress', '--event=phase_started', '--phase=review', `--run-id=${second.runId}`, `--agent-id=${second.agentId}`],
         first.worktree, { ORC_SESSION_SECRET: peerSessionId })).rejects.toThrow(/not an authenticated running session/);

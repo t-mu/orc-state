@@ -4,15 +4,16 @@ import { submitLifecycle } from '../lib/lifecycleDispatch.ts';
 import { cliError } from './shared.ts';
 
 const agentId = flag('agent-id');
-const sessionToken = flag('session-token');
+// The launched session's id; --session-token is its older name.
+const sessionId = flag('session-id') ?? flag('session-token');
 
-if (!agentId || !sessionToken) {
-  console.error('Usage: orc report-for-duty --agent-id=<id> --session-token=<token>');
+if (!agentId || !sessionId) {
+  console.error('Usage: orc report-for-duty --agent-id=<id> --session-id=<id>');
   process.exit(1);
 }
 
 try {
-  console.log((await submitLifecycle({ op: 'report-for-duty', agent_id: agentId, session_token: sessionToken })).message);
+  console.log((await submitLifecycle({ op: 'report-for-duty', agent_id: agentId, session_token: sessionId })).message);
 } catch (error) {
   cliError(error);
 }

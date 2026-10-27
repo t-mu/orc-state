@@ -27,7 +27,7 @@ function withPrependedPath(pathValue: string | undefined, entry: string): string
 export function normalizeWorkerEnv(
   baseEnv: NodeJS.ProcessEnv,
   repoRoot: string | null = null,
-  project: { id: string; stateDir: string; sessionToken?: string; sessionSecret?: string } | null = null,
+  project: { id: string; stateDir: string; sessionId?: string; sessionSecret?: string } | null = null,
 ): Record<string, string> {
   const env = { ...baseEnv } as Record<string, string>;
   const localBin = repoRoot ? join(repoRoot, 'node_modules', '.bin') : '';
@@ -51,8 +51,10 @@ export function normalizeWorkerEnv(
     env.ORC_CONTROL_SOCKET = defaultSocketPath(project.stateDir);
     // The session id names the session (report-for-duty); its secret, held only in this
     // environment, is the credential every control call presents (task 231). A master
-    // secret inherited from the coordinator's environment is blanked.
-    if (project.sessionToken) env.ORC_SESSION_TOKEN = project.sessionToken;
+    // secret, and the legacy ORC_SESSION_TOKEN name for the id, inherited from the
+    // coordinator's environment are blanked.
+    if (project.sessionId) env.ORC_SESSION_ID = project.sessionId;
+    env.ORC_SESSION_TOKEN = '';
     if (project.sessionSecret) env.ORC_SESSION_SECRET = project.sessionSecret;
     env.ORC_MASTER_SECRET = '';
     env.ORC_HOME = '';
@@ -191,7 +193,7 @@ export async function launchWorkerSession(
     sandboxNetwork,
     runtime,
     emit,
-    sessionToken = randomUUID(),
+    sessionId = randomUUID(),
   }: {
     adapter: Adapter;
     workingDirectory: string | null | undefined;
@@ -204,7 +206,7 @@ export async function launchWorkerSession(
     sandboxNetwork?: SandboxNetwork;
     runtime?: WorkerRuntime;
     emit: (event: OrcEventInput) => void;
-    sessionToken?: string;
+    sessionId?: string;
   },
 ): Promise<{ ok: boolean; session_handle?: string; provider_ref?: unknown; reason?: string }> {
   try {
@@ -213,7 +215,7 @@ export async function launchWorkerSession(
     const sessionSecret = ACTIVE_PROJECT ? newSessionSecret() : null;
     const workerEnv = stripWorkerProfileControlEnv(normalizeWorkerEnv({
       ORC_STATE_DIR: stateDir,
-    }, repoRoot, ACTIVE_PROJECT ? { id: ACTIVE_PROJECT.id, stateDir, sessionToken, ...(sessionSecret ? { sessionSecret } : {}) } : null));
+    }, repoRoot, ACTIVE_PROJECT ? { id: ACTIVE_PROJECT.id, stateDir, sessionId, ...(sessionSecret ? { sessionSecret } : {}) } : null));
     const workerBootstrapProfile = resolveWorkerBootstrapProfile();
     const workerStartupProfile = resolveWorkerStartupProfile();
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
@@ -222,7 +224,7 @@ export async function launchWorkerSession(
         agent.provider,
         agent.role ?? 'worker',
         workerEnv.ORC_BIN ?? 'orc',
-        sessionToken,
+        sessionId,
         { workerBootstrapProfile },
       ),
       model: taskModel ?? agent.model ?? null,
@@ -242,7 +244,7 @@ export async function launchWorkerSession(
     const updates: Partial<Agent> = {
       status: 'running',
       session_handle,
-      session_token: sessionToken,
+      session_token: sessionId,
       session_started_at: nowIso,
       session_ready_at: protocolReady ? nowIso : null,
       provider_ref: provider_ref as Agent['provider_ref'],
@@ -251,7 +253,7 @@ export async function launchWorkerSession(
     };
     const ref = (provider_ref ?? {}) as { transport?: unknown; pid?: unknown; process_start?: unknown };
     recordProviderSession(stateDir, {
-      sessionId: sessionToken,
+      sessionId,
       runId,
       agentId: agent.agent_id,
       provider: agent.provider,
@@ -327,7 +329,7 @@ export async function spawnEphemeralWorker(
     sandboxNetwork,
     runtime,
     emit,
-    sessionToken = randomUUID(),
+    sessionId = randomUUID(),
   }: {
     agentId: string;
     provider: ProviderName;
@@ -341,7 +343,7 @@ export async function spawnEphemeralWorker(
     sandboxNetwork?: SandboxNetwork;
     runtime?: WorkerRuntime;
     emit: (event: OrcEventInput) => void;
-    sessionToken?: string;
+    sessionId?: string;
   },
 ): Promise<{ ok: boolean; agent?: Agent; session_handle?: string; provider_ref?: unknown; reason?: string }> {
   let agent: Agent;
@@ -363,7 +365,7 @@ export async function spawnEphemeralWorker(
     ...(sandboxNetwork !== undefined ? { sandboxNetwork } : {}),
     ...(runtime !== undefined ? { runtime } : {}),
     emit,
-    sessionToken,
+    sessionId,
   });
 
   if (!result.ok) {
