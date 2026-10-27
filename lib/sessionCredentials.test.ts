@@ -35,7 +35,7 @@ describe('session credentials (task 231)', () => {
 
   it('a project accepts a session secret and nothing read from the state', () => {
     writeFileSync(join(dir, 'runtime.db'), '');
-    expect(sessionForCredential(dir, 'secret-a')).toBe('session-a');
+    expect(sessionForCredential(dir, 'secret-a')?.session_id).toBe('session-a');
     expect(sessionForCredential(dir, 'session-a')).toBeNull();
     expect(sessionForCredential(dir, 'session-old')).toBeNull();
     expect(sessionForCredential(dir, credentialHash('secret-a'))).toBeNull();
@@ -43,8 +43,8 @@ describe('session credentials (task 231)', () => {
   });
 
   it('a legacy installation also accepts the id of a session recorded without a secret', () => {
-    expect(sessionForCredential(dir, 'secret-a')).toBe('session-a');
-    expect(sessionForCredential(dir, 'session-old')).toBe('session-old');
+    expect(sessionForCredential(dir, 'secret-a')?.session_id).toBe('session-a');
+    expect(sessionForCredential(dir, 'session-old')?.session_id).toBe('session-old');
     // A session that has a secret is never proven by its id, and imported ids never authenticate.
     expect(sessionForCredential(dir, 'session-a')).toBeNull();
     expect(sessionForCredential(dir, 'legacy-worker-c')).toBeNull();
@@ -54,5 +54,24 @@ describe('session credentials (task 231)', () => {
     expect(clientCredential({ ORC_MASTER_SECRET: 'm', ORC_SESSION_SECRET: 's' })).toBe('m');
     expect(clientCredential({ ORC_MASTER_SECRET: '', ORC_SESSION_SECRET: 's' })).toBe('s');
     expect(clientCredential({ ORC_SESSION_TOKEN: 'session-a' })).toBeNull();
+  });
+
+  it('a relaunch of the same session keeps its hash unless it brings a new one', async () => {
+    const { recordProviderSession } = await import('./runStore.ts');
+    const record = (credential: string | null) => recordProviderSession(dir, {
+      sessionId: 'session-z', runId: null, agentId: 'worker-z', provider: 'claude', providerRef: null,
+      startedAt: new Date().toISOString(), credentialHash: credential === null ? null : credentialHash(credential),
+    });
+    record('secret-z');
+    record(null);
+    expect(sessionForCredential(dir, 'secret-z')?.session_id).toBe('session-z');
+    record('secret-z2');
+    expect(sessionForCredential(dir, 'secret-z')).toBeNull();
+    expect(sessionForCredential(dir, 'secret-z2')?.session_id).toBe('session-z');
+  });
+
+  it('ignores a master secret reference the provider did not expand', () => {
+    expect(clientCredential({ ORC_MASTER_SECRET: '${ORC_MASTER_SECRET}', ORC_SESSION_SECRET: 's' })).toBe('s');
+    expect(clientCredential({ ORC_MASTER_SECRET: '${ORC_MASTER_SECRET}' })).toBeNull();
   });
 });

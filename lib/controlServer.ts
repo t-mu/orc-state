@@ -10,7 +10,7 @@ import {
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER, defaultSocketPath,
   type AckState, type ControlEndpoint, type ControlErrorCode, type StreamFrame, type SubmitCommandRequest,
 } from './controlProtocol.ts';
-import { readEventBatch, withEventDb } from './eventLog.ts';
+import { readEventBatch } from './eventLog.ts';
 import { sessionForCredential } from './sessionCredentials.ts';
 import { readControlSnapshot } from './statusProjection.ts';
 import { TerminalBroker } from './terminalBroker.ts';
@@ -48,13 +48,8 @@ export interface ControlServer {
  */
 export function sessionAuthenticator(stateDir: string): CommandAuthenticator {
   return (credential) => {
-    const sessionId = sessionForCredential(stateDir, credential);
-    if (!sessionId) return null;
-    return withEventDb(stateDir, (db) => {
-      const row = db.prepare("SELECT session_id, agent_id FROM sessions WHERE session_id = ? AND state = 'running'")
-        .get(sessionId) as { session_id: string; agent_id: string } | undefined;
-      return row ? { agentId: row.agent_id, sessionId: row.session_id } : null;
-    });
+    const session = sessionForCredential(stateDir, credential);
+    return session?.state === 'running' ? { agentId: session.agent_id, sessionId: session.session_id } : null;
   };
 }
 
@@ -219,6 +214,23 @@ export async function startControlServer(stateDir: string, options: ControlServe
     }
   }
 
+  /**
+   * Who reads a worker-facing route: a session (by its secret) or the
+   * operator (by its token); the bearer token alone is not enough. `runId` is
+   * the run a worker session is limited to, null for the master and the operator.
+   */
+  function readerScope(req: IncomingMessage): { runId: string | null } {
+    const header = req.headers[SESSION_HEADER];
+    if (typeof header === 'string' && header) {
+      const session = sessionForCredential(stateDir, header);
+      if (!session || session.state === 'offline') throw new ControlError('unauthenticated', 'Reader is not an authenticated session', 401);
+      const role = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id)?.role;
+      return { runId: role === 'master' ? null : session.run_id ?? '' };
+    }
+    if (isOperator(req)) return { runId: null };
+    throw new ControlError('unauthenticated', 'Reads need a session secret or the operator token', 401);
+  }
+
   function actorCredential(req: IncomingMessage): string {
     const credential = req.headers[SESSION_HEADER];
     if (typeof credential !== 'string' || !credential) throw new ControlError('unauthenticated', 'Session credential required for mutations', 401);
@@ -302,18 +314,13 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (req.method === 'GET' && reviews) {
       const runId = decodePathSegment(reviews[1]);
       // A worker session reads only its own run's reviews; the operator and the master read any.
-      const header = req.headers[SESSION_HEADER];
-      if (typeof header === 'string' && header) {
-        const sessionId = sessionForCredential(stateDir, header);
-        const session = sessionId === null ? undefined : withEventDb(stateDir, (db) => db
-          .prepare('SELECT agent_id, run_id FROM sessions WHERE session_id = ?').get(sessionId) as { agent_id: string; run_id: string | null } | undefined);
-        if (!session) throw new ControlError('unauthenticated', 'Review reader is not authenticated', 401);
-        const role = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id)?.role;
-        if (role !== 'master' && session.run_id !== runId) throw new ControlError('forbidden', `Session is not scoped to run ${runId}`, 403);
-      }
+      const reader = readerScope(req);
+      if (reader.runId !== null && reader.runId !== runId) throw new ControlError('forbidden', `Session is not scoped to run ${runId}`, 403);
       return ok({ reviews: readRunReviews(stateDir, runId) });
     }
     if (req.method === 'GET' && url.pathname === '/v1/memory/wake-up') {
+      // Memories belong to the project: any authenticated session or the operator reads them.
+      readerScope(req);
       const budget = Number(url.searchParams.get('budget') ?? DEFAULT_WAKE_UP_BUDGET);
       if (!isWakeUpBudget(budget)) throw new ControlError('bad_request', 'budget must be a positive integer', 400);
       return ok(readMemoryWakeUp(stateDir, { wing: url.searchParams.get('wing'), budget }));

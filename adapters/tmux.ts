@@ -180,9 +180,15 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       }
       tmux(['pipe-pane', '-o', '-t', target(agentId), `cat >> ${shellQuote(logPath(agentId))}`]);
 
+      try {
+        const started = inspect(agentId);
+        if (!started.alive || started.pid == null) throw new Error(`tmux session for ${agentId} exited during startup`);
+        await runStartupDialogs((text) => write(agentId, text), provider, config, () => capture(agentId) ?? readLogTail(agentId));
+      } finally {
+        // The launcher removes itself when it runs; if the pane never ran it, its secrets must not linger.
+        rmSync(dirname(launcher), { recursive: true, force: true });
+      }
       const started = inspect(agentId);
-      if (!started.alive || started.pid == null) throw new Error(`tmux session for ${agentId} exited during startup`);
-      await runStartupDialogs((text) => write(agentId, text), provider, config, () => capture(agentId) ?? readLogTail(agentId));
 
       return {
         session_handle: `tmux:${agentId}`,

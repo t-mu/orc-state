@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from './eventLog.ts';
@@ -10,6 +10,8 @@ import { submitOperatorMutation } from './operatorMutations.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
 import { readBacklog, readClaims } from './stateReader.ts';
 import { invokeTool } from '../mcp/server.ts';
+import { credentialHash } from './sessionCredentials.ts';
+import { PROJECT_DESCRIPTOR } from './projectRegistry.ts';
 import type { Claim } from '../types/claims.ts';
 
 let dir: string;
@@ -163,6 +165,28 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', masterSession: 'session-master' });
     expect(result).toMatchObject({ cancelled: true, status: 'blocked' });
     expect(queryEvents(dir, { event_type: 'task_cancelled' }).at(-1)).toMatchObject({ actor_id: 'master' });
+  });
+});
+
+describe('operator mutations in a project state directory (task 231)', () => {
+  beforeEach(() => {
+    // A project descriptor marks the state directory as a project's: secrets only.
+    writeFileSync(join(dir, PROJECT_DESCRIPTOR), JSON.stringify({ id: 'p1', name: 'demo', target_repo_root: dir }));
+    withEventDbTransaction(dir, (db) => {
+      db.prepare('UPDATE sessions SET credential_hash = ? WHERE session_id = ?').run(credentialHash('secret-master'), 'session-master');
+      db.prepare('UPDATE sessions SET credential_hash = ? WHERE session_id = ?').run(credentialHash('secret-a'), 'session-a');
+    });
+  });
+
+  it('authenticates the master by its secret, never by its recorded session id', async () => {
+    const reset = { op: 'reset-task', task_ref: 'orch/active' } as const;
+    expect(authorizeOperator(dir, { credential: 'secret-master', operator: false }, reset)).toEqual({ actorId: 'master' });
+    expect(() => authorizeOperator(dir, { credential: 'session-master', operator: false }, reset)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+    expect(() => authorizeOperator(dir, { credential: 'secret-a', operator: false }, reset)).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    // The direct path applies the same rule with the coordinator down.
+    const offline = { project: 'p', stateDir: dir, warn: vi.fn() };
+    await expect(submitOperatorMutation(reset, { ...offline, env: { ORC_MASTER_SECRET: 'session-master' } })).rejects.toMatchObject({ code: 'unauthenticated' });
+    await expect(submitOperatorMutation(reset, { ...offline, env: { ORC_MASTER_SECRET: 'secret-master' } })).resolves.toMatchObject({ reset: true });
   });
 });
 

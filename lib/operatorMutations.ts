@@ -7,7 +7,7 @@ import { AGENT_ID_RE, TASK_TYPES } from './constants.ts';
 import { ControlClient } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from './dispatchPlanner.ts';
-import { appendSequencedEvent, queryEvents, withEventDb } from './eventLog.ts';
+import { appendSequencedEvent, queryEvents } from './eventLog.ts';
 import { withLock } from './lock.ts';
 import { storeDrawer, wingFromTaskRef } from './memoryStore.ts';
 import { bridgeInputResponse } from './messageBridge.ts';
@@ -450,19 +450,16 @@ export function parseOperatorRequest(body: Record<string, unknown>): OperatorReq
  * - A session credential must be the master's (not `offline`), and the
  *   mutation is recorded as the master; a worker or scout session is refused,
  *   so a worker shell's `orc task-reset` fails instead of acting as operator.
- * - A caller without a session must state operator intent; it is recorded as
- *   `human` or a registered agent it names. Its credential is the control
- *   token alone, which every local process can read: same-user trust, not a
- *   boundary, until task 231 gives the operator a secret.
+ * - A caller without a session must present the operator token the
+ *   coordinator writes on every start (task 231); it is recorded as `human`
+ *   or a registered agent it names.
  * - Answering an input request needs the master session, as it always has.
  */
 export function authorizeOperator(stateDir: string, caller: { credential: string | null; operator: boolean }, request: OperatorRequest): { actorId: string } {
   const { credential } = caller;
   if (credential !== null) {
-    const sessionId = sessionForCredential(stateDir, credential);
-    const session = sessionId === null ? undefined : withEventDb(stateDir, (db) => db.prepare(
-      "SELECT agent_id FROM sessions WHERE session_id = ? AND state IN ('running', 'recoverable', 'unknown')",
-    ).get(sessionId) as { agent_id: string } | undefined);
+    const resolved = sessionForCredential(stateDir, credential);
+    const session = resolved && resolved.state !== 'offline' ? resolved : undefined;
     if (!session) throw new ControlError('unauthenticated', 'Operator caller is not authenticated', 401);
     const agent = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id);
     if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403);

@@ -369,11 +369,13 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
       };
       const rootsOptions = sandboxRootsOptions(config, cwd);
       const filesystem = claudeSandboxFilesystem(rootsOptions);
-      // A project session must not read the operator's credential (task 231).
-      const denyRead = rootsOptions.controlSocket ? [join(rootsOptions.stateDir, OPERATOR_TOKEN_FILE)] : [];
-      if (filesystem || denyRead.length) {
-        sandboxConfig.filesystem = { ...(filesystem ?? {}), ...(denyRead.length ? { denyRead } : {}) };
+      // A project session must not read the operator's credential (task 231): the sandbox
+      // hides it from shell commands, a permission rule from the Read tool (`//` marks an absolute path).
+      const operatorToken = rootsOptions.controlSocket ? join(rootsOptions.stateDir, OPERATOR_TOKEN_FILE) : null;
+      if (filesystem || operatorToken) {
+        sandboxConfig.filesystem = { ...(filesystem ?? {}), ...(operatorToken ? { denyRead: [operatorToken] } : {}) };
       }
+      if (operatorToken) settings.permissions = { deny: [`Read(/${operatorToken})`] };
       // Read-only scouts need the socket too: their report-for-duty goes through the coordinator.
       if (rootsOptions.controlSocket) {
         sandboxConfig.network = claudeSandboxNetwork(rootsOptions.controlSocket, sandboxNetworkOf(config));

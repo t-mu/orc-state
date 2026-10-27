@@ -75,22 +75,25 @@ export class ControlClient {
     this.timeoutMs = options.timeoutMs ?? 10_000;
   }
 
+  /** A client with a session presents its secret; one without acts as the operator if it can read the operator token. */
   private headers(token: string): Record<string, string> {
+    const operatorToken = this.sessionToken ? '' : readOperatorToken(this.stateDir);
     return {
       authorization: `Bearer ${token}`,
       [PROTOCOL_HEADER]: String(CONTROL_PROTOCOL_VERSION),
       ...(this.sessionToken ? { [SESSION_HEADER]: this.sessionToken } : {}),
+      ...(operatorToken ? { [OPERATOR_HEADER]: operatorToken } : {}),
     };
   }
 
-  private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
+  private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
     const { endpoint, token } = discover(this.stateDir);
     const text = body === undefined ? undefined : JSON.stringify(body);
     return new Promise<T>((resolve, reject) => {
       const req = request({
         // No pooled sockets: a pooled connection can outlive a daemon restart.
         socketPath: endpoint.path, path, method, timeout: this.timeoutMs, agent: false,
-        headers: { ...this.headers(token), ...extraHeaders, ...(text ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) } : {}) },
+        headers: { ...this.headers(token), ...(text ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) } : {}) },
       }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -158,13 +161,9 @@ export class ControlClient {
     return this.call('GET', `/v1/memory/wake-up${suffix}`);
   }
 
-  /**
-   * Apply a master or operator mutation in the coordinator. A client with a
-   * session presents it (only the master's is accepted); one without states
-   * that it acts as the operator.
-   */
+  /** Apply a master (its session) or operator (the operator token) mutation in the coordinator. */
   operator(request: OperatorRequest): Promise<Record<string, unknown>> {
-    return this.call('POST', '/v1/operator', request, this.sessionToken ? {} : { [OPERATOR_HEADER]: readOperatorToken(this.stateDir) });
+    return this.call('POST', '/v1/operator', request);
   }
 
   listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {

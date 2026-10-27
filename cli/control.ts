@@ -14,9 +14,9 @@
  *   orc control messages [--include-consumed]
  *   orc control consume <message_id>
  *
- * Mutations authenticate with the caller's running provider session ID, taken
- * from --session-token, else the session's secret (ORC_MASTER_SECRET or
- * ORC_SESSION_SECRET), else ORC_SESSION_TOKEN (a legacy installation's session id).
+ * Mutations present the caller's session secret (ORC_MASTER_SECRET or
+ * ORC_SESSION_SECRET), or --session-token; a legacy installation also accepts
+ * a session id (ORC_SESSION_TOKEN) for sessions recorded without a secret.
  */
 import { boolFlag, flag } from '../lib/args.ts';
 import { ControlClient } from '../lib/controlClient.ts';

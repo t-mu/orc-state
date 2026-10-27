@@ -278,10 +278,8 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
  * not its PID.
  */
 export function authorizeLifecycle(stateDir: string, credential: string, request: LifecycleRequest): { live: boolean } {
-  const sessionId = sessionForCredential(stateDir, credential);
-  const session = sessionId === null ? undefined : withEventDb(stateDir, (db) => db
-    .prepare('SELECT agent_id, run_id, state FROM sessions WHERE session_id = ?')
-    .get(sessionId) as { agent_id: string; run_id: string | null; state: string } | undefined);
+  const session = sessionForCredential(stateDir, credential) ?? undefined;
+  const sessionId = session?.session_id;
   // After the merge the coordinator finishes the run and closes its session. The
   // worker's own run-finish may still follow and repeats a finished run as a
   // no-op; a waiting input request learns from its poll that the run ended.

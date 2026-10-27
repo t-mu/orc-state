@@ -498,6 +498,15 @@ const stdoutResizeHandler = () => {
     masterPty.resize(process.stdout.columns ?? 220, process.stdout.rows ?? 50);
   }
 };
+// A killed start-session must not leave the master's credential valid: close its session on the way out.
+for (const [signal, code] of [['SIGHUP', 129], ['SIGTERM', 143]] as const) {
+  process.once(signal, () => {
+    markMasterOffline();
+    try { masterPty?.kill(); } catch { /* already gone */ }
+    process.exit(code);
+  });
+}
+
 const cliResult = await new Promise<{ type: string; error?: Error | undefined; code?: number | undefined; signal?: string | undefined }>((resolvePromise) => {
   try {
     masterPty = pty.spawn(binary, spawnArgs, {

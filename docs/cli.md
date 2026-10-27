@@ -195,7 +195,9 @@ In a registered project, `task-reset`, `task-unblock`, `delegate` and
 through its control API; the CLI sends them as the operator, the master's tools
 with the master's session, and a shell inside a worker session (one with
 `ORC_SESSION_SECRET`) is refused. `run-input-respond` answers as the master and
-needs its session id (`--session-token`) in every case. When no coordinator is
+needs the master's credential in every case: in a project its `ORC_MASTER_SECRET`
+(so it runs from the master's own shell), in a legacy installation its session id
+(`--session-token`). When no coordinator is
 running they apply the change directly and print `coordinator is not running;
 applying <op> directly`, so operator recovery works with the coordinator stopped.
 
@@ -427,7 +429,7 @@ coordinator is stopped or restarting they retry for up to
 | `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=requeue\|block]` |
 | `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` |
 | `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` |
-| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` `[--session-token=<master session>]` |
+| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` `[--session-token=<master session id, legacy only>]` |
 
 ---
 

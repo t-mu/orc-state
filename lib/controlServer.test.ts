@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -307,6 +307,14 @@ describe('local daemon control API', () => {
     expect(reviews).toHaveLength(1);
     expect(reviews[0].payload).toMatchObject({ outcome: 'findings', findings: 'second pass' });
     await expect(reader.reviews('run-b')).resolves.toEqual({ reviews: [] });
+    // A worker session reads only its own run's reviews; the master reads any (task 231).
+    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).reviews('run-a')).resolves.toMatchObject({ reviews: [expect.anything()] });
+    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).reviews('run-b')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    await expect(new ControlClient(dir, { sessionToken: 'session-master' }).reviews('run-b')).resolves.toEqual({ reviews: [] });
+    await expect(new ControlClient(dir, { sessionToken: 'forged' }).reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated' });
     await expect(rawGet({ authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8').trim()}`, 'x-orc-protocol': '1' }, '/v1/runs/%E0/reviews'))
       .resolves.toMatchObject({ status: 400, body: { error: { code: 'bad_request' } } });
 
@@ -318,6 +326,10 @@ describe('local daemon control API', () => {
     });
     await expect(reader.memoryWakeUp({ wing: 'elsewhere' })).resolves.toEqual({ initialized: true, text: '' });
     await expect(reader.memoryWakeUp({ budget: 0 })).rejects.toMatchObject({ code: 'bad_request' });
+    // The bearer token alone reads nothing: a reader is a session or holds the operator token.
+    rmSync(join(dir, 'operator.token'));
+    await expect(reader.reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
+    await expect(reader.memoryWakeUp()).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
   });
 
   it('resumes after the snapshot cursor across a disconnect and a daemon restart without gaps', async () => {
