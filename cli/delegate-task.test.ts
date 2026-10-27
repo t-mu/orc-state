@@ -52,6 +52,17 @@ describe('cli/delegate-task.ts', () => {
     expect(event?.actor_id).toBe('worker-01');
   });
 
+  it('refuses a target that already has an active run, as the master tool does (task 232)', () => {
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [{
+      run_id: 'run-busy', task_ref: 'docs/other', agent_id: 'worker-01', state: 'in_progress',
+      claimed_at: '2026-01-01T00:00:00.000Z', lease_expires_at: '2099-01-01T00:00:00.000Z',
+    }] }));
+    const result = runCli(['--task-ref=docs/task-1', '--target-agent-id=worker-01']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Target agent worker-01 already has active run run-busy');
+    expect(readBacklog().features[0].tasks[0].owner).toBeUndefined();
+  });
+
   it('auto-assigns matching refactor-capable target when none provided', () => {
     const result = runCli([
       '--task-ref=docs/task-1',

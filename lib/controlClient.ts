@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError,
-  PROTOCOL_HEADER, SESSION_HEADER,
+  OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER,
   type AckState, type ControlEndpoint, type ControlResponse, type StreamFrame, type SubmitCommandRequest,
 } from './controlProtocol.ts';
 import type { DurableCommand } from './commandDelivery.ts';
@@ -74,14 +74,14 @@ export class ControlClient {
     };
   }
 
-  private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     const { endpoint, token } = discover(this.stateDir);
     const text = body === undefined ? undefined : JSON.stringify(body);
     return new Promise<T>((resolve, reject) => {
       const req = request({
         // No pooled sockets: a pooled connection can outlive a daemon restart.
         socketPath: endpoint.path, path, method, timeout: this.timeoutMs, agent: false,
-        headers: { ...this.headers(token), ...(text ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) } : {}) },
+        headers: { ...this.headers(token), ...extraHeaders, ...(text ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) } : {}) },
       }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -149,9 +149,13 @@ export class ControlClient {
     return this.call('GET', `/v1/memory/wake-up${suffix}`);
   }
 
-  /** Apply a master (with the master's session) or operator (without a session) mutation in the coordinator. */
+  /**
+   * Apply a master or operator mutation in the coordinator. A client with a
+   * session presents it (only the master's is accepted); one without states
+   * that it acts as the operator.
+   */
   operator(request: OperatorRequest): Promise<Record<string, unknown>> {
-    return this.call('POST', '/v1/operator', request);
+    return this.call('POST', '/v1/operator', request, this.sessionToken ? {} : { [OPERATOR_HEADER]: '1' });
   }
 
   listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {

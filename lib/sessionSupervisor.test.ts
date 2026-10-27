@@ -122,6 +122,15 @@ describe('reconcileSessions', () => {
     expect(queryEvents(dir, { event_type: 'session_reconciled' })).toHaveLength(5);
   });
 
+  it('leaves the foreground master session to start-session (task 232)', async () => {
+    insertSession('session-master', 'master', null, null, null, 'pty');
+    // start-session records the master's session but never gives the master agent a handle.
+    const master: Agent = { ...agent('master', 'session-master'), role: 'master', session_handle: null };
+    const results = await reconcileSessions(dir, { owner: 'pid:2:new-coordinator', agents: [master], inspect: () => Promise.resolve(null) });
+    expect(results).toEqual([]);
+    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master')?.state).toBe('running');
+  });
+
   it('refuses commands to a recoverable session', () => {
     insertSession('s-pty', 'worker-a', 'run-1', 200, 'proc:6', 'pty');
     insertSession('s-master', 'master', null, null, null);

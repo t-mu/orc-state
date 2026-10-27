@@ -4,13 +4,14 @@ import { listAgents } from './agentRegistry.ts';
 import { syncBacklogFromSpecs } from './backlogSync.ts';
 import { setRunInputState } from './claimManager.ts';
 import { AGENT_ID_RE, TASK_TYPES } from './constants.ts';
+import { ControlClient } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from './dispatchPlanner.ts';
 import { appendSequencedEvent, queryEvents, withEventDb } from './eventLog.ts';
 import { withLock } from './lock.ts';
 import { storeDrawer, wingFromTaskRef } from './memoryStore.ts';
 import { bridgeInputResponse } from './messageBridge.ts';
-import { BACKLOG_DOCS_DIR } from './paths.ts';
+import { ACTIVE_PROJECT, BACKLOG_DOCS_DIR, STATE_DIR } from './paths.ts';
 import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
@@ -444,21 +445,37 @@ export function parseOperatorRequest(body: Record<string, unknown>): OperatorReq
 }
 
 /**
- * Who may send an operator mutation, and as whom it is recorded. A session
- * credential must be the running master's; it acts as the master unless it
- * names another actor. A caller without one is an operator holding the
- * control token, recorded as `human` by default. This is the same-user
- * trust of the token itself, not a boundary: per-session and operator
- * secrets are task 231.
+ * Who may send an operator mutation, and as whom it is recorded.
+ * - A session credential must be the master's (not `offline`), and the
+ *   mutation is recorded as the master; a worker or scout session is refused,
+ *   so a worker shell's `orc task-reset` fails instead of acting as operator.
+ * - A caller without a session must state operator intent; it is recorded as
+ *   `human` or a registered agent it names. Its credential is the control
+ *   token alone, which every local process can read: same-user trust, not a
+ *   boundary, until task 231 gives the operator a secret.
+ * - Answering an input request needs the master session, as it always has.
  */
-export function authorizeOperator(stateDir: string, credential: string | null, request: OperatorRequest): { actorId: string } {
-  if (credential === null) return { actorId: request.actor_id ?? 'human' };
-  const session = withEventDb(stateDir, (db) => db.prepare("SELECT agent_id FROM sessions WHERE session_id = ? AND state = 'running'")
-    .get(credential) as { agent_id: string } | undefined);
-  if (!session || credential.startsWith('legacy-')) throw new ControlError('unauthenticated', 'Operator caller is not authenticated', 401);
-  const agent = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id);
-  if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403);
-  return { actorId: request.actor_id ?? agent.agent_id };
+export function authorizeOperator(stateDir: string, caller: { credential: string | null; operator: boolean }, request: OperatorRequest): { actorId: string } {
+  const { credential } = caller;
+  if (credential !== null) {
+    const session = credential.startsWith('legacy-') ? undefined : withEventDb(stateDir, (db) => db.prepare(
+      "SELECT agent_id FROM sessions WHERE session_id = ? AND state IN ('running', 'recoverable', 'unknown')",
+    ).get(credential) as { agent_id: string } | undefined);
+    if (!session) throw new ControlError('unauthenticated', 'Operator caller is not authenticated', 401);
+    const agent = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id);
+    if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403);
+    if (request.actor_id !== undefined && request.actor_id !== agent.agent_id) {
+      throw new ControlError('forbidden', `A master session acts as ${agent.agent_id}, not ${request.actor_id}`, 403);
+    }
+    return { actorId: agent.agent_id };
+  }
+  if (!caller.operator) throw new ControlError('unauthenticated', 'Operator mutations need a session credential or operator intent', 401);
+  if (request.op === 'respond-input') throw new ControlError('forbidden', 'Input response requires a running master session', 403);
+  const actorId = request.actor_id ?? 'human';
+  if (actorId !== 'human' && !listAgents(stateDir).some((entry) => entry.agent_id === actorId)) {
+    throw new ControlError('bad_request', `Actor agent not found: ${actorId}`, 400);
+  }
+  return { actorId };
 }
 
 /** Apply an authorized operator mutation; the coordinator calls this, as does a direct fallback. */
@@ -472,4 +489,44 @@ export function applyOperatorMutation(stateDir: string, request: OperatorRequest
     case 'delegate-task': return delegateTask(stateDir, args) as Record<string, unknown>;
     case 'respond-input': return respondInput(stateDir, args, authority);
   }
+}
+
+/** Coordinator requests are applied once received, so a timeout is never retried (see lifecycleDispatch). */
+const OPERATOR_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * Apply a master or operator mutation (task 232). In a registered project the
+ * running coordinator applies it. The caller presents its session when it has
+ * one — the master's MCP server its ORC_MASTER_SESSION, any shell inside a
+ * worker session its ORC_SESSION_TOKEN (and is refused) — and otherwise acts
+ * as the operator. With no coordinator answering, the caller applies it
+ * directly and says so: the request provably never reached a coordinator, and
+ * the direct path takes the same state lock. A legacy installation always
+ * applies it directly.
+ */
+export async function submitOperatorMutation(
+  request: OperatorRequest,
+  {
+    env = process.env,
+    sessionToken = env.ORC_MASTER_SESSION?.trim() || env.ORC_SESSION_TOKEN?.trim() || null,
+    direct = { trustedMaster: true }, warn = (line: string) => console.error(line),
+    project = ACTIVE_PROJECT, stateDir = STATE_DIR,
+  }: {
+    env?: NodeJS.ProcessEnv;
+    sessionToken?: string | null;
+    /** How a direct apply proves it may answer an input request. */
+    direct?: { sessionId?: string | null; trustedMaster?: boolean };
+    warn?: (line: string) => void;
+    project?: unknown;
+    stateDir?: string;
+  } = {},
+): Promise<Record<string, unknown>> {
+  if (!project) return applyOperatorMutation(stateDir, request, direct);
+  try {
+    return await new ControlClient(stateDir, { sessionToken, timeoutMs: OPERATOR_REQUEST_TIMEOUT_MS }).operator(request);
+  } catch (error) {
+    if (!(error instanceof ControlError) || error.code !== 'unavailable') throw error;
+  }
+  warn(`coordinator is not running; applying ${request.op} directly`);
+  return applyOperatorMutation(stateDir, request, direct);
 }

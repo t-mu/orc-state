@@ -15,8 +15,7 @@ import {
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
 import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
-import { submitOperatorMutation } from '../lib/lifecycleDispatch.ts';
-import { masterActorId, type OperatorOp } from '../lib/operatorMutations.ts';
+import { masterActorId, submitOperatorMutation, type OperatorOp } from '../lib/operatorMutations.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -76,6 +75,8 @@ export function validateToolArguments(name: string, args: Record<string, unknown
   return { ok: false, error: `Invalid arguments for ${name}: ${path} ${first.message}` };
 }
 
+let warnedWithoutMasterSession = false;
+
 /** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */
 const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
   cancel_task: 'cancel-task', reset_task: 'reset-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
@@ -86,7 +87,11 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
   const op = OPERATOR_TOOLS[name];
   if (op && project) {
     // The master's session credential (from start-session) proves the caller; without one the
-    // MCP server acts as an operator, still recorded as the master as before.
+    // MCP server acts as an operator, still recorded as the master as before, and says so once.
+    if (!masterSession && !warnedWithoutMasterSession) {
+      warnedWithoutMasterSession = true;
+      process.stderr.write('[orc-mcp] ORC_MASTER_SESSION is not set; master tools reach the coordinator as the operator\n');
+    }
     return submitOperatorMutation({ op, ...args, ...(masterSession || args.actor_id !== undefined ? {} : { actor_id: masterActorId(stateDir) }) },
       { sessionToken: masterSession, project, stateDir });
   }

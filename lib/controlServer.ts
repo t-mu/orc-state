@@ -7,7 +7,7 @@ import { atomicWriteJson } from './atomicWrite.ts';
 import { CommandDispatcher, type CommandAuthenticator } from './commandDelivery.ts';
 import {
   CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError,
-  PROTOCOL_HEADER, SESSION_HEADER, defaultSocketPath,
+  OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER, defaultSocketPath,
   type AckState, type ControlEndpoint, type ControlErrorCode, type StreamFrame, type SubmitCommandRequest,
 } from './controlProtocol.ts';
 import { readEventBatch, withEventDb } from './eventLog.ts';
@@ -74,13 +74,18 @@ function taskError(error: unknown): ControlError {
   return classify(error);
 }
 
-/** Operator mutation failures carry the CLI's text: a missing target is 404, bad input 400, a refused transition 409. */
+/** Operator mutation refusals carry the CLI's text: a missing target is 404, bad input 400, a refused transition 409. */
+const OPERATOR_REFUSALS: Array<[RegExp, ControlErrorCode, number]> = [
+  [/not found/i, 'not_found', 404],
+  [/is required|^Invalid|must be/, 'bad_request', 400],
+  [/^task is not blocked|already has active run|cannot execute task|^Input request|^Input response|^Message actor is not scoped/, 'conflict', 409],
+];
+
 function operatorError(error: unknown): ControlError {
   if (error instanceof ControlError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found/i.test(message)) return new ControlError('not_found', message, 404);
-  if (/is required|^Invalid|must be/.test(message)) return new ControlError('bad_request', message, 400);
-  return new ControlError('conflict', message, 409);
+  for (const [match, code, status] of OPERATOR_REFUSALS) if (match.test(message)) return new ControlError(code, message, status);
+  return classify(error);
 }
 
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
@@ -374,7 +379,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const credential = typeof header === 'string' && header ? header : null;
       const request = parseOperatorRequest(await readBody(req));
       assertOpen();
-      const { actorId } = authorizeOperator(stateDir, credential, request);
+      const { actorId } = authorizeOperator(stateDir, { credential, operator: req.headers[OPERATOR_HEADER] === '1' }, request);
       try {
         return ok(applyOperatorMutation(stateDir, { ...request, actor_id: actorId }));
       } catch (error) {

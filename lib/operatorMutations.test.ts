@@ -4,7 +4,7 @@ import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } 
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
-import { submitOperatorMutation } from './lifecycleDispatch.ts';
+import { submitOperatorMutation } from './operatorMutations.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
 import { readBacklog, readClaims } from './stateReader.ts';
 import { invokeTool } from '../mcp/server.ts';
@@ -61,16 +61,29 @@ describe('parseOperatorRequest (task 232)', () => {
 
 describe('authorizeOperator (task 232)', () => {
   const reset = { op: 'reset-task', task_ref: 'orch/active' } as const;
+  const operator = { credential: null, operator: true };
 
-  it('an operator without a session acts as human, or as the actor it names', () => {
-    expect(authorizeOperator(dir, null, reset)).toEqual({ actorId: 'human' });
-    expect(authorizeOperator(dir, null, { ...reset, actor_id: 'ops-bot' })).toEqual({ actorId: 'ops-bot' });
+  it('an operator states its intent and acts as human, or as a registered agent it names', () => {
+    expect(authorizeOperator(dir, operator, reset)).toEqual({ actorId: 'human' });
+    expect(authorizeOperator(dir, operator, { ...reset, actor_id: 'master' })).toEqual({ actorId: 'master' });
+    expect(() => authorizeOperator(dir, operator, { ...reset, actor_id: 'ghost' })).toThrow(expect.objectContaining({ code: 'bad_request' }));
+    // Without a session or operator intent nothing is applied.
+    expect(() => authorizeOperator(dir, { credential: null, operator: false }, reset)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+    // Answering a worker needs the master, as it always has.
+    expect(() => authorizeOperator(dir, operator, { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }))
+      .toThrow(expect.objectContaining({ code: 'forbidden' }));
   });
 
-  it('a session must be the running master', () => {
-    expect(authorizeOperator(dir, 'session-master', reset)).toEqual({ actorId: 'master' });
-    expect(() => authorizeOperator(dir, 'session-a', reset)).toThrow(expect.objectContaining({ code: 'forbidden' }));
-    expect(() => authorizeOperator(dir, 'forged', reset)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+  it('a session must be the master\'s, and acts only as the master', () => {
+    const as = (credential: string) => ({ credential, operator: false });
+    expect(authorizeOperator(dir, as('session-master'), reset)).toEqual({ actorId: 'master' });
+    expect(() => authorizeOperator(dir, as('session-master'), { ...reset, actor_id: 'worker-a' })).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    // A worker session is refused even when it also claims operator intent.
+    expect(() => authorizeOperator(dir, { credential: 'session-a', operator: true }, reset)).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    expect(() => authorizeOperator(dir, as('forged'), reset)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+    // A master session the coordinator could not adopt after a restart still authenticates.
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'recoverable' WHERE session_id = 'session-master'").run());
+    expect(authorizeOperator(dir, as('session-master'), reset)).toEqual({ actorId: 'master' });
   });
 });
 
@@ -114,6 +127,17 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     expect(status('orch/todo')).toBe('todo');
   });
 
+  it('a shell inside a worker session presents it and is refused; only the master answers input', async () => {
+    const workerEnv = { ORC_SESSION_TOKEN: 'session-a' };
+    await expect(submitOperatorMutation({ op: 'reset-task', task_ref: 'orch/todo' }, { env: workerEnv, project: 'p', stateDir: dir }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    const answer = { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'go ahead' } as const;
+    await expect(submitOperatorMutation(answer, { env: {}, project: 'p', stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SESSION: 'session-master' }, project: 'p', stateDir: dir }))
+      .resolves.toMatchObject({ ok: true, responded_by: 'master' });
+    expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'master', payload: expect.objectContaining({ response: 'go ahead' }) })]);
+  });
+
   it('the master MCP tools are routed to the coordinator in a project', async () => {
     const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', masterSession: 'session-master' });
     expect(result).toMatchObject({ cancelled: true, status: 'blocked' });
@@ -124,7 +148,7 @@ describe('master and operator mutations through the coordinator (task 232)', () 
 describe('submitOperatorMutation without a coordinator (task 232)', () => {
   it('applies the mutation directly and says so', async () => {
     const warn = vi.fn();
-    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { project: 'p', stateDir: dir, warn }))
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn }))
       .resolves.toEqual({ unblocked: true, task_ref: 'orch/blocked' });
     expect(warn).toHaveBeenCalledWith('coordinator is not running; applying unblock-task directly');
     expect(status('orch/blocked')).toBe('todo');

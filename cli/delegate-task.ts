@@ -7,7 +7,7 @@
  * In a registered project the running coordinator applies the delegation.
  */
 import { flag } from '../lib/args.ts';
-import { submitOperatorMutation } from '../lib/lifecycleDispatch.ts';
+import { submitOperatorMutation } from '../lib/operatorMutations.ts';
 import { cliError } from './shared.ts';
 
 const taskRef = flag('task-ref');
