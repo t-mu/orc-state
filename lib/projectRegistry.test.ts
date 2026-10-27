@@ -131,5 +131,5 @@ describe('global project registry', () => {
     expect(globalSet.status, globalSet.stderr).toBe(0);
     const fallback = spawnSync(process.execPath, [cli, 'project', 'config', 'get', 'worker_pool.max_workers'], { cwd: temp, env, encoding: 'utf8' });
     expect(JSON.parse(fallback.stdout).value).toBe(1);
-  });
+  }, 30_000); // Spawns several orc CLI processes; slow under a full-suite load.
 });

@@ -3,7 +3,7 @@ ref: global-project-state/230-serve-sandboxed-worker-reads-without-state-dir-wri
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/229-route-worker-lifecycle-writes-through-an-authenticated-project-api
 ---
