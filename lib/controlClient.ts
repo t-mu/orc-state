@@ -12,6 +12,7 @@ import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
+import type { OperatorRequest } from './operatorMutations.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 export interface EventRow { seq: number; event: unknown }
@@ -146,6 +147,11 @@ export class ControlClient {
     if (opts.budget !== undefined) query.set('budget', String(opts.budget));
     const suffix = query.size ? `?${query}` : '';
     return this.call('GET', `/v1/memory/wake-up${suffix}`);
+  }
+
+  /** Apply a master (with the master's session) or operator (without a session) mutation in the coordinator. */
+  operator(request: OperatorRequest): Promise<Record<string, unknown>> {
+    return this.call('POST', '/v1/operator', request);
   }
 
   listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {

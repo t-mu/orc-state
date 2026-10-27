@@ -189,6 +189,14 @@ Commands for creating, completing, and managing tasks. In normal operation,
 the master agent handles task creation and the coordinator handles dispatch.
 These are available for manual intervention and debugging.
 
+In a registered project, `task-reset`, `task-unblock`, `delegate` and
+`run-input-respond` (like the master's `cancel_task`, `reset_task`,
+`delegate_task` and `respond_input`) are applied by the running coordinator
+through its control API; the CLI sends them as the operator, the master's tools
+with the master's session. When no coordinator is running they apply the change
+directly and print `coordinator is not running; applying <op> directly`, so
+operator recovery works with the coordinator stopped.
+
 | Command | Description |
 |---------|-------------|
 | `task-create` | Register a task from an existing markdown spec in `backlog/`. In a project state directory (one with `runtime.db`) it creates a database-only task instead, and no spec file is read. |

@@ -18,6 +18,7 @@ import { listAgents } from './agentRegistry.ts';
 import { RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
+import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
 import { DEFAULT_WAKE_UP_BUDGET, isWakeUpBudget, readMemoryWakeUp, readRunReviews } from './projectReads.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -71,6 +72,15 @@ function taskError(error: unknown): ControlError {
   if (message.startsWith('Task not found')) return new ControlError('not_found', message, 404);
   if (error instanceof TaskInputError) return new ControlError('bad_request', message, 400);
   return classify(error);
+}
+
+/** Operator mutation failures carry the CLI's text: a missing target is 404, bad input 400, a refused transition 409. */
+function operatorError(error: unknown): ControlError {
+  if (error instanceof ControlError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (/not found/i.test(message)) return new ControlError('not_found', message, 404);
+  if (/is required|^Invalid|must be/.test(message)) return new ControlError('bad_request', message, 400);
+  return new ControlError('conflict', message, 409);
 }
 
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
@@ -357,6 +367,18 @@ export async function startControlServer(stateDir: string, options: ControlServe
         // A rejected transition (wrong state, wrong owner) is the caller's conflict, reported verbatim.
         if (error instanceof ControlError) throw error;
         throw new ControlError('conflict', error instanceof Error ? error.message : String(error), 409);
+      }
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/operator') {
+      const header = req.headers[SESSION_HEADER];
+      const credential = typeof header === 'string' && header ? header : null;
+      const request = parseOperatorRequest(await readBody(req));
+      assertOpen();
+      const { actorId } = authorizeOperator(stateDir, credential, request);
+      try {
+        return ok(applyOperatorMutation(stateDir, { ...request, actor_id: actorId }));
+      } catch (error) {
+        throw operatorError(error);
       }
     }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {

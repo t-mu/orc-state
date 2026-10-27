@@ -401,6 +401,14 @@ describe('clean-repository project workflow', () => {
       expect(claims()).toHaveLength(2);
       expect(json<Array<{ status: string }>>(orcOk(['project', 'task', 'list'])).every((task) => task.status === 'done')).toBe(true);
       expect(readdirSync(target).sort()).toEqual(['.git', 'README.md', 'alpha.txt', 'beta.txt']);
+
+      // ── Operator mutations go through the running coordinator (task 232). ─────
+      // Under a stand-in sandbox that cannot write (or even open) the state, only the coordinator can apply them.
+      const operator = (...args: string[]) => orcAsync(args, target,
+        { ...cleanEnv({ ORC_PROJECT_ID: project.id, ORC_STATE_DIR: project.stateDir }), NODE_OPTIONS: sandboxNodeOptions([]) });
+      expect(await operator('task-reset', 'app/alpha')).toContain('task reset: app/alpha (was: done');
+      expect(json<Array<{ ref: string; status: string }>>(orcOk(['project', 'task', 'list'])).find((task) => task.ref === 'app/alpha')?.status).toBe('todo');
+      await expect(operator('task-unblock', 'app/beta')).rejects.toThrow('task is not blocked (status: done): app/beta');
     } finally {
       await coordinator.doShutdown();
       exit.mockRestore();

@@ -557,7 +557,10 @@ Session IDs appear in `agents.json`, and any process running as the same OS
 user can read `control.token` or open `events.db` directly. Per-session secrets
 (task 231) and process isolation are follow-up work. Worker lifecycle requests
 (`/v1/lifecycle`) are checked against the caller's own run, which stops a
-worker's mistakes but not a worker that reads a peer's session id. Delivery of queued commands to a provider transport is also not
+worker's mistakes but not a worker that reads a peer's session id. Operator
+mutations (`/v1/operator`) without a session header are accepted on the control
+token alone, so any process that can read `control.token` and reach the socket
+can act as the operator until task 231 adds an operator credential. Delivery of queued commands to a provider transport is also not
 wired yet; commands stay `queued` until a dispatcher with a transport runs.
 
 | Method | Path | Result |
@@ -568,6 +571,7 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 | `GET` | `/v1/runs/<run_id>/reviews` | `{ reviews }`: the run's `review_submitted` events plus bridged reviewer feedback, latest per agent (what `orc review-read` prints). Read-only, bearer token only |
 | `GET` | `/v1/memory/wake-up?wing=<w>&budget=<tokens>` | `{ initialized, text }` (what `orc memory-wake-up` prints); `initialized` is false without a memory store. `budget` defaults to 800. Read-only, bearer token only |
 | `POST` | `/v1/lifecycle` | Worker lifecycle request `{ op, agent_id, run_id?, ... }`, applied by the coordinator. `op` is `run-start`, `run-fail` (`reason`, `code`, `policy`), `run-finish`, `run-work-complete`, `progress` (`event`, `phase?`, `reason?`, `policy?`), `review-submit` (`outcome`, `reason`), `input-request` (`question`) -> `{ request_id, request_seq, active }`, `input-poll` (`request_id`, `request_seq`, `heartbeat?`) -> `{ response, active }`, `input-timeout`, `memory-record` (`content`, `wing?`, `hall?`, `room?`, `importance?`; no `agent_id`) or `report-for-duty` (`session_token`). Result `{ message, ... }`. The session must not be `offline` (`running`, `recoverable` or `unknown`) and must be launched for that agent and run (else `403 forbidden`; an unrecognised or offline session `401`). An offline session may still send `input-poll` for its own run (its heartbeat is ignored) and `run-finish` or `progress` `run_finished` once that run is `done`. A rejected transition is `409 conflict` with the CLI's error text |
+| `POST` | `/v1/operator` | Master or operator mutation `{ op, actor_id?, ... }`, applied by the coordinator (task 232). `op` is `cancel-task` (`task_ref`, `reason?`), `reset-task` (`task_ref`), `unblock-task` (`task_ref`, `reason?`), `delegate-task` (`task_ref`, `target_agent_id?`, `task_type?`, `note?`) or `respond-input` (`run_id`, `agent_id`, `response`, `request_id?`, `record_memory?`); the result is the MCP tool's. With `x-orc-session` the credential must be the running master's session (else `403 forbidden`; unknown `401`), recorded as the master unless `actor_id` names another actor; without it the caller is an operator, recorded as `actor_id` or `human`. A missing task or agent is `404 not_found`, bad input `400 bad_request`, a refused transition `409 conflict`, each with the CLI's error text |
 | `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |
 | `POST` | `/v1/commands/<id>/ack` | Recipient ACK `{ state: accepted\|running\|completed\|failed }` -> `{ command }` |
 | `POST` | `/v1/messages` | Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |

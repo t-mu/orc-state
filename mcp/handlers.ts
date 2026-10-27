@@ -4,19 +4,16 @@ import { join } from 'node:path';
 import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory, storeDrawer } from '../lib/memoryStore.ts';
 
 import { createAdapter } from '../adapters/index.ts';
-import { bridgeInputResponse } from '../lib/messageBridge.ts';
 import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { PlanAuthoringError, writePlan, type WritePlanInput } from '../lib/planAuthoring.ts';
 import { ACTIVE_PROJECT, PLANS_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
-import { describeAutoTargetFailure, selectAutoTarget } from '../lib/dispatchPlanner.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
 import { withLock } from '../lib/lock.ts';
-import { setRunInputState } from '../lib/claimManager.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
-import { evaluateTaskEligibility, formatRoutingReasons } from '../lib/taskRouting.ts';
+import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
@@ -26,9 +23,8 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
-import { commitBacklog, createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
-import { commitClaims } from '../lib/runStore.ts';
-import type { Claim } from '../types/claims.ts';
+import { createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -48,7 +44,7 @@ function assertStringArray(value: unknown, field: string) {
 }
 
 function defaultActorId(stateDir: string) {
-  return listAgents(stateDir).find((agent) => agent.role === 'master')?.agent_id ?? 'master';
+  return masterActorId(stateDir);
 }
 
 function assertActorId(stateDir: string, actorId: unknown) {
@@ -83,10 +79,6 @@ function plansDirForState(stateDir: string) {
   return PLANS_DIR;
 }
 
-function readBacklogFresh(stateDir: string, { lockAlreadyHeld = false }: { lockAlreadyHeld?: boolean } = {}) {
-  syncBacklogFromSpecs(stateDir, backlogDocsDirForState(stateDir), { lockAlreadyHeld });
-  return readBacklog(stateDir);
-}
 
 // `next_task_seq` always means "the next available numeric sequence from this state snapshot".
 // Before create_task mutates backlog.json, it is the number to consume next.
@@ -615,215 +607,11 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
 }
 
 export function handleDelegateTask(stateDir: string, args: Record<string, unknown> = {}) {
-  const {
-    task_ref,
-    target_agent_id,
-    task_type = 'implementation',
-    note = null,
-    actor_id = defaultActorId(stateDir),
-  } = args;
-
-  if (!task_ref) throw new Error('task_ref is required');
-  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (!TASK_TYPES.includes(task_type as string)) throw new Error(`Invalid task type: ${String(task_type)}`);
-
-  const now = new Date().toISOString();
-
-  return withLock(join(stateDir, '.lock'), () => {
-    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
-    const claims = readClaims(stateDir).claims;
-    const allAgents = listAgents(stateDir);
-    const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
-    if (actor_id !== 'human' && !actorExists) {
-      throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
-    }
-
-    let task: Task | null = null;
-    let featureRef: string | null = null;
-    for (const feature of backlog.features) {
-      const found = feature.tasks.find((candidate) => candidate.ref === task_ref);
-      if (found) {
-        task = found;
-        featureRef = feature.ref;
-        break;
-      }
-    }
-    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
-    const taskForDiagnostics = { ...task };
-
-    let assignedTarget: string | null = (target_agent_id as string) ?? null;
-    if (assignedTarget) {
-      const target = allAgents.find((agent) => agent.agent_id === assignedTarget);
-      if (!target) throw new Error(`Target agent not found: ${assignedTarget}`);
-      const activeClaim = claims.find((claim) =>
-        claim.agent_id === assignedTarget && ['claimed', 'in_progress'].includes(claim.state),
-      );
-      if (activeClaim) {
-        throw new Error(`Target agent ${assignedTarget} already has active run ${activeClaim.run_id}`);
-      }
-      const evaluation = evaluateTaskEligibility({ ...task, task_type: task_type as string | undefined }, target);
-      if (!evaluation.eligible) {
-        throw new Error(
-          `Target agent ${assignedTarget} cannot execute task: ` +
-          `${evaluation.reasons.join(', ')} (${formatRoutingReasons(evaluation.reasons).join('; ')})`,
-        );
-      }
-    } else {
-      assignedTarget = selectAutoTarget({
-        task,
-        taskType: task_type as string,
-        allAgents,
-        claims,
-      });
-    }
-
-    task.task_type = task_type as Task['task_type'];
-    task.planning_state = 'ready_for_dispatch';
-    task.delegated_by = actor_id as string;
-    if (assignedTarget) {
-      task.owner = assignedTarget;
-    } else if (task.owner) {
-      delete task.owner;
-    }
-    const unblocked = task.status === 'blocked';
-    if (unblocked) task.status = 'todo';
-    task.updated_at = now;
-    commitBacklog(stateDir, backlog, unblocked ? { [task_ref as string]: { cause: 'unblock', actorId: actor_id as string } } : {});
-
-    appendSequencedEvent(
-      stateDir,
-      {
-        ts: now,
-        event: 'task_delegated',
-        actor_type: actor_id === 'human' ? 'human' : 'agent',
-        actor_id: actor_id as string,
-        task_ref: task_ref as string,
-        ...(assignedTarget ? { agent_id: assignedTarget } : {}),
-        payload: {
-          target_agent_id: assignedTarget ?? null,
-          task_type,
-          note,
-          feature_ref: featureRef,
-          auto_assigned: !target_agent_id,
-        },
-      },
-      { lockAlreadyHeld: true },
-    );
-
-    if (!assignedTarget) {
-      return {
-        warning: 'no_eligible_worker',
-        task_ref,
-        message: `No eligible worker for ${typeof task_ref === 'string' ? task_ref : '(unknown)'}; inspect candidate_diagnostics for routing blockers.`,
-        candidate_diagnostics: describeAutoTargetFailure({
-          task: taskForDiagnostics,
-          taskType: task_type as string,
-          allAgents,
-          claims,
-        }),
-      };
-    }
-    return { task_ref, assigned_to: assignedTarget };
-  });
+  return delegateTask(stateDir, args);
 }
 
 export function handleCancelTask(stateDir: string, args: Record<string, unknown> = {}) {
-  const {
-    task_ref,
-    reason = null,
-    actor_id = defaultActorId(stateDir),
-  } = args;
-
-  if (!task_ref) throw new Error('task_ref is required');
-  if (reason != null && typeof reason !== 'string') throw new Error('reason must be a string');
-  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-
-  const now = new Date().toISOString();
-  let cancelledRuns: Claim[] = [];
-
-  const result = withLock(join(stateDir, '.lock'), () => {
-    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
-    const claimsData = readClaims(stateDir);
-    const claims = claimsData.claims;
-
-    if (actor_id !== 'human') {
-      const allAgents = listAgents(stateDir);
-      const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
-      if (!actorExists) {
-        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
-      }
-    }
-
-    const task = findTask(backlog, task_ref as string);
-    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
-
-    if (TERMINAL_STATUSES.has(task.status)) {
-      return { error: 'already_terminal', task_ref, status: task.status };
-    }
-
-    const activeClaims = claims.filter((claim) =>
-      claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state),
-    );
-    if (activeClaims.length > 0) {
-      claimsData.claims = claims.filter((claim) =>
-        !(claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state)),
-      );
-      cancelledRuns = activeClaims;
-      commitClaims(stateDir, claimsData, activeClaims.map((removed) => ({
-        ts: now,
-        event: 'run_cancelled' as const,
-        actor_type: actor_id === 'human' ? 'human' as const : 'agent' as const,
-        actor_id: actor_id as string,
-        run_id: removed.run_id,
-        task_ref: task_ref as string,
-        agent_id: removed.agent_id,
-        payload: { reason },
-      })));
-    }
-
-    if (projectTaskStoreFor(stateDir)) {
-      // Project SQLite follows the contract: cancellation is its own terminal status.
-      task.status = 'cancelled';
-      delete task.blocked_reason;
-      commitBacklog(stateDir, backlog, { [task_ref as string]: { cause: 'cancel', actorId: actor_id as string, reason: (reason as string | null) ?? null } });
-    } else {
-      task.status = 'blocked';
-      task.updated_at = now;
-      task.blocked_reason = (reason as string | null) ?? 'cancelled';
-      commitBacklog(stateDir, backlog);
-    }
-
-    appendSequencedEvent(
-      stateDir,
-      {
-        ts: now,
-        event: 'task_cancelled',
-        actor_type: actor_id === 'human' ? 'human' : 'agent',
-        actor_id: actor_id as string,
-        task_ref: task_ref as string,
-        ...(cancelledRuns[0] ? { run_id: cancelledRuns[0].run_id, agent_id: cancelledRuns[0].agent_id } : {}),
-        payload: {
-          reason,
-          had_active_run: cancelledRuns.length > 0,
-        },
-      },
-      { lockAlreadyHeld: true },
-    );
-
-    return {
-      cancelled: true,
-      task_ref,
-      status: task.status,
-      ...(cancelledRuns[0]
-        ? {
-            cancelled_run_id: cancelledRuns[0].run_id,
-            cancelled_run_count: cancelledRuns.length,
-          }
-        : {}),
-    };
-  });
-
-  return result;
+  return cancelTask(stateDir, args);
 }
 
 function readRunWorktreesState(stateDir?: string): RunWorktreesState {
@@ -1063,52 +851,8 @@ export function handleQueryEvents(
   }
 }
 
-export function handleResetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {
-  if (!task_ref) throw new Error('task_ref is required');
-  if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) {
-    throw new Error(`Invalid actor_id: ${typeof actor_id === 'string' ? actor_id : '(unknown)'}`);
-  }
-
-  return withLock(join(stateDir, '.lock'), () => {
-    const now = new Date().toISOString();
-
-    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
-    const task = findTask(backlog, task_ref as string);
-    if (!task) throw new Error(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
-
-    const previousStatus = task.status;
-    task.status = 'todo';
-    delete task.blocked_reason;
-    task.updated_at = now;
-
-    const claimsState = readClaims(stateDir);
-    const activeClaims = claimsState.claims.filter(
-      (c) => c.task_ref === task_ref && (c.state === 'claimed' || c.state === 'in_progress'),
-    );
-
-    for (const c of activeClaims) {
-      c.state = 'failed';
-      c.failure_reason = 'manual_reset';
-      c.finished_at = now;
-    }
-
-    commitClaims(stateDir, claimsState, [{
-      ts: now,
-      event: 'task_updated',
-      actor_type: actor_id === 'human' ? 'human' : 'agent',
-      actor_id,
-      task_ref: task_ref as string,
-      payload: { reset: true, previous_status: previousStatus, status: 'todo' },
-    }]);
-    commitBacklog(stateDir, backlog, previousStatus === 'todo' ? {} : { [task_ref as string]: { cause: 'operator_reset', actorId: actor_id } });
-
-    return {
-      reset: true,
-      task_ref,
-      previous_status: previousStatus,
-      cancelled_claims: activeClaims.length,
-    };
-  });
+export function handleResetTask(stateDir: string, args: Record<string, unknown> = {}) {
+  return resetTask(stateDir, args);
 }
 
 export function handleListWorktrees(stateDir: string) {
@@ -1135,58 +879,8 @@ export function handleListWorktrees(stateDir: string) {
   });
 }
 
-export function handleRespondInput(stateDir: string, { run_id, agent_id, response, actor_id }: Record<string, unknown> = {}) {
-  if (!run_id) throw new Error('run_id is required');
-  if (!agent_id) throw new Error('agent_id is required');
-  if (typeof response !== 'string' || (response).length === 0) {
-    throw new Error('response is required');
-  }
-
-  const effectiveActorId = (actor_id as string) ?? defaultActorId(stateDir);
-  if (!AGENT_ID_RE.test(effectiveActorId)) {
-    throw new Error('actor_id must be a valid agent id');
-  }
-
-  const inputRequests = queryEvents(stateDir, {
-    event_type: 'input_requested',
-    run_id: run_id as string,
-    agent_id: agent_id as string,
-  });
-  const latestRequest = inputRequests.length > 0
-    ? inputRequests.at(-1) as unknown as Record<string, unknown>
-    : null;
-  const latestRequestId = (latestRequest?.payload as Record<string, unknown> | undefined)?.request_id;
-  const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
-    typeof latestRequestId === 'string' ? latestRequestId : null, { trustedMaster: true });
-
-  try {
-    setRunInputState(stateDir, run_id as string, agent_id as string, { inputState: null });
-  } catch {
-    // Allow master replies to be recorded even if the claim just completed.
-  }
-
-  appendSequencedEvent(stateDir, {
-    ts: new Date().toISOString(),
-    event: 'input_response',
-    actor_type: 'agent',
-    actor_id: effectiveActorId,
-    run_id: run_id as string,
-    task_ref: latestRequest?.task_ref as string | undefined,
-    agent_id: agent_id as string,
-    payload: {
-      response,
-      question: (latestRequest?.payload as Record<string, unknown> | undefined)?.question ?? null,
-      request_id: typeof latestRequestId === 'string' ? latestRequestId : null,
-      message_id: messageId,
-    },
-  } as import('../types/events.ts').OrcEventInput);
-
-  return {
-    ok: true,
-    run_id,
-    agent_id,
-    responded_by: effectiveActorId,
-  };
+export function handleRespondInput(stateDir: string, args: Record<string, unknown> = {}) {
+  return respondInput(stateDir, args);
 }
 
 export function handleGetNotifications(stateDir: string, { after_seq }: { after_seq?: unknown } = {}) {

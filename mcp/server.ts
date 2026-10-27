@@ -14,7 +14,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
-import { assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
+import { submitOperatorMutation } from '../lib/lifecycleDispatch.ts';
+import { masterActorId, type OperatorOp } from '../lib/operatorMutations.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -74,7 +76,20 @@ export function validateToolArguments(name: string, args: Record<string, unknown
   return { ok: false, error: `Invalid arguments for ${name}: ${path} ${first.message}` };
 }
 
-export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {}) {
+/** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */
+const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
+  cancel_task: 'cancel-task', reset_task: 'reset-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
+};
+
+export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
+  { project = ACTIVE_PROJECT, masterSession = process.env.ORC_MASTER_SESSION?.trim() || null }: { project?: unknown; masterSession?: string | null } = {}) {
+  const op = OPERATOR_TOOLS[name];
+  if (op && project) {
+    // The master's session credential (from start-session) proves the caller; without one the
+    // MCP server acts as an operator, still recorded as the master as before.
+    return submitOperatorMutation({ op, ...args, ...(masterSession || args.actor_id !== undefined ? {} : { actor_id: masterActorId(stateDir) }) },
+      { sessionToken: masterSession, project, stateDir });
+  }
   switch (name) {
     case 'list_tasks':
       return handlers.handleListTasks(stateDir, args);

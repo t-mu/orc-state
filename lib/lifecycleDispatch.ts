@@ -3,6 +3,7 @@ import { ControlClient } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
 import { ACTIVE_PROJECT, STATE_DIR } from './paths.ts';
 import { applyLifecycle, type LifecycleRequest, type LifecycleResult } from './workerLifecycle.ts';
+import { applyOperatorMutation, type OperatorRequest } from './operatorMutations.ts';
 
 /** How long a worker waits for a stopped or restarting coordinator before giving up. */
 const DEFAULT_RETRY_MS = 120_000;
@@ -55,4 +56,36 @@ export async function submitLifecycle(request: LifecycleRequest, env: NodeJS.Pro
     throw new Error(`In a registered project the coordinator applies ${request.op}; run it from the worker session (ORC_SESSION_TOKEN is not set)`);
   }
   return sendLifecycle(new ControlClient(STATE_DIR, { sessionToken, timeoutMs: REQUEST_TIMEOUT_MS }), request);
+}
+
+/**
+ * Apply a master or operator mutation (task 232). In a registered project the
+ * running coordinator applies it: with the master's session credential for a
+ * master tool, without one for an operator shell. With no coordinator
+ * running the caller — never sandboxed — applies it directly and says so;
+ * the request provably never reached a coordinator. A legacy installation
+ * always applies it directly.
+ */
+export async function submitOperatorMutation(
+  request: OperatorRequest,
+  {
+    sessionToken = null, direct = { trustedMaster: true }, warn = (line: string) => console.error(line),
+    project = ACTIVE_PROJECT, stateDir = STATE_DIR,
+  }: {
+    sessionToken?: string | null;
+    project?: unknown;
+    stateDir?: string;
+    /** How a direct apply proves it may answer an input request. */
+    direct?: { sessionId?: string | null; trustedMaster?: boolean };
+    warn?: (line: string) => void;
+  } = {},
+): Promise<Record<string, unknown>> {
+  if (!project) return applyOperatorMutation(stateDir, request, direct);
+  try {
+    return await new ControlClient(stateDir, { sessionToken, timeoutMs: REQUEST_TIMEOUT_MS }).operator(request);
+  } catch (error) {
+    if (!(error instanceof ControlError) || error.code !== 'unavailable') throw error;
+  }
+  warn(`coordinator is not running; applying ${request.op} directly`);
+  return applyOperatorMutation(stateDir, request, direct);
 }
