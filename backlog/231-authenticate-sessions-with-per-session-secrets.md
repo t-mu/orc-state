@@ -45,6 +45,7 @@ Presenting a value read from the state directory authenticates nobody. Once Task
 ### Constraints from Task 232
 
 - `/v1/operator` accepts an operator on the control token plus `x-orc-operator: 1`; give the operator a credential workers cannot read, so the header becomes a claim that needs it.
+- The coordinator no longer supersedes the master's session; `orc start-session` closes it when the master exits and supersedes it when a new master starts. A start-session process that is killed leaves its row `running` (a valid master credential) until then: close it from the master pid file's liveness, or on a signal handler, before that id becomes a secret.
 - The master's MCP server receives its session id as `ORC_MASTER_SESSION`, which `start-session` also writes into `mcp-config.json` in the state directory and, for a Codex master, into its command line. Once that value is a secret, deliver it by environment only (or a file workers cannot read).
 
 ### Start here
