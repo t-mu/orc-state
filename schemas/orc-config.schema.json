@@ -36,6 +36,7 @@
         "model": { "type": ["string", "null"] },
         "execution_mode": { "type": "string", "enum": ["full-access", "sandbox"] },
         "runtime": { "type": "string", "enum": ["cli", "structured"] },
+        "sandbox_network": { "type": "string", "enum": ["restricted", "open"] },
         "provider_models": {
           "type": "object",
           "additionalProperties": false,

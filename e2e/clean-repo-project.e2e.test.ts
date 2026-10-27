@@ -186,7 +186,11 @@ function makeWorkers(writable: string[]) {
     git(item.worktree, 'add', file);
     git(item.worktree, 'commit', '-qm', `feat: ${title}`);
     await workerOrc(item.agentId, ['review-submit', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`, '--outcome=approved', '--reason=looks right'], item.worktree);
+    // Reads work in the sandbox too: the coordinator serves them (task 230).
+    const reviews = await workerOrc(item.agentId, ['review-read', `--run-id=${item.runId}`, '--json'], item.worktree);
+    expect(json<{ count: number; reviews: Array<{ payload: { findings: string } }> }>(reviews)).toMatchObject({ count: 1, reviews: [{ payload: { findings: 'looks right' } }] });
     await workerOrc(item.agentId, ['memory-record', `--content=${title} lives in its own file`], item.worktree);
+    expect(await workerOrc(item.agentId, ['memory-wake-up'], item.worktree)).toContain(`${title} lives in its own file`);
     await workerOrc(item.agentId, ['run-work-complete', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], item.worktree);
   }
 
@@ -331,6 +335,10 @@ describe('clean-repository project workflow', () => {
       await workers.completeTask(started[0]);
       await coordinator.doShutdown();
       expect(await events()).toContain('coordinator_stopped');
+      // Reads fall back to the state directory while the coordinator is down. The stand-in sandbox cannot load
+      // SQLite at all, so here that fallback fails, and says to retry (a real sandbox opens it read-only).
+      await expect(workers.workerOrc(started[1].agentId, ['review-read', `--run-id=${started[1].runId}`], started[1].worktree))
+        .rejects.toThrow(/retry once the coordinator is running/);
       for (const item of started) {
         expect(spawnSync('tmux', ['-L', tmuxSocket, 'has-session', '-t', `=${tmux.tmuxSessionName(item.agentId)}`]).status).toBe(0);
       }

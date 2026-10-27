@@ -12,6 +12,7 @@ import { ControlClient, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
+import { closeMemoryDb, storeDrawer } from './memoryStore.ts';
 import type { Claim } from '../types/claims.ts';
 
 const exec = promisify(execFile);
@@ -282,6 +283,32 @@ describe('local daemon control API', () => {
     expect(asked).toMatchObject({ active: true, request_id: expect.any(String) });
     await expect(workerA.lifecycle({ op: 'input-poll', run_id: 'run-a', agent_id: 'worker-a', request_id: asked.request_id!, request_seq: asked.request_seq! }))
       .resolves.toMatchObject({ response: null, active: true });
+  });
+
+  it('serves a run\'s reviews and the memory wake-up to readers without state write access (task 230)', async () => {
+    const reader = new ControlClient(dir);
+    await expect(reader.reviews('run-a')).resolves.toEqual({ reviews: [] });
+    for (const findings of ['first pass', 'second pass']) {
+      appendSequencedEvent(dir, {
+        ts: new Date().toISOString(), event: 'review_submitted', actor_type: 'agent', actor_id: 'worker-a',
+        run_id: 'run-a', agent_id: 'worker-a', payload: { outcome: 'findings', findings },
+      });
+    }
+    const { reviews } = await reader.reviews('run-a');
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0].payload).toMatchObject({ outcome: 'findings', findings: 'second pass' });
+    await expect(reader.reviews('run-b')).resolves.toEqual({ reviews: [] });
+    await expect(rawGet({ authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8').trim()}`, 'x-orc-protocol': '1' }, '/v1/runs/%E0/reviews'))
+      .resolves.toMatchObject({ status: 400, body: { error: { code: 'bad_request' } } });
+
+    await expect(reader.memoryWakeUp()).resolves.toEqual({ initialized: false, text: '' });
+    storeDrawer(dir, { wing: 'orch', hall: 'facts', room: 'build', content: 'run npm run build after changes', importance: 9 });
+    closeMemoryDb(dir);
+    await expect(reader.memoryWakeUp({ wing: 'orch', budget: 100 })).resolves.toEqual({
+      initialized: true, text: expect.stringContaining('run npm run build after changes'),
+    });
+    await expect(reader.memoryWakeUp({ wing: 'elsewhere' })).resolves.toEqual({ initialized: true, text: '' });
+    await expect(reader.memoryWakeUp({ budget: 0 })).rejects.toMatchObject({ code: 'bad_request' });
   });
 
   it('resumes after the snapshot cursor across a disconnect and a daemon restart without gaps', async () => {

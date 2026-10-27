@@ -352,7 +352,7 @@ Each agent role (master, worker) can run in one of two execution mode presets:
 | `full-access` | No sandbox — agent has full filesystem and network access. Default. |
 | `sandbox` | Agent is confined to the workspace; unsandboxed shell commands are disallowed. |
 
-Configure via `default_execution_mode`, `master.execution_mode`, or `worker_pool.execution_mode` in `orc-state.config.json`, or override at runtime with `ORC_MASTER_EXECUTION_MODE` / `ORC_WORKER_EXECUTION_MODE` env vars. Scouts are launched with `read_only: true`, which tightens permissions in `sandbox` mode; in `full-access` mode they receive the same flags as regular workers.
+Configure via `default_execution_mode`, `master.execution_mode`, or `worker_pool.execution_mode` in `orc-state.config.json`, or override at runtime with `ORC_MASTER_EXECUTION_MODE` / `ORC_WORKER_EXECUTION_MODE` env vars. Scouts are launched with `read_only: true`, which tightens permissions in `sandbox` mode; in `full-access` mode they receive the same flags as regular workers. In a registered project, sandboxed Codex workers and Claude workers on Linux reach the coordinator only with the opt-in `worker_pool.sandbox_network: open` (`ORC_WORKER_SANDBOX_NETWORK`), which widens their network access; Claude scouts on Linux follow the same setting, which lets them reach every Unix socket.
 
 See `docs/configuration.md` → **Execution Modes** for full details including per-provider CLI flags and Linux prerequisites.
 

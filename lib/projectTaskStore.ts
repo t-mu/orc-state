@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
+import { openReadOnlyDatabase, shouldOpenReadOnly } from './sqliteReadOnly.ts';
 
 export const PROJECT_TASK_SCHEMA_VERSION = 4;
 
@@ -363,14 +364,23 @@ export class ProjectTaskStore {
 
   constructor(projectStateDir: string) {
     mkdirSync(projectStateDir, { recursive: true, mode: 0o700 });
-    this.db = new Database(join(projectStateDir, 'runtime.db'));
+    const path = join(projectStateDir, 'runtime.db');
+    const db = new Database(path);
     try {
-      this.db.pragma('busy_timeout = 5000');
-      migrateProjectTaskSchema(this.db);
-      this.db.pragma('journal_mode = WAL');
+      db.pragma('busy_timeout = 5000');
+      migrateProjectTaskSchema(db);
+      db.pragma('journal_mode = WAL');
+      this.db = db;
     } catch (error) {
-      this.db.close();
-      throw error;
+      db.close();
+      // A sandboxed project session reads the task store the coordinator holds open.
+      if (!shouldOpenReadOnly(error, path)) throw error;
+      this.db = openReadOnlyDatabase(path);
+      const version = this.db.pragma('user_version', { simple: true }) as number;
+      if (version !== PROJECT_TASK_SCHEMA_VERSION) {
+        this.db.close();
+        throw new Error(`runtime.db schema version ${version} does not match this orc binary (${PROJECT_TASK_SCHEMA_VERSION}); it cannot be migrated without write access`);
+      }
     }
   }
 

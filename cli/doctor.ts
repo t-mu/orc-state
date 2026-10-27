@@ -15,7 +15,7 @@ import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiag
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { formatSkippedSpecs, validateBacklogSync } from './backlog-sync-check.ts';
-import { checkSandboxDependencies } from '../lib/sandboxDeps.ts';
+import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
@@ -41,6 +41,7 @@ const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
 const providers = new Set(agents.map((a) => a.provider));
 
 const sandboxDeps = checkSandboxDependencies();
+const sandboxControlSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE_PROJECT) });
 const memoryHealth = validateMemoryDb(STATE_DIR);
 const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
 // Legacy installations still run until migrated; a sibling layout no longer does.
@@ -68,6 +69,7 @@ const checks: Record<string, unknown> = {
   stateErrors,
   backlogSync,
   sandboxDependencies: sandboxDeps,
+  sandboxControlSocket,
   memoryHealth,
   runtimeSchema,
   legacyLayout,
@@ -227,6 +229,7 @@ if (sd.skipped) {
     console.log(`    Fedora:        sudo dnf install bubblewrap socat`);
   }
 }
+if (sandboxControlSocket.warning) console.log(`  warning: ${sandboxControlSocket.warning}`);
 
 console.log('');
 const mh = checks.memoryHealth as ReturnType<typeof validateMemoryDb>;

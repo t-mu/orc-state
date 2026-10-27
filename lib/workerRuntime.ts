@@ -3,7 +3,7 @@ import { resolveOrcBin } from './orcBin.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
-import type { ExecutionMode, ProviderName, WorkerRuntime } from './providers.ts';
+import type { ExecutionMode, ProviderName, SandboxNetwork, WorkerRuntime } from './providers.ts';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -149,6 +149,7 @@ interface Adapter {
     read_only?: boolean;
     require_git_checkout?: boolean;
     execution_mode?: 'full-access' | 'sandbox';
+    sandbox_network?: SandboxNetwork;
     startup_profile?: 'default' | 'real-provider-smoke';
     runtime?: WorkerRuntime;
     env: Record<string, string>;
@@ -182,6 +183,7 @@ export async function launchWorkerSession(
     taskModel = null,
     retryable = false,
     executionMode,
+    sandboxNetwork,
     runtime,
     emit,
     sessionToken = randomUUID(),
@@ -194,6 +196,7 @@ export async function launchWorkerSession(
     taskModel?: string | null;
     retryable?: boolean;
     executionMode?: ExecutionMode;
+    sandboxNetwork?: SandboxNetwork;
     runtime?: WorkerRuntime;
     emit: (event: OrcEventInput) => void;
     sessionToken?: string;
@@ -221,6 +224,7 @@ export async function launchWorkerSession(
       read_only: agent.role === 'scout',
       require_git_checkout: agent.role === 'worker',
       execution_mode: effectiveMode,
+      ...(sandboxNetwork ? { sandbox_network: sandboxNetwork } : {}),
       startup_profile: workerStartupProfile,
       // Scouts stay on the CLI; only task workers use a structured runtime.
       ...(runtime && agent.role !== 'scout' ? { runtime } : {}),
@@ -313,6 +317,7 @@ export async function spawnEphemeralWorker(
     taskRef = null,
     taskModel = null,
     executionMode,
+    sandboxNetwork,
     runtime,
     emit,
     sessionToken = randomUUID(),
@@ -326,6 +331,7 @@ export async function spawnEphemeralWorker(
     taskRef?: string | null;
     taskModel?: string | null;
     executionMode?: ExecutionMode;
+    sandboxNetwork?: SandboxNetwork;
     runtime?: WorkerRuntime;
     emit: (event: OrcEventInput) => void;
     sessionToken?: string;
@@ -347,6 +353,7 @@ export async function spawnEphemeralWorker(
     taskModel,
     retryable: false, // ephemeral workers fail-and-requeue on launch failure, no retries
     ...(executionMode !== undefined ? { executionMode } : {}),
+    ...(sandboxNetwork !== undefined ? { sandboxNetwork } : {}),
     ...(runtime !== undefined ? { runtime } : {}),
     emit,
     sessionToken,

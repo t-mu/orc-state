@@ -182,6 +182,33 @@ describe('handleRequestScout', () => {
     })).rejects.toThrow('did not report for duty in time');
   });
 
+  it('in a project, passes the sandbox network opt-in and explains a scout that cannot reach the socket (task 230)', async () => {
+    launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
+      agent.status = 'running';
+      agent.session_handle = createSessionHandle(agent.agent_id);
+      agent.session_token = 'scout-token-3';
+      agent.session_started_at = '2026-01-01T00:00:00.000Z';
+      agent.session_ready_at = null;
+      return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
+    });
+    vi.resetModules();
+    vi.doMock('../lib/paths.ts', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../lib/paths.ts')>(), ACTIVE_PROJECT: { id: 'p1', stateDir: dir },
+    }));
+    vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
+    try {
+      const { handleRequestScout } = await import('./handlers.ts');
+      // The master is a Codex session, so the scout is a Codex scout: read-only, no network setting.
+      await expect(handleRequestScout(dir, { objective: 'Inspect', actor_id: 'master' }))
+        .rejects.toThrow(/did not report for duty in time; in a project a sandboxed codex scout .* \(request a claude scout\)/);
+      expect(launchWorkerSessionMock.mock.calls[0][2]).toMatchObject({ sandboxNetwork: 'restricted' });
+    } finally {
+      vi.unstubAllEnvs();
+      vi.doUnmock('../lib/paths.ts');
+      vi.resetModules();
+    }
+  });
+
   it('rejects non-master non-human actors', async () => {
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',

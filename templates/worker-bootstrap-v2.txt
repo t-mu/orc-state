@@ -133,7 +133,8 @@ When a TASK_START block arrives:
           --- END REVIEWER CONSTRAINTS ---
        c. Retrieve findings: `{{orc_bin}} review-read --run-id=<run_id>`
           If a reviewer failed or is non-responsive, proceed with reviews that were submitted.
-          `review-read` always exits 0 — inspect its output for outcomes.
+          `review-read` exits 0 whatever the reviews say — inspect its output for outcomes.
+          A non-zero exit means the reviews could not be read; retry it shortly.
           When reading reviewer output from an output file, grep for `REVIEW_FINDINGS_END` —
           if absent, the reviewer did not finish and should be treated as non-responsive.
        d. Retry for missing structured output (conversational reviewers only): for each

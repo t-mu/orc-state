@@ -33,6 +33,7 @@ describe('loadWorkerPoolConfig', () => {
       provider_models: {},
       execution_mode: 'full-access',
       runtime: 'cli',
+      sandbox_network: 'restricted',
     });
   });
 
@@ -60,6 +61,7 @@ describe('loadWorkerPoolConfig', () => {
       provider_models: {},
       execution_mode: 'full-access',
       runtime: 'cli',
+      sandbox_network: 'restricted',
     });
   });
 
@@ -86,6 +88,7 @@ describe('loadWorkerPoolConfig', () => {
     })).toMatchObject({
       execution_mode: 'full-access',
       runtime: 'cli',
+      sandbox_network: 'restricted',
     });
   });
 
@@ -104,6 +107,17 @@ describe('loadWorkerPoolConfig', () => {
     expect(() => loadWorkerPoolConfig({ env: {}, configFile: configPath })).toThrow('Invalid worker runtime "api"');
   });
 
+  it('reads the sandbox network opt-in; env wins; default is restricted; unknown values are refused (task 230)', () => {
+    const configPath = join(dir, 'orc-state.config.json');
+    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', sandbox_network: 'open' } }));
+    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).sandbox_network).toBe('open');
+    expect(loadWorkerPoolConfig({ env: { ORC_WORKER_SANDBOX_NETWORK: 'restricted' }, configFile: configPath }).sandbox_network).toBe('restricted');
+    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
+    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).sandbox_network).toBe('restricted');
+    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', sandbox_network: 'wide' } }));
+    expect(() => loadWorkerPoolConfig({ env: {}, configFile: configPath })).toThrow('Invalid worker sandbox network "wide"');
+  });
+
   it('defaults execution_mode to full-access when absent from config', () => {
     const configPath = join(dir, 'orc-state.config.json');
     writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
@@ -111,6 +125,7 @@ describe('loadWorkerPoolConfig', () => {
     expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toMatchObject({
       execution_mode: 'full-access',
       runtime: 'cli',
+      sandbox_network: 'restricted',
     });
   });
 
@@ -176,7 +191,7 @@ describe('resolveWorkerModel', () => {
       model: 'generic-model',
       provider_models: { claude: 'claude-sonnet-4-6', codex: 'gpt-5.4' },
       execution_mode: 'full-access',
-      runtime: 'cli',
+      runtime: 'cli', sandbox_network: 'restricted',
     };
     expect(resolveWorkerModel(config)).toBe('claude-sonnet-4-6');
     expect(resolveWorkerModel(config, 'codex')).toBe('gpt-5.4');
@@ -189,7 +204,7 @@ describe('resolveWorkerModel', () => {
       model: 'generic-model',
       provider_models: {},
       execution_mode: 'full-access',
-      runtime: 'cli',
+      runtime: 'cli', sandbox_network: 'restricted',
     };
     expect(resolveWorkerModel(config)).toBe('generic-model');
   });
@@ -202,6 +217,7 @@ describe('resolveWorkerModel', () => {
       provider_models: {},
       execution_mode: 'full-access',
       runtime: 'cli',
+      sandbox_network: 'restricted',
     };
     expect(resolveWorkerModel(config)).toBeNull();
   });

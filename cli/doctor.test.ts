@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
-import { checkSandboxDependencies } from '../lib/sandboxDeps.ts';
+import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -266,6 +266,25 @@ describe('doctor sandbox dependencies', () => {
     expect(result.skipped).toBe(true);
     expect(result.ok).toBe(true);
     expect(result.reason).toContain('no Claude sandbox configured');
+  });
+});
+
+describe('doctor sandbox control socket (task 230)', () => {
+  const missingConfig = '/nonexistent/orc-state.config.json';
+  const check = (env: NodeJS.ProcessEnv, platform = 'linux', project = true) =>
+    checkSandboxControlSocket({ platform, env, configFile: missingConfig, project }).warning;
+
+  it('warns when sandboxed Codex or Linux Claude project workers cannot reach the socket', () => {
+    expect(check({ ORC_WORKER_PROVIDER: 'codex', ORC_WORKER_EXECUTION_MODE: 'sandbox' })).toContain('worker_pool.sandbox_network');
+    expect(check({ ORC_WORKER_PROVIDER: 'codex', ORC_WORKER_EXECUTION_MODE: 'sandbox' }, 'darwin')).toContain('the Codex sandbox');
+    expect(check({ ORC_WORKER_PROVIDER: 'claude', ORC_WORKER_EXECUTION_MODE: 'sandbox' })).toContain("Claude's Linux sandbox");
+  });
+
+  it('stays quiet with the opt-in, on macOS Claude, in full-access, and outside a project', () => {
+    expect(check({ ORC_WORKER_PROVIDER: 'codex', ORC_WORKER_EXECUTION_MODE: 'sandbox', ORC_WORKER_SANDBOX_NETWORK: 'open' })).toBeNull();
+    expect(check({ ORC_WORKER_PROVIDER: 'claude', ORC_WORKER_EXECUTION_MODE: 'sandbox' }, 'darwin')).toBeNull();
+    expect(check({ ORC_WORKER_PROVIDER: 'codex', ORC_WORKER_EXECUTION_MODE: 'full-access' })).toBeNull();
+    expect(check({ ORC_WORKER_PROVIDER: 'codex', ORC_WORKER_EXECUTION_MODE: 'sandbox' }, 'linux', false)).toBeNull();
   });
 });
 
