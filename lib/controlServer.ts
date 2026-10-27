@@ -18,8 +18,7 @@ import { listAgents } from './agentRegistry.ts';
 import { RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
-import { readRunReviews } from './reviewRead.ts';
-import { memoryWakeUp } from './memoryStore.ts';
+import { DEFAULT_WAKE_UP_BUDGET, isWakeUpBudget, readMemoryWakeUp, readRunReviews } from './projectReads.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
@@ -115,6 +114,14 @@ function classify(error: unknown): ControlError {
     if (typeof match === 'string' ? message === match : match.test(message)) return new ControlError(code, message, status);
   }
   return new ControlError('internal', message, 500);
+}
+
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new ControlError('bad_request', `Malformed path segment: ${segment}`, 400);
+  }
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -268,13 +275,11 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return ok({ events: rows, cursor: rows.at(-1)?.seq ?? after });
     }
     const reviews = /^\/v1\/runs\/([^/]+)\/reviews$/.exec(url.pathname);
-    if (req.method === 'GET' && reviews) return ok({ reviews: readRunReviews(stateDir, decodeURIComponent(reviews[1])) });
+    if (req.method === 'GET' && reviews) return ok({ reviews: readRunReviews(stateDir, decodePathSegment(reviews[1])) });
     if (req.method === 'GET' && url.pathname === '/v1/memory/wake-up') {
-      const budget = Number(url.searchParams.get('budget') ?? '800');
-      if (!Number.isSafeInteger(budget) || budget < 1) throw new ControlError('bad_request', 'budget must be a positive integer', 400);
-      if (!existsSync(join(stateDir, 'memory.db'))) return ok({ initialized: false, text: '' });
-      const wing = url.searchParams.get('wing');
-      return ok({ initialized: true, text: memoryWakeUp(stateDir, { ...(wing ? { wing } : {}), tokenBudget: budget }) });
+      const budget = Number(url.searchParams.get('budget') ?? DEFAULT_WAKE_UP_BUDGET);
+      if (!isWakeUpBudget(budget)) throw new ControlError('bad_request', 'budget must be a positive integer', 400);
+      return ok(readMemoryWakeUp(stateDir, { wing: url.searchParams.get('wing'), budget }));
     }
     if (req.method === 'GET' && url.pathname === '/v1/events/stream') return stream(res, seqParam(url, 'after'));
     if (req.method === 'POST' && url.pathname === '/v1/terminals/provider') {

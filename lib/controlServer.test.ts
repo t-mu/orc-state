@@ -298,6 +298,8 @@ describe('local daemon control API', () => {
     expect(reviews).toHaveLength(1);
     expect(reviews[0].payload).toMatchObject({ outcome: 'findings', findings: 'second pass' });
     await expect(reader.reviews('run-b')).resolves.toEqual({ reviews: [] });
+    await expect(rawGet({ authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8').trim()}`, 'x-orc-protocol': '1' }, '/v1/runs/%E0/reviews'))
+      .resolves.toMatchObject({ status: 400, body: { error: { code: 'bad_request' } } });
 
     await expect(reader.memoryWakeUp()).resolves.toEqual({ initialized: false, text: '' });
     storeDrawer(dir, { wing: 'orch', hall: 'facts', room: 'build', content: 'run npm run build after changes', importance: 9 });

@@ -6,12 +6,12 @@
  * Retrieves all review_submitted events for a run, deduplicated by agent_id
  * (latest submission wins). In a registered project the running coordinator
  * serves them, so a sandboxed worker without write access can read them.
- * Exits 0 whatever the reviews say — the worker decides whether to proceed.
+ * Exits 0 whatever the reviews say — the worker decides whether to proceed;
+ * exits 1 only when the reviews could not be read (retry later).
  */
 import { STATE_DIR } from '../lib/paths.ts';
 import { boolFlag, flag } from '../lib/args.ts';
-import { readRunReviews } from '../lib/reviewRead.ts';
-import { readProjectState } from '../lib/projectReads.ts';
+import { readRunReviews, readViaCoordinator } from '../lib/projectReads.ts';
 import { cliError } from './shared.ts';
 
 const runId = flag('run-id');
@@ -24,7 +24,7 @@ if (!runId) {
 
 let reviews;
 try {
-  reviews = await readProjectState(
+  reviews = await readViaCoordinator(
     async (client) => (await client.reviews(runId)).reviews,
     () => readRunReviews(STATE_DIR, runId),
   );

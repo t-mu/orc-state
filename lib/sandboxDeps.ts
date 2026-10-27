@@ -48,3 +48,32 @@ export function checkSandboxDependencies({
 
   return { ok: missing.length === 0, skipped: false, reason: '', missing };
 }
+
+/**
+ * A sandboxed project worker reaches its coordinator only through the control
+ * socket (task 230). Only Claude's macOS sandbox allows that one socket by
+ * path; Codex and Claude on Linux connect only with the opt-in
+ * `worker_pool.sandbox_network: open`. Without it, their lifecycle commands
+ * fail, so doctor warns.
+ */
+export function checkSandboxControlSocket({
+  platform = process.platform,
+  env = process.env,
+  configFile,
+  project,
+}: {
+  platform?: string;
+  env?: NodeJS.ProcessEnv;
+  configFile?: string;
+  project: boolean;
+}): { warning: string | null } {
+  if (!project) return { warning: null };
+  const workerConfig = safeLoad(() => loadWorkerPoolConfig(configFile !== undefined ? { env, configFile } : { env }));
+  if (workerConfig?.execution_mode !== 'sandbox' || workerConfig.sandbox_network === 'open') return { warning: null };
+  if (workerConfig.provider !== 'codex' && !(workerConfig.provider === 'claude' && platform === 'linux')) return { warning: null };
+  const sandbox = workerConfig.provider === 'codex' ? 'the Codex sandbox' : "Claude's Linux sandbox";
+  return {
+    warning: `sandboxed ${workerConfig.provider} workers cannot reach the coordinator's control socket under ${sandbox}, so their lifecycle commands fail; `
+      + 'set worker_pool.sandbox_network to open (it widens the sandbox network, see docs/configuration.md → Execution Modes) or use full-access',
+  };
+}

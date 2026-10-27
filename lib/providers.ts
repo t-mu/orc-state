@@ -23,6 +23,15 @@ export function isSupportedExecutionMode(value: string): value is ExecutionMode 
 export type WorkerRuntime = 'cli' | 'structured';
 export const WORKER_RUNTIMES: readonly WorkerRuntime[] = ['cli', 'structured'] as const;
 
+/**
+ * Network a sandboxed project worker gets for its control socket (task 230).
+ * `restricted` allows only that socket's path, which only Claude's macOS
+ * sandbox honours; `open` lets Claude on Linux reach every Unix socket and
+ * gives Codex workers network access, so their lifecycle commands work.
+ */
+export type SandboxNetwork = 'restricted' | 'open';
+export const SANDBOX_NETWORKS: readonly SandboxNetwork[] = ['restricted', 'open'] as const;
+
 export interface WorkerPoolConfig {
   max_workers: number;
   provider: ProviderName;
@@ -30,6 +39,7 @@ export interface WorkerPoolConfig {
   provider_models: Partial<Record<ProviderName, string>>;
   execution_mode: ExecutionMode;
   runtime: WorkerRuntime;
+  sandbox_network: SandboxNetwork;
 }
 
 export interface MasterConfig {
@@ -76,6 +86,7 @@ export const DEFAULT_WORKER_POOL_CONFIG: Readonly<WorkerPoolConfig> = Object.fre
   provider_models: Object.freeze({}),
   execution_mode: 'full-access' as ExecutionMode,
   runtime: 'cli' as WorkerRuntime,
+  sandbox_network: 'restricted' as SandboxNetwork,
 });
 
 export const DEFAULT_MASTER_CONFIG: Readonly<MasterConfig> = Object.freeze({
@@ -275,6 +286,11 @@ export function loadWorkerPoolConfig({
     throw new Error(`Invalid worker runtime "${runtimeRaw}". Must be cli or structured.`);
   }
 
+  const sandboxNetworkRaw = env.ORC_WORKER_SANDBOX_NETWORK ?? (wp.sandbox_network as string | null) ?? null;
+  if (sandboxNetworkRaw != null && !SANDBOX_NETWORKS.includes(sandboxNetworkRaw as SandboxNetwork)) {
+    throw new Error(`Invalid worker sandbox network "${sandboxNetworkRaw}". Must be restricted or open.`);
+  }
+
   return {
     max_workers: maxWorkers ?? parseNonNegativeInteger(wp.max_workers, 'worker_pool.max_workers') ?? DEFAULT_WORKER_POOL_CONFIG.max_workers,
     provider,
@@ -282,6 +298,7 @@ export function loadWorkerPoolConfig({
     provider_models: parseProviderModels(wp.provider_models),
     execution_mode,
     runtime: (runtimeRaw as WorkerRuntime | null) ?? DEFAULT_WORKER_POOL_CONFIG.runtime,
+    sandbox_network: (sandboxNetworkRaw as SandboxNetwork | null) ?? DEFAULT_WORKER_POOL_CONFIG.sandbox_network,
   };
 }
 

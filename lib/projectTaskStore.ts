@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
-import { isReadOnlyOpenError, openReadOnlyDatabase } from './sqliteReadOnly.ts';
+import { openReadOnlyDatabase, shouldOpenReadOnly } from './sqliteReadOnly.ts';
 
 export const PROJECT_TASK_SCHEMA_VERSION = 4;
 
@@ -373,9 +373,14 @@ export class ProjectTaskStore {
       this.db = db;
     } catch (error) {
       db.close();
-      // A sandboxed project worker reads the task store without write access to it.
-      if (!isReadOnlyOpenError(error) || !existsSync(path)) throw error;
+      // A sandboxed project session reads the task store the coordinator holds open.
+      if (!shouldOpenReadOnly(error, path)) throw error;
       this.db = openReadOnlyDatabase(path);
+      const version = this.db.pragma('user_version', { simple: true }) as number;
+      if (version !== PROJECT_TASK_SCHEMA_VERSION) {
+        this.db.close();
+        throw new Error(`runtime.db schema version ${version} does not match this orc binary (${PROJECT_TASK_SCHEMA_VERSION}); it cannot be migrated without write access`);
+      }
     }
   }
 

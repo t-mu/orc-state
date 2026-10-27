@@ -47,6 +47,11 @@ function connectionError(error: unknown): Error {
   if (code === 'ECONNREFUSED' || code === 'ENOENT') {
     return new ControlError('unavailable', 'Control daemon is not running (stale endpoint descriptor)', 503);
   }
+  // A sandbox that does not allow the control socket refuses the connect itself.
+  if (code === 'EACCES' || code === 'EPERM') {
+    return new ControlError('forbidden',
+      `Connecting to the control socket was refused (${code}); in a sandboxed project session this needs worker_pool.sandbox_network=open (see docs/configuration.md → Execution Modes)`, 403);
+  }
   return error as Error;
 }
 

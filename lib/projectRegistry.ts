@@ -15,7 +15,7 @@ export interface ProjectRecord {
 }
 
 export type SettingValue = string | number | null;
-type SettingKind = 'provider' | 'execution_mode' | 'runtime' | 'string' | 'nonnegative' | 'positive' | 'merge_strategy' | 'pr_provider';
+type SettingKind = 'provider' | 'execution_mode' | 'runtime' | 'sandbox_network' | 'string' | 'nonnegative' | 'positive' | 'merge_strategy' | 'pr_provider';
 
 const SETTING_KINDS: Readonly<Record<string, SettingKind>> = {
   default_provider: 'provider',
@@ -28,6 +28,7 @@ const SETTING_KINDS: Readonly<Record<string, SettingKind>> = {
   'worker_pool.model': 'string',
   'worker_pool.execution_mode': 'execution_mode',
   'worker_pool.runtime': 'runtime',
+  'worker_pool.sandbox_network': 'sandbox_network',
   'coordinator.mode': 'string',
   'coordinator.tick_interval_ms': 'positive',
   'coordinator.concurrency_limit': 'positive',
@@ -64,6 +65,7 @@ const ENV_KEYS: Readonly<Record<string, string>> = {
   'worker_pool.model': 'ORC_WORKER_MODEL',
   'worker_pool.execution_mode': 'ORC_WORKER_EXECUTION_MODE',
   'worker_pool.runtime': 'ORC_WORKER_RUNTIME',
+  'worker_pool.sandbox_network': 'ORC_WORKER_SANDBOX_NETWORK',
 };
 
 function settingKind(key: string): SettingKind {
@@ -90,6 +92,7 @@ export function validateProjectSetting(key: string, value: unknown): SettingValu
     provider: ['codex', 'claude', 'gemini'],
     execution_mode: ['full-access', 'sandbox'],
     runtime: ['cli', 'structured'],
+    sandbox_network: ['restricted', 'open'],
     merge_strategy: ['direct', 'pr'],
     pr_provider: ['github'],
   };

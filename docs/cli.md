@@ -418,7 +418,7 @@ them uses `review-read` to collect results. Not for human use.
 | Command | Description |
 |---------|-------------|
 | `review-submit` | Submit review outcome (approved or findings) for a run. |
-| `review-read` | Retrieve all submitted review findings for a run. |
+| `review-read` | Retrieve all submitted review findings for a run. Exits 0 whatever the reviews say; exits 1 only when they could not be read (the coordinator is down and the state is not readable directly), and the message asks to retry. |
 
 **Flags:**
 

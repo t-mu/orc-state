@@ -4,7 +4,7 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerDb, unregisterDb } from './eventLog.ts';
 import { logger } from './logger.ts';
-import { isReadOnlyOpenError, openReadOnlyDatabase } from './sqliteReadOnly.ts';
+import { openReadOnlyDatabase, shouldOpenReadOnly } from './sqliteReadOnly.ts';
 
 const MEMORY_DB_FILE = 'memory.db';
 const _memDbs = new Map<string, Database.Database>();
@@ -19,8 +19,8 @@ export function initMemoryDb(stateDir: string): Database.Database {
     setupMemoryDb(db);
   } catch (error) {
     db.close();
-    // A sandboxed project worker reads the store without write access to it.
-    if (!isReadOnlyOpenError(error) || !existsSync(dbPath)) throw error;
+    // A sandboxed project session reads the store the coordinator holds open.
+    if (!shouldOpenReadOnly(error, dbPath)) throw error;
     db = openReadOnlyDatabase(dbPath);
   }
 

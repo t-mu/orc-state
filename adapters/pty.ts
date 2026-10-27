@@ -35,6 +35,7 @@ import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.t
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { isPidAlive, isSameProcess, processIdentity } from '../lib/processIdentity.ts';
 import type { SessionInspection } from './interface.ts';
+import type { SandboxNetwork } from '../lib/providers.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
   claude: 'claude',
@@ -212,26 +213,31 @@ export function codexSandboxWritableRootArgs(opts: SandboxRootsOptions): string[
   return ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(roots)}`];
 }
 
+/** The opt-in `worker_pool.sandbox_network` setting a launch carries (task 230). */
+export function sandboxNetworkOf(config: Record<string, unknown>): SandboxNetwork {
+  return config.sandbox_network === 'open' ? 'open' : 'restricted';
+}
+
 /**
  * Codex sandbox args letting a project worker reach its control socket.
- * `workspace-write` disables network access, and Codex has no per-socket
- * allowance for its legacy sandbox modes, so a worker that must connect to
- * the coordinator gets network access. Read-only scouts have no network
- * setting; their report-for-duty fails under the Codex sandbox. See
- * docs/configuration.md → Execution Modes → Codex.
+ * `workspace-write` blocks network access, Unix sockets included, and has no
+ * per-socket allowance, so only `sandbox_network: open` connects the worker
+ * — by giving it network access. Read-only scouts have no network setting.
+ * See docs/configuration.md → Execution Modes → Codex.
  */
-export function codexSandboxNetworkArgs(opts: SandboxRootsOptions): string[] {
-  return !opts.readOnly && opts.controlSocket ? ['-c', 'sandbox_workspace_write.network_access=true'] : [];
+export function codexSandboxNetworkArgs(opts: SandboxRootsOptions, network: SandboxNetwork): string[] {
+  return !opts.readOnly && opts.controlSocket && network === 'open' ? ['-c', 'sandbox_workspace_write.network_access=true'] : [];
 }
 
 /**
  * Claude sandbox network settings for a project session's control socket.
  * Connecting to a Unix socket is a network permission in Claude's sandbox.
- * `allowUnixSockets` names the path on macOS; Linux ignores it (seccomp
- * cannot filter by path), so there every Unix socket is allowed.
+ * `allowUnixSockets` names the path, which only macOS honours; Linux ignores
+ * it (seccomp cannot filter by path), so there the socket is reachable only
+ * with `sandbox_network: open`, which allows every Unix socket.
  */
-export function claudeSandboxNetwork(controlSocket: string, platform: NodeJS.Platform = process.platform): Record<string, unknown> {
-  return { allowUnixSockets: [controlSocket], ...(platform === 'linux' ? { allowAllUnixSockets: true } : {}) };
+export function claudeSandboxNetwork(controlSocket: string, network: SandboxNetwork, platform: NodeJS.Platform = process.platform): Record<string, unknown> {
+  return { allowUnixSockets: [controlSocket], ...(network === 'open' && platform === 'linux' ? { allowAllUnixSockets: true } : {}) };
 }
 
 /**
@@ -294,7 +300,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
       const sandboxScope = readOnly ? 'read-only' : 'workspace-write';
       args.push('--sandbox', sandboxScope, '--ask-for-approval', 'never');
       const rootsOptions = sandboxRootsOptions(config, cwd);
-      args.push(...codexSandboxWritableRootArgs(rootsOptions), ...codexSandboxNetworkArgs(rootsOptions));
+      args.push(...codexSandboxWritableRootArgs(rootsOptions), ...codexSandboxNetworkArgs(rootsOptions, sandboxNetworkOf(config)));
     } else {
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
@@ -367,7 +373,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
       }
       // Read-only scouts need the socket too: their report-for-duty goes through the coordinator.
       if (rootsOptions.controlSocket) {
-        sandboxConfig.network = claudeSandboxNetwork(rootsOptions.controlSocket);
+        sandboxConfig.network = claudeSandboxNetwork(rootsOptions.controlSocket, sandboxNetworkOf(config));
       }
       settings.sandbox = sandboxConfig;
     }

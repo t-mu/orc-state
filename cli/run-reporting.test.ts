@@ -647,7 +647,8 @@ describe('orc-run-input-request', () => {
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    // Ending the run before the request is filed would test a different refusal; allow for a loaded machine.
+    for (let attempt = 0; attempt < 500; attempt += 1) {
       if (readEvents().some((event) => event.event === 'input_requested')) break;
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
     }

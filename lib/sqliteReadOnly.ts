@@ -1,13 +1,10 @@
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import Database from 'better-sqlite3';
 
 /**
- * A process that may read but not write a state directory — a sandboxed
- * project worker — cannot run the setup (`journal_mode = WAL`, DDL,
- * migrations) the read-write open performs, and SQLite refuses even a
- * read-only open of a WAL database whose `-wal`/`-shm` files it cannot create.
+ * The open failures of a process that may read but not write a state
+ * directory — a sandboxed project session — which cannot run the setup
+ * (`journal_mode = WAL`, DDL, migrations) a read-write open performs.
  */
 export function isReadOnlyOpenError(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
@@ -15,32 +12,30 @@ export function isReadOnlyOpenError(error: unknown): boolean {
 }
 
 /**
- * Open an existing database for reading without writing its directory. A
- * read-only connection works while another process keeps the WAL files open
- * (the running coordinator); otherwise the database and its WAL are copied
- * to a private temporary directory and read there. The copy is a snapshot:
- * callers are short-lived reads, and writes go through the coordinator.
+ * Whether an open that failed with `error` should be retried read-only.
+ * Only a sandboxed session (one launched with ORC_SESSION_TOKEN) does: it
+ * sends every write to the coordinator. A writer — the coordinator, the MCP
+ * server, an operator shell — keeps failing loudly at open instead of caching
+ * a read-only handle its later writes would trip over.
+ */
+export function shouldOpenReadOnly(error: unknown, path: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.ORC_SESSION_TOKEN?.trim()) && isReadOnlyOpenError(error) && existsSync(path);
+}
+
+/**
+ * Open an existing WAL database read-only. SQLite can do so without write
+ * access only while another process keeps its `-wal`/`-shm` files (the
+ * running coordinator); otherwise the read is refused with a retryable error.
  */
 export function openReadOnlyDatabase(path: string): Database.Database {
+  const db = new Database(path, { readonly: true, fileMustExist: true });
   try {
-    const db = new Database(path, { readonly: true, fileMustExist: true });
-    try {
-      // Opening is lazy; the first read is what touches the WAL index.
-      db.pragma('schema_version', { simple: true });
-      return db;
-    } catch (error) {
-      db.close();
-      throw error;
-    }
+    // Opening is lazy; the first read is what touches the WAL index.
+    db.pragma('schema_version', { simple: true });
+    return db;
   } catch (error) {
+    db.close();
     if (!isReadOnlyOpenError(error)) throw error;
+    throw new Error(`${path} cannot be read without write access while no coordinator holds it open; retry once the coordinator is running`, { cause: error });
   }
-  const dir = mkdtempSync(join(tmpdir(), 'orc-readonly-'));
-  process.once('exit', () => rmSync(dir, { recursive: true, force: true }));
-  const copy = join(dir, basename(path));
-  copyFileSync(path, copy);
-  if (existsSync(`${path}-wal`)) copyFileSync(`${path}-wal`, `${copy}-wal`);
-  const db = new Database(copy, { fileMustExist: true });
-  db.pragma('query_only = ON');
-  return db;
 }

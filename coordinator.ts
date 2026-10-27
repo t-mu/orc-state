@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
-import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode, ProviderName, WorkerRuntime } from './lib/providers.ts';
+import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode, ProviderName, SandboxNetwork, WorkerRuntime } from './lib/providers.ts';
 import { resolveWorkerProvider } from './lib/providers.ts';
 import { isManagedSlot } from './lib/workerSlots.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
@@ -413,6 +413,7 @@ async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unk
     taskModel: (launchConfig.task_model ?? null) as string | null,
     retryable: launchConfig.retryable === true,
     ...(launchConfig.execution_mode != null ? { executionMode: launchConfig.execution_mode as ExecutionMode } : {}),
+    ...(launchConfig.sandbox_network != null ? { sandboxNetwork: launchConfig.sandbox_network as SandboxNetwork } : {}),
     ...(launchConfig.runtime != null ? { runtime: launchConfig.runtime as WorkerRuntime } : {}),
     emit,
   });
@@ -517,6 +518,7 @@ async function processClaimedSessionReadiness(
         // which is correct — their sessions are managed externally.
         retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
         execution_mode: workerPoolConfig.execution_mode,
+        sandbox_network: workerPoolConfig.sandbox_network,
         runtime: workerPoolConfig.runtime,
       });
       if (!ready.ok || !agent.session_handle) {
@@ -610,6 +612,7 @@ async function processManagedSessionStartRetries(
       task_model: retryTask?.model ?? null,
       retryable: true,
       execution_mode: workerPoolConfig.execution_mode,
+      sandbox_network: workerPoolConfig.sandbox_network,
       runtime: workerPoolConfig.runtime,
     });
     if (ready.ok && agent.session_handle && agent.status !== 'offline') {
@@ -1792,6 +1795,7 @@ async function executeDispatchPlan(
         taskRef,
         taskModel: task?.model ?? null,
         executionMode: workerPoolConfig.execution_mode,
+        sandboxNetwork: workerPoolConfig.sandbox_network,
         runtime: workerPoolConfig.runtime,
         emit,
       });

@@ -30,7 +30,7 @@ import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import { controlSocketOf, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots } from './pty.ts';
+import { controlSocketOf, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
 import type { SessionInspection } from './interface.ts';
 import {
   CapabilityRefusal,
@@ -161,8 +161,8 @@ export function codexAppServerSandboxParams(config: Record<string, unknown>, cwd
   const roots = sandboxExtraWritableRoots({ readOnly: false, cwd, stateDir: STATE_DIR, gitRepoRoot: TARGET_REPO_ROOT, controlSocket });
   const settings: Record<string, unknown> = {
     ...(roots.length ? { 'sandbox_workspace_write.writable_roots': roots } : {}),
-    // A project worker must reach its coordinator's socket (see codexSandboxNetworkArgs).
-    ...(controlSocket ? { 'sandbox_workspace_write.network_access': true } : {}),
+    // Opt-in: a project worker reaches its coordinator's socket only with network access (see codexSandboxNetworkArgs).
+    ...(controlSocket && sandboxNetworkOf(config) === 'open' ? { 'sandbox_workspace_write.network_access': true } : {}),
   };
   return {
     sandbox: 'workspace-write',
