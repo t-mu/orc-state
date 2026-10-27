@@ -931,6 +931,10 @@ export async function handleRequestScout(stateDir: string, {
   const linkedWorktree = recordedWorktree != null && existsSync(recordedWorktree) ? recordedWorktree : null;
   const workingDirectory = linkedWorktree ?? repoRoot;
 
+  // A project scout reports for duty over the control socket, under the same opt-in as workers.
+  // Resolved before registering, so an invalid setting leaves no scout behind.
+  const sandboxNetwork = ACTIVE_PROJECT ? loadWorkerPoolConfig().sandbox_network : undefined;
+
   const scout = registerAgent(stateDir, {
     agent_id: scoutId,
     provider: resolvedProvider,
@@ -942,8 +946,7 @@ export async function handleRequestScout(stateDir: string, {
     adapter,
     workingDirectory,
     repoRoot,
-    // A project scout reports for duty over the control socket, under the same opt-in as workers.
-    ...(ACTIVE_PROJECT ? { sandboxNetwork: loadWorkerPoolConfig().sandbox_network } : {}),
+    ...(sandboxNetwork ? { sandboxNetwork } : {}),
     emit: (event) => appendSequencedEvent(stateDir, event),
   });
   if (!launchResult.ok || !launchResult.session_handle) {
@@ -964,8 +967,11 @@ export async function handleRequestScout(stateDir: string, {
     await adapter.stop(launchResult.session_handle);
     removeAgent(stateDir, scout.agent_id);
     // A sandboxed project scout that cannot reach the control socket never reports (task 230).
-    const hint = ACTIVE_PROJECT
-      ? '; in a project a sandboxed scout reports through the control socket, which Codex scouts and Claude scouts on Linux without worker_pool.sandbox_network=open cannot reach (see docs/configuration.md → Execution Modes)'
+    const unreachable = sandboxNetwork === 'restricted'
+      && (resolvedProvider === 'codex' || (resolvedProvider === 'claude' && process.platform === 'linux'));
+    const hint = unreachable || (sandboxNetwork === 'open' && resolvedProvider === 'codex')
+      ? `; in a project a sandboxed ${resolvedProvider} scout reports through the control socket, which it cannot reach here`
+        + (resolvedProvider === 'codex' ? ' (request a claude scout)' : ' (set worker_pool.sandbox_network=open)') + ' — see docs/configuration.md → Execution Modes'
       : '';
     throw new Error(`Failed to brief scout ${scoutId}: scout did not report for duty in time${hint}`);
   }
