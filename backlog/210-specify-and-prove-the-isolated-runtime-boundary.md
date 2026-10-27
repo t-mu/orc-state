@@ -3,10 +3,12 @@ ref: isolagent-worker-runtime/210-specify-and-prove-the-isolated-runtime-boundar
 feature: isolagent-worker-runtime
 review_level: full
 priority: normal
-status: todo
+status: cancelled
 ---
 
 # Task 210 — Specify and prove the isolated runtime boundary
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Independent.
 

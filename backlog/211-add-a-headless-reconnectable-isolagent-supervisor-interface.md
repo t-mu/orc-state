@@ -3,12 +3,14 @@ ref: isolagent-worker-runtime/211-add-a-headless-reconnectable-isolagent-supervi
 feature: isolagent-worker-runtime
 review_level: full
 priority: high
-status: blocked
+status: cancelled
 depends_on:
   - isolagent-worker-runtime/210-specify-and-prove-the-isolated-runtime-boundary
 ---
 
 # Task 211 — Add a headless reconnectable isolagent supervisor interface
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Depends on Task 210.
 

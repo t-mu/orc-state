@@ -17,6 +17,8 @@ derived_task_refs:
 
 # Isolagent Worker Runtime and Peer Messaging Before Desktop
 
+**Cancelled in this repository (2026-10-27):** The user decided to keep orc-state as a shareable base framework. Isolagent integration and the desktop client belong in a separate private repository that depends on a pinned orc-state release. Derived tasks 210–217 and desktop task 208 are cancelled here; this plan remains historical design context. The public framework may expose provider-neutral, authenticated project and worker APIs without depending on Isolagent.
+
 ## Objective
 
 Run orc-state task workers in separate isolagent microVMs while keeping scheduling, state, Git finalization, and agent message routing in the host daemon. Preserve a complete CLI/TUI workflow and require a proven isolated workflow before desktop development begins.

@@ -3,13 +3,15 @@ ref: isolagent-worker-runtime/216-connect-isolated-terminals-shells-and-operator
 feature: isolagent-worker-runtime
 review_level: full
 priority: normal
-status: todo
+status: cancelled
 depends_on:
   - isolagent-worker-runtime/214-integrate-isolagent-as-a-recoverable-worker-transport
   - isolagent-worker-runtime/215-connect-vm-worker-inboxes-to-durable-messages
 ---
 
 # Task 216 — Connect isolated terminals, shells, and operator controls to CLI/TUI
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Depends on Tasks 214, and 215.
 

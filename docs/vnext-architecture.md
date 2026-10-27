@@ -1,5 +1,11 @@
 # vNext architecture and migration map
 
+**Historical migration map:** The public orc-state repository now owns the base
+coordination framework only. Isolagent integration and the desktop client are
+planned for a separate private repository that depends on a pinned orc-state
+release. Backlog tasks 208 and 210–217 are cancelled here; references below
+describe the earlier proposal, not current implementation work.
+
 Status: proposed, validated against `main` at `f63b06c` on 2026-10-17. The
 [implementation brief](../ORC_STATE_VNEXT_IMPLEMENTATION_BRIEF.md) is product
 intent; this document records the repository-specific path. The brief is currently
@@ -26,7 +32,7 @@ failures were observed.
 | Terminal access | `cli/attach.ts` and `cli/control-worker.ts` print a log tail; `node-pty` handle is process-local. Docker image has tmux installed. | **Build.** Terminal broker and independent worktree shell; attach/detach, resize, scrollback, read-only default, exclusive input lease. |
 | Local control API | Task 201: the coordinator serves protocol v1 (HTTP/JSON over an owner-only Unix socket plus a token): snapshot, cursor event stream, scoped command enqueue/ACK. `runs-active --via-control` and `orc control` use it; other CLI and MCP paths still call libraries directly. | **Adapt.** Add the loopback TCP listener for the host (chosen in Task 195; packaged in Task 206), add per-session secrets, wire command delivery, then move the remaining CLI/MCP paths and the desktop onto shared services. |
 | Container | `docker/dev` is a development shell, with a persistent home volume and host GitHub config mount; it does not run a project daemon. | **Adapt/build.** One long-lived non-root project container, scoped auth/runtime volumes, project bind mount, loopback control transport, preflight, no host home or Docker socket mount. |
-| Desktop | No Electron app; Ink TUI exists under `lib/tui`. | **Defer.** Build only after control API, state, sessions, and reconnect behavior have passed integration gates. Retain Ink/CLI. |
+| Desktop | No desktop app; Ink TUI exists under `lib/tui`. | **External.** Build in the private application repository against the public control API. Retain Ink/CLI here. |
 
 ## Proposed modules and ownership
 

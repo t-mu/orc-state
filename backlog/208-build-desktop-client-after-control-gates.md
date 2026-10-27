@@ -3,7 +3,7 @@ ref: vnext-control-plane/208-build-desktop-client-after-control-gates
 feature: vnext-control-plane
 review_level: full
 priority: low
-status: todo
+status: cancelled
 depends_on:
   - vnext-control-plane/201-add-local-daemon-control-api
   - vnext-control-plane/202-supervise-and-reconcile-agent-sessions
@@ -16,6 +16,8 @@ depends_on:
 ---
 
 # Task 208 — Build desktop client after control gates
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Depends on Tasks 201, 202, 203, 205, 206, 207, 217 and 228. Do not start before both the isolated CLI/TUI gate in Task 217 and the clean-repo project-state gate in Task 228 pass.
 

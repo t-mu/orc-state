@@ -3,13 +3,15 @@ ref: isolagent-worker-runtime/217-prove-the-cli-tui-isolation-gate-and-block-des
 feature: isolagent-worker-runtime
 review_level: full
 priority: normal
-status: todo
+status: cancelled
 depends_on:
   - isolagent-worker-runtime/215-connect-vm-worker-inboxes-to-durable-messages
   - isolagent-worker-runtime/216-connect-isolated-terminals-shells-and-operator-controls-to-cli-tui
 ---
 
 # Task 217 — Prove the CLI/TUI isolation gate and block desktop until it passes
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Depends on Tasks 215, and 216.
 
