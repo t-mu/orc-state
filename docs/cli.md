@@ -189,6 +189,26 @@ Commands for creating, completing, and managing tasks. In normal operation,
 the master agent handles task creation and the coordinator handles dispatch.
 These are available for manual intervention and debugging.
 
+In a registered project, `task-reset`, `task-unblock`, `delegate` and
+`run-input-respond` (like the master's `cancel_task`, `reset_task`,
+`delegate_task` and `respond_input`) are applied by the running coordinator
+through its control API; the CLI sends them as the operator, the master's tools
+with the master's session, and a shell inside a worker session (one with
+`ORC_SESSION_TOKEN`) is refused. `run-input-respond` answers as the master and
+needs its session id (`--session-token`) in every case. When no coordinator is
+running they apply the change directly and print `coordinator is not running;
+applying <op> directly`, so operator recovery works with the coordinator stopped.
+
+These commands and the master's tools now share one implementation: `task-reset`
+and `reset_task` also clear `requeue_eligible_after` and record a
+`run_cancelled` event per cancelled run; `delegate` applies the master tool's
+eligibility check, refusing a target that already has an active run, with the
+routing reasons in the error; `task-unblock` records `--actor-id` when given.
+Without `--actor-id` the coordinator records the caller (the master session as the
+master, an operator as `human`); with the master's session, `--actor-id` must name
+the master itself. An answer from `run-input-respond` is recorded with
+`actor_type: agent` for an agent actor such as `master` (it used to be `human`).
+
 | Command | Description |
 |---------|-------------|
 | `task-create` | Register a task from an existing markdown spec in `backlog/`. In a project state directory (one with `runtime.db`) it creates a database-only task instead, and no spec file is read. |
@@ -207,7 +227,7 @@ These are available for manual intervention and debugging.
 | `task-create` | `--feature=<ref>` `--title=<text>` `[--ref=<slug>]` `[--task-type=implementation\|refactor]` `[--description=<text>]` `[--ac=<criterion>]` `[--depends-on=<task-ref>]` `[--owner=<agent_id>]` `[--required-capabilities=<cap>]` `[--required-provider=<provider>]` `[--body-file=<path>]` (project state directories only) |
 | `task-mark-done` | `<task-ref>` `[--actor-id=<id>]` |
 | `task-reset` | `<task-ref>` `[--actor-id=<id>]` |
-| `task-unblock` | `<task-ref>` `[--reason=<text>]` |
+| `task-unblock` | `<task-ref>` `[--reason=<text>]` `[--actor-id=<id>]` |
 | `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` |
 | `feature-create` | `<ref>` `[--title=<text>]` |
 
@@ -406,7 +426,7 @@ coordinator is stopped or restarting they retry for up to
 | `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=requeue\|block]` |
 | `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` |
 | `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` |
-| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` |
+| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` `[--session-token=<master session>]` |
 
 ---
 

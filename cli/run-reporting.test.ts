@@ -561,7 +561,8 @@ describe('orc-run-input-request', () => {
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
     let eventsAfterRequest: Array<Record<string, unknown>> = [];
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    // A child process start can take seconds on a loaded machine.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       eventsAfterRequest = readEvents();
       if (eventsAfterRequest.some((event) => event.event === 'input_requested')) break;
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));

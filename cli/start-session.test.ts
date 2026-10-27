@@ -319,6 +319,21 @@ describe('cli/start-session.ts', () => {
       expect(spawnMock).toHaveBeenCalled();
     });
 
+    it('closes the master\'s session when the master exits, so its id stops authenticating (task 232)', async () => {
+      seedState();
+      mockSpawn(makeSpawnMock());
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      const masterSessions = listSupervisedSessions(dir).filter((row) => row.agent_id === 'master');
+      expect(masterSessions.length).toBeGreaterThan(0);
+      expect(masterSessions.every((row) => row.state === 'offline')).toBe(true);
+    });
+
     it('registers missing master with fixed id without prompting master agent id', async () => {
       seedState();
       const spawnMock = makeSpawnMock();

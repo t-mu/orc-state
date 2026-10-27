@@ -35,7 +35,7 @@ import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
-import { recordProviderSession } from '../lib/runStore.ts';
+import { closeProviderSessionsForAgent, recordProviderSession } from '../lib/runStore.ts';
 import {
   promptProvider,
   isInteractive,
@@ -179,14 +179,23 @@ function orcStateEnv(): Record<string, string> {
   return ACTIVE_PROJECT ? { ORC_PROJECT_ID: ACTIVE_PROJECT.id, ORC_STATE_DIR: STATE_DIR } : { ORC_STATE_DIR: STATE_DIR };
 }
 
-function writeMcpConfig() {
+/**
+ * The master's MCP server environment. In a project it also carries the
+ * master's session id, the credential its mutations present to the
+ * coordinator (task 232).
+ */
+function masterMcpEnv(masterSessionId: string): Record<string, string> {
+  return ACTIVE_PROJECT ? { ...orcStateEnv(), ORC_MASTER_SESSION: masterSessionId } : orcStateEnv();
+}
+
+function writeMcpConfig(env: Record<string, string>) {
   const serverPath = runtimeModulePath('../mcp/server.ts', '../mcp/server.js');
   const config = {
     mcpServers: {
       orchestrator: {
         command: process.execPath,
         args: [serverPath],
-        env: orcStateEnv(),
+        env,
       },
     },
   };
@@ -420,7 +429,7 @@ const masterModelArgs = masterConfig.model ? ['--model', masterConfig.model] : [
 const checkoutRoot = resolveActiveCheckoutRoot();
 try {
   if (master.provider === 'claude') {
-    const mcpConfigPath = writeMcpConfig();
+    const mcpConfigPath = writeMcpConfig(masterMcpEnv(sessionReset.session_id));
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap, '--name', 'MASTER', ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
@@ -432,7 +441,7 @@ try {
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     const codexMcpArgs = ACTIVE_PROJECT
-      ? codexMcpOverrideArgs(runtimeModulePath('../mcp/server.ts', '../mcp/server.js'), orcStateEnv())
+      ? codexMcpOverrideArgs(runtimeModulePath('../mcp/server.ts', '../mcp/server.js'), masterMcpEnv(sessionReset.session_id))
       : [];
     const codexConfigPath = ACTIVE_PROJECT ? 'command-line overrides' : writeCodexProjectMcpConfig(checkoutRoot);
     const codexModeArgs = masterConfig.execution_mode === 'sandbox'
@@ -446,7 +455,7 @@ try {
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'gemini') {
-    const mcpConfigPath = writeMcpConfig();
+    const mcpConfigPath = writeMcpConfig(masterMcpEnv(sessionReset.session_id));
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-instruction', bootstrap, ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
@@ -565,15 +574,22 @@ masterPty = null;
 
 function markMasterOffline() {
   if (!master) return;
+  const now = new Date().toISOString();
   try {
     updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'offline',
       session_handle: null,
       provider_ref: null,
-      last_status_change_at: new Date().toISOString(),
+      last_status_change_at: now,
     });
   } catch {
     // Agent may have been removed by orc kill-all before teardown; safe to ignore.
+  }
+  try {
+    // The coordinator leaves the master's session to us: an ended master's id must stop authenticating.
+    closeProviderSessionsForAgent(STATE_DIR, master.agent_id, now);
+  } catch {
+    // Best effort, as above.
   }
 }
 

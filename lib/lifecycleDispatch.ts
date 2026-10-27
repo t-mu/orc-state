@@ -56,3 +56,4 @@ export async function submitLifecycle(request: LifecycleRequest, env: NodeJS.Pro
   }
   return sendLifecycle(new ControlClient(STATE_DIR, { sessionToken, timeoutMs: REQUEST_TIMEOUT_MS }), request);
 }
+

@@ -172,6 +172,10 @@ export async function reconcileSessions(
   const results: ReconcileResult[] = [];
   for (const session of listSupervisedSessions(stateDir, ['running', 'recoverable', 'unknown'])) {
     const agent = byAgent.get(session.agent_id);
+    // The foreground master session belongs to `orc start-session`, which records it (superseding the
+    // previous one) and closes it when the master exits; the coordinator never launched it and holds no
+    // handle for it, so it is not the coordinator's to supersede.
+    if (agent?.role === 'master') continue;
     let decision: Pick<ReconcileResult, 'state' | 'outcome' | 'reason'>;
     if (!agent?.session_handle || agent.session_token !== session.session_id) {
       decision = { state: 'offline', outcome: 'superseded', reason: 'agent no longer references this session' };
