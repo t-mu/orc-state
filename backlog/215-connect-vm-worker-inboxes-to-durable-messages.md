@@ -3,7 +3,7 @@ ref: isolagent-worker-runtime/215-connect-vm-worker-inboxes-to-durable-messages
 feature: isolagent-worker-runtime
 review_level: full
 priority: normal
-status: todo
+status: cancelled
 depends_on:
   - vnext-control-plane/207-route-peer-review-and-human-messages
   - isolagent-worker-runtime/213-expose-the-scoped-worker-bridge-over-the-host-tunnel
@@ -11,6 +11,8 @@ depends_on:
 ---
 
 # Task 215 — Connect VM worker inboxes to durable messages
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Depends on Tasks 207, 213 and 214.
 

@@ -3,13 +3,15 @@ ref: isolagent-worker-runtime/212-package-isolated-worker-flavors-and-fail-close
 feature: isolagent-worker-runtime
 review_level: full
 priority: normal
-status: todo
+status: cancelled
 depends_on:
   - isolagent-worker-runtime/210-specify-and-prove-the-isolated-runtime-boundary
   - isolagent-worker-runtime/211-add-a-headless-reconnectable-isolagent-supervisor-interface
 ---
 
 # Task 212 — Package isolated worker flavors and fail-closed preflight
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Depends on Tasks 210, and 211.
 

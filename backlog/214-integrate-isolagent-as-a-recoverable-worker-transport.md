@@ -3,7 +3,7 @@ ref: isolagent-worker-runtime/214-integrate-isolagent-as-a-recoverable-worker-tr
 feature: isolagent-worker-runtime
 review_level: full
 priority: normal
-status: todo
+status: cancelled
 depends_on:
   - isolagent-worker-runtime/211-add-a-headless-reconnectable-isolagent-supervisor-interface
   - isolagent-worker-runtime/212-package-isolated-worker-flavors-and-fail-closed-preflight
@@ -11,6 +11,8 @@ depends_on:
 ---
 
 # Task 214 — Integrate isolagent as a recoverable worker transport
+
+**Cancelled:** Isolagent integration and the desktop client will be developed outside the public orc-state repository. This spec is retained as historical design context and must not be dispatched here.
 
 Depends on Tasks 211, 212, and 213.
 
