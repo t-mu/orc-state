@@ -13,8 +13,9 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
@@ -43,7 +44,12 @@ export function tmuxSessionName(agentId: string): string {
 
 function logPath(agentId: string) { return join(STATE_DIR, 'pty-logs', `${agentId}.log`); }
 function settingsPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.json`); }
-function launcherPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.launch.sh`); }
+/**
+ * The launcher carries the session's environment, including its secret (task 231),
+ * so it lives in a private temporary directory, never the state directory, and
+ * removes itself and that directory before exec.
+ */
+function newLauncherPath(agentId: string) { return join(mkdtempSync(join(tmpdir(), 'orc-launch-')), `${agentId}.launch.sh`); }
 
 function tmux(args: string[], options: { input?: string; env?: Record<string, string> } = {}) {
   return spawnSync(tmuxBinary(), ['-L', tmuxSocketName(), ...args], {
@@ -158,25 +164,31 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       // A long-lived tmux server keeps the environment of whoever started it,
       // so each session gets its exact env from a private launcher script that
       // deletes itself before exec. Env values never appear in argv.
-      const launcher = launcherPath(agentId);
+      const launcher = newLauncherPath(agentId);
       const exports = Object.entries(launch.env)
         .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`);
-      writeFileSync(launcher, ['#!/bin/sh', 'rm -f "$0"', ...exports,
+      writeFileSync(launcher, ['#!/bin/sh', 'rm -f "$0"', 'rmdir "$(dirname "$0")" 2>/dev/null', ...exports,
         `exec ${[launch.binary, ...launch.args].map(shellQuote).join(' ')}`, ''].join('\n'), { mode: 0o700 });
       chmodSync(launcher, 0o700);
       try {
         tmuxOrThrow(['new-session', '-d', '-s', tmuxSessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher)],
           { env: stripNestedProviderEnv(process.env) as Record<string, string> });
       } catch (error) {
-        try { unlinkSync(launcher); } catch { /* already consumed */ }
+        rmSync(dirname(launcher), { recursive: true, force: true });
         throw error;
       }
       tmux(['pipe-pane', '-o', '-t', target(agentId), `cat >> ${shellQuote(logPath(agentId))}`]);
 
+      try {
+        const started = inspect(agentId);
+        if (!started.alive || started.pid == null) throw new Error(`tmux session for ${agentId} exited during startup`);
+        await runStartupDialogs((text) => write(agentId, text), provider, config, () => capture(agentId) ?? readLogTail(agentId));
+      } finally {
+        // The launcher removes itself when it runs; if the pane never ran it, its secrets must not linger.
+        rmSync(dirname(launcher), { recursive: true, force: true });
+      }
       const started = inspect(agentId);
-      if (!started.alive || started.pid == null) throw new Error(`tmux session for ${agentId} exited during startup`);
-      await runStartupDialogs((text) => write(agentId, text), provider, config, () => capture(agentId) ?? readLogTail(agentId));
 
       return {
         session_handle: `tmux:${agentId}`,
@@ -255,7 +267,7 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       try {
         const agentId = parseHandle(sessionHandle);
         tmux(['kill-session', '-t', target(agentId)]);
-        for (const path of [hookEventPath(agentId), `${hookEventPath(agentId)}.processing`, settingsPath(agentId), launcherPath(agentId)]) {
+        for (const path of [hookEventPath(agentId), `${hookEventPath(agentId)}.processing`, settingsPath(agentId)]) {
           try { unlinkSync(path); } catch { /* already gone or never created */ }
         }
       } catch {

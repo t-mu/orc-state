@@ -1,3 +1,4 @@
+import { credentialHash, newSessionSecret } from './sessionCredentials.ts';
 import { updateAgentRuntime, registerAgent, removeAgent } from './agentRegistry.ts';
 import { resolveOrcBin } from './orcBin.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
@@ -26,7 +27,7 @@ function withPrependedPath(pathValue: string | undefined, entry: string): string
 export function normalizeWorkerEnv(
   baseEnv: NodeJS.ProcessEnv,
   repoRoot: string | null = null,
-  project: { id: string; stateDir: string; sessionToken?: string } | null = null,
+  project: { id: string; stateDir: string; sessionToken?: string; sessionSecret?: string } | null = null,
 ): Record<string, string> {
   const env = { ...baseEnv } as Record<string, string>;
   const localBin = repoRoot ? join(repoRoot, 'node_modules', '.bin') : '';
@@ -48,8 +49,12 @@ export function normalizeWorkerEnv(
     env.ORC_PROJECT_ID = project.id;
     env.ORC_STATE_DIR = project.stateDir; // temporary bridge for readers that predate project identity
     env.ORC_CONTROL_SOCKET = defaultSocketPath(project.stateDir);
-    // The session id is the worker's credential for `orc control` calls on that socket.
+    // The session id names the session (report-for-duty); its secret, held only in this
+    // environment, is the credential every control call presents (task 231). A master
+    // secret inherited from the coordinator's environment is blanked.
     if (project.sessionToken) env.ORC_SESSION_TOKEN = project.sessionToken;
+    if (project.sessionSecret) env.ORC_SESSION_SECRET = project.sessionSecret;
+    env.ORC_MASTER_SECRET = '';
     env.ORC_HOME = '';
     env.ORC_REPO_ROOT = '';
     env.ORC_CONFIG_FILE = '';
@@ -205,9 +210,10 @@ export async function launchWorkerSession(
   try {
     const nowIso = new Date().toISOString();
     const effectiveMode: ExecutionMode = agent.role === 'scout' ? 'sandbox' : (executionMode ?? 'full-access');
+    const sessionSecret = ACTIVE_PROJECT ? newSessionSecret() : null;
     const workerEnv = stripWorkerProfileControlEnv(normalizeWorkerEnv({
       ORC_STATE_DIR: stateDir,
-    }, repoRoot, ACTIVE_PROJECT ? { id: ACTIVE_PROJECT.id, stateDir, sessionToken } : null));
+    }, repoRoot, ACTIVE_PROJECT ? { id: ACTIVE_PROJECT.id, stateDir, sessionToken, ...(sessionSecret ? { sessionSecret } : {}) } : null));
     const workerBootstrapProfile = resolveWorkerBootstrapProfile();
     const workerStartupProfile = resolveWorkerStartupProfile();
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
@@ -256,6 +262,7 @@ export async function launchWorkerSession(
       processStart: typeof ref.process_start === 'string' ? ref.process_start : null,
       ownerId: currentSessionOwnerId(),
       ownerExpiresAt: new Date(Date.now() + SESSION_OWNER_TTL_MS).toISOString(),
+      credentialHash: sessionSecret ? credentialHash(sessionSecret) : null,
     });
     updateAgentRuntime(stateDir, agent.agent_id, updates);
     syncAgentRuntime(agent, updates);

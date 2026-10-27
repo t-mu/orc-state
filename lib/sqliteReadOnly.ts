@@ -13,13 +13,13 @@ export function isReadOnlyOpenError(error: unknown): boolean {
 
 /**
  * Whether an open that failed with `error` should be retried read-only.
- * Only a sandboxed session (one launched with ORC_SESSION_TOKEN) does: it
+ * Only a sandboxed session (one launched with ORC_SESSION_SECRET) does: it
  * sends every write to the coordinator. A writer — the coordinator, the MCP
  * server, an operator shell — keeps failing loudly at open instead of caching
  * a read-only handle its later writes would trip over.
  */
 export function shouldOpenReadOnly(error: unknown, path: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(env.ORC_SESSION_TOKEN?.trim()) && isReadOnlyOpenError(error) && existsSync(path);
+  return Boolean(env.ORC_SESSION_SECRET?.trim()) && isReadOnlyOpenError(error) && existsSync(path);
 }
 
 /**

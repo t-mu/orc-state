@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
-export const RUNTIME_SCHEMA_VERSION = 6;
+export const RUNTIME_SCHEMA_VERSION = 7;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
@@ -236,6 +236,20 @@ export function migrateRuntimeSchema(db: Database.Database): void {
       db.pragma('user_version = 6');
     }).immediate();
   }
+  currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (currentVersion === 6) {
+    db.transaction(() => {
+      if ((db.pragma('user_version', { simple: true }) as number) !== 6) return;
+      // A session authenticates with a secret only its process holds; the state keeps its hash (task 231).
+      db.exec(`
+        ALTER TABLE sessions ADD COLUMN credential_hash TEXT;
+        CREATE UNIQUE INDEX sessions_credential_idx ON sessions(credential_hash) WHERE credential_hash IS NOT NULL;
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (7, 'session_credentials', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      `);
+      db.pragma('user_version = 7');
+    }).immediate();
+  }
   const health = inspectRuntimeSchemaDb(db);
   if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
 }
@@ -272,6 +286,7 @@ function inspectRuntimeSchemaDb(db: Database.Database): { ok: boolean; version: 
       if (byVersion.get(4) !== 'session_supervision') messages.push('missing migration record 4');
       if (byVersion.get(5) !== 'terminal_broker') messages.push('missing migration record 5');
       if (byVersion.get(6) !== 'semantic_message_routing') messages.push('missing migration record 6');
+      if (byVersion.get(7) !== 'session_credentials') messages.push('missing migration record 7');
     }
     const violations = db.pragma('foreign_key_check') as unknown[];
     if (violations.length > 0) messages.push(`${violations.length} foreign key violation(s)`);

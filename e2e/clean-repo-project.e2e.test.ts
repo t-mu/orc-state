@@ -34,7 +34,7 @@ import { defaultSocketPath } from '../lib/controlProtocol.ts';
 const ORC = resolve(import.meta.dirname, '..', 'cli', 'orc.ts');
 const ORC_ENV_KEYS = ['ORC_STATE_DIR', 'ORC_HOME', 'ORC_REPO_ROOT', 'ORC_CONFIG_FILE', 'ORC_PROJECT_ID', 'ORC_DATA_HOME',
   'ORC_BACKLOG_DIR', 'ORC_PLANS_DIR', 'ORC_WORKTREES_DIR', 'ORC_MAX_WORKERS', 'ORC_WORKER_PROVIDER', 'ORC_WORKER_MODEL',
-  'ORC_SESSION_TOKEN', 'ORC_CONTROL_SOCKET', 'ORC_CONTROL_API', 'ORC_SESSION_TRANSPORT'];
+  'ORC_SESSION_TOKEN', 'ORC_SESSION_SECRET', 'ORC_MASTER_SECRET', 'ORC_CONTROL_SOCKET', 'ORC_CONTROL_API', 'ORC_SESSION_TRANSPORT'];
 const PROCESS_EVENTS = ['SIGINT', 'SIGTERM', 'exit', 'unhandledRejection', 'uncaughtException'] as const;
 
 let temp: string;
@@ -120,8 +120,8 @@ function makeWorkers(writable: string[]) {
   const envs = new Map<string, NodeJS.ProcessEnv>();
   const settings = new Map<string, { allowWrite: string[]; unixSockets: string[] }>();
   const pending: Pending[] = [];
-  const workerOrc = (agentId: string, args: string[], cwd: string) => orcAsync(args, cwd,
-    { ...cleanEnv(), ...envs.get(agentId), NODE_OPTIONS: sandboxNodeOptions(writable) });
+  const workerOrc = (agentId: string, args: string[], cwd: string, override: NodeJS.ProcessEnv = {}) => orcAsync(args, cwd,
+    { ...cleanEnv(), ...envs.get(agentId), ...override, NODE_OPTIONS: sandboxNodeOptions(writable) });
 
   function wrap(real: Adapter): Adapter {
     return {
@@ -209,7 +209,7 @@ function makeWorkers(writable: string[]) {
     for (const item of take('finish')) await workerOrc(item.agentId, ['run-finish', `--run-id=${item.runId}`, `--agent-id=${item.agentId}`], tmpdir());
   }
 
-  return { wrap, settings, workerOrc, startTasks, completeTask, handleFollowUps };
+  return { wrap, settings, envs, workerOrc, startTasks, completeTask, handleFollowUps };
 }
 
 beforeEach(() => {
@@ -311,8 +311,18 @@ describe('clean-repository project workflow', () => {
         .rejects.toThrow(/Session belongs to/);
       await expect(workers.workerOrc(first.agentId, ['run-fail', `--run-id=${second.runId}`, `--agent-id=${first.agentId}`], first.worktree))
         .rejects.toThrow(/not scoped to run/);
+      // A peer's session id, recorded in the state directory, proves nothing: only its secret would (task 231).
+      const peerSessionId = workers.envs.get(second.agentId)!.ORC_SESSION_TOKEN!;
+      expect(readFileSync(join(project.stateDir, 'agents.json'), 'utf8')).toContain(peerSessionId);
+      await expect(workers.workerOrc(first.agentId, ['progress', '--event=phase_started', '--phase=review', `--run-id=${second.runId}`, `--agent-id=${second.agentId}`],
+        first.worktree, { ORC_SESSION_SECRET: peerSessionId })).rejects.toThrow(/not an authenticated running session/);
+      // The secrets themselves appear nowhere in the state directory or the PTY logs.
+      const secrets = started.map((item) => workers.envs.get(item.agentId)!.ORC_SESSION_SECRET!);
+      expect(secrets.every((secret) => secret.length >= 43)).toBe(true);
+      const stateText = spawnSync('grep', ['-rlaF', '-e', secrets[0], '-e', secrets[1], project.stateDir], { encoding: 'utf8' }).stdout;
+      expect(stateText).toBe('');
       // Without a session credential a project lifecycle command is refused outright.
-      expect(orc(['run-start', `--run-id=${first.runId}`, `--agent-id=${first.agentId}`]).stderr).toContain('ORC_SESSION_TOKEN is not set');
+      expect(orc(['run-start', `--run-id=${first.runId}`, `--agent-id=${first.agentId}`]).stderr).toContain('ORC_SESSION_SECRET is not set');
 
       // ── Inspect and attach through the CLI and the TUI while both runs are active. ──
       const status = json<{ project: { id: string } }>(orcOk(['status', '--json']));

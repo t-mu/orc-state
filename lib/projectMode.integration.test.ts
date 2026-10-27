@@ -111,6 +111,8 @@ describe('project mode against a registered target repository', () => {
     expect(git(repo, 'branch', '--list', 'task/run-probe').trim()).toContain('task/run-probe');
     expect(launch.env).toMatchObject({
       ORC_PROJECT_ID: project.id, ORC_HOME: '', ORC_REPO_ROOT: '', ORC_STATE_DIR: project.stateDir, ORC_SESSION_TOKEN: 'session-probe',
+      // The secret is the credential; a master secret inherited from the coordinator is blanked (task 231).
+      ORC_SESSION_SECRET: 'secret-probe', ORC_MASTER_SECRET: '',
     });
     expect(String((launch.env as Record<string, string>).ORC_CONTROL_SOCKET)).toMatch(/\.sock$/);
     expect(launch.claudeCwd).toBe(worktreePath);

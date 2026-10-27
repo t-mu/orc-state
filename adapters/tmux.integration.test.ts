@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -132,7 +133,10 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     const { adapter } = await loadAdapter();
     const first = await adapter.start('worker.1', { working_directory: dir, env: { ORC_PROBE: 'first' } });
     const second = await adapter.start('worker_1', { working_directory: dir });
+    // The launcher carried the session's environment; nothing of it is left behind (task 231).
     expect(existsSync(join(dir, 'pty-settings', 'worker.1.launch.sh'))).toBe(false);
+    expect(readdirSync(tmpdir()).filter((name) => name.startsWith('orc-launch-'))
+      .some((name) => existsSync(join(tmpdir(), name, 'worker.1.launch.sh')))).toBe(false);
     // Similar agent IDs must not share (or kill) each other's session.
     expect(adapter.inspectSession(first.session_handle).alive).toBe(true);
     expect(adapter.inspectSession(second.session_handle).alive).toBe(true);

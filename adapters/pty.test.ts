@@ -350,7 +350,9 @@ describe('buildStartArgs execution mode', () => {
     const { adapter } = await makeAdapter({ provider: 'claude' });
     await adapter.start('scout-1', { execution_mode: 'sandbox', read_only: true, env: { ORC_CONTROL_SOCKET: socket } });
     const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'scout-1.json'), 'utf8'));
-    expect(settings.sandbox.filesystem).toBeUndefined();
+    // No writable roots, but the operator's credential is hidden from it (task 231).
+    expect(settings.sandbox.filesystem).toEqual({ denyRead: [join(dir, 'operator.token')] });
+    expect(settings.permissions).toEqual({ deny: [`Read(/${join(dir, 'operator.token')})`] });
     expect(settings.sandbox.network.allowUnixSockets).toEqual([socket]);
   });
 

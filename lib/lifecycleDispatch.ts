@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { ControlClient } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
+import { clientCredential } from './sessionCredentials.ts';
 import { ACTIVE_PROJECT, STATE_DIR } from './paths.ts';
 import { applyLifecycle, type LifecycleRequest, type LifecycleResult } from './workerLifecycle.ts';
 
@@ -50,9 +51,10 @@ export async function sendLifecycle(
  */
 export async function submitLifecycle(request: LifecycleRequest, env: NodeJS.ProcessEnv = process.env): Promise<LifecycleResult> {
   if (!ACTIVE_PROJECT) return applyLifecycle(STATE_DIR, request);
-  const sessionToken = env.ORC_SESSION_TOKEN?.trim();
+  // A worker presents its own secret; the master's shell (memory-record) its master secret.
+  const sessionToken = clientCredential(env);
   if (!sessionToken) {
-    throw new Error(`In a registered project the coordinator applies ${request.op}; run it from the worker session (ORC_SESSION_TOKEN is not set)`);
+    throw new Error(`In a registered project the coordinator applies ${request.op}; run it from the worker session (ORC_SESSION_SECRET is not set)`);
   }
   return sendLifecycle(new ControlClient(STATE_DIR, { sessionToken, timeoutMs: REQUEST_TIMEOUT_MS }), request);
 }

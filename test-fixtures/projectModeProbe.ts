@@ -21,7 +21,7 @@ if (action === 'launch') {
   const { loadWorkerPoolConfig } = await import('../lib/providers.ts');
   const worktree = ensureRunWorktree(paths.STATE_DIR, { runId: 'run-probe', taskRef: 'app/probe', agentId: 'worker-a' });
   const project = paths.ACTIVE_PROJECT!;
-  const env = normalizeWorkerEnv({ ORC_STATE_DIR: paths.STATE_DIR }, paths.ORC_PACKAGE_ROOT, { id: project.id, stateDir: paths.STATE_DIR, sessionToken: 'session-probe' });
+  const env = normalizeWorkerEnv({ ORC_STATE_DIR: paths.STATE_DIR }, paths.ORC_PACKAGE_ROOT, { id: project.id, stateDir: paths.STATE_DIR, sessionToken: 'session-probe', sessionSecret: 'secret-probe' });
   const base = { working_directory: worktree.worktree_path, require_git_checkout: true, execution_mode: 'sandbox', env };
   const claude = prepareProviderLaunch('claude', 'worker-a', base);
   const codex = prepareProviderLaunch('codex', 'worker-b', base);
@@ -29,7 +29,8 @@ if (action === 'launch') {
   const settingsArg = claude.args[claude.args.indexOf('--settings') + 1];
   Object.assign(result, {
     worktree,
-    env: { ORC_PROJECT_ID: env.ORC_PROJECT_ID, ORC_HOME: env.ORC_HOME, ORC_REPO_ROOT: env.ORC_REPO_ROOT, ORC_STATE_DIR: env.ORC_STATE_DIR, ORC_SESSION_TOKEN: env.ORC_SESSION_TOKEN, ORC_CONTROL_SOCKET: env.ORC_CONTROL_SOCKET },
+    env: { ORC_PROJECT_ID: env.ORC_PROJECT_ID, ORC_HOME: env.ORC_HOME, ORC_REPO_ROOT: env.ORC_REPO_ROOT, ORC_STATE_DIR: env.ORC_STATE_DIR, ORC_SESSION_TOKEN: env.ORC_SESSION_TOKEN,
+      ORC_SESSION_SECRET: env.ORC_SESSION_SECRET, ORC_MASTER_SECRET: env.ORC_MASTER_SECRET, ORC_CONTROL_SOCKET: env.ORC_CONTROL_SOCKET },
     claudeCwd: claude.cwd,
     claudeSettingsPath: settingsArg,
     claudeSandbox: (JSON.parse(readFileSync(settingsArg, 'utf8')) as { sandbox?: unknown }).sandbox,

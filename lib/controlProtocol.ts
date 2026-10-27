@@ -11,10 +11,16 @@ import { join } from 'node:path';
 export const CONTROL_PROTOCOL_VERSION = 1;
 export const PROTOCOL_HEADER = 'x-orc-protocol';
 export const SESSION_HEADER = 'x-orc-session';
-/** A caller without a session states that it acts as the operator (task 232); task 231 adds its credential. */
+/** A caller without a session acts as the operator by presenting the operator token (tasks 232, 231). */
 export const OPERATOR_HEADER = 'x-orc-operator';
 export const CONTROL_ENDPOINT_FILE = 'control.json';
 export const CONTROL_TOKEN_FILE = 'control.token';
+/**
+ * The operator's credential (task 231), sent as the operator header's value.
+ * Every coordinator start writes a new one; sandboxed Claude sessions are
+ * denied reading it.
+ */
+export const OPERATOR_TOKEN_FILE = 'operator.token';
 
 export interface ControlEndpoint {
   protocol_version: number;

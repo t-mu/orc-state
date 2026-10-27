@@ -77,13 +77,19 @@ export function validateToolArguments(name: string, args: Record<string, unknown
 
 let warnedWithoutMasterSession = false;
 
+/** The master's secret, unless the provider passed the config's `${ORC_MASTER_SECRET}` reference through unexpanded. */
+function masterSecretFromEnv(): string | null {
+  const value = process.env.ORC_MASTER_SECRET?.trim();
+  return value && !value.startsWith('${') ? value : null;
+}
+
 /** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */
 const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
   cancel_task: 'cancel-task', reset_task: 'reset-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
 };
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
-  { project = ACTIVE_PROJECT, masterSession = process.env.ORC_MASTER_SESSION?.trim() || null }: { project?: unknown; masterSession?: string | null } = {}) {
+  { project = ACTIVE_PROJECT, masterSession = masterSecretFromEnv() }: { project?: unknown; masterSession?: string | null } = {}) {
   const op = OPERATOR_TOOLS[name];
   if (op && project) {
     // The master's session credential (from start-session) proves the caller, and the master always acts as
@@ -93,11 +99,11 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return submitOperatorMutation({ op, ...own }, { sessionToken: masterSession, project, stateDir });
     }
     if (op === 'respond-input') {
-      throw new Error('respond_input needs the master session in a registered project (ORC_MASTER_SESSION, set by orc start-session); restart the master with orc start-session');
+      throw new Error('respond_input needs the master session in a registered project (ORC_MASTER_SECRET, set by orc start-session); restart the master with orc start-session');
     }
     if (!warnedWithoutMasterSession) {
       warnedWithoutMasterSession = true;
-      process.stderr.write('[orc-mcp] ORC_MASTER_SESSION is not set; master tools reach the coordinator as the operator\n');
+      process.stderr.write('[orc-mcp] ORC_MASTER_SECRET is not set; master tools reach the coordinator as the operator\n');
     }
     return submitOperatorMutation({ op, ...args, ...(args.actor_id !== undefined ? {} : { actor_id: masterActorId(stateDir) }) },
       { sessionToken: null, project, stateDir });

@@ -7,6 +7,9 @@ const NESTED_PROVIDER_ENV_KEYS = [
   'CODEX_SANDBOX',
   'CODEX_SANDBOX_NETWORK_DISABLED',
   'CODEX_THREAD_ID',
+  // Session secrets (task 231) belong to one session; a child — or a long-lived tmux server — never inherits them.
+  'ORC_MASTER_SECRET',
+  'ORC_SESSION_SECRET',
 ] as const;
 
 /**

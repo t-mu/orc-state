@@ -14,11 +14,13 @@
  *   orc control messages [--include-consumed]
  *   orc control consume <message_id>
  *
- * Mutations authenticate with the caller's running provider session ID, taken
- * from --session-token or ORC_SESSION_TOKEN.
+ * Mutations present the caller's session secret (ORC_MASTER_SECRET or
+ * ORC_SESSION_SECRET), or --session-token; a legacy installation also accepts
+ * a session id (ORC_SESSION_TOKEN) for sessions recorded without a secret.
  */
 import { boolFlag, flag } from '../lib/args.ts';
 import { ControlClient } from '../lib/controlClient.ts';
+import { clientCredential } from '../lib/sessionCredentials.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import type { AckState } from '../lib/controlProtocol.ts';
 import type { MessageKind } from '../lib/messageRouter.ts';
@@ -40,7 +42,7 @@ function required(name: string): string {
   return value;
 }
 
-const client = new ControlClient(STATE_DIR, { sessionToken: flag('session-token') ?? process.env.ORC_SESSION_TOKEN ?? null });
+const client = new ControlClient(STATE_DIR, { sessionToken: flag('session-token') ?? clientCredential() ?? process.env.ORC_SESSION_TOKEN ?? null });
 
 try {
   if (subcommand === 'snapshot') {

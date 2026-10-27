@@ -13,7 +13,7 @@ import { isReadOnlyOpenError, openReadOnlyDatabase, shouldOpenReadOnly } from '.
 
 let dir: string;
 const repoRoot = join(import.meta.dirname, '..');
-const savedToken = process.env.ORC_SESSION_TOKEN;
+const savedToken = process.env.ORC_SESSION_SECRET;
 // Root ignores file permissions, so a read-only state directory cannot be simulated.
 const asRoot = process.getuid?.() === 0;
 
@@ -22,8 +22,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (savedToken === undefined) delete process.env.ORC_SESSION_TOKEN;
-  else process.env.ORC_SESSION_TOKEN = savedToken;
+  if (savedToken === undefined) delete process.env.ORC_SESSION_SECRET;
+  else process.env.ORC_SESSION_SECRET = savedToken;
   chmodSync(dir, 0o700);
   for (const name of readdirSync(dir)) chmodSync(join(dir, name), 0o600);
   closeMemoryDb();
@@ -71,10 +71,10 @@ describe('read-only opens (task 230)', () => {
     expect(isReadOnlyOpenError(new Error('x'))).toBe(false);
     const path = join(dir, 'x.db');
     new Database(path).close();
-    expect(shouldOpenReadOnly(readOnly, path, { ORC_SESSION_TOKEN: 'session-a' })).toBe(true);
+    expect(shouldOpenReadOnly(readOnly, path, { ORC_SESSION_SECRET: 'session-a' })).toBe(true);
     // The coordinator, the MCP server and operator shells write: they fail loudly instead.
     expect(shouldOpenReadOnly(readOnly, path, {})).toBe(false);
-    expect(shouldOpenReadOnly(readOnly, join(dir, 'missing.db'), { ORC_SESSION_TOKEN: 'session-a' })).toBe(false);
+    expect(shouldOpenReadOnly(readOnly, join(dir, 'missing.db'), { ORC_SESSION_SECRET: 'session-a' })).toBe(false);
   });
 });
 
@@ -82,7 +82,7 @@ describe.skipIf(asRoot)('state stores without write access to the state director
   it('a session reads events, memories and tasks while the coordinator holds them open', () => {
     const release = coordinatorState().holdOpen();
     lockStateDir();
-    process.env.ORC_SESSION_TOKEN = 'session-a';
+    process.env.ORC_SESSION_SECRET = 'session-a';
     try {
       expect(queryEvents(dir, { run_id: 'run-a', event_type: 'review_submitted' })).toHaveLength(1);
       expect(memoryWakeUp(dir)).toContain('remember the build');
@@ -97,7 +97,7 @@ describe.skipIf(asRoot)('state stores without write access to the state director
   it('with the coordinator stopped the read is refused as retryable, not as a readonly write', () => {
     coordinatorState();
     lockStateDir();
-    process.env.ORC_SESSION_TOKEN = 'session-a';
+    process.env.ORC_SESSION_SECRET = 'session-a';
     expect(() => queryEvents(dir, { run_id: 'run-a' })).toThrow(/cannot be read without write access while no coordinator holds it open; retry/);
     expect(() => openReadOnlyDatabase(join(dir, 'memory.db'))).toThrow(/retry once the coordinator is running/);
   });
@@ -105,10 +105,10 @@ describe.skipIf(asRoot)('state stores without write access to the state director
   it('a process without a session keeps its own open error and caches nothing', () => {
     const state = coordinatorState();
     lockStateDir();
-    delete process.env.ORC_SESSION_TOKEN;
+    delete process.env.ORC_SESSION_SECRET;
     // A writer (coordinator, MCP server, operator shell) sees SQLite's error, not a read-only fallback.
     expect(() => queryEvents(dir, { run_id: 'run-a' })).toThrow('attempt to write a readonly database');
-    process.env.ORC_SESSION_TOKEN = 'session-a';
+    process.env.ORC_SESSION_SECRET = 'session-a';
     expect(() => queryEvents(dir, { run_id: 'run-a' })).toThrow(/retry once the coordinator is running/);
     // Once the coordinator holds the files open again, the same process reads them.
     chmodSync(dir, 0o700);
@@ -125,7 +125,7 @@ describe.skipIf(asRoot)('state stores without write access to the state director
   it('a project read falls back to the state directory when no coordinator answers', async () => {
     const release = coordinatorState().holdOpen();
     lockStateDir();
-    process.env.ORC_SESSION_TOKEN = 'session-a';
+    process.env.ORC_SESSION_SECRET = 'session-a';
     try {
       // No control.json: the client reports the coordinator unavailable, and the read goes direct.
       const reviews = await readViaCoordinator(
@@ -144,7 +144,7 @@ describe.skipIf(asRoot)('state stores without write access to the state director
     lockStateDir();
     const run = (...args: string[]) => spawnSync(process.execPath, ['cli/orc.ts', ...args], {
       cwd: repoRoot, encoding: 'utf8',
-      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_SESSION_TOKEN: 'session-a' },
+      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_SESSION_SECRET: 'session-a' },
     });
     try {
       const reviews = run('review-read', '--run-id=run-a', '--json');
