@@ -3,7 +3,7 @@ ref: global-project-state/232-route-master-and-operator-mutations-through-the-co
 feature: global-project-state
 review_level: full
 priority: normal
-status: todo
+status: done
 depends_on:
   - global-project-state/229-route-worker-lifecycle-writes-through-an-authenticated-project-api
 ---
