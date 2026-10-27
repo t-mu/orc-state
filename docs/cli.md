@@ -204,6 +204,10 @@ and `reset_task` also clear `requeue_eligible_after` and record a
 `run_cancelled` event per cancelled run; `delegate` applies the master tool's
 eligibility check, refusing a target that already has an active run, with the
 routing reasons in the error; `task-unblock` records `--actor-id` when given.
+Without `--actor-id` the coordinator records the caller (the master session as the
+master, an operator as `human`); with the master's session, `--actor-id` must name
+the master itself. An answer from `run-input-respond` is recorded with
+`actor_type: agent` for an agent actor such as `master` (it used to be `human`).
 
 | Command | Description |
 |---------|-------------|
