@@ -36,6 +36,7 @@ import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { closeProviderSessionsForAgent, recordProviderSession } from '../lib/runStore.ts';
+import { credentialHash, newSessionSecret } from '../lib/sessionCredentials.ts';
 import {
   promptProvider,
   isInteractive,
@@ -180,12 +181,19 @@ function orcStateEnv(): Record<string, string> {
 }
 
 /**
- * The master's MCP server environment. In a project it also carries the
- * master's session id, the credential its mutations present to the
- * coordinator (task 232).
+ * The master's secret (task 231): the credential its MCP tools and shells
+ * present to the coordinator. It lives only in the master's environment; the
+ * state keeps its hash, and MCP configs reference it by name.
  */
-function masterMcpEnv(masterSessionId: string): Record<string, string> {
-  return ACTIVE_PROJECT ? { ...orcStateEnv(), ORC_MASTER_SESSION: masterSessionId } : orcStateEnv();
+const masterSecret = ACTIVE_PROJECT ? newSessionSecret() : null;
+
+/**
+ * The master's MCP server environment. In a project it forwards the master's
+ * secret from the provider's own environment by reference (Claude and Gemini
+ * expand `${VAR}`), so the value is never written into `mcp-config.json`.
+ */
+function masterMcpEnv(): Record<string, string> {
+  return masterSecret ? { ...orcStateEnv(), ORC_MASTER_SECRET: '${ORC_MASTER_SECRET}' } : orcStateEnv();
 }
 
 function writeMcpConfig(env: Record<string, string>) {
@@ -429,7 +437,7 @@ const masterModelArgs = masterConfig.model ? ['--model', masterConfig.model] : [
 const checkoutRoot = resolveActiveCheckoutRoot();
 try {
   if (master.provider === 'claude') {
-    const mcpConfigPath = writeMcpConfig(masterMcpEnv(sessionReset.session_id));
+    const mcpConfigPath = writeMcpConfig(masterMcpEnv());
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap, '--name', 'MASTER', ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
@@ -441,7 +449,8 @@ try {
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     const codexMcpArgs = ACTIVE_PROJECT
-      ? codexMcpOverrideArgs(runtimeModulePath('../mcp/server.ts', '../mcp/server.js'), masterMcpEnv(sessionReset.session_id))
+      // Codex forwards the secret by name from its own environment (env_vars), never on its command line.
+      ? codexMcpOverrideArgs(runtimeModulePath('../mcp/server.ts', '../mcp/server.js'), orcStateEnv(), process.execPath, ['ORC_MASTER_SECRET'])
       : [];
     const codexConfigPath = ACTIVE_PROJECT ? 'command-line overrides' : writeCodexProjectMcpConfig(checkoutRoot);
     const codexModeArgs = masterConfig.execution_mode === 'sandbox'
@@ -455,7 +464,7 @@ try {
     console.log(bootstrap);
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'gemini') {
-    const mcpConfigPath = writeMcpConfig(masterMcpEnv(sessionReset.session_id));
+    const mcpConfigPath = writeMcpConfig(masterMcpEnv());
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-instruction', bootstrap, ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
@@ -496,7 +505,7 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       cols: process.stdout.columns ?? 220,
       rows: process.stdout.rows ?? 50,
       cwd: resolveInvocationCwd(),
-      env: process.env as Record<string, string>,
+      env: { ...process.env, ...(masterSecret ? { ORC_MASTER_SECRET: masterSecret } : {}) } as Record<string, string>,
     });
     const startedAt = new Date().toISOString();
     recordProviderSession(STATE_DIR, {
@@ -506,6 +515,7 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       provider: master.provider,
       providerRef: null,
       startedAt,
+      credentialHash: masterSecret ? credentialHash(masterSecret) : null,
     });
     updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'running',

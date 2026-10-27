@@ -194,7 +194,7 @@ In a registered project, `task-reset`, `task-unblock`, `delegate` and
 `delegate_task` and `respond_input`) are applied by the running coordinator
 through its control API; the CLI sends them as the operator, the master's tools
 with the master's session, and a shell inside a worker session (one with
-`ORC_SESSION_TOKEN`) is refused. `run-input-respond` answers as the master and
+`ORC_SESSION_SECRET`) is refused. `run-input-respond` answers as the master and
 needs its session id (`--session-token`) in every case. When no coordinator is
 running they apply the change directly and print `coordinator is not running;
 applying <op> directly`, so operator recovery works with the coordinator stopped.
@@ -359,9 +359,10 @@ coordinator first and use a sequence at or before the event you want replayed.
 control API (see `docs/contracts.md` → **Local Control API**). They fail with
 "Control daemon is not running" when the coordinator is stopped or has crashed;
 the plain `runs-active` path still works then. Mutations authenticate with the
-caller's running provider session ID from `--session-token` or
-`ORC_SESSION_TOKEN`. Sessions are not yet given this variable automatically;
-`orc control snapshot` lists running sessions (caller and recipient IDs).
+caller's session secret (`ORC_MASTER_SECRET` or `ORC_SESSION_SECRET`, which
+launched sessions receive; `--session-token` overrides it). A legacy
+installation also accepts `ORC_SESSION_TOKEN`, the session id. `orc control
+snapshot` lists running sessions (caller and recipient IDs).
 Queued commands are not yet delivered to workers.
 
 ---
@@ -396,7 +397,7 @@ progress through the task lifecycle. Not for human use.
 
 In a registered project these commands do not write the state directory: each
 is sent to the coordinator over `ORC_CONTROL_SOCKET` with the worker's session
-credential (`ORC_SESSION_TOKEN`), and the coordinator applies it for that
+secret (`ORC_SESSION_SECRET`), and the coordinator applies it for that
 session's own run. Outside a worker session they are refused, except
 `memory-record`, which an operator shell still writes directly. While the
 coordinator is stopped or restarting they retry for up to

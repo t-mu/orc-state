@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
@@ -125,21 +127,25 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     await expect(operator.operator({ op: 'reset-task', task_ref: 'orch/missing' })).rejects.toMatchObject({ code: 'not_found', status: 404 });
     await expect(operator.operator({ op: 'unblock-task', task_ref: 'orch/todo' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
     expect(status('orch/todo')).toBe('todo');
+
+    // The operator is proven by the coordinator's operator token (task 231), not by claiming the role.
+    rmSync(join(dir, 'operator.token'));
+    await expect(operator.operator({ op: 'unblock-task', task_ref: 'orch/blocked' })).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
   });
 
   it('a shell inside a worker session presents it and is refused; only the master answers input', async () => {
-    const workerEnv = { ORC_SESSION_TOKEN: 'session-a' };
+    const workerEnv = { ORC_SESSION_SECRET: 'session-a' };
     await expect(submitOperatorMutation({ op: 'reset-task', task_ref: 'orch/todo' }, { env: workerEnv, project: 'p', stateDir: dir }))
       .rejects.toMatchObject({ code: 'forbidden' });
     const answer = { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'go ahead' } as const;
     await expect(submitOperatorMutation(answer, { env: {}, project: 'p', stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SESSION: 'session-master' }, project: 'p', stateDir: dir }))
+    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
       .resolves.toMatchObject({ ok: true, responded_by: 'master' });
     expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'master', payload: expect.objectContaining({ response: 'go ahead' }) })]);
   });
 
   it('a CLI run with the master session in its environment acts as the master', async () => {
-    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: { ORC_MASTER_SESSION: 'session-master' }, project: 'p', stateDir: dir }))
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
       .resolves.toMatchObject({ unblocked: true });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
   });
@@ -164,11 +170,11 @@ describe('submitOperatorMutation without a coordinator (task 232)', () => {
   it('applies the coordinator\'s rule on the direct path too', async () => {
     const offline = { project: 'p', stateDir: dir, warn: vi.fn() };
     // A shell inside a worker session cannot use the direct path to act as the operator.
-    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { ...offline, env: { ORC_SESSION_TOKEN: 'session-a' } }))
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { ...offline, env: { ORC_SESSION_SECRET: 'session-a' } }))
       .rejects.toMatchObject({ code: 'forbidden' });
     expect(status('orch/blocked')).toBe('blocked');
     // The master's session is recorded as the master.
-    await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { ...offline, env: { ORC_MASTER_SESSION: 'session-master' } });
+    await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { ...offline, env: { ORC_MASTER_SECRET: 'session-master' } });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
   });
 

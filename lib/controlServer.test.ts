@@ -12,6 +12,7 @@ import { ControlClient, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
+import { credentialHash } from './sessionCredentials.ts';
 import { closeMemoryDb, storeDrawer } from './memoryStore.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -99,13 +100,21 @@ const submit = (client: ControlClient, key: string, run = 'run-a', recipient = '
 
 describe('local daemon control API', () => {
   it('creates and revises project tasks with revision checks and master-only authoring', async () => {
-    const master = new ControlClient(dir, { sessionToken: 'session-master' });
+    const master = new ControlClient(dir, { sessionToken: 'secret-master' });
     await expect(master.listTasks()).rejects.toMatchObject({ code: 'not_found' });
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
       { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
       { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
     ] }));
     initProjectTaskStore(dir);
+    // A project authenticates sessions by their secrets only (task 231); a recorded session id proves nothing.
+    withEventDbTransaction(dir, (db) => {
+      for (const [id, secret] of [['session-master', 'secret-master'], ['session-a', 'secret-a']]) {
+        db.prepare('UPDATE sessions SET credential_hash = ? WHERE session_id = ?').run(credentialHash(secret), id);
+      }
+    });
+    await expect(new ControlClient(dir, { sessionToken: 'session-master' }).createTask({ feature: 'app', title: 'Stolen id' }))
+      .rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
     const { task } = await master.createTask({ feature: 'app', title: 'Remote task', body_markdown: '# Remote task\n\nDo it.\n' });
     expect(task).toMatchObject({ ref: 'app/remote-task', spec_revision: 1, body_markdown: '# Remote task\n\nDo it.\n' });
     expect((await master.getTask('app/remote-task')).task).toMatchObject({ spec_revision: 1 });
@@ -114,7 +123,7 @@ describe('local daemon control API', () => {
     await expect(master.getTask('app/missing')).rejects.toMatchObject({ code: 'not_found', status: 404 });
     await expect(master.createTask({ feature: 'app', title: 'Remote task' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
     await expect(master.createTask({ feature: 'app', title: 'Bad', priority: 'urgent' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
-    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).createTask({ feature: 'app', title: 'Worker task' }))
+    await expect(new ControlClient(dir, { sessionToken: 'secret-a' }).createTask({ feature: 'app', title: 'Worker task' }))
       .rejects.toMatchObject({ code: 'forbidden', status: 403 });
     expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);
   });

@@ -36,6 +36,7 @@ import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { isPidAlive, isSameProcess, processIdentity } from '../lib/processIdentity.ts';
 import type { SessionInspection } from './interface.ts';
 import type { SandboxNetwork } from '../lib/providers.ts';
+import { OPERATOR_TOKEN_FILE } from '../lib/controlProtocol.ts';
 
 const PROVIDER_BINARIES: Record<string, string> = {
   claude: 'claude',
@@ -368,8 +369,10 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
       };
       const rootsOptions = sandboxRootsOptions(config, cwd);
       const filesystem = claudeSandboxFilesystem(rootsOptions);
-      if (filesystem) {
-        sandboxConfig.filesystem = filesystem;
+      // A project session must not read the operator's credential (task 231).
+      const denyRead = rootsOptions.controlSocket ? [join(rootsOptions.stateDir, OPERATOR_TOKEN_FILE)] : [];
+      if (filesystem || denyRead.length) {
+        sandboxConfig.filesystem = { ...(filesystem ?? {}), ...(denyRead.length ? { denyRead } : {}) };
       }
       // Read-only scouts need the socket too: their report-for-duty goes through the coordinator.
       if (rootsOptions.controlSocket) {

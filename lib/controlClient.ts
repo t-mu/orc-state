@@ -3,7 +3,7 @@ import { request } from 'node:http';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
-  CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError,
+  CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER,
   type AckState, type ControlEndpoint, type ControlResponse, type StreamFrame, type SubmitCommandRequest,
 } from './controlProtocol.ts';
@@ -40,6 +40,15 @@ function discover(stateDir: string): { endpoint: ControlEndpoint; token: string 
   // A project worker is handed its coordinator's socket explicitly; the bearer token still comes from the state dir.
   const socket = process.env.ORC_CONTROL_SOCKET?.trim();
   return { endpoint: socket ? { ...endpoint, path: socket } : endpoint, token };
+}
+
+/** The operator token the running coordinator wrote; empty when it cannot be read (the server then refuses). */
+function readOperatorToken(stateDir: string): string {
+  try {
+    return readFileSync(join(stateDir, OPERATOR_TOKEN_FILE), 'utf8').trim();
+  } catch {
+    return '';
+  }
 }
 
 /** A crashed daemon leaves its descriptor behind; report it like a stopped one. */
@@ -155,7 +164,7 @@ export class ControlClient {
    * that it acts as the operator.
    */
   operator(request: OperatorRequest): Promise<Record<string, unknown>> {
-    return this.call('POST', '/v1/operator', request, this.sessionToken ? {} : { [OPERATOR_HEADER]: '1' });
+    return this.call('POST', '/v1/operator', request, this.sessionToken ? {} : { [OPERATOR_HEADER]: readOperatorToken(this.stateDir) });
   }
 
   listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {

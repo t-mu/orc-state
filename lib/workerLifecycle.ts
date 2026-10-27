@@ -1,3 +1,4 @@
+import { sessionForCredential } from './sessionCredentials.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -276,8 +277,9 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
  * still reports its lifecycle: the session id it presents is the credential,
  * not its PID.
  */
-export function authorizeLifecycle(stateDir: string, sessionId: string, request: LifecycleRequest): { live: boolean } {
-  const session = sessionId.startsWith('legacy-') ? undefined : withEventDb(stateDir, (db) => db
+export function authorizeLifecycle(stateDir: string, credential: string, request: LifecycleRequest): { live: boolean } {
+  const sessionId = sessionForCredential(stateDir, credential);
+  const session = sessionId === null ? undefined : withEventDb(stateDir, (db) => db
     .prepare('SELECT agent_id, run_id, state FROM sessions WHERE session_id = ?')
     .get(sessionId) as { agent_id: string; run_id: string | null; state: string } | undefined);
   // After the merge the coordinator finishes the run and closes its session. The

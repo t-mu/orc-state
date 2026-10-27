@@ -147,6 +147,8 @@ export function recordProviderSession(stateDir: string, session: {
   processStart?: string | null;
   ownerId?: string | null;
   ownerExpiresAt?: string | null;
+  /** Hash of the session's secret (task 231); the secret itself is never stored. */
+  credentialHash?: string | null;
 }): boolean {
   if (session.sessionId === session.agentId || session.sessionId === session.runId) {
     throw new Error('Provider session ID must differ from agent and run IDs');
@@ -158,16 +160,17 @@ export function recordProviderSession(stateDir: string, session: {
       .run(session.startedAt, session.agentId, session.sessionId);
     db.prepare(`
       INSERT INTO sessions (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at,
-        transport, process_pid, process_start, owner_id, owner_expires_at, state_reason)
-      VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        transport, process_pid, process_start, owner_id, owner_expires_at, state_reason, credential_hash)
+      VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         state = 'running', provider_ref = excluded.provider_ref, updated_at = excluded.updated_at,
         transport = excluded.transport, process_pid = excluded.process_pid, process_start = excluded.process_start,
-        owner_id = excluded.owner_id, owner_expires_at = excluded.owner_expires_at, state_reason = NULL
+        owner_id = excluded.owner_id, owner_expires_at = excluded.owner_expires_at, state_reason = NULL,
+        credential_hash = COALESCE(excluded.credential_hash, sessions.credential_hash)
     `).run(session.sessionId, session.runId, session.agentId, session.provider,
       session.providerRef == null ? null : JSON.stringify(session.providerRef), session.startedAt, session.startedAt,
       session.transport ?? null, session.processPid ?? null, session.processStart ?? null,
-      session.ownerId ?? null, session.ownerExpiresAt ?? null);
+      session.ownerId ?? null, session.ownerExpiresAt ?? null, session.credentialHash ?? null);
     return true;
   });
 }

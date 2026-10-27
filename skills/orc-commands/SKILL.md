@@ -95,7 +95,7 @@ These commands are for observability. They are supported, but they are not alter
 
 ### Run Lifecycle (Worker Commands)
 
-Workers emit these from inside their PTY session via Bash tool. In a registered project they are sent to the coordinator with the worker's `ORC_SESSION_TOKEN` and refused outside a worker session (except `memory-record`); they retry for up to `ORC_CONTROL_RETRY_MS` while the coordinator restarts. To stop a run from outside, use `orc task-reset <ref>` or `reset_task`/`cancel_task`.
+Workers emit these from inside their PTY session via Bash tool. In a registered project they are sent to the coordinator with the worker's session secret (`ORC_SESSION_SECRET`) and refused outside a worker session (except `memory-record`); they retry for up to `ORC_CONTROL_RETRY_MS` while the coordinator restarts. To stop a run from outside, use `orc task-reset <ref>` or `reset_task`/`cancel_task`.
 
 | Command | Usage | Notes |
 |---------|-------|-------|

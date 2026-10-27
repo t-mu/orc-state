@@ -14,6 +14,7 @@ import { bridgeInputResponse } from './messageBridge.ts';
 import { ACTIVE_PROJECT, BACKLOG_DOCS_DIR, STATE_DIR } from './paths.ts';
 import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
+import { clientCredential, sessionForCredential } from './sessionCredentials.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from './taskRouting.ts';
 import type { Claim } from '../types/claims.ts';
@@ -458,9 +459,10 @@ export function parseOperatorRequest(body: Record<string, unknown>): OperatorReq
 export function authorizeOperator(stateDir: string, caller: { credential: string | null; operator: boolean }, request: OperatorRequest): { actorId: string } {
   const { credential } = caller;
   if (credential !== null) {
-    const session = credential.startsWith('legacy-') ? undefined : withEventDb(stateDir, (db) => db.prepare(
+    const sessionId = sessionForCredential(stateDir, credential);
+    const session = sessionId === null ? undefined : withEventDb(stateDir, (db) => db.prepare(
       "SELECT agent_id FROM sessions WHERE session_id = ? AND state IN ('running', 'recoverable', 'unknown')",
-    ).get(credential) as { agent_id: string } | undefined);
+    ).get(sessionId) as { agent_id: string } | undefined);
     if (!session) throw new ControlError('unauthenticated', 'Operator caller is not authenticated', 401);
     const agent = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id);
     if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403);
@@ -497,8 +499,8 @@ const OPERATOR_REQUEST_TIMEOUT_MS = 120_000;
 /**
  * Apply a master or operator mutation (task 232). In a registered project the
  * running coordinator applies it. The caller presents its session when it has
- * one — the master's MCP server its ORC_MASTER_SESSION, any shell inside a
- * worker session its ORC_SESSION_TOKEN (and is refused) — and otherwise acts
+ * one — the master's tools and shells their ORC_MASTER_SECRET, any shell inside
+ * a worker session its ORC_SESSION_SECRET (and is refused) — and otherwise acts
  * as the operator. With no coordinator answering, the caller applies it
  * directly and says so: the request provably never reached a coordinator, and
  * the direct path takes the same state lock. A legacy installation always
@@ -508,7 +510,7 @@ export async function submitOperatorMutation(
   request: OperatorRequest,
   {
     env = process.env,
-    sessionToken = env.ORC_MASTER_SESSION?.trim() || env.ORC_SESSION_TOKEN?.trim() || null,
+    sessionToken = clientCredential(env),
     direct = { trustedMaster: true }, warn = (line: string) => console.error(line),
     project = ACTIVE_PROJECT, stateDir = STATE_DIR,
   }: {

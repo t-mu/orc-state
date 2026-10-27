@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ControlClient } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
+import { clientCredential } from './sessionCredentials.ts';
 import { queryEvents } from './eventLog.ts';
 import { getMemoryDb, memoryWakeUp } from './memoryStore.ts';
 import { readBridgedReviewFeedback } from './messageBridge.ts';
@@ -20,7 +21,7 @@ import type { ReviewSubmittedEvent } from '../types/events.ts';
 export async function readViaCoordinator<T>(
   remote: (client: ControlClient) => Promise<T>,
   local: () => T,
-  { project = ACTIVE_PROJECT, client = () => new ControlClient(STATE_DIR) }: { project?: unknown; client?: () => ControlClient } = {},
+  { project = ACTIVE_PROJECT, client = () => new ControlClient(STATE_DIR, { sessionToken: clientCredential() }) }: { project?: unknown; client?: () => ControlClient } = {},
 ): Promise<T> {
   if (!project) return local();
   let unanswered: ControlError;
