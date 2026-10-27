@@ -42,6 +42,11 @@ Presenting a value read from the state directory authenticates nobody. Once Task
 - The worker read routes (`GET /v1/runs/<run_id>/reviews`, `GET /v1/memory/wake-up`) accept the bearer token alone. Scope them by the session credential (a worker reads only its own run's reviews) together with the other routes.
 - `worker_pool.sandbox_network: open` lets a sandboxed Linux Claude worker or scout reach every Unix socket (including orc's private tmux server) and a Codex worker the network. A secret is only as strong as that boundary: document that per-session secrets assume the default `restricted` network, or a host where those sockets are unreachable.
 
+### Constraints from Task 232
+
+- `/v1/operator` accepts an operator on the control token plus `x-orc-operator: 1`; give the operator a credential workers cannot read, so the header becomes a claim that needs it.
+- The master's MCP server receives its session id as `ORC_MASTER_SESSION`, which `start-session` also writes into `mcp-config.json` in the state directory and, for a Codex master, into its command line. Once that value is a secret, deliver it by environment only (or a file workers cannot read).
+
 ### Start here
 
 - `lib/workerRuntime.ts` (`launchWorkerSession`, `normalizeWorkerEnv`), `cli/start-session.ts`, `lib/sessionBootstrap.ts`.
