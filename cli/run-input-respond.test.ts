@@ -3,7 +3,8 @@ import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
-import { queryEvents } from '../lib/eventLog.ts';
+import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from '../lib/eventLog.ts';
+import { bridgeInputRequest } from '../lib/messageBridge.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -77,10 +78,38 @@ describe('cli/run-input-respond.ts', () => {
   });
 });
 
-function runCli(args: string[]) {
+describe('cli/run-input-respond.ts durable request in a legacy installation', () => {
+  beforeEach(() => {
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-1', 'docs/task-1', 'worker-1', 'in_progress', 'now', 'now')").run();
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
+        VALUES ('master-1', NULL, 'master', 'claude', 'running', 'now', 'now')`).run();
+    });
+    bridgeInputRequest(dir, 'run-1', 'worker-1', 'req-1', 'Which approach?');
+    closeAllDatabases();
+  });
+
+  it('answers as the master named by --session-id', () => {
+    expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A', '--session-id=master-1']).status).toBe(0);
+  });
+
+  it('accepts the older --session-token name and the legacy ORC_SESSION_TOKEN variable', () => {
+    expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A', '--session-token=master-1']).status).toBe(0);
+    expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A'], { ORC_SESSION_TOKEN: 'master-1' }).status).toBe(0);
+  });
+
+  it('refuses without the master session id', () => {
+    const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('running master session');
+  });
+});
+
+function runCli(args: string[], env: Record<string, string> = {}) {
   return spawnSync('node', ['cli/run-input-respond.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir, ORC_SESSION_ID: '', ORC_SESSION_TOKEN: '', ORC_SESSION_SECRET: '', ORC_MASTER_SECRET: '', ...env },
     encoding: 'utf8',
   });
 }

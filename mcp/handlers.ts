@@ -748,7 +748,7 @@ export async function handleRequestScout(stateDir: string, {
   if (!sessionToken) {
     await adapter.stop(launchResult.session_handle);
     removeAgent(stateDir, scout.agent_id);
-    throw new Error(`Failed to launch scout ${scoutId}: missing session token after launch`);
+    throw new Error(`Failed to launch scout ${scoutId}: missing session id after launch`);
   }
   const ready = await waitForScoutReportedForDuty(stateDir, scout.agent_id, sessionToken, scout);
   if (!ready) {

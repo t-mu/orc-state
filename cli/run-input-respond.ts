@@ -2,6 +2,7 @@
 /**
  * cli/run-input-respond.ts
  * Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>]
+ *   [--session-id=<master session id, legacy only>]
  *
  * Answer a worker's input request, as the running master session
  * (its ORC_MASTER_SECRET; its session id, --session-id or ORC_SESSION_ID, in a legacy installation). In a registered project the
@@ -20,14 +21,14 @@ const actorId = flag('actor-id') ?? (ACTIVE_PROJECT ? null : 'master');
 const requestedId = flag('request-id');
 
 if (!runId || !agentId || !response) {
-  console.error('Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]');
+  console.error('Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>] [--session-id=<master session id, legacy only>]');
   process.exit(1);
 }
 
 // A project authenticates the master by its secret; a legacy installation by the master's session id.
-// --session-token is the older name of --session-id.
+// --session-token is the older name of --session-id. A session id is a credential only in a legacy installation.
 const legacySession = flag('session-id') ?? flag('session-token') ?? sessionIdFromEnv();
-const credential = clientCredential() ?? legacySession;
+const credential = clientCredential() ?? (ACTIVE_PROJECT ? null : legacySession);
 try {
   await submitOperatorMutation({
     op: 'respond-input', run_id: runId, agent_id: agentId, response, record_memory: true, ...(actorId ? { actor_id: actorId } : {}),

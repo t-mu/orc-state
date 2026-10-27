@@ -231,7 +231,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
     case 'report-for-duty': {
       const agent = getAgent(stateDir, request.agent_id);
       if (!agent) throw new Error(`Agent not found: ${request.agent_id}`);
-      if (agent.session_token !== request.session_token) throw new Error(`Session token mismatch for ${request.agent_id}`);
+      if (agent.session_token !== request.session_token) throw new Error(`Session id mismatch for ${request.agent_id}`);
       appendSequencedEvent(stateDir, {
         ts: at, event: 'reported_for_duty', actor_type: 'agent', actor_id: request.agent_id, agent_id: request.agent_id,
         payload: { session_token: request.session_token },
@@ -300,7 +300,7 @@ export function authorizeLifecycle(stateDir: string, credential: string, request
     throw new ControlError('forbidden', `Session is not scoped to run ${request.run_id}`, 403);
   }
   if (request.op === 'report-for-duty' && request.session_token !== sessionId) {
-    throw new ControlError('forbidden', 'report-for-duty must present the caller\'s own session token', 403);
+    throw new ControlError('forbidden', 'report-for-duty must present the caller\'s own session id', 403);
   }
   return { live };
 }

@@ -22,7 +22,7 @@
 import { boolFlag, flag } from '../lib/args.ts';
 import { ControlClient } from '../lib/controlClient.ts';
 import { clientCredential, sessionIdFromEnv } from '../lib/sessionCredentials.ts';
-import { STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, STATE_DIR } from '../lib/paths.ts';
 import type { AckState } from '../lib/controlProtocol.ts';
 import type { MessageKind } from '../lib/messageRouter.ts';
 import { cliError } from './shared.ts';
@@ -43,7 +43,9 @@ function required(name: string): string {
   return value;
 }
 
-const client = new ControlClient(STATE_DIR, { credential: flag('credential') ?? flag('session-token') ?? clientCredential() ?? sessionIdFromEnv() });
+const client = new ControlClient(STATE_DIR, {
+  credential: flag('credential') ?? flag('session-token') ?? clientCredential() ?? (ACTIVE_PROJECT ? null : sessionIdFromEnv()),
+});
 
 try {
   if (subcommand === 'snapshot') {

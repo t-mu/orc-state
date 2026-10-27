@@ -277,7 +277,7 @@ describe('orc-report-for-duty', () => {
     const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-id=wrong-token']);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Session token mismatch');
+    expect(result.stderr).toContain('Session id mismatch');
   });
 });
 

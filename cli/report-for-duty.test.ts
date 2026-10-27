@@ -65,10 +65,10 @@ describe('cli/report-for-duty.ts', () => {
     expect(result.stderr).toContain('Agent not found');
   });
 
-  it('exits 1 when session token does not match', () => {
+  it('exits 1 when the session id does not match', () => {
     const result = runCli(['--agent-id=worker-1', '--session-id=wrong-token']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Session token mismatch');
+    expect(result.stderr).toContain('Session id mismatch');
   });
 });
 
