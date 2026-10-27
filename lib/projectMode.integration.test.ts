@@ -128,7 +128,10 @@ describe('project mode against a registered target repository', () => {
     expect(sandbox.network?.allowUnixSockets).toEqual([socket]);
     expect((launch.codexArgs as string[]).join(' ')).toContain(socket);
     expect((launch.codexArgs as string[]).join(' ')).not.toContain(`"${project.stateDir}"`);
-    expect(launch.structured).toEqual({ sandbox: 'workspace-write', config: { 'sandbox_workspace_write.writable_roots': allowWrite.slice(1) } });
+    expect(launch.codexArgs as string[]).toContain('sandbox_workspace_write.network_access=true');
+    expect(launch.structured).toEqual({ sandbox: 'workspace-write', config: {
+      'sandbox_workspace_write.writable_roots': allowWrite.slice(1), 'sandbox_workspace_write.network_access': true,
+    } });
     expect(launch.maxWorkers).toBe(3);
     // Nothing was written into the target working tree.
     expect(readdirSync(repo).sort()).toEqual(['.git', 'README.md']);

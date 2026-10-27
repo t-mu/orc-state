@@ -213,6 +213,28 @@ export function codexSandboxWritableRootArgs(opts: SandboxRootsOptions): string[
 }
 
 /**
+ * Codex sandbox args letting a project worker reach its control socket.
+ * `workspace-write` disables network access, and Codex has no per-socket
+ * allowance for its legacy sandbox modes, so a worker that must connect to
+ * the coordinator gets network access. Read-only scouts have no network
+ * setting; their report-for-duty fails under the Codex sandbox. See
+ * docs/configuration.md → Execution Modes → Codex.
+ */
+export function codexSandboxNetworkArgs(opts: SandboxRootsOptions): string[] {
+  return !opts.readOnly && opts.controlSocket ? ['-c', 'sandbox_workspace_write.network_access=true'] : [];
+}
+
+/**
+ * Claude sandbox network settings for a project session's control socket.
+ * Connecting to a Unix socket is a network permission in Claude's sandbox.
+ * `allowUnixSockets` names the path on macOS; Linux ignores it (seccomp
+ * cannot filter by path), so there every Unix socket is allowed.
+ */
+export function claudeSandboxNetwork(controlSocket: string, platform: NodeJS.Platform = process.platform): Record<string, unknown> {
+  return { allowUnixSockets: [controlSocket], ...(platform === 'linux' ? { allowAllUnixSockets: true } : {}) };
+}
+
+/**
  * Resolve the provider launch cwd (task 204). An explicit working_directory —
  * the assigned worktree for task workers — is used as-is and must be an
  * existing directory; launching elsewhere would silently run the worker
@@ -271,7 +293,8 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
       // are granted as additional writable roots (see sandboxExtraWritableRoots).
       const sandboxScope = readOnly ? 'read-only' : 'workspace-write';
       args.push('--sandbox', sandboxScope, '--ask-for-approval', 'never');
-      args.push(...codexSandboxWritableRootArgs(sandboxRootsOptions(config, cwd)));
+      const rootsOptions = sandboxRootsOptions(config, cwd);
+      args.push(...codexSandboxWritableRootArgs(rootsOptions), ...codexSandboxNetworkArgs(rootsOptions));
     } else {
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
@@ -342,10 +365,9 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
       if (filesystem) {
         sandboxConfig.filesystem = filesystem;
       }
-      // Connecting to a Unix socket is a network permission in Claude's sandbox.
-      // Read-only scouts need it too: their report-for-duty goes through the coordinator.
+      // Read-only scouts need the socket too: their report-for-duty goes through the coordinator.
       if (rootsOptions.controlSocket) {
-        sandboxConfig.network = { allowUnixSockets: [rootsOptions.controlSocket] };
+        sandboxConfig.network = claudeSandboxNetwork(rootsOptions.controlSocket);
       }
       settings.sandbox = sandboxConfig;
     }

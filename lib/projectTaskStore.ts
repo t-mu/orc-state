@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
+import { isReadOnlyOpenError, openReadOnlyDatabase } from './sqliteReadOnly.ts';
 
 export const PROJECT_TASK_SCHEMA_VERSION = 4;
 
@@ -363,14 +364,18 @@ export class ProjectTaskStore {
 
   constructor(projectStateDir: string) {
     mkdirSync(projectStateDir, { recursive: true, mode: 0o700 });
-    this.db = new Database(join(projectStateDir, 'runtime.db'));
+    const path = join(projectStateDir, 'runtime.db');
+    const db = new Database(path);
     try {
-      this.db.pragma('busy_timeout = 5000');
-      migrateProjectTaskSchema(this.db);
-      this.db.pragma('journal_mode = WAL');
+      db.pragma('busy_timeout = 5000');
+      migrateProjectTaskSchema(db);
+      db.pragma('journal_mode = WAL');
+      this.db = db;
     } catch (error) {
-      this.db.close();
-      throw error;
+      db.close();
+      // A sandboxed project worker reads the task store without write access to it.
+      if (!isReadOnlyOpenError(error) || !existsSync(path)) throw error;
+      this.db = openReadOnlyDatabase(path);
     }
   }
 

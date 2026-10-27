@@ -4,6 +4,7 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { registerDb, unregisterDb } from './eventLog.ts';
 import { logger } from './logger.ts';
+import { isReadOnlyOpenError, openReadOnlyDatabase } from './sqliteReadOnly.ts';
 
 const MEMORY_DB_FILE = 'memory.db';
 const _memDbs = new Map<string, Database.Database>();
@@ -13,7 +14,22 @@ export function initMemoryDb(stateDir: string): Database.Database {
   if (existing?.open) return existing;
   if (existing) _memDbs.delete(stateDir); // stale closed handle
   const dbPath = join(stateDir, MEMORY_DB_FILE);
-  const db = new Database(dbPath);
+  let db = new Database(dbPath);
+  try {
+    setupMemoryDb(db);
+  } catch (error) {
+    db.close();
+    // A sandboxed project worker reads the store without write access to it.
+    if (!isReadOnlyOpenError(error) || !existsSync(dbPath)) throw error;
+    db = openReadOnlyDatabase(dbPath);
+  }
+
+  registerDb('memory:' + stateDir, db);
+  _memDbs.set(stateDir, db);
+  return db;
+}
+
+function setupMemoryDb(db: Database.Database): void {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
 
@@ -62,10 +78,6 @@ export function initMemoryDb(stateDir: string): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_drawers_wing_room ON drawers(wing, room);
   `);
-
-  registerDb('memory:' + stateDir, db);
-  _memDbs.set(stateDir, db);
-  return db;
 }
 
 export function getMemoryDb(stateDir: string): Database.Database {

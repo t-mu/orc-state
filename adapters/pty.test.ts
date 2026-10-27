@@ -351,7 +351,7 @@ describe('buildStartArgs execution mode', () => {
     await adapter.start('scout-1', { execution_mode: 'sandbox', read_only: true, env: { ORC_CONTROL_SOCKET: socket } });
     const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'scout-1.json'), 'utf8'));
     expect(settings.sandbox.filesystem).toBeUndefined();
-    expect(settings.sandbox.network).toEqual({ allowUnixSockets: [socket] });
+    expect(settings.sandbox.network.allowUnixSockets).toEqual([socket]);
   });
 
   it('codex full-access: --dangerously-bypass-approvals-and-sandbox', async () => {
@@ -565,7 +565,29 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     const settings = JSON.parse(readFileSync(join(stateDir, 'pty-settings', 'bob.json'), 'utf8'));
     expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', socket, ...gitRoots(target)]);
     expect(settings.sandbox.filesystem.allowWrite).not.toContain(stateDir);
-    expect(settings.sandbox.network).toEqual({ allowUnixSockets: [socket] });
+    expect(settings.sandbox.network.allowUnixSockets).toEqual([socket]);
+  });
+
+  it('claude sandbox network (task 230): Linux ignores socket paths, so every Unix socket is allowed there', async () => {
+    const { claudeSandboxNetwork } = await import('./pty.ts');
+    expect(claudeSandboxNetwork('/s.sock', 'darwin')).toEqual({ allowUnixSockets: ['/s.sock'] });
+    expect(claudeSandboxNetwork('/s.sock', 'linux')).toEqual({ allowUnixSockets: ['/s.sock'], allowAllUnixSockets: true });
+  });
+
+  it('codex, project worker (task 230): network access so the worker reaches its control socket', async () => {
+    const { target, worktree, stateDir } = twoRootLayout();
+    const socket = join(stateDir, 'control.sock');
+    const codex = await makeAdapter({ provider: 'codex' });
+    await codex.adapter.start('c', { execution_mode: 'sandbox', working_directory: worktree, env: { ORC_CONTROL_SOCKET: socket } });
+    expect(codex.spawnSpy.mock.calls[0][1]).toEqual([
+      '--sandbox', 'workspace-write', '--ask-for-approval', 'never',
+      '-c', `sandbox_workspace_write.writable_roots=${JSON.stringify([socket, ...gitRoots(target)])}`,
+      '-c', 'sandbox_workspace_write.network_access=true',
+      '--enable', 'multi_agent',
+    ]);
+    const { codexSandboxNetworkArgs } = await import('./pty.ts');
+    expect(codexSandboxNetworkArgs({ readOnly: true, cwd: worktree, stateDir, gitRepoRoot: target, controlSocket: socket })).toEqual([]);
+    expect(codexSandboxNetworkArgs({ readOnly: false, cwd: worktree, stateDir, gitRepoRoot: target })).toEqual([]);
   });
 
   it('claude, attached: grants the orchestration repo .git subtrees, not the whole root', async () => {

@@ -157,10 +157,16 @@ function stringField(value: unknown, key: string): string | undefined {
 export function codexAppServerSandboxParams(config: Record<string, unknown>, cwd: string): Record<string, unknown> {
   if (config.read_only === true) return { sandbox: 'read-only' };
   if (config.execution_mode !== 'sandbox') return { sandbox: 'danger-full-access' };
-  const roots = sandboxExtraWritableRoots({ readOnly: false, cwd, stateDir: STATE_DIR, gitRepoRoot: TARGET_REPO_ROOT, controlSocket: controlSocketOf(config) });
+  const controlSocket = controlSocketOf(config);
+  const roots = sandboxExtraWritableRoots({ readOnly: false, cwd, stateDir: STATE_DIR, gitRepoRoot: TARGET_REPO_ROOT, controlSocket });
+  const settings: Record<string, unknown> = {
+    ...(roots.length ? { 'sandbox_workspace_write.writable_roots': roots } : {}),
+    // A project worker must reach its coordinator's socket (see codexSandboxNetworkArgs).
+    ...(controlSocket ? { 'sandbox_workspace_write.network_access': true } : {}),
+  };
   return {
     sandbox: 'workspace-write',
-    ...(roots.length ? { config: { 'sandbox_workspace_write.writable_roots': roots } } : {}),
+    ...(Object.keys(settings).length ? { config: settings } : {}),
   };
 }
 

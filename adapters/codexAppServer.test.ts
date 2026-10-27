@@ -125,6 +125,8 @@ describe('codex app-server runtime: session start', () => {
     const params = frames('thread/start')[0].params as Record<string, unknown>;
     expect(params.sandbox).toBe('workspace-write');
     expect((params.config as Record<string, string[]>)['sandbox_workspace_write.writable_roots']).toContain(dir);
+    // Network access is only for a project worker's control socket.
+    expect((params.config as Record<string, unknown>)['sandbox_workspace_write.network_access']).toBeUndefined();
 
     await adapter.stop('app:worker-1');
     await startSession(adapter, { execution_mode: 'sandbox', read_only: true });

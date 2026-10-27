@@ -12,6 +12,7 @@ import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
+import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 export interface EventRow { seq: number; event: unknown }
 
@@ -127,6 +128,19 @@ export class ControlClient {
   /** Apply a worker lifecycle request in the coordinator, scoped to this client's session. */
   lifecycle(request: LifecycleRequest): Promise<LifecycleResult> {
     return this.call('POST', '/v1/lifecycle', request);
+  }
+
+  reviews(runId: string): Promise<{ reviews: ReviewSubmittedEvent[] }> {
+    return this.call('GET', `/v1/runs/${encodeURIComponent(runId)}/reviews`);
+  }
+
+  /** `initialized` is false when the project has no memory store yet. */
+  memoryWakeUp(opts: { wing?: string | null; budget?: number } = {}): Promise<{ initialized: boolean; text: string }> {
+    const query = new URLSearchParams();
+    if (opts.wing) query.set('wing', opts.wing);
+    if (opts.budget !== undefined) query.set('budget', String(opts.budget));
+    const suffix = query.size ? `?${query}` : '';
+    return this.call('GET', `/v1/memory/wake-up${suffix}`);
   }
 
   listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {

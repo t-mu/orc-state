@@ -6,6 +6,7 @@ import { validateEventObject } from './eventValidation.ts';
 import type { OrcEvent, OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { assertSupportedRuntimeSchemaVersion, migrateRuntimeSchema } from './runtimeSchema.ts';
+import { isReadOnlyOpenError, openReadOnlyDatabase } from './sqliteReadOnly.ts';
 
 // Module-level singleton: one DB connection per stateDir.
 const _dbs = new Map<string, Database.Database>();
@@ -59,8 +60,19 @@ function getDb(stateDir: string): Database.Database {
     return db;
   } catch (error) {
     db.close();
+    // A process that can read but not write the state directory (a sandboxed
+    // project worker) reads the database as the coordinator left it.
+    if (!isReadOnlyOpenError(error) || !existsSync(dbPath)) throw error;
+  }
+  const readOnly = openReadOnlyDatabase(dbPath);
+  try {
+    assertSupportedRuntimeSchemaVersion(readOnly);
+  } catch (error) {
+    readOnly.close();
     throw error;
   }
+  _dbs.set(stateDir, readOnly);
+  return readOnly;
 }
 
 function migrateJsonlIfNeeded(db: Database.Database, stateDir: string): void {
