@@ -96,7 +96,7 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     // itself. Without one the MCP server acts as the operator, still recorded as the master, and says so once.
     if (masterSession) {
       const { actor_id: _ignored, ...own } = args;
-      return submitOperatorMutation({ op, ...own }, { sessionToken: masterSession, project, stateDir });
+      return submitOperatorMutation({ op, ...own }, { credential: masterSession, project, stateDir });
     }
     if (op === 'respond-input') {
       throw new Error('respond_input needs the master session in a registered project (ORC_MASTER_SECRET, set by orc start-session); restart the master with orc start-session');
@@ -106,7 +106,7 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       process.stderr.write('[orc-mcp] ORC_MASTER_SECRET is not set; master tools reach the coordinator as the operator\n');
     }
     return submitOperatorMutation({ op, ...args, ...(args.actor_id !== undefined ? {} : { actor_id: masterActorId(stateDir) }) },
-      { sessionToken: null, project, stateDir });
+      { credential: null, project, stateDir });
   }
   switch (name) {
     case 'list_tasks':

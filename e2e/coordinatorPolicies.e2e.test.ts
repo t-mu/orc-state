@@ -223,7 +223,7 @@ describe('coordinator policy e2e', () => {
 
     const adapter = {
       start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
-        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        const sessionToken = /session_id: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
         if (sessionToken) {
           appendSequencedEvent(dir, {
             ts: new Date().toISOString(),
@@ -466,7 +466,7 @@ describe('coordinator policy e2e', () => {
       heartbeatProbe: vi.fn().mockResolvedValue(true),
       start: vi.fn().mockImplementation((_agentId: string, { system_prompt }: { system_prompt: string }) => {
         spawnedAgentId = _agentId;
-        const sessionToken = /session_token: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
+        const sessionToken = /session_id: ([^\n]+)/.exec(system_prompt)?.[1]?.trim();
         if (sessionToken) {
           appendSequencedEvent(dir, {
             ts: new Date().toISOString(),

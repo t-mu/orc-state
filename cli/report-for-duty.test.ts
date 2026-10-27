@@ -21,13 +21,19 @@ afterEach(() => {
 
 describe('cli/report-for-duty.ts', () => {
   it('reports for duty successfully with correct token', () => {
+    const result = runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('reported_for_duty: worker-1');
+  });
+
+  it('accepts the older --session-token name', () => {
     const result = runCli(['--agent-id=worker-1', `--session-token=${TOKEN}`]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('reported_for_duty: worker-1');
   });
 
   it('emits reported_for_duty event', () => {
-    runCli(['--agent-id=worker-1', `--session-token=${TOKEN}`]);
+    runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
     const events = readEvents();
     const event = events.find((e) => e.event === 'reported_for_duty' && e.agent_id === 'worker-1');
     expect(event).toBeDefined();
@@ -35,32 +41,32 @@ describe('cli/report-for-duty.ts', () => {
   });
 
   it('updates agent session_ready_at timestamp', () => {
-    runCli(['--agent-id=worker-1', `--session-token=${TOKEN}`]);
+    runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
     const agents = readAgents();
     const agent = agents.find((a: Record<string, unknown>) => a.agent_id === 'worker-1');
     expect(agent?.session_ready_at).toBeTruthy();
   });
 
   it('exits 1 when --agent-id is missing', () => {
-    const result = runCli([`--session-token=${TOKEN}`]);
+    const result = runCli([`--session-id=${TOKEN}`]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc report-for-duty');
   });
 
-  it('exits 1 when --session-token is missing', () => {
+  it('exits 1 when --session-id is missing', () => {
     const result = runCli(['--agent-id=worker-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc report-for-duty');
   });
 
   it('exits 1 when agent is not found', () => {
-    const result = runCli(['--agent-id=nonexistent', `--session-token=${TOKEN}`]);
+    const result = runCli(['--agent-id=nonexistent', `--session-id=${TOKEN}`]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Agent not found');
   });
 
   it('exits 1 when session token does not match', () => {
-    const result = runCli(['--agent-id=worker-1', '--session-token=wrong-token']);
+    const result = runCli(['--agent-id=worker-1', '--session-id=wrong-token']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Session token mismatch');
   });

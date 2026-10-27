@@ -21,7 +21,7 @@ import type { ReviewSubmittedEvent } from '../types/events.ts';
 export async function readViaCoordinator<T>(
   remote: (client: ControlClient) => Promise<T>,
   local: () => T,
-  { project = ACTIVE_PROJECT, client = () => new ControlClient(STATE_DIR, { sessionToken: clientCredential() }) }: { project?: unknown; client?: () => ControlClient } = {},
+  { project = ACTIVE_PROJECT, client = () => new ControlClient(STATE_DIR, { credential: clientCredential() }) }: { project?: unknown; client?: () => ControlClient } = {},
 ): Promise<T> {
   if (!project) return local();
   let unanswered: ControlError;

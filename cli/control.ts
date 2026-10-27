@@ -7,20 +7,21 @@
  *   orc control snapshot
  *   orc control events [--after=<seq>] [--limit=<n>] [--follow] [--max-events=<n>]
  *   orc control command --run-id=<id> --recipient-session=<id> --kind=<kind>
- *     --idempotency-key=<key> [--payload=<json>] [--session-token=<id>]
- *   orc control ack <command_id> --state=<accepted|running|completed|failed> [--session-token=<id>]
+ *     --idempotency-key=<key> [--payload=<json>] [--credential=<secret>]
+ *   orc control ack <command_id> --state=<accepted|running|completed|failed> [--credential=<secret>]
  *   orc control message --run-id=<id> --recipient-session=<id> --kind=<message|question|review_request|feedback|result>
  *     --text=<text> --idempotency-key=<key> [--artifact-ref=<ref>] [--parent-message=<id>]
  *   orc control messages [--include-consumed]
  *   orc control consume <message_id>
  *
  * Mutations present the caller's session secret (ORC_MASTER_SECRET or
- * ORC_SESSION_SECRET), or --session-token; a legacy installation also accepts
- * a session id (ORC_SESSION_TOKEN) for sessions recorded without a secret.
+ * ORC_SESSION_SECRET), or --credential (--session-token is its older name); a
+ * legacy installation also accepts a session id (ORC_SESSION_ID, or the legacy
+ * ORC_SESSION_TOKEN) for sessions recorded without a secret.
  */
 import { boolFlag, flag } from '../lib/args.ts';
 import { ControlClient } from '../lib/controlClient.ts';
-import { clientCredential } from '../lib/sessionCredentials.ts';
+import { clientCredential, sessionIdFromEnv } from '../lib/sessionCredentials.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import type { AckState } from '../lib/controlProtocol.ts';
 import type { MessageKind } from '../lib/messageRouter.ts';
@@ -42,7 +43,7 @@ function required(name: string): string {
   return value;
 }
 
-const client = new ControlClient(STATE_DIR, { sessionToken: flag('session-token') ?? clientCredential() ?? process.env.ORC_SESSION_TOKEN ?? null });
+const client = new ControlClient(STATE_DIR, { credential: flag('credential') ?? flag('session-token') ?? clientCredential() ?? sessionIdFromEnv() });
 
 try {
   if (subcommand === 'snapshot') {

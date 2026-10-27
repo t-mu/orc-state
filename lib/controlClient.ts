@@ -18,8 +18,8 @@ import type { ReviewSubmittedEvent } from '../types/events.ts';
 export interface EventRow { seq: number; event: unknown }
 
 export interface ControlClientOptions {
-  /** Actor credential for mutations: the caller's running provider session ID. */
-  sessionToken?: string | null;
+  /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET); a legacy installation also accepts a session id. */
+  credential?: string | null;
   timeoutMs?: number;
 }
 
@@ -67,21 +67,21 @@ function connectionError(error: unknown): Error {
 
 export class ControlClient {
   private readonly stateDir: string;
-  private readonly sessionToken: string | null;
+  private readonly credential: string | null;
   private readonly timeoutMs: number;
   constructor(stateDir: string, options: ControlClientOptions = {}) {
     this.stateDir = stateDir;
-    this.sessionToken = options.sessionToken ?? null;
+    this.credential = options.credential ?? null;
     this.timeoutMs = options.timeoutMs ?? 10_000;
   }
 
   /** A client with a session presents its secret; one without acts as the operator if it can read the operator token. */
   private headers(token: string): Record<string, string> {
-    const operatorToken = this.sessionToken ? '' : readOperatorToken(this.stateDir);
+    const operatorToken = this.credential ? '' : readOperatorToken(this.stateDir);
     return {
       authorization: `Bearer ${token}`,
       [PROTOCOL_HEADER]: String(CONTROL_PROTOCOL_VERSION),
-      ...(this.sessionToken ? { [SESSION_HEADER]: this.sessionToken } : {}),
+      ...(this.credential ? { [SESSION_HEADER]: this.credential } : {}),
       ...(operatorToken ? { [OPERATOR_HEADER]: operatorToken } : {}),
     };
   }

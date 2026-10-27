@@ -54,6 +54,15 @@ export function clientCredential(env: NodeJS.ProcessEnv = process.env): string |
 }
 
 /**
+ * The session's identifier (not a credential): ORC_SESSION_ID, or the legacy
+ * ORC_SESSION_TOKEN that predates it. A legacy installation still accepts it as
+ * the credential of a session recorded without a secret.
+ */
+export function sessionIdFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.ORC_SESSION_ID?.trim() || env.ORC_SESSION_TOKEN?.trim() || null;
+}
+
+/**
  * A project state directory accepts secrets only. It is recognised by its
  * project descriptor or its task store, so losing one of them does not make
  * it accept readable session ids.

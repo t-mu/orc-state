@@ -53,7 +53,7 @@ afterEach(async () => {
 function cli(...args: string[]) {
   return exec(process.execPath, args, {
     cwd: repoRoot, encoding: 'utf8',
-    env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_SESSION_TOKEN: '' },
+    env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_SESSION_ID: '', ORC_SESSION_TOKEN: '' },
   }).then(
     ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
     (error: { code?: number; stdout?: string; stderr?: string }) => ({ code: error.code ?? 1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),
@@ -100,7 +100,7 @@ const submit = (client: ControlClient, key: string, run = 'run-a', recipient = '
 
 describe('local daemon control API', () => {
   it('creates and revises project tasks with revision checks and master-only authoring', async () => {
-    const master = new ControlClient(dir, { sessionToken: 'secret-master' });
+    const master = new ControlClient(dir, { credential: 'secret-master' });
     await expect(master.listTasks()).rejects.toMatchObject({ code: 'not_found' });
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
       { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
@@ -113,7 +113,7 @@ describe('local daemon control API', () => {
         db.prepare('UPDATE sessions SET credential_hash = ? WHERE session_id = ?').run(credentialHash(secret), id);
       }
     });
-    await expect(new ControlClient(dir, { sessionToken: 'session-master' }).createTask({ feature: 'app', title: 'Stolen id' }))
+    await expect(new ControlClient(dir, { credential: 'session-master' }).createTask({ feature: 'app', title: 'Stolen id' }))
       .rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
     const { task } = await master.createTask({ feature: 'app', title: 'Remote task', body_markdown: '# Remote task\n\nDo it.\n' });
     expect(task).toMatchObject({ ref: 'app/remote-task', spec_revision: 1, body_markdown: '# Remote task\n\nDo it.\n' });
@@ -123,7 +123,7 @@ describe('local daemon control API', () => {
     await expect(master.getTask('app/missing')).rejects.toMatchObject({ code: 'not_found', status: 404 });
     await expect(master.createTask({ feature: 'app', title: 'Remote task' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
     await expect(master.createTask({ feature: 'app', title: 'Bad', priority: 'urgent' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
-    await expect(new ControlClient(dir, { sessionToken: 'secret-a' }).createTask({ feature: 'app', title: 'Worker task' }))
+    await expect(new ControlClient(dir, { credential: 'secret-a' }).createTask({ feature: 'app', title: 'Worker task' }))
       .rejects.toMatchObject({ code: 'forbidden', status: 403 });
     expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);
   });
@@ -134,8 +134,8 @@ describe('local daemon control API', () => {
     const dispatcher = new CommandDispatcher(dir, { send: (command) => { sent.push(command); return Promise.resolve(); } }, sessionAuthenticator(dir));
     await server.close();
     server = await startControlServer(dir, { pollMs: 20, commands: dispatcher });
-    const a = new ControlClient(dir, { sessionToken: 'session-a' });
-    const b = new ControlClient(dir, { sessionToken: 'session-b' });
+    const a = new ControlClient(dir, { credential: 'session-a' });
+    const b = new ControlClient(dir, { credential: 'session-b' });
     const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'review-1',
       kind: 'review_request' as const, text: 'Review this change', artifactRefs: ['git:abc123'] };
     const first = (await a.sendMessage(input)).message;
@@ -162,8 +162,8 @@ describe('local daemon control API', () => {
   });
 
   it('rejects unscoped actors, stale recipients, forged replies and privileged command kinds', async () => {
-    const a = new ControlClient(dir, { sessionToken: 'session-a' });
-    const b = new ControlClient(dir, { sessionToken: 'session-b' });
+    const a = new ControlClient(dir, { credential: 'session-a' });
+    const b = new ControlClient(dir, { credential: 'session-b' });
     const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'review-2',
       kind: 'review_request' as const, text: 'orc task-reset all', artifactRefs: ['git:def456'] };
     const message = (await a.sendMessage(input)).message;
@@ -188,18 +188,18 @@ describe('local daemon control API', () => {
   it('retries the same review message across sender and recipient reconnects', async () => {
     const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'reconnect-review',
       kind: 'review_request' as const, text: 'Review', artifactRefs: ['git:abc'] };
-    const first = (await new ControlClient(dir, { sessionToken: 'session-a' }).sendMessage(input)).message;
+    const first = (await new ControlClient(dir, { credential: 'session-a' }).sendMessage(input)).message;
     withEventDbTransaction(dir, (db) => {
       db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id IN ('session-a', 'session-b')").run();
       db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
         VALUES ('session-a-new', 'run-a', 'worker-a', 'claude', 'running', 'later', 'later'),
           ('session-b-new', 'run-b', 'worker-b', 'codex', 'running', 'later', 'later')`).run();
     });
-    const retried = (await new ControlClient(dir, { sessionToken: 'session-a-new' }).sendMessage({ ...input, recipientSessionId: 'session-b-new' })).message;
+    const retried = (await new ControlClient(dir, { credential: 'session-a-new' }).sendMessage({ ...input, recipientSessionId: 'session-b-new' })).message;
     expect(retried.message_id).toBe(first.message_id);
     expect(retried.recipient_session_id).toBe('session-b-new');
     expect(retried.command_id).not.toBe(first.command_id);
-    expect((await new ControlClient(dir, { sessionToken: 'session-b-new' }).messages()).messages.map((m) => m.message_id)).toContain(first.message_id);
+    expect((await new ControlClient(dir, { credential: 'session-b-new' }).messages()).messages.map((m) => m.message_id)).toContain(first.message_id);
   });
 
   it('publishes an owner-only endpoint and rejects unversioned or unauthenticated requests', async () => {
@@ -225,7 +225,7 @@ describe('local daemon control API', () => {
     expect(snapshot.runs.map((run) => run.run_id).sort()).toEqual(['run-a', 'run-b']);
 
     const follower = cli('cli/control.ts', 'events', '--follow', `--after=${snapshot.cursor}`, '--max-events=1');
-    const submitted = await cli('cli/control.ts', 'command', '--session-token=session-master', '--run-id=run-a',
+    const submitted = await cli('cli/control.ts', 'command', '--credential=session-master', '--run-id=run-a',
       '--recipient-session=session-a', '--kind=input', '--idempotency-key=k1', '--payload={"text":"hi"}');
     expect(submitted.code).toBe(0);
     const command = JSON.parse(submitted.stdout) as { command_id: string; state: string; actor_id: string };
@@ -239,11 +239,11 @@ describe('local daemon control API', () => {
     expect(row.event.payload.command_id).toBe(command.command_id);
 
     // Delivery is not wired to a provider transport yet; simulate the send.
-    expect((await cli('cli/control.ts', 'ack', command.command_id, '--state=accepted', '--session-token=session-a')).stderr).toContain('Cannot acknowledge queued');
+    expect((await cli('cli/control.ts', 'ack', command.command_id, '--state=accepted', '--credential=session-a')).stderr).toContain('Cannot acknowledge queued');
     reserveCommand(dir);
     markSendStarted(dir, command.command_id);
     markSent(dir, command.command_id);
-    const acked = await cli('cli/control.ts', 'ack', command.command_id, '--state=accepted', '--session-token=session-a');
+    const acked = await cli('cli/control.ts', 'ack', command.command_id, '--state=accepted', '--credential=session-a');
     expect(JSON.parse(acked.stdout).state).toBe('accepted');
   });
 
@@ -254,13 +254,13 @@ describe('local daemon control API', () => {
     expect(anonymous.stderr).toContain('Session credential required');
     expect((await cli(...args, '--session-token=forged')).stderr).toContain('not authenticated');
 
-    const crossActor = new ControlClient(dir, { sessionToken: 'session-b' });
+    const crossActor = new ControlClient(dir, { credential: 'session-b' });
     await expect(submit(crossActor, 'k2')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
-    const crossRecipient = new ControlClient(dir, { sessionToken: 'session-a' });
+    const crossRecipient = new ControlClient(dir, { credential: 'session-a' });
     await expect(submit(crossRecipient, 'k3', 'run-a', 'session-b')).rejects.toMatchObject({ code: 'forbidden' });
     expect(commandCount()).toBe(0);
 
-    const { command } = await submit(new ControlClient(dir, { sessionToken: 'session-master' }), 'k4');
+    const { command } = await submit(new ControlClient(dir, { credential: 'session-master' }), 'k4');
     reserveCommand(dir);
     markSendStarted(dir, command.command_id);
     await expect(crossActor.acknowledge(command.command_id, 'accepted')).rejects.toMatchObject({ code: 'forbidden' });
@@ -268,7 +268,7 @@ describe('local daemon control API', () => {
   });
 
   it('applies worker lifecycle requests only for the caller\'s own session and run (task 229)', async () => {
-    const workerA = new ControlClient(dir, { sessionToken: 'session-a' });
+    const workerA = new ControlClient(dir, { credential: 'session-a' });
     const phase = { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'phase_started', phase: 'explore' } as const;
     await expect(workerA.lifecycle(phase)).resolves.toMatchObject({ message: 'progress event accepted: phase_started run=run-a agent=worker-a' });
     const lifecycleEvents = () => withEventDb(dir, (db) => db.prepare("SELECT COUNT(*) AS n FROM events WHERE event = 'phase_started'").get() as { n: number }).n;
@@ -277,8 +277,8 @@ describe('local daemon control API', () => {
     // The self-asserted --agent-id is no longer enough: the credential must own the run.
     await expect(workerA.lifecycle({ ...phase, run_id: 'run-b', agent_id: 'worker-b' })).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     await expect(workerA.lifecycle({ ...phase, run_id: 'run-b' })).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(new ControlClient(dir, { sessionToken: 'session-master' }).lifecycle(phase)).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(new ControlClient(dir, { sessionToken: 'forged' }).lifecycle(phase)).rejects.toMatchObject({ code: 'unauthenticated' });
+    await expect(new ControlClient(dir, { credential: 'session-master' }).lifecycle(phase)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(new ControlClient(dir, { credential: 'forged' }).lifecycle(phase)).rejects.toMatchObject({ code: 'unauthenticated' });
     await expect(new ControlClient(dir).lifecycle(phase)).rejects.toMatchObject({ code: 'unauthenticated' });
     await expect(workerA.lifecycle({ op: 'report-for-duty', agent_id: 'worker-a', session_token: 'session-b' })).rejects.toMatchObject({ code: 'forbidden' });
     expect(lifecycleEvents()).toBe(1);
@@ -308,13 +308,13 @@ describe('local daemon control API', () => {
     expect(reviews[0].payload).toMatchObject({ outcome: 'findings', findings: 'second pass' });
     await expect(reader.reviews('run-b')).resolves.toEqual({ reviews: [] });
     // A worker session reads only its own run's reviews; the master reads any (task 231).
-    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).reviews('run-a')).resolves.toMatchObject({ reviews: [expect.anything()] });
-    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).reviews('run-b')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    await expect(new ControlClient(dir, { credential: 'session-a' }).reviews('run-a')).resolves.toMatchObject({ reviews: [expect.anything()] });
+    await expect(new ControlClient(dir, { credential: 'session-a' }).reviews('run-b')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
       { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
     ] }));
-    await expect(new ControlClient(dir, { sessionToken: 'session-master' }).reviews('run-b')).resolves.toEqual({ reviews: [] });
-    await expect(new ControlClient(dir, { sessionToken: 'forged' }).reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated' });
+    await expect(new ControlClient(dir, { credential: 'session-master' }).reviews('run-b')).resolves.toEqual({ reviews: [] });
+    await expect(new ControlClient(dir, { credential: 'forged' }).reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated' });
     await expect(rawGet({ authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8').trim()}`, 'x-orc-protocol': '1' }, '/v1/runs/%E0/reviews'))
       .resolves.toMatchObject({ status: 400, body: { error: { code: 'bad_request' } } });
 
@@ -333,7 +333,7 @@ describe('local daemon control API', () => {
   });
 
   it('resumes after the snapshot cursor across a disconnect and a daemon restart without gaps', async () => {
-    const master = new ControlClient(dir, { sessionToken: 'session-master' });
+    const master = new ControlClient(dir, { credential: 'session-master' });
     const { cursor } = await master.snapshot();
     const seen: EventRow[] = [];
 
@@ -422,9 +422,9 @@ describe('local daemon control API', () => {
       db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
         VALUES ('legacy-0123456789abcdef01234567', NULL, 'auditor', 'codex', 'running', '2026-01-01', '2026-01-01')`).run();
     });
-    await expect(submit(new ControlClient(dir, { sessionToken: 'legacy-0123456789abcdef01234567' }), 'l1'))
+    await expect(submit(new ControlClient(dir, { credential: 'legacy-0123456789abcdef01234567' }), 'l1'))
       .rejects.toMatchObject({ code: 'unauthenticated' });
-    await expect(new ControlClient(dir, { sessionToken: 'session-a' }).acknowledge('cmd-missing', 'accepted'))
+    await expect(new ControlClient(dir, { credential: 'session-a' }).acknowledge('cmd-missing', 'accepted'))
       .rejects.toMatchObject({ code: 'not_found', status: 404 });
     const snapshot = await new ControlClient(dir).snapshot();
     expect(snapshot.sessions.find((row) => row.agent_id === 'worker-a')).toEqual({ session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', state: 'running', transport: null, state_reason: null });

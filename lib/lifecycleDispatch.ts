@@ -52,10 +52,10 @@ export async function sendLifecycle(
 export async function submitLifecycle(request: LifecycleRequest, env: NodeJS.ProcessEnv = process.env): Promise<LifecycleResult> {
   if (!ACTIVE_PROJECT) return applyLifecycle(STATE_DIR, request);
   // A worker presents its own secret; the master's shell (memory-record) its master secret.
-  const sessionToken = clientCredential(env);
-  if (!sessionToken) {
+  const credential = clientCredential(env);
+  if (!credential) {
     throw new Error(`In a registered project the coordinator applies ${request.op}; run it from the worker session (ORC_SESSION_SECRET is not set)`);
   }
-  return sendLifecycle(new ControlClient(STATE_DIR, { sessionToken, timeoutMs: REQUEST_TIMEOUT_MS }), request);
+  return sendLifecycle(new ControlClient(STATE_DIR, { credential, timeoutMs: REQUEST_TIMEOUT_MS }), request);
 }
 

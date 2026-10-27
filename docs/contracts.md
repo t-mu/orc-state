@@ -167,7 +167,7 @@ A task is eligible for dispatch when all of:
 | `dispatch_mode` | `"autonomous"` \| `"supervised"` \| `"human-commanded"` | no | How tasks are dispatched |
 | `capabilities` | string[] | no | Declared capabilities for capability-based routing |
 | `session_handle` | string | no | PTY session handle (`pty:<agent_id>`) |
-| `session_token` | string | no | Provider session token |
+| `session_token` | string | no | Id of the agent's current session (named for history; not a credential) |
 | `session_started_at` | ISO 8601 | no | When the PTY session was created |
 | `session_ready_at` | ISO 8601 | no | When the session became ready for commands |
 | `provider_ref` | object | no | Provider-specific metadata |
@@ -576,7 +576,7 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 | `GET` | `/v1/events/stream?after=<seq>` | NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
 | `GET` | `/v1/runs/<run_id>/reviews` | `{ reviews }`: the run's `review_submitted` events plus bridged reviewer feedback, latest per agent (what `orc review-read` prints). Needs a session secret (a worker reads only its own run, `403` otherwise; the master any run) or the operator token (`x-orc-operator`); else `401` |
 | `GET` | `/v1/memory/wake-up?wing=<w>&budget=<tokens>` | `{ initialized, text }` (what `orc memory-wake-up` prints); `initialized` is false without a memory store. `budget` defaults to 800. Memories are project-wide: any session secret or the operator token reads them; else `401` |
-| `POST` | `/v1/lifecycle` | Worker lifecycle request `{ op, agent_id, run_id?, ... }`, applied by the coordinator. `op` is `run-start`, `run-fail` (`reason`, `code`, `policy`), `run-finish`, `run-work-complete`, `progress` (`event`, `phase?`, `reason?`, `policy?`), `review-submit` (`outcome`, `reason`), `input-request` (`question`) -> `{ request_id, request_seq, active }`, `input-poll` (`request_id`, `request_seq`, `heartbeat?`) -> `{ response, active }`, `input-timeout`, `memory-record` (`content`, `wing?`, `hall?`, `room?`, `importance?`; no `agent_id`) or `report-for-duty` (`session_token`). Result `{ message, ... }`. The session must not be `offline` (`running`, `recoverable` or `unknown`) and must be launched for that agent and run (else `403 forbidden`; an unrecognised or offline session `401`). An offline session may still send `input-poll` for its own run (its heartbeat is ignored) and `run-finish` or `progress` `run_finished` once that run is `done`. A rejected transition is `409 conflict` with the CLI's error text |
+| `POST` | `/v1/lifecycle` | Worker lifecycle request `{ op, agent_id, run_id?, ... }`, applied by the coordinator. `op` is `run-start`, `run-fail` (`reason`, `code`, `policy`), `run-finish`, `run-work-complete`, `progress` (`event`, `phase?`, `reason?`, `policy?`), `review-submit` (`outcome`, `reason`), `input-request` (`question`) -> `{ request_id, request_seq, active }`, `input-poll` (`request_id`, `request_seq`, `heartbeat?`) -> `{ response, active }`, `input-timeout`, `memory-record` (`content`, `wing?`, `hall?`, `room?`, `importance?`; no `agent_id`) or `report-for-duty` (`session_token`, the session id). Result `{ message, ... }`. The session must not be `offline` (`running`, `recoverable` or `unknown`) and must be launched for that agent and run (else `403 forbidden`; an unrecognised or offline session `401`). An offline session may still send `input-poll` for its own run (its heartbeat is ignored) and `run-finish` or `progress` `run_finished` once that run is `done`. A rejected transition is `409 conflict` with the CLI's error text |
 | `POST` | `/v1/operator` | Master or operator mutation `{ op, actor_id?, ... }`, applied by the coordinator (task 232). `op` is `cancel-task` (`task_ref`, `reason?`), `reset-task` (`task_ref`), `unblock-task` (`task_ref`, `reason?`), `delegate-task` (`task_ref`, `target_agent_id?`, `task_type?`, `note?`) or `respond-input` (`run_id`, `agent_id`, `response`, `request_id?`, `record_memory?`); the result is the MCP tool's. With `x-orc-session` the credential must be the master's session secret, its session not `offline` (a worker's is `403 forbidden`, an unknown one `401`), and `actor_id`, if sent, must be the master's own. Without it the caller must send `x-orc-operator` with the operator token (else `401`) and acts as the operator, recorded as `actor_id` (`human` or a registered agent) or `human`; `respond-input` always needs the master session (`403`). A missing task or agent is `404 not_found`, bad input `400 bad_request`, a refused transition `409 conflict`, each with the CLI's error text; anything else is `500 internal` |
 | `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |
 | `POST` | `/v1/commands/<id>/ack` | Recipient ACK `{ state: accepted\|running\|completed\|failed }` -> `{ command }` |
@@ -600,8 +600,8 @@ with a new session on the same run and read or consume its queued mailbox items.
 their existing events while writing corresponding message records for active
 runs; legacy event readers remain supported. For a durable input request,
 `run-input-respond` requires the master's credential: its secret
-(`ORC_MASTER_SECRET`) in a project, its session id (`--session-token` or
-`ORC_SESSION_TOKEN`) in a legacy installation. Review feedback is queued for the
+(`ORC_MASTER_SECRET`) in a project, its session id (`--session-id` or
+`ORC_SESSION_ID`) in a legacy installation. Review feedback is queued for the
 worker's run mailbox.
 
 **Snapshot then subscribe.** Read `/v1/snapshot`, then stream from
