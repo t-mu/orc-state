@@ -138,6 +138,21 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'master', payload: expect.objectContaining({ response: 'go ahead' }) })]);
   });
 
+  it('a CLI run with the master session in its environment acts as the master', async () => {
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: { ORC_MASTER_SESSION: 'session-master' }, project: 'p', stateDir: dir }))
+      .resolves.toMatchObject({ unblocked: true });
+    expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
+  });
+
+  it('the master MCP tools act as the master, and respond_input needs its session', async () => {
+    // A master tool's actor_id is ignored in a project: the master acts as itself.
+    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo', actor_id: 'human' }, { project: 'p', masterSession: 'session-master' }))
+      .resolves.toMatchObject({ reset: true });
+    expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
+    expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { project: 'p', masterSession: null }))
+      .toThrow('respond_input needs the master session');
+  });
+
   it('the master MCP tools are routed to the coordinator in a project', async () => {
     const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', masterSession: 'session-master' });
     expect(result).toMatchObject({ cancelled: true, status: 'blocked' });
@@ -146,6 +161,18 @@ describe('master and operator mutations through the coordinator (task 232)', () 
 });
 
 describe('submitOperatorMutation without a coordinator (task 232)', () => {
+  it('applies the coordinator\'s rule on the direct path too', async () => {
+    const offline = { project: 'p', stateDir: dir, warn: vi.fn() };
+    // A shell inside a worker session cannot use the direct path to act as the operator.
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { ...offline, env: { ORC_SESSION_TOKEN: 'session-a' } }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    expect(status('orch/blocked')).toBe('blocked');
+    // The master's session is recorded as the master.
+    await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { ...offline, env: { ORC_MASTER_SESSION: 'session-master' } });
+    expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
+  });
+
+
   it('applies the mutation directly and says so', async () => {
     const warn = vi.fn();
     await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn }))

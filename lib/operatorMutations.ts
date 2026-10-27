@@ -514,7 +514,7 @@ export async function submitOperatorMutation(
   }: {
     env?: NodeJS.ProcessEnv;
     sessionToken?: string | null;
-    /** How a direct apply proves it may answer an input request. */
+    /** How a legacy installation's direct apply proves it may answer an input request. */
     direct?: { sessionId?: string | null; trustedMaster?: boolean };
     warn?: (line: string) => void;
     project?: unknown;
@@ -527,6 +527,8 @@ export async function submitOperatorMutation(
   } catch (error) {
     if (!(error instanceof ControlError) || error.code !== 'unavailable') throw error;
   }
+  // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
+  const { actorId } = authorizeOperator(stateDir, { credential: sessionToken, operator: sessionToken === null }, request);
   warn(`coordinator is not running; applying ${request.op} directly`);
-  return applyOperatorMutation(stateDir, request, direct);
+  return applyOperatorMutation(stateDir, { ...request, actor_id: actorId });
 }

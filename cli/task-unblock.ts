@@ -12,7 +12,7 @@ import { cliError } from './shared.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const reason = flag('reason');
-const actorId = flag('actor-id') ?? 'human';
+const actorId = flag('actor-id');
 
 if (!taskRef) {
   console.error('Usage: orc task-unblock <task_ref> [--reason=<text>] [--actor-id=<id>]');
@@ -20,7 +20,7 @@ if (!taskRef) {
 }
 
 try {
-  await submitOperatorMutation({ op: 'unblock-task', task_ref: taskRef, actor_id: actorId, ...(reason ? { reason } : {}) });
+  await submitOperatorMutation({ op: 'unblock-task', task_ref: taskRef, ...(actorId ? { actor_id: actorId } : {}), ...(reason ? { reason } : {}) });
   console.log(`task unblocked: ${taskRef}`);
 } catch (err) {
   cliError(err);

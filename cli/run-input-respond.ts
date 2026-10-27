@@ -8,12 +8,14 @@
  * running coordinator applies it.
  */
 import { flag } from '../lib/args.ts';
+import { ACTIVE_PROJECT } from '../lib/paths.ts';
 import { submitOperatorMutation } from '../lib/operatorMutations.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
 const response = flag('response');
-const actorId = flag('actor-id') ?? 'master';
+// Without --actor-id: the master session in a project, `master` in a legacy installation.
+const actorId = flag('actor-id') ?? (ACTIVE_PROJECT ? null : 'master');
 const requestedId = flag('request-id');
 
 if (!runId || !agentId || !response) {
@@ -24,7 +26,7 @@ if (!runId || !agentId || !response) {
 const sessionToken = flag('session-token') ?? process.env.ORC_SESSION_TOKEN ?? null;
 try {
   await submitOperatorMutation({
-    op: 'respond-input', run_id: runId, agent_id: agentId, response, actor_id: actorId, record_memory: true,
+    op: 'respond-input', run_id: runId, agent_id: agentId, response, record_memory: true, ...(actorId ? { actor_id: actorId } : {}),
     ...(requestedId ? { request_id: requestedId } : {}),
   }, { sessionToken, direct: { sessionId: sessionToken } });
 } catch (error) {

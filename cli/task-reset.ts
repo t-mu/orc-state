@@ -11,7 +11,8 @@ import { submitOperatorMutation } from '../lib/operatorMutations.ts';
 import { cliError } from './shared.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
-const actorId = flag('actor-id') ?? 'human';
+// Without --actor-id the coordinator records the caller: the operator as human, a master session as the master.
+const actorId = flag('actor-id');
 
 if (!taskRef) {
   console.error('Usage: orc task-reset <task_ref> [--actor-id=<id>]');
@@ -19,7 +20,7 @@ if (!taskRef) {
 }
 
 try {
-  const result = await submitOperatorMutation({ op: 'reset-task', task_ref: taskRef, actor_id: actorId });
+  const result = await submitOperatorMutation({ op: 'reset-task', task_ref: taskRef, ...(actorId ? { actor_id: actorId } : {}) });
   console.log(`task reset: ${taskRef} (was: ${String(result.previous_status)}, cancelled ${String(result.cancelled_claims)} active claims)`);
 } catch (err) {
   cliError(err);

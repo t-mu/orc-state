@@ -35,7 +35,7 @@ import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
-import { recordProviderSession } from '../lib/runStore.ts';
+import { closeProviderSessionsForAgent, recordProviderSession } from '../lib/runStore.ts';
 import {
   promptProvider,
   isInteractive,
@@ -574,15 +574,22 @@ masterPty = null;
 
 function markMasterOffline() {
   if (!master) return;
+  const now = new Date().toISOString();
   try {
     updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'offline',
       session_handle: null,
       provider_ref: null,
-      last_status_change_at: new Date().toISOString(),
+      last_status_change_at: now,
     });
   } catch {
     // Agent may have been removed by orc kill-all before teardown; safe to ignore.
+  }
+  try {
+    // The coordinator leaves the master's session to us: an ended master's id must stop authenticating.
+    closeProviderSessionsForAgent(STATE_DIR, master.agent_id, now);
+  } catch {
+    // Best effort, as above.
   }
 }
 
