@@ -101,6 +101,19 @@ describe('cli/kill-all.ts', () => {
       expect(existsSync(pidFile)).toBe(false);
     });
 
+    it('never signals a reused PID: a lock whose process start no longer matches is stale', () => {
+      seedState();
+      const pidFile = join(dir, 'coordinator.pid');
+      // This test's own (live) process, recorded with another start time, stands in for a reused PID.
+      writeFileSync(pidFile, JSON.stringify({ pid: process.pid, process_start: 'proc:0' }));
+
+      const result = spawnKillAll(dir);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('already stopped');
+      expect(existsSync(pidFile)).toBe(false);
+    });
+
     it('prints "not running" when pid file exists but contains no pid', () => {
       seedState();
       writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({}));

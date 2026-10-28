@@ -27,7 +27,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
-import { readProcessStart } from '../lib/processIdentity.ts';
+import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { controlSocketOf, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
@@ -427,7 +427,7 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     if (!isAppServerHandle(sessionHandle)) return null;
     const record = currentSessionForAgent(STATE_DIR, sessionHandle.slice(HANDLE_PREFIX.length));
     if (record?.transport !== 'app-server' || record.process_pid == null || record.process_start == null) return null;
-    if (readProcessStart(record.process_pid) !== record.process_start) return null;
+    if (!isSameProcess({ pid: record.process_pid, start: record.process_start })) return null;
     return { pid: record.process_pid, processStart: record.process_start };
   }
 

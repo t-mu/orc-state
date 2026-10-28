@@ -21,7 +21,16 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
-/** Start-time fingerprint, or null when the process does not exist. */
+function psStart(pid: number, env: NodeJS.ProcessEnv): string {
+  const ps = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', env });
+  return ps.status === 0 ? ps.stdout.trim() : '';
+}
+
+/**
+ * Start-time fingerprint, or null when the process does not exist. Without
+ * procfs (macOS) it is `ps`'s start time, read in UTC and the C locale so
+ * every reader agrees whatever its own TZ or locale (`psutc:`).
+ */
 export function readProcessStart(pid: number): string | null {
   if (!isPidAlive(pid)) return null;
   try {
@@ -30,9 +39,8 @@ export function readProcessStart(pid: number): string | null {
     const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
     if (fields[19]) return `proc:${fields[19]}`;
   } catch { /* no procfs (macOS) */ }
-  const ps = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' });
-  const start = ps.status === 0 ? ps.stdout.trim() : '';
-  return start ? `ps:${start}` : null;
+  const start = psStart(pid, { ...process.env, TZ: 'UTC', LC_ALL: 'C' });
+  return start ? `psutc:${start}` : null;
 }
 
 export function processIdentity(pid: number): ProcessIdentity | null {
@@ -40,7 +48,16 @@ export function processIdentity(pid: number): ProcessIdentity | null {
   return start ? { pid, start } : null;
 }
 
-/** True only when the PID is alive and still belongs to the recorded process. */
+/**
+ * True only when the PID is alive and still belongs to the recorded process.
+ * A `ps:` fingerprint recorded before readings were normalised was taken in
+ * the recorder's own TZ and locale, so it is compared the same way.
+ */
 export function isSameProcess(identity: ProcessIdentity): boolean {
+  if (identity.start.startsWith('ps:')) {
+    if (!isPidAlive(identity.pid)) return false;
+    const start = psStart(identity.pid, process.env);
+    return start !== '' && `ps:${start}` === identity.start;
+  }
   return readProcessStart(identity.pid) === identity.start;
 }
