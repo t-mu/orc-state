@@ -168,7 +168,9 @@ are read-only by default; add `--write` to acquire the exclusive input lease.
 Press Ctrl-] to detach a writer or Ctrl-C to detach an observer. `--once` prints
 the current output and exits. The shell survives detach and daemon restart;
 its output is retained in `.orc-state/terminal-logs/`.
-Terminals require the local control daemon and tmux. A legacy `pty:` provider
+Terminals require the local control daemon and tmux, and are for the master
+and the operator: run them from the master's shell or an operator shell, never
+from inside a worker session. A legacy `pty:` provider
 has only its log tail through `orc attach`.
 
 **Flags:**
@@ -200,6 +202,9 @@ needs the master's credential in every case: in a project its `ORC_MASTER_SECRET
 (`--session-id`, or `ORC_SESSION_ID`). When no coordinator is
 running they apply the change directly and print `coordinator is not running;
 applying <op> directly`, so operator recovery works with the coordinator stopped.
+While a coordinator still holds the project (its `coordinator.pid` names the
+live coordinator process, checked by PID and start time) but its control API is not answering, as during startup or shutdown,
+they refuse with a retryable error instead of writing alongside it.
 
 These commands and the master's tools now share one implementation: `task-reset`
 and `reset_task` also clear `requeue_eligible_after` and record a
@@ -365,7 +370,9 @@ caller's session secret (`ORC_MASTER_SECRET` or `ORC_SESSION_SECRET`, which
 launched sessions receive; `--credential` overrides it, and `--session-token`
 is its older name). A legacy installation also accepts the session id,
 `ORC_SESSION_ID` (or the legacy `ORC_SESSION_TOKEN`). `orc control
-snapshot` lists running sessions (caller and recipient IDs).
+snapshot` lists running sessions (caller and recipient IDs). Snapshot, events
+and `runs-active --via-control` read the whole project, so only the master and
+the operator may use them; a worker session is refused (`403`).
 Queued commands are not yet delivered to workers.
 
 ---

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { processIdentity } from './processIdentity.ts';
@@ -8,7 +8,7 @@ import { closeAllDatabases, initEventsDb, queryEvents, withEventDb, withEventDbT
 import { closeProviderSessionsForAgent, commitClaims, recordProviderSession } from './runStore.ts';
 import { CommandDispatcher } from './commandDelivery.ts';
 import {
-  classifySession, currentSessionOwnerId, listSupervisedSessions, reconcileSessions,
+  classifySession, currentSessionOwnerId, identityMismatch, listSupervisedSessions, reconcileSessions,
   renewSessionOwnership, setSessionState, type SupervisedSession,
 } from './sessionSupervisor.ts';
 import type { SessionInspection } from '../adapters/interface.ts';
@@ -70,6 +70,14 @@ describe('classifySession', () => {
     const result = classifySession(session({ transport: 'pty' }), { ...live(100, 'proc:5', false), transport: 'pty', reason: 'pty is owned by another process' });
     expect(result.state).toBe('recoverable');
     expect(result.reason).toContain('orc worker-remove');
+  });
+
+  it('adopts a live session whose start was recorded in the older ps: format', () => {
+    const lstart = spawnSync('ps', ['-o', 'lstart=', '-p', String(process.pid)], { encoding: 'utf8' }).stdout.trim();
+    const recorded = session({ process_pid: process.pid, process_start: `ps:${lstart}` });
+    expect(identityMismatch(recorded, live(process.pid, 'psutc:Thu Jan  1 00:00:00 1970'))).toBe(false);
+    expect(identityMismatch(session({ process_pid: process.pid, process_start: 'ps:Thu Jan  1 00:00:00 1970' }), live(process.pid, 'psutc:x'))).toBe(true);
+    expect(identityMismatch(recorded, live(process.pid + 1, 'psutc:x'))).toBe(true);
   });
 
   it('treats a legacy session without identity as unknown and an exited one as offline', () => {

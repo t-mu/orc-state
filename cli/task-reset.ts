@@ -7,7 +7,7 @@
  * registered project the running coordinator applies it.
  */
 import { flag } from '../lib/args.ts';
-import { submitOperatorMutation } from '../lib/operatorMutations.ts';
+import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));

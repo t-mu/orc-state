@@ -6,7 +6,7 @@ import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } 
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
-import { submitOperatorMutation } from './operatorMutations.ts';
+import { submitOperatorMutation } from './operatorDispatch.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
 import { readBacklog, readClaims } from './stateReader.ts';
 import { invokeTool } from '../mcp/server.ts';
@@ -207,6 +207,20 @@ describe('submitOperatorMutation without a coordinator (task 232)', () => {
     const warn = vi.fn();
     await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn }))
       .resolves.toEqual({ unblocked: true, task_ref: 'orch/blocked' });
+    expect(warn).toHaveBeenCalledWith('coordinator is not running; applying unblock-task directly');
+    expect(status('orch/blocked')).toBe('todo');
+  });
+
+  it('leaves the write to a live coordinator whose control API is not answering', async () => {
+    writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
+    const warn = vi.fn();
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn }))
+      .rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(`coordinator (pid ${process.pid}) is running`) });
+    expect(warn).not.toHaveBeenCalled();
+    expect(status('orch/blocked')).toBe('blocked');
+    // A lock whose PID now belongs to another process (a reused PID) holds nothing.
+    writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), process_start: 'proc:0' }));
+    await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn });
     expect(warn).toHaveBeenCalledWith('coordinator is not running; applying unblock-task directly');
     expect(status('orch/blocked')).toBe('todo');
   });

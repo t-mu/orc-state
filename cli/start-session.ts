@@ -48,6 +48,7 @@ import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
+import { isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
 import {
   appendSessionStartedEvent,
   prepareSessionReuse,
@@ -89,6 +90,14 @@ function readCoordinatorPidRecord() {
   }
 }
 
+function readCoordinatorLock(): CoordinatorLock | null {
+  try {
+    return JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')) as CoordinatorLock;
+  } catch {
+    return null;
+  }
+}
+
 function readCoordinatorPidFromFile() {
   return readCoordinatorPidRecord()?.pid ?? null;
 }
@@ -115,6 +124,8 @@ function isCoordinatorCommandPid(pid: number) {
 function coordinatorStatus() {
   const pid = readCoordinatorPidFromFile();
   if (!pid) return { running: false, pid: null };
+  // A lock whose recorded process start no longer matches names a reused PID, not the coordinator.
+  if (!isCoordinatorLockHeld(readCoordinatorLock())) return { running: false, pid };
   try {
     process.kill(pid, 0);           // no-op signal: throws if process is dead
     return { running: isCoordinatorCommandPid(pid), pid };

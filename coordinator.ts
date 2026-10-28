@@ -68,6 +68,8 @@ import type { RemediationSignals } from './lib/remediationPolicies.ts';
 import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
 import type { Backlog } from './types/backlog.ts';
 import { readMigrationMarker, writeProjectDescriptor } from './lib/projectContext.ts';
+import { readProcessStart } from './lib/processIdentity.ts';
+import { isCoordinatorLockHeld, type CoordinatorLock } from './lib/coordinatorLiveness.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -2188,14 +2190,9 @@ const reportedSkippedSpecs = new Set<string>();
 
 const COORDINATOR_PID_FILE = join(STATE_DIR, 'coordinator.pid');
 
-function isCoordinatorPidAlive(pid: number) {
-  try { process.kill(pid, 0); return true; }
-  catch (e) { return (e as NodeJS.ErrnoException).code !== 'ESRCH'; }
-}
-
 function acquireCoordinatorLock() {
   const lockFlags = constants.O_EXCL | constants.O_CREAT | constants.O_WRONLY;
-  const payload = JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() });
+  const payload = JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), process_start: readProcessStart(process.pid) });
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -2213,12 +2210,12 @@ function acquireCoordinatorLock() {
       let other: unknown;
       try { other = JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')) as unknown; } catch { /* stale/corrupt */ }
       const otherPid = (other as Record<string, unknown> | undefined)?.pid;
-      if (Number.isInteger(otherPid) && (otherPid as number) > 0 && isCoordinatorPidAlive(otherPid as number)) {
+      if (isCoordinatorLockHeld(other as CoordinatorLock | undefined)) {
         console.error(`[coordinator] ERROR: another coordinator is already running (PID ${String(otherPid)}). Aborting.`);
         process.exit(1);
       }
       if (Number.isInteger(otherPid) && (otherPid as number) > 0) {
-        log(`stale coordinator.pid removed (PID ${String(otherPid)} is dead)`);
+        log(`stale coordinator.pid removed (PID ${String(otherPid)} is dead or no longer the coordinator)`);
       } else {
         log('stale coordinator.pid removed (missing or invalid pid metadata)');
       }

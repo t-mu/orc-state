@@ -15,7 +15,9 @@ import {
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
 import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
-import { masterActorId, submitOperatorMutation, type OperatorOp } from '../lib/operatorMutations.ts';
+import { masterActorId, type OperatorOp } from '../lib/operatorMutations.ts';
+import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
+import { clientCredential } from '../lib/sessionCredentials.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -79,8 +81,7 @@ let warnedWithoutMasterSession = false;
 
 /** The master's secret, unless the provider passed the config's `${ORC_MASTER_SECRET}` reference through unexpanded. */
 function masterSecretFromEnv(): string | null {
-  const value = process.env.ORC_MASTER_SECRET?.trim();
-  return value && !value.startsWith('${') ? value : null;
+  return clientCredential({ ORC_MASTER_SECRET: process.env.ORC_MASTER_SECRET });
 }
 
 /** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */

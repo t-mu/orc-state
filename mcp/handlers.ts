@@ -15,7 +15,7 @@ import { withLock } from '../lib/lock.ts';
 import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
-import { BACKLOG_DOCS_DIR, RUN_WORKTREES_FILE } from '../lib/paths.ts';
+import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
@@ -24,7 +24,7 @@ import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
 import { createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
-import { cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput } from '../lib/operatorMutations.ts';
+import { TERMINAL_STATUSES, backlogDocsDirForState, cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -66,11 +66,6 @@ function assertNoProjectOnlyFields(args: Record<string, unknown>) {
   }
 }
 
-function backlogDocsDirForState(stateDir: string) {
-  const colocatedDocsDir = join(stateDir, 'backlog');
-  return existsSync(colocatedDocsDir) ? colocatedDocsDir : BACKLOG_DOCS_DIR;
-}
-
 function plansDirForState(stateDir: string) {
   const colocatedPlansDir = join(stateDir, 'plans');
   if (existsSync(colocatedPlansDir)) return colocatedPlansDir;
@@ -85,7 +80,6 @@ function plansDirForState(stateDir: string) {
 // After create_task commits, it becomes the next number after the task just created.
 
 // Fields returned by list_tasks (summary view). Use get_task() for full detail.
-const TERMINAL_STATUSES = new Set(['done', 'released', 'cancelled']);
 
 function toTaskSummary(task: Task & { feature_ref: string }) {
   return {

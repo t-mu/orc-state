@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eventLog.ts';
-import { readProcessStart } from './processIdentity.ts';
+import { isSameProcess, readProcessStart } from './processIdentity.ts';
 import type { SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
 
@@ -111,7 +111,10 @@ export const UNWRITABLE_REASON = 'session is alive but not writable by this coor
 /** True when a live inspection contradicts the recorded PID and start time. */
 export function identityMismatch(session: SupervisedSession, inspection: SessionInspection | null): boolean {
   if (!inspection?.alive || session.process_pid == null || session.process_start == null) return false;
-  return inspection.pid !== session.process_pid || inspection.processStart !== session.process_start;
+  if (inspection.pid !== session.process_pid) return true;
+  if (inspection.processStart === session.process_start) return false;
+  // A `ps:` start recorded before fingerprints were normalised reads differently now; ask the process itself.
+  return !(session.process_start.startsWith('ps:') && isSameProcess({ pid: session.process_pid, start: session.process_start }));
 }
 
 /** Extend this owner's lease on the running sessions it supervises. */

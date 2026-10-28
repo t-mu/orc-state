@@ -26,6 +26,7 @@ import { closeProviderSessionsForAgent, commitClaims } from '../lib/runStore.ts'
 import { boolFlag }                 from '../lib/args.ts';
 import { formatErrorMessage } from './shared.ts';
 import { commitBacklog } from '../lib/projectTasks.ts';
+import { isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
 
 const keepSessions = boolFlag('keep-sessions');
 
@@ -33,15 +34,17 @@ const keepSessions = boolFlag('keep-sessions');
 
 const pidFile = join(STATE_DIR, 'coordinator.pid');
 if (existsSync(pidFile)) {
-  let pid: number | undefined;
+  let lock: CoordinatorLock | null = null;
   try {
-    const parsed = JSON.parse(readFileSync(pidFile, 'utf8')) as Record<string, unknown> | null | undefined;
-    const rawPid = parsed?.pid;
-    pid = typeof rawPid === 'number' ? rawPid : undefined;
+    lock = JSON.parse(readFileSync(pidFile, 'utf8')) as CoordinatorLock | null;
   } catch { /* stale */ }
-  if (pid) {
+  const pid = typeof lock?.pid === 'number' ? lock.pid : undefined;
+  if (pid && !isCoordinatorLockHeld(lock)) {
+    // The PID is dead, or now belongs to another process: never signal it.
+    try { unlinkSync(pidFile); } catch { /* already gone */ }
+    console.log('  Coordinator already stopped');
+  } else if (pid) {
     try {
-      process.kill(pid, 0); // throws ESRCH if already dead
       process.kill(pid, 'SIGTERM');
       // Poll up to 2 s (10 × 200 ms) for the process to exit
       for (let i = 0; i < 10; i++) {
