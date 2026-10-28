@@ -122,7 +122,8 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
    the codebase independently.
 3. Retrieve findings: `orc review-read --run-id=<run_id>`
    If a reviewer failed or is non-responsive, proceed with the reviews
-   that were submitted. `orc review-read` exits 0 regardless of count.
+   that were submitted. `orc review-read` exits 0 whatever the reviews say;
+   a non-zero exit means the reviews could not be read — retry it shortly.
    When reading reviewer output from an output file, grep for
    `REVIEW_FINDINGS_END` — if absent, the reviewer did not finish and
    should be treated as non-responsive.
@@ -136,7 +137,8 @@ Signal phase: `orc progress --event=phase_started --phase=review --run-id=<run_i
 5. Address ALL findings in a fixup commit.
 
 **Gate:** Parse `orc review-read` output — all submitted reviewers report `approved`.
-`orc review-read` always exits 0; you MUST inspect the output for outcomes.
+`orc review-read` exits 0 whatever the reviews say; you MUST inspect the output for outcomes
+(a non-zero exit means they could not be read — retry, never treat it as "no reviews").
 One review round only.
 
 ### Phase 4 — Complete

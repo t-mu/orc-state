@@ -4,17 +4,16 @@ import { listAgents } from './agentRegistry.ts';
 import { syncBacklogFromSpecs } from './backlogSync.ts';
 import { setRunInputState } from './claimManager.ts';
 import { AGENT_ID_RE, TASK_TYPES } from './constants.ts';
-import { ControlClient } from './controlClient.ts';
-import { ControlError } from './controlProtocol.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from './dispatchPlanner.ts';
 import { appendSequencedEvent, queryEvents } from './eventLog.ts';
 import { withLock } from './lock.ts';
 import { storeDrawer, wingFromTaskRef } from './memoryStore.ts';
+import { ControlError } from './controlProtocol.ts';
 import { bridgeInputResponse } from './messageBridge.ts';
-import { ACTIVE_PROJECT, BACKLOG_DOCS_DIR, STATE_DIR } from './paths.ts';
+import { BACKLOG_DOCS_DIR } from './paths.ts';
 import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
-import { clientCredential, sessionForCredential } from './sessionCredentials.ts';
+import { sessionForCredential } from './sessionCredentials.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from './taskRouting.ts';
 import type { Claim } from '../types/claims.ts';
@@ -28,14 +27,16 @@ import type { Task } from '../types/backlog.ts';
  * installation or while no coordinator is running.
  */
 
-const TERMINAL_STATUSES = new Set(['done', 'released', 'cancelled']);
+/** Task statuses no lifecycle transition leaves (other than an operator reset). */
+export const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'released', 'cancelled']);
 
 /** The registered master's agent id, the default actor of master tools. */
 export function masterActorId(stateDir: string): string {
   return listAgents(stateDir).find((agent) => agent.role === 'master')?.agent_id ?? 'master';
 }
 
-function backlogDocsDirForState(stateDir: string) {
+/** A legacy installation's Markdown spec directory: colocated with its state, else the configured one. */
+export function backlogDocsDirForState(stateDir: string) {
   const colocatedDocsDir = join(stateDir, 'backlog');
   return existsSync(colocatedDocsDir) ? colocatedDocsDir : BACKLOG_DOCS_DIR;
 }
@@ -488,46 +489,4 @@ export function applyOperatorMutation(stateDir: string, request: OperatorRequest
     case 'delegate-task': return delegateTask(stateDir, args) as Record<string, unknown>;
     case 'respond-input': return respondInput(stateDir, args, authority);
   }
-}
-
-/** Coordinator requests are applied once received, so a timeout is never retried (see lifecycleDispatch). */
-const OPERATOR_REQUEST_TIMEOUT_MS = 120_000;
-
-/**
- * Apply a master or operator mutation (task 232). In a registered project the
- * running coordinator applies it. The caller presents its session when it has
- * one — the master's tools and shells their ORC_MASTER_SECRET, any shell inside
- * a worker session its ORC_SESSION_SECRET (and is refused) — and otherwise acts
- * as the operator. With no coordinator answering, the caller applies it
- * directly and says so: the request provably never reached a coordinator, and
- * the direct path takes the same state lock. A legacy installation always
- * applies it directly.
- */
-export async function submitOperatorMutation(
-  request: OperatorRequest,
-  {
-    env = process.env,
-    credential = clientCredential(env),
-    direct = { trustedMaster: true }, warn = (line: string) => console.error(line),
-    project = ACTIVE_PROJECT, stateDir = STATE_DIR,
-  }: {
-    env?: NodeJS.ProcessEnv;
-    credential?: string | null;
-    /** How a legacy installation's direct apply proves it may answer an input request. */
-    direct?: { sessionId?: string | null; trustedMaster?: boolean };
-    warn?: (line: string) => void;
-    project?: unknown;
-    stateDir?: string;
-  } = {},
-): Promise<Record<string, unknown>> {
-  if (!project) return applyOperatorMutation(stateDir, request, direct);
-  try {
-    return await new ControlClient(stateDir, { credential, timeoutMs: OPERATOR_REQUEST_TIMEOUT_MS }).operator(request);
-  } catch (error) {
-    if (!(error instanceof ControlError) || error.code !== 'unavailable') throw error;
-  }
-  // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
-  const { actorId } = authorizeOperator(stateDir, { credential, operator: credential === null }, request);
-  warn(`coordinator is not running; applying ${request.op} directly`);
-  return applyOperatorMutation(stateDir, { ...request, actor_id: actorId });
 }

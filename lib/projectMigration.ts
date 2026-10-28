@@ -8,7 +8,7 @@ import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SpecEntry } f
 import { closeAllDatabases } from './eventLog.ts';
 import { closeMemoryDb } from './memoryStore.ts';
 import { parsePlan } from './planDocs.ts';
-import { isPidAlive } from './processIdentity.ts';
+import { runningCoordinatorPid } from './coordinatorLiveness.ts';
 import { MIGRATION_MARKER, MIGRATION_RECORD, projectMigrationStatus, readMigrationMarker, type MigrationMarker } from './projectContext.ts';
 import { canonicalProjectGitRoot, validateProjectSetting, type ProjectRecord, type ProjectRegistry, type SettingValue } from './projectRegistry.ts';
 import { closeProjectTaskStores, initProjectTaskStore, prepareProjectTask, refreshBacklogProjection, type TaskAuthoringInput } from './projectTasks.ts';
@@ -196,14 +196,6 @@ function runtimeInput(feature: string, task: Task): TaskAuthoringInput {
   };
 }
 
-function coordinatorRunning(stateDir: string): number | null {
-  try {
-    const pid = (JSON.parse(readFileSync(join(stateDir, 'coordinator.pid'), 'utf8')) as { pid?: unknown }).pid;
-    return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 && isPidAlive(pid) ? pid : null;
-  } catch {
-    return null;
-  }
-}
 
 /** Tasks plus plans in a project's runtime.db, read without migrating its schema. */
 function projectContentCount(stateDir: string): number {
@@ -350,7 +342,7 @@ export function planMigration(path: string, registry: ProjectRegistry): Migratio
       return 0;
     }
   })();
-  const coordinatorPid = coordinatorRunning(installation.stateDir);
+  const coordinatorPid = runningCoordinatorPid(installation.stateDir);
   if (coordinatorPid) blocking('coordinator_running', `the legacy coordinator is running (PID ${coordinatorPid}); stop it first (orc kill-all)`);
 
   const databases: Record<string, Record<string, number> | null> = {};
@@ -400,7 +392,7 @@ export function planMigration(path: string, registry: ProjectRegistry): Migratio
   const markedProject = marker ? registry.get(marker.project_id) : null;
   const existing = markedProject ?? registry.list().find((project) => project.canonicalGitRoot === installation.targetRepoRoot) ?? null;
   const existingStatus = existing ? projectMigrationStatus(existing.stateDir) : null;
-  const projectCoordinator = existing && !markedProject ? coordinatorRunning(existing.stateDir) : null;
+  const projectCoordinator = existing && !markedProject ? runningCoordinatorPid(existing.stateDir) : null;
   if (projectCoordinator) blocking('project_coordinator_running', `project ${existing!.name} (${existing!.id}) has a running coordinator (PID ${projectCoordinator}); stop it first`);
   if (existing && !markedProject) {
     const record = readMigrationRecord(existing.stateDir);
@@ -643,7 +635,7 @@ function acquireMigrationLock(lockFile: string): boolean {
     writeFileSync(lockFile, payload, { flag: 'wx' });
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || coordinatorRunning(dirname(lockFile))) return false;
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || runningCoordinatorPid(dirname(lockFile))) return false;
     writeFileSync(lockFile, payload);
     return true;
   }

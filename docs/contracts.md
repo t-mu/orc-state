@@ -545,9 +545,10 @@ or wrong token returns `401 unauthenticated`. Responses are
 with `code` in `unsupported_protocol_version | unauthenticated | forbidden | not_found | conflict | bad_request | unavailable | internal`.
 `unavailable` means the daemon is shutting down, stopped, or crashed (stale descriptor).
 
-**Mutations** also send `x-orc-session: <session_id>`, the caller's running
-provider session ID from the `sessions` table. Actor and recipient names in the
-request body are never trusted. Commands go through the durable command queue,
+**Mutations** also send `x-orc-session` with the caller's session credential
+(see **Session credentials** below; in a legacy installation, a session id
+recorded without a secret). Actor and recipient names in the request body are
+never trusted. Commands go through the durable command queue,
 which enforces run scope: a worker may only address its own run; the master may
 address any active run, but only that run's recipient session. Derived
 `legacy-*` session IDs (imported from `agents.json`) are never accepted.
@@ -565,15 +566,22 @@ directly; sandboxing (with the default `restricted` network) is what stops a
 worker. Only Claude's sandbox hides `operator.token`, and a sandbox without its
 own process namespace (Codex's) can read peer and master secrets from
 `/proc/<pid>/environ`; such a worker reaches the socket at all only with
-`worker_pool.sandbox_network: open`. Worker lifecycle
+`worker_pool.sandbox_network: open`.
+
+**Who may read.** The bearer token only reaches the daemon; every route also
+names its caller. Whole-project reads (`/v1/snapshot`, `/v1/events`,
+`/v1/events/stream`, `GET /v1/tasks…`) and every `/v1/terminals…` route need
+the master's session secret or the operator token: a worker session gets
+`403 forbidden`, a caller with neither `401`. A worker reads its own run's
+reviews and the project's memories through the scoped routes below. Worker lifecycle
 requests (`/v1/lifecycle`) are checked against the caller's own run. Delivery of queued commands to a provider transport is also not
 wired yet; commands stay `queued` until a dispatcher with a transport runs.
 
 | Method | Path | Result |
 |--------|------|--------|
-| `GET` | `/v1/snapshot` | `{ project, cursor, generated_at, runs, sessions }`; cursor, runs and sessions come from one SQLite read transaction. `sessions` lists running sessions so callers can find a run's recipient session. In a project state directory `project` is `{ id, name, target_repo_root }` and each run carries `task_status` and `spec_revision` from project SQLite; otherwise `project` is null |
-| `GET` | `/v1/events?after=<seq>&limit=<n>` | `{ events: [{ seq, event }], cursor }` (`limit` 1-1000) |
-| `GET` | `/v1/events/stream?after=<seq>` | NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
+| `GET` | `/v1/snapshot` | Master or operator only. `{ project, cursor, generated_at, runs, sessions }`; cursor, runs and sessions come from one SQLite read transaction. `sessions` lists running sessions so callers can find a run's recipient session. In a project state directory `project` is `{ id, name, target_repo_root }` and each run carries `task_status` and `spec_revision` from project SQLite; otherwise `project` is null |
+| `GET` | `/v1/events?after=<seq>&limit=<n>` | Master or operator only. `{ events: [{ seq, event }], cursor }` (`limit` 1-1000) |
+| `GET` | `/v1/events/stream?after=<seq>` | Master or operator only. NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
 | `GET` | `/v1/runs/<run_id>/reviews` | `{ reviews }`: the run's `review_submitted` events plus bridged reviewer feedback, latest per agent (what `orc review-read` prints). Needs a session secret (a worker reads only its own run, `403` otherwise; the master any run) or the operator token (`x-orc-operator`); else `401` |
 | `GET` | `/v1/memory/wake-up?wing=<w>&budget=<tokens>` | `{ initialized, text }` (what `orc memory-wake-up` prints); `initialized` is false without a memory store. `budget` defaults to 800. Memories are project-wide: any session secret or the operator token reads them; else `401` |
 | `POST` | `/v1/lifecycle` | Worker lifecycle request `{ op, agent_id, run_id?, ... }`, applied by the coordinator. `op` is `run-start`, `run-fail` (`reason`, `code`, `policy`), `run-finish`, `run-work-complete`, `progress` (`event`, `phase?`, `reason?`, `policy?`), `review-submit` (`outcome`, `reason`), `input-request` (`question`) -> `{ request_id, request_seq, active }`, `input-poll` (`request_id`, `request_seq`, `heartbeat?`) -> `{ response, active }`, `input-timeout`, `memory-record` (`content`, `wing?`, `hall?`, `room?`, `importance?`; no `agent_id`) or `report-for-duty` (`session_token`, the session id). Result `{ message, ... }`. The session must not be `offline` (`running`, `recoverable` or `unknown`) and must be launched for that agent and run (else `403 forbidden`; an unrecognised or offline session `401`). An offline session may still send `input-poll` for its own run (its heartbeat is ignored) and `run-finish` or `progress` `run_finished` once that run is `done`. A rejected transition is `409 conflict` with the CLI's error text |
@@ -583,7 +591,12 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 | `POST` | `/v1/messages` | Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |
 | `GET` | `/v1/messages?include_consumed=1` | Caller mailbox `{ messages }`; consumed messages are omitted by default |
 | `POST` | `/v1/messages/<id>/consume` | Idempotently acknowledge a mailbox item -> `{ message }` |
-| `GET` | `/v1/tasks` | Project state directories only (else `404 not_found`): `{ tasks }`, each with `spec_revision`, `content_hash` and `body_markdown` |
+| `POST` | `/v1/terminals/provider` | Master or operator only. `{ run_id }` -> `{ terminal }`: observe the run's tmux provider session (what `orc terminal provider` uses) |
+| `POST` | `/v1/terminals/shell` | Master or operator only. `{ run_id }` -> `{ terminal }`: a shell the coordinator starts in the run's worktree, outside any provider sandbox |
+| `GET` | `/v1/terminals/<id>?after=<seq>` | Master or operator only. `{ terminal, screen, output, cursor }` |
+| `POST` | `/v1/terminals/<id>/lease` | Master or operator only. `{ action: acquire, owner_id, ttl_ms? }` -> `{ lease_id, expires_at }`; `{ action: renew\|release, lease_id }` |
+| `POST` | `/v1/terminals/<id>/input`, `/v1/terminals/<id>/resize` | Master or operator only, holding the lease. `{ lease_id, data }` or `{ lease_id, columns, rows }` |
+| `GET` | `/v1/tasks` | Master or operator only. Project state directories only (else `404 not_found`): `{ tasks }`, each with `spec_revision`, `content_hash` and `body_markdown` |
 | `GET` | `/v1/tasks/<ref>` | `{ task }`; unknown ref -> `404 not_found`. Encode the ref (`app%2Flogin`) |
 | `GET` | `/v1/tasks/<ref>/revisions` | `{ revisions }` (immutable, oldest first, without bodies); unknown ref -> `404` |
 | `POST` | `/v1/tasks` | Master session only (else `403 forbidden`). Create a database-only task `{ feature?, ref?, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, required_provider?, ... }` -> `201 { task }`; existing ref -> `409 conflict`; invalid field -> `400 bad_request` |

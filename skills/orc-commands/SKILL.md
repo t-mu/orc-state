@@ -131,7 +131,7 @@ For workers that need master input (e.g. blocked on a decision):
 | Command | Usage | Notes |
 |---------|-------|-------|
 | `run-input-request` | `orc run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>]` | Worker calls this to ask master a question. Blocks until response or timeout. |
-| `run-input-respond` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>]` | Master calls this to answer a worker's input request. |
+| `run-input-respond` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>] [--session-id=<id>, legacy only]` | Master answers a worker's input request. In a registered project it needs the master's `ORC_MASTER_SECRET`, so run it from the master session (or use MCP `respond_input`); worker and operator shells are refused. |
 
 ### Memory (Worker)
 

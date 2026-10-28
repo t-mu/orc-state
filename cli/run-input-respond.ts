@@ -11,7 +11,7 @@
 import { flag } from '../lib/args.ts';
 import { clientCredential, sessionIdFromEnv } from '../lib/sessionCredentials.ts';
 import { ACTIVE_PROJECT } from '../lib/paths.ts';
-import { submitOperatorMutation } from '../lib/operatorMutations.ts';
+import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');

@@ -8,7 +8,7 @@
  */
 import { flag } from '../lib/args.ts';
 import { ACTIVE_PROJECT } from '../lib/paths.ts';
-import { submitOperatorMutation } from '../lib/operatorMutations.ts';
+import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
 
 const taskRef = flag('task-ref');

@@ -9,7 +9,7 @@ import { appendSequencedEvent, closeAllDatabases, initEventsDb, withEventDb, wit
 import { commitClaims } from './runStore.ts';
 import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
 import { ControlClient, type EventRow } from './controlClient.ts';
-import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, defaultSocketPath } from './controlProtocol.ts';
+import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
 import { credentialHash } from './sessionCredentials.ts';
@@ -72,6 +72,11 @@ function rawGet(headers: Record<string, string>, path = '/v1/snapshot'): Promise
   });
 }
 
+/** The operator's header, which whole-project reads need beyond the bearer token. */
+function operator(): Record<string, string> {
+  return { [OPERATOR_HEADER]: readFileSync(join(dir, OPERATOR_TOKEN_FILE), 'utf8').trim() };
+}
+
 function heartbeats(count: number): void {
   for (let i = 0; i < count; i += 1) {
     appendSequencedEvent(dir, {
@@ -125,6 +130,8 @@ describe('local daemon control API', () => {
     await expect(master.createTask({ feature: 'app', title: 'Bad', priority: 'urgent' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(new ControlClient(dir, { credential: 'secret-a' }).createTask({ feature: 'app', title: 'Worker task' }))
       .rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    // A worker reads its own task through its envelope, not the project's task list.
+    await expect(new ControlClient(dir, { credential: 'secret-a' }).listTasks()).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);
   });
 
@@ -217,7 +224,9 @@ describe('local daemon control API', () => {
       expect(result.status).toBe(401);
       expect(result.body.error?.code).toBe('unauthenticated');
     }
-    expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` })).body.ok).toBe(true);
+    // The bearer token alone reaches the daemon but not its whole-project reads.
+    expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` })).status).toBe(401);
+    expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}`, ...operator() })).body.ok).toBe(true);
   });
 
   it('lets separate client processes read a snapshot, follow events and submit an allowed command', async () => {
@@ -332,12 +341,34 @@ describe('local daemon control API', () => {
     await expect(reader.memoryWakeUp()).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
   });
 
+  it('keeps whole-project reads and terminals to the master and the operator', async () => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    const worker = new ControlClient(dir, { credential: 'session-a' });
+    const forbidden = { code: 'forbidden', status: 403 };
+    await expect(worker.snapshot()).rejects.toMatchObject(forbidden);
+    await expect(worker.events(0)).rejects.toMatchObject(forbidden);
+    await expect(take(worker.subscribe(0), 1)).rejects.toMatchObject(forbidden);
+    await expect(worker.openTerminal('shell', 'run-a')).rejects.toMatchObject(forbidden);
+    await expect(worker.openTerminal('provider', 'run-b')).rejects.toMatchObject(forbidden);
+    await expect(worker.observeTerminal('term-1')).rejects.toMatchObject(forbidden);
+    await expect(worker.acquireTerminal('term-1', 'worker-a')).rejects.toMatchObject(forbidden);
+    // The bearer token alone, as any process that can read the state directory holds it, opens nothing.
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/terminals/term-1')).status).toBe(401);
+    await expect(new ControlClient(dir, { credential: 'session-master' }).snapshot()).resolves.toMatchObject({ runs: expect.any(Array) });
+    await expect(new ControlClient(dir).events(0)).resolves.toMatchObject({ events: expect.any(Array) });
+  });
+
   it('resumes after the snapshot cursor across a disconnect and a daemon restart without gaps', async () => {
     const master = new ControlClient(dir, { credential: 'session-master' });
-    const { cursor } = await master.snapshot();
+    const reader = new ControlClient(dir);
+    const { cursor } = await reader.snapshot();
     const seen: EventRow[] = [];
 
-    const first = master.subscribe(cursor);
+    const first = reader.subscribe(cursor);
     const firstBatch = take(first, 2);
     await submit(master, 'r1');
     await submit(master, 'r2');
@@ -349,7 +380,7 @@ describe('local daemon control API', () => {
     server = await startControlServer(dir, { pollMs: 20 });
     await submit(master, 'r4');
 
-    seen.push(...await take(master.subscribe(seen.at(-1)!.seq), 2));
+    seen.push(...await take(reader.subscribe(seen.at(-1)!.seq), 2));
     const expected = withEventDb(dir, (db) => (db.prepare('SELECT seq FROM events WHERE seq > ? ORDER BY seq').all(cursor) as Array<{ seq: number }>).map((r) => r.seq));
     expect(seen.map((row) => row.seq)).toEqual(expected);
     expect(seen.map((row) => (row.event as { event: string }).event)).toEqual(Array(4).fill('command_queued'));
@@ -386,7 +417,7 @@ describe('local daemon control API', () => {
     expect((await client.events(rest.cursor)).cursor).toBe(rest.cursor);
     await expect(client.events(0, 1001)).rejects.toMatchObject({ code: 'bad_request' });
     const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
-    const negative = await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/events?after=-1');
+    const negative = await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}`, ...operator() }, '/v1/events?after=-1');
     expect(negative.body.error?.code).toBe('bad_request');
   });
 
@@ -401,7 +432,7 @@ describe('local daemon control API', () => {
 
     const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
     const frames = await new Promise<string[]>((resolve, reject) => {
-      const req = request({ socketPath: server.endpoint.path, path: `/v1/events/stream?after=${cursor + 650}`, headers: { 'x-orc-protocol': '1', authorization: `Bearer ${token}` } }, (res) => {
+      const req = request({ socketPath: server.endpoint.path, path: `/v1/events/stream?after=${cursor + 650}`, headers: { 'x-orc-protocol': '1', authorization: `Bearer ${token}`, ...operator() } }, (res) => {
         let text = '';
         res.on('data', (chunk: Buffer) => {
           text += chunk.toString('utf8');

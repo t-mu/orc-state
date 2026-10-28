@@ -242,7 +242,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to master agent_id. In a registered project the master always acts as itself and this is ignored.',
+          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -302,7 +302,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to master agent_id. In a registered project the master always acts as itself and this is ignored.',
+          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -329,7 +329,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to the current master agent id. In a registered project the master always acts as itself and this is ignored.',
+          description: 'Defaults to the current master agent id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -409,7 +409,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Actor performing the reset (default: human). In a registered project the master always acts as itself and this is ignored.',
+          description: 'Actor performing the reset (default: human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,

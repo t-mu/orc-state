@@ -231,6 +231,15 @@ export async function startControlServer(stateDir: string, options: ControlServe
     throw new ControlError('unauthenticated', 'Reads need a session secret or the operator token', 401);
   }
 
+  /**
+   * Whole-project reads (snapshot, events) and terminals belong to the master
+   * and the operator. A worker session sees only its own run through the
+   * scoped routes, so it is refused here even though it holds the bearer token.
+   */
+  function projectReader(req: IncomingMessage): void {
+    if (readerScope(req).runId !== null) throw new ControlError('forbidden', 'Only the master or the operator may use this route', 403);
+  }
+
   function actorCredential(req: IncomingMessage): string {
     const credential = req.headers[SESSION_HEADER];
     if (typeof credential !== 'string' || !credential) throw new ControlError('unauthenticated', 'Session credential required for mutations', 401);
@@ -280,7 +289,10 @@ export async function startControlServer(stateDir: string, options: ControlServe
     authenticated(req);
     const url = new URL(req.url ?? '/', 'http://orc.local');
     const ok = (result: unknown, status = 200) => send(res, status, { protocol_version: CONTROL_PROTOCOL_VERSION, ok: true, result });
-    if (req.method === 'GET' && url.pathname === '/v1/snapshot') return ok(readControlSnapshot(stateDir));
+    if (req.method === 'GET' && url.pathname === '/v1/snapshot') {
+      projectReader(req);
+      return ok(readControlSnapshot(stateDir));
+    }
     if (url.pathname === '/v1/messages') {
       const principal = sessionAuthenticator(stateDir)(actorCredential(req));
       if (!principal) throw new ControlError('unauthenticated', 'Message caller is not authenticated', 401);
@@ -304,6 +316,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return ok({ message: consumeMessage(stateDir, principal, decodeURIComponent(messageAck[1])) });
     }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
+      projectReader(req);
       const after = seqParam(url, 'after');
       const limit = Number(url.searchParams.get('limit') ?? '100');
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new ControlError('bad_request', 'limit must be between 1 and 1000', 400);
@@ -325,7 +338,12 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (!isWakeUpBudget(budget)) throw new ControlError('bad_request', 'budget must be a positive integer', 400);
       return ok(readMemoryWakeUp(stateDir, { wing: url.searchParams.get('wing'), budget }));
     }
-    if (req.method === 'GET' && url.pathname === '/v1/events/stream') return stream(res, seqParam(url, 'after'));
+    if (req.method === 'GET' && url.pathname === '/v1/events/stream') {
+      projectReader(req);
+      return stream(res, seqParam(url, 'after'));
+    }
+    // A terminal (a worker's provider session, or a shell the coordinator starts outside any sandbox) is never a worker's to open.
+    if (url.pathname.startsWith('/v1/terminals/')) projectReader(req);
     if (req.method === 'POST' && url.pathname === '/v1/terminals/provider') {
       const body = await readBody(req);
       if (typeof body.run_id !== 'string' || !body.run_id) throw new ControlError('bad_request', 'run_id is required', 400);
@@ -362,6 +380,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (!match) throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
       const ref = match[1] === undefined ? null : decodeURIComponent(match[1]);
       try {
+        if (req.method === 'GET') projectReader(req);
         if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
         if (req.method === 'GET' && !match[2]) {
           const task = store.getTask(ref!);
