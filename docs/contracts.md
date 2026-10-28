@@ -597,8 +597,8 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs.
 | `POST` | `/v1/terminals/<id>/lease` | Master or operator only. `{ action: acquire, owner_id, ttl_ms? }` -> `{ lease_id, expires_at }`; `{ action: renew\|release, lease_id }` |
 | `POST` | `/v1/terminals/<id>/input`, `/v1/terminals/<id>/resize` | Master or operator only, holding the lease. `{ lease_id, data }` or `{ lease_id, columns, rows }` |
 | `GET` | `/v1/tasks` | Master or operator only. Project state directories only (else `404 not_found`): `{ tasks }`, each with `spec_revision`, `content_hash` and `body_markdown` |
-| `GET` | `/v1/tasks/<ref>` | `{ task }`; unknown ref -> `404 not_found`. Encode the ref (`app%2Flogin`) |
-| `GET` | `/v1/tasks/<ref>/revisions` | `{ revisions }` (immutable, oldest first, without bodies); unknown ref -> `404` |
+| `GET` | `/v1/tasks/<ref>` | Master or operator only. `{ task }`; unknown ref -> `404 not_found`. Encode the ref (`app%2Flogin`) |
+| `GET` | `/v1/tasks/<ref>/revisions` | Master or operator only. `{ revisions }` (immutable, oldest first, without bodies); unknown ref -> `404` |
 | `POST` | `/v1/tasks` | Master session only (else `403 forbidden`). Create a database-only task `{ feature?, ref?, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, required_provider?, ... }` -> `201 { task }`; existing ref -> `409 conflict`; invalid field -> `400 bad_request` |
 | `POST` | `/v1/tasks/<ref>/revisions` | Master session only. Edit `{ expected_revision, ...fields }` -> `{ task, changed }`; a stale `expected_revision` -> `409 conflict`; `status` is never editable |
 

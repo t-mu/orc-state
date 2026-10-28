@@ -202,8 +202,8 @@ needs the master's credential in every case: in a project its `ORC_MASTER_SECRET
 (`--session-id`, or `ORC_SESSION_ID`). When no coordinator is
 running they apply the change directly and print `coordinator is not running;
 applying <op> directly`, so operator recovery works with the coordinator stopped.
-While a coordinator still holds the project (its `coordinator.pid` names a live
-process) but its control API is not answering, as during startup or shutdown,
+While a coordinator still holds the project (its `coordinator.pid` names the
+live coordinator process, checked by PID and start time) but its control API is not answering, as during startup or shutdown,
 they refuse with a retryable error instead of writing alongside it.
 
 These commands and the master's tools now share one implementation: `task-reset`

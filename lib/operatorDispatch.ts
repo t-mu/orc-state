@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { ControlClient } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
 import { runningCoordinatorPid } from './coordinatorLiveness.ts';
@@ -46,7 +47,7 @@ export async function submitOperatorMutation(
   // descriptors) still owns its writes; only a stopped one leaves them to the caller.
   const pid = runningCoordinatorPid(stateDir);
   if (pid !== null) {
-    throw new ControlError('unavailable', `The coordinator (pid ${pid}) is running but its control API is not answering; retry ${request.op} in a moment`, 503);
+    throw new ControlError('unavailable', `The coordinator (pid ${pid}) is running but its control API is not answering; retry ${request.op} in a moment. If pid ${pid} is not an orc coordinator, remove ${join(stateDir, 'coordinator.pid')}`, 503);
   }
   // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
   const { actorId } = authorizeOperator(stateDir, { credential, operator: credential === null }, request);
