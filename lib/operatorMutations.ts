@@ -378,6 +378,8 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
   const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
     typeof latestRequestId === 'string' ? latestRequestId : null, authority);
   if (request_id && !messageId) throw new Error('Input request is not pending for this run');
+  // Nothing to answer: an unknown run, or one that never asked. A run that asked and then ended keeps the event-only answer.
+  if (!messageId && !latestRequest) throw new Error('Input request is not pending for this run');
 
   try {
     setRunInputState(stateDir, run_id as string, agent_id as string, { inputState: null });

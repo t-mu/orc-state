@@ -65,6 +65,13 @@ describe('cli/run-input-respond.ts', () => {
     expect(event?.actor_id).toBe('orc-master-1');
   });
 
+  it('exits 1 and records nothing when the run never asked', () => {
+    const result = runCli(['--run-id=run-typo', '--agent-id=worker-1', '--response=yes']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Input request is not pending');
+    expect(readEvents().some((e) => e.event === 'input_response')).toBe(false);
+  });
+
   it('exits 1 when --run-id is missing', () => {
     const result = runCli(['--agent-id=worker-1', '--response=done']);
     expect(result.status).toBe(1);
@@ -80,6 +87,8 @@ describe('cli/run-input-respond.ts', () => {
 
 describe('cli/run-input-respond.ts durable request in a legacy installation', () => {
   beforeEach(() => {
+    // The durable request below is the only one.
+    writeFileSync(join(dir, 'events.jsonl'), '');
     initEventsDb(dir);
     withEventDbTransaction(dir, (db) => {
       db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-1', 'docs/task-1', 'worker-1', 'in_progress', 'now', 'now')").run();
@@ -140,7 +149,11 @@ function seedState() {
       lease_expires_at: '2099-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  // The worker asked; a test that needs a different question overwrites this.
+  writeFileSync(join(dir, 'events.jsonl'), JSON.stringify({
+    seq: 1, ts: '2026-01-01T00:02:00Z', event: 'input_requested', actor_type: 'agent', actor_id: 'worker-1',
+    run_id: 'run-1', task_ref: 'docs/task-1', agent_id: 'worker-1', payload: { question: 'ready?', request_id: 'req-0' },
+  }) + '\n');
 }
 
 function readEvents() {

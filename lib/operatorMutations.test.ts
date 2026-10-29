@@ -3,6 +3,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from './eventLog.ts';
+import { bridgeInputRequest } from './messageBridge.ts';
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
@@ -139,11 +140,21 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     const workerEnv = { ORC_SESSION_SECRET: 'session-a' };
     await expect(submitOperatorMutation({ op: 'reset-task', task_ref: 'orch/todo' }, { env: workerEnv, project: 'p', stateDir: dir }))
       .rejects.toMatchObject({ code: 'forbidden' });
+    bridgeInputRequest(dir, 'run-a', 'worker-a', 'req-1', 'Proceed?');
     const answer = { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'go ahead' } as const;
     await expect(submitOperatorMutation(answer, { env: {}, project: 'p', stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
     await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
       .resolves.toMatchObject({ ok: true, responded_by: 'master' });
     expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'master', payload: expect.objectContaining({ response: 'go ahead' }) })]);
+  });
+
+  it('respond_input refuses a run that never asked instead of reporting a delivered answer', async () => {
+    const answer = { op: 'respond-input', run_id: 'run-typo', agent_id: 'worker-a', response: 'go ahead' } as const;
+    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+      .rejects.toThrow('Input request is not pending');
+    await expect(submitOperatorMutation({ ...answer, run_id: 'run-a' }, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+      .rejects.toThrow('Input request is not pending');
+    expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([]);
   });
 
   it('a CLI run with the master session in its environment acts as the master', async () => {
