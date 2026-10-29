@@ -36,7 +36,7 @@ describe('the Markdown sync commands in a registered project', () => {
     try {
       writeFileSync(join(dir, 'runtime.db'), '');
       writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
-      for (const script of ['cli/backlog-sync.ts', 'cli/backlog-sync-check.ts']) {
+      for (const script of ['cli/backlog-sync.ts', 'cli/backlog-sync-check.ts', 'cli/backlog-orient.ts']) {
         const result = spawnSync('node', [script], {
           cwd: resolve(import.meta.dirname, '..'), encoding: 'utf8',
           env: { ...process.env, ORC_STATE_DIR: dir, ORC_PROJECT_ID: '', ORC_BACKLOG_DIR: join(dir, 'backlog') },
