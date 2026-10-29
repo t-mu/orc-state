@@ -2,10 +2,7 @@
   "mcpServers": {
     "orchestrator": {
       "command": "node",
-      "args": ["mcp/server.ts"],
-      "env": {
-        "ORC_STATE_DIR": ".orc-state"
-      }
+      "args": ["mcp/server.ts"]
     }
   }
 }
