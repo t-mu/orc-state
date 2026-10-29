@@ -49,8 +49,14 @@ export interface ControlServer {
  */
 export function sessionAuthenticator(stateDir: string): CommandAuthenticator {
   return (credential) => {
-    const principal = resolveControlPrincipal(stateDir, credential, false);
-    return principal?.live ? { agentId: principal.agentId!, sessionId: principal.sessionId! } : null;
+    try {
+      const principal = resolveControlPrincipal(stateDir, credential, false);
+      return principal && principal.kind !== 'operator' && principal.running
+        ? { agentId: principal.agentId, sessionId: principal.sessionId } : null;
+    } catch (error) {
+      if (error instanceof ControlError && error.code === 'unauthenticated') return null;
+      throw error;
+    }
   };
 }
 

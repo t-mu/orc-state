@@ -4,8 +4,8 @@ import { sessionForCredential } from './sessionCredentials.ts';
 
 /** Identity established by a session secret or the coordinator's operator token. */
 export type ControlPrincipal =
-  | { kind: 'worker'; agentId: string; runId: string; sessionId: string; live: boolean }
-  | { kind: 'master'; agentId: string; runId: null; sessionId: string; live: boolean }
+  | { kind: 'worker'; agentId: string; runId: string; sessionId: string; live: boolean; running: boolean }
+  | { kind: 'master'; agentId: string; runId: null; sessionId: string; live: boolean; running: boolean }
   | { kind: 'operator'; agentId: null; runId: null; sessionId: null; live: true };
 
 export function resolveControlPrincipal(stateDir: string, credential: string | null, operator: boolean): ControlPrincipal | null {
@@ -14,9 +14,11 @@ export function resolveControlPrincipal(stateDir: string, credential: string | n
     if (!session) throw new ControlError('unauthenticated', 'Caller is not authenticated', 401);
     const role = listAgents(stateDir).find((agent) => agent.agent_id === session.agent_id)?.role;
     if (role === 'master') {
-      return { kind: 'master', agentId: session.agent_id, runId: null, sessionId: session.session_id, live: session.state !== 'offline' };
+      return { kind: 'master', agentId: session.agent_id, runId: null, sessionId: session.session_id,
+        live: session.state !== 'offline', running: session.state === 'running' };
     }
-    return { kind: 'worker', agentId: session.agent_id, runId: session.run_id ?? '', sessionId: session.session_id, live: session.state !== 'offline' };
+    return { kind: 'worker', agentId: session.agent_id, runId: session.run_id ?? '', sessionId: session.session_id,
+      live: session.state !== 'offline', running: session.state === 'running' };
   }
   return operator ? { kind: 'operator', agentId: null, runId: null, sessionId: null, live: true } : null;
 }

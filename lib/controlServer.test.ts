@@ -104,6 +104,16 @@ const submit = (client: ControlClient, key: string, run = 'run-a', recipient = '
 });
 
 describe('local daemon control API', () => {
+  it('keeps command authentication restricted to running sessions', () => {
+    const authenticate = sessionAuthenticator(dir);
+    expect(authenticate('session-a')).toEqual({ agentId: 'worker-a', sessionId: 'session-a' });
+    expect(authenticate('forged')).toBeNull();
+    for (const state of ['recoverable', 'unknown', 'offline']) {
+      withEventDbTransaction(dir, (db) => db.prepare('UPDATE sessions SET state = ? WHERE session_id = ?').run(state, 'session-a'));
+      expect(authenticate('session-a')).toBeNull();
+    }
+  });
+
   it('creates and revises project tasks with revision checks and master-only authoring', async () => {
     const master = new ControlClient(dir, { credential: 'secret-master' });
     await expect(master.listTasks()).rejects.toMatchObject({ code: 'not_found' });
