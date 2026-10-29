@@ -378,6 +378,8 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
   const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
     typeof latestRequestId === 'string' ? latestRequestId : null, authority);
   if (request_id && !messageId) throw new Error('Input request is not pending for this run');
+  // Nothing to answer: an unknown run, or one that never asked. A run that asked and then ended keeps the event-only answer.
+  if (!messageId && !latestRequest) throw new Error('Input request is not pending for this run');
 
   try {
     setRunInputState(stateDir, run_id as string, agent_id as string, { inputState: null });
@@ -456,18 +458,24 @@ export function parseOperatorRequest(body: Record<string, unknown>): OperatorReq
  *   or a registered agent it names.
  * - Answering an input request needs the master session, as it always has.
  */
+/** The master agent a live session credential belongs to; any other session is refused. */
+export function masterForCredential(stateDir: string, credential: string): string {
+  const resolved = sessionForCredential(stateDir, credential);
+  const session = resolved && resolved.state !== 'offline' ? resolved : undefined;
+  if (!session) throw new ControlError('unauthenticated', 'Operator caller is not authenticated', 401);
+  const agent = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id);
+  if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403);
+  return agent.agent_id;
+}
+
 export function authorizeOperator(stateDir: string, caller: { credential: string | null; operator: boolean }, request: OperatorRequest): { actorId: string } {
   const { credential } = caller;
   if (credential !== null) {
-    const resolved = sessionForCredential(stateDir, credential);
-    const session = resolved && resolved.state !== 'offline' ? resolved : undefined;
-    if (!session) throw new ControlError('unauthenticated', 'Operator caller is not authenticated', 401);
-    const agent = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id);
-    if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403);
-    if (request.actor_id !== undefined && request.actor_id !== agent.agent_id) {
-      throw new ControlError('forbidden', `A master session acts as ${agent.agent_id}, not ${request.actor_id}`, 403);
+    const masterId = masterForCredential(stateDir, credential);
+    if (request.actor_id !== undefined && request.actor_id !== masterId) {
+      throw new ControlError('forbidden', `A master session acts as ${masterId}, not ${request.actor_id}`, 403);
     }
-    return { actorId: agent.agent_id };
+    return { actorId: masterId };
   }
   if (!caller.operator) throw new ControlError('unauthenticated', 'Operator mutations need a session credential or operator intent', 401);
   if (request.op === 'respond-input') throw new ControlError('forbidden', 'Input response requires a running master session', 403);

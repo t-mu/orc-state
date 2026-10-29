@@ -3,6 +3,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from './eventLog.ts';
+import { bridgeInputRequest } from './messageBridge.ts';
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
@@ -139,11 +140,21 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     const workerEnv = { ORC_SESSION_SECRET: 'session-a' };
     await expect(submitOperatorMutation({ op: 'reset-task', task_ref: 'orch/todo' }, { env: workerEnv, project: 'p', stateDir: dir }))
       .rejects.toMatchObject({ code: 'forbidden' });
+    bridgeInputRequest(dir, 'run-a', 'worker-a', 'req-1', 'Proceed?');
     const answer = { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'go ahead' } as const;
     await expect(submitOperatorMutation(answer, { env: {}, project: 'p', stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
     await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
       .resolves.toMatchObject({ ok: true, responded_by: 'master' });
     expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'master', payload: expect.objectContaining({ response: 'go ahead' }) })]);
+  });
+
+  it('respond_input refuses a run that never asked instead of reporting a delivered answer', async () => {
+    const answer = { op: 'respond-input', run_id: 'run-typo', agent_id: 'worker-a', response: 'go ahead' } as const;
+    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+      .rejects.toThrow('Input request is not pending');
+    await expect(submitOperatorMutation({ ...answer, run_id: 'run-a' }, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+      .rejects.toThrow('Input request is not pending');
+    expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([]);
   });
 
   it('a CLI run with the master session in its environment acts as the master', async () => {
@@ -154,15 +165,26 @@ describe('master and operator mutations through the coordinator (task 232)', () 
 
   it('the master MCP tools act as the master, and respond_input needs its session', async () => {
     // A master tool's actor_id is ignored in a project: the master acts as itself.
-    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo', actor_id: 'human' }, { project: 'p', masterSession: 'session-master' }))
+    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo', actor_id: 'human' }, { project: 'p', credential: 'session-master' }))
       .resolves.toMatchObject({ reset: true });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
-    expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { project: 'p', masterSession: null }))
+    expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { project: 'p', credential: null }))
       .toThrow('respond_input needs the master session');
   });
 
+  it('an MCP server inside a worker session presents it and is refused, not promoted to the operator', async () => {
+    const before = status('orch/todo');
+    await expect(invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo' }, { project: 'p', credential: 'session-a' }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo' }, { project: 'p', credential: 'session-a' }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    expect(status('orch/todo')).toBe(before);
+    expect(() => invokeTool(dir, 'request_scout', { objective: 'look around' }, { project: 'p', credential: 'session-a' }))
+      .toThrow(expect.objectContaining({ code: 'forbidden' }));
+  });
+
   it('the master MCP tools are routed to the coordinator in a project', async () => {
-    const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', masterSession: 'session-master' });
+    const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', credential: 'session-master' });
     expect(result).toMatchObject({ cancelled: true, status: 'blocked' });
     expect(queryEvents(dir, { event_type: 'task_cancelled' }).at(-1)).toMatchObject({ actor_id: 'master' });
   });

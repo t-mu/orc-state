@@ -247,11 +247,11 @@ specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
 
 | Command | Description |
 |---------|-------------|
-| `backlog-sync` | Repair runtime state from markdown specs. |
-| `backlog-sync-check` | Legacy installations: check that todo specs are registered and titles/features match runtime state (status is never compared). Unregistered non-todo specs are listed as skipped. Exits 1 on mismatch. |
+| `backlog-sync` | Legacy installations: repair runtime state from markdown specs. Refused (exit 1) in a registered project. |
+| `backlog-sync-check` | Legacy installations: check that todo specs are registered and titles/features match runtime state (status is never compared). Unregistered non-todo specs are listed as skipped. Exits 1 on mismatch, and in a registered project. |
 | `backlog-ready` | List tasks eligible for dispatch (todo + deps satisfied). |
 | `backlog-blocked` | List blocked tasks with reasons. |
-| `backlog-orient` | Print backlog summary: next task seq, features, task counts. |
+| `backlog-orient` | Legacy installations: print backlog summary: next task seq, features, task counts. |
 
 **Flags:**
 
@@ -264,6 +264,11 @@ specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
 ---
 
 ## Plans
+
+The Markdown plan and spec verbs (`plan_write`, `spec_preview`, `spec_publish`) serve legacy
+installations only. A registered project refuses them, because it never registers Markdown; use
+`orc project plan import` for plans and `create_task` (`body_markdown`) or `orc project task import`
+for tasks.
 
 Plans live alongside the backlog as a first-class artifact directory. A plan
 artifact is a markdown file at `plans/<plan_id>-<slug>.md` that captures the

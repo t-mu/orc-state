@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverActiveTaskSpecs, type SpecEntry } from '../lib/backlogSync.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
+import { isProjectStateDir } from '../lib/projectTasks.ts';
 import { formatErrorMessage } from './shared.ts';
 
 interface RegisteredTaskEntry {
@@ -147,7 +148,16 @@ export function formatBacklogSyncResult(result: {
 
 const stateBacklogPath = join(STATE_DIR, 'backlog.json');
 
+/** Markdown sync is legacy-only; in a project it would compare nothing and report success. */
+export function exitIfProject(command: string, stateDir: string = STATE_DIR) {
+  if (!isProjectStateDir(stateDir)) return;
+  console.error(`${command} is legacy-only: a registered project keeps its tasks in SQLite and does not sync backlog/ Markdown. `
+    + 'Use orc project task import <path> to add specs, and orc status or orc project task list to inspect tasks.');
+  process.exit(1);
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  exitIfProject('orc backlog-sync-check');
   try {
     const refsArg = process.argv.find((a) => a.startsWith('--refs='));
     const filterRefs = refsArg

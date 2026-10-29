@@ -23,7 +23,7 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
-import { createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { createProjectTask, describeProjectTask, isProjectStateDir, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
 import { TERMINAL_STATUSES, backlogDocsDirForState, cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
@@ -889,7 +889,18 @@ export function handleGetNotifications(stateDir: string, { after_seq }: { after_
   return { notifications, last_seq: lastSeq };
 }
 
+/**
+ * The /plan and /spec verbs write Markdown that only a legacy installation registers; a project's
+ * coordinator never reads it, so their output would silently never become tasks.
+ */
+function assertLegacyVerb(stateDir: string, tool: string) {
+  if (!isProjectStateDir(stateDir)) return;
+  throw new Error(`${tool} is legacy-only: a registered project does not register Markdown plans or specs. `
+    + 'Create tasks with create_task (body_markdown) or orc project task import, and plans with orc project plan import');
+}
+
 export async function handlePlanWrite(stateDir: string, args: Record<string, unknown> = {}) {
+  assertLegacyVerb(stateDir, 'plan_write');
   const {
     name,
     title,
@@ -967,6 +978,12 @@ export async function handlePlanWrite(stateDir: string, args: Record<string, unk
   }
 }
 
+/** "Not initialized" only when the state directory is missing; any other failure keeps its own text. */
+function memoryFailure(stateDir: string, err: unknown): string {
+  if (!existsSync(stateDir)) return 'memory system not initialized';
+  return `memory failed: ${err instanceof Error ? err.message : String(err)}`;
+}
+
 export function handleMemoryWakeUp(stateDir: string, args: Record<string, unknown> = {}) {
   const { wing, tokenBudget } = args;
   try {
@@ -975,8 +992,8 @@ export function handleMemoryWakeUp(stateDir: string, args: Record<string, unknow
       ...(typeof tokenBudget === 'number' ? { tokenBudget } : {}),
     });
     return { text };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -990,8 +1007,8 @@ export function handleMemoryRecall(stateDir: string, args: Record<string, unknow
       ...(typeof limit === 'number' ? { limit } : {}),
     });
     return { drawers };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -1006,8 +1023,8 @@ export function handleMemorySearch(stateDir: string, args: Record<string, unknow
       ...(typeof limit === 'number' ? { limit } : {}),
     });
     return { results };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -1025,8 +1042,8 @@ export function handleMemoryStore(stateDir: string, args: Record<string, unknown
       ...(typeof sourceRef === 'string' ? { sourceRef } : {}),
     });
     return { id };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -1034,8 +1051,8 @@ export function handleMemoryStatus(stateDir: string, _args: Record<string, unkno
   try {
     const stats = getMemoryStats(stateDir);
     return { stats };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -1051,6 +1068,7 @@ function specOptsFromArgs(stateDir: string, args: Record<string, unknown>) {
 }
 
 export function handleSpecPreview(stateDir: string, args: Record<string, unknown> = {}) {
+  assertLegacyVerb(stateDir, 'spec_preview');
   const { plan_id } = args;
   if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
     throw new Error('plan_id must be a non-negative integer');
@@ -1059,6 +1077,7 @@ export function handleSpecPreview(stateDir: string, args: Record<string, unknown
 }
 
 export function handleSpecPublish(stateDir: string, args: Record<string, unknown> = {}) {
+  assertLegacyVerb(stateDir, 'spec_publish');
   const { plan_id, confirm } = args;
   if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
     throw new Error('plan_id must be a non-negative integer');

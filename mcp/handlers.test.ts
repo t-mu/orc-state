@@ -1810,6 +1810,10 @@ describe('memory handlers', () => {
     expect(result.stats.dbSizeBytes).toBeGreaterThan(0);
   });
 
+  it('a memory failure in an existing state directory reports its own cause', () => {
+    expect(handleMemorySearch(dir, { query: '"unbalanced' })).toEqual({ error: 'memory failed: unterminated string' });
+  });
+
   it('memory tools return graceful response when memory DB cannot be initialized', () => {
     const badDir = join(dir, 'nonexistent', 'subdir');
     // These four throw internally and return a structured error object
@@ -1819,6 +1823,15 @@ describe('memory handlers', () => {
     expect(handleMemoryStatus(badDir)).toEqual({ error: 'memory system not initialized' });
     // memoryWakeUp handles DB failure internally and returns empty text, so handleMemoryWakeUp returns { text: '' }
     expect(handleMemoryWakeUp(badDir, {})).toEqual({ text: '' });
+  });
+});
+
+describe('the /plan and /spec verbs in a registered project', () => {
+  it('refuse instead of writing Markdown the project never registers', async () => {
+    writeFileSync(join(dir, 'runtime.db'), '');
+    await expect(handlePlanWrite(dir, { name: 'x' })).rejects.toThrow(/plan_write is legacy-only.*create_task/);
+    expect(() => handleSpecPreview(dir, { plan_id: 1 })).toThrow(/spec_preview is legacy-only/);
+    expect(() => handleSpecPublish(dir, { plan_id: 1, confirm: true })).toThrow(/spec_publish is legacy-only/);
   });
 });
 
