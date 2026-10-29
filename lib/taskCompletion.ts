@@ -4,6 +4,7 @@ import { appendSequencedEvent } from './eventLog.ts';
 import { readBacklog, findTask } from './stateReader.ts';
 import { STATE_DIR } from './paths.ts';
 import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
+import { ConflictError, NotFoundError } from './domainErrors.ts';
 
 const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'released', 'cancelled']);
 
@@ -11,18 +12,18 @@ export function markTaskDoneRuntimeOnly(
   taskRef: string,
   actorId = 'human',
   stateDir = STATE_DIR,
-): void {
-  withLock(join(stateDir, '.lock'), () => {
+): { previousStatus: string } {
+  return withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
 
     const backlog = readBacklog(stateDir);
     const task = findTask(backlog, taskRef);
     const previousStatus = task?.status ?? 'unregistered';
     if (!task) {
-      throw new Error(`task not found: ${taskRef}`);
+      throw new NotFoundError(`task not found: ${taskRef}`);
     }
     if (NON_COMPLETABLE_STATUSES.has(task.status)) {
-      throw new Error(`task ${taskRef} cannot transition to done from status ${task.status}`);
+      throw new ConflictError(`task ${taskRef} cannot transition to done from status ${task.status}`);
     }
 
     if (task.status !== 'done') {
@@ -47,6 +48,6 @@ export function markTaskDoneRuntimeOnly(
       { lockAlreadyHeld: true },
     );
 
-    console.log(`task marked done: ${taskRef} (was: ${previousStatus})`);
+    return { previousStatus };
   });
 }

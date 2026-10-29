@@ -8,6 +8,8 @@ import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
 import { submitOperatorMutation } from './operatorDispatch.ts';
+import { submitProjectWrite } from './projectWriteDispatch.ts';
+import { ControlError } from './controlProtocol.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
 import { readBacklog, readClaims } from './stateReader.ts';
 import { invokeTool } from '../mcp/server.ts';
@@ -251,5 +253,53 @@ describe('submitOperatorMutation without a coordinator (task 232)', () => {
     const warn = vi.fn();
     await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { project: null, stateDir: dir, warn });
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('project authoring dispatch (task 234)', () => {
+  it('uses the coordinator when it answers and refuses a direct write while its pid lock is live', async () => {
+    const direct = vi.fn(() => ({ source: 'direct' }));
+    const warn = vi.fn();
+    await expect(submitProjectWrite(dir, 'task create', undefined, () => Promise.resolve({ source: 'daemon' }), direct, { credential: null, warn }))
+      .resolves.toEqual({ source: 'daemon' });
+    expect(direct).not.toHaveBeenCalled();
+    writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
+    await expect(submitProjectWrite(dir, 'task create', undefined,
+      () => Promise.reject(new ControlError('unavailable', 'offline', 503)), direct, { credential: null, warn }))
+      .rejects.toMatchObject({ code: 'unavailable', status: 503 });
+    expect(direct).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('applies directly with an explicit warning only when no coordinator owns the project', async () => {
+    const direct = vi.fn((actor: string) => ({ actor }));
+    const warn = vi.fn();
+    await expect(submitProjectWrite(dir, 'task edit', undefined,
+      () => Promise.reject(new ControlError('unavailable', 'offline', 503)), direct, { credential: null, warn }))
+      .resolves.toEqual({ actor: 'human' });
+    expect(warn).toHaveBeenCalledWith('coordinator is not running; applying task edit directly');
+  });
+});
+
+describe('remaining recovery writes through the coordinator (task 234)', () => {
+  it('applies run-expire and task-mark-done through the live control API', async () => {
+    const control = await startControlServer(dir);
+    try {
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
+      const options = { project: 'p', stateDir: dir, env: {}, warn: vi.fn() };
+      await expect(submitOperatorMutation({ op: 'run-expire', run_id: 'run-a' }, options))
+        .resolves.toMatchObject({ expired: true, task_ref: 'orch/active' });
+      expect(status('orch/active')).toBe('todo');
+      await expect(submitOperatorMutation({ op: 'task-mark-done', task_ref: 'orch/todo' }, options))
+        .resolves.toMatchObject({ done: true, previous_status: 'todo' });
+      expect(status('orch/todo')).toBe('done');
+      await expect(submitOperatorMutation({ op: 'run-expire', run_id: 'missing' }, options))
+        .rejects.toMatchObject({ code: 'not_found', status: 404 });
+      await expect(submitOperatorMutation({ op: 'task-mark-done', task_ref: 'orch/blocked' }, options))
+        .rejects.toMatchObject({ code: 'conflict', status: 409 });
+      expect(options.warn).not.toHaveBeenCalled();
+    } finally {
+      await control.close();
+    }
   });
 });

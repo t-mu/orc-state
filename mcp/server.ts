@@ -18,6 +18,8 @@ import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.t
 import { masterActorId, masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
+import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
+import { projectTaskStoreFor } from '../lib/projectTasks.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -116,6 +118,23 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
   if (name === 'request_scout' && project && credential) {
     // Only the master's session may launch scouts; it acts as itself.
     return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential) });
+  }
+  if (project && projectTaskStoreFor(stateDir) && name === 'create_task') {
+    const { actor_id, ...input } = args;
+    const actorId = typeof actor_id === 'string' ? actor_id : masterActorId(stateDir);
+    return submitProjectWrite<unknown>(stateDir, 'create_task', actorId,
+      async (client) => ({ ...(await client.createTask(input, actorId)).task, next_task_seq: undefined }),
+      (actor) => handlers.handleCreateTask(stateDir, { ...input, actor_id: actor }), { credential });
+  }
+  if (project && projectTaskStoreFor(stateDir) && name === 'update_task') {
+    const { task_ref, expected_revision, actor_id, ...changes } = args;
+    const actorId = typeof actor_id === 'string' ? actor_id : masterActorId(stateDir);
+    return submitProjectWrite<unknown>(stateDir, 'update_task', actorId,
+      async (client) => {
+        const result = await client.reviseTask(task_ref as string, expected_revision as number, changes, actorId);
+        return { ...result.task, changed: result.changed };
+      },
+      (actor) => handlers.handleUpdateTask(stateDir, { ...args, actor_id: actor }), { credential });
   }
   switch (name) {
     case 'list_tasks':

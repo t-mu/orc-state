@@ -13,7 +13,9 @@ import { bridgeInputResponse } from './messageBridge.ts';
 import { BACKLOG_DOCS_DIR } from './paths.ts';
 import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
-import { sessionForCredential } from './sessionCredentials.ts';
+import { resolveControlPrincipal, requireProjectAuthor, type ControlPrincipal } from './controlPrincipal.ts';
+import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
+import { markTaskDoneRuntimeOnly } from './taskCompletion.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from './taskRouting.ts';
 import type { Claim } from '../types/claims.ts';
@@ -56,9 +58,9 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
     actor_id = masterActorId(stateDir),
   } = args;
 
-  if (!task_ref) throw new Error('task_ref is required');
-  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (!TASK_TYPES.includes(task_type as string)) throw new Error(`Invalid task type: ${String(task_type)}`);
+  if (!task_ref) throw new InputError('task_ref is required');
+  if (!AGENT_ID_RE.test(actor_id as string)) throw new InputError(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!TASK_TYPES.includes(task_type as string)) throw new InputError(`Invalid task type: ${String(task_type)}`);
 
   const now = new Date().toISOString();
 
@@ -68,7 +70,7 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
     const allAgents = listAgents(stateDir);
     const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
     if (actor_id !== 'human' && !actorExists) {
-      throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
+      throw new NotFoundError(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
     }
 
     let task: Task | null = null;
@@ -81,22 +83,22 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
         break;
       }
     }
-    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
+    if (!task) throw new NotFoundError(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
     const taskForDiagnostics = { ...task };
 
     let assignedTarget: string | null = (target_agent_id as string) ?? null;
     if (assignedTarget) {
       const target = allAgents.find((agent) => agent.agent_id === assignedTarget);
-      if (!target) throw new Error(`Target agent not found: ${assignedTarget}`);
+      if (!target) throw new NotFoundError(`Target agent not found: ${assignedTarget}`);
       const activeClaim = claims.find((claim) =>
         claim.agent_id === assignedTarget && ['claimed', 'in_progress'].includes(claim.state),
       );
       if (activeClaim) {
-        throw new Error(`Target agent ${assignedTarget} already has active run ${activeClaim.run_id}`);
+        throw new ConflictError(`Target agent ${assignedTarget} already has active run ${activeClaim.run_id}`);
       }
       const evaluation = evaluateTaskEligibility({ ...task, task_type: task_type as string | undefined }, target);
       if (!evaluation.eligible) {
-        throw new Error(
+        throw new ConflictError(
           `Target agent ${assignedTarget} cannot execute task: ` +
           `${evaluation.reasons.join(', ')} (${formatRoutingReasons(evaluation.reasons).join('; ')})`,
         );
@@ -167,9 +169,9 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
     actor_id = masterActorId(stateDir),
   } = args;
 
-  if (!task_ref) throw new Error('task_ref is required');
-  if (reason != null && typeof reason !== 'string') throw new Error('reason must be a string');
-  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
+  if (!task_ref) throw new InputError('task_ref is required');
+  if (reason != null && typeof reason !== 'string') throw new InputError('reason must be a string');
+  if (!AGENT_ID_RE.test(actor_id as string)) throw new InputError(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 
   const now = new Date().toISOString();
   let cancelledRuns: Claim[] = [];
@@ -183,12 +185,12 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
       const allAgents = listAgents(stateDir);
       const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
       if (!actorExists) {
-        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
+        throw new NotFoundError(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
       }
     }
 
     const task = findTask(backlog, task_ref as string);
-    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
+    if (!task) throw new NotFoundError(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     if (TERMINAL_STATUSES.has(task.status)) {
       return { error: 'already_terminal', task_ref, status: task.status };
@@ -261,9 +263,9 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
 
 /** Reset a task to todo from any status, failing its active runs (an operator recovery). */
 export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {
-  if (!task_ref) throw new Error('task_ref is required');
+  if (!task_ref) throw new InputError('task_ref is required');
   if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) {
-    throw new Error(`Invalid actor_id: ${typeof actor_id === 'string' ? actor_id : '(unknown)'}`);
+    throw new InputError(`Invalid actor_id: ${typeof actor_id === 'string' ? actor_id : '(unknown)'}`);
   }
 
   return withLock(join(stateDir, '.lock'), () => {
@@ -271,7 +273,7 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
 
     const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const task = findTask(backlog, task_ref as string);
-    if (!task) throw new Error(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
+    if (!task) throw new NotFoundError(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     const previousStatus = task.status;
     task.status = 'todo';
@@ -315,16 +317,16 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
 
 /** Return a blocked task to todo (an operator recovery). */
 export function unblockTask(stateDir: string, { task_ref, reason = null, actor_id = 'human' }: Record<string, unknown> = {}) {
-  if (!task_ref || typeof task_ref !== 'string') throw new Error('task_ref is required');
-  if (reason != null && typeof reason !== 'string') throw new Error('reason must be a string');
-  if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) throw new Error(`Invalid actor_id: ${String(actor_id)}`);
+  if (!task_ref || typeof task_ref !== 'string') throw new InputError('task_ref is required');
+  if (reason != null && typeof reason !== 'string') throw new InputError('reason must be a string');
+  if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) throw new InputError(`Invalid actor_id: ${String(actor_id)}`);
 
   return withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
     const backlog = readBacklog(stateDir);
     const task = findTask(backlog, task_ref);
-    if (!task) throw new Error(`task not found: ${task_ref}`);
-    if (task.status !== 'blocked') throw new Error(`task is not blocked (status: ${task.status}): ${task_ref}`);
+    if (!task) throw new NotFoundError(`task not found: ${task_ref}`);
+    if (task.status !== 'blocked') throw new ConflictError(`task is not blocked (status: ${task.status}): ${task_ref}`);
 
     task.status = 'todo';
     delete task.blocked_reason;
@@ -354,18 +356,18 @@ export function unblockTask(stateDir: string, { task_ref, reason = null, actor_i
  */
 export function respondInput(stateDir: string, { run_id, agent_id, response, actor_id, request_id, record_memory = false }: Record<string, unknown> = {},
   authority: { sessionId?: string | null; trustedMaster?: boolean } = { trustedMaster: true }) {
-  if (!run_id) throw new Error('run_id is required');
-  if (!agent_id) throw new Error('agent_id is required');
+  if (!run_id) throw new InputError('run_id is required');
+  if (!agent_id) throw new InputError('agent_id is required');
   if (typeof response !== 'string' || (response).length === 0) {
-    throw new Error('response is required');
+    throw new InputError('response is required');
   }
 
   const effectiveActorId = (actor_id as string) ?? masterActorId(stateDir);
   if (!AGENT_ID_RE.test(effectiveActorId)) {
-    throw new Error('actor_id must be a valid agent id');
+    throw new InputError('actor_id must be a valid agent id');
   }
 
-  if (request_id != null && typeof request_id !== 'string') throw new Error('request_id must be a string');
+  if (request_id != null && typeof request_id !== 'string') throw new InputError('request_id must be a string');
   const inputRequests = queryEvents(stateDir, {
     event_type: 'input_requested',
     run_id: run_id as string,
@@ -377,9 +379,9 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
   const latestRequestId = request_id ?? (latestRequest?.payload as Record<string, unknown> | undefined)?.request_id;
   const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
     typeof latestRequestId === 'string' ? latestRequestId : null, authority);
-  if (request_id && !messageId) throw new Error('Input request is not pending for this run');
+  if (request_id && !messageId) throw new ConflictError('Input request is not pending for this run');
   // Nothing to answer: an unknown run, or one that never asked. A run that asked and then ended keeps the event-only answer.
-  if (!messageId && !latestRequest) throw new Error('Input request is not pending for this run');
+  if (!messageId && !latestRequest) throw new ConflictError('Input request is not pending for this run');
 
   try {
     setRunInputState(stateDir, run_id as string, agent_id as string, { inputState: null });
@@ -423,7 +425,7 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
   };
 }
 
-export type OperatorOp = 'cancel-task' | 'reset-task' | 'unblock-task' | 'delegate-task' | 'respond-input';
+export type OperatorOp = 'cancel-task' | 'reset-task' | 'unblock-task' | 'delegate-task' | 'respond-input' | 'run-expire' | 'task-mark-done';
 
 /** A master or operator mutation sent to the coordinator: `op` plus the same arguments as the MCP tool. */
 export type OperatorRequest = { op: OperatorOp; actor_id?: string } & Record<string, unknown>;
@@ -434,6 +436,8 @@ const OPERATOR_OPS: Readonly<Record<OperatorOp, readonly string[]>> = {
   'unblock-task': ['task_ref', 'reason'],
   'delegate-task': ['task_ref', 'target_agent_id', 'task_type', 'note'],
   'respond-input': ['run_id', 'agent_id', 'response', 'request_id', 'record_memory'],
+  'run-expire': ['run_id'],
+  'task-mark-done': ['task_ref'],
 };
 
 export function parseOperatorRequest(body: Record<string, unknown>): OperatorRequest {
@@ -460,30 +464,15 @@ export function parseOperatorRequest(body: Record<string, unknown>): OperatorReq
  */
 /** The master agent a live session credential belongs to; any other session is refused. */
 export function masterForCredential(stateDir: string, credential: string): string {
-  const resolved = sessionForCredential(stateDir, credential);
-  const session = resolved && resolved.state !== 'offline' ? resolved : undefined;
-  if (!session) throw new ControlError('unauthenticated', 'Operator caller is not authenticated', 401);
-  const agent = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id);
-  if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403);
-  return agent.agent_id;
+  const principal = resolveControlPrincipal(stateDir, credential, false);
+  if (principal?.kind !== 'master' || !principal.live) throw new ControlError(principal ? 'forbidden' : 'unauthenticated', 'Only the running master session may act as master', principal ? 403 : 401);
+  return principal.agentId;
 }
 
-export function authorizeOperator(stateDir: string, caller: { credential: string | null; operator: boolean }, request: OperatorRequest): { actorId: string } {
-  const { credential } = caller;
-  if (credential !== null) {
-    const masterId = masterForCredential(stateDir, credential);
-    if (request.actor_id !== undefined && request.actor_id !== masterId) {
-      throw new ControlError('forbidden', `A master session acts as ${masterId}, not ${request.actor_id}`, 403);
-    }
-    return { actorId: masterId };
-  }
-  if (!caller.operator) throw new ControlError('unauthenticated', 'Operator mutations need a session credential or operator intent', 401);
-  if (request.op === 'respond-input') throw new ControlError('forbidden', 'Input response requires a running master session', 403);
-  const actorId = request.actor_id ?? 'human';
-  if (actorId !== 'human' && !listAgents(stateDir).some((entry) => entry.agent_id === actorId)) {
-    throw new ControlError('bad_request', `Actor agent not found: ${actorId}`, 400);
-  }
-  return { actorId };
+export function authorizeOperator(stateDir: string, caller: ControlPrincipal | { credential: string | null; operator: boolean } | null, request: OperatorRequest): { actorId: string } {
+  const principal = caller && 'credential' in caller ? resolveControlPrincipal(stateDir, caller.credential, caller.operator) : caller;
+  if (principal?.kind === 'operator' && request.op === 'respond-input') throw new ControlError('forbidden', 'Input response requires a running master session', 403);
+  return { actorId: requireProjectAuthor(stateDir, principal, request.actor_id) };
 }
 
 /** Apply an authorized operator mutation; the coordinator calls this, as does a direct fallback. */
@@ -496,5 +485,38 @@ export function applyOperatorMutation(stateDir: string, request: OperatorRequest
     case 'unblock-task': return unblockTask(stateDir, args);
     case 'delegate-task': return delegateTask(stateDir, args) as Record<string, unknown>;
     case 'respond-input': return respondInput(stateDir, args, authority);
+    case 'run-expire': return expireRun(stateDir, args.run_id, args.actor_id as string);
+    case 'task-mark-done': {
+      const result = markTaskDoneRuntimeOnly(args.task_ref as string, args.actor_id as string, stateDir);
+      return { task_ref: args.task_ref, done: true, previous_status: result.previousStatus };
+    }
   }
+}
+
+/** Force-expire a claim and requeue its task, under the same state lock as the coordinator. */
+export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): Record<string, unknown> {
+  if (typeof runId !== 'string' || !runId) throw new InputError('run_id is required');
+  return withLock(join(stateDir, '.lock'), () => {
+    const now = new Date().toISOString();
+    const claimsState = readClaims(stateDir);
+    const claim = claimsState.claims.find((entry) => entry.run_id === runId);
+    if (!claim) throw new NotFoundError(`run not found: ${runId}`);
+    if (claim.state === 'done' || claim.state === 'failed') throw new ConflictError(`run is already terminal (state: ${claim.state}): ${runId}`);
+    const backlog = readBacklog(stateDir);
+    const task = findTask(backlog, claim.task_ref);
+    if (!task) throw new NotFoundError(`task not found for run: ${claim.task_ref}`);
+    if (TERMINAL_STATUSES.has(task.status)) throw new ConflictError(`task is already terminal (status: ${task.status}): ${claim.task_ref}`);
+    claim.state = 'failed';
+    claim.failure_reason = 'manual_expire';
+    claim.finished_at = now;
+    claim.finalization_state = null;
+    claim.finalization_retry_count = 0;
+    claim.finalization_blocked_reason = null;
+    task.status = 'todo';
+    task.updated_at = now;
+    commitClaims(stateDir, claimsState, [{ ts: now, event: 'claim_expired', actor_type: actorId === 'human' ? 'human' : 'agent', actor_id: actorId,
+      run_id: runId, task_ref: claim.task_ref, agent_id: claim.agent_id, payload: { reason: 'manual_expire', policy: 'requeue' } }]);
+    commitBacklog(stateDir, backlog, { [claim.task_ref]: { cause: 'failure_requeue', runId, actorId, reason: 'manual_expire' } });
+    return { run_id: runId, task_ref: claim.task_ref, expired: true };
+  });
 }

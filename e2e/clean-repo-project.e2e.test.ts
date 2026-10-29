@@ -404,7 +404,9 @@ describe('clean-repository project workflow', () => {
       // ── A stale Markdown export cannot requeue a completed task. ─────────────
       const stale = join(temp, 'exports', 'app', 'alpha.md');
       writeFileSync(stale, readFileSync(stale, 'utf8').replace('---\n', '---\nstatus: todo\n'));
-      const reimport = json<{ imported: Array<{ ref: string; action: string; ignored_fields: string[] }> }>(orcOk(['project', 'task', 'import', join(temp, 'exports')]));
+      // The coordinator shares this test process, so an authoring CLI call must be asynchronous to let its socket respond.
+      const reimport = json<{ imported: Array<{ ref: string; action: string; ignored_fields: string[] }> }>(
+        await orcAsync(['project', 'task', 'import', join(temp, 'exports')], target, cleanEnv()));
       expect(reimport.imported.find((entry) => entry.ref === 'app/alpha')).toMatchObject({ action: 'unchanged', ignored_fields: ['status'] });
       await coordinator.tick();
       await coordinator.tick();

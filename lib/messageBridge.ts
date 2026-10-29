@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ConflictError } from './domainErrors.ts';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
 
 type Run = { run_id: string; agent_id: string | null; state: string };
@@ -7,7 +8,7 @@ type Session = { session_id: string; agent_id: string; run_id: string | null };
 function activeRun(db: import('better-sqlite3').Database, runId: string, agentId: string): Run | null {
   const run = db.prepare('SELECT run_id, agent_id, state FROM runs WHERE run_id = ?').get(runId) as Run | undefined;
   if (!run) return null;
-  if (run.agent_id !== agentId || !['claimed', 'in_progress'].includes(run.state)) throw new Error('Message actor is not scoped to an active run');
+  if (run.agent_id !== agentId || !['claimed', 'in_progress'].includes(run.state)) throw new ConflictError('Message actor is not scoped to an active run');
   return run;
 }
 
@@ -43,27 +44,27 @@ export function bridgeInputResponse(stateDir: string, runId: string, agentId: st
   return withEventDbTransaction(stateDir, (db) => {
     const run = db.prepare('SELECT agent_id, state FROM runs WHERE run_id = ?').get(runId) as Pick<Run, 'agent_id' | 'state'> | undefined;
     if (!run) return null;
-    if (run.agent_id !== agentId) throw new Error('Message actor is not scoped to an active run');
+    if (run.agent_id !== agentId) throw new ConflictError('Message actor is not scoped to an active run');
     // A run that already ended has no live recipient; keep the legacy event-only answer.
     if (!['claimed', 'in_progress'].includes(run.state)) return null;
     const request = db.prepare(`SELECT request_id, message_id, state, response FROM input_requests WHERE run_id = ?
       ${requestId ? 'AND request_id = ?' : ''} ORDER BY created_at DESC, rowid DESC LIMIT 1`)
       .get(...(requestId ? [runId, requestId] : [runId])) as { request_id: string; message_id: string | null; state: string; response: string | null } | undefined;
     if (!request) {
-      if (requestId && db.prepare('SELECT 1 FROM input_requests WHERE run_id = ?').get(runId)) throw new Error('Input request is not pending for this run');
+      if (requestId && db.prepare('SELECT 1 FROM input_requests WHERE run_id = ?').get(runId)) throw new ConflictError('Input request is not pending for this run');
       return null;
     }
     if (!authority.trustedMaster) {
       const master = authority.sessionId ? runningSession(db, 'master', null) : null;
-      if (!master || master.session_id !== authority.sessionId) throw new Error('Input response requires a running master session');
+      if (!master || master.session_id !== authority.sessionId) throw new ConflictError('Input response requires a running master session');
     }
     if (request.state === 'answered') {
-      if (request.response !== response) throw new Error('Input request already has a different response');
+      if (request.response !== response) throw new ConflictError('Input request already has a different response');
       const existing = db.prepare('SELECT message_id FROM messages WHERE idempotency_key = ?')
         .get(`input-response:${request.request_id}`) as { message_id: string } | undefined;
       return existing?.message_id ?? null;
     }
-    if (request.state !== 'pending') throw new Error('Input request is not pending for this run');
+    if (request.state !== 'pending') throw new ConflictError('Input request is not pending for this run');
     const recipient = runningSession(db, agentId, runId);
     const id = `msg-${randomUUID()}`;
     db.prepare(`INSERT INTO messages

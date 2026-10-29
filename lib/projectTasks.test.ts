@@ -15,6 +15,8 @@ import { ProjectRegistry } from './projectRegistry.ts';
 import { readBacklog, readClaims } from './stateReader.ts';
 import { handleCreateTask, handleGetTask, handleUpdateTask } from '../mcp/handlers.ts';
 import { runProjectCommand } from '../cli/project.ts';
+import { runProjectCommandRouted } from '../cli/project.ts';
+import { startControlServer } from './controlServer.ts';
 
 let dir: string;
 
@@ -145,6 +147,27 @@ describe('MCP task tools in a project state directory', () => {
 });
 
 describe('orc project task', () => {
+  it('authors through a live coordinator using the same CLI arguments', async () => {
+    const repo = join(dir, 'routed-product');
+    mkdirSync(repo);
+    execFileSync('git', ['init', '-q', repo]);
+    const registry = new ProjectRegistry(join(dir, 'routed-data'));
+    try {
+      const project = runProjectCommand(['add', realpathSync(repo)], registry) as { id: string; stateDir: string };
+      const server = await startControlServer(project.stateDir);
+      try {
+        const flag = `--project=${project.id}`;
+        await expect(runProjectCommandRouted(['task', 'create', '--feature=app', '--title=Routed task', flag], registry))
+          .resolves.toMatchObject({ ref: 'app/routed-task', spec_revision: 1 });
+        await expect(runProjectCommandRouted(['task', 'edit', 'app/routed-task', '--expected-revision=1', '--priority=high', flag], registry))
+          .resolves.toMatchObject({ ref: 'app/routed-task', spec_revision: 2, priority: 'high' });
+      } finally {
+        await server.close();
+      }
+    } finally {
+      registry.close();
+    }
+  });
   it('creates and edits tasks of the selected registered project from an external Markdown file', () => {
     const repo = join(dir, 'product');
     mkdirSync(repo);

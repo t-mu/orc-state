@@ -32,13 +32,15 @@ import { isSupportedProvider } from '../lib/providers.ts';
 import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration } from '../lib/taskAuthority.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { createProjectTask, projectTaskStoreFor } from '../lib/projectTasks.ts';
+import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 import type { Task } from '../types/backlog.ts';
 import { cliError } from './shared.ts';
 
 const featureRef = flag('feature');
 const title = flag('title');
 const taskType = flag('task-type') ?? 'implementation';
-const actorId = flag('actor-id') ?? 'human';
+const requestedActorId = flag('actor-id');
+const actorId = requestedActorId ?? 'human';
 
 if (!featureRef || !title) {
   console.error('Usage: orc task-create --feature=<ref> --title=<text> [options]');
@@ -97,7 +99,7 @@ if (projectTaskStoreFor(STATE_DIR)) {
     const bodyFile = flag('body-file');
     const acceptanceCriteria = flagAll('ac');
     const dependsOn = flagAll('depends-on');
-    const task = createProjectTask(STATE_DIR, {
+    const input = {
       feature: featureRef, title, ref: taskSlug, task_type: taskType,
       description: flag('description'),
       ...(bodyFile ? { body_markdown: readFileSync(resolve(bodyFile), 'utf8') } : {}),
@@ -106,7 +108,12 @@ if (projectTaskStoreFor(STATE_DIR)) {
       ...(requiredCapabilities.length > 0 ? { required_capabilities: requiredCapabilities } : {}),
       ...(requiredProvider ? { required_provider: requiredProvider } : {}),
       ...(owner ? { owner } : {}),
-    }, actorId);
+    };
+    const task = ACTIVE_PROJECT
+      ? await submitProjectWrite(STATE_DIR, 'task create', requestedActorId ?? undefined,
+        async (client) => { const created = (await client.createTask(input, requestedActorId ?? undefined)).task; return { ref: String(created.ref), revision: Number(created.spec_revision) }; },
+        (actor) => { const created = createProjectTask(STATE_DIR, input, actor); return { ref: created.ref, revision: created.revision }; })
+      : createProjectTask(STATE_DIR, input, actorId);
     console.log(`task created: ${task.ref} (revision ${task.revision})${ACTIVE_PROJECT ? ` in project ${ACTIVE_PROJECT.name} (${ACTIVE_PROJECT.id})` : ''}`);
   } catch (err) {
     cliError(err);

@@ -8,6 +8,7 @@ import { createProjectTask, describeProjectTask, initProjectTaskStore, revisePro
 import { migrateLegacyInstallation, migrationCleanupReport } from '../lib/projectMigration.ts';
 import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
+import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 
 function option(args: string[], name: string): string | undefined {
   const prefixed = args.find((arg) => arg.startsWith(`--${name}=`));
@@ -164,11 +165,43 @@ export function runProjectCommand(args: string[], registry: ProjectRegistry, env
   usage();
 }
 
+/** The CLI's project task writes use the daemon whenever it owns the project. */
+export async function runProjectCommandRouted(args: string[], registry: ProjectRegistry, env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): Promise<unknown> {
+  const [action, ...rest] = args;
+  if (action !== 'task') return runProjectCommand(args, registry, env, cwd);
+  const [verb, ...flags] = rest;
+  if (!['create', 'edit', 'import'].includes(verb)) return runProjectCommand(args, registry, env, cwd);
+  const stateDir = registry.resolve({ explicitProjectId: option(flags, 'project') ?? null, env, cwd }).stateDir;
+  const actorId = option(flags, 'actor-id');
+  if (verb === 'create') {
+    if (positionals(flags).length !== 0) usage();
+    const input = taskInput(flags, [...Object.keys(TASK_FIELD_FLAGS), 'body-file', 'depends-on', 'ac', 'project', 'actor-id']);
+    return submitProjectWrite<unknown>(stateDir, 'task create', actorId,
+      async (client) => (await client.createTask(input, actorId)).task,
+      (actor) => describeProjectTask(createProjectTask(stateDir, input, actor)));
+  }
+  const values = positionals(flags);
+  if (values.length !== 1) usage();
+  if (verb === 'import') {
+    if (flags.some((arg) => arg.startsWith('--') && arg !== '--strict' && !/^--(project|actor-id)=/.test(arg))) usage();
+    return submitProjectWrite<unknown>(stateDir, 'task import', actorId,
+      (client) => client.importTasks(resolve(values[0]), flags.includes('--strict'), actorId),
+      (actor) => importTaskMarkdown(stateDir, values[0], { strict: flags.includes('--strict'), actorId: actor }));
+  }
+  const expected = option(flags, 'expected-revision');
+  const input = taskInput(flags, [...Object.keys(TASK_FIELD_FLAGS).filter((flag) => !['feature', 'ref', 'owner'].includes(flag)),
+    'body-file', 'depends-on', 'ac', 'project', 'actor-id', 'expected-revision']);
+  if (expected === undefined) throw new Error('expected_revision is required for project task edits');
+  return submitProjectWrite<unknown>(stateDir, 'task edit', actorId,
+    async (client) => { const result = await client.reviseTask(values[0], Number(expected), input, actorId); return { ...result.task, changed: result.changed }; },
+    (actor) => { const result = reviseProjectTask(stateDir, values[0], Number(expected), input, actor); return { ...describeProjectTask(result.task), changed: result.changed }; });
+}
+
 if (isMainModule(process.argv[1], import.meta.url)) {
   let registry: ProjectRegistry | undefined;
   try {
     registry = new ProjectRegistry();
-    const result = runProjectCommand(process.argv.slice(2), registry);
+    const result = await runProjectCommandRouted(process.argv.slice(2), registry);
     console.log(JSON.stringify(result, null, 2));
     // A migration that was refused or failed verification changed nothing it would cut over.
     const status = (result as { status?: unknown } | null)?.status;

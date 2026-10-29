@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,7 +9,7 @@ import { appendSequencedEvent, closeAllDatabases, initEventsDb, withEventDb, wit
 import { commitClaims } from './runStore.ts';
 import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
 import { ControlClient, type EventRow } from './controlClient.ts';
-import { CONTROL_ENDPOINT_FILE, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, defaultSocketPath } from './controlProtocol.ts';
+import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, PROTOCOL_HEADER, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
 import { credentialHash } from './sessionCredentials.ts';
@@ -133,6 +133,34 @@ describe('local daemon control API', () => {
     // A worker reads its own task through its envelope, not the project's task list.
     await expect(new ControlClient(dir, { credential: 'secret-a' }).listTasks()).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);
+  });
+
+  it('lets an operator author and import project tasks while refusing worker and bearer-only callers', async () => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    initProjectTaskStore(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare('UPDATE sessions SET credential_hash = ? WHERE session_id = ?').run(credentialHash('secret-a'), 'session-a');
+    });
+    const operatorClient = new ControlClient(dir);
+    const created = await operatorClient.createTask({ feature: 'app', title: 'Operator task' });
+    expect(created.task).toMatchObject({ ref: 'app/operator-task', spec_revision: 1 });
+    expect(await operatorClient.reviseTask('app/operator-task', 1, { priority: 'high' })).toMatchObject({ changed: true });
+    const importPath = join(dir, 'import.md');
+    writeFileSync(importPath, '---\nref: app/imported-task\nfeature: app\ntitle: Imported task\n---\n\n# Imported task\n');
+    expect(await operatorClient.importTasks(importPath)).toMatchObject({ imported: [expect.objectContaining({ ref: 'app/imported-task' })] });
+    await expect(new ControlClient(dir, { credential: 'secret-a' }).importTasks(importPath)).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    const headers = { authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8')}`, [PROTOCOL_HEADER]: String(CONTROL_PROTOCOL_VERSION) };
+    expect((await rawGet(headers, '/v1/tasks')).status).toBe(401);
+  });
+
+  it('returns 500 for an unexpected lifecycle failure', async () => {
+    // A directory where the memory database belongs causes an unexpected storage failure.
+    mkdirSync(join(dir, 'memory.db'));
+    await expect(new ControlClient(dir, { credential: 'session-a' }).lifecycle({ op: 'memory-record', content: 'note' }))
+      .rejects.toMatchObject({ code: 'internal', status: 500 });
   });
 
   it('routes a cross-provider review and result durably through session mailboxes', async () => {
