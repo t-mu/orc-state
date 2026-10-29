@@ -60,9 +60,14 @@ function asToolError(message: unknown) {
   };
 }
 
-function isExpectedToolError(err: unknown) {
+/**
+ * A refusal the agent can act on: the coordinator's errors, task input and revision conflicts, lifecycle
+ * rules. A system or SQLite failure, or a programming error, is internal; its stack goes to stderr.
+ */
+export function isExpectedToolError(err: unknown) {
   if (!(err instanceof Error)) return false;
-  return /(Invalid|required|not found|already exists|cannot execute|must be|Unknown tool)/i.test(err.message);
+  if ('errno' in err || err.name === 'SqliteError') return false;
+  return !(err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError || err instanceof SyntaxError);
 }
 
 export function validateToolArguments(name: string, args: Record<string, unknown> = {}) {
@@ -202,6 +207,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (isExpectedToolError(err)) {
       return asToolError((err as Error).message);
     }
+    process.stderr.write(`[orc-mcp] ${name} failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
     throw new McpError(ErrorCode.InternalError, 'Internal MCP tool execution failure');
   }
 });

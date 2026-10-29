@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { TOOLS } from './tools-list.ts';
-import { invokeTool, readResource, validateToolArguments } from './server.ts';
+import { invokeTool, isExpectedToolError, readResource, validateToolArguments } from './server.ts';
+import { ControlError } from '../lib/controlProtocol.ts';
+import { RevisionConflictError } from '../lib/projectTaskStore.ts';
 
 let stateDir: string;
 
@@ -60,6 +62,16 @@ describe('orchestrator mcp server foundation', () => {
     const tasks = invokeTool(stateDir, 'list_tasks', {});
     expect(Array.isArray(tasks)).toBe(true);
     expect(() => invokeTool(stateDir, 'unknown_tool', {})).toThrow(/Unknown tool/);
+  });
+
+  it('passes refusals the agent can act on through, and keeps system failures internal', () => {
+    expect(isExpectedToolError(new ControlError('unavailable', 'The coordinator (pid 1) is running but its control API is not answering; retry', 503))).toBe(true);
+    expect(isExpectedToolError(new ControlError('forbidden', 'Only the master session or an operator may send operator mutations', 403))).toBe(true);
+    expect(isExpectedToolError(new RevisionConflictError('orch/t', 3, 4))).toBe(true);
+    expect(isExpectedToolError(new Error('Input request is not pending for this run'))).toBe(true);
+    expect(isExpectedToolError(Object.assign(new Error('ENOENT: no such file'), { errno: -2, code: 'ENOENT' }))).toBe(false);
+    expect(isExpectedToolError(new TypeError('x is undefined'))).toBe(false);
+    expect(isExpectedToolError('boom')).toBe(false);
   });
 
   it('reads supported resources and throws for unknown resource uri', () => {
