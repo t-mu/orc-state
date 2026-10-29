@@ -17,6 +17,8 @@ argument-hint: "[plan <id>] | [optional: override feature name]"
 
 # Spec
 
+**Legacy installations only.** In a registered project (`get_status` shows a project) the `plan_write`, `spec_preview` and `spec_publish` tools refuse: a project never registers Markdown. Create tasks there with `create_task` (`body_markdown`) or `orc project task import`, and plans with `orc project plan import`.
+
 <!-- $ARGUMENTS: may contain `plan <id>` to select a saved plan, or an optional
      feature-override string. If blank, use the conversational fallback. -->
 $ARGUMENTS

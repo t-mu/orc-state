@@ -207,7 +207,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`), unique among currently-active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
 5. Task completion: coordinator calls `orc task-mark-done <task-ref>` after merge; task status is runtime-owned and no spec is edited
 6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
-7. Normal inspection: `orc status`, `orc doctor`, `orc backlog-sync-check`
+7. Normal inspection: `orc status`, `orc doctor` (and, in a legacy installation only, `orc backlog-sync-check`)
 8. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
 
 Outside the blessed workflow, commands are for observability, setup, or recovery only — not the default path.
@@ -235,7 +235,7 @@ orc start-session                                 # start coordinator + master s
 orc kill-all                                      # ⚠️ stop coordinator + clear ALL agents; use only to fully reset
 
 # Task management
-orc task-create                                   # register a task that already has a matching markdown spec
+orc task-create                                   # project: create a task in SQLite (prefer orc project task create); legacy: register a matching markdown spec (recovery)
 orc task-mark-done <task-ref>                     # coordinator-only: mark shared runtime state done after merge
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
@@ -304,7 +304,9 @@ Normal task-authoring path:
 
 ### Artifact directories
 
-The repo has two first-class artifact directories:
+In a legacy installation the repo has two first-class artifact directories (a
+registered project keeps tasks and plans in its SQLite store and imports or
+exports Markdown explicitly with `orc project task|plan import|export`):
 
 - `backlog/` — task specs. Each task is `backlog/<N>-<slug>.md` and drives the
   coordinator's task lifecycle.
@@ -318,7 +320,10 @@ The repo has two first-class artifact directories:
 ### Lifecycle verbs
 
 Lifecycle verbs are agent-agnostic MCP-backed workflows any caller (master,
-worker, automation) can invoke from inside a fresh worktree. They author and
+worker, automation) can invoke from inside a fresh worktree. They serve legacy
+installations only: a registered project refuses `plan_write`, `spec_preview`
+and `spec_publish`, because it never registers Markdown — author tasks there
+with `create_task` (`body_markdown`) or `orc project task import`. They author and
 publish artifacts under `plans/` and `backlog/`. Each verb pairs a skill
 (prompt/UI surface) with one or more MCP tools (engine + state contract):
 

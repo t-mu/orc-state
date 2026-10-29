@@ -287,7 +287,7 @@ export const TOOLS = [
   },
   {
     name: 'cancel_task',
-    description: 'Cancel a task regardless of current non-terminal state. Blocks the task; active runs are cancelled and removed.',
+    description: 'Cancel a task regardless of current non-terminal state. In a registered project the task becomes cancelled; a legacy installation records it as blocked (with blocked_reason). Active runs are cancelled and removed. A done, released or cancelled task returns { error: "already_terminal", task_ref, status } as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -409,7 +409,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Actor performing the reset (default: human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
+          description: 'Actor performing the reset. Defaults to human in a legacy installation and to the master agent in a registered project (where orc task-reset records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -441,7 +441,7 @@ export const TOOLS = [
   },
   {
     name: 'plan_write',
-    description: 'Persist a fully-specified plan artifact to plans/<plan_id>-<slug>.md within the current worktree. Allocates the next plan_id atomically, validates all required sections, writes derived_task_refs: [] on fresh plans, and rejects unresolved placeholders. Does NOT touch .orc-state/backlog.json, git, or any file outside the worktree. If the derived name collides with an existing backlog feature ref, the call fails unless acknowledge_feature_collision is true — pass true only when the new plan genuinely belongs to the same feature, per the /plan skill disambiguation flow.',
+    description: 'Legacy installations only (refused in a registered project; use create_task there). Persist a fully-specified plan artifact to plans/<plan_id>-<slug>.md within the current worktree. Allocates the next plan_id atomically, validates all required sections, writes derived_task_refs: [] on fresh plans, and rejects unresolved placeholders. Does NOT touch .orc-state/backlog.json, git, or any file outside the worktree. If the derived name collides with an existing backlog feature ref, the call fails unless acknowledge_feature_collision is true — pass true only when the new plan genuinely belongs to the same feature, per the /plan skill disambiguation flow.',
     inputSchema: {
       type: 'object',
       required: ['name', 'title', 'objective', 'scope', 'out_of_scope', 'constraints', 'affected_areas', 'steps'],
@@ -619,7 +619,7 @@ export const TOOLS = [
   },
   {
     name: 'spec_preview',
-    description: 'Preview the backlog task specs that would be generated from a saved plan artifact. Pure read — no files are written and no state is mutated. Pairs with spec_publish. Pass worktree_path to target a specific worktree; otherwise plans/ and backlog/ resolve relative to the MCP server\'s current repo root.',
+    description: 'Legacy installations only (refused in a registered project; use create_task there). Preview the backlog task specs that would be generated from a saved plan artifact. Pure read — no files are written and no state is mutated. Pairs with spec_publish. Pass worktree_path to target a specific worktree; otherwise plans/ and backlog/ resolve relative to the MCP server\'s current repo root.',
     inputSchema: {
       type: 'object',
       required: ['plan_id'],
@@ -639,7 +639,7 @@ export const TOOLS = [
   },
   {
     name: 'spec_publish',
-    description: 'Publish a saved plan into backlog task specs inside the invoking agent\'s worktree. Stages files under <state_dir>/plan-staging/<plan_id>/ as a concurrency lock, writes specs to <worktree>/backlog/, and updates the plan file with derived_task_refs. Does not touch .orc-state/backlog.json or git — the caller is responsible for commit + merge. Hard-fails if confirm !== true, if derived_task_refs is already non-empty, or if the staging directory already exists. Pass worktree_path to target a specific worktree.',
+    description: 'Legacy installations only (refused in a registered project; use create_task there). Publish a saved plan into backlog task specs inside the invoking agent\'s worktree. Stages files under <state_dir>/plan-staging/<plan_id>/ as a concurrency lock, writes specs to <worktree>/backlog/, and updates the plan file with derived_task_refs. Does not touch .orc-state/backlog.json or git — the caller is responsible for commit + merge. Hard-fails if confirm !== true, if derived_task_refs is already non-empty, or if the staging directory already exists. Pass worktree_path to target a specific worktree.',
     inputSchema: {
       type: 'object',
       required: ['plan_id', 'confirm'],

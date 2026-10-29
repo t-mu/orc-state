@@ -35,7 +35,7 @@ Normal workflow:
 3. a legacy coordinator registers new `todo` spec definitions on each tick; task status is runtime-owned and never read from or written to a spec
 4. `orc delegate`
 5. worker lifecycle via `run-start` -> `run-work-complete` -> `run-finish`
-6. inspect with `orc status` / `orc doctor`; `orc backlog-sync-check` is available ad-hoc if you want to double-check state
+6. inspect with `orc status` / `orc doctor`; in a legacy installation `orc backlog-sync-check` is available ad-hoc if you want to double-check state (a registered project refuses it)
 
 Outside the blessed workflow, use only:
 
@@ -89,8 +89,8 @@ These commands are for observability. They are supported, but they are not alter
 | `task-mark-done` | `orc task-mark-done <feature/task>` | Mark a task done in runtime state (the coordinator does this after merge). No spec is edited; status is runtime-owned. |
 | `task-reset` | `orc task-reset <feature/task>` | Reset a task to `todo`, cancelling any active claim. Use when a blocked or stuck task needs another attempt. |
 | `task-unblock` | `orc task-unblock <feature/task>` | Transition a blocked task back to `todo`. |
-| `backlog-sync` | `orc backlog-sync` | Legacy installations: register spec definitions (new `todo` specs, titles, dependencies) into runtime state. Never changes status; lists unregistered non-todo specs as skipped. |
-| `backlog-sync-check` | `orc backlog-sync-check` | Legacy installations: validate that todo specs are registered and titles/features match (status is not compared). Ad-hoc only — not part of the task-creation flow. |
+| `backlog-sync` | `orc backlog-sync` | Legacy installations (refused in a project): register spec definitions (new `todo` specs, titles, dependencies) into runtime state. Never changes status; lists unregistered non-todo specs as skipped. |
+| `backlog-sync-check` | `orc backlog-sync-check` | Legacy installations (refused in a project): validate that todo specs are registered and titles/features match (status is not compared). Ad-hoc only — not part of the task-creation flow. |
 | `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
 
 ### Run Lifecycle (Worker Commands)
@@ -109,6 +109,8 @@ Workers emit these from inside their PTY session via Bash tool. In a registered 
 
 Agent-agnostic workflows for authoring plans and backlog tasks. Any caller
 may invoke them from inside a fresh worktree — they have no master affinity.
+Legacy installations only: a registered project refuses these tools (use
+`create_task` with `body_markdown` or `orc project task import`).
 See the individual skills for the full flow.
 
 | MCP tool | Skill | Purpose |

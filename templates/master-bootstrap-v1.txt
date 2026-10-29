@@ -74,7 +74,7 @@ get_notifications(after_seq?)
 WRITE STATE
 
 create_task(title, feature?, ref?, task_type?, priority?, required_provider?, required_capabilities?, model?, owner?, actor_id?)
-  Registers a task in the runtime dispatch backlog (state/backlog.json).
+  Registers a task for dispatch (a legacy installation's state/backlog.json).
   title is the only required field. feature defaults to "general".
   ref: explicit slug matching the markdown spec filename.
   In a registered project, this creates the task in project SQLite with no
@@ -126,6 +126,7 @@ reset_task(task_ref, actor_id?)
 LIFECYCLE VERBS
 
 plan_write(name, title, objective, scope, out_of_scope, constraints, affected_areas, steps, acknowledge_feature_collision?)
+  Legacy installations only — refused in a registered project (use create_task).
   Persist a fully-specified plan artifact at plans/<plan_id>-<slug>.md within
   the current worktree. Allocates plan_id atomically via nextPlanId(), validates
   every required section (placeholders rejected, round-trips through parsePlan),
@@ -201,10 +202,13 @@ memory_status()
 LIFECYCLE VERBS
 
 spec_preview(plan_id)
+  Legacy installations only — refused in a registered project.
   Preview the backlog task specs that would be generated from plans/<plan_id>-*.md.
   Pure read — no files written, no state mutated. Pairs with spec_publish.
 
 spec_publish(plan_id, confirm)
+  Legacy installations only — refused in a registered project (a project never
+  registers Markdown specs; use create_task with body_markdown).
   Publish a saved plan into backlog task specs inside the invoking agent's worktree.
   Stages under .orc-state/plan-staging/<plan_id>/ as a concurrency lock, writes specs
   to backlog/, and updates the plan file with derived_task_refs.
@@ -219,7 +223,7 @@ Planning new work:
    spec to backlog/<N>-<slug>.md following the template (create-task skill or
    the file directly; get_status().next_task_seq gives the next number).
 2. A legacy coordinator registers new todo specs on each tick — no manual
-   registration needed (`orc backlog-sync-check` verifies). Task status is
+   registration needed (`orc backlog-sync-check` verifies, legacy only). Task status is
    runtime-owned everywhere: never edit a spec's status: field; use
    reset_task / cancel_task and the run lifecycle.
    When creating tasks, assess complexity and set an appropriate model via
@@ -274,13 +278,14 @@ Master worktree workflow (for user-given tasks involving file changes):
   git -C <main-repo> branch -d master/<slug>
 
 Worker worktree workflow (for backlog tasks):
-  The coordinator launches each worker inside the assigned .worktrees/<run_id>
-  checkout. Workers commit/review/verify/rebase there, emit orc run-work-complete
+  The coordinator launches each worker inside its assigned worktree (the
+  assigned_worktree in TASK_START; a project keeps them under its state
+  directory, a legacy installation under .worktrees/<run_id>). Workers commit/review/verify/rebase there, emit orc run-work-complete
   as the ready-for-finalization handoff, and do not merge to main or clean up
   the worktree/branch themselves.
 
-All file changes — including task spec files (backlog/*.md) — must go
-through a worktree. Read-only operations (status checks, log inspection,
+All file changes — including a legacy installation's task spec files
+(backlog/*.md) — must go through a worktree. Read-only operations (status checks, log inspection,
 running orc commands) are the only exception.
 
 Recovery / debug paths:
@@ -291,8 +296,9 @@ Recovery / debug paths:
 Those paths are supported, but they are not part of the normal agent workflow.
 
 Backlog tasks must never be self-executed. If the user requests work that
-belongs in the backlog, write a spec in a worktree, register it, and delegate
-to a worker.
+belongs in the backlog, create it (create_task with body_markdown in a
+registered project; a spec written in a worktree in a legacy installation)
+and delegate to a worker.
 
 INVARIANTS
 
