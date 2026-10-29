@@ -24,7 +24,7 @@
   "definitions": {
     "TaskStatus": {
       "type": "string",
-      "enum": ["todo", "claimed", "in_progress", "blocked", "done", "released"],
+      "enum": ["todo", "claimed", "in_progress", "blocked", "done", "released", "cancelled"],
       "description": "Lifecycle state of a task. 'released' is final and immutable."
     },
     "TaskRef": {
