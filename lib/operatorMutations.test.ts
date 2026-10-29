@@ -154,15 +154,26 @@ describe('master and operator mutations through the coordinator (task 232)', () 
 
   it('the master MCP tools act as the master, and respond_input needs its session', async () => {
     // A master tool's actor_id is ignored in a project: the master acts as itself.
-    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo', actor_id: 'human' }, { project: 'p', masterSession: 'session-master' }))
+    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo', actor_id: 'human' }, { project: 'p', credential: 'session-master' }))
       .resolves.toMatchObject({ reset: true });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
-    expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { project: 'p', masterSession: null }))
+    expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { project: 'p', credential: null }))
       .toThrow('respond_input needs the master session');
   });
 
+  it('an MCP server inside a worker session presents it and is refused, not promoted to the operator', async () => {
+    const before = status('orch/todo');
+    await expect(invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo' }, { project: 'p', credential: 'session-a' }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo' }, { project: 'p', credential: 'session-a' }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    expect(status('orch/todo')).toBe(before);
+    expect(() => invokeTool(dir, 'request_scout', { objective: 'look around' }, { project: 'p', credential: 'session-a' }))
+      .toThrow(expect.objectContaining({ code: 'forbidden' }));
+  });
+
   it('the master MCP tools are routed to the coordinator in a project', async () => {
-    const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', masterSession: 'session-master' });
+    const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', credential: 'session-master' });
     expect(result).toMatchObject({ cancelled: true, status: 'blocked' });
     expect(queryEvents(dir, { event_type: 'task_cancelled' }).at(-1)).toMatchObject({ actor_id: 'master' });
   });

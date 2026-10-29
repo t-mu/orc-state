@@ -15,7 +15,7 @@ import {
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
 import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
-import { masterActorId, type OperatorOp } from '../lib/operatorMutations.ts';
+import { masterActorId, masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import * as handlers from './handlers.ts';
@@ -79,25 +79,21 @@ export function validateToolArguments(name: string, args: Record<string, unknown
 
 let warnedWithoutMasterSession = false;
 
-/** The master's secret, unless the provider passed the config's `${ORC_MASTER_SECRET}` reference through unexpanded. */
-function masterSecretFromEnv(): string | null {
-  return clientCredential({ ORC_MASTER_SECRET: process.env.ORC_MASTER_SECRET });
-}
-
 /** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */
 const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
   cancel_task: 'cancel-task', reset_task: 'reset-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
 };
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
-  { project = ACTIVE_PROJECT, masterSession = masterSecretFromEnv() }: { project?: unknown; masterSession?: string | null } = {}) {
+  { project = ACTIVE_PROJECT, credential = clientCredential(process.env) }: { project?: unknown; credential?: string | null } = {}) {
   const op = OPERATOR_TOOLS[name];
   if (op && project) {
-    // The master's session credential (from start-session) proves the caller, and the master always acts as
-    // itself. Without one the MCP server acts as the operator, still recorded as the master, and says so once.
-    if (masterSession) {
+    // The server presents the session it runs in: the master's (from start-session) acts as the master,
+    // and a worker's is refused like its shell. Without one it acts as the operator, still recorded as
+    // the master, and says so once.
+    if (credential) {
       const { actor_id: _ignored, ...own } = args;
-      return submitOperatorMutation({ op, ...own }, { credential: masterSession, project, stateDir });
+      return submitOperatorMutation({ op, ...own }, { credential, project, stateDir });
     }
     if (op === 'respond-input') {
       throw new Error('respond_input needs the master session in a registered project (ORC_MASTER_SECRET, set by orc start-session); restart the master with orc start-session');
@@ -108,6 +104,10 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     }
     return submitOperatorMutation({ op, ...args, ...(args.actor_id !== undefined ? {} : { actor_id: masterActorId(stateDir) }) },
       { credential: null, project, stateDir });
+  }
+  if (name === 'request_scout' && project && credential) {
+    // Only the master's session may launch scouts; it acts as itself.
+    return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential) });
   }
   switch (name) {
     case 'list_tasks':
