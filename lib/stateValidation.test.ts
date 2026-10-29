@@ -74,7 +74,7 @@ describe('validateBacklog', () => {
   });
 
   it('accepts all valid task statuses', () => {
-    for (const status of ['todo', 'claimed', 'in_progress', 'blocked', 'done', 'released']) {
+    for (const status of ['todo', 'claimed', 'in_progress', 'blocked', 'done', 'released', 'cancelled']) {
       const data = { version: '1', features: [validFeature({ tasks: [validTask({ status })] })] };
       expect(validateBacklog(data)).toEqual([]);
     }

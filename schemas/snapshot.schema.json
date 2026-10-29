@@ -40,7 +40,7 @@
       "description": "Keyed by task_ref. Current status of every known task.",
       "additionalProperties": {
         "type": "string",
-        "enum": ["todo", "claimed", "in_progress", "blocked", "done", "released"]
+        "enum": ["todo", "claimed", "in_progress", "blocked", "done", "released", "cancelled"]
       }
     }
   },
