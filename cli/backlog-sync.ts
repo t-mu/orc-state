@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
 import { formatErrorMessage } from './shared.ts';
-import { formatSkippedSpecs } from './backlog-sync-check.ts';
+import { exitIfProject, formatSkippedSpecs } from './backlog-sync-check.ts';
 
 export function formatBacklogRepairResult(result: {
   updated: boolean;
@@ -34,6 +34,7 @@ export function formatBacklogRepairResult(result: {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  exitIfProject('orc backlog-sync');
   try {
     const result = syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);
     console.log(formatBacklogRepairResult(result));

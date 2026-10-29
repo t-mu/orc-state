@@ -28,6 +28,13 @@ describe('cli/orc.ts', () => {
     expect(result.stdout.indexOf('Blessed workflow commands:')).toBeLessThan(result.stdout.indexOf('Recovery / debug commands:'));
     expect(result.stdout.indexOf('Recovery / debug commands:')).toBeLessThan(result.stdout.indexOf('Supported inspection commands:'));
     expect(result.stdout.indexOf('Supported inspection commands:')).toBeLessThan(result.stdout.indexOf('Advanced / specialized commands:'));
+    // The blessed set is what AGENTS.md tells agents to use; coordinator-only and Markdown commands are not in it.
+    const section = (title: string) => result.stdout.split(`${title}\n`)[1].split('\n\n')[0].split('\n').map((line) => line.trim());
+    expect(section('Blessed workflow commands:')).toEqual(expect.arrayContaining(['project', 'progress', 'review-submit', 'review-read', 'run-input-request']));
+    expect(section('Blessed workflow commands:')).not.toContain('task-mark-done');
+    expect(section('Blessed workflow commands:')).not.toContain('backlog-sync-check');
+    expect(section('Recovery / debug commands:')).toContain('task-mark-done');
+    expect(section('Legacy installations only:')).toEqual(['backlog-sync', 'backlog-sync-check', 'backlog-orient', 'feature-create']);
   });
 
   it('prints the package version for --version and -v', () => {

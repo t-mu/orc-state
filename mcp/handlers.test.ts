@@ -1826,6 +1826,15 @@ describe('memory handlers', () => {
   });
 });
 
+describe('the /plan and /spec verbs in a registered project', () => {
+  it('refuse instead of writing Markdown the project never registers', async () => {
+    writeFileSync(join(dir, 'runtime.db'), '');
+    await expect(handlePlanWrite(dir, { name: 'x' })).rejects.toThrow(/plan_write is legacy-only.*create_task/);
+    expect(() => handleSpecPreview(dir, { plan_id: 1 })).toThrow(/spec_preview is legacy-only/);
+    expect(() => handleSpecPublish(dir, { plan_id: 1, confirm: true })).toThrow(/spec_publish is legacy-only/);
+  });
+});
+
 describe('handlePlanWrite', () => {
   function validArgs(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
