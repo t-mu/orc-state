@@ -1,4 +1,4 @@
-export type SnapshotTaskStatus = 'todo' | 'claimed' | 'in_progress' | 'blocked' | 'done' | 'released';
+export type SnapshotTaskStatus = 'todo' | 'claimed' | 'in_progress' | 'blocked' | 'done' | 'released' | 'cancelled';
 
 export interface AgentSummary {
   agent_id: string;
