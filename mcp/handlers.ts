@@ -967,6 +967,12 @@ export async function handlePlanWrite(stateDir: string, args: Record<string, unk
   }
 }
 
+/** "Not initialized" only when the state directory is missing; any other failure keeps its own text. */
+function memoryFailure(stateDir: string, err: unknown): string {
+  if (!existsSync(stateDir)) return 'memory system not initialized';
+  return `memory failed: ${err instanceof Error ? err.message : String(err)}`;
+}
+
 export function handleMemoryWakeUp(stateDir: string, args: Record<string, unknown> = {}) {
   const { wing, tokenBudget } = args;
   try {
@@ -975,8 +981,8 @@ export function handleMemoryWakeUp(stateDir: string, args: Record<string, unknow
       ...(typeof tokenBudget === 'number' ? { tokenBudget } : {}),
     });
     return { text };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -990,8 +996,8 @@ export function handleMemoryRecall(stateDir: string, args: Record<string, unknow
       ...(typeof limit === 'number' ? { limit } : {}),
     });
     return { drawers };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -1006,8 +1012,8 @@ export function handleMemorySearch(stateDir: string, args: Record<string, unknow
       ...(typeof limit === 'number' ? { limit } : {}),
     });
     return { results };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -1025,8 +1031,8 @@ export function handleMemoryStore(stateDir: string, args: Record<string, unknown
       ...(typeof sourceRef === 'string' ? { sourceRef } : {}),
     });
     return { id };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 
@@ -1034,8 +1040,8 @@ export function handleMemoryStatus(stateDir: string, _args: Record<string, unkno
   try {
     const stats = getMemoryStats(stateDir);
     return { stats };
-  } catch {
-    return { error: 'memory system not initialized' };
+  } catch (err) {
+    return { error: memoryFailure(stateDir, err) };
   }
 }
 

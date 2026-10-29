@@ -1810,6 +1810,10 @@ describe('memory handlers', () => {
     expect(result.stats.dbSizeBytes).toBeGreaterThan(0);
   });
 
+  it('a memory failure in an existing state directory reports its own cause', () => {
+    expect(handleMemorySearch(dir, { query: '"unbalanced' })).toEqual({ error: 'memory failed: unterminated string' });
+  });
+
   it('memory tools return graceful response when memory DB cannot be initialized', () => {
     const badDir = join(dir, 'nonexistent', 'subdir');
     // These four throw internally and return a structured error object

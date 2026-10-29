@@ -47,8 +47,11 @@ const TOOL_VALIDATORS = new Map(
   TOOLS.map((tool) => [tool.name, ajv.compile(tool.inputSchema)]),
 );
 
-function asToolResult(payload: unknown) {
+/** A payload that reports an `error` (cancel_task's already_terminal, a memory failure) is a tool error too. */
+export function asToolResult(payload: unknown) {
+  const failed = typeof payload === 'object' && payload !== null && typeof (payload as { error?: unknown }).error === 'string';
   return {
+    ...(failed ? { isError: true } : {}),
     content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
   };
 }

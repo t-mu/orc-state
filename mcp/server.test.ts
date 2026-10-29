@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { TOOLS } from './tools-list.ts';
-import { invokeTool, isExpectedToolError, readResource, validateToolArguments } from './server.ts';
+import { asToolResult, invokeTool, isExpectedToolError, readResource, validateToolArguments } from './server.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { RevisionConflictError } from '../lib/projectTaskStore.ts';
 
@@ -72,6 +72,13 @@ describe('orchestrator mcp server foundation', () => {
     expect(isExpectedToolError(Object.assign(new Error('ENOENT: no such file'), { errno: -2, code: 'ENOENT' }))).toBe(false);
     expect(isExpectedToolError(new TypeError('x is undefined'))).toBe(false);
     expect(isExpectedToolError('boom')).toBe(false);
+  });
+
+  it('marks a payload that reports an error as a tool error, keeping its fields', () => {
+    expect(asToolResult({ error: 'already_terminal', task_ref: 'orch/t', status: 'done' })).toMatchObject({ isError: true });
+    expect(JSON.parse(asToolResult({ error: 'already_terminal', task_ref: 'orch/t' }).content[0].text)).toEqual({ error: 'already_terminal', task_ref: 'orch/t' });
+    expect(asToolResult({ cancelled: true })).not.toHaveProperty('isError');
+    expect(asToolResult([{ error: 'x' }])).not.toHaveProperty('isError');
   });
 
   it('reads supported resources and throws for unknown resource uri', () => {
