@@ -119,10 +119,11 @@ export function createRuntimeRepo(): RuntimeRepo {
 
   // ── Claude Code workspace trust ────────────────────────────────────
   // Claude Code shows a workspace trust dialog for unknown directories.
-  // Pre-trust the temp repo by running `claude -p` in print mode (which
+  // Pre-trust the temp root by running `claude -p` in print mode (which
   // skips the trust dialog and creates the project entry in ~/.claude/projects/).
-  // This makes subsequent interactive sessions skip the trust dialog.
-  preTrustWorkspace(repoRoot);
+  // The root covers both the repo and the run worktrees under the data home,
+  // so subsequent interactive worker sessions skip the trust dialog.
+  preTrustWorkspace(root);
 
   return {
     root,
@@ -141,7 +142,7 @@ export function createRuntimeRepo(): RuntimeRepo {
     },
     cleanup() {
       // Clean up the trust entry so ~/.claude/projects/ doesn't accumulate stale entries.
-      const encoded = repoRoot.replace(/\//g, '-');
+      const encoded = root.replace(/\//g, '-');
       const projectDir = join(homedir(), '.claude', 'projects', encoded);
       rmSync(projectDir, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
@@ -160,10 +161,10 @@ export function createRuntimeRepo(): RuntimeRepo {
  * The CLAUDECODE nesting-detection env vars are stripped so this works
  * when called from inside a Claude Code session.
  */
-function preTrustWorkspace(repoRoot: string): void {
+function preTrustWorkspace(dir: string): void {
   const { CLAUDECODE: _1, CLAUDE_CODE_ENTRYPOINT: _2, CLAUDE_CODE_EXECPATH: _3, ...env } = process.env;
   spawnSync('claude', ['-p', 'ok'], {
-    cwd: repoRoot,
+    cwd: dir,
     env: env as NodeJS.ProcessEnv,
     encoding: 'utf8',
     timeout: 15_000,

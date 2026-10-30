@@ -5,7 +5,7 @@
  * These tests validate the harness code itself and do not require a real provider
  * CLI to be installed or authenticated.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -352,8 +352,8 @@ describe('createRuntimeRepo', () => {
 
 describe('buildRuntimeEnv', () => {
   it('selects the temp project and drops legacy path overrides', () => {
-    process.env.ORC_STATE_DIR = '/tmp/inherited-state';
-    process.env.ORC_REPO_ROOT = '/tmp/inherited-repo';
+    vi.stubEnv('ORC_STATE_DIR', '/tmp/inherited-state');
+    vi.stubEnv('ORC_REPO_ROOT', '/tmp/inherited-repo');
 
     try {
       const repo = createRuntimeRepo();
@@ -370,8 +370,7 @@ describe('buildRuntimeEnv', () => {
 
       assertPathsInside(repo.root, { ORC_DATA_HOME: env.ORC_DATA_HOME as string });
     } finally {
-      delete process.env.ORC_STATE_DIR;
-      delete process.env.ORC_REPO_ROOT;
+      vi.unstubAllEnvs();
     }
   });
 
