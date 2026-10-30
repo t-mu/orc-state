@@ -117,9 +117,10 @@ describe('App', () => {
     // Capacity summary is shown separately from the live worker list
     expect(frame).toContain('1/3 capacity');
     expect(frame).toContain('2 available');
-    // Scouts still rendered
-    expect(frame).toContain('scout-1');
-    expect(frame).toContain('[SCOUT]');
+    // Scouts are listed by id and state, not drawn as worker slots
+    expect(frame).toContain('Scouts (1)');
+    expect(frame).toMatch(/scout-1\s+running\s+attached/);
+    expect(frame).not.toContain('[SCOUT]');
   });
 
   it('refreshes status on the polling interval', async () => {

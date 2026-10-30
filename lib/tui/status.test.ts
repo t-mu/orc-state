@@ -185,12 +185,12 @@ describe('buildWorkerSlotViewModels — phases', () => {
     eventReadError: '',
   };
 
-  it('shows a scout by its agent status, with no slot classification', () => {
+  it('keeps scouts out of the worker slots', () => {
     const vms = buildWorkerSlotViewModels({
       ...baseStatus,
       scouts: [{ agent_id: 'scout-1', provider: 'claude', model: null, status: 'running', session_handle: 'pty:s', launched_at: null }],
     });
-    expect(vms[1]).toMatchObject({ slot_id: 'scout-1', role: 'scout', slot_state: 'running', run_state: null, sprite_state: 'work' });
+    expect(vms.map((vm) => vm.slot_id)).toEqual(['orc-1']);
   });
 
   it('returns empty phases array when no run is active', () => {

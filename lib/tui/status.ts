@@ -223,25 +223,6 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
     });
   }
 
-  // Scouts are ad-hoc sessions, shown by their agent status rather than as capacity.
-  for (const scout of status.scouts ?? []) {
-    viewModels.push({
-      slot_id: scout.agent_id,
-      role: 'scout',
-      provider: scout.provider ?? null,
-      model: scout.model ?? null,
-      slot_state: scout.status,
-      task_ref: null,
-      run_state: null,
-      current_phase: null,
-      phases: [],
-      age_seconds: null,
-      activity_seconds: null,
-      heartbeat_seconds: null,
-      sprite_state: scoutStatusToSpriteState(scout.status),
-    });
-  }
-
   return viewModels;
 }
 
@@ -249,11 +230,5 @@ export function runStateToSpriteState(runState: string | null | undefined): Spri
   if (runState === 'in_progress' || runState === 'claimed') return 'work';
   if (runState === 'done' || runState === 'released') return 'done';
   if (runState === 'blocked' || runState === 'failed') return 'fail';
-  return 'idle';
-}
-
-function scoutStatusToSpriteState(status: string | null | undefined): SpriteState {
-  if (status === 'running') return 'work';
-  if (status === 'offline' || status === 'dead') return 'fail';
   return 'idle';
 }

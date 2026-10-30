@@ -5,8 +5,8 @@ import type { SpriteMap } from './sprites.ts';
 import type { WorkerSlotViewModel } from './status.ts';
 
 export function WorkerSlot({ slot, sprites }: { slot: WorkerSlotViewModel; sprites: SpriteMap }) {
-  const roleColor = slot.role === 'scout' ? 'cyan' : slot.role === 'reviewer' ? 'magenta' : 'green';
-  const borderColor = slot.role === 'scout' ? 'cyan' : slot.role === 'reviewer' ? 'magenta' : 'green';
+  const roleColor = slot.role === 'reviewer' ? 'magenta' : 'green';
+  const borderColor = roleColor;
   const providerLabel = slot.provider ?? 'unknown';
   const modelLabel = slot.model ? ` ${slot.model}` : '';
 
@@ -18,7 +18,7 @@ export function WorkerSlot({ slot, sprites }: { slot: WorkerSlotViewModel; sprit
         <Text color={roleColor}>[{slot.role.toUpperCase()}]</Text>
       </Text>
       <Text dimColor>{providerLabel}{modelLabel}</Text>
-      <OrcSprite spriteState={slot.sprite_state} role={slot.role === 'scout' ? 'scout' : 'worker'} sprites={sprites} />
+      <OrcSprite spriteState={slot.sprite_state} role="worker" sprites={sprites} />
       <Text>{slot.task_ref ?? slot.slot_state}</Text>
       {slot.phases.length > 0 ? <PhaseWizard phases={slot.phases} /> : <Text dimColor>{slot.run_state ?? ''}</Text>}
       <Text dimColor>
