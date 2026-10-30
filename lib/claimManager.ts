@@ -1,6 +1,5 @@
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
-import { basename, join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
 import { DEFAULT_LEASE_MS } from './constants.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
@@ -10,7 +9,7 @@ import type { ClaimsState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
-import { writeRunRevisionSnapshot, writeRunTaskSnapshot } from './documentIndex.ts';
+import { writeRunRevisionSnapshot } from './documentIndex.ts';
 import { commitBacklog, projectTaskStoreFor, refreshBacklogProjection } from './projectTasks.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
@@ -51,10 +50,7 @@ export function claimTask(
   stateDir: string,
   taskRef: string,
   agentId: string,
-  { leaseDurationMs = DEFAULT_LEASE_MS,
-    docsDir = join(basename(stateDir) === '.orc-state' ? join(stateDir, '..') : stateDir, 'backlog'),
-    requireSpec = false }:
-    { leaseDurationMs?: number; docsDir?: string; requireSpec?: boolean } = {},
+  { leaseDurationMs = DEFAULT_LEASE_MS }: { leaseDurationMs?: number } = {},
 ): { run_id: string; lease_expires_at: string } {
   return withLock(lockPath(stateDir), () => {
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
@@ -77,15 +73,10 @@ export function claimTask(
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
     // A project task pins its latest SQLite revision; the worker receives that exact body.
     const projectStore = projectTaskStoreFor(stateDir);
-    // Older in-memory test states have no Markdown directory. Real orchestration
-    // roots do; a missing or invalid spec there must block a new claim.
-    if (!projectStore && requireSpec && !existsSync(docsDir)) throw new NotFoundError(`Markdown spec directory not found: ${docsDir}`);
     // Project SQLite verifies status and dependencies, records the claim and binds the run in one transaction.
     const revision = projectStore?.claimTask(taskRef, run_id, agentId);
     try {
-      let taskSpecSnapshot;
-      if (revision) taskSpecSnapshot = writeRunRevisionSnapshot(stateDir, run_id, revision);
-      else if (existsSync(docsDir)) taskSpecSnapshot = writeRunTaskSnapshot(stateDir, run_id, taskRef, docsDir);
+      const taskSpecSnapshot = revision ? writeRunRevisionSnapshot(stateDir, run_id, revision) : undefined;
 
       task.status = 'claimed';
 

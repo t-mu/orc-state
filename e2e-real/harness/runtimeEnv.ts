@@ -51,7 +51,6 @@ export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): Runtime
     ORC_STATE_DIR: repo.stateDir,
     ORC_REPO_ROOT: repo.repoRoot,
     ORC_WORKTREES_DIR: repo.worktreesDir,
-    ORC_BACKLOG_DIR: repo.backlogDir,
     ORC_CONFIG_FILE: configPath,
     ORC_WORKER_BOOTSTRAP_PROFILE: 'smoke',
     ORC_WORKER_STARTUP_PROFILE: 'real-provider-smoke',

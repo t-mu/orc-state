@@ -77,7 +77,6 @@ function writeSpec(taskRef: string, feature: string, title: string, status = 'to
 beforeEach(() => {
   dir = createTempStateDir('orc-mcp-handlers-test-');
   process.env.ORC_REPO_ROOT = dir;
-  process.env.ORC_BACKLOG_DIR = join(dir, 'backlog');
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedBacklog([
     {
@@ -212,7 +211,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanupTempStateDir(dir);
   delete process.env.ORC_REPO_ROOT;
-  delete process.env.ORC_BACKLOG_DIR;
 });
 
 describe('mcp read handlers', () => {

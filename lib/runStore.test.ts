@@ -30,7 +30,7 @@ describe('SQLite run authority', () => {
     initEventsDb(dir);
     const result = spawnSync('node', ['cli/doctor.ts', '--json'], {
       cwd: join(import.meta.dirname, '..'),
-      env: { ...process.env, ORC_STATE_DIR: dir, ORC_BACKLOG_DIR: join(dir, 'backlog') },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     const report = JSON.parse(result.stdout) as { checks: { runtimeSchema: { ok: boolean } }; active_claims: number };

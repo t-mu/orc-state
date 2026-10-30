@@ -53,7 +53,7 @@ describe('durable event offsets', () => {
     mkdirSync(join(dir, 'backlog'), { recursive: true });
     const doctor = spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
       cwd: join(import.meta.dirname, '..'),
-      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_BACKLOG_DIR: join(dir, 'backlog') },
+      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
       encoding: 'utf8',
     });
     expect(doctor.status, doctor.stderr || doctor.stdout).toBe(0);

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
@@ -29,7 +29,6 @@ beforeEach(() => {
   dir = createTempStateDir('orc-coord-test-');
   process.env.ORC_STATE_DIR = dir;
   process.env.ORC_REPO_ROOT = dir;
-  process.env.ORC_BACKLOG_DIR = join(dir, 'backlog');
   mkdirSync(join(dir, 'backlog'));
   for (const [index, ref] of ['proj/fix-bug', 'proj/task-a', 'proj/task-b', 'proj/claude-task', 'proj/codex-task'].entries()) {
     writeFileSync(join(dir, 'backlog', `${900 + index}-fixture.md`),
@@ -48,7 +47,6 @@ afterEach(() => {
   delete process.env.ORC_WORKER_PROVIDER;
   delete process.env.ORC_WORKER_MODEL;
   delete process.env.ORC_CONFIG_FILE;
-  delete process.env.ORC_BACKLOG_DIR;
 });
 
 function readEvents(stateDir: string): Array<Record<string, unknown>> {
@@ -3066,28 +3064,6 @@ describe('processTerminalRunEvents', () => {
 });
 
 describe('buildTaskEnvelope', () => {
-  it('hands the worker the claimed revision after the live Markdown changes', async () => {
-    const docsDir = join(dir, 'backlog');
-    const specPath = join(docsDir, '900-fixture.md');
-    const original = '---\nref: proj/fix-bug\nfeature: proj\nstatus: todo\n---\n\n# Task 196 — Original instructions\n';
-    writeFileSync(specPath, original);
-    seedState(dir, { tasks: [DISPATCHABLE_TASK] });
-    const { claimTask } = await import('./lib/claimManager.ts');
-    const { run_id } = claimTask(dir, 'proj/fix-bug', 'orc-1', { docsDir });
-    writeFileSync(specPath, original.replace('Original instructions', 'Changed instructions'));
-    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
-      getRunWorktree: vi.fn().mockReturnValue({ worktree_path: '/tmp/product-worktree' }),
-    }));
-
-    const { buildTaskEnvelope } = await import('./coordinator.ts');
-    const rendered = buildTaskEnvelope('proj/fix-bug', run_id, 'orc-1');
-    const snapshotPath = join(dir, 'run-specs', `${run_id}.md`);
-    expect(rendered).toContain(`task_spec_path: ${snapshotPath}`);
-    expect(rendered).toContain('task_spec_revision_status: stale');
-    expect(rendered).toContain('task_spec_sha256: ');
-    expect(readFileSync(snapshotPath, 'utf8')).toBe(original);
-  });
-
   it('renders a minimal TASK_START payload with runtime handoff data only', async () => {
     seedState(dir, {
       tasks: [{
@@ -3097,18 +3073,6 @@ describe('buildTaskEnvelope', () => {
       }],
     });
 
-    vi.doMock('./lib/taskSpecReader.ts', () => ({
-      readTaskSpecSections: vi.fn().mockReturnValue({
-        current_state: 'Current state text.',
-        desired_state: 'Desired state text.',
-        start_here: '- coordinator.ts',
-        files_to_change: '- coordinator.ts\n- coordinator.test.ts',
-        implementation_notes: '- keep review scope narrow',
-        avoid_reading: 'lib/masterPtyForwarder.ts',
-        verification: '```bash\nnpx vitest\n```',
-        source_path: 'docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md',
-      }),
-    }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn(),
       getRunWorktree: vi.fn().mockReturnValue({
@@ -3122,7 +3086,7 @@ describe('buildTaskEnvelope', () => {
     expect(rendered).toContain('TASK_START v4');
     expect(rendered).toContain('task_ref: proj/fix-bug');
     expect(rendered).toContain('run_id: run-envelope-1');
-    expect(rendered).toContain('task_spec_path: /tmp/orc-worktrees/run-envelope-1/docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
+    expect(rendered).toContain('task_spec_path: (task spec not found)');
     expect(rendered).toContain('assigned_worktree: /tmp/orc-worktrees/run-envelope-1');
     expect(rendered).toContain('TASK_END');
     expect(rendered).not.toContain('current_state:');
@@ -3130,7 +3094,6 @@ describe('buildTaskEnvelope', () => {
     expect(rendered).not.toContain('acceptance_criteria:');
     expect(rendered).not.toContain('task_contract_v1_json:');
     expect(rendered).not.toContain('run-start --run-id=run-envelope-1 --agent-id=orc-1');
-    expect(rendered).not.toContain('open docs/backlog/148-launch-provider-sessions-inside-assigned-worktrees.md');
   });
 });
 

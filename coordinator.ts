@@ -35,7 +35,7 @@ import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, t
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
-import { ACTIVE_PROJECT, assertProjectMode, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
+import { ACTIVE_PROJECT, assertProjectMode, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
@@ -43,7 +43,7 @@ import { checkSandboxControlSocket } from './lib/sandboxDeps.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
-import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
+import { InjectionScanError } from './lib/promptInjectionScan.ts';
 import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
@@ -59,7 +59,7 @@ import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } f
 import { fileURLToPath } from 'node:url';
 import { findTask, readBacklog, readJson } from './lib/stateReader.ts';
 import { closeSync, constants, existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { join } from 'node:path';
 import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
@@ -1778,8 +1778,6 @@ async function executeDispatchPlan(
       // Claim the task before session work so capacity is held
       const claimed = claimTask(STATE_DIR, taskRef, agentId, {
         leaseDurationMs: LEASE_CONFIG.default_ms,
-        docsDir: BACKLOG_DOCS_DIR,
-        requireSpec: true,
       });
       runId = claimed.run_id;
       log(`claimed ${taskRef} for ${agentId} (${runId})`);
@@ -1878,19 +1876,9 @@ export function buildTaskEnvelope(taskRef: string, runId: string, agentId: strin
   const claim = (readJson(STATE_DIR, 'claims.json') as { claims: Claim[] }).claims.find((entry) => entry.run_id === runId);
   const snapshot = claim?.task_spec_snapshot;
   if (snapshot) verifyRunTaskSnapshot(snapshot);
-  const taskSpec = snapshot ? null : readTaskSpecSections(taskRef);
   const runWorktree = getRunWorktree(STATE_DIR, runId);
-  const taskSpecWorktreePath = (() => {
-    // A project SQLite revision has no repository file; the pinned snapshot is the spec.
-    if (snapshot?.task_revision !== undefined) return snapshot.snapshot_path;
-    const sourcePath = snapshot?.source_path ?? taskSpec?.source_path;
-    if (!sourcePath) return '(task spec not found)';
-    if (!runWorktree?.worktree_path) return sourcePath;
-    const repoRelativePath = isAbsolute(sourcePath)
-      ? relative(REPO_ROOT, sourcePath)
-      : sourcePath;
-    return join(runWorktree.worktree_path, repoRelativePath);
-  })();
+  // A project SQLite revision has no repository file; the pinned snapshot is the spec.
+  const taskSpecWorktreePath = snapshot?.snapshot_path ?? '(task spec not found)';
   return renderTemplate('task-envelope-v2.txt', {
     task_ref: taskRef,
     run_id: runId,

@@ -17,7 +17,7 @@ function doctor(stateDir: string) {
   mkdirSync(join(stateDir, 'backlog'), { recursive: true });
   return spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
     cwd: join(import.meta.dirname, '..'),
-    env: { ...process.env, ORC_STATE_DIR: stateDir, ORC_REPO_ROOT: stateDir, ORC_BACKLOG_DIR: join(stateDir, 'backlog') },
+    env: { ...process.env, ORC_STATE_DIR: stateDir, ORC_REPO_ROOT: stateDir },
     encoding: 'utf8',
   });
 }

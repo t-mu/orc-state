@@ -21,8 +21,6 @@ afterEach(() => {
 function runSibling(cwd: string, args: string[]) {
   const env = { ...process.env };
   delete env.ORC_STATE_DIR;
-  delete env.ORC_BACKLOG_DIR;
-  delete env.ORC_PLANS_DIR;
   delete env.ORC_REPO_ROOT;
   delete env.ORC_HOME;
   return spawnSync('node', [resolve(repoRoot, 'cli/init.ts'), ...args], { cwd, env, encoding: 'utf8' });
@@ -62,7 +60,7 @@ describe('cli/init.ts in a registered project', () => {
     mkdirSync(target, { recursive: true });
     spawnSync('git', ['init', '-q'], { cwd: target });
     const env: NodeJS.ProcessEnv = { ...process.env, ORC_DATA_HOME: join(dir, 'data') };
-    for (const key of ['ORC_STATE_DIR', 'ORC_BACKLOG_DIR', 'ORC_PLANS_DIR', 'ORC_REPO_ROOT', 'ORC_HOME', 'ORC_CONFIG_FILE', 'ORC_PROJECT_ID']) delete env[key];
+    for (const key of ['ORC_STATE_DIR', 'ORC_REPO_ROOT', 'ORC_HOME', 'ORC_CONFIG_FILE', 'ORC_PROJECT_ID']) delete env[key];
     const added = spawnSync('node', [resolve(repoRoot, 'cli/orc.ts'), 'project', 'add', target, '--name=demo'], { cwd: dir, env, encoding: 'utf8' });
     expect(added.status, added.stderr).toBe(0);
     const project = JSON.parse(added.stdout) as { id: string; stateDir: string };

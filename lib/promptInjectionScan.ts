@@ -1,3 +1,12 @@
+export class InjectionScanError extends Error {
+  findings: string[];
+  constructor(findings: string[]) {
+    super(`Injection scan blocked dispatch: ${findings.join('; ')}`);
+    this.name = 'InjectionScanError';
+    this.findings = findings;
+  }
+}
+
 export interface ScanResult {
   safe: boolean;
   findings: string[];

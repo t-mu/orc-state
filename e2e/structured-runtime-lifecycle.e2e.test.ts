@@ -91,7 +91,6 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     Object.assign(process.env, {
       ORC_STATE_DIR: dir,
       ORC_REPO_ROOT: dir,
-      ORC_BACKLOG_DIR: join(dir, 'backlog'),
       ORC_MAX_WORKERS: '1',
       ORC_WORKER_PROVIDER: 'codex',
       ORC_WORKER_RUNTIME: 'structured',

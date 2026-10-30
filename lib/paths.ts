@@ -73,7 +73,7 @@ export function assertProjectMode(): void {
 // ORCHESTRATION-ROOT consumers — framework home (orc binary, specs, plans,
 // config, state). These are correct as-is and were NOT changed by task 185:
 //   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
-//                       WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, ORC_CONFIG_FILE
+//                       WORKTREES_DIR, ORC_CONFIG_FILE
 //   coordinator.ts      resolveOrcBinSh(REPO_ROOT)           (orc binary lookup)
 //   coordinator.ts      relative(REPO_ROOT, source_path)     (backlog spec path math)
 //   coordinator.ts      repoRoot: REPO_ROOT → worker env     (orc bin/ctx for workers)
@@ -106,14 +106,6 @@ export function assertProjectMode(): void {
 export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)
   : resolve(ORCHESTRATION_ROOT, ACTIVE_PROJECT ? 'worktrees' : '.worktrees');
-
-export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
-  ? resolve(process.env.ORC_BACKLOG_DIR)
-  : resolve(ORCHESTRATION_ROOT, 'backlog');
-
-export const PLANS_DIR = process.env.ORC_PLANS_DIR
-  ? resolve(process.env.ORC_PLANS_DIR)
-  : resolve(ORCHESTRATION_ROOT, 'plans');
 
 /** Path to per-agent hook-events NDJSON file written by the Notification hook. */
 export function hookEventPath(agentId: string): string {

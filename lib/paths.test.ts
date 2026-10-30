@@ -20,8 +20,6 @@ describe('paths', () => {
     vi.stubEnv('ORC_STATE_DIR', undefined as unknown as string);
     vi.stubEnv('ORC_CONFIG_FILE', undefined as unknown as string);
     vi.stubEnv('ORC_WORKTREES_DIR', undefined as unknown as string);
-    vi.stubEnv('ORC_BACKLOG_DIR', undefined as unknown as string);
-    vi.stubEnv('ORC_PLANS_DIR', undefined as unknown as string);
     vi.stubEnv('ORC_HOME', undefined as unknown as string);
     vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
   });
@@ -44,11 +42,9 @@ describe('paths', () => {
   it('keys artifact directories off the orchestration root', async () => {
     mockRepoRoot('/tmp/repo-root');
 
-    const { ORCHESTRATION_ROOT, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR } = await import('./paths.ts');
+    const { ORCHESTRATION_ROOT, WORKTREES_DIR } = await import('./paths.ts');
     expect(ORCHESTRATION_ROOT).toBe('/tmp/repo-root');
     expect(WORKTREES_DIR).toBe('/tmp/repo-root/.worktrees');
-    expect(BACKLOG_DOCS_DIR).toBe('/tmp/repo-root/backlog');
-    expect(PLANS_DIR).toBe('/tmp/repo-root/plans');
   });
 
   it('TARGET_REPO_ROOT defaults to the orchestration root in the single-repo layout', async () => {
@@ -94,12 +90,10 @@ describe('paths', () => {
     }));
     vi.stubEnv('ORC_STATE_DIR', '/tmp/orch-home/.orc-state');
 
-    const { ORCHESTRATION_ROOT, TARGET_REPO_ROOT, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR } = await import('./paths.ts');
+    const { ORCHESTRATION_ROOT, TARGET_REPO_ROOT, WORKTREES_DIR } = await import('./paths.ts');
     expect(ORCHESTRATION_ROOT).toBe('/tmp/orch-home');
     expect(TARGET_REPO_ROOT).toBe('/tmp/orch-home');
     expect(WORKTREES_DIR).toBe('/tmp/orch-home/.worktrees');
-    expect(BACKLOG_DOCS_DIR).toBe('/tmp/orch-home/backlog');
-    expect(PLANS_DIR).toBe('/tmp/orch-home/plans');
     expect(resolveOrchestrationRoot).not.toHaveBeenCalled();
   });
 
