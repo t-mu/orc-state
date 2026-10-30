@@ -29,17 +29,41 @@ function readAgents() {
 }
 
 describe('cli/gc-workers.ts', () => {
-  it('marks unreachable workers offline when not deregistering', async () => {
+  it('removes offline workers immediately', async () => {
     writeAgents([
-      { agent_id: 'alive', provider: 'claude', status: 'running', session_handle: 'alive-handle', provider_ref: { id: 1 }, registered_at: '2026-01-01T00:00:00Z' },
-      { agent_id: 'stale', provider: 'claude', status: 'running', session_handle: 'stale-handle', provider_ref: { id: 2 }, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'offline', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'dead', provider: 'claude', status: 'dead', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'running', provider: 'claude', status: 'running', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'master', provider: 'claude', role: 'master', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+    ]);
+    vi.doMock('../adapters/index.ts', () => ({
+      createAdapter: () => ({ heartbeatProbe: () => Promise.resolve(true) }),
+    }));
+
+    const oldArgv = process.argv;
+    const oldStateDir = process.env.ORC_STATE_DIR;
+    process.argv = ['node', 'cli/gc-workers.ts'];
+    setStateDirEnv(dir);
+    try {
+      await import('./gc-workers.ts');
+    } finally {
+      process.argv = oldArgv;
+      setStateDirEnv(oldStateDir);
+    }
+
+    const ids = readAgents().map((a: Record<string, unknown>) => a.agent_id);
+    expect(ids).toEqual(['running', 'master', 'scout-1']);
+  });
+
+  it('removes running workers with dead session probes', async () => {
+    writeAgents([
+      { agent_id: 'stale', provider: 'claude', status: 'running', session_handle: 'stale-handle', registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'alive', provider: 'claude', status: 'running', session_handle: 'alive-handle', registered_at: '2026-01-01T00:00:00Z' },
     ]);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
-        heartbeatProbe: async (handle: string) => {
-          await Promise.resolve();
-          return handle === 'alive-handle';
-        },
+        heartbeatProbe: (handle: string) => Promise.resolve(handle === 'alive-handle'),
       }),
     }));
 
@@ -54,51 +78,17 @@ describe('cli/gc-workers.ts', () => {
       setStateDirEnv(oldStateDir);
     }
 
-    const agents = readAgents();
-    expect(agents.find((a: Record<string, unknown>) => a.agent_id === 'alive').status).toBe('running');
-    const stale = agents.find((a: Record<string, unknown>) => a.agent_id === 'stale');
-    expect(stale.status).toBe('offline');
-    expect(stale.session_handle).toBeNull();
-    expect(stale.provider_ref).toBeNull();
+    const ids = readAgents().map((a: Record<string, unknown>) => a.agent_id);
+    expect(ids).toEqual(['alive']);
   });
 
-  it('removes unreachable workers with --deregister', async () => {
-    writeAgents([
-      { agent_id: 'stale', provider: 'claude', status: 'running', session_handle: 'stale-handle', registered_at: '2026-01-01T00:00:00Z' },
-    ]);
-    vi.doMock('../adapters/index.ts', () => ({
-      createAdapter: () => ({
-        heartbeatProbe: async () => {
-          await Promise.resolve();
-          return false;
-        },
-      }),
-    }));
-
-    const oldArgv = process.argv;
-    const oldStateDir = process.env.ORC_STATE_DIR;
-    process.argv = ['node', 'cli/gc-workers.ts', '--deregister'];
-    setStateDirEnv(dir);
-    try {
-      await import('./gc-workers.ts');
-    } finally {
-      process.argv = oldArgv;
-      setStateDirEnv(oldStateDir);
-    }
-
-    expect(readAgents()).toEqual([]);
-  });
-
-  it('ignores adapter errors and leaves workers unchanged', async () => {
+  it('does not remove workers when probe throws', async () => {
     writeAgents([
       { agent_id: 'x', provider: 'claude', status: 'running', session_handle: 'x-handle', registered_at: '2026-01-01T00:00:00Z' },
     ]);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({
-        heartbeatProbe: async () => {
-          await Promise.resolve();
-          throw new Error('probe failed');
-        },
+        heartbeatProbe: () => { throw new Error('pty unavailable'); },
       }),
     }));
 
@@ -116,4 +106,29 @@ describe('cli/gc-workers.ts', () => {
 
     expect(readAgents()).toEqual(before);
   });
+
+  it('keeps an offline or dead worker that still holds an active claim', async () => {
+    writeAgents([
+      { agent_id: 'claimed', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'idle', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+    ]);
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [
+      { run_id: 'run-1', task_ref: 'proj/task-1', agent_id: 'claimed', state: 'claimed', claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: '2099-01-01T00:00:00Z' },
+    ] }));
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ heartbeatProbe: () => Promise.resolve(false) }) }));
+
+    const oldArgv = process.argv;
+    const oldStateDir = process.env.ORC_STATE_DIR;
+    process.argv = ['node', 'cli/gc-workers.ts'];
+    setStateDirEnv(dir);
+    try {
+      await import('./gc-workers.ts');
+    } finally {
+      process.argv = oldArgv;
+      setStateDirEnv(oldStateDir);
+    }
+
+    expect(readAgents().map((a: Record<string, unknown>) => a.agent_id)).toEqual(['claimed']);
+  });
+
 });

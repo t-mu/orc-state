@@ -143,7 +143,6 @@ Remove any lingering offline workers:
 
 ```bash
 orc worker-gc
-orc worker-clearall
 ```
 
 ---
@@ -162,10 +161,11 @@ orc worker-clearall
    ```bash
    orc doctor
    ```
-3. If the worker is genuinely stuck, remove it and reset the task:
+3. If the worker is genuinely stuck, reset the task (this releases its claim),
+   then remove the worker (`worker-remove` refuses while a claim is active):
    ```bash
-   orc worker-remove <agent-id>
    orc task-reset <task-ref>
+   orc worker-remove <agent-id>
    ```
 4. Re-dispatch the task:
    ```bash

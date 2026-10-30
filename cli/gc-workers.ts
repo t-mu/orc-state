@@ -1,49 +1,50 @@
 #!/usr/bin/env node
 /**
  * cli/gc-workers.ts
- * Usage: node cli/gc-workers.ts [--deregister]
+ * Usage: node cli/gc-workers.ts
  *
- * Checks registered workers with a session_handle and marks unreachable ones
- * offline. With --deregister, removes unreachable workers from agents.json.
+ * Removes workers that are definitely stale (offline or dead status, or a dead heartbeat).
+ * A worker that holds an active claim is kept: the coordinator recovers its run.
+ * The master and scouts are never touched (scouts are removed with remove_scout).
  * Uses adapter.heartbeatProbe() - works with any adapter implementation.
  */
-import { listAgents, updateAgentRuntime, removeAgent } from '../lib/agentRegistry.ts';
+import { listAgents, removeAgent } from '../lib/agentRegistry.ts';
+import { readClaims } from '../lib/stateReader.ts';
 import { createAdapter } from '../adapters/index.ts';
 import { STATE_DIR } from '../lib/paths.ts';
-import { boolFlag } from '../lib/args.ts';
 
-const deregister = boolFlag('deregister');
-const workers = listAgents(STATE_DIR);
-let offlineCount = 0;
-let removedCount = 0;
+const claimed = new Set((readClaims(STATE_DIR).claims ?? [])
+  .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
+  .map((claim) => claim.agent_id));
+const workers = listAgents(STATE_DIR)
+  .filter((agent) => agent.role !== 'master' && agent.role !== 'scout' && !claimed.has(agent.agent_id));
+let removedOffline = 0;
+let removedStale = 0;
 
 for (const worker of workers) {
-  if (!worker.session_handle) continue;
+  if (worker.status === 'offline' || worker.status === 'dead') {
+    removeAgent(STATE_DIR, worker.agent_id);
+    removedOffline++;
+    continue;
+  }
+
+  if (!worker.session_handle) {
+    continue;
+  }
+
   try {
     const adapter = createAdapter(worker.provider);
     const alive = await adapter.heartbeatProbe(worker.session_handle);
-    if (alive) continue;
-
-    if (deregister) {
+    if (!alive) {
       removeAgent(STATE_DIR, worker.agent_id);
-      removedCount++;
-      continue;
+      removedStale++;
     }
-
-    updateAgentRuntime(STATE_DIR, worker.agent_id, {
-      status: 'offline',
-      session_handle: null,
-      provider_ref: null,
-      last_status_change_at: new Date().toISOString(),
-    });
-    offlineCount++;
   } catch {
-    // Ignore adapter errors in GC to avoid partial failure aborting the pass.
+    // Treat adapter failure as unknown; do not remove to avoid false positives.
   }
 }
 
-if (deregister) {
-  console.log(`Worker GC complete. Removed ${removedCount} stale worker(s).`);
-} else {
-  console.log(`Worker GC complete. Marked ${offlineCount} stale worker(s) offline.`);
-}
+const totalRemoved = removedOffline + removedStale;
+console.log(`Worker GC complete. Removed ${totalRemoved} worker(s).`);
+console.log(`  offline removed: ${removedOffline}`);
+console.log(`  stale removed:   ${removedStale}`);

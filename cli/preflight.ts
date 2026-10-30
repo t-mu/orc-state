@@ -29,8 +29,6 @@ const legacyInstallation = !ACTIVE_PROJECT;
 
 const checks = {
   state_valid: stateErrors.length === 0,
-  has_registered_workers: agents.length > 0,
-  has_online_workers: agents.some((a) => a.status !== 'offline'),
   orphaned_active_claims: getOrphanedClaims(agents, claims),
   legacy_layout_supported: !legacyInstallation,
   project_ok: projectHealth?.ok ?? true,
@@ -39,7 +37,6 @@ const providerBinaries = getProviderBinaries(agents);
 const allBinariesPresent = Object.values(providerBinaries).every(Boolean);
 
 const ok = checks.state_valid
-  && checks.has_registered_workers
   && checks.orphaned_active_claims.length === 0
   && allBinariesPresent
   && !legacyInstallation
@@ -54,9 +51,6 @@ const result = {
     orphaned_active_claims_count: checks.orphaned_active_claims.length,
   },
   warnings: [
-    ...(checks.has_registered_workers && !checks.has_online_workers
-      ? ['All registered workers are offline. Start or rebind at least one worker session before coordinator run.']
-      : []),
     ...(!gitRepo
       ? ['Not inside a git repository — worktree isolation will not work']
       : []),
@@ -82,8 +76,6 @@ console.log('Orchestrator Preflight');
 console.log('----------------------');
 console.log(formatProjectIdentity(projectHealth?.project ?? null));
 console.log(`state_valid:            ${checks.state_valid}`);
-console.log(`has_registered_workers: ${checks.has_registered_workers}`);
-console.log(`has_online_workers:     ${checks.has_online_workers}`);
 console.log(`orphaned_active_claims: ${checks.orphaned_active_claims.length}`);
 if (siblingRetired) console.log('sibling_layout:         retired (run orc project migrate)');
 console.log('provider_binaries:');
@@ -122,7 +114,7 @@ if (!ok) {
   console.log('');
   console.log('Suggested actions:');
   console.log('  1. orc doctor  (check provider binaries and worker state)');
-  console.log('  2. orc worker-clearall  (remove stale workers)');
+  console.log('  2. orc worker-gc  (remove stale workers)');
   process.exit(1);
 }
 

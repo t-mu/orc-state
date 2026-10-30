@@ -137,17 +137,18 @@ orc runs-active
 
 ### Fix
 
-Mark stale workers offline, then remove them:
-
-```bash
-orc worker-gc
-orc worker-clearall
-```
-
-If a task was claimed by the stale worker, reset it so it can be re-dispatched:
+If a task was claimed by the stale worker, reset it first so it can be
+re-dispatched (this releases the claim):
 
 ```bash
 orc task-reset <task-ref>
+```
+
+Then remove stale workers (offline, or with a dead session; a worker that still
+holds an active claim is kept):
+
+```bash
+orc worker-gc
 ```
 
 ## Recoverable or Unknown Sessions
@@ -171,10 +172,11 @@ orc task-reset <task-ref>
 
 The coordinator never kills or redispatches these sessions on its own.
 
-1. Let the worker finish, or stop it: `orc worker-remove <agent_id>`. The stop
-   only signals the recorded process if its start time still matches.
-2. If the run must be redone: `orc task-reset <task_ref>`.
-3. To avoid the case for future workers, keep `tmux` installed and leave
+1. Let the worker finish (no action), or stop it: first release its claim with
+   `orc task-reset <task_ref>` (or `orc task-cancel <task_ref>`), then run
+   `orc worker-remove <agent_id>`, which refuses while a claim is active. The
+   stop only signals the recorded process if its start time still matches.
+2. To avoid the case for future workers, keep `tmux` installed and leave
    `ORC_SESSION_TRANSPORT` at `auto` (or set `tmux`). tmux sessions survive a
    coordinator restart and are adopted.
 

@@ -265,7 +265,6 @@ describe('cli/start-session.ts', () => {
       mockBinaryCheck(true);
       const promptCreateWorkerAction = vi.fn().mockResolvedValue('skip');
       vi.doMock('../lib/prompts.ts', () => ({
-        promptAgentId: vi.fn().mockResolvedValue('master'),
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(false),
         promptCoordinatorAction: vi.fn().mockResolvedValue('reuse'),
@@ -273,8 +272,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice: vi.fn(),
         promptWorkerPoolAction:       vi.fn().mockResolvedValue('clear_all'),
         promptCreateWorkerAction,
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
       setEnv(dir);
       seedCoordinatorRunning();
@@ -329,7 +326,6 @@ describe('cli/start-session.ts', () => {
       mockSpawn(spawnMock);
       mockBinaryCheck(true);
       vi.doMock('../lib/prompts.ts', () => ({
-        promptAgentId: vi.fn().mockRejectedValue(new Error('master-id prompt should not be called')),
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
         promptCoordinatorAction: vi.fn().mockResolvedValue('reuse'),
@@ -337,8 +333,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice: vi.fn(),
         promptWorkerPoolAction: vi.fn().mockResolvedValue('reuse'),
         promptCreateWorkerAction: vi.fn().mockResolvedValue('skip'),
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
 
       setEnv(dir);
@@ -355,7 +349,6 @@ describe('cli/start-session.ts', () => {
     it('does not register a second master when one already exists (conflict gate cancels)', async () => {
       seedState([masterAgent({ status: 'running' })]);
       vi.doMock('../lib/prompts.ts', () => ({
-        promptAgentId:               vi.fn().mockResolvedValue('master'),
         promptProvider:              vi.fn().mockResolvedValue('claude'),
         isInteractive:               vi.fn().mockReturnValue(true), // interactive so cancel → exit 0
         promptCoordinatorAction:      vi.fn().mockResolvedValue('reuse'),
@@ -363,8 +356,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice:     vi.fn(),
         promptWorkerPoolAction:       vi.fn().mockResolvedValue('clear_all'),
         promptCreateWorkerAction:     vi.fn().mockResolvedValue('skip'),
-        promptRole:                  vi.fn().mockResolvedValue('worker'),
-        promptCapabilities:          vi.fn().mockResolvedValue(''),
       }));
       mockSpawn();
       mockBinaryCheck(true);
@@ -384,7 +375,6 @@ describe('cli/start-session.ts', () => {
     it('replace removes old master and continues to fresh registration', async () => {
       seedState([masterAgent()]);
       vi.doMock('../lib/prompts.ts', () => ({
-        promptAgentId:               vi.fn().mockResolvedValue('master2'),
         promptProvider:              vi.fn().mockResolvedValue('codex'),
         isInteractive:               vi.fn().mockReturnValue(true),
         promptCoordinatorAction:      vi.fn().mockResolvedValue('reuse'),
@@ -392,8 +382,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice:     vi.fn(),
         promptWorkerPoolAction:       vi.fn().mockResolvedValue('clear_all'),
         promptCreateWorkerAction:     vi.fn().mockResolvedValue('skip'),
-        promptRole:                  vi.fn().mockResolvedValue('worker'),
-        promptCapabilities:          vi.fn().mockResolvedValue(''),
       }));
       mockSpawn();
       mockBinaryCheck(true);
@@ -415,7 +403,6 @@ describe('cli/start-session.ts', () => {
       const spawnMock = makeSpawnMock({ writeCoordinatorPid: true });
       mockSpawn(spawnMock);
       vi.doMock('../lib/prompts.ts', () => ({
-        promptAgentId:               vi.fn().mockResolvedValue('master'),
         promptProvider:              vi.fn().mockResolvedValue('claude'),
         isInteractive:               vi.fn().mockReturnValue(true),
         promptCoordinatorAction:      vi.fn().mockResolvedValue('reuse'),
@@ -423,8 +410,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice:     vi.fn(),
         promptWorkerPoolAction:       vi.fn().mockResolvedValue(''),
         promptCreateWorkerAction:     vi.fn().mockResolvedValue('skip'),
-        promptRole:                  vi.fn().mockResolvedValue('worker'),
-        promptCapabilities:          vi.fn().mockResolvedValue(''),
       }));
       mockBinaryCheck(true);
       setEnv(dir);
@@ -446,14 +431,11 @@ describe('cli/start-session.ts', () => {
         masterAgent({ agent_id: 'worker-01', role: 'worker', provider: 'codex' }),
       ]);
       vi.doMock('../lib/prompts.ts', () => ({
-        promptAgentId: vi.fn().mockResolvedValue('master'),
         promptProvider: vi.fn().mockResolvedValue('claude'),
         isInteractive: vi.fn().mockReturnValue(true),
         promptCoordinatorAction: vi.fn().mockResolvedValue('reuse'),
         promptMasterAction: vi.fn().mockResolvedValue('reuse'),
         printManagedWorkerNotice: vi.fn(),
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
       mockSpawn();
       mockBinaryCheck(true);
@@ -476,7 +458,6 @@ describe('cli/start-session.ts', () => {
       const spawnSyncMock = vi.fn().mockReturnValue({ status: 0, stdout: `node ${coordinatorScriptPath}` });
       mockSpawn(spawnMock, spawnSyncMock);
       vi.doMock('../lib/prompts.ts', () => ({
-        promptAgentId:               vi.fn().mockResolvedValue('master'),
         promptProvider:              vi.fn().mockResolvedValue('claude'),
         isInteractive:               vi.fn().mockReturnValue(true),
         promptCoordinatorAction:      vi.fn().mockResolvedValue('terminate'),
@@ -484,8 +465,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice:     vi.fn(),
         promptWorkerPoolAction:       vi.fn().mockResolvedValue(''),
         promptCreateWorkerAction:     vi.fn().mockResolvedValue('skip'),
-        promptRole:                  vi.fn().mockResolvedValue('worker'),
-        promptCapabilities:          vi.fn().mockResolvedValue(''),
       }));
       mockBinaryCheck(true);
 
@@ -603,8 +582,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice: vi.fn(),
         promptWorkerPoolAction: vi.fn().mockResolvedValue('reuse'),
         promptCreateWorkerAction: vi.fn().mockResolvedValue('skip'),
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
       mockBinaryCheck(true);
 
@@ -641,8 +618,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice: vi.fn(),
         promptWorkerPoolAction: vi.fn().mockResolvedValue('reuse'),
         promptCreateWorkerAction: vi.fn().mockResolvedValue('skip'),
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
       mockBinaryCheck(true);
 
@@ -676,8 +651,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice: vi.fn(),
         promptWorkerPoolAction: vi.fn().mockResolvedValue('reuse'),
         promptCreateWorkerAction: vi.fn().mockResolvedValue('skip'),
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
       mockBinaryCheck(true);
 
@@ -710,8 +683,6 @@ describe('cli/start-session.ts', () => {
         printManagedWorkerNotice: vi.fn(),
         promptWorkerPoolAction: vi.fn().mockResolvedValue('reuse'),
         promptCreateWorkerAction: vi.fn().mockResolvedValue('skip'),
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
       mockBinaryCheck(true);
 
@@ -765,8 +736,6 @@ describe('cli/start-session.ts', () => {
           return Promise.resolve('reuse');
         }),
         printManagedWorkerNotice: vi.fn(),
-        promptRole: vi.fn().mockResolvedValue('worker'),
-        promptCapabilities: vi.fn().mockResolvedValue(''),
       }));
       mockSpawn(makeSpawnMock());
       mockBinaryCheck(true);

@@ -6,7 +6,6 @@
  * Examples:
  *   orc start-session
  *   orc start-session --provider=claude
- *   orc register-worker worker-01 --provider=claude
  *   orc watch
  */
 import { spawnSync } from 'node:child_process';
@@ -34,8 +33,6 @@ export function readVersion(): string {
 
 const COMMANDS: Record<string, string> = {
   'start-session':      'start-session.ts',
-  'register-worker':    'register-worker.ts',
-  'start-worker-session': 'start-worker-session.ts',
   'status':             'status.ts',
   'watch':              'watch.ts',
   'attach':             'attach.ts',
@@ -63,10 +60,8 @@ const COMMANDS: Record<string, string> = {
   'run-fail':           'run-fail.ts',
   'review-submit':      'review-submit.ts',
   'review-read':        'review-read.ts',
-  'deregister':         'deregister.ts',
   'worker-remove':      'remove-worker.ts',
   'worker-gc':          'gc-workers.ts',
-  'worker-clearall':    'clear-workers.ts',
   'kill-all':           'kill-all.ts',
   'mcp-server':         'mcp-server.ts',
   'install':            'install.ts',
@@ -112,14 +107,10 @@ const BLESSED = [
 ];
 
 const RECOVERY_DEBUG = [
-  'register-worker',
-  'start-worker-session',
   'attach',
   'control-worker',
-  'deregister',
   'worker-remove',
   'worker-gc',
-  'worker-clearall',
   'kill-all',
   'task-reset',
   'task-unblock',
