@@ -60,6 +60,8 @@ describe('storage-neutral task authoring', () => {
     expect(() => reviseProjectTask(dir, 'app/edit', 1, { priority: 'low' })).toThrow(RevisionConflictError);
     expect(reviseProjectTask(dir, 'app/edit', 2, { body_markdown: '# Edited\n\nv2\n\n## Acceptance criteria\n- Works\n' }).changed).toBe(false);
     expect(() => reviseProjectTask(dir, 'app/edit', 2, { status: 'done' })).toThrow('cannot change status. Use lifecycle commands');
+    // The guidance comes first, even without an expected revision.
+    expect(() => reviseProjectTask(dir, 'app/edit', undefined, { status: 'done' })).toThrow('cannot change status. Use lifecycle commands');
     const store = initProjectTaskStore(dir);
     expect(store.listRevisions('app/edit').map((revision) => revision.revision)).toEqual([1, 2]);
     expect(store.getRevision('app/edit', 1)?.bodyMarkdown).toBe('# Edit me\n\nv1\n');

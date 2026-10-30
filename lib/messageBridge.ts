@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictError } from './domainErrors.ts';
+import { ConflictError, ForbiddenError } from './domainErrors.ts';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
 
 type Run = { run_id: string; agent_id: string | null; state: string };
@@ -56,7 +56,7 @@ export function bridgeInputResponse(stateDir: string, runId: string, agentId: st
     }
     if (!authority.trustedMaster) {
       const master = authority.sessionId ? runningSession(db, 'master', null) : null;
-      if (!master || master.session_id !== authority.sessionId) throw new ConflictError('Input response requires a running master session');
+      if (!master || master.session_id !== authority.sessionId) throw new ForbiddenError('Input response requires a running master session');
     }
     if (request.state === 'answered') {
       if (request.response !== response) throw new ConflictError('Input request already has a different response');

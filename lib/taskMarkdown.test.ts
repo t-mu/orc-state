@@ -6,7 +6,7 @@ import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixt
 import { closeAllDatabases, queryEvents } from './eventLog.ts';
 import { closeProjectTaskStores, createProjectTask, initProjectTaskStore } from './projectTasks.ts';
 import { migrateProjectTaskSchema, PROJECT_TASK_SCHEMA_VERSION, RevisionConflictError } from './projectTaskStore.ts';
-import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, parseFrontmatter, renderTaskMarkdown } from './taskMarkdown.ts';
+import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, parseFrontmatter, readTaskMarkdownSources, renderTaskMarkdown } from './taskMarkdown.ts';
 
 let dir: string;
 let outside: string;
@@ -69,6 +69,18 @@ describe('Markdown task import', () => {
     writeFileSync(file, SPEC.replace('status: todo', 'status: done'));
     expect(() => importTaskMarkdown(dir, file)).toThrow('has status done');
     expect(initProjectTaskStore(dir).getTask('app/12-login')).toBeNull();
+  });
+
+  it('reads a directory\'s specs in the caller and reports its notes and legacy specs as skipped', () => {
+    const backlog = join(outside, 'read-backlog');
+    mkdirSync(join(backlog, 'legacy'), { recursive: true });
+    writeFileSync(join(backlog, '1-spec.md'), '---\nref: app/read-spec\nfeature: app\n---\n\n# Read spec\n');
+    writeFileSync(join(backlog, 'notes.md'), '# Notes\n');
+    writeFileSync(join(backlog, 'legacy', '0-old.md'), '---\nref: app/old\nfeature: app\n---\n');
+    const { sources, skipped } = readTaskMarkdownSources(backlog);
+    expect(sources).toEqual([{ path: join(backlog, '1-spec.md'), text: expect.stringContaining('ref: app/read-spec') }]);
+    expect(skipped).toEqual([join(backlog, 'notes.md')]);
+    expect(() => readTaskMarkdownSources(join(outside, 'missing'))).toThrow('Import path not found');
   });
 
   it('rejects a named file that is not a task spec', () => {

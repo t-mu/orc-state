@@ -178,9 +178,15 @@ describe('local daemon control API', () => {
     await expect(operatorClient.importTasks([{ path: 'notes.md', text: '# Not a spec\n' }])).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     const headers = { authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8')}`, [PROTOCOL_HEADER]: String(CONTROL_PROTOCOL_VERSION) };
     expect((await rawGet(headers, '/v1/tasks')).status).toBe(401);
-    for (const [path, body] of [['/v1/tasks/import', { files }], ['/v1/tasks', { feature: 'app', title: 'Anon' }], ['/v1/operator', { op: 'reset-task', task_ref: 'app/operator-task' }]] as const) {
+    for (const [path, body] of [['/v1/tasks/import', { files }], ['/v1/tasks', { feature: 'app', title: 'Anon' }], ['/v1/operator', { op: 'reset-task', task_ref: 'app/operator-task' }],
+      ['/v1/operator', { op: 'not-an-op' }]] as const) {
       expect((await rawPost(headers, path, body)).status).toBe(401);
     }
+    // Caller input in a path segment is a 400, never a server fault.
+    expect((await rawGet({ ...headers, ...operator() }, '/v1/tasks/%E0')).status).toBe(400);
+    // An older client sending a coordinator-side path is told to update.
+    const legacyImport = await rawPost({ ...headers, ...operator() }, '/v1/tasks/import', { path: '/tmp/x.md' });
+    expect(legacyImport.status).toBe(400);
   });
 
   it('maps task input mistakes and duplicates by type, ignores a master\'s named actor, and explains status edits', async () => {
@@ -198,6 +204,7 @@ describe('local daemon control API', () => {
     expect(added).toMatchObject({ actor_id: 'master' });
     await expect(master.createTask({ feature: 'app', ref: 'loop', title: 'Loop', depends_on: ['app/loop'] })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(master.reviseTask('app/named-actor', 0, { priority: 'high' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    await expect(master.createTask({ feature: 'app', title: 'Named actor' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
     await expect(master.reviseTask('app/named-actor', 1, { status: 'done' })).rejects.toMatchObject({ code: 'bad_request', status: 400, message: expect.stringContaining('task-mark-done') });
   });
 

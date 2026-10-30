@@ -62,16 +62,6 @@ export function sessionAuthenticator(stateDir: string): CommandAuthenticator {
   };
 }
 
-/** Map storage-neutral task API failures to protocol errors; anything unexpected is internal. */
-function taskError(error: unknown): ControlError {
-  if (error instanceof ControlError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof RevisionConflictError || error instanceof ConflictError) return new ControlError('conflict', message, 409);
-  if (error instanceof NotFoundError) return new ControlError('not_found', message, 404);
-  if (error instanceof TaskInputError || error instanceof InputError) return new ControlError('bad_request', message, 400);
-  return classify(error);
-}
-
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
 
 function classify(error: unknown): ControlError {
@@ -273,7 +263,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     const messageAck = /^\/v1\/messages\/([^/]+)\/consume$/.exec(url.pathname);
     if (req.method === 'POST' && messageAck) {
       const caller = messageSession(req);
-      return ok({ message: consumeMessage(stateDir, { agentId: caller.agentId, sessionId: caller.sessionId }, decodeURIComponent(messageAck[1])) });
+      return ok({ message: consumeMessage(stateDir, { agentId: caller.agentId, sessionId: caller.sessionId }, decodePathSegment(messageAck[1])) });
     }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       projectReader(req);
@@ -316,7 +306,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     }
     const terminalRoute = /^\/v1\/terminals\/([^/]+)(?:\/(lease|input|resize))?$/.exec(url.pathname);
     if (terminalRoute) {
-      const terminalId = decodeURIComponent(terminalRoute[1]);
+      const terminalId = decodePathSegment(terminalRoute[1]);
       const action = terminalRoute[2];
       if (req.method === 'GET' && !action) return ok(terminals.observe(terminalId, seqParam(url, 'after')));
       if (req.method === 'POST' && action) {
@@ -343,46 +333,41 @@ export async function startControlServer(stateDir: string, options: ControlServe
         const actor = requireProjectAuthor(stateDir, caller, actorField(body));
         if (!Array.isArray(body.files) || body.files.some((file: unknown) => !file || typeof file !== 'object'
           || typeof (file as Record<string, unknown>).path !== 'string' || typeof (file as Record<string, unknown>).text !== 'string')) {
-          throw new InputError('files must be a list of { path, text }');
+          // An older client sent a coordinator-side path; say which side to update instead of a bare shape error.
+          throw new InputError(typeof body.path === 'string'
+            ? 'This coordinator takes imported specs as text, not a path: the client is older than the coordinator; update orc on the client'
+            : 'files must be a list of { path, text }');
         }
         if (body.strict !== undefined && typeof body.strict !== 'boolean') throw new InputError('strict must be a boolean');
         assertOpen();
-        try {
-          return ok({ imported: importTaskMarkdownSources(stateDir, body.files as TaskMarkdownSource[], { strict: body.strict === true, actorId: actor }) });
-        } catch (error) {
-          throw taskError(error);
-        }
+        return ok({ imported: importTaskMarkdownSources(stateDir, body.files as TaskMarkdownSource[], { strict: body.strict === true, actorId: actor }) });
       }
       const match = /^\/v1\/tasks(?:\/([^/]+)(\/revisions)?)?$/.exec(url.pathname);
       if (!match) throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
-      const ref = match[1] === undefined ? null : decodeURIComponent(match[1]);
-      try {
-        if (req.method === 'GET') projectReader(req);
-        if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
-        if (req.method === 'GET' && !match[2]) {
-          const task = store.getTask(ref!);
-          if (!task) throw new NotFoundError(`Task not found: ${ref}`);
-          return ok({ task: describeProjectTask(task) });
+      const ref = match[1] === undefined ? null : decodePathSegment(match[1]);
+      if (req.method === 'GET') projectReader(req);
+      if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
+      if (req.method === 'GET' && !match[2]) {
+        const task = store.getTask(ref!);
+        if (!task) throw new NotFoundError(`Task not found: ${ref}`);
+        return ok({ task: describeProjectTask(task) });
+      }
+      if (req.method === 'GET') {
+        if (!store.getTask(ref!)) throw new NotFoundError(`Task not found: ${ref}`);
+        return ok({ revisions: store.listRevisions(ref!) });
+      }
+      if (req.method === 'POST') {
+        const caller = requireProjectReader(principal(req));
+        const body = await readBody(req);
+        const actor = requireProjectAuthor(stateDir, caller, actorField(body));
+        delete body.actor_id;
+        assertOpen();
+        if (ref === null) return ok({ task: describeProjectTask(createProjectTask(stateDir, body, actor)) }, 201);
+        if (match[2]) {
+          const { expected_revision: expectedRevision, ...changes } = body;
+          const { task, changed } = reviseProjectTask(stateDir, ref, expectedRevision, changes, actor);
+          return ok({ task: describeProjectTask(task), changed });
         }
-        if (req.method === 'GET') {
-          if (!store.getTask(ref!)) throw new NotFoundError(`Task not found: ${ref}`);
-          return ok({ revisions: store.listRevisions(ref!) });
-        }
-        if (req.method === 'POST') {
-          const caller = requireProjectReader(principal(req));
-          const body = await readBody(req);
-          const actor = requireProjectAuthor(stateDir, caller, actorField(body));
-          delete body.actor_id;
-          assertOpen();
-          if (ref === null) return ok({ task: describeProjectTask(createProjectTask(stateDir, body, actor)) }, 201);
-          if (match[2]) {
-            const { expected_revision: expectedRevision, ...changes } = body;
-            const { task, changed } = reviseProjectTask(stateDir, ref, expectedRevision, changes, actor);
-            return ok({ task: describeProjectTask(task), changed });
-          }
-        }
-      } catch (error) {
-        throw taskError(error);
       }
       throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
     }
@@ -396,9 +381,11 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return ok(applyLifecycle(stateDir, scoped));
     }
     if (req.method === 'POST' && url.pathname === '/v1/operator') {
+      // Authenticate before reading a body; which ops the caller may send depends on the parsed request.
+      const caller = requirePrincipal(principal(req));
       const request = parseOperatorRequest(await readBody(req));
       assertOpen();
-      const { actorId } = authorizeOperator(stateDir, principal(req), request);
+      const { actorId } = authorizeOperator(stateDir, caller, request);
       return ok(applyOperatorMutation(stateDir, { ...request, actor_id: actorId }));
     }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
@@ -423,7 +410,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const body = await readBody(req);
       assertOpen();
       if (!ACK_STATES.has(body.state as AckState)) throw new ControlError('bad_request', 'state must be accepted, running, completed or failed', 400);
-      return ok({ command: commands.acknowledge(credential, decodeURIComponent(ack[1]), body.state as AckState) });
+      return ok({ command: commands.acknowledge(credential, decodePathSegment(ack[1]), body.state as AckState) });
     }
     throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
   }
