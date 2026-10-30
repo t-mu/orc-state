@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
@@ -11,7 +11,9 @@ import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './
 import { ControlClient, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, PROTOCOL_HEADER, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
+import Database from 'better-sqlite3';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
+import { ProjectTaskStore } from './projectTaskStore.ts';
 import { credentialHash } from './sessionCredentials.ts';
 import { closeMemoryDb, storeDrawer } from './memoryStore.ts';
 import type { Claim } from '../types/claims.ts';
@@ -225,6 +227,26 @@ describe('local daemon control API', () => {
     mkdirSync(join(dir, 'memory.db'));
     await expect(new ControlClient(dir, { credential: 'session-a' }).lifecycle({ op: 'memory-record', content: 'note' }))
       .rejects.toMatchObject({ code: 'internal', status: 500 });
+  });
+
+  it('answers an invalid project task transition with 409 and other store failures with 500', async () => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    initProjectTaskStore(dir);
+    const operatorClient = new ControlClient(dir);
+    await operatorClient.createTask({ feature: 'app', title: 'Not started' });
+    await expect(operatorClient.operator({ op: 'task-mark-done', task_ref: 'app/not-started' })).rejects.toMatchObject({
+      code: 'conflict', status: 409, message: 'invalid task transition for app/not-started: todo -> done (cause merge_succeeded)',
+    });
+    const fault = vi.spyOn(ProjectTaskStore.prototype, 'applyTransition').mockImplementation(() => {
+      throw new Database.SqliteError('disk I/O error', 'SQLITE_IOERR');
+    });
+    try {
+      await expect(operatorClient.operator({ op: 'task-mark-done', task_ref: 'app/not-started' })).rejects.toMatchObject({ code: 'internal', status: 500 });
+    } finally {
+      fault.mockRestore();
+    }
   });
 
   it('routes a cross-provider review and result durably through session mailboxes', async () => {
