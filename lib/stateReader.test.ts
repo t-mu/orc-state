@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJson, findTask, readAgents, readClaims } from './stateReader.ts';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -16,8 +16,16 @@ afterEach(() => {
 
 describe('readJson', () => {
   it('reads and parses a json file', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
-    expect(readJson(dir, 'backlog.json')).toEqual({ version: '1', features: [] });
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
+    expect(readJson(dir, 'agents.json')).toEqual({ version: '1', agents: [] });
+  });
+
+  it('reads backlog.json from the project task store, not the projection file', () => {
+    seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1' }]);
+    rmSync(join(dir, 'backlog.json'));
+    const backlog = readJson(dir, 'backlog.json') as { features: Array<{ ref: string; tasks: Array<{ ref: string; status: string }> }> };
+    expect(backlog.features.map((feature) => feature.ref)).toEqual(['docs']);
+    expect(backlog.features[0].tasks).toMatchObject([{ ref: 'docs/task-1', status: 'todo' }]);
   });
 });
 

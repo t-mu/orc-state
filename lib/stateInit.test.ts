@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureStateInitialized } from './stateInit.ts';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 
 let tmpDir: string;
 
@@ -54,25 +54,22 @@ describe('ensureStateInitialized', () => {
     expect(claims.claims).toEqual([]);
   });
 
-  it('is idempotent — does not overwrite existing files on second call', () => {
+  it('is idempotent — does not overwrite an existing project backlog projection on second call', () => {
     tmpDir = createTempStateDir('orc-state-init-test-');
     const stateDir = join(tmpDir, 'state');
 
     ensureStateInitialized(stateDir);
 
-    // Overwrite backlog with custom content to simulate an already-initialised repo
-    writeFileSync(
-      join(stateDir, 'backlog.json'),
-      JSON.stringify({ version: '1', features: [{ ref: 'custom', title: 'Custom', tasks: [] }] }, null, 2) + '\n',
-      'utf8',
-    );
+    // A registered project's tasks live in its store; backlog.json is their projection.
+    seedProjectTasks(stateDir, [{ ref: 'custom/task-1', title: 'Custom task' }]);
 
-    // Second call must not clobber the custom content
+    // Second call (e.g. start-session on an existing project) must not clobber the projection
     ensureStateInitialized(stateDir);
 
     const backlog = JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8')) as {
-      features: { ref: string }[];
+      features: { ref: string; tasks: { ref: string }[] }[];
     };
-    expect(backlog.features[0].ref).toBe('custom');
+    expect(backlog.features.map((feature) => feature.ref)).toEqual(['custom']);
+    expect(backlog.features[0].tasks.map((task) => task.ref)).toEqual(['custom/task-1']);
   });
 });

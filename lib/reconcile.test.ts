@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { reconcileState } from './reconcile.ts';
 import { queryEvents } from './eventLog.ts';
-import { createTempStateDir, cleanupTempStateDir, seedState, readStateFile } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState, seedProjectTasks, readStateFile, readBacklog } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -16,12 +16,9 @@ afterEach(() => {
   cleanupTempStateDir(dir);
 });
 
-function writeState({ tasks, claims }: { tasks: unknown[]; claims: unknown[] }) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks }],
-  }));
+function writeState({ tasks, claims }: { tasks: Array<{ ref: string; title: string; status: string }>; claims: unknown[] }) {
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, tasks, claims);
 }
 
 describe('reconcileState', () => {
@@ -39,7 +36,7 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
+    const backlog = readBacklog(dir);
     const claims = readStateFile<{ claims: Array<{ state: string }> }>(dir, 'claims.json');
     expect(backlog.features[0].tasks[0].status).toBe('claimed');
     expect(claims.claims[0].state).toBe('claimed');
@@ -59,7 +56,7 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
+    const backlog = readBacklog(dir);
     expect(backlog.features[0].tasks[0].status).toBe('in_progress');
   });
 
@@ -77,7 +74,7 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
+    const backlog = readBacklog(dir);
     expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
@@ -88,7 +85,7 @@ describe('reconcileState', () => {
     });
 
     reconcileState(dir);
-    const backlog = readStateFile<{ features: Array<{ tasks: Array<{ status: string }> }> }>(dir, 'backlog.json');
+    const backlog = readBacklog(dir);
     expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
@@ -143,6 +140,46 @@ describe('reconcileState', () => {
     expect(queryEvents(dir, { event_type: 'run_failed' })).toMatchObject([
       { run_id: 'run-orphan', payload: { reason: 'reconcile_orphan_claim' } },
     ]);
+  });
+
+  it('fails an active claim whose task row the project store does not reflect', () => {
+    writeState({
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }],
+      claims: [{
+        run_id: 'run-1',
+        task_ref: 'docs/task-1',
+        agent_id: 'a1',
+        state: 'claimed',
+        claimed_at: '2026-01-01T00:00:00.000Z',
+        lease_expires_at: '2026-01-01T01:00:00.000Z',
+      }],
+    });
+
+    reconcileState(dir);
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+    expect(readStateFile<{ claims: Array<{ state: string }> }>(dir, 'claims.json').claims[0].state).toBe('failed');
+    expect(queryEvents(dir, { event_type: 'run_failed' })).toMatchObject([
+      { run_id: 'run-1', payload: { reason: 'reconcile_status_mismatch' } },
+    ]);
+  });
+
+  it('leaves a merged task and its unfinished run alone in the finalize window', () => {
+    writeState({
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'done' }],
+      claims: [{
+        run_id: 'run-1',
+        task_ref: 'docs/task-1',
+        agent_id: 'a1',
+        state: 'in_progress',
+        claimed_at: '2026-01-01T00:00:00.000Z',
+        lease_expires_at: '2026-01-01T01:00:00.000Z',
+      }],
+    });
+
+    reconcileState(dir);
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
+    expect(readStateFile<{ claims: Array<{ state: string }> }>(dir, 'claims.json').claims[0].state).toBe('in_progress');
+    expect(queryEvents(dir, { event_type: 'run_failed' })).toEqual([]);
   });
 
   it('is idempotent', () => {

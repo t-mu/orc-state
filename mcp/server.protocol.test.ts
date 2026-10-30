@@ -1,6 +1,6 @@
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -12,23 +12,15 @@ let pending: Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) =
 let parseFailure: Error | null;
 
 function seedState(dir: string) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'project',
-      title: 'Project',
-      tasks: [{
-        ref: 'project/todo-one',
-        title: 'Todo one',
-        status: 'todo',
-        task_type: 'implementation',
-        planning_state: 'ready_for_dispatch',
-        delegated_by: 'master',
-        created_at: '2026-01-01T00:00:00.000Z',
-        updated_at: '2026-01-01T00:00:00.000Z',
-      }],
-    }],
-  }));
+  seedProjectTasks(dir, [{
+    ref: 'project/todo-one',
+    title: 'Todo one',
+    status: 'todo',
+    task_type: 'implementation',
+    planning_state: 'ready_for_dispatch',
+    delegated_by: 'master',
+    created_at: '2026-01-01T00:00:00.000Z',
+  }]);
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -240,7 +232,10 @@ describe('mcp stdio protocol', () => {
   });
 
   it('returns protocol InternalError for unexpected tool execution failures', async () => {
-    unlinkSync(join(stateDir, 'backlog.json'));
+    // Corrupt the project task store under the running server: opening it now fails inside SQLite.
+    rmSync(join(stateDir, 'runtime.db-wal'), { force: true });
+    rmSync(join(stateDir, 'runtime.db-shm'), { force: true });
+    writeFileSync(join(stateDir, 'runtime.db'), 'not a sqlite database');
     await expect(callTool('list_tasks', {})).rejects.toMatchObject({
       code: -32603,
     });

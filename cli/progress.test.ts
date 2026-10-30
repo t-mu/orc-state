@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { initEventsDb, queryEvents } from '../lib/eventLog.ts';
 import Database from 'better-sqlite3';
+import { initProjectTaskStore } from '../lib/projectTasks.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -63,10 +64,13 @@ describe('cli/progress.ts', () => {
   });
 
   it('commits run_finished with the completed run', () => {
+    // A worker finishes only after the coordinator's merge confirmation records `done`.
+    initProjectTaskStore(dir).applyTransition('docs/task-1', { cause: 'run_start', to: 'in_progress', runId: 'run-1', actorId: 'bob' });
+    recordMergeConfirmation(dir, 'docs/task-1');
     const result = runProgress(['--event=run_finished', '--run-id=run-1', '--agent-id=bob']);
     expect(result.status).toBe(0);
     expect(readClaims().claims[0].state).toBe('done');
-    expect(readBacklog().features[0].tasks[0].status).toBe('done');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
     expect(readEvents().some((event) => event.event === 'run_finished' && event.run_id === 'run-1')).toBe(true);
   });
 
@@ -74,7 +78,7 @@ describe('cli/progress.ts', () => {
     const result = runProgress(['--event=run_failed', '--run-id=run-1', '--agent-id=bob', '--reason=boom']);
     expect(result.status).toBe(0);
     expect(readClaims().claims[0].state).toBe('failed');
-    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
     expect(readEvents().some((event) => event.event === 'run_failed' && event.run_id === 'run-1')).toBe(true);
   });
 
@@ -118,37 +122,28 @@ function runProgress(args: string[]) {
 }
 
 function seedState(stateDir: string) {
-  writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed', depends_on: [], acceptance_criteria: ['a', 'b', 'c'] }] }],
-  }));
   writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z', session_handle: 'openai:session-bob', provider_ref: null }],
   }));
-  writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: 'run-1',
-      task_ref: 'docs/task-1',
-      agent_id: 'bob',
-      state: 'claimed',
-      claimed_at: '2026-01-01T00:00:00Z',
-      lease_expires_at: '2099-01-01T00:00:00Z',
-      last_heartbeat_at: null,
-      started_at: null,
-      finished_at: null,
-    }],
-  }));
+  const claims = [{
+    run_id: 'run-1',
+    task_ref: 'docs/task-1',
+    agent_id: 'bob',
+    state: 'claimed',
+    claimed_at: '2026-01-01T00:00:00Z',
+    lease_expires_at: '2099-01-01T00:00:00Z',
+    last_heartbeat_at: null,
+    started_at: null,
+    finished_at: null,
+  }];
+  writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(stateDir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed', depends_on: [], acceptance_criteria: ['a', 'b', 'c'] }], claims);
   writeFileSync(join(stateDir, 'events.jsonl'), '');
 }
 
 function readClaims() {
   return JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8'));
-}
-
-function readBacklog() {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
 }
 
 function readEvents() {

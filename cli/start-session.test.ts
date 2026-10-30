@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import {
+  bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, seedState as seedProjectState,
+} from '../test-fixtures/stateHelpers.ts';
 import { spawnSync }     from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -45,12 +47,7 @@ afterEach(() => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function seedState(agents: unknown[] = []) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1', features: [{ ref: 'project', title: 'Project', tasks: [] }],
-  }));
-  writeFileSync(join(dir, 'agents.json'),  JSON.stringify({ version: '1', agents }));
-  writeFileSync(join(dir, 'claims.json'),  JSON.stringify({ version: '1', claims: [] }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  seedProjectState(dir, { agents });
 }
 
 function masterAgent(overrides = {}) {
@@ -80,25 +77,16 @@ function readClaims() {
 }
 
 function seedActiveRuntimeState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'project',
-      title: 'Project',
-      tasks: [{ ref: 'project/task-1', title: 'Task 1', status: 'in_progress' }],
-    }],
-  }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: 'run-1',
-      task_ref: 'project/task-1',
-      agent_id: 'orc-1',
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00Z',
-      lease_expires_at: '2099-01-01T00:00:00Z',
-    }],
-  }));
+  const claims = [{
+    run_id: 'run-1',
+    task_ref: 'project/task-1',
+    agent_id: 'orc-1',
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00Z',
+    lease_expires_at: '2099-01-01T00:00:00Z',
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: 'project/task-1', title: 'Task 1', status: 'in_progress' }], claims);
 }
 
 function setEnv(stateDir: string) {
@@ -205,9 +193,8 @@ describe('cli/start-session.ts', () => {
 
     it('does not overwrite existing state files', () => {
       seedState();
-      // Write a sentinel value into backlog to detect overwrites
-      const sentinel = { version: '1', features: [{ ref: 'sentinel', title: 'Sentinel', tasks: [] }] };
-      writeFileSync(join(dir, 'backlog.json'), JSON.stringify(sentinel));
+      // Seed a sentinel task: auto-init must neither reset the store nor overwrite its projection
+      seedProjectTasks(dir, [{ ref: 'sentinel/task-1', title: 'Sentinel', status: 'todo' }]);
 
       spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
@@ -215,8 +202,10 @@ describe('cli/start-session.ts', () => {
         encoding: 'utf8',
       });
 
-      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-      expect(backlog.features[0].ref).toBe('sentinel');
+      expect(readBacklog(dir).features[0].ref).toBe('sentinel');
+      const projection = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+      expect(projection.features.flatMap((feature: { tasks: Array<{ ref: string }> }) => feature.tasks.map((task) => task.ref)))
+        .toEqual(['sentinel/task-1']);
     });
 
     it('resets volatile runtime state and appends session_started on startup', async () => {
@@ -238,8 +227,7 @@ describe('cli/start-session.ts', () => {
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
 
-      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-      expect(backlog.features[0].tasks[0].status).toBe('todo');
+      expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
       expect(readClaims()[0]).toMatchObject({ state: 'failed', failure_reason: 'session_reset' });
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(true);
@@ -420,8 +408,7 @@ describe('cli/start-session.ts', () => {
       expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(true);
       expect(readAgents()).toHaveLength(1);       // agents unchanged
       // tasks and claims must NOT be reset — that is the whole point of 'reuse'
-      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
       expect(readClaims()[0].state).toBe('in_progress');
     });
 
@@ -812,8 +799,7 @@ describe('cli/start-session.ts', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(false);
-      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
       expect(readClaims()[0].state).toBe('in_progress');
       expect(readAgents()[0]).toMatchObject({
         status: 'running',
@@ -846,8 +832,7 @@ describe('cli/start-session.ts', () => {
       expect(output).not.toContain('Master session ended.');
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(false);
-      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
       expect(readClaims()[0].state).toBe('in_progress');
       expect(readAgents()[0]).toMatchObject({
         status: 'running',
@@ -924,8 +909,7 @@ describe('cli/start-session.ts', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(false);
-      const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-      expect(backlog.features[0].tasks[0].status).toBe('in_progress');
+      expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
       expect(readClaims()[0].state).toBe('in_progress');
       expect(readAgents()[0]).toMatchObject({
         status: 'running',

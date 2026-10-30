@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readClaims, readBacklog } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -24,12 +24,12 @@ describe('cli/run-expire.ts', () => {
     expect(result.stdout).toContain('run expired: run-1');
     expect(result.stdout).toContain('docs/task-1 requeued');
 
-    const claims = readClaims();
+    const claims = readClaims(dir);
     const claim = claims.find((c: Record<string, unknown>) => c.run_id === 'run-1');
     expect(claim?.state).toBe('failed');
     expect(claim?.failure_reason).toBe('manual_expire');
 
-    const backlog = readBacklog();
+    const backlog = readBacklog(dir);
     const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task?.status).toBe('todo');
   });
@@ -45,7 +45,7 @@ describe('cli/run-expire.ts', () => {
 
     expect(runCli(['run-1']).status).toBe(0);
 
-    const claim = readClaims().find((c: Record<string, unknown>) => c.run_id === 'run-1');
+    const claim = readClaims(dir).find((c: Record<string, unknown>) => c.run_id === 'run-1');
     expect(claim?.finalization_state).toBeNull();
     expect(claim?.finalization_retry_count).toBe(0);
     expect(claim?.finalization_blocked_reason).toBeNull();
@@ -98,39 +98,22 @@ function runCli(args: string[]) {
 }
 
 function seedState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }],
-    }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: 'run-1',
-      task_ref: 'docs/task-1',
-      agent_id: 'worker-1',
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00Z',
-      started_at: '2026-01-01T00:01:00Z',
-      lease_expires_at: '2099-01-01T00:00:00Z',
-    }],
-  }));
+  const claims = [{
+    run_id: 'run-1',
+    task_ref: 'docs/task-1',
+    agent_id: 'worker-1',
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00Z',
+    started_at: '2026-01-01T00:01:00Z',
+    lease_expires_at: '2099-01-01T00:00:00Z',
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
-}
-
-function readClaims(): Array<Record<string, unknown>> {
-  return (JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')) as { claims: Array<Record<string, unknown>> }).claims;
-}
-
-function readBacklog() {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')) as { features: Array<{ tasks: Array<Record<string, unknown>> }> };
 }
 
 function readEvents() {

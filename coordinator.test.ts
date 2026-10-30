@@ -28,7 +28,8 @@ beforeEach(() => {
   // a fresh coordinator.ts (and fresh paths.ts / adapterInstances Map).
   vi.resetModules();
   dir = createTempStateDir('orc-coord-test-');
-  process.env.ORC_STATE_DIR = dir;
+  // The coordinator runs only for a registered project.
+  Object.assign(process.env, bridgeProjectEnv(dir));
   process.env.ORC_REPO_ROOT = dir;
 });
 
@@ -2722,8 +2723,9 @@ describe('processTerminalRunEvents', () => {
 
     const claim = readClaims(dir).find((entry) => entry.run_id === 'run-test')!;
     expect(claim.state).toBe('done');
+    // The task is recorded done only from the coordinator's merge confirmation.
     const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/test-task')!;
-    expect(task.status).toBe('done');
+    expect(task.status).toBe('in_progress');
     const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).toHaveBeenCalledWith('pty:orc-1');
     expect(agent.status).toBe('idle');
@@ -3094,14 +3096,7 @@ describe('buildTaskEnvelope', () => {
   });
 });
 
-// main() runs only for a registered project.
-function runAsProject() {
-  Object.assign(process.env, bridgeProjectEnv(dir));
-}
-
 describe('doShutdown', () => {
-  beforeEach(runAsProject);
-
   it('stops all managed PTY sessions before coordinator_stopped event', async () => {
     process.env.ORC_MAX_WORKERS = '2';
     process.env.ORC_WORKER_PROVIDER = 'claude';
@@ -3340,8 +3335,6 @@ describe('doShutdown', () => {
 });
 
 describe('global error handlers', () => {
-  beforeEach(runAsProject);
-
   it('unhandledRejection triggers doShutdown and logs to stderr', async () => {
     seedState(dir);
 
@@ -3458,7 +3451,7 @@ describe('lifecycle reducer integration', () => {
     expect(new Date(afterHb.lease_expires_at as string).getTime())
       .toBeGreaterThanOrEqual(new Date(beforeLease).getTime());
 
-    // run_finished → should transition to done
+    // run_finished → the claim is done
     await processTerminalRunEvents([{
       event: 'run_finished',
       run_id: 'run-reducer-001',
@@ -3472,8 +3465,9 @@ describe('lifecycle reducer integration', () => {
     expect(afterFinish.state).toBe('done');
     expect(afterFinish.finished_at).toBeTruthy();
 
+    // The task is recorded done only from the coordinator's merge confirmation.
     const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'orch/reducer-task')!;
-    expect(task.status).toBe('done');
+    expect(task.status).toBe('in_progress');
   });
 
   it('treats duplicate and replayed events as explicit reducer outcomes', async () => {

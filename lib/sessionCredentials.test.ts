@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
+import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './eventLog.ts';
 import { clientCredential, credentialHash, newSessionSecret, sessionForCredential, sessionIdFromEnv } from './sessionCredentials.ts';
 
 let dir: string;
 
 beforeEach(() => {
+  // A legacy layout (no task store); the project test adds runtime.db itself.
   dir = createTempStateDir('orch-credentials-');
-  seedState(dir);
   initEventsDb(dir);
   withEventDbTransaction(dir, (db) => {
     db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)

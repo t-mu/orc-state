@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
+import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -22,7 +23,7 @@ describe('cli/task-reset.ts', () => {
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('task reset: docs/task-1');
-    const task = readBacklog().features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task?.status).toBe('todo');
   });
 
@@ -66,19 +67,14 @@ describe('cli/task-reset.ts', () => {
   });
 
   it('resets a blocked task with no active claims', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{
-        ref: 'docs',
-        title: 'Docs',
-        tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'blocked', blocked_reason: 'stuck' }],
-      }],
-    }));
+    initProjectTaskStore(dir).applyTransition('docs/task-1', {
+      cause: 'failure_block', to: 'blocked', runId: 'run-1', actorId: 'worker-1', reason: 'stuck',
+    });
     writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('task reset: docs/task-1');
-    const task = readBacklog().features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task?.status).toBe('todo');
     expect(task?.blocked_reason).toBeUndefined();
   });
@@ -93,20 +89,9 @@ function runCli(args: string[]) {
 }
 
 function seedState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }],
-    }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-    version: '1',
+  seedProjectState(dir, {
+    tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }],
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
-  }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
     claims: [{
       run_id: 'run-1',
       task_ref: 'docs/task-1',
@@ -116,12 +101,7 @@ function seedState() {
       started_at: '2026-01-01T00:01:00Z',
       lease_expires_at: '2099-01-01T00:00:00Z',
     }],
-  }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
-}
-
-function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')) as { features: Array<{ tasks: Array<Record<string, unknown>> }> };
+  });
 }
 
 function readClaims(): Array<Record<string, unknown>> {

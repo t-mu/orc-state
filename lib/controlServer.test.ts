@@ -41,10 +41,10 @@ beforeEach(async () => {
   initEventsDb(dir);
   commitClaims(dir, { version: '1', claims: [claim('run-a', 'worker-a', 'orch/task-a'), claim('run-b', 'worker-b', 'orch/task-b')] });
   withEventDbTransaction(dir, (db) => {
-    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
-      VALUES ('session-master', NULL, 'master', 'codex', 'running', '2026-01-01', '2026-01-01'),
-        ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01'),
-        ('session-b', 'run-b', 'worker-b', 'claude', 'running', '2026-01-01', '2026-01-01')`).run();
+    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-master', NULL, 'master', 'codex', 'running', '2026-01-01', '2026-01-01', ?),
+        ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01', ?),
+        ('session-b', 'run-b', 'worker-b', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('session-master'), credentialHash('session-a'), credentialHash('session-b'));
   });
   server = await startControlServer(dir, { pollMs: 20 });
 });
@@ -136,7 +136,6 @@ describe('local daemon control API', () => {
 
   it('creates and revises project tasks with revision checks and master-only authoring', async () => {
     const master = new ControlClient(dir, { credential: 'secret-master' });
-    await expect(master.listTasks()).rejects.toMatchObject({ code: 'not_found' });
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
       { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
       { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
@@ -163,6 +162,25 @@ describe('local daemon control API', () => {
     // A worker reads its own task through its envelope, not the project's task list.
     await expect(new ControlClient(dir, { credential: 'secret-a' }).listTasks()).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);
+  });
+
+  it('reports not_found for the task list when the state dir has no project task store', async () => {
+    // A legacy state directory: no runtime.db, no project.json.
+    const legacyDir = createTempStateDir('orch-control-legacy-');
+    writeFileSync(join(legacyDir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    initEventsDb(legacyDir);
+    withEventDbTransaction(legacyDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
+      VALUES ('session-master', NULL, 'master', 'codex', 'running', '2026-01-01', '2026-01-01')`).run());
+    const legacyServer = await startControlServer(legacyDir, { pollMs: 20 });
+    try {
+      expect(existsSync(join(legacyDir, 'runtime.db'))).toBe(false);
+      await expect(new ControlClient(legacyDir, { credential: 'session-master' }).listTasks()).rejects.toMatchObject({ code: 'not_found' });
+    } finally {
+      await legacyServer.close();
+      cleanupTempStateDir(legacyDir);
+    }
   });
 
   it('lets an operator author and import project tasks while refusing worker and bearer-only callers', async () => {
@@ -312,9 +330,9 @@ describe('local daemon control API', () => {
     const first = (await new ControlClient(dir, { credential: 'session-a' }).sendMessage(input)).message;
     withEventDbTransaction(dir, (db) => {
       db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id IN ('session-a', 'session-b')").run();
-      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
-        VALUES ('session-a-new', 'run-a', 'worker-a', 'claude', 'running', 'later', 'later'),
-          ('session-b-new', 'run-b', 'worker-b', 'codex', 'running', 'later', 'later')`).run();
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+        VALUES ('session-a-new', 'run-a', 'worker-a', 'claude', 'running', 'later', 'later', ?),
+          ('session-b-new', 'run-b', 'worker-b', 'codex', 'running', 'later', 'later', ?)`).run(credentialHash('session-a-new'), credentialHash('session-b-new'));
     });
     const retried = (await new ControlClient(dir, { credential: 'session-a-new' }).sendMessage({ ...input, recipientSessionId: 'session-b-new' })).message;
     expect(retried.message_id).toBe(first.message_id);
@@ -441,9 +459,9 @@ describe('local daemon control API', () => {
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
       { agent_id: 'scout-1', provider: 'claude', role: 'scout', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
     ] }));
-    withEventDbTransaction(dir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
-      VALUES ('session-scout', NULL, 'scout-1', 'claude', 'running', '2026-01-01', '2026-01-01'),
-        ('session-runless', NULL, 'worker-c', 'claude', 'running', '2026-01-01', '2026-01-01')`).run());
+    withEventDbTransaction(dir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-scout', NULL, 'scout-1', 'claude', 'running', '2026-01-01', '2026-01-01', ?),
+        ('session-runless', NULL, 'worker-c', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('session-scout'), credentialHash('session-runless')));
     await expect(new ControlClient(dir, { credential: 'session-scout' }).reviews('run-a')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     await expect(new ControlClient(dir, { credential: 'session-runless' }).reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
     await expect(new ControlClient(dir, { credential: 'forged' }).reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated' });

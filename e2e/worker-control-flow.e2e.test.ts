@@ -1,17 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 
 function readAgents(stateDir: string) {
   return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')).agents;
 }
 
 function seedState(stateDir: string) {
-  writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'project', title: 'Project', tasks: [] }],
-  }));
+  seedProjectTasks(stateDir, []);
   writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
   writeFileSync(join(stateDir, 'events.jsonl'), '');
   writeFileSync(join(stateDir, 'coordinator.pid'), JSON.stringify({ pid: process.pid }));

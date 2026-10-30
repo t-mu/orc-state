@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, seedState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -11,17 +11,6 @@ let dir: string;
 beforeEach(() => {
   dir = createTempStateDir('orc-task-mark-done-test-');
   mkdirSync(join(dir, 'backlog'), { recursive: true });
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }],
-    }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
   writeSpec('docs/task-1', 'docs', 'Task 1', 'todo');
 });
 
@@ -35,7 +24,7 @@ describe('cli/task-mark-done.ts', () => {
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
 
-    const task = readBacklog().features[0].tasks.find((entry) => entry.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'docs/task-1');
     expect(task?.status).toBe('done');
 
     const event = readEvents().find((entry) => entry.event === 'task_updated' && entry.task_ref === 'docs/task-1');
@@ -71,13 +60,14 @@ describe('cli/task-mark-done.ts', () => {
     expect(result.status).toBe(0);
   });
 
-  it('allows transition from todo because coordinator owns runtime completion after merge', () => {
+  it('refuses completion from todo: the project store records done only for a merged in_progress run', () => {
     seedBacklogTask('todo');
 
     const result = runCli(['docs/task-1']);
 
-    expect(result.status).toBe(0);
-    expect(readBacklog().features[0].tasks[0].status).toBe('done');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('invalid task transition');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
   });
 
   it('rejects completion from blocked', () => {
@@ -125,18 +115,7 @@ function writeSpec(taskRef: string, feature: string, title: string, status: stri
 }
 
 function seedBacklogTask(status: string) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status }],
-    }],
-  }));
-}
-
-function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+  seedState(dir, { tasks: [{ ref: 'docs/task-1', title: 'Task 1', status }] });
 }
 
 function readEvents() {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import {
   validateBacklog,
   validateAgents,
@@ -245,7 +245,7 @@ describe('validateStateDir', () => {
   });
 
   it('returns no errors for a fully valid state directory', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(VALID_BACKLOG));
+    seedProjectTasks(dir, []); // writes the backlog.json projection of an empty project store
     writeFileSync(join(dir, 'agents.json'), JSON.stringify(VALID_AGENTS));
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(VALID_CLAIMS));
     writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify(VALID_RUN_WORKTREES));
@@ -264,18 +264,18 @@ describe('validateStateDir', () => {
   });
 
   it('reports JSON parse errors', () => {
-    writeFileSync(join(dir, 'backlog.json'), '{invalid json}');
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify(VALID_AGENTS));
+    seedProjectTasks(dir, []);
+    writeFileSync(join(dir, 'agents.json'), '{invalid json}');
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(VALID_CLAIMS));
     writeFileSync(join(dir, 'events.jsonl'), '');
 
     const errors = validateStateDir(dir);
-    expect(errors).toEqual(expect.arrayContaining([expect.stringContaining('backlog.json: JSON parse error')]));
+    expect(errors).toEqual(expect.arrayContaining([expect.stringContaining('agents.json: JSON parse error')]));
   });
 
   it('reports validation errors from individual files', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '2', features: [] }));
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify(VALID_AGENTS));
+    seedProjectTasks(dir, []);
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '2', agents: [] }));
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(VALID_CLAIMS));
     writeFileSync(join(dir, 'events.jsonl'), '');
 
@@ -284,7 +284,7 @@ describe('validateStateDir', () => {
   });
 
   it('reports validation errors from run-worktrees metadata when present', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(VALID_BACKLOG));
+    seedProjectTasks(dir, []);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify(VALID_AGENTS));
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(VALID_CLAIMS));
     writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({
@@ -306,7 +306,7 @@ describe('validateStateDir', () => {
   });
 
   it('reports cross-file invariant violations', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(VALID_BACKLOG));
+    seedProjectTasks(dir, []);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify(VALID_AGENTS));
     writeFileSync(join(dir, 'claims.json'), JSON.stringify({
       version: '1',

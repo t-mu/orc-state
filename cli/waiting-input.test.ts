@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -112,20 +112,13 @@ function runCli(args: string[]) {
 }
 
 function seedState(claims: unknown[]) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [
-        { ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' },
-        { ref: 'docs/task-2', title: 'Task 2', status: 'in_progress' },
-        { ref: 'docs/task-3', title: 'Task 3', status: 'in_progress' },
-        { ref: 'docs/task-4', title: 'Task 4', status: 'in_progress' },
-      ],
-    }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [
+    { ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' },
+    { ref: 'docs/task-2', title: 'Task 2', status: 'in_progress' },
+    { ref: 'docs/task-3', title: 'Task 3', status: 'in_progress' },
+    { ref: 'docs/task-4', title: 'Task 4', status: 'in_progress' },
+  ], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }

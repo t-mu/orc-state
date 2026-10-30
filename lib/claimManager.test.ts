@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { queryEvents } from './eventLog.ts';
-import { createTempStateDir, cleanupTempStateDir, seedState, readStateFile } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState, readStateFile, readBacklog as readStoreBacklog } from '../test-fixtures/stateHelpers.ts';
 import {
   claimTask,
   markTaskEnvelopeSent,
@@ -33,7 +33,7 @@ function seed(dir: string, { tasks = [makeTask('orch/init')], claims = [] as Cla
   seedState(dir, { tasks, claims });
 }
 
-function readBacklog(dir: string): Backlog { return readStateFile<Backlog>(dir, 'backlog.json'); }
+function readBacklog(dir: string): Backlog { return readStoreBacklog(dir) as unknown as Backlog; }
 function readClaims(dir: string) { return readStateFile<{ version: string; claims: Claim[] }>(dir, 'claims.json'); }
 function readEvents(dir: string)  {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,7 +56,7 @@ describe('claimTask', () => {
     expect(new Date(lease_expires_at).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it('sets task status to claimed in backlog.json', () => {
+  it('sets task status to claimed in the project task store', () => {
     seed(dir);
     claimTask(dir, 'orch/init', 'agent-01');
     const task = readBacklog(dir).features[0].tasks[0];
@@ -360,7 +360,7 @@ describe('finishRun', () => {
     expect(readEvents(dir)).toHaveLength(0);
   });
 
-  it('sets claim to done and task to done on success', () => {
+  it('sets claim to done and leaves the task in_progress for the merge confirmation on success', () => {
     seed(dir);
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
     startRun(dir, run_id, 'agent-01');
@@ -369,7 +369,8 @@ describe('finishRun', () => {
     const claim = readClaims(dir).claims.find(c => c.run_id === run_id);
     expect(claim!.state).toBe('done');
     expect(claim!.finished_at).toBeTruthy();
-    expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
+    // The project store records done only from the coordinator's merge confirmation.
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
   });
 
   it('emits run_finished event on success', () => {
@@ -706,13 +707,12 @@ describe('nextEligibleTask', () => {
   });
 
   it('skips unknown task types and selects known dispatchable task', () => {
-    seed(dir, {
-      tasks: [
-        { ...makeTask('orch/plan'), task_type: 'planning' as Task['task_type'] },
-        { ...makeTask('orch/impl'), task_type: 'implementation' },
-      ],
-    });
-    expect(nextEligibleTask(dir)).toBe('orch/impl');
+    // The project store rejects unknown task types, so model the backlog in memory.
+    const backlog = makeBacklog([
+      { ...makeTask('orch/plan'), task_type: 'planning' as Task['task_type'] },
+      { ...makeTask('orch/impl'), task_type: 'implementation' },
+    ]);
+    expect(nextEligibleTaskFromBacklog(backlog)).toBe('orch/impl');
   });
 
   it('does not route unknown task types to any agent', () => {
@@ -727,13 +727,12 @@ describe('nextEligibleTask', () => {
   });
 
   it('requires planning_state=ready_for_dispatch when planning_state is present', () => {
-    seed(dir, {
-      tasks: [
-        { ...makeTask('orch/a'), planning_state: 'proposal' as Task['planning_state'] },
-        { ...makeTask('orch/b'), planning_state: 'ready_for_dispatch' },
-      ],
-    });
-    expect(nextEligibleTask(dir)).toBe('orch/b');
+    // The project store accepts only ready_for_dispatch/archived, so model the backlog in memory.
+    const backlog = makeBacklog([
+      { ...makeTask('orch/a'), planning_state: 'proposal' as Task['planning_state'] },
+      { ...makeTask('orch/b'), planning_state: 'ready_for_dispatch' },
+    ]);
+    expect(nextEligibleTaskFromBacklog(backlog)).toBe('orch/b');
   });
 
   it('routes only tasks matching required_capabilities', () => {

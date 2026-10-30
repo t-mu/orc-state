@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import {
+  createTempStateDir,
+  cleanupTempStateDir,
+  readBacklog,
+  seedProjectTasks,
+} from '../test-fixtures/stateHelpers.ts';
 import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
 
@@ -69,7 +74,7 @@ describe('coordinator policy e2e', () => {
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
-    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
     const agent = readAgents().agents[0];
     expect(agent.status).toBe('idle');
     expect(agent.session_handle).toBe(null);
@@ -144,7 +149,7 @@ describe('coordinator policy e2e', () => {
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
-    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
     const agent = readAgents().agents[0];
     expect(agent.session_handle).toBe(null);
     const runFailed = readEvents().find((e) => e.event === 'run_failed' && e.run_id === 'run-inactive-timeout');
@@ -191,16 +196,13 @@ describe('coordinator policy e2e', () => {
 
   it('cleans up ephemeral worker and requeues task when dispatch send fails', async () => {
     // Use managed pool: master-only, ephemeral workers spawned on demand
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [{
-        ref: 'docs/task-1',
-        title: 'Task 1',
-        status: 'todo',
-        planning_state: 'ready_for_dispatch',
-        task_type: 'implementation',
-      }] }],
-    }));
+    seedProjectTasks(dir, [{
+      ref: 'docs/task-1',
+      title: 'Task 1',
+      status: 'todo',
+      planning_state: 'ready_for_dispatch',
+      task_type: 'implementation',
+    }]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{
@@ -255,7 +257,7 @@ describe('coordinator policy e2e', () => {
     await coordinator.tick();
 
     // Task should be requeued
-    const task = readBacklog().features[0].tasks[0];
+    const task = readBacklog(dir).features[0].tasks[0];
     expect(task.status).toBe('todo');
 
     // Ephemeral worker is removed entirely (not marked offline)
@@ -391,7 +393,7 @@ describe('coordinator policy e2e', () => {
     claim = readClaims().claims[0];
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_blocked_reason).toContain('finalization retry timed out waiting for worker progress');
-    expect(readBacklog().features[0].tasks[0].status).toBe('in_progress');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
   });
 
   it('expires a stale lease only once across multiple ticks', async () => {
@@ -423,7 +425,7 @@ describe('coordinator policy e2e', () => {
 
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
-    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
 
     const expiredEvents = readEvents().filter((e) => e.event === 'claim_expired' && e.run_id === 'run-expired-once');
     expect(expiredEvents).toHaveLength(1);
@@ -431,16 +433,13 @@ describe('coordinator policy e2e', () => {
 
   it('dispatches task via ephemeral worker in managed pool', async () => {
     // Use managed pool: master-only, ephemeral workers spawned on demand
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [{
-        ref: 'docs/task-1',
-        title: 'Task 1',
-        status: 'todo',
-        planning_state: 'ready_for_dispatch',
-        task_type: 'implementation',
-      }] }],
-    }));
+    seedProjectTasks(dir, [{
+      ref: 'docs/task-1',
+      title: 'Task 1',
+      status: 'todo',
+      planning_state: 'ready_for_dispatch',
+      task_type: 'implementation',
+    }]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{
@@ -500,7 +499,7 @@ describe('coordinator policy e2e', () => {
 
     const claims = readClaims().claims.filter((c) => ['claimed', 'in_progress', 'done'].includes(c.state as string));
     expect(claims).toHaveLength(1);
-    const task = readBacklog().features[0].tasks.find((t) => t.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((t) => t.ref === 'docs/task-1');
     expect(task!.status).not.toBe('todo');
     const events = readEvents();
     expect(events.some((event) => event.event === 'claim_created' && event.agent_id === spawnedAgentId)).toBe(true);
@@ -526,10 +525,6 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
     planning_state: 'ready_for_dispatch',
     task_type: 'implementation',
   };
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [task] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -551,10 +546,7 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
     version: '1',
     claims: claim ? [claim] : [],
   }));
-}
-
-function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+  seedProjectTasks(dir, [task], claim ? [claim] : []);
 }
 
 function readClaims(): { claims: Array<Record<string, unknown>> } {

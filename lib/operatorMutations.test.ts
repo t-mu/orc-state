@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
+import { cleanupTempStateDir, createTempStateDir, seedProjectTasks, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from './eventLog.ts';
 import { bridgeInputRequest } from './messageBridge.ts';
 import { commitClaims } from './runStore.ts';
@@ -36,13 +36,14 @@ beforeEach(() => {
   seedState(dir, {
     tasks: [task('orch/active', 'in_progress'), task('orch/blocked', 'blocked'), task('orch/todo', 'todo')],
     agents: [agent('master', 'master'), agent('worker-a', 'worker')],
+    claims: [claim('run-a', 'orch/active')],
   });
   initEventsDb(dir);
   commitClaims(dir, { version: '1', claims: [claim('run-a', 'orch/active')] });
   withEventDbTransaction(dir, (db) => {
-    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
-      VALUES ('session-master', NULL, 'master', 'claude', 'running', '2026-01-01', '2026-01-01'),
-        ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01')`).run();
+    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-master', NULL, 'master', 'claude', 'running', '2026-01-01', '2026-01-01', ?),
+        ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('session-master'), credentialHash('session-a'));
   });
 });
 
@@ -208,7 +209,7 @@ describe('master and operator mutations through the coordinator (task 232)', () 
 
   it('the master MCP tools are routed to the coordinator in a project', async () => {
     const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', credential: 'session-master' });
-    expect(result).toMatchObject({ cancelled: true, status: 'blocked' });
+    expect(result).toMatchObject({ cancelled: true, status: 'cancelled' });
     expect(queryEvents(dir, { event_type: 'task_cancelled' }).at(-1)).toMatchObject({ actor_id: 'master' });
   });
 });
@@ -311,9 +312,11 @@ describe('remaining recovery writes through the coordinator (task 234)', () => {
       await expect(submitOperatorMutation({ op: 'run-expire', run_id: 'run-a' }, options))
         .resolves.toMatchObject({ expired: true, task_ref: 'orch/active' });
       expect(status('orch/active')).toBe('todo');
-      await expect(submitOperatorMutation({ op: 'task-mark-done', task_ref: 'orch/todo' }, options))
-        .resolves.toMatchObject({ done: true, previous_status: 'todo' });
-      expect(status('orch/todo')).toBe('done');
+      // A project records done only from in_progress, as the merge confirmation would.
+      seedProjectTasks(dir, [task('orch/running', 'in_progress')]);
+      await expect(submitOperatorMutation({ op: 'task-mark-done', task_ref: 'orch/running' }, options))
+        .resolves.toMatchObject({ done: true, previous_status: 'in_progress' });
+      expect(status('orch/running')).toBe('done');
       await expect(submitOperatorMutation({ op: 'run-expire', run_id: 'missing' }, options))
         .rejects.toMatchObject({ code: 'not_found', status: 404 });
       await expect(submitOperatorMutation({ op: 'task-mark-done', task_ref: 'orch/blocked' }, options))

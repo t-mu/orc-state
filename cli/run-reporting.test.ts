@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
@@ -58,39 +58,30 @@ async function appendEventWithRetry(event: Parameters<typeof appendSequencedEven
 }
 
 function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{ agent_id: agentId, provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: 'docs/task-1',
-      agent_id: agentId,
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      started_at: '2026-01-01T00:01:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      finished_at: null,
-      finalization_state: null,
-      finalization_retry_count: 0,
-      finalization_blocked_reason: null,
-    }],
-  }));
+  const claims = [{
+    run_id: runId,
+    task_ref: 'docs/task-1',
+    agent_id: agentId,
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    started_at: '2026-01-01T00:01:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    finished_at: null,
+    finalization_state: null,
+    finalization_retry_count: 0,
+    finalization_blocked_reason: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
 function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'claimed' }] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -103,28 +94,23 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'claimed',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      started_at: null,
-      finished_at: null,
-    }],
-  }));
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'claimed',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    started_at: null,
+    finished_at: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'claimed' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
 function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -137,31 +123,26 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      started_at: '2026-01-01T00:01:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      finished_at: null,
-      finalization_state: null,
-      finalization_retry_count: 0,
-      finalization_blocked_reason: null,
-    }],
-  }));
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    started_at: '2026-01-01T00:01:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    finished_at: null,
+    finalization_state: null,
+    finalization_retry_count: 0,
+    finalization_blocked_reason: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
 function _seedFailedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'todo' }] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -174,23 +155,22 @@ function _seedFailedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'failed',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      started_at: '2026-01-01T00:01:00.000Z',
-      finished_at: '2026-01-01T00:10:00.000Z',
-      lease_expires_at: '2026-01-01T00:10:00.000Z',
-      last_heartbeat_at: null,
-      finalization_state: null,
-      finalization_retry_count: 0,
-      finalization_blocked_reason: null,
-    }],
-  }));
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'failed',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    started_at: '2026-01-01T00:01:00.000Z',
+    finished_at: '2026-01-01T00:10:00.000Z',
+    lease_expires_at: '2026-01-01T00:10:00.000Z',
+    last_heartbeat_at: null,
+    finalization_state: null,
+    finalization_retry_count: 0,
+    finalization_blocked_reason: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'todo' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
@@ -413,6 +393,7 @@ describe('orc-run-work-complete', () => {
 describe('orc-run-finish', () => {
   it('commits run_finished with the completed claim', () => {
     seedInProgressRun({ runId: 'run-fin-001', agentId: 'worker-01' });
+    recordMergeConfirmation(dir, 'docs/task-1');
 
     const result = runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
 
@@ -455,8 +436,8 @@ describe('orc-run-fail', () => {
     const agents = readAgents();
     expect(agents.agents[0].last_heartbeat_at).toBeUndefined();
 
-    const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-    const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const backlog = readBacklog(dir);
+    const task = backlog.features[0].tasks.find((t) => t.ref === 'docs/task-1');
     expect(task!.status).toBe('todo');
 
     const events = readEvents();
@@ -478,8 +459,8 @@ describe('orc-run-fail', () => {
 
     expect(result.status).toBe(0);
 
-    const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-    const task = backlog.features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const backlog = readBacklog(dir);
+    const task = backlog.features[0].tasks.find((t) => t.ref === 'docs/task-1');
     expect(task!.status).toBe('blocked');
     const events = readEvents();
     const failedEvent = events.find((e) => e.event === 'run_failed' && e.run_id === 'run-fail-002');
@@ -518,7 +499,7 @@ describe('orc-run-fail', () => {
     const cases = [
       { script: 'run-start.ts', args: ['--run-id=run-lock-start', '--agent-id=worker-01'], seed: () => seedClaimedRun({ runId: 'run-lock-start', agentId: 'worker-01' }) },
       { script: 'run-heartbeat.ts', args: ['--run-id=run-lock-heartbeat', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-heartbeat', agentId: 'worker-01' }) },
-      { script: 'run-finish.ts', args: ['--run-id=run-lock-finish', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-finish', agentId: 'worker-01' }) },
+      { script: 'run-finish.ts', args: ['--run-id=run-lock-finish', '--agent-id=worker-01'], seed: () => { seedInProgressRun({ runId: 'run-lock-finish', agentId: 'worker-01' }); recordMergeConfirmation(dir, 'docs/task-1'); } },
       { script: 'run-fail.ts', args: ['--run-id=run-lock-fail', '--agent-id=worker-01', '--reason=boom'], seed: () => seedInProgressRun({ runId: 'run-lock-fail', agentId: 'worker-01' }) },
       { script: 'run-work-complete.ts', args: ['--run-id=run-lock-complete', '--agent-id=worker-01'], seed: () => { seedInProgressRun({ runId: 'run-lock-complete', agentId: 'worker-01' }); } },
     ];
