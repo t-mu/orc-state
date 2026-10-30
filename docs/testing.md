@@ -10,6 +10,14 @@ The test suite has three tiers:
 | `npm run test:e2e` | E2E tests with fixture CLIs | Before merging coordinator changes |
 | `npm run test:real-providers` | Real-provider smoke tests (opt-in) | Before releases or after provider integration changes |
 
+Every vitest config removes all inherited `ORC_*` variables before any test
+worker starts (`vitest.orcEnv.mjs`), so running the suite from inside a live
+orc session (a worker's `ORC_STATE_DIR`, control socket, secrets) never
+reaches that session's project. Test workers see only the values the config
+sets deliberately (`ORC_SESSION_TRANSPORT`, and an `ORC_DATA_HOME` that names
+no registry); a test that needs another `ORC_*` value sets it itself.
+`vitest.orcEnv.test.ts` guards this for each config.
+
 ---
 
 ## Unit and integration tests

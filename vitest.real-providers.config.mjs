@@ -1,5 +1,8 @@
 import { defineConfig } from 'vitest/config';
+import { stripInheritedOrcEnv } from './vitest.orcEnv.mjs';
 import { resolve } from 'node:path';
+
+stripInheritedOrcEnv();
 
 export default defineConfig({
   test: {
