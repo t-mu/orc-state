@@ -276,6 +276,28 @@ describe('mcp read handlers', () => {
     expect(workers[0].active_task_ref).toBe('project/todo-one');
   });
 
+  it('handleListAgents lists a scout by id and state, without worker fields', () => {
+    seedAgents([{
+      agent_id: 'scout-1',
+      provider: 'claude',
+      role: 'scout',
+      status: 'running',
+      session_handle: 'pty:scout-1',
+      session_token: 'secret',
+      last_heartbeat_at: null,
+      registered_at: '2026-01-01T00:00:00.000Z',
+    }]);
+    expect(handleListAgents(dir, { role: 'scout' })).toEqual([{
+      agent_id: 'scout-1',
+      role: 'scout',
+      provider: 'claude',
+      model: null,
+      status: 'running',
+      session_handle: 'pty:scout-1',
+      launched_at: '2026-01-01T00:00:00.000Z',
+    }]);
+  });
+
   it('handleListActiveRuns returns only claimed/in_progress claims', () => {
     const active = handleListActiveRuns(dir);
     expect(active.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2', 'run-4']);

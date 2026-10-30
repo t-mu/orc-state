@@ -116,7 +116,8 @@ describe('cli/status.ts', () => {
     expect(result.stdout).toContain('Orchestrator Status');
     expect(result.stdout).toContain('Worker Capacity:');
     expect(result.stdout).toContain('scout-1');
-    expect(result.stdout).toContain('scout    investigating');
+    expect(result.stdout).toContain('Scouts (1):');
+    expect(result.stdout).toMatch(/scout-1\s+running\s+attached/);
     expect(result.stdout).toContain('Finalization (1):');
     expect(result.stdout).toContain('blocked_preserved:        1');
     expect(result.stdout).toContain('task/run-1');

@@ -15,6 +15,15 @@ export interface TuiSlot {
   last_heartbeat_at: string | null;
 }
 
+export interface TuiScout {
+  agent_id: string;
+  provider: string | null;
+  model: string | null;
+  status: string;
+  session_handle: string | null;
+  launched_at: string | null;
+}
+
 export interface PhaseEntry {
   name: string;
   state: 'done' | 'active' | 'stale' | 'error' | 'pending';
@@ -67,14 +76,7 @@ export interface TuiStatus {
     waiting_for_capacity: number;
     slots: TuiSlot[];
   };
-  scout_capacity: {
-    total_slots: number;
-    investigating_slots: number;
-    idle_slots: number;
-    warming_slots: number;
-    unavailable_slots: number;
-    slots: TuiSlot[];
-  };
+  scouts: TuiScout[];
   tasks: {
     counts: Record<string, number>;
     total: number;
@@ -159,14 +161,7 @@ export function emptyTuiStatus(): TuiStatus {
       waiting_for_capacity: 0,
       slots: [],
     },
-    scout_capacity: {
-      total_slots: 0,
-      investigating_slots: 0,
-      idle_slots: 0,
-      warming_slots: 0,
-      unavailable_slots: 0,
-      slots: [],
-    },
+    scouts: [],
     tasks: {
       counts: {},
       total: 0,
@@ -228,24 +223,6 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
     });
   }
 
-  for (const scout of status.scout_capacity.slots) {
-    viewModels.push({
-      slot_id: scout.agent_id,
-      role: scout.role,
-      provider: scout.provider ?? null,
-      model: scout.model ?? null,
-      slot_state: scout.slot_state,
-      task_ref: null,
-      run_state: scout.slot_state,
-      current_phase: null,
-      phases: [],
-      age_seconds: null,
-      activity_seconds: null,
-      heartbeat_seconds: null,
-      sprite_state: scoutStateToSpriteState(scout.slot_state),
-    });
-  }
-
   return viewModels;
 }
 
@@ -253,11 +230,5 @@ export function runStateToSpriteState(runState: string | null | undefined): Spri
   if (runState === 'in_progress' || runState === 'claimed') return 'work';
   if (runState === 'done' || runState === 'released') return 'done';
   if (runState === 'blocked' || runState === 'failed') return 'fail';
-  return 'idle';
-}
-
-function scoutStateToSpriteState(slotState: string | null | undefined): SpriteState {
-  if (slotState === 'investigating' || slotState === 'warming') return 'work';
-  if (slotState === 'unavailable') return 'fail';
   return 'idle';
 }

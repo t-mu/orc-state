@@ -46,7 +46,8 @@ describe('cli/watch.ts', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Worker Capacity:');
     expect(result.stdout).toContain('scout-1');
-    expect(result.stdout).toContain('scout    investigating');
+    expect(result.stdout).toContain('Scouts (1):');
+    expect(result.stdout).toMatch(/scout-1\s+running\s+attached/);
     expect(result.stdout).toContain('Master:');
     expect(result.stdout).toContain('Finalization (1):');
     expect(result.stdout).toContain('awaiting_finalize:        1');

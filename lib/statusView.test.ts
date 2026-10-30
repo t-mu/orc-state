@@ -7,7 +7,8 @@ import type { Agent, Task, Claim } from '../types/index.ts';
 
 type StatusResult = {
   worker_capacity: { configured_slots: number; available_slots: number; used_slots: number; warming_slots: number; dispatch_ready_count: number; waiting_for_capacity: number; slots: Array<{ agent_id: string; role?: string }> };
-  scout_capacity: { total_slots: number; investigating_slots: number; idle_slots: number; warming_slots: number; unavailable_slots: number; slots: Array<{ agent_id: string; slot_state: string }> };
+  scouts: Array<Record<string, unknown>>;
+  scout_capacity?: unknown;
   tasks: { total: number; counts: Record<string, number> };
   claims: { total: number; active: Array<Record<string, unknown>>; in_progress: number; awaiting_run_started: number; stalled: number };
   master: { agent_id: string } | null;
@@ -87,13 +88,13 @@ describe('buildStatus', () => {
     expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['amber-anchor']);
   });
 
-  it('surfaces scouts in a separate scout capacity block', () => {
+  it('lists scouts by id and state, not as capacity', () => {
     writeState({
       agents: [
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
         { agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
         { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1' } as Agent,
-        { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'idle' } as Agent,
+        { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'idle', registered_at: '2026-01-01T00:00:00Z' } as Agent,
       ],
     });
     writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
@@ -101,10 +102,11 @@ describe('buildStatus', () => {
 
     const s = buildStatus(dir) as unknown as StatusResult;
     expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['amber-anchor']);
-    expect(s.scout_capacity.total_slots).toBe(2);
-    expect(s.scout_capacity.investigating_slots).toBe(1);
-    expect(s.scout_capacity.idle_slots).toBe(1);
-    expect(s.scout_capacity.slots.map((slot) => slot.agent_id)).toEqual(['scout-1', 'scout-2']);
+    expect(s.scout_capacity).toBeUndefined();
+    expect(s.scouts).toEqual([
+      { agent_id: 'scout-1', provider: 'codex', model: null, status: 'running', session_handle: 'pty:scout-1', launched_at: null },
+      { agent_id: 'scout-2', provider: 'claude', model: null, status: 'idle', session_handle: null, launched_at: '2026-01-01T00:00:00Z' },
+    ]);
   });
 
   it('counts tasks by status', () => {
@@ -595,7 +597,7 @@ describe('formatStatus', () => {
     expect(output).not.toContain('orc-3');
   });
 
-  it('renders a separate scout slots section', () => {
+  it('renders scouts as their own list, outside worker capacity', () => {
     writeState({
       agents: [
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
@@ -606,9 +608,11 @@ describe('formatStatus', () => {
     writeEvents([]);
 
     const output = formatStatus(buildStatus(dir));
-    expect(output).toContain('scout-1');
-    expect(output).toContain('scout-2');
-    expect(output).toContain('scout    investigating');
+    expect(output).toContain('slots: (none spawned)');
+    expect(output).toContain('Scouts (2):');
+    expect(output).toMatch(/scout-1\s+running\s+attached/);
+    expect(output).toMatch(/scout-2\s+offline\s+detached/);
+    expect(output).not.toContain('investigating');
   });
 });
 

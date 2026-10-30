@@ -5,6 +5,7 @@ import { EventFeed } from './EventFeed.tsx';
 import { FailureAlert } from './FailureAlert.tsx';
 import { Header } from './Header.tsx';
 import { RunsTable } from './RunsTable.tsx';
+import { ScoutList } from './ScoutList.tsx';
 import { buildWorkerSlotViewModels, loadTuiStatus } from './status.ts';
 import { WorkerGrid } from './WorkerGrid.tsx';
 
@@ -44,6 +45,7 @@ export function App({ stateDir, sprites, intervalMs = 3000 }: AppProps) {
           available: status.worker_capacity.available_slots,
         }}
       />
+      <ScoutList scouts={status.scouts ?? []} />
       <RunsTable runs={status.claims.active} />
       <EventFeed events={status.recentEvents} eventReadError={status.eventReadError} />
     </Box>
