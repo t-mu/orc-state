@@ -112,7 +112,7 @@ if (worker.session_handle) {
 }
 
 if (!worker.session_handle) {
-  console.log(`Agent '${worker.agent_id}' registered (${worker.provider}). Coordinator will provision the headless session on its next tick, even while idle.`);
+  console.log(`Agent '${worker.agent_id}' registered (${worker.provider}). No session was started: the coordinator launches worker sessions only for claimed runs.`);
   console.log('This command is for debug/recovery workflows. Normal task execution launches workers per task automatically.');
   console.log(`Use: orc watch     — monitor for the agent_online event / running status`);
   console.log(`Use: orc attach ${worker.agent_id}  — attach to worker output once running`);

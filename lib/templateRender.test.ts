@@ -68,6 +68,13 @@ describe('renderTemplate', () => {
     expect(rendered).not.toContain('keeps it alive while you are registered');
   });
 
+  it('keeps the placeholder get_scout_report uses to tell the echoed report template from a truncated report', () => {
+    for (const template of ['scout-bootstrap-v1.txt', 'scout-brief-v1.txt']) {
+      const text = renderTemplate(template, { agent_id: 's', orc_bin: 'orc', provider: 'claude', session_token: 't' });
+      expect(text, template).toMatch(/<concrete next step[^\n]*\nSCOUT_REPORT_END/);
+    }
+  });
+
   it('never points a worker or scout at an MCP tool, since they start without the orchestrator server', () => {
     const vars = { agent_id: 'w', orc_bin: 'orc', provider: 'claude', session_token: 't' };
     for (const template of ['worker-bootstrap-v2.txt', 'scout-bootstrap-v1.txt', 'scout-brief-v1.txt', 'task-envelope-v2.txt']) {

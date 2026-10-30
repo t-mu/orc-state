@@ -243,7 +243,7 @@ orc delegate                                      # assign/dispatch a task to an
 
 # Worker management — recovery/debug only
 orc register-worker <id> --provider=claude        # register a new worker agent
-orc start-worker-session <id> --provider=claude   # launch headless PTY session + bootstrap
+orc start-worker-session <id> --provider=claude   # register a worker (and stop or rebind its session); the coordinator launches sessions only for claimed runs
 orc attach <id>                                   # print tail of worker PTY output log (read-only)
 orc control-worker <id>                           # inspect a running worker session
 orc deregister <id>                               # remove a specific agent registration
