@@ -84,17 +84,18 @@ lifecycle. The master cleans them up after reading their report.
 
 ## Data flow
 
-1. **Spec authored** — you write a markdown file in `backlog/` describing the task.
-2. **Coordinator syncs** — on each tick, the coordinator reads all `backlog/*.md` files
-   and reconciles them into `.orc-state/backlog.json`.
+1. **Spec authored** — the master (`create_task`) or you (`orc project task create|import`)
+   store the task spec as a revision in the project's SQLite task store (`runtime.db`).
+2. **Projection updated** — the task store is projected into the read-only
+   `backlog.json` that the scheduler and status views read.
 3. **Task becomes eligible** — once a task's `depends_on` refs are all `done` or
    `released`, the coordinator marks it eligible for dispatch.
 4. **Claim created** — when concurrency capacity is available (live worker count is below
    `max_workers`), the coordinator registers a new task-scoped worker agent, resolves the
    provider from the task's `required_provider` field or the configured default, creates a
-   claim in `.orc-state/claims.json`, and launches a PTY session for the new worker.
+   claim in `claims.json` pinned to the task's latest revision, and launches a PTY session for the new worker.
 5. **Worker runs** — the worker reads the spec, writes code, runs tests, and submits
-   the work for self-review. Each lifecycle event is appended to `.orc-state/events.db`.
+   the work for self-review. Each lifecycle event is appended to `events.db`.
 6. **Work complete** — the worker signals `run-work-complete`; the coordinator takes
    over to rebase the branch and merge it to main.
 7. **Task released** — after merge, the task transitions to `released` and the worktree
@@ -104,12 +105,14 @@ lifecycle. The master cleans them up after reading their report.
 
 ## State directory
 
-All runtime state lives under `.orc-state/` at the repo root. Agents never write these
+All runtime state lives in the project's external state directory
+(`<data-home>/projects/<project_id>/`), outside the repository. Agents never write these
 files directly — all mutations go through `orc` CLI commands or MCP tool handlers.
 
 | File | Contents |
 |------|----------|
-| `backlog.json` | Features and tasks (synced from `backlog/*.md`) |
+| `runtime.db` | SQLite task store: revisions, status, transitions, runs, plans |
+| `backlog.json` | Features and tasks (read-only projection of `runtime.db`) |
 | `agents.json` | Registered agents and their session metadata |
 | `claims.json` | Active and historical run claims |
 | `events.db` | Append-only SQLite event log |
@@ -119,24 +122,23 @@ For field-level schemas and concurrency guarantees, see [Contracts & invariants]
 
 ---
 
-## Two-root model (project vs legacy attached)
+## Two-root model
 
 orc resolves two roots:
 
-- **Orchestration root** — owns state, worktrees, settings and (in a legacy
-  installation) `backlog/`, `plans/` and `orc-state.config.json`. The
-  coordinator runs against it.
+- **Orchestration root** — the project's external state directory; owns state,
+  worktrees and logs. The coordinator runs against it.
 - **Target repo root** — the repository whose product code the runs operate on.
   All product-code git operations (worktree creation, branch delete, merge, PR
   push) target this repo.
 
-For a **registered project** the roots differ: the orchestration root is the
-project's external state directory in the data home, and the target is the
-registered Git repository. Worktrees are placed under the state directory but
+The roots differ: the orchestration root is the project's external state
+directory in the data home, and the target is the registered Git repository. Worktrees are placed under the state directory but
 are git worktrees **of the target repo**, which receives only product-code
-commits. A **legacy attached** installation keeps both roots in the same
-directory until it is migrated. The sibling layout (a separate orchestration
-repository with `target_repo`) is retired; see [Sibling Mode](./sibling-mode.md).
+commits. Legacy installations that kept both roots in the repository
+(attached) or in a separate orchestration repository with `target_repo`
+(sibling) no longer run; `orc project migrate` moves one into a project (see
+[Sibling Mode](./sibling-mode.md)).
 
 ---
 

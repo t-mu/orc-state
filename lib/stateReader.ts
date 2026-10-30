@@ -7,8 +7,6 @@ import { logger } from './logger.ts';
 import { readAuthoritativeClaims, withAuthoritativeAgentSessions } from './runStore.ts';
 import { projectTaskStoreFor, readProjectBacklog } from './projectTasks.ts';
 
-const TASK_SEQ_RE = /(?:^|\/)task-(\d+)(?:-|$)/;
-
 export function readJson(stateDir: string, file: string): unknown {
   if (file === 'claims.json') {
     const authoritative = readAuthoritativeClaims(stateDir);
@@ -60,25 +58,4 @@ export function findTask(backlog: unknown, taskRef: string): Task | null {
     if (task) return task;
   }
   return null;
-}
-
-export function getNextTaskSeq(backlog: unknown): number {
-  const b = backlog as Backlog | null;
-  if (Number.isInteger(b?.next_task_seq) && (b?.next_task_seq ?? 0) >= 1) {
-    return b!.next_task_seq!;
-  }
-
-  let max = 0;
-  for (const feature of (b?.features ?? [])) {
-    for (const task of feature?.tasks ?? []) {
-      const match = typeof task?.ref === 'string'
-        ? task.ref.match(TASK_SEQ_RE)
-        : null;
-      if (!match) continue;
-      const value = Number.parseInt(match[1], 10);
-      if (Number.isInteger(value) && value > max) max = value;
-    }
-  }
-
-  return max > 0 ? max + 1 : 1;
 }

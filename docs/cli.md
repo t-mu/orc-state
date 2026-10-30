@@ -15,18 +15,19 @@ These are the commands you'll use to start and stop the orchestrator.
 
 ### `orc init`
 
-Interactive first-time setup. Walks you through provider selection, initializes
-state files, and installs skills, agents, and MCP configuration for your chosen
-providers.
+First-time setup of a registered project. Register the repository first with
+`orc project add <git-path>` (or migrate an old installation with
+`orc project migrate`); without a registered project `orc init` refuses to run,
+as do `orc start-session`, the coordinator and the MCP server. Walks you through
+provider selection (`--provider` is required outside a TTY).
 
 ```bash
 orc init                           # interactive (TTY)
 orc init --provider=claude         # non-interactive
 orc init --provider=claude,codex   # multiple providers
-orc init --force                   # reinitialize (backs up existing state)
 ```
 
-Inside a registered project (`orc project add`), `orc init` writes nothing into the
+`orc init` writes nothing into the
 repository: it records the provider choices as project settings in the registry
 (`default_provider`, `worker_pool.provider`, and `worker_pool.max_workers` when unset),
 completes the external state directory, and points at `orc install --global --skip-mcp`
@@ -34,7 +35,7 @@ for skills and agents (`orc start-session` wires the MCP server). It needs no Gi
 directory when the project is selected with `--project`, asks no install questions, ignores
 `--skip-skills`/`--skip-agents`/`--skip-mcp`/`--feature`/`--feature-title` (with a note), and refuses `--force`.
 
-**Flags:** `[--provider=<providers>]` `[--worker-provider=<name>]` `[--feature=<ref>]` `[--feature-title=<title>]` `[--skip-skills]` `[--skip-agents]` `[--skip-mcp]` `[--force]`
+**Flags:** `[--provider=<providers>]` `[--worker-provider=<name>]`
 
 ### `orc start-session`
 
@@ -124,8 +125,9 @@ orc preflight
 
 ## Setup
 
-These commands are called by `orc init` automatically. You typically don't need
-to run them directly unless you're updating an existing installation.
+`orc init` does not run these. Install skills and agents for your user with
+`orc install --global --skip-mcp --provider=<providers>`; `orc start-session`
+wires the orchestrator MCP server into the master itself.
 
 | Command | Description |
 |---------|-------------|
@@ -167,7 +169,7 @@ worktree, including when the provider uses a structured runtime. Both commands
 are read-only by default; add `--write` to acquire the exclusive input lease.
 Press Ctrl-] to detach a writer or Ctrl-C to detach an observer. `--once` prints
 the current output and exits. The shell survives detach and daemon restart;
-its output is retained in `.orc-state/terminal-logs/`.
+its output is retained in `terminal-logs/` in the project state directory.
 Terminals require the local control daemon and tmux, and are for the master
 and the operator: run them from the master's shell or an operator shell, never
 from inside a worker session. A legacy `pty:` provider
@@ -191,15 +193,14 @@ Commands for creating, completing, and managing tasks. In normal operation,
 the master agent handles task creation and the coordinator handles dispatch.
 These are available for manual intervention and debugging.
 
-In a registered project, `task-cancel`, `task-reset`, `task-unblock`, `delegate` and
+`task-cancel`, `task-reset`, `task-unblock`, `delegate` and
 `run-input-respond` (like the master's `cancel_task`, `reset_task`, `unblock_task`,
 `delegate_task` and `respond_input`) are applied by the running coordinator
 through its control API; the CLI sends them as the operator, the master's tools
 with the master's session, and a shell inside a worker session (one with
 `ORC_SESSION_SECRET`) is refused. `run-input-respond` answers as the master and
-needs the master's credential in every case: in a project its `ORC_MASTER_SECRET`
-(so it runs from the master's own shell), in a legacy installation its session id
-(`--session-id`, or `ORC_SESSION_ID`). When no coordinator is
+needs the master's credential in every case: its `ORC_MASTER_SECRET`
+(so it runs from the master's own shell). When no coordinator is
 running they apply the change directly and print `coordinator is not running;
 applying <op> directly`, so operator recovery works with the coordinator stopped.
 While a coordinator still holds the project (its `coordinator.pid` names the
@@ -223,12 +224,12 @@ agent; any other id (such as `coordinator`) is refused. The same rule applies to
 | `task-mark-done <task-ref>` | Operator recovery: mark a task done in runtime state. The coordinator marks merged tasks done itself. No spec file is changed. |
 | `task-reset <task-ref>` | Reset a task to `todo`, cancelling any active claims. |
 | `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
-| `task-cancel <task-ref>` | Cancel a task that is not yet terminal, ending any active run (`cancelled` in a project, recorded as `blocked` in a legacy installation). Exits 1 for a task that is already done, released or cancelled. |
+| `task-cancel <task-ref>` | Cancel a task that is not yet terminal, ending any active run (status `cancelled`). Exits 1 for a task that is already done, released or cancelled. |
 | `delegate` | Dispatch a task to an available worker agent. |
 | `project task <list\|show\|revisions\|create\|edit\|import\|export>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`, `import <file-or-dir> [--strict]`, `export <dir-or-file.md> [--ref=a,b]`; `project plan <list\|show\|import\|export>` stores and renders plans. All accept `--project=<id>`; `create`, `edit` and `import` also accept `--actor-id=<id>`. See configuration.md → Project tasks. |
-| `project migrate [legacy-path] [--execute [--name=N] \| --cleanup-report]` | Move an attached or sibling installation into a registered project. Without flags it is a dry run (inventory, conflicts, blockers; nothing is written). `--execute` backs up, imports tasks with their effective runtime status, copies history, imports plans and settings, verifies parity, and cuts over; a retry is safe. `--cleanup-report` lists leftover legacy files after the cutover; nothing is deleted. Exits 1 when `--execute` is `blocked` or `verification_failed`. See configuration.md → Migrating an existing installation. |
+| `project migrate [legacy-path] [--execute [--name=N] \| --cleanup-report]` | Move an attached or sibling installation into a registered project; it is the only way to keep using an old installation, which no longer runs. Without flags it is a dry run (inventory, conflicts, blockers; nothing is written). `--execute` backs up, imports tasks with their effective runtime status, copies history, imports plans and settings, verifies parity, and cuts over; a retry is safe. `--cleanup-report` lists leftover legacy files after the cutover; nothing is deleted. Exits 1 when `--execute` is `blocked` or `verification_failed`. See configuration.md → Migrating an existing installation. |
 
-In a registered project, `orc project task create|edit|import`, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
+`orc project task create|edit|import`, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
 
 **Flags:**
 
@@ -257,12 +258,12 @@ files in the format below, and `orc project plan export` writes it. Tasks are au
 - `## Implementation Steps` is an ordered sequence of `### Step N — Title`
   sub-headings. Steps may declare dependencies with the exact structured cue
   `Depends on: N` or `Depends on: N, M`. The structured cue is plans-only;
-  backlog specs continue to use the prose `Depends on Task N.` form.
+  task specs continue to use the prose `Depends on Task N.` form.
 - Plan bodies must not contain unresolved placeholders: `TBD`, `TODO`, three or
   more `?` characters, or bare bracketed fill-ins (`[like this]`) outside fenced
   code blocks and outside markdown link syntax (`[text](url)`).
 - Plan files must be UTF-8 without a byte-order mark.
-- `plan_id` numbering is an independent sequence from backlog task numbers.
+- `plan_id` numbering is an independent sequence from task numbers.
   Collisions across the two sequences are expected and benign.
 
 See `plans/TEMPLATE.md` for a skeleton that `orc project plan import` accepts. The parser
@@ -316,8 +317,7 @@ control API (see `docs/contracts.md` → **Local Control API**). They fail with
 the plain `runs-active` path still works then. Mutations authenticate with the
 caller's session secret (`ORC_MASTER_SECRET` or `ORC_SESSION_SECRET`, which
 launched sessions receive; `--credential` overrides it, and `--session-token`
-is its older name). A legacy installation also accepts the session id,
-`ORC_SESSION_ID` (or the legacy `ORC_SESSION_TOKEN`). `orc control
+is its older name). `orc control
 snapshot` lists running sessions (caller and recipient IDs). Snapshot, events
 and `runs-active --via-control` read the whole project, so only the master and
 the operator may use them; a worker session is refused (`403`).

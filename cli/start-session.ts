@@ -19,7 +19,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pty from 'node-pty';
 
@@ -30,7 +30,7 @@ import {
   removeAgent,
   updateAgentRuntime,
 } from '../lib/agentRegistry.ts';
-import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
@@ -186,9 +186,9 @@ async function stopCoordinator(pid: number) {
   return false;
 }
 
-/** How child processes find this session's state: the project identity in project mode. */
+/** How child processes find this session's state: the project identity. */
 function orcStateEnv(): Record<string, string> {
-  return ACTIVE_PROJECT ? { ORC_PROJECT_ID: ACTIVE_PROJECT.id, ORC_STATE_DIR: STATE_DIR } : { ORC_STATE_DIR: STATE_DIR };
+  return { ORC_PROJECT_ID: ACTIVE_PROJECT!.id, ORC_STATE_DIR: STATE_DIR };
 }
 
 /**
@@ -196,15 +196,15 @@ function orcStateEnv(): Record<string, string> {
  * present to the coordinator. It lives only in the master's environment; the
  * state keeps its hash, and MCP configs reference it by name.
  */
-const masterSecret = ACTIVE_PROJECT ? newSessionSecret() : null;
+const masterSecret = newSessionSecret();
 
 /**
- * The master's MCP server environment. In a project it forwards the master's
+ * The master's MCP server environment. It forwards the master's
  * secret from the provider's own environment by reference (Claude and Gemini
  * expand `${VAR}`), so the value is never written into `mcp-config.json`.
  */
 function masterMcpEnv(): Record<string, string> {
-  return masterSecret ? { ...orcStateEnv(), ORC_MASTER_SECRET: '${ORC_MASTER_SECRET}' } : orcStateEnv();
+  return { ...orcStateEnv(), ORC_MASTER_SECRET: '${ORC_MASTER_SECRET}' };
 }
 
 function writeMcpConfig(env: Record<string, string>) {
@@ -224,10 +224,6 @@ function writeMcpConfig(env: Record<string, string>) {
   return configPath;
 }
 
-function escapeTomlString(value: string) {
-  return JSON.stringify(value);
-}
-
 function resolveInvocationCwd(cwd: string = process.cwd()) {
   const shellPwd = process.env.PWD;
   if (!shellPwd) return cwd;
@@ -241,80 +237,6 @@ function resolveInvocationCwd(cwd: string = process.cwd()) {
     // Fall back to the canonical cwd if either path is unavailable.
   }
   return cwd;
-}
-
-function resolveActiveCheckoutRoot(cwd: string = resolveInvocationCwd()) {
-  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
-    cwd,
-    encoding: 'utf8',
-  });
-  const configuredRoot = process.env.ORC_REPO_ROOT ? resolve(process.env.ORC_REPO_ROOT) : null;
-  if (result.status !== 0) {
-    return configuredRoot ?? resolve(cwd);
-  }
-  return result.stdout.trim() || configuredRoot || resolve(cwd);
-}
-
-function stripTomlTable(existing: string, tablePath: string) {
-  const lines = existing.split('\n');
-  const stripped: string[] = [];
-  let skipTable = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed === '# BEGIN ORC MANAGED MCP' || trimmed === '# END ORC MANAGED MCP') {
-      continue;
-    }
-
-    const tableMatch = trimmed.match(/^\[([^\]]+)\]$/);
-    if (tableMatch) {
-      const currentTable = tableMatch[1].trim();
-      skipTable = currentTable === tablePath || currentTable.startsWith(`${tablePath}.`);
-    }
-
-    if (!skipTable) {
-      stripped.push(line);
-    }
-  }
-
-  return stripped.join('\n').trimEnd();
-}
-
-function writeCodexProjectMcpConfig(repoRoot: string) {
-  const serverPath = runtimeModulePath('../mcp/server.ts', '../mcp/server.js');
-  const codexDir = join(repoRoot, '.codex');
-  const configPath = join(codexDir, 'config.toml');
-  const managedBlockStart = '# BEGIN ORC MANAGED MCP';
-  const managedBlockEnd = '# END ORC MANAGED MCP';
-  const managedBlock = [
-    managedBlockStart,
-    '[mcp_servers.orchestrator]',
-    `command = ${escapeTomlString(process.execPath)}`,
-    `args = [${escapeTomlString(serverPath)}]`,
-    `cwd = ${escapeTomlString(repoRoot)}`,
-    '',
-    '[mcp_servers.orchestrator.env]',
-    `ORC_STATE_DIR = ${escapeTomlString(STATE_DIR)}`,
-    managedBlockEnd,
-    '',
-  ].join('\n');
-
-  mkdirSync(codexDir, { recursive: true });
-
-  let existing = '';
-  try {
-    existing = readFileSync(configPath, 'utf8');
-  } catch {
-    existing = '';
-  }
-
-  const withoutManagedBlock = stripTomlTable(existing, 'mcp_servers.orchestrator');
-  const nextContents = withoutManagedBlock
-    ? `${withoutManagedBlock}\n\n${managedBlock}`
-    : managedBlock;
-
-  writeFileSync(configPath, nextContents);
-  return configPath;
 }
 
 // ── Find master ────────────────────────────────────────────────────────────
@@ -334,7 +256,7 @@ if (deprecatedWorkerId || deprecatedWorkerProvider) {
 // ── Startup wizard ─────────────────────────────────────────────────────────
 
 try {
-  assertSupportedLayout();
+  assertProjectMode();
 } catch (error) {
   console.error((error as Error).message);
   process.exit(1);
@@ -445,7 +367,6 @@ console.log('  Recovery/debug:     orc register-worker / orc start-worker-sessio
 let spawnArgs: string[] = [];
 const masterConfig = loadMasterConfig();
 const masterModelArgs = masterConfig.model ? ['--model', masterConfig.model] : [];
-const checkoutRoot = resolveActiveCheckoutRoot();
 try {
   if (master.provider === 'claude') {
     const mcpConfigPath = writeMcpConfig(masterMcpEnv());
@@ -459,16 +380,13 @@ try {
     console.log('----- END MASTER BOOTSTRAP -----\n');
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
-    const codexMcpArgs = ACTIVE_PROJECT
-      // Codex forwards the secret by name from its own environment (env_vars), never on its command line.
-      ? codexMcpOverrideArgs(runtimeModulePath('../mcp/server.ts', '../mcp/server.js'), orcStateEnv(), process.execPath, ['ORC_MASTER_SECRET'])
-      : [];
-    const codexConfigPath = ACTIVE_PROJECT ? 'command-line overrides' : writeCodexProjectMcpConfig(checkoutRoot);
+    // Codex forwards the secret by name from its own environment (env_vars), never on its command line.
+    const codexMcpArgs = codexMcpOverrideArgs(runtimeModulePath('../mcp/server.ts', '../mcp/server.js'), orcStateEnv(), process.execPath, ['ORC_MASTER_SECRET']);
     const codexModeArgs = masterConfig.execution_mode === 'sandbox'
       ? ['--sandbox', 'workspace-write', '--ask-for-approval', 'never']
       : ['--dangerously-bypass-approvals-and-sandbox'];
     spawnArgs = [...codexModeArgs, ...codexMcpArgs, ...masterModelArgs, bootstrap];
-    console.log(`  MCP server: orchestrator tools available via ${codexConfigPath}.`);
+    console.log('  MCP server: orchestrator tools available via command-line overrides.');
     console.log('  Master bootstrap loaded via initial prompt.');
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
     console.log('\n----- MASTER BOOTSTRAP -----');
@@ -528,7 +446,7 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       cols: process.stdout.columns ?? 220,
       rows: process.stdout.rows ?? 50,
       cwd: resolveInvocationCwd(),
-      env: { ...process.env, ...(masterSecret ? { ORC_MASTER_SECRET: masterSecret } : {}) } as Record<string, string>,
+      env: { ...process.env, ORC_MASTER_SECRET: masterSecret } as Record<string, string>,
     });
     const startedAt = new Date().toISOString();
     recordProviderSession(STATE_DIR, {
@@ -538,7 +456,7 @@ const cliResult = await new Promise<{ type: string; error?: Error | undefined; c
       provider: master.provider,
       providerRef: null,
       startedAt,
-      credentialHash: masterSecret ? credentialHash(masterSecret) : null,
+      credentialHash: credentialHash(masterSecret),
     });
     updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'running',

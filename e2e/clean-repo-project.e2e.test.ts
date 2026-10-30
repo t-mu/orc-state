@@ -33,7 +33,7 @@ import { defaultSocketPath } from '../lib/controlProtocol.ts';
 
 const ORC = resolve(import.meta.dirname, '..', 'cli', 'orc.ts');
 const ORC_ENV_KEYS = ['ORC_STATE_DIR', 'ORC_HOME', 'ORC_REPO_ROOT', 'ORC_CONFIG_FILE', 'ORC_PROJECT_ID', 'ORC_DATA_HOME',
-  'ORC_BACKLOG_DIR', 'ORC_PLANS_DIR', 'ORC_WORKTREES_DIR', 'ORC_MAX_WORKERS', 'ORC_WORKER_PROVIDER', 'ORC_WORKER_MODEL',
+  'ORC_WORKTREES_DIR', 'ORC_MAX_WORKERS', 'ORC_WORKER_PROVIDER', 'ORC_WORKER_MODEL',
   'ORC_SESSION_ID', 'ORC_SESSION_TOKEN', 'ORC_SESSION_SECRET', 'ORC_MASTER_SECRET', 'ORC_CONTROL_SOCKET', 'ORC_CONTROL_API', 'ORC_SESSION_TRANSPORT'];
 const PROCESS_EVENTS = ['SIGINT', 'SIGTERM', 'exit', 'unhandledRejection', 'uncaughtException'] as const;
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 function readAgents(stateDir: string) {
   return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')).agents;
@@ -63,12 +63,13 @@ describe('worker control flow e2e', () => {
     vi.clearAllMocks();
     dir = createTempStateDir('orch-worker-control-e2e-');
     seedState(dir);
-    process.env.ORC_STATE_DIR = dir;
+    Object.assign(process.env, bridgeProjectEnv(dir));
   });
 
   afterEach(() => {
     cleanupTempStateDir(dir);
     delete process.env.ORC_STATE_DIR;
+    delete process.env.ORC_PROJECT_ID;
     vi.unmock('../lib/prompts.ts');
     vi.unmock('../lib/binaryCheck.ts');
     vi.unmock('node-pty');

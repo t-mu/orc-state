@@ -23,15 +23,16 @@ const claimsRaw = readClaimsFromLib(STATE_DIR).claims ?? [];
 const agents = agentsRaw;
 const claims = claimsRaw;
 
-// A retired sibling layout fails preflight; it must be migrated before it runs.
+// A legacy installation (attached or sibling) fails preflight; it must be migrated before it runs.
 const siblingRetired = LEGACY_SIBLING_TARGET !== null;
+const legacyInstallation = !ACTIVE_PROJECT;
 
 const checks = {
   state_valid: stateErrors.length === 0,
   has_registered_workers: agents.length > 0,
   has_online_workers: agents.some((a) => a.status !== 'offline'),
   orphaned_active_claims: getOrphanedClaims(agents, claims),
-  legacy_layout_supported: !siblingRetired,
+  legacy_layout_supported: !legacyInstallation,
   project_ok: projectHealth?.ok ?? true,
 };
 const providerBinaries = getProviderBinaries(agents);
@@ -41,7 +42,7 @@ const ok = checks.state_valid
   && checks.has_registered_workers
   && checks.orphaned_active_claims.length === 0
   && allBinariesPresent
-  && !siblingRetired
+  && !legacyInstallation
   && checks.project_ok;
 
 const result = {
@@ -62,7 +63,7 @@ const result = {
     ...(siblingRetired
       ? [`sibling layout error (fails preflight): target_repo ${LEGACY_SIBLING_TARGET} is retired; run orc project migrate ${ORCHESTRATION_ROOT} --execute`]
       : []),
-    ...(!ACTIVE_PROJECT && !siblingRetired ? [`legacy installation at ${ORCHESTRATION_ROOT}; migrate it into a project with orc project migrate`] : []),
+    ...(legacyInstallation && !siblingRetired ? [`legacy installation error (fails preflight): ${ORCHESTRATION_ROOT} no longer runs; migrate it with orc project migrate ${ORCHESTRATION_ROOT} --execute`] : []),
     ...(projectHealth?.errors ?? []).map((e) => `project error (fails preflight): ${e}`),
     ...(projectHealth?.warnings ?? []).map((w) => `project warning: ${w}`),
   ],

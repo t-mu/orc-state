@@ -1,8 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { syncBacklogFromSpecs } from './backlogSync.ts';
 import { claimTask, expireStaleLeases, finishRun, startRun } from './claimManager.ts';
 import { closeAllDatabases, queryEvents } from './eventLog.ts';
 import { assertRunMayFinish, closeProjectTaskStores, commitBacklog, createProjectTask, initProjectTaskStore } from './projectTasks.ts';
@@ -177,17 +174,6 @@ describe('project status authority', () => {
     findTask(renamed, 'app/base')!.title = 'Renamed';
     expect(() => commitBacklog(dir, renamed)).toThrow('only through a spec revision');
     expect(task('app/base')).toMatchObject({ status: 'todo', title: 'Base' });
-  });
-
-  it('never lets a stale Markdown status requeue a completed task', () => {
-    const { run_id } = claimTask(dir, 'app/base', 'worker-a');
-    startRun(dir, run_id, 'worker-a');
-    markTaskDoneRuntimeOnly('app/base', 'coordinator', dir);
-    mkdirSync(join(dir, 'backlog'));
-    writeFileSync(join(dir, 'backlog', '1-base.md'), '---\nref: app/base\nfeature: app\nstatus: todo\n---\n# Base\n');
-    syncBacklogFromSpecs(dir, join(dir, 'backlog'));
-    reconcileState(dir);
-    expect(task('app/base').status).toBe('done');
   });
 
   it('reconciles a task left active without an operational claim', () => {

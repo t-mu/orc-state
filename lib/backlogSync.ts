@@ -1,8 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { atomicWriteJson } from './atomicWrite.ts';
-import { withLock } from './lock.ts';
-import { isProjectStateDir } from './projectContext.ts';
 import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
 
 const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
@@ -269,27 +266,4 @@ export function syncBacklogFromSpecsLoaded(backlog: Backlog, specs: SpecEntry[],
     added_features: addedFeatures,
     ...(skippedSpecs.length > 0 ? { skipped_specs: skippedSpecs } : {}),
   };
-}
-
-export function syncBacklogFromSpecs(stateDir: string, docsDir: string, { lockAlreadyHeld = false }: { lockAlreadyHeld?: boolean } = {}): SyncResult {
-  // Project SQLite owns task definitions; Markdown reaches it only by explicit import.
-  if (isProjectStateDir(stateDir)) return { updated: false, added_tasks: 0, updated_tasks: 0, added_features: 0 };
-  const specs = discoverActiveTaskSpecs(docsDir);
-  if (specs.length === 0) {
-    return { updated: false, added_tasks: 0, updated_tasks: 0, added_features: 0 };
-  }
-
-  const backlogPath = join(stateDir, 'backlog.json');
-
-  const runSync = () => {
-    const backlog = JSON.parse(readFileSync(backlogPath, 'utf8')) as Backlog;
-    const result = syncBacklogFromSpecsLoaded(backlog, specs);
-    if (result.updated) {
-      atomicWriteJson(backlogPath, backlog);
-    }
-    return result;
-  };
-
-  if (lockAlreadyHeld) return runSync();
-  return withLock(join(stateDir, '.lock'), runSync);
 }

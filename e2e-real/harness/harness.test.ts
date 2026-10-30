@@ -337,7 +337,6 @@ describe('buildRuntimeEnv', () => {
     expect(env.ORC_STATE_DIR).toBe(repo.stateDir);
     expect(env.ORC_REPO_ROOT).toBe(repo.repoRoot);
     expect(env.ORC_WORKTREES_DIR).toBe(repo.worktreesDir);
-    expect(env.ORC_BACKLOG_DIR).toBe(repo.backlogDir);
     expect(env.ORC_CONFIG_FILE).toBe(join(repo.repoRoot, 'orc-state.config.json'));
     expect(cwd).toBe(repo.repoRoot);
 

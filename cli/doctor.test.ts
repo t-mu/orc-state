@@ -173,6 +173,18 @@ describe('cli/doctor.ts', () => {
   });
 });
 
+describe('doctor on a legacy installation', () => {
+  it('fails and points at the migration', () => {
+    seedCleanState();
+    const result = runCli(['--json']);
+    const json = JSON.parse(result.stdout);
+    expect(result.status).toBe(1);
+    expect(json.checks.legacyLayout.ok).toBe(false);
+    expect(json.checks.legacyLayout.message).toContain('no longer runs');
+    expect(json.checks.legacyLayout.message).toContain('orc project migrate');
+  });
+});
+
 describe('doctor memory health', () => {
   it('reports memory not initialized when memory.db missing', () => {
     seedCleanState();
@@ -180,7 +192,6 @@ describe('doctor memory health', () => {
     const json = JSON.parse(result.stdout);
     expect(json.checks.memoryHealth.ok).toBe(true);
     expect(json.checks.memoryHealth.messages.some((m: string) => m.includes('not initialized'))).toBe(true);
-    expect(result.status).toBe(0);
   });
 
   it('validates memory.db schema when present', () => {

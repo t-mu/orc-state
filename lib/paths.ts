@@ -52,11 +52,13 @@ export const TARGET_REPO_ROOT = ACTIVE_PROJECT
 // (the retired sibling layout). It must be migrated before it runs again.
 export const LEGACY_SIBLING_TARGET = ACTIVE_PROJECT ? null : legacySiblingTarget(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
 
-/** Refuse to operate a retired sibling layout: its runs would otherwise land in the orchestration home. */
-export function assertSupportedLayout(): void {
+/** Only a registered project runs: a legacy (attached or sibling) installation must be migrated first. */
+export function assertProjectMode(): void {
+  if (ACTIVE_PROJECT) return;
   if (LEGACY_SIBLING_TARGET) {
     throw new Error(`${ORCHESTRATION_ROOT} is a sibling orchestration home (target_repo: ${LEGACY_SIBLING_TARGET}). Sibling layouts are retired; migrate it into a project with: orc project migrate ${ORCHESTRATION_ROOT} --execute`);
   }
+  throw new Error(`No registered project here. Legacy .orc-state installations no longer run: migrate one with orc project migrate ${ORCHESTRATION_ROOT} --execute, or register a repository with orc project add <git-path> (or pass --project=<id>)`);
 }
 
 // ─── Repo-root call-site classification (authoritative; task 185) ────────────
@@ -71,7 +73,7 @@ export function assertSupportedLayout(): void {
 // ORCHESTRATION-ROOT consumers — framework home (orc binary, specs, plans,
 // config, state). These are correct as-is and were NOT changed by task 185:
 //   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
-//                       WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, ORC_CONFIG_FILE
+//                       WORKTREES_DIR, ORC_CONFIG_FILE
 //   coordinator.ts      resolveOrcBinSh(REPO_ROOT)           (orc binary lookup)
 //   coordinator.ts      relative(REPO_ROOT, source_path)     (backlog spec path math)
 //   coordinator.ts      repoRoot: REPO_ROOT → worker env     (orc bin/ctx for workers)
@@ -104,14 +106,6 @@ export function assertSupportedLayout(): void {
 export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)
   : resolve(ORCHESTRATION_ROOT, ACTIVE_PROJECT ? 'worktrees' : '.worktrees');
-
-export const BACKLOG_DOCS_DIR = process.env.ORC_BACKLOG_DIR
-  ? resolve(process.env.ORC_BACKLOG_DIR)
-  : resolve(ORCHESTRATION_ROOT, 'backlog');
-
-export const PLANS_DIR = process.env.ORC_PLANS_DIR
-  ? resolve(process.env.ORC_PLANS_DIR)
-  : resolve(ORCHESTRATION_ROOT, 'plans');
 
 /** Path to per-agent hook-events NDJSON file written by the Notification hook. */
 export function hookEventPath(agentId: string): string {

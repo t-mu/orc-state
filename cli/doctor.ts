@@ -36,14 +36,14 @@ const sandboxDeps = checkSandboxDependencies();
 const sandboxControlSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE_PROJECT) });
 const memoryHealth = validateMemoryDb(STATE_DIR);
 const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
-// Legacy installations still run until migrated; a sibling layout no longer does.
+// Neither a legacy attached installation nor a sibling layout runs any more; both must be migrated.
 const legacyLayout = ACTIVE_PROJECT ? null : {
-  ok: LEGACY_SIBLING_TARGET === null,
+  ok: false,
   root: ORCHESTRATION_ROOT,
   sibling_target: LEGACY_SIBLING_TARGET,
   message: LEGACY_SIBLING_TARGET
     ? `sibling layout (target_repo: ${LEGACY_SIBLING_TARGET}) is retired; run orc project migrate ${ORCHESTRATION_ROOT} --execute`
-    : `legacy installation at ${ORCHESTRATION_ROOT}; migrate it into a project with orc project migrate`,
+    : `legacy installation at ${ORCHESTRATION_ROOT} no longer runs; migrate it into a project with orc project migrate ${ORCHESTRATION_ROOT} --execute`,
 };
 
 // A legacy state directory that was migrated must not be run again; the project owns its state now.
@@ -224,7 +224,7 @@ for (const message of runtimeSchema.messages) console.log(`  ${message}`);
 
 if (legacyLayout) {
   console.log('');
-  console.log(`${legacyLayout.ok ? 'warning' : 'error'}: ${legacyLayout.message}`);
+  console.log(`error: ${legacyLayout.message}`);
 }
 
 if (!summary.ok) {

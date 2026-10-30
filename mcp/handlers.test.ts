@@ -77,7 +77,6 @@ function writeSpec(taskRef: string, feature: string, title: string, status = 'to
 beforeEach(() => {
   dir = createTempStateDir('orc-mcp-handlers-test-');
   process.env.ORC_REPO_ROOT = dir;
-  process.env.ORC_BACKLOG_DIR = join(dir, 'backlog');
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedBacklog([
     {
@@ -212,7 +211,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanupTempStateDir(dir);
   delete process.env.ORC_REPO_ROOT;
-  delete process.env.ORC_BACKLOG_DIR;
 });
 
 describe('mcp read handlers', () => {
@@ -256,15 +254,6 @@ describe('mcp read handlers', () => {
 
     expect(handleListTasks(dir).some((task) => task.ref === 'project/cancelled-one')).toBe(false);
     expect(handleListTasks(dir, { status: 'cancelled' }).map((task) => task.ref)).toEqual(['project/cancelled-one']);
-  });
-
-  it('syncs authoritative markdown before serving backlog-backed reads', () => {
-    writeSpec('project/todo-one', 'project', 'Todo one renamed');
-    const tasks = handleListTasks(dir);
-    expect(tasks.find((task) => task.ref === 'project/todo-one')?.title).toBe('Todo one renamed');
-
-    const task = handleGetTask(dir, { task_ref: 'project/todo-one' }) as Record<string, unknown>;
-    expect(task.title).toBe('Todo one renamed');
   });
 
   it('handleListAgents omits dead by default, includes dead when requested, and supports role filter', () => {
@@ -405,7 +394,7 @@ describe('mcp read handlers', () => {
     const status = handleGetStatus(dir);
 
     expect(Object.keys(status).sort()).toEqual(
-      ['active_tasks', 'agents', 'last_notification_seq', 'next_task_seq', 'project', 'stalled_runs', 'task_counts'].sort(),
+      ['active_tasks', 'agents', 'last_notification_seq', 'project', 'stalled_runs', 'task_counts'].sort(),
     );
     expect((status.agents as Array<Record<string, unknown>>).every((agent) =>
       ['agent_id', 'role', 'status', 'provider', 'active_task_ref'].every((key) => Object.hasOwn(agent, key)))).toBe(true);
@@ -421,7 +410,6 @@ describe('mcp read handlers', () => {
     expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done' || task.status === 'released')).toBe(false);
     expect(status.last_notification_seq).toBe(0);
     expect(status.stalled_runs).toBe(3);
-    expect(status.next_task_seq).toBe(1);
     expect(status.project).toBeNull();
   });
 

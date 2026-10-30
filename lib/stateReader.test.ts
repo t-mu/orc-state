@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readJson, findTask, readAgents, readClaims, getNextTaskSeq } from './stateReader.ts';
+import { readJson, findTask, readAgents, readClaims } from './stateReader.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -87,44 +87,5 @@ describe('readClaims', () => {
     } finally {
       spy.mockRestore();
     }
-  });
-});
-
-describe('getNextTaskSeq', () => {
-  it('returns backlog.next_task_seq when present', () => {
-    expect(getNextTaskSeq({ version: '1', next_task_seq: 12, features: [] })).toBe(12);
-  });
-
-  it('bootstraps from numbered task refs when field is absent', () => {
-    const backlog = {
-      version: '1',
-      features: [
-        {
-          ref: 'orch',
-          title: 'Orchestrator',
-          tasks: [
-            { ref: 'orch/task-7-old', title: 'Task 7', status: 'done' },
-            { ref: 'orch/task-124-backlog-next-task-seq', title: 'Task 124', status: 'todo' },
-          ],
-        },
-      ],
-    };
-
-    expect(getNextTaskSeq(backlog)).toBe(125);
-  });
-
-  it('returns 1 when no numbered refs exist and field is absent', () => {
-    const backlog = {
-      version: '1',
-      features: [
-        {
-          ref: 'orch',
-          title: 'Orchestrator',
-          tasks: [{ ref: 'orch/add-health-check', title: 'Task', status: 'todo' }],
-        },
-      ],
-    };
-
-    expect(getNextTaskSeq(backlog)).toBe(1);
   });
 });

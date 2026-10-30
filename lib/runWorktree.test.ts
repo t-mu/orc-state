@@ -22,8 +22,6 @@ beforeEach(() => {
   dir = createTempStateDir('orch-run-worktree-test-');
   process.env.ORC_STATE_DIR = dir;
   process.env.ORC_WORKTREES_DIR = join(dir, 'repo', '.worktrees');
-  process.env.ORC_BACKLOG_DIR = join(dir, 'docs', 'backlog');
-  process.env.ORC_PLANS_DIR = join(dir, 'plans');
   // Worktree git operations run against the TARGET repo root. ORC_REPO_ROOT
   // short-circuits TARGET_REPO_ROOT resolution, so it pins the target repo the
   // worktree is a worktree *of* — distinct from ORC_WORKTREES_DIR, which is
@@ -37,8 +35,6 @@ afterEach(() => {
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_WORKTREES_DIR;
-  delete process.env.ORC_BACKLOG_DIR;
-  delete process.env.ORC_PLANS_DIR;
   if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
   else delete process.env.ORC_REPO_ROOT;
 });
@@ -341,7 +337,6 @@ describe('ensureRunWorktree (real git, sibling layout)', () => {
     stateDir = join(orchRoot, '.orc-state');
     process.env.ORC_STATE_DIR = stateDir;
     process.env.ORC_WORKTREES_DIR = join(orchRoot, '.worktrees');
-    process.env.ORC_BACKLOG_DIR = join(orchRoot, 'backlog');
     process.env.ORC_REPO_ROOT = target;
   });
 

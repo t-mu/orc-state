@@ -6,7 +6,6 @@ import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixt
 import { claimTask, finishRun } from './claimManager.ts';
 import { taskSnapshotStatus } from './documentIndex.ts';
 import { closeAllDatabases, queryEvents } from './eventLog.ts';
-import { syncBacklogFromSpecs } from './backlogSync.ts';
 import { parseBodyAcceptanceCriteria, parseBodyTitle, RevisionConflictError } from './projectTaskStore.ts';
 import {
   closeProjectTaskStores, createProjectTask, initProjectTaskStore, reviseProjectTask,
@@ -78,14 +77,6 @@ describe('storage-neutral task authoring', () => {
     } finally {
       cleanupTempStateDir(descriptorOnly);
     }
-  });
-
-  it('ignores Markdown backlog sync in a project state directory', () => {
-    mkdirSync(join(dir, 'backlog'));
-    writeFileSync(join(dir, 'backlog', '1-file.md'), '---\nref: app/file\nfeature: app\nstatus: todo\n---\n# File task\n');
-    expect(isProjectStateDir(dir)).toBe(true);
-    expect(syncBacklogFromSpecs(dir, join(dir, 'backlog')).updated).toBe(false);
-    expect(readBacklog(dir).features).toEqual([]);
   });
 
   it('pins a claimed run to its revision and delivers that exact body even after later edits', () => {

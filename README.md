@@ -23,14 +23,21 @@ or [Gemini](https://github.com/google/gemini-cli)).
 
 ```bash
 npm install -g orc-state
-cd my-project
-orc init                    # pick providers, install skills/agents/MCP
-orc start-session           # start orchestrating
+orc project add ~/code/my-project   # register the repository (or: orc project migrate <old-root> --execute)
+cd ~/code/my-project
+orc init                            # pick providers; stored in the project registry
+orc install --global --skip-mcp --provider=claude   # optional: skills and agents for your user
+orc start-session                   # start orchestrating
 ```
 
-`orc init` walks you through provider selection and installs the skills,
-agent definitions, and MCP configuration your providers need. After init,
-`orc start-session` reads from your config — no flags required.
+`orc init` walks you through provider selection and records it in the
+project registry; it writes nothing into your repository. All orc state lives
+outside the repository, in the project's state directory. After init,
+`orc start-session` reads the project settings — no flags required. It wires
+the orchestrator MCP server into the master session itself.
+
+Legacy `.orc-state` installations (state and `backlog/` inside the repository)
+no longer run; migrate one with `orc project migrate <root> --execute`.
 
 `orc start-session` starts the coordinator in the background and opens a
 master agent session in your terminal. If a coordinator is already running,
@@ -42,15 +49,16 @@ it reuses it. You pick the provider for your master session at init time
 You're now in a conversation with the master agent. Start planning the work
 — discuss scope, break it into units, and ask the master to create tasks.
 It stores them in the project's task store (`create_task`); no file is written
-to your repository. A legacy installation must run `orc project migrate` first.
+to your repository.
 
 Once tasks are in the backlog, the coordinator dispatches them to worker
 agents that execute each task in an isolated git worktree. You can monitor
 progress, intervene on blockers, and review results — all through the
 master session.
 
-For deeper work, you can also write task specs directly in `backlog/*.md` —
-the coordinator picks them up on the next tick. See
+For deeper work, you can also author tasks yourself with
+`orc project task create|edit`, or import Markdown specs with
+`orc project task import <path>`. See
 [Concepts & terminology](./docs/concepts.md) and
 [Architecture overview](./docs/architecture.md) for the mental model.
 
@@ -60,7 +68,7 @@ the coordinator picks them up on the next tick. See
 - [Concepts & terminology](./docs/concepts.md)
 - [Architecture overview](./docs/architecture.md)
 - [Configuration](./docs/configuration.md)
-- [Sibling mode (retired)](./docs/sibling-mode.md) — use a registered project (`orc project add`) for a repo that can't hold framework files
+- [Sibling mode (retired)](./docs/sibling-mode.md) — migrating an old sibling orchestration home
 - [CLI reference](./docs/cli.md)
 - [Memory system](./docs/memory.md)
 - [Writing custom adapters](./docs/adapters.md)

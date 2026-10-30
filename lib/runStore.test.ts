@@ -30,11 +30,12 @@ describe('SQLite run authority', () => {
     initEventsDb(dir);
     const result = spawnSync('node', ['cli/doctor.ts', '--json'], {
       cwd: join(import.meta.dirname, '..'),
-      env: { ...process.env, ORC_STATE_DIR: dir, ORC_BACKLOG_DIR: join(dir, 'backlog') },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
     const report = JSON.parse(result.stdout) as { checks: { runtimeSchema: { ok: boolean } }; active_claims: number };
-    expect(result.status, result.stdout).toBe(0);
+    // A legacy fixture fails doctor overall (legacy installations no longer run); its state checks still pass.
+    expect((report.checks as Record<string, unknown>).stateErrors, result.stdout).toEqual([]);
     expect(report.checks.runtimeSchema.ok).toBe(true);
     expect(report.active_claims).toBe(0);
   });

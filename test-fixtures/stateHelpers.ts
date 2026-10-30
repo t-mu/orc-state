@@ -2,9 +2,22 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
+import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SyncResult } from '../lib/backlogSync.ts';
+import type { Backlog } from '../types/backlog.ts';
 
 export function createTempStateDir(prefix = 'orch-test-'): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+export const TEST_PROJECT_ID = 'test-project';
+
+/**
+ * Marks a temp state directory as a registered project's (its project.json descriptor) and returns
+ * the environment that selects it without a registry. Entry points refuse to run anything else.
+ */
+export function bridgeProjectEnv(dir: string, targetRepoRoot: string = dir): { ORC_PROJECT_ID: string; ORC_STATE_DIR: string } {
+  writeFileSync(join(dir, 'project.json'), `${JSON.stringify({ id: TEST_PROJECT_ID, name: 'test', target_repo_root: targetRepoRoot }, null, 2)}\n`);
+  return { ORC_PROJECT_ID: TEST_PROJECT_ID, ORC_STATE_DIR: dir };
 }
 
 export function cleanupTempStateDir(dir: string): void {
@@ -97,4 +110,13 @@ export function makeRunWorktreeMock(overrides: Record<string, unknown> = {}): Re
     getRunWorktree: vi.fn().mockReturnValue(null),
     ...overrides,
   };
+}
+
+/** Registers backlog/ Markdown specs into a legacy fixture's backlog.json, as migration reads them. */
+export function seedBacklogFromSpecs(stateDir: string, docsDir: string): SyncResult {
+  const backlogPath = join(stateDir, 'backlog.json');
+  const backlog = JSON.parse(readFileSync(backlogPath, 'utf8')) as Backlog;
+  const result = syncBacklogFromSpecsLoaded(backlog, discoverActiveTaskSpecs(docsDir));
+  if (result.updated) writeFileSync(backlogPath, JSON.stringify(backlog));
+  return result;
 }

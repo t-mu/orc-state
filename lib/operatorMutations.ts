@@ -1,7 +1,5 @@
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { listAgents } from './agentRegistry.ts';
-import { syncBacklogFromSpecs } from './backlogSync.ts';
 import { setRunInputState } from './claimManager.ts';
 import { AGENT_ID_RE, TASK_TYPES } from './constants.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from './dispatchPlanner.ts';
@@ -10,7 +8,6 @@ import { withLock } from './lock.ts';
 import { storeDrawer, wingFromTaskRef } from './memoryStore.ts';
 import { ControlError } from './controlProtocol.ts';
 import { bridgeInputResponse } from './messageBridge.ts';
-import { BACKLOG_DOCS_DIR } from './paths.ts';
 import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
 import { resolveControlPrincipal, requireProjectAuthor, type ControlPrincipal } from './controlPrincipal.ts';
@@ -37,18 +34,6 @@ export function masterActorId(stateDir: string): string {
   return listAgents(stateDir).find((agent) => agent.role === 'master')?.agent_id ?? 'master';
 }
 
-/** A legacy installation's Markdown spec directory: colocated with its state, else the configured one. */
-export function backlogDocsDirForState(stateDir: string) {
-  const colocatedDocsDir = join(stateDir, 'backlog');
-  return existsSync(colocatedDocsDir) ? colocatedDocsDir : BACKLOG_DOCS_DIR;
-}
-
-/** Read the backlog after registering any new legacy Markdown specs. */
-export function readBacklogFresh(stateDir: string, { lockAlreadyHeld = false }: { lockAlreadyHeld?: boolean } = {}) {
-  syncBacklogFromSpecs(stateDir, backlogDocsDirForState(stateDir), { lockAlreadyHeld });
-  return readBacklog(stateDir);
-}
-
 export function delegateTask(stateDir: string, args: Record<string, unknown> = {}) {
   const {
     task_ref,
@@ -65,7 +50,7 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
   const now = new Date().toISOString();
 
   return withLock(join(stateDir, '.lock'), () => {
-    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
+    const backlog = readBacklog(stateDir);
     const claims = readClaims(stateDir).claims;
     const allAgents = listAgents(stateDir);
     const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
@@ -177,7 +162,7 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
   let cancelledRuns: Claim[] = [];
 
   const result = withLock(join(stateDir, '.lock'), () => {
-    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
+    const backlog = readBacklog(stateDir);
     const claimsData = readClaims(stateDir);
     const claims = claimsData.claims;
 
@@ -271,7 +256,7 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
   return withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
 
-    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
+    const backlog = readBacklog(stateDir);
     const task = findTask(backlog, task_ref as string);
     if (!task) throw new NotFoundError(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 

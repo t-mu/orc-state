@@ -20,8 +20,6 @@ describe('paths', () => {
     vi.stubEnv('ORC_STATE_DIR', undefined as unknown as string);
     vi.stubEnv('ORC_CONFIG_FILE', undefined as unknown as string);
     vi.stubEnv('ORC_WORKTREES_DIR', undefined as unknown as string);
-    vi.stubEnv('ORC_BACKLOG_DIR', undefined as unknown as string);
-    vi.stubEnv('ORC_PLANS_DIR', undefined as unknown as string);
     vi.stubEnv('ORC_HOME', undefined as unknown as string);
     vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
   });
@@ -44,11 +42,9 @@ describe('paths', () => {
   it('keys artifact directories off the orchestration root', async () => {
     mockRepoRoot('/tmp/repo-root');
 
-    const { ORCHESTRATION_ROOT, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR } = await import('./paths.ts');
+    const { ORCHESTRATION_ROOT, WORKTREES_DIR } = await import('./paths.ts');
     expect(ORCHESTRATION_ROOT).toBe('/tmp/repo-root');
     expect(WORKTREES_DIR).toBe('/tmp/repo-root/.worktrees');
-    expect(BACKLOG_DOCS_DIR).toBe('/tmp/repo-root/backlog');
-    expect(PLANS_DIR).toBe('/tmp/repo-root/plans');
   });
 
   it('TARGET_REPO_ROOT defaults to the orchestration root in the single-repo layout', async () => {
@@ -61,19 +57,20 @@ describe('paths', () => {
   it('never targets a configured sibling target_repo; it is detected and refused instead', async () => {
     mockRepoRoot('/tmp/orch-root', { targetRepoRoot: '/tmp/product-repo' });
 
-    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT, LEGACY_SIBLING_TARGET, assertSupportedLayout } = await import('./paths.ts');
+    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT, LEGACY_SIBLING_TARGET, assertProjectMode } = await import('./paths.ts');
     expect(TARGET_REPO_ROOT).toBe(ORCHESTRATION_ROOT);
     expect(LEGACY_SIBLING_TARGET).toBe('/tmp/product-repo');
-    expect(() => assertSupportedLayout()).toThrow('orc project migrate /tmp/orch-root --execute');
+    expect(() => assertProjectMode()).toThrow('sibling orchestration home');
+    expect(() => assertProjectMode()).toThrow('orc project migrate /tmp/orch-root --execute');
   });
 
-  it('ORC_REPO_ROOT forces the target root of a legacy installation', async () => {
+  it('refuses to run a legacy attached installation', async () => {
     mockRepoRoot('/tmp/orch-root');
     vi.stubEnv('ORC_REPO_ROOT', '/tmp/forced');
 
-    const { TARGET_REPO_ROOT, assertSupportedLayout } = await import('./paths.ts');
+    const { TARGET_REPO_ROOT, assertProjectMode } = await import('./paths.ts');
     expect(TARGET_REPO_ROOT).toBe('/tmp/forced');
-    expect(() => assertSupportedLayout()).not.toThrow();
+    expect(() => assertProjectMode()).toThrow(/Legacy \.orc-state installations no longer run.*orc project add/);
   });
 
   it('still honors ORC_STATE_DIR overrides explicitly', async () => {
@@ -93,12 +90,10 @@ describe('paths', () => {
     }));
     vi.stubEnv('ORC_STATE_DIR', '/tmp/orch-home/.orc-state');
 
-    const { ORCHESTRATION_ROOT, TARGET_REPO_ROOT, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR } = await import('./paths.ts');
+    const { ORCHESTRATION_ROOT, TARGET_REPO_ROOT, WORKTREES_DIR } = await import('./paths.ts');
     expect(ORCHESTRATION_ROOT).toBe('/tmp/orch-home');
     expect(TARGET_REPO_ROOT).toBe('/tmp/orch-home');
     expect(WORKTREES_DIR).toBe('/tmp/orch-home/.worktrees');
-    expect(BACKLOG_DOCS_DIR).toBe('/tmp/orch-home/backlog');
-    expect(PLANS_DIR).toBe('/tmp/orch-home/plans');
     expect(resolveOrchestrationRoot).not.toHaveBeenCalled();
   });
 

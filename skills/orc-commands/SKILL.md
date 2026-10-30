@@ -11,14 +11,17 @@ argument-hint: "[command name or operation]"
 
 ## Critical: State Directory
 
-All orc commands resolve state from `process.cwd()/.orc-state` unless overridden.
-**Always run from the repo root**, or prefix with the env var:
+All orc commands act on a registered project. Its state lives outside the
+repository, in the project state directory (`orc project show` prints it).
+Inside a registered repository (or any of its worktrees) the repository selects
+its project; elsewhere pass `--project=<id>` (or set `ORC_PROJECT_ID`):
 
 ```bash
-ORC_STATE_DIR=<your-project>/.orc-state orc <cmd>
+orc --project=<project-id> <cmd>
 ```
 
-Commands that forget this will hit `ENOENT` errors or read wrong state. The `kill-all`
+Legacy `.orc-state` installations no longer run; migrate one with
+`orc project migrate <root> --execute`. The `kill-all`
 command is especially dangerous to run accidentally — it stops the coordinator and
 clears all agents.
 
@@ -31,7 +34,7 @@ clears all agents.
 Normal workflow:
 
 1. `orc start-session`
-2. author the task with `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository). In a legacy installation, edit the `backlog/` Markdown spec (its coordinator registers it) or run `orc project migrate`; MCP task writes are refused there
+2. author the task with `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository)
 3. task status is runtime-owned: change it only through lifecycle commands
 4. `orc delegate`
 5. worker lifecycle via `run-start` -> `run-work-complete` -> `run-finish`
@@ -51,7 +54,7 @@ Outside the blessed workflow, use only:
 | `status` | `orc status [--mine] [--agent-id=<id>]` | Print agent/task/claim table. |
 | `doctor` | `orc doctor` | Validate state files, check provider keys/binaries, find orphaned claims. |
 | `preflight` | `orc preflight` | Lightweight environment health check. |
-| `init` | `orc init [--force]` | Initialise state directory. `--force` overwrites existing files. |
+| `init` | `orc init [--provider=claude,codex] [--worker-provider=<name>]` | Configure a registered project (`orc project add <git-path>` first): records providers in the project registry and initializes the external state directory. Writes nothing into the repository; `--force` is refused. |
 | `kill-all` | `orc kill-all` | ⚠️ Stops coordinator + clears ALL agents. Use only to fully reset. **Never run in a loop or batch script** — it has no `--help` guard and executes immediately. |
 | `install-agents` | `orc install-agents [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic agent prompts into `.claude/agents/` or `.codex/agents/`. |
 | `install-skills` | `orc install-skills [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic skills into `.claude/skills/` or `.codex/skills/`. |
@@ -110,11 +113,11 @@ For workers that need master input (e.g. blocked on a decision):
 | Command | Usage | Notes |
 |---------|-------|-------|
 | `run-input-request` | `orc run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>]` | Worker calls this to ask master a question. Blocks until response or timeout. |
-| `run-input-respond` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>] [--session-id=<id>, legacy only]` | Master answers a worker's input request. In a registered project it needs the master's `ORC_MASTER_SECRET`, so run it from the master session (or use MCP `respond_input`); worker and operator shells are refused. |
+| `run-input-respond` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>]` | Master answers a worker's input request. It needs the master's `ORC_MASTER_SECRET`, so run it from the master session (or use MCP `respond_input`); worker and operator shells are refused. |
 
 ### Memory (Worker)
 
-Workers use these to persist and recall drawer-scoped memories. Store lives at `.orc-state/memory.db` (SQLite).
+Workers use these to persist and recall drawer-scoped memories. Store lives at `memory.db` in the project state directory (SQLite).
 
 | Command | Usage | Notes |
 |---------|-------|-------|
@@ -144,9 +147,9 @@ Recovery/debug only:
 # 1. Kill existing
 ps aux | grep "coordinator.ts" | grep -v grep | awk '{print $2}' | xargs kill
 
-# 2. Start with explicit state dir (avoids cwd ambiguity)
-ORC_STATE_DIR=/path/to/repo/.orc-state node /path/to/repo/coordinator.ts \
-  >> /path/to/repo/.orc-state/coordinator.out.log 2>&1 &
+# 2. Start it for an explicit project (avoids cwd ambiguity)
+ORC_PROJECT_ID=<project-id> node /path/to/orc-state/coordinator.ts \
+  >> "<project state directory>/coordinator.out.log" 2>&1 &
 ```
 
 ---

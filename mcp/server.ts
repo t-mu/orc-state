@@ -14,7 +14,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
-import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { masterActorId, masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
@@ -136,7 +136,7 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     const { actor_id, ...input } = args;
     const actorId = taskAuthorActor(stateDir, actor_id, credential);
     return submitProjectWrite<unknown>(stateDir, 'create_task', actorId,
-      async (client) => ({ ...(await client.createTask(input, actorId)).task, next_task_seq: undefined }),
+      async (client) => (await client.createTask(input, actorId)).task,
       (actor) => handlers.handleCreateTask(stateDir, { ...input, actor_id: actor }), { credential });
   }
   if (project && projectTaskStoreFor(stateDir) && name === 'update_task') {
@@ -257,7 +257,7 @@ function isEntryPoint() {
 }
 
 export async function startServer() {
-  assertSupportedLayout();
+  assertProjectMode();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write('[orc-mcp] server started\n');

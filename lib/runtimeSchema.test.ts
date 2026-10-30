@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -14,10 +14,9 @@ beforeEach(() => { dir = createTempStateDir('orch-runtime-schema-'); });
 afterEach(() => { closeAllDatabases(); cleanupTempStateDir(dir); });
 
 function doctor(stateDir: string) {
-  mkdirSync(join(stateDir, 'backlog'), { recursive: true });
   return spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
     cwd: join(import.meta.dirname, '..'),
-    env: { ...process.env, ORC_STATE_DIR: stateDir, ORC_REPO_ROOT: stateDir, ORC_BACKLOG_DIR: join(stateDir, 'backlog') },
+    env: { ...process.env, ORC_STATE_DIR: stateDir, ORC_REPO_ROOT: stateDir },
     encoding: 'utf8',
   });
 }
@@ -54,7 +53,8 @@ describe('runtime schema migration', () => {
       repeated.close();
     }
     const result = doctor(dir);
-    expect(result.status, result.stderr || result.stdout).toBe(0);
+    // A legacy fixture fails doctor overall (legacy installations no longer run); its state checks still pass.
+    expect(JSON.parse(result.stdout).checks.stateErrors, result.stderr || result.stdout).toEqual([]);
     expect((JSON.parse(result.stdout) as { checks: { runtimeSchema: { ok: boolean } } }).checks.runtimeSchema.ok).toBe(true);
   });
 
@@ -83,7 +83,7 @@ describe('runtime schema migration', () => {
       expect(queryEvents(dir, { fts_query: 'legacy' }).map((event) => event.event_id)).toEqual(['legacy-7']);
       expect(inspectRuntimeSchema(dir).ok).toBe(true);
       const result = doctor(dir);
-      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout).checks.stateErrors, result.stderr || result.stdout).toEqual([]);
     } finally {
       cleanupTempStateDir(fixtureDir);
     }

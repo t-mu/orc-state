@@ -52,11 +52,12 @@ reconnaissance before deciding what task to create._
 
 ### Task
 
-The unit of work. Each task is defined by a markdown spec in `backlog/` and tracked in
+The unit of work. Each task is defined by a Markdown spec stored as an immutable
+revision in the project's task store (no file in the repository) and tracked in
 runtime state with a lifecycle (`todo → claimed → in_progress → done → released`).
 A task may be attempted multiple times across different runs.
 
-_You'll encounter this when reading `orc status` or browsing the `backlog/` directory._
+_You'll encounter this when reading `orc status` or `orc project task list`._
 
 ---
 
@@ -127,8 +128,8 @@ The AI backend that powers an agent session — for example, Claude, Codex, or G
 The orchestrator is provider-agnostic: the same coordination logic works with any
 supported provider, selected via configuration.
 
-_You'll encounter this in `orc-state.config.json` when choosing which AI model
-runs your workers._
+_You'll encounter this in `orc init` and the project settings (`orc project config`)
+when choosing which AI model runs your workers._
 
 ---
 
@@ -152,10 +153,10 @@ operate on.
 
 For a registered project (`orc project add`) the orchestration root is an
 external state directory, so the target repo stays free of framework files and
-receives only product-code commits. A legacy attached installation keeps both
-in the same directory (`.orc-state/`, `backlog/`, `plans/`,
-`orc-state.config.json` inside the repository) until `orc project migrate`
-moves it.
+receives only product-code commits. A legacy installation that kept both in
+the same directory (`.orc-state/`, `backlog/`, `plans/`,
+`orc-state.config.json` inside the repository) no longer runs;
+`orc project migrate` moves it into a project.
 
 _You'll encounter this when registering a project or migrating an older
 installation._

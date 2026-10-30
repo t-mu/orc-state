@@ -42,7 +42,7 @@ directly on the main checkout while a run is active.
 
 Worktree lifecycle commands are pre-authorized — do not stop to ask for permission before running: `git worktree add`, `git worktree remove`, `git branch -d`, `git commit`, `git rebase main`, and `git -C ../.. merge ... --no-ff`.
 
-Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). Worker sessions start with that path as their working directory; confirm with `pwd`. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned `.worktrees/<run_id>`.
+Your assigned worktree path is in the TASK_START payload (`assigned_worktree`). Worker sessions start with that path as their working directory; confirm with `pwd`. Do not create a second worktree unless the task payload explicitly tells you to recover a missing one. Run all builds, tests, and edits from inside the assigned worktree (`<state>/worktrees/<run_id>` in the project state directory).
 
 ### Worktree cleanup ordering (direct mode)
 
@@ -74,8 +74,7 @@ Do NOT skip phases. Do NOT reorder phases.
 ### Phase 1 — Explore
 
 Signal phase: `orc progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id=<agent_id>`
-Read the full task spec at `task_spec_path` from TASK_START (the pinned revision; in a legacy installation it
-mirrors `backlog/<N>-<slug>.md`). Identify all affected files.
+Read the full task spec at `task_spec_path` from TASK_START (the pinned task revision). Identify all affected files.
 Check existing patterns in those files before writing any code.
 
 **Gate:** Run `orc run-start --run-id=<run_id> --agent-id=<agent_id>`.
@@ -157,9 +156,9 @@ Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run
 **Gate:** `run-work-complete` MUST exit 0.
 Do NOT call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge.
 
-The worker bootstrap emits the same Phase 4 instructions in every layout. In a
-registered project there is no task spec file at all; the sibling layout is
-retired (`orc project migrate` moves an old orchestration home).
+There is no task spec file in the repository: the spec is a project task
+revision. Legacy `.orc-state` installations (attached or sibling) no longer
+run; `orc project migrate` moves one into a registered project.
 
 ### Phase 5 — Finalize
 
@@ -202,8 +201,8 @@ Do NOT clean up the worktree or branch yourself.
 Use these as the default workflow. Treat everything else as recovery/debug unless the task explicitly requires it.
 
 1. Session startup: `orc start-session`
-2. Task authoring: in a registered project, `orc project task create|edit|import` (or the MCP `create_task`/`update_task` tools) — no file in the repository. In a legacy installation, edit `backlog/<N>-<slug>.md`.
-3. Task registration: a project's tasks live in its SQLite store. A legacy coordinator registers new `todo` spec definitions on each tick; status is never read from or written to a spec.
+2. Task authoring: `orc project task create|edit|import` (or the MCP `create_task`/`update_task` tools) — no file in the repository.
+3. Task registration: a project's tasks live in its SQLite store (`runtime.db`); status is never read from or written to a spec.
 4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`), unique among currently-active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
 5. Task completion: the coordinator marks the task done itself after merge; task status is runtime-owned and no spec is edited (`orc task-mark-done` is the operator's recovery command)
 6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
@@ -286,36 +285,32 @@ orc memory-record --content="..." [--wing=X] [--hall=Y] \
 ## Orchestrator Conventions
 
 ### State files (never write directly)
+State lives outside the repository, in the project state directory
+`<data-home>/projects/<project_id>/` (see `docs/configuration.md`).
+
 | File | Contents |
 |------|----------|
-| `.orc-state/backlog.json` | Backlog features and tasks |
-| `.orc-state/agents.json` | Registered agents |
-| `.orc-state/claims.json` | Active and recent claims |
-| `.orc-state/events.db` | SQLite event store |
-| `.orc-state/memory.db` | SQLite memory store (drawers, FTS5 index) |
+| `runtime.db` | SQLite task store: task revisions, status, transitions, runs, plans |
+| `backlog.json` | Read-only projection of the project's tasks |
+| `agents.json` | Registered agents |
+| `claims.json` | Active and recent claims |
+| `events.db` | SQLite event store |
+| `memory.db` | SQLite memory store (drawers, FTS5 index) |
 
 ### Write rules
 **For agents:** use `orc` CLI commands or MCP tools for all state changes. Never call `withLock`, `atomicWriteJson`, or other internal library functions directly — those are for code authors implementing new handlers, not for agents operating the system.
 
 Normal task-authoring path:
-- Registered project: `orc project task create|edit|import` or the MCP `create_task`/`update_task` tools; no `backlog/` file is written anywhere.
-- Legacy installation: edit the markdown spec in `backlog/`; the coordinator registers new `todo` spec definitions on each tick. Task-authoring tools (`create_task`, `update_task`) refuse it; run `orc project migrate`.
-- In both, task status is runtime-owned: change it only through lifecycle commands, never through a spec's `status:`.
+- `orc project task create|edit|import` or the MCP `create_task`/`update_task` tools; no `backlog/` file is written anywhere.
+- Task status is runtime-owned: change it only through lifecycle commands, never through a spec's `status:`.
 
-### Artifact directories
+### Tasks and plans
 
-In a legacy installation the repo has two first-class artifact directories (a
-registered project keeps tasks and plans in its SQLite store and imports or
-exports Markdown explicitly with `orc project task|plan import|export`):
-
-- `backlog/` — task specs. Each task is `backlog/<N>-<slug>.md` and drives the
-  coordinator's task lifecycle.
-- `plans/` — plan artifacts. Each plan is `plans/<plan_id>-<slug>.md` with a
-  documented on-disk contract (required frontmatter, required sections,
-  placeholder rejection rules, and the plans-only `Depends on: N[, N...]`
-  dependency cue). Plan ids are an independent sequence from backlog task
-  numbers. See `docs/cli.md` → **Plans** for the full contract; the parser lives
-  in `lib/planDocs.ts` and also reads `orc project plan import` files.
+A project keeps its tasks and plans in its SQLite store; Markdown is imported
+or exported explicitly with `orc project task|plan import|export`. The plan
+Markdown format (required frontmatter, sections, the `Depends on: N[, N...]`
+cue) is documented in `docs/cli.md` → **Plans**; the parser lives in
+`lib/planDocs.ts`.
 
 ### Execution Modes
 
@@ -326,7 +321,7 @@ Each agent role (master, worker) can run in one of two execution mode presets:
 | `full-access` | No sandbox — agent has full filesystem and network access. Default. |
 | `sandbox` | Agent is confined to the workspace; unsandboxed shell commands are disallowed. |
 
-Configure via `default_execution_mode`, `master.execution_mode`, or `worker_pool.execution_mode` in `orc-state.config.json`, or override at runtime with `ORC_MASTER_EXECUTION_MODE` / `ORC_WORKER_EXECUTION_MODE` env vars. Scouts are launched with `read_only: true`, which tightens permissions in `sandbox` mode; in `full-access` mode they receive the same flags as regular workers. In a registered project, sandboxed Codex workers and Claude workers on Linux reach the coordinator only with the opt-in `worker_pool.sandbox_network: open` (`ORC_WORKER_SANDBOX_NETWORK`), which widens their network access; Claude scouts on Linux follow the same setting, which lets them reach every Unix socket.
+Configure via `default_execution_mode`, `master.execution_mode`, or `worker_pool.execution_mode` in the project settings (`orc project config set`), or override at runtime with `ORC_MASTER_EXECUTION_MODE` / `ORC_WORKER_EXECUTION_MODE` env vars. Scouts are launched with `read_only: true`, which tightens permissions in `sandbox` mode; in `full-access` mode they receive the same flags as regular workers. Sandboxed Codex workers and Claude workers on Linux reach the coordinator only with the opt-in `worker_pool.sandbox_network: open` (`ORC_WORKER_SANDBOX_NETWORK`), which widens their network access; Claude scouts on Linux follow the same setting, which lets them reach every Unix socket.
 
 See `docs/configuration.md` → **Execution Modes** for full details including per-provider CLI flags and Linux prerequisites.
 
@@ -346,7 +341,7 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 | `in_progress → done` | Coordinator, after merge (`orc task-mark-done <ref>` is the operator's recovery command) |
 | `done → released` | Coordinator (after merge) |
 | `claimed/in_progress → blocked` | Worker (`orc run-fail --policy=block`) |
-| `todo/claimed/in_progress/blocked → cancelled` | Master (`cancel_task`) or operator (`orc task-cancel <ref>`); a registered project only — a legacy installation records cancellation as `blocked` |
+| `todo/claimed/in_progress/blocked → cancelled` | Master (`cancel_task`) or operator (`orc task-cancel <ref>`) |
 | `blocked → todo` | Operator (`orc task-unblock <ref>`) or master (`unblock_task`) |
 | any non-`todo` status `→ todo` | Operator (`orc task-reset <ref>`), including a completed or cancelled task |
 
@@ -431,11 +426,10 @@ Follow the **Phased Workflow** above. The five phases are:
 4. **Complete** — rebase (direct mode) or skip rebase (PR mode), `orc run-work-complete` (gate: run-work-complete exits 0); never edit a spec's `status:`
 5. **Finalize** — direct mode: coordinator follow-up + `orc run-finish`; PR mode: remain in session, handle PR_REVIEW, then run-work-complete + run-finish (gate: terminal success)
 
-New task specs follow `backlog/TASK_TEMPLATE.md` (the body of a project task uses the same sections).
+The body of a project task follows the sections in `backlog/TASK_TEMPLATE.md`.
 
 ### Task Creation Completion
-- Registered project: the turn is complete when `orc project task create` or `create_task` returns; no file is written.
-- Legacy installation: save the markdown spec under the backlog directory; the coordinator registers the new spec's definition on its next tick, so saving the file completes the authoring turn.
+The turn is complete when `orc project task create` or `create_task` returns; no file is written.
 
 ---
 
