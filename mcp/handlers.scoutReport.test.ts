@@ -11,7 +11,7 @@ vi.mock('../adapters/index.ts', () => ({
   createAdapter: vi.fn(() => ({ start: vi.fn(), send: vi.fn(), attach: vi.fn(), heartbeatProbe: alive, stop, getOutputTail: tail })),
 }));
 
-const { extractScoutReport, handleGetScoutReport, handleRemoveScout } = await import('./handlers.ts');
+const { extractScoutReport, handleGetAgentWorkview, handleGetScoutReport, handleRemoveScout } = await import('./handlers.ts');
 
 const template = readFileSync(resolve(import.meta.dirname, '../templates/scout-brief-v1.txt'), 'utf8');
 const report = 'SCOUT_REPORT\nfindings:\nthe lease expired\n\nlikely_cause:\nclock skew\n\nrecommended_action:\nreset the task\nSCOUT_REPORT_END';
@@ -79,6 +79,12 @@ describe('scout report tools', () => {
     expect(await handleRemoveScout(dir, { agent_id: 'scout-1' })).toEqual({ agent_id: 'scout-1', removed: false, reason: 'not_found' });
     const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')) as { agents: Array<{ agent_id: string }> };
     expect(agents.agents.map((agent) => agent.agent_id)).toEqual(['worker-a']);
+  });
+});
+
+describe('agent workview for a scout', () => {
+  it('points at get_scout_report instead of a worker view', () => {
+    expect(handleGetAgentWorkview(dir, { agent_id: 'scout-1' })).toEqual({ error: 'scout', agent_id: 'scout-1', hint: 'read a scout with get_scout_report' });
   });
 });
 
