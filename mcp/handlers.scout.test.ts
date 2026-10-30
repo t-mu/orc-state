@@ -41,7 +41,6 @@ beforeEach(() => {
       role: 'master',
       status: 'running',
       session_handle: 'pty:master',
-      capabilities: [],
       registered_at: '2026-01-01T00:00:00.000Z',
     }],
   }, null, 2));
@@ -216,7 +215,6 @@ describe('handleRequestScout', () => {
           role: 'master',
           status: 'running',
           session_handle: 'pty:master',
-          capabilities: [],
           registered_at: '2026-01-01T00:00:00.000Z',
         },
         {
@@ -225,7 +223,6 @@ describe('handleRequestScout', () => {
           role: 'worker',
           status: 'running',
           session_handle: 'pty:orc-1',
-          capabilities: [],
           registered_at: '2026-01-01T00:00:00.000Z',
         },
       ],

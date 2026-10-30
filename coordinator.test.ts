@@ -1284,6 +1284,50 @@ describe('stale worker removal', () => {
     await tick();
 
     expect(readAgents(dir).map((a) => a.agent_id).sort()).toEqual(['master', 'scout-1']);
+    const removals = readEvents(dir).filter((event) => event.event === 'agent_offline');
+    expect(removals.map((event) => [event.agent_id, (event.payload as Record<string, unknown>).code]).sort()).toEqual([
+      ['gone-dead', 'status_dead'],
+      ['gone-offline', 'status_offline'],
+    ]);
+  });
+
+  it('keeps an unclaimed worker and finishes the tick when its session probe throws', async () => {
+    const now = new Date().toISOString();
+    seedState(dir, {
+      agents: [{ agent_id: 'worker-probe', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-probe', registered_at: now, last_heartbeat_at: now }],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockRejectedValue(new Error('pty unavailable')),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await expect(tick()).resolves.toBeUndefined();
+
+    expect(readAgents(dir).map((a) => a.agent_id)).toEqual(['worker-probe']);
+  });
+
+  it('never stops or removes a stale worker whose session is recoverable', async () => {
+    const staleTs = new Date(Date.now() - (2 * 60 * 60 * 1000 + 10_000)).toISOString();
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-recoverable', provider: 'claude', role: 'worker', status: 'running',
+        session_handle: 'pty:worker-recoverable', session_token: 'sess-r', registered_at: staleTs, last_heartbeat_at: staleTs,
+      }],
+    });
+    const { initEventsDb, withEventDbTransaction } = await import('./lib/eventLog.ts');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, transport, process_pid, process_start, state_reason)
+        VALUES ('sess-r', NULL, 'worker-recoverable', 'claude', 'recoverable', 'now', 'now', 'pty', 4545, 'proc:45', 'not writable')`).run();
+    });
+    const stop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(readAgents(dir).map((a) => a.agent_id)).toEqual(['worker-recoverable']);
   });
 });
 

@@ -53,12 +53,10 @@ describe('cli/gc-workers.ts', () => {
     expect(ids).toEqual(['running', 'master', 'scout-1']);
   });
 
-  it('leaves running workers to the coordinator without probing their sessions', async () => {
+  it('leaves running workers with a session handle to the coordinator', async () => {
     writeAgents([
       { agent_id: 'running', provider: 'claude', status: 'running', session_handle: 'pty:running', registered_at: '2026-01-01T00:00:00Z' },
     ]);
-    const heartbeatProbe = vi.fn().mockResolvedValue(false);
-    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ heartbeatProbe }) }));
 
     const oldArgv = process.argv;
     const oldStateDir = process.env.ORC_STATE_DIR;
@@ -72,7 +70,6 @@ describe('cli/gc-workers.ts', () => {
     }
 
     expect(readAgents().map((a: Record<string, unknown>) => a.agent_id)).toEqual(['running']);
-    expect(heartbeatProbe).not.toHaveBeenCalled();
   });
 
   it('keeps an offline or dead worker that still holds an active claim', async () => {

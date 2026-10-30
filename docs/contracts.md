@@ -181,7 +181,7 @@ A task is eligible for dispatch when all of:
 - **idle** -- registered and session alive, no active run
 - **running** -- actively executing a claimed task
 - **offline** -- session unreachable or shut down gracefully
-- **dead** -- no longer reachable; a running coordinator removes offline and dead worker records itself, and `orc worker-gc` removes them when no coordinator runs
+- **dead** -- legacy value, no longer set: the coordinator now removes a worker record instead of marking it dead. Records already holding it are removed by the coordinator, or by `orc worker-gc` when no coordinator runs
 
 ---
 
@@ -478,8 +478,8 @@ before upgrading an existing project.
 | `agent_registered` | Coordinator | New agent registered |
 | `agent_online` | Coordinator | Agent session confirmed alive |
 | `reported_for_duty` | Worker | Worker reports ready |
-| `agent_offline` | Coordinator | Agent session lost |
-| `agent_marked_dead` | Coordinator | Agent marked dead by GC |
+| `agent_offline` | Coordinator | Agent session lost, or (`reason: worker_record_removed`, `code` = `status_offline` \| `status_dead` \| `session_exited`) an unclaimed worker record was removed |
+| `agent_marked_dead` | Coordinator | An unclaimed worker's heartbeat passed the dead TTL; its record is removed |
 | `session_start_failed` | Coordinator | PTY session failed to start |
 | `session_reconciled` | Coordinator | Restart reconciliation or ownership decision for a provider session (`payload.session_id`, `state`, `outcome`, `reason`) |
 | `session_started` | Coordinator | PTY session launched successfully |

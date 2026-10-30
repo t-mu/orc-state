@@ -21,8 +21,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   dir = createTempStateDir('orc-scout-report-test-');
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
-    { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'running', session_handle: 'pty:scout-1', capabilities: [], registered_at: '2026-01-01T00:00:00.000Z' },
-    { agent_id: 'worker-a', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-a', capabilities: [], registered_at: '2026-01-01T00:00:00.000Z' },
+    { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'running', session_handle: 'pty:scout-1', registered_at: '2026-01-01T00:00:00.000Z' },
+    { agent_id: 'worker-a', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-a', registered_at: '2026-01-01T00:00:00.000Z' },
   ] }));
 });
 

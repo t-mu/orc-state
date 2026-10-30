@@ -887,7 +887,9 @@ function hasOtherActiveClaim(agentId: string, runId: string) {
  * Remove worker records that no run needs any more: offline or dead workers,
  * workers whose session process has exited, and workers silent past the dead
  * TTL. Workers holding an active claim are left to the run lifecycle; the
- * master and scouts (removed with remove_scout) are never touched.
+ * master and scouts (removed with remove_scout) are never touched. A session
+ * this coordinator cannot confirm or write to (recoverable/unknown) is never
+ * stopped here: it stays visible until it exits or an operator removes it.
  */
 async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date.now()) {
   const busyAgents = activeClaimAgents(claims);
@@ -896,10 +898,12 @@ async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date
     if (!agent?.agent_id) continue;
     if (agent.role === 'master' || agent.role === 'scout') continue;
     if (busyAgents.has(agent.agent_id)) continue;
+    const session = currentSessionForAgent(STATE_DIR, agent.agent_id);
+    if (session && (session.state === 'recoverable' || session.state === 'unknown')) continue;
 
     let reason: string | null = null;
     if (agent.status === 'offline' || agent.status === 'dead') {
-      reason = `status ${agent.status}`;
+      reason = `status_${agent.status}`;
     } else {
       const lastHeartbeatMs = typeof agent.last_heartbeat_at === 'string'
         ? new Date(agent.last_heartbeat_at).getTime()
@@ -913,12 +917,26 @@ async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date
           agent_id: agent.agent_id,
           payload: { elapsed_ms: elapsedMs },
         });
-        reason = 'heartbeat expired';
-      } else if (agent.session_handle && !(await getAdapter(agent.provider).heartbeatProbe(agent.session_handle))) {
-        reason = 'session exited';
+        reason = 'heartbeat_expired';
+      } else if (agent.session_handle) {
+        try {
+          if (!(await getAdapter(agent.provider).heartbeatProbe(agent.session_handle))) reason = 'session_exited';
+        } catch (error) {
+          // An unanswerable probe is not proof of death: keep the worker.
+          log(`warning: could not probe worker ${agent.agent_id}: ${(error as Error).message}`);
+        }
       }
     }
     if (!reason) continue;
+    if (reason !== 'heartbeat_expired') {
+      emit({
+        event: 'agent_offline',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        agent_id: agent.agent_id,
+        payload: { reason: 'worker_record_removed', code: reason },
+      });
+    }
     await cleanupRunCapacity(agent.agent_id);
     log(`removed worker ${agent.agent_id} (${reason})`);
     removed = true;

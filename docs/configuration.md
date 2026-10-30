@@ -277,8 +277,8 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `run_inactive_nudge_ms` | integer | `600000` | Delay before first nudge to an inactive run (ms) |
 | `run_inactive_escalate_ms` | integer | `900000` | Delay before escalating an inactive run (ms) |
 | `run_inactive_nudge_interval_ms` | integer | `300000` | Interval between inactivity nudges (ms) |
-| `session_start_max_attempts` | integer | `3` | Max retry attempts for starting a worker session |
-| `session_start_retry_delay_ms` | integer | `30000` | Delay between session start retries (ms) |
+| `session_start_max_attempts` | integer | `3` | Unused: workers are never relaunched, so session starts are not retried. Kept so stored settings still load; slated for removal. |
+| `session_start_retry_delay_ms` | integer | `30000` | Unused: workers are never relaunched, so session starts are not retried. Kept so stored settings still load; slated for removal. |
 | `memory_prune_interval_ms` | integer | `3600000` | Interval between periodic memory pruning runs (ms). Set to `0` to disable periodic pruning (startup prune still runs). Note: `0` can only be set via project settings — the CLI flag does not accept zero. |
 | `worker_stale_soft_ms` | integer | `1800000` | Inactivity before soft alert — emits `worker_needs_attention` notification (30 min). |
 | `worker_stale_nudge_ms` | integer | `3600000` | Inactivity before PTY nudge message (60 min). |
