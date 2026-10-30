@@ -17,7 +17,6 @@ The orchestrator reads/writes JSON state under `ORC_STATE_DIR` (default `<repo-r
 - Workers run as headless PTY sessions managed by the coordinator.
 - Worker PTY sessions launch inside their assigned run worktree, while shared orchestrator state stays anchored to the canonical repo root.
 - `orc start-session` is the master entrypoint; it does not open worker foreground shells.
-- `orc start-worker-session` requests/repairs headless worker runtime state.
 - `orc attach <agent_id>` attaches to a worker's background PTY output.
 
 ## Session Handles
@@ -140,10 +139,7 @@ Subcommands:
 - `orc delegate`
 - `orc attach`
 - `orc start-session`
-- `orc register-worker`
-- `orc start-worker-session`
 - `orc worker-gc`
-- `orc worker-clearall`
 - `orc worker-remove`
 - `orc run-start`
 - `orc run-heartbeat`

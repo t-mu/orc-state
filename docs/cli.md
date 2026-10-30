@@ -152,14 +152,10 @@ commands are for when you need to intervene manually.
 
 | Command | Description |
 |---------|-------------|
-| `register-worker <id>` | Manually create a worker agent record. |
-| `start-worker-session <id>` | Launch a headless PTY session for an existing worker. |
 | `attach <id>` | Print the tail of a worker's PTY output log (read-only). |
 | `control-worker <id>` | Interactive PTY control of a running worker session. |
-| `deregister <id>` | Remove an agent registration. Blocks if active claims exist. |
-| `worker-remove <id>` | Stop a worker's session and remove it. |
-| `worker-gc` | Mark workers with dead PIDs as offline. |
-| `worker-clearall` | Remove all offline and stale workers. |
+| `worker-remove <id>` | Stop a worker's session and remove it. Refused while the worker holds an active claim. |
+| `worker-gc` | Remove offline and dead workers, and workers whose session is unreachable, unless they hold an active claim. |
 | `worker-status [agent_id]` | Show worker state, active task, and session info. |
 
 For a live run, `orc terminal provider <run_id>` observes its tmux provider
@@ -178,10 +174,7 @@ has only its log tail through `orc attach`.
 
 | Command | Flags |
 |---------|-------|
-| `register-worker` | `<id>` `--provider=codex\|claude\|gemini` `[--role=worker\|reviewer\|scout]` `[--capabilities=<a,b>]` |
-| `start-worker-session` | `<id>` `[--provider=codex\|claude\|gemini]` `[--force-rebind]` |
 | `worker-remove` | `<id>` `[--keep-session]` |
-| `worker-gc` | `[--deregister]` |
 | `worker-status` | `[<agent_id>]` `[--json]` |
 
 ---

@@ -203,7 +203,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 1. Session startup: `orc start-session`
 2. Task authoring: `orc project task create|edit|import` (or the MCP `create_task`/`update_task` tools) — no file in the repository.
 3. Task registration: a project's tasks live in its SQLite store (`runtime.db`); status is never read from or written to a spec.
-4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`), unique among currently-active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
+4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`), unique among currently-active workers. The provider is resolved from the task's `required_provider` field or the configured default.
 5. Task completion: the coordinator marks the task done itself after merge; task status is runtime-owned and no spec is edited (`orc task-mark-done` is the operator's recovery command)
 6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
 7. Normal inspection: `orc status`, `orc doctor`
@@ -241,14 +241,10 @@ orc task-cancel <task-ref>                        # cancel a task that is not ye
 orc delegate                                      # assign/dispatch a task to an agent
 
 # Worker management — recovery/debug only
-orc register-worker <id> --provider=claude        # register a new worker agent
-orc start-worker-session <id> --provider=claude   # register a worker (and stop or rebind its session); the coordinator launches sessions only for claimed runs
 orc attach <id>                                   # print tail of worker PTY output log (read-only)
 orc control-worker <id>                           # inspect a running worker session
-orc deregister <id>                               # remove a specific agent registration
-orc worker-remove <id>                            # stop session + deregister a worker
-orc worker-gc                                     # mark stale workers offline
-orc worker-clearall                               # remove all offline/stale workers
+orc worker-remove <id>                            # stop a worker's session and remove it (refused while it holds a claim)
+orc worker-gc                                     # remove offline, dead and unreachable workers that hold no claim
 ```
 
 ### Run Lifecycle (Worker Commands — blessed path)

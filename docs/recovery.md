@@ -137,11 +137,10 @@ orc runs-active
 
 ### Fix
 
-Mark stale workers offline, then remove them:
+Remove stale workers (offline, or with a dead session and no active claim):
 
 ```bash
 orc worker-gc
-orc worker-clearall
 ```
 
 If a task was claimed by the stale worker, reset it so it can be re-dispatched:

@@ -143,7 +143,6 @@ Remove any lingering offline workers:
 
 ```bash
 orc worker-gc
-orc worker-clearall
 ```
 
 ---

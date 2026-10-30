@@ -23,7 +23,8 @@ describe('cli/orc.ts', () => {
     expect(result.stdout).toContain('start-session');
     expect(result.stdout).toContain('task-mark-done');
     expect(result.stdout).not.toContain('task-create');
-    expect(result.stdout).toContain('register-worker');
+    expect(result.stdout).toContain('worker-gc');
+    expect(result.stdout).not.toMatch(/register-worker|start-worker-session|deregister|worker-clearall/);
     expect(result.stdout).toContain('events-tail');
     expect(result.stdout).toContain('install-agents');
     expect(result.stdout.indexOf('Blessed workflow commands:')).toBeLessThan(result.stdout.indexOf('Recovery / debug commands:'));

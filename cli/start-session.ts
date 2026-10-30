@@ -353,7 +353,7 @@ console.log('  WORKERS: coordinator-managed background capacity launched per tas
 console.log('\nNext steps:');
 console.log('  Delegate work:      orc delegate [--target-agent-id=<id>] --task-ref=<feature/task>');
 console.log('  Check status:       orc status');
-console.log('  Recovery/debug:     orc register-worker / orc start-worker-session / orc control-worker');
+console.log('  Recovery/debug:     orc control-worker / orc worker-remove / orc worker-gc');
 
 let spawnArgs: string[] = [];
 const masterConfig = loadMasterConfig();

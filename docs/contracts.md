@@ -184,7 +184,7 @@ A task is eligible for dispatch when all of:
 - **idle** -- registered and session alive, no active run
 - **running** -- actively executing a claimed task
 - **offline** -- session unreachable or shut down gracefully
-- **dead** -- marked dead by `worker-gc` after sustained unreachability
+- **dead** -- marked dead by the coordinator after sustained unreachability; `orc worker-gc` removes it
 
 ---
 

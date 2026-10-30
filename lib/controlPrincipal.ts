@@ -25,8 +25,8 @@ export function resolveControlPrincipal(stateDir: string, credential: string | n
     const common = { agentId: session.agent_id, sessionId: session.session_id, live: session.state !== 'offline', running: session.state === 'running' };
     if (role === 'master') return { kind: 'master', runId: null, ...common };
     if (role === 'scout') return { kind: 'scout', runId: null, ...common };
-    // Every worker launch carries its run (the coordinator launches only for a claim; `orc start-worker-session`
-    // only registers the agent), so a run-less worker session is a stale or forged record.
+    // Every worker launch carries its run (the coordinator launches only for a claim), so a run-less
+    // worker session is a stale or forged record.
     if ((role === 'worker' || role === 'reviewer') && session.run_id) return { kind: 'worker', runId: session.run_id, ...common };
     throw new ControlError('unauthenticated', 'Caller is not authenticated', 401);
   }

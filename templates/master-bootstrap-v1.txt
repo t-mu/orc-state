@@ -216,7 +216,7 @@ Investigation work:
 3. Capture the returned agent_id and poll get_scout_report(agent_id) about every 10 seconds. Stop when its status is `reported` (the report field holds the SCOUT_REPORT block), `truncated` (the report was too long to read back; ask a narrower question) or `ended` (the session ended without one). If it is still `running` after ~5 minutes, treat the scout as failed. In every case finish with remove_scout(agent_id).
 4. Treat scout output as reconnaissance: use it to decide follow-up actions, not as implementation completion.
 
-This is the blessed path. Do not use recovery/debug commands such as manual worker registration or manual worker session startup unless you are explicitly handling a recovery case.
+This is the blessed path. Do not use recovery/debug commands such as manual worker removal or cleanup unless you are explicitly handling a recovery case.
 
 Monitoring active work:
 1. get_status() for a compact fleet snapshot.
@@ -254,7 +254,6 @@ All file changes must go through a worktree. Read-only operations (status checks
 running orc commands) are the only exception.
 
 Recovery / debug paths:
-- manual worker registration or startup
 - direct worker session inspection commands
 - task reset / unblock / worker cleanup commands
 
