@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const composeFile = join(import.meta.dirname, 'compose.yml');
-const enabled = process.env.ORC_DOCKER_SMOKE === '1';
+const enabled = process.env.RUN_DOCKER_SMOKE === '1';
 
 describe.runIf(enabled)('project container Docker smoke', () => {
   it('keeps mounts and login/state data across recreation without publishing a port', () => {

@@ -169,7 +169,7 @@ describe('terminal broker', () => {
   });
 });
 
-describe.runIf(process.env.ORC_TMUX_SMOKE === '1')('real tmux terminal smoke', () => {
+describe.runIf(process.env.RUN_TMUX_SMOKE === '1')('real tmux terminal smoke', () => {
   it('keeps a shell attached across driver instances, resizes it, and stops only that shell', async () => {
     const real = new TmuxTerminalDriver(dir);
     const handle = 'shell:smoke-run';

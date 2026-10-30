@@ -14,9 +14,12 @@ Every vitest config removes all inherited `ORC_*` variables before any test
 worker starts (`vitest.orcEnv.mjs`), so running the suite from inside a live
 orc session (a worker's `ORC_STATE_DIR`, control socket, secrets) never
 reaches that session's project. Test workers see only the values the config
-sets deliberately (`ORC_SESSION_TRANSPORT`, and an `ORC_DATA_HOME` that names
-no registry); a test that needs another `ORC_*` value sets it itself.
-`vitest.orcEnv.test.ts` guards this for each config.
+sets deliberately (an `ORC_DATA_HOME` that names no registry, plus
+`ORC_SESSION_TRANSPORT=pty` outside the real-provider config); a test that
+needs another `ORC_*` value sets it itself. `vitest.orcEnv.test.ts` guards
+this for each config. Opt-in switches you pass on the command line therefore
+use a `RUN_` prefix (`RUN_REAL_PROVIDERS`, `RUN_TMUX_SMOKE`, `RUN_DOCKER_SMOKE`):
+an `ORC_*` switch would be stripped.
 
 ---
 

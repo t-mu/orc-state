@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config';
-import { stripInheritedOrcEnv } from './vitest.orcEnv.mjs';
+import { stripInheritedOrcEnv, TEST_DATA_HOME } from './vitest.orcEnv.mjs';
 import { resolve } from 'node:path';
 
 stripInheritedOrcEnv();
@@ -7,6 +7,9 @@ stripInheritedOrcEnv();
 export default defineConfig({
   test: {
     environment: 'node',
+    // The e2e-real harness gives each test its own temp ORC_DATA_HOME; the test
+    // process itself must not resolve the developer's real registry.
+    env: { ORC_DATA_HOME: TEST_DATA_HOME },
     // Run real-provider tests serially — provider PTYs and auth state must not
     // be exercised concurrently.
     fileParallelism: false,
