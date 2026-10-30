@@ -116,7 +116,7 @@ export const TOOLS = [
   },
   {
     name: 'get_agent_workview',
-    description: 'Return a compact actionable work summary for one agent. An unknown agent returns { error: "not_found", agent_id } as a tool error.',
+    description: 'Return a compact actionable work summary for one agent. An unknown agent returns { error: "not_found", agent_id } and a scout { error: "scout", agent_id } (read it with get_scout_report) as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['agent_id'],

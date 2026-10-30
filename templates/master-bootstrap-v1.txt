@@ -51,6 +51,7 @@ get_agent_workview(agent_id)
   Returns a compact actionable work summary for one agent:
   active_run, queued_tasks, blockers, recommended_action.
   Use this first when deciding what a specific worker should do next.
+  A scout id returns { error: "scout" }: read scouts with get_scout_report.
 
 get_run(run_id)
   Returns full claim details for a run, merged with task_title and worktree_path.

@@ -241,29 +241,14 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
 export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_id?: unknown } = {}) {
   if (!agent_id) throw new Error('agent_id is required');
 
-  const backlog = readBacklog(stateDir);
-  const claims = readClaims(stateDir).claims;
   const agents = listAgents(stateDir);
   const agent = agents.find((entry) => entry.agent_id === agent_id);
   if (!agent) return { error: 'not_found', agent_id };
+  // A scout has no run or tasks; get_scout_report is its view.
+  if (agent.role === 'scout') return { error: 'scout', agent_id, hint: 'read a scout with get_scout_report' };
 
-  if (agent.role === 'scout') {
-    return {
-      agent_id,
-      agent: {
-        agent_id: agent.agent_id,
-        role: 'scout',
-        status: agent.status,
-        provider: agent.provider,
-        launched_at: agent.last_heartbeat_at ?? agent.registered_at ?? null,
-      },
-      active_run: null,
-      queued_tasks: [],
-      blockers: [],
-      recommended_action: 'poll_for_report',
-      note: `Poll get_scout_report until its status is reported or ended, then call remove_scout for ${agent.agent_id}`,
-    };
-  }
+  const backlog = readBacklog(stateDir);
+  const claims = readClaims(stateDir).claims;
 
   const activeRun = claims.find((claim) =>
     claim.agent_id === agent_id && ['claimed', 'in_progress'].includes(claim.state),
