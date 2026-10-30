@@ -46,15 +46,11 @@ describe('cli/preflight.ts', () => {
     expect(json.checks.orphaned_active_claims_count).toBe(1);
   });
 
-  it('returns warning when all registered workers are offline', () => {
-    seedValidState({
-      agents: [{ agent_id: 'bob', provider: 'codex', status: 'offline', registered_at: '2026-01-01T00:00:00Z' }],
-    });
-    createFakeBinary('codex');
-    const result = runPreflight(['--json'], { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` });
-    expect(result.status).toBe(0);
-    const json = JSON.parse(result.stdout);
-    expect(json.warnings.length).toBeGreaterThan(0);
+  it('passes for an idle project with no registered workers (the coordinator launches them per task)', () => {
+    seedValidState({ agents: [] });
+    const result = runPreflight(['--json']);
+    expect(result.status, result.stdout).toBe(0);
+    expect(JSON.parse(result.stdout).ok).toBe(true);
   });
 
   it('reports provider_binaries as empty map when no agents are registered', () => {

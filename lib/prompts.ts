@@ -33,16 +33,6 @@ function onCancel(e: Error): never {
  *   - returns null if not interactive (caller must validate and exit with usage message)
  */
 
-export async function promptAgentId(existing: string | null): Promise<string | null> {
-  if (existing) return existing;
-  if (!isInteractive()) return null;
-  const { input } = await getPromptModule();
-  return input({
-    message: 'Agent ID (e.g. worker-01)',
-    validate: (v) => /^[a-z0-9][a-z0-9-]*$/.test(v) || 'Must match [a-z0-9][a-z0-9-]*',
-  }).catch(onCancel);
-}
-
 export async function promptProvider(
   existing: string | null,
   options: { message?: string } = {},
@@ -60,48 +50,6 @@ export async function promptProvider(
       { value: 'codex',  name: 'Codex (OpenAI)', description: 'CLI installed + authenticated' },
       { value: 'gemini', name: 'Gemini (Google)', description: 'CLI installed + authenticated'  },
     ],
-  }).catch(onCancel);
-}
-
-export async function promptRole(existing: string | null): Promise<string | null> {
-  if (existing) return existing;
-  if (!isInteractive()) return null;
-  const { select } = await getPromptModule();
-  return select({
-    message: 'Select role',
-    choices: [
-      { value: 'worker',   name: 'Worker',   description: 'executes tasks'      },
-      { value: 'reviewer', name: 'Reviewer', description: 'reviews output'      },
-      { value: 'scout',    name: 'Scout',    description: 'investigates read-only' },
-      { value: 'master',   name: 'Master',   description: 'delegates and plans' },
-    ],
-  }).catch(onCancel);
-}
-
-export async function promptWorkerRole(existing: string | null): Promise<string | null> {
-  if (existing) return existing;
-  if (!isInteractive()) return null;
-  const { select } = await getPromptModule();
-  return select({
-    message: 'Select non-master role',
-    choices: [
-      { value: 'worker',   name: 'Worker',   description: 'executes delegated tasks' },
-      { value: 'reviewer', name: 'Reviewer', description: 'reviews worker output' },
-      { value: 'scout',    name: 'Scout',    description: 'investigates code, logs, and runs' },
-    ],
-  }).catch(onCancel);
-}
-
-/**
- * @param existing - null means not provided (prompt); '' means explicitly empty
- */
-export async function promptCapabilities(existing: string | null): Promise<string> {
-  if (existing != null) return existing; // empty string is a valid "no capabilities"
-  if (!isInteractive()) return '';
-  const { input } = await getPromptModule();
-  return input({
-    message: 'Capabilities (comma-separated, optional — leave blank for none)',
-    default: '',
   }).catch(onCancel);
 }
 

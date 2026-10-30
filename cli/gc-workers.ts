@@ -5,6 +5,7 @@
  *
  * Removes workers that are definitely stale (offline or dead status, or a dead heartbeat).
  * A worker that holds an active claim is kept: the coordinator recovers its run.
+ * The master and scouts are never touched (scouts are removed with remove_scout).
  * Uses adapter.heartbeatProbe() - works with any adapter implementation.
  */
 import { listAgents, removeAgent } from '../lib/agentRegistry.ts';
@@ -15,7 +16,8 @@ import { STATE_DIR } from '../lib/paths.ts';
 const claimed = new Set((readClaims(STATE_DIR).claims ?? [])
   .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
   .map((claim) => claim.agent_id));
-const workers = listAgents(STATE_DIR).filter((worker) => !claimed.has(worker.agent_id));
+const workers = listAgents(STATE_DIR)
+  .filter((agent) => agent.role !== 'master' && agent.role !== 'scout' && !claimed.has(agent.agent_id));
 let removedOffline = 0;
 let removedStale = 0;
 

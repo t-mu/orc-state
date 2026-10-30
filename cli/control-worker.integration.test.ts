@@ -120,7 +120,7 @@ describe.runIf(PTY_SUPPORTED)('cli/control-worker.ts integration', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('is not reachable');
-    expect(result.stderr).toContain('--force-rebind');
+    expect(result.stderr).toContain('orc status');
   }, 15_000);
 });
 

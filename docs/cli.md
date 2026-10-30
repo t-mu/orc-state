@@ -154,8 +154,8 @@ commands are for when you need to intervene manually.
 |---------|-------------|
 | `attach <id>` | Print the tail of a worker's PTY output log (read-only). |
 | `control-worker <id>` | Interactive PTY control of a running worker session. |
-| `worker-remove <id>` | Stop a worker's session and remove it. Refused while the worker holds an active claim. |
-| `worker-gc` | Remove offline and dead workers, and workers whose session is unreachable, unless they hold an active claim. |
+| `worker-remove <id>` | Stop a worker's session and remove it. Refused while the worker holds an active claim, and for the master or a scout. |
+| `worker-gc` | Remove offline and dead workers, and workers whose session is unreachable, unless they hold an active claim. The master and scouts are left alone. |
 | `worker-status [agent_id]` | Show worker state, active task, and session info. |
 
 For a live run, `orc terminal provider <run_id>` observes its tmux provider

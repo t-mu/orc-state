@@ -117,4 +117,26 @@ describe('cli/remove-worker.ts', () => {
     exit.mockRestore();
   });
 
+
+  it.each(['master', 'scout'])('refuses the %s', async (role) => {
+    writeAgents([{ agent_id: 'them', provider: 'claude', role, status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' }]);
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`__exit__${code}`); }) as never);
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const oldArgv = process.argv;
+    const oldStateDir = process.env.ORC_STATE_DIR;
+    process.argv = ['node', 'cli/remove-worker.ts', 'them'];
+    setStateDirEnv(dir);
+    try {
+      await expect(import('./remove-worker.ts')).rejects.toThrow('__exit__1');
+    } finally {
+      process.argv = oldArgv;
+      setStateDirEnv(oldStateDir);
+    }
+
+    expect(stderr.mock.calls.flat().join(' ')).toContain(`it is the ${role}, not a worker`);
+    expect(readAgents()).toHaveLength(1);
+    exit.mockRestore();
+  });
+
 });

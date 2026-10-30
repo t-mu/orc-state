@@ -67,8 +67,8 @@ These commands are recovery/debug only. Do not choose them when the blessed work
 |---------|-------|-------|
 | `attach` | `orc attach <id>` | Print tail of a worker's PTY output log. Read-only. |
 | `control-worker` | `orc control-worker <id>` | Attach to a running worker session for inspection. |
-| `worker-remove` | `orc worker-remove <id> [--keep-session]` | Stop a worker's session and remove it. Refused while it holds an active claim. |
-| `worker-gc` | `orc worker-gc` | Remove offline, dead and unreachable workers that hold no active claim. |
+| `worker-remove` | `orc worker-remove <id> [--keep-session]` | Stop a worker's session and remove it. Refused while it holds an active claim, and for the master or a scout. |
+| `worker-gc` | `orc worker-gc` | Remove offline, dead and unreachable workers that hold no active claim (never the master or scouts). |
 
 ### Supported Inspection
 

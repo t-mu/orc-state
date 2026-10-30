@@ -130,8 +130,6 @@ describe('worker control flow e2e', () => {
       promptCoordinatorAction: vi.fn().mockResolvedValue('reuse'),
       promptMasterAction: vi.fn().mockResolvedValue('reuse'),
       printManagedWorkerNotice: vi.fn(),
-      promptRole: vi.fn().mockResolvedValue('worker'),
-      promptCapabilities: vi.fn().mockResolvedValue(''),
     }));
     vi.doMock('../lib/binaryCheck.ts', () => ({
       checkAndInstallBinary: vi.fn().mockResolvedValue(true),

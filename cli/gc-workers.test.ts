@@ -32,7 +32,10 @@ describe('cli/gc-workers.ts', () => {
   it('removes offline workers immediately', async () => {
     writeAgents([
       { agent_id: 'offline', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'dead', provider: 'claude', status: 'dead', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
       { agent_id: 'running', provider: 'claude', status: 'running', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'master', provider: 'claude', role: 'master', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
     ]);
     vi.doMock('../adapters/index.ts', () => ({
       createAdapter: () => ({ heartbeatProbe: () => Promise.resolve(true) }),
@@ -50,7 +53,7 @@ describe('cli/gc-workers.ts', () => {
     }
 
     const ids = readAgents().map((a: Record<string, unknown>) => a.agent_id);
-    expect(ids).toEqual(['running']);
+    expect(ids).toEqual(['running', 'master', 'scout-1']);
   });
 
   it('removes running workers with dead session probes', async () => {

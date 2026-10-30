@@ -27,6 +27,12 @@ if (!worker) {
   process.exit(1);
 }
 
+// The master is replaced with orc start-session; a scout is the master's, removed with remove_scout.
+if (worker.role === 'master' || worker.role === 'scout') {
+  console.error(`Cannot remove ${workerId}: it is the ${worker.role}, not a worker${worker.role === 'scout' ? ' (the master removes scouts with remove_scout)' : ''}`);
+  process.exit(1);
+}
+
 const activeClaim = (readClaims(STATE_DIR).claims ?? []).find((claim) =>
   claim.agent_id === workerId && ['claimed', 'in_progress'].includes(claim.state),
 );
