@@ -20,10 +20,12 @@ import { RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
-import { importTaskMarkdown } from './taskMarkdown.ts';
+import { importTaskMarkdownSources, type TaskMarkdownSource } from './taskMarkdown.ts';
 import { DEFAULT_WAKE_UP_BUDGET, isWakeUpBudget, readMemoryWakeUp, readRunReviews } from './projectReads.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
+/** A whole backlog directory travels as text in one import request. */
+const MAX_IMPORT_BODY_BYTES = 32 * 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
 
 export interface ControlServerOptions {
@@ -60,16 +62,6 @@ export function sessionAuthenticator(stateDir: string): CommandAuthenticator {
   };
 }
 
-/** Map storage-neutral task API failures to protocol errors; anything unexpected is internal. */
-function taskError(error: unknown): ControlError {
-  if (error instanceof ControlError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof RevisionConflictError || error instanceof ConflictError) return new ControlError('conflict', message, 409);
-  if (error instanceof NotFoundError) return new ControlError('not_found', message, 404);
-  if (error instanceof TaskInputError || error instanceof InputError) return new ControlError('bad_request', message, 400);
-  return classify(error);
-}
-
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
 
 function classify(error: unknown): ControlError {
@@ -102,12 +94,12 @@ function sendError(res: ServerResponse, error: unknown): void {
   send(res, failure.status, { protocol_version: CONTROL_PROTOCOL_VERSION, ok: false, error: { code: failure.code, message: failure.message } });
 }
 
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readBody(req: IncomingMessage, limit = MAX_BODY_BYTES): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new ControlError('bad_request', 'Request body too large', 413);
+    if (size > limit) throw new ControlError('bad_request', 'Request body too large', 413);
     chunks.push(chunk as Buffer);
   }
   try {
@@ -117,6 +109,11 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   } catch {
     throw new ControlError('bad_request', 'Request body must be a JSON object', 400);
   }
+}
+
+function actorField(body: Record<string, unknown>): string | undefined {
+  if (body.actor_id !== undefined && typeof body.actor_id !== 'string') throw new InputError('actor_id must be a string');
+  return body.actor_id;
 }
 
 function seqParam(url: URL, name: string): number {
@@ -187,6 +184,13 @@ export async function startControlServer(stateDir: string, options: ControlServe
     requireProjectReader(principal(req));
   }
 
+  /** Messages, like commands, need a running session: the operator and a recoverable or unknown session are not authenticated for them. */
+  function messageSession(req: IncomingMessage): Extract<ControlPrincipal, { kind: 'worker' | 'master' }> {
+    const caller = principal(req);
+    if (!caller || caller.kind === 'operator' || !caller.running) throw new ControlError('unauthenticated', 'Messages require a running session', 401);
+    return caller;
+  }
+
   function actorCredential(req: IncomingMessage): string {
     const credential = req.headers[SESSION_HEADER];
     if (typeof credential !== 'string' || !credential) throw new ControlError('unauthenticated', 'Session credential required for mutations', 401);
@@ -241,8 +245,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return ok(readControlSnapshot(stateDir));
     }
     if (url.pathname === '/v1/messages') {
-      const caller = requirePrincipal(principal(req));
-      if (caller.kind === 'operator') throw new ControlError('forbidden', 'Messages require a session', 403);
+      const caller = messageSession(req);
       const messageActor = { agentId: caller.agentId, sessionId: caller.sessionId };
       if (req.method === 'GET') return ok({ messages: listMessages(stateDir, messageActor, url.searchParams.get('include_consumed') === '1') });
       if (req.method === 'POST') {
@@ -259,9 +262,8 @@ export async function startControlServer(stateDir: string, options: ControlServe
     }
     const messageAck = /^\/v1\/messages\/([^/]+)\/consume$/.exec(url.pathname);
     if (req.method === 'POST' && messageAck) {
-      const caller = requirePrincipal(principal(req));
-      if (caller.kind === 'operator') throw new ControlError('forbidden', 'Messages require a session', 403);
-      return ok({ message: consumeMessage(stateDir, { agentId: caller.agentId, sessionId: caller.sessionId }, decodeURIComponent(messageAck[1])) });
+      const caller = messageSession(req);
+      return ok({ message: consumeMessage(stateDir, { agentId: caller.agentId, sessionId: caller.sessionId }, decodePathSegment(messageAck[1])) });
     }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       projectReader(req);
@@ -304,7 +306,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     }
     const terminalRoute = /^\/v1\/terminals\/([^/]+)(?:\/(lease|input|resize))?$/.exec(url.pathname);
     if (terminalRoute) {
-      const terminalId = decodeURIComponent(terminalRoute[1]);
+      const terminalId = decodePathSegment(terminalRoute[1]);
       const action = terminalRoute[2];
       if (req.method === 'GET' && !action) return ok(terminals.observe(terminalId, seqParam(url, 'after')));
       if (req.method === 'POST' && action) {
@@ -325,45 +327,47 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const store = projectTaskStoreFor(stateDir);
       if (!store) throw new ControlError('not_found', 'Task API requires a project state directory', 404);
       if (req.method === 'POST' && url.pathname === '/v1/tasks/import') {
-        const caller = principal(req);
-        const body = await readBody(req);
-        if (body.actor_id !== undefined && typeof body.actor_id !== 'string') throw new InputError('actor_id must be a string');
-        const actor = requireProjectAuthor(stateDir, caller, typeof body.actor_id === 'string' ? body.actor_id : undefined);
-        if (typeof body.path !== 'string' || !body.path) throw new InputError('path is required');
+        // Authorize before reading a body; the specs arrive as text, so the coordinator never opens a caller's path.
+        const caller = requireProjectReader(principal(req));
+        const body = await readBody(req, MAX_IMPORT_BODY_BYTES);
+        const actor = requireProjectAuthor(stateDir, caller, actorField(body));
+        if (!Array.isArray(body.files) || body.files.some((file: unknown) => !file || typeof file !== 'object'
+          || typeof (file as Record<string, unknown>).path !== 'string' || typeof (file as Record<string, unknown>).text !== 'string')) {
+          // An older client sent a coordinator-side path; say which side to update instead of a bare shape error.
+          throw new InputError(typeof body.path === 'string'
+            ? 'This coordinator takes imported specs as text, not a path: the client is older than the coordinator; update orc on the client'
+            : 'files must be a list of { path, text }');
+        }
         if (body.strict !== undefined && typeof body.strict !== 'boolean') throw new InputError('strict must be a boolean');
         assertOpen();
-        return ok(importTaskMarkdown(stateDir, body.path, { strict: body.strict === true, actorId: actor }));
+        return ok({ imported: importTaskMarkdownSources(stateDir, body.files as TaskMarkdownSource[], { strict: body.strict === true, actorId: actor }) });
       }
       const match = /^\/v1\/tasks(?:\/([^/]+)(\/revisions)?)?$/.exec(url.pathname);
       if (!match) throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
-      const ref = match[1] === undefined ? null : decodeURIComponent(match[1]);
-      try {
-        if (req.method === 'GET') projectReader(req);
-        if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
-        if (req.method === 'GET' && !match[2]) {
-          const task = store.getTask(ref!);
-          if (!task) throw new NotFoundError(`Task not found: ${ref}`);
-          return ok({ task: describeProjectTask(task) });
+      const ref = match[1] === undefined ? null : decodePathSegment(match[1]);
+      if (req.method === 'GET') projectReader(req);
+      if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
+      if (req.method === 'GET' && !match[2]) {
+        const task = store.getTask(ref!);
+        if (!task) throw new NotFoundError(`Task not found: ${ref}`);
+        return ok({ task: describeProjectTask(task) });
+      }
+      if (req.method === 'GET') {
+        if (!store.getTask(ref!)) throw new NotFoundError(`Task not found: ${ref}`);
+        return ok({ revisions: store.listRevisions(ref!) });
+      }
+      if (req.method === 'POST') {
+        const caller = requireProjectReader(principal(req));
+        const body = await readBody(req);
+        const actor = requireProjectAuthor(stateDir, caller, actorField(body));
+        delete body.actor_id;
+        assertOpen();
+        if (ref === null) return ok({ task: describeProjectTask(createProjectTask(stateDir, body, actor)) }, 201);
+        if (match[2]) {
+          const { expected_revision: expectedRevision, ...changes } = body;
+          const { task, changed } = reviseProjectTask(stateDir, ref, expectedRevision, changes, actor);
+          return ok({ task: describeProjectTask(task), changed });
         }
-        if (req.method === 'GET') {
-          if (!store.getTask(ref!)) throw new NotFoundError(`Task not found: ${ref}`);
-          return ok({ revisions: store.listRevisions(ref!) });
-        }
-        if (req.method === 'POST') {
-          const body = await readBody(req);
-          if (body.actor_id !== undefined && typeof body.actor_id !== 'string') throw new InputError('actor_id must be a string');
-          const actor = requireProjectAuthor(stateDir, principal(req), typeof body.actor_id === 'string' ? body.actor_id : undefined);
-          delete body.actor_id;
-          assertOpen();
-          if (ref === null) return ok({ task: describeProjectTask(createProjectTask(stateDir, body, actor)) }, 201);
-          if (match[2]) {
-            const { expected_revision: expectedRevision, ...changes } = body;
-            const { task, changed } = reviseProjectTask(stateDir, ref, expectedRevision, changes, actor);
-            return ok({ task: describeProjectTask(task), changed });
-          }
-        }
-      } catch (error) {
-        throw taskError(error);
       }
       throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
     }
@@ -377,9 +381,11 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return ok(applyLifecycle(stateDir, scoped));
     }
     if (req.method === 'POST' && url.pathname === '/v1/operator') {
+      // Authenticate before reading a body; which ops the caller may send depends on the parsed request.
+      const caller = requirePrincipal(principal(req));
       const request = parseOperatorRequest(await readBody(req));
       assertOpen();
-      const { actorId } = authorizeOperator(stateDir, principal(req), request);
+      const { actorId } = authorizeOperator(stateDir, caller, request);
       return ok(applyOperatorMutation(stateDir, { ...request, actor_id: actorId }));
     }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
@@ -404,7 +410,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const body = await readBody(req);
       assertOpen();
       if (!ACK_STATES.has(body.state as AckState)) throw new ControlError('bad_request', 'state must be accepted, running, completed or failed', 400);
-      return ok({ command: commands.acknowledge(credential, decodeURIComponent(ack[1]), body.state as AckState) });
+      return ok({ command: commands.acknowledge(credential, decodePathSegment(ack[1]), body.state as AckState) });
     }
     throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
   }

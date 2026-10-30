@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
 import { openReadOnlyDatabase, shouldOpenReadOnly } from './sqliteReadOnly.ts';
+import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
 
 export const PROJECT_TASK_SCHEMA_VERSION = 4;
 
@@ -339,8 +340,8 @@ export function parseBodyAcceptanceCriteria(body: string): string[] {
 function normalizeDependencies(ref: string, dependsOn: readonly unknown[]): string[] {
   const unique = [...new Set(dependsOn)];
   for (const dependency of unique) {
-    if (typeof dependency !== 'string' || !dependency.trim()) throw new Error('Task dependencies must be non-empty strings');
-    if (dependency === ref) throw new Error(`Task ${ref} cannot depend on itself`);
+    if (typeof dependency !== 'string' || !dependency.trim()) throw new InputError('Task dependencies must be non-empty strings');
+    if (dependency === ref) throw new InputError(`Task ${ref} cannot depend on itself`);
   }
   return (unique as string[]).sort();
 }
@@ -388,13 +389,13 @@ export class ProjectTaskStore {
 
   createTask(input: TaskSpecInput): ProjectTask {
     const title = input.title ?? parseBodyTitle(input.bodyMarkdown);
-    if (!input.ref.trim() || !title?.trim()) throw new Error('Task ref and title are required');
+    if (!input.ref.trim() || !title?.trim()) throw new InputError('Task ref and title are required');
     const now = input.createdAt ?? new Date().toISOString();
     const dependsOn = normalizeDependencies(input.ref, input.dependsOn ?? []);
     const priority = input.priority ?? 'normal';
     const requiredProvider = input.requiredProvider ?? null;
     this.inTransaction(() => {
-      if (this.db.prepare('SELECT 1 FROM tasks WHERE ref = ?').get(input.ref)) throw new Error(`Task already exists: ${input.ref}`);
+      if (this.db.prepare('SELECT 1 FROM tasks WHERE ref = ?').get(input.ref)) throw new ConflictError(`Task already exists: ${input.ref}`);
       this.db.prepare('INSERT INTO tasks (ref, title, priority, required_provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(input.ref, title, priority, requiredProvider, now, now);
       this.insertRevision(input.ref, 1, { title, bodyMarkdown: input.bodyMarkdown, metadata: input.metadata ?? {}, priority, requiredProvider, dependsOn }, now);
@@ -410,13 +411,13 @@ export class ProjectTaskStore {
    * when it was based on an older revision.
    */
   reviseTask(ref: string, expectedRevision: number, changes: TaskSpecChanges): { task: ProjectTask; changed: boolean } {
-    if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new Error('expected revision must be a positive integer');
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new InputError('expected revision must be a positive integer');
     const changed = this.db.transaction(() => {
       const current = this.getTask(ref);
-      if (!current) throw new Error(`Task not found: ${ref}`);
+      if (!current) throw new NotFoundError(`Task not found: ${ref}`);
       const bodyMarkdown = changes.bodyMarkdown ?? current.bodyMarkdown;
       const title = changes.title ?? (changes.bodyMarkdown !== undefined ? parseBodyTitle(bodyMarkdown) : null) ?? current.title;
-      if (!title.trim()) throw new Error('Task title is required');
+      if (!title.trim()) throw new InputError('Task title is required');
       const baseMetadata = Object.fromEntries(Object.entries(current.metadata).filter(([key]) => !(INDEXED_METADATA_KEYS as readonly string[]).includes(key)));
       const metadata = changes.metadata ?? baseMetadata;
       const priority = changes.priority ?? current.priority;

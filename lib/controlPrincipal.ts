@@ -36,10 +36,8 @@ export function requireProjectReader(principal: ControlPrincipal | null): Extrac
 
 export function requireProjectAuthor(stateDir: string, principal: ControlPrincipal | null, actorId?: string): string {
   const caller = requireProjectReader(principal);
-  if (caller.kind === 'master') {
-    if (actorId !== undefined && actorId !== caller.agentId) throw new ControlError('forbidden', `A master session acts as ${caller.agentId}, not ${actorId}`, 403);
-    return caller.agentId;
-  }
+  // A master session always acts as itself; a named actor is ignored, as the master's operator tools do.
+  if (caller.kind === 'master') return caller.agentId;
   const actor = actorId ?? 'human';
   if (actor !== 'human' && !listAgents(stateDir).some((agent) => agent.agent_id === actor)) {
     throw new ControlError('bad_request', `Actor agent not found: ${actor}`, 400);

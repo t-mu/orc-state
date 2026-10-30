@@ -452,26 +452,26 @@ export function parseOperatorRequest(body: Record<string, unknown>): OperatorReq
   return body as OperatorRequest;
 }
 
+/** The master agent a live session credential belongs to; any other session is refused. */
+export function masterForCredential(stateDir: string, credential: string): string {
+  const principal = resolveControlPrincipal(stateDir, credential, false);
+  if (principal?.kind !== 'master' || !principal.live) throw new ControlError(principal ? 'forbidden' : 'unauthenticated', 'Only a master session that is not offline may act as master', principal ? 403 : 401);
+  return principal.agentId;
+}
+
 /**
  * Who may send an operator mutation, and as whom it is recorded.
  * - A session credential must be the master's (not `offline`), and the
- *   mutation is recorded as the master; a worker or scout session is refused,
+ *   mutation is recorded as the master (a named actor is ignored); a worker or scout session is refused,
  *   so a worker shell's `orc task-reset` fails instead of acting as operator.
  * - A caller without a session must present the operator token the
  *   coordinator writes on every start (task 231); it is recorded as `human`
  *   or a registered agent it names.
  * - Answering an input request needs the master session, as it always has.
  */
-/** The master agent a live session credential belongs to; any other session is refused. */
-export function masterForCredential(stateDir: string, credential: string): string {
-  const principal = resolveControlPrincipal(stateDir, credential, false);
-  if (principal?.kind !== 'master' || !principal.live) throw new ControlError(principal ? 'forbidden' : 'unauthenticated', 'Only the running master session may act as master', principal ? 403 : 401);
-  return principal.agentId;
-}
-
 export function authorizeOperator(stateDir: string, caller: ControlPrincipal | { credential: string | null; operator: boolean } | null, request: OperatorRequest): { actorId: string } {
   const principal = caller && 'credential' in caller ? resolveControlPrincipal(stateDir, caller.credential, caller.operator) : caller;
-  if (principal?.kind === 'operator' && request.op === 'respond-input') throw new ControlError('forbidden', 'Input response requires a running master session', 403);
+  if (principal?.kind === 'operator' && request.op === 'respond-input') throw new ControlError('forbidden', 'Input response requires the master session (not the operator token)', 403);
   return { actorId: requireProjectAuthor(stateDir, principal, request.actor_id) };
 }
 

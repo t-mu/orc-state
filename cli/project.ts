@@ -6,7 +6,7 @@ import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { createProjectTask, describeProjectTask, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
 import { migrateLegacyInstallation, migrationCleanupReport } from '../lib/projectMigration.ts';
-import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown } from '../lib/taskMarkdown.ts';
+import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, importTaskMarkdownSources, readTaskMarkdownSources } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
 import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 
@@ -184,9 +184,11 @@ export async function runProjectCommandRouted(args: string[], registry: ProjectR
   if (values.length !== 1) usage();
   if (verb === 'import') {
     if (flags.some((arg) => arg.startsWith('--') && arg !== '--strict' && !/^--(project|actor-id)=/.test(arg))) usage();
+    const strict = flags.includes('--strict');
+    const { sources, skipped } = readTaskMarkdownSources(values[0]);
     return submitProjectWrite<unknown>(stateDir, 'task import', actorId,
-      (client) => client.importTasks(resolve(values[0]), flags.includes('--strict'), actorId),
-      (actor) => importTaskMarkdown(stateDir, values[0], { strict: flags.includes('--strict'), actorId: actor }));
+      async (client) => ({ ...(await client.importTasks(sources, strict, actorId)), skipped }),
+      (actor) => ({ imported: importTaskMarkdownSources(stateDir, sources, { strict, actorId: actor }), skipped }));
   }
   const expected = option(flags, 'expected-revision');
   const input = taskInput(flags, [...Object.keys(TASK_FIELD_FLAGS).filter((flag) => !['feature', 'ref', 'owner'].includes(flag)),

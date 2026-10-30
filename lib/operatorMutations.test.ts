@@ -84,7 +84,8 @@ describe('authorizeOperator (task 232)', () => {
   it('a session must be the master\'s, and acts only as the master', () => {
     const as = (credential: string) => ({ credential, operator: false });
     expect(authorizeOperator(dir, as('session-master'), reset)).toEqual({ actorId: 'master' });
-    expect(() => authorizeOperator(dir, as('session-master'), { ...reset, actor_id: 'worker-a' })).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    // A named actor is ignored: the master session is always recorded as itself.
+    expect(authorizeOperator(dir, as('session-master'), { ...reset, actor_id: 'worker-a' })).toEqual({ actorId: 'master' });
     // A worker session is refused even when it also claims operator intent.
     expect(() => authorizeOperator(dir, { credential: 'session-a', operator: true }, reset)).toThrow(expect.objectContaining({ code: 'forbidden' }));
     expect(() => authorizeOperator(dir, as('forged'), reset)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));

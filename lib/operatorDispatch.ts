@@ -1,14 +1,8 @@
-import { join } from 'node:path';
-import { ControlClient } from './controlClient.ts';
-import { ControlError } from './controlProtocol.ts';
-import { runningCoordinatorPid } from './coordinatorLiveness.ts';
 import { applyOperatorMutation, authorizeOperator, type OperatorRequest } from './operatorMutations.ts';
 import { ACTIVE_PROJECT, STATE_DIR } from './paths.ts';
 import { clientCredential } from './sessionCredentials.ts';
 import { resolveControlPrincipal } from './controlPrincipal.ts';
-
-/** Coordinator requests are applied once received, so a timeout is never retried (see lifecycleDispatch). */
-const OPERATOR_REQUEST_TIMEOUT_MS = 120_000;
+import { routeToCoordinator } from './projectWriteDispatch.ts';
 
 /**
  * Apply a master or operator mutation (task 232). In a registered project the
@@ -39,19 +33,11 @@ export async function submitOperatorMutation(
   } = {},
 ): Promise<Record<string, unknown>> {
   if (!project) return applyOperatorMutation(stateDir, request, direct);
-  try {
-    return await new ControlClient(stateDir, { credential, timeoutMs: OPERATOR_REQUEST_TIMEOUT_MS }).operator(request);
-  } catch (error) {
-    if (!(error instanceof ControlError) || error.code !== 'unavailable') throw error;
-  }
-  // A coordinator that holds the project but is not answering (starting, shutting down, or between
-  // descriptors) still owns its writes; only a stopped one leaves them to the caller.
-  const pid = runningCoordinatorPid(stateDir);
-  if (pid !== null) {
-    throw new ControlError('unavailable', `The coordinator (pid ${pid}) is running but its control API is not answering; retry ${request.op} in a moment. If pid ${pid} is not an orc coordinator, remove ${join(stateDir, 'coordinator.pid')}`, 503);
-  }
-  // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
-  const { actorId } = authorizeOperator(stateDir, resolveControlPrincipal(stateDir, credential, credential === null), request);
-  warn(`coordinator is not running; applying ${request.op} directly`);
-  return applyOperatorMutation(stateDir, { ...request, actor_id: actorId });
+  return routeToCoordinator(stateDir, request.op, {
+    credential, warn,
+    remote: (client) => client.operator(request),
+    // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
+    authorize: () => authorizeOperator(stateDir, resolveControlPrincipal(stateDir, credential, credential === null), request).actorId,
+    direct: (actorId) => applyOperatorMutation(stateDir, { ...request, actor_id: actorId }),
+  });
 }

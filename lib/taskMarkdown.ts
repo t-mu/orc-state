@@ -159,6 +159,30 @@ export interface TaskImportResult {
   ignored_fields: string[];
 }
 
+export interface TaskMarkdownSource { path: string; text: string }
+
+/**
+ * Read the specs an import names, in the caller's process: a sandboxed client
+ * sends their contents to the coordinator, which never opens a client's path.
+ */
+export function readTaskMarkdownSources(path: string): { sources: TaskMarkdownSource[]; skipped: string[] } {
+  const source = resolve(path);
+  if (!existsSync(source)) throw new TaskInputError(`Import path not found: ${source}`);
+  const skipped: string[] = [];
+  const sources: TaskMarkdownSource[] = [];
+  const directory = statSync(source).isDirectory();
+  for (const file of markdownFiles(source)) {
+    const text = readFileSync(file, 'utf8');
+    // A directory may hold templates and notes; only files naming a valid task ref are specs there.
+    if (directory) {
+      const ref = /^---[ \t]*\r?\n[\s\S]*?^ref:[ \t]*(\S+)/m.exec(text)?.[1];
+      if (!ref || !TASK_REF_RE.test(ref.replace(/^(['"])(.*)\1$/, '$2'))) { skipped.push(file); continue; }
+    }
+    sources.push({ path: file, text });
+  }
+  return { sources, skipped };
+}
+
 /**
  * Import task specs from a file or directory in one transaction, so any
  * failing file leaves the project unchanged. In a directory, Markdown without
@@ -168,20 +192,16 @@ export interface TaskImportResult {
  * file came from an export, its `spec_revision` is the expected revision, so
  * an edit to a stale export fails instead of overwriting newer work.
  */
-export function importTaskMarkdown(stateDir: string, path: string, { strict = false, actorId = 'human' }: { strict?: boolean; actorId?: string } = {}): { imported: TaskImportResult[]; skipped: string[] } {
+export function importTaskMarkdown(stateDir: string, path: string, options: { strict?: boolean; actorId?: string } = {}): { imported: TaskImportResult[]; skipped: string[] } {
+  const { sources, skipped } = readTaskMarkdownSources(path);
+  return { imported: importTaskMarkdownSources(stateDir, sources, options), skipped };
+}
+
+/** Apply already-read specs (see importTaskMarkdown); each source must be a spec. */
+export function importTaskMarkdownSources(stateDir: string, sources: TaskMarkdownSource[], { strict = false, actorId = 'human' }: { strict?: boolean; actorId?: string } = {}): TaskImportResult[] {
   const store = requireProjectTaskStore(stateDir);
-  const source = resolve(path);
-  if (!existsSync(source)) throw new TaskInputError(`Import path not found: ${source}`);
-  const skipped: string[] = [];
   const specs: ParsedTaskMarkdown[] = [];
-  const directory = statSync(source).isDirectory();
-  for (const file of markdownFiles(source)) {
-    const text = readFileSync(file, 'utf8');
-    // A directory may hold templates and notes; only files naming a valid task ref are specs there.
-    if (directory) {
-      const ref = /^---[ \t]*\r?\n[\s\S]*?^ref:[ \t]*(\S+)/m.exec(text)?.[1];
-      if (!ref || !TASK_REF_RE.test(ref.replace(/^(['"])(.*)\1$/, '$2'))) { skipped.push(file); continue; }
-    }
+  for (const { path: file, text } of sources) {
     const spec = parseTaskMarkdown(text, file, { strict });
     if (!spec) throw new TaskInputError(`${file} is not a task spec: missing ref frontmatter`);
     specs.push(spec);
@@ -197,7 +217,7 @@ export function importTaskMarkdown(stateDir: string, path: string, { strict = fa
   }
 
   // One transaction: a failure in any file leaves the project unchanged.
-  const imported = withTaskAuthoringBatch(stateDir, () => specs.map((spec): TaskImportResult => {
+  return withTaskAuthoringBatch(stateDir, () => specs.map((spec): TaskImportResult => {
     const current = store.getTask(spec.ref);
     let task: ProjectTask;
     let action: TaskImportResult['action'];
@@ -220,7 +240,6 @@ export function importTaskMarkdown(stateDir: string, path: string, { strict = fa
     store.recordImport(spec.ref, task.revision, spec.sourcePath, spec.fileSha256);
     return { path: spec.sourcePath, ref: spec.ref, action, revision: task.revision, ignored_fields: spec.ignoredFields };
   }));
-  return { imported, skipped };
 }
 
 function yamlList(key: string, values: unknown): string[] {

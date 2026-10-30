@@ -205,7 +205,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 2. Task authoring: in a registered project, `orc project task create|edit|import` (or the MCP `create_task`/`update_task` tools) — no file in the repository. In a legacy installation, edit `backlog/<N>-<slug>.md`.
 3. Task registration: a project's tasks live in its SQLite store. A legacy coordinator registers new `todo` spec definitions on each tick; status is never read from or written to a spec.
 4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`), unique among currently-active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
-5. Task completion: coordinator calls `orc task-mark-done <task-ref>` after merge; task status is runtime-owned and no spec is edited
+5. Task completion: the coordinator marks the task done itself after merge; task status is runtime-owned and no spec is edited (`orc task-mark-done` is the operator's recovery command)
 6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
 7. Normal inspection: `orc status`, `orc doctor` (and, in a legacy installation only, `orc backlog-sync-check`)
 8. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
@@ -236,7 +236,7 @@ orc kill-all                                      # ⚠️ stop coordinator + cl
 
 # Task management
 orc task-create                                   # project: create a task in SQLite (prefer orc project task create); legacy: register a matching markdown spec (recovery)
-orc task-mark-done <task-ref>                     # coordinator-only: mark shared runtime state done after merge
+orc task-mark-done <task-ref>                     # operator recovery: mark runtime state done (the coordinator does this itself after merge)
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
 orc delegate                                      # assign/dispatch a task to an agent
@@ -376,7 +376,7 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 |------------|-------------|
 | `todo → claimed` | Coordinator (on delegate) |
 | `claimed → in_progress` | Worker (`orc run-start`) |
-| `in_progress → done` | Coordinator (`orc task-mark-done <ref>` after merge) |
+| `in_progress → done` | Coordinator, after merge (`orc task-mark-done <ref>` is the operator's recovery command) |
 | `done → released` | Coordinator (after merge) |
 | `claimed/in_progress → blocked` | Worker (`orc run-fail --policy=block`) |
 | `todo/claimed/in_progress/blocked → cancelled` | Master (`cancel_task`); a registered project only — a legacy installation records cancellation as `blocked` |

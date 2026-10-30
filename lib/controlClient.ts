@@ -13,6 +13,7 @@ import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
 import type { OperatorRequest } from './operatorMutations.ts';
+import type { TaskMarkdownSource } from './taskMarkdown.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 export interface EventRow { seq: number; event: unknown }
@@ -184,8 +185,9 @@ export class ControlClient {
       ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
-  importTasks(path: string, strict = false, actorId?: string): Promise<{ imported: unknown[]; skipped: string[] }> {
-    return this.call('POST', '/v1/tasks/import', { path, strict, ...(actorId === undefined ? {} : { actor_id: actorId }) });
+  /** Sends specs the caller read itself (readTaskMarkdownSources); the coordinator never opens a caller's path. */
+  importTasks(files: TaskMarkdownSource[], strict = false, actorId?: string): Promise<{ imported: unknown[] }> {
+    return this.call('POST', '/v1/tasks/import', { files, strict, ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
   openTerminal(kind: 'provider' | 'shell', runId: string): Promise<{ terminal: TerminalRecord }> {
