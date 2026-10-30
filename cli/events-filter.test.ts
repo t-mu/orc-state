@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 
@@ -10,7 +9,7 @@ let dir: string;
 
 beforeEach(() => {
   dir = createTempStateDir('orc-events-filter-test-');
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
+  seedProjectTasks(dir, []);
 });
 
 afterEach(() => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -81,7 +81,7 @@ function runCli(args: string[]) {
 }
 
 function seedState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
+  seedProjectTasks(dir, []);
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{

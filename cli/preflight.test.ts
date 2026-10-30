@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
-import { closeProjectTaskStores, initProjectTaskStore } from '../lib/projectTasks.ts';
+import { closeProjectTaskStores } from '../lib/projectTasks.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -140,14 +140,7 @@ function seedValidState({
   agents = [] as unknown[],
   claims = [] as unknown[],
 } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }] }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
-  initProjectTaskStore(dir);
+  seedState(dir, { tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }], agents, claims });
   closeProjectTaskStores();
 }
 

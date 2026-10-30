@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -249,14 +249,8 @@ function seedValidState({
   claims = [] as unknown[],
   runWorktrees = [] as unknown[],
 } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedState(dir, { tasks, agents, claims });
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({ version: '1', runs: runWorktrees }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
   writeFileSync(join(root, 'orc-state.config.json'), JSON.stringify({
     worker_pool: { max_workers: 2, provider: 'codex' },
   }));

@@ -4,25 +4,13 @@ import { join } from 'node:path';
 import { initEventsDb, queryEvents } from './eventLog.ts';
 import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession, restoreVolatileRuntimeStateFromSnapshot } from './sessionState.ts';
 import { readAgents } from './stateReader.ts';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
 beforeEach(() => {
   dir = createTempStateDir('orc-session-state-test-');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [
-        { ref: 'docs/task-1', title: 'Task 1', status: 'claimed' },
-        { ref: 'docs/task-2', title: 'Task 2', status: 'in_progress' },
-        { ref: 'docs/task-3', title: 'Task 3', status: 'done' },
-      ],
-    }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [
@@ -70,6 +58,11 @@ beforeEach(() => {
     ],
   }));
   writeFileSync(join(dir, 'events.jsonl'), '');
+  seedProjectTasks(dir, [
+    { ref: 'docs/task-1', title: 'Task 1', status: 'claimed' },
+    { ref: 'docs/task-2', title: 'Task 2', status: 'in_progress' },
+    { ref: 'docs/task-3', title: 'Task 3', status: 'done' },
+  ], JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')).claims);
 });
 
 afterEach(() => {
@@ -93,7 +86,7 @@ describe('resetVolatileRuntimeStateForSession', () => {
   it('resets active runtime state and appends a session_started event on demand', () => {
     const result = resetVolatileRuntimeStateForSession(dir);
 
-    const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')) as { features: Array<{ tasks: Array<{ ref: string; status: string }> }> };
+    const backlog = readBacklog(dir);
     const claims = JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')) as { claims: Array<{ state: string; failure_reason?: string }> };
     const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')) as { agents: Array<{ agent_id: string; status: string; session_handle: string | null; provider_ref: unknown }> };
 

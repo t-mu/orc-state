@@ -11,7 +11,6 @@ let dir: string;
 
 beforeEach(() => {
   dir = createTempStateDir('orc-snapshot-');
-  seedState(dir);
   initEventsDb(dir);
 });
 
@@ -23,15 +22,21 @@ afterEach(() => {
 
 describe('control snapshot project fields', () => {
   it('carries no project or task fields for a legacy state directory', () => {
-    seedState(dir, { tasks: [{ ref: 'orch/a', title: 'A', status: 'todo' }] });
-    claimTask(dir, 'orch/a', 'worker-a');
+    // No task store: a legacy layout's run is only its claim.
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [{
+      run_id: 'run-a', task_ref: 'orch/a', agent_id: 'worker-a', state: 'claimed',
+      claimed_at: '2026-01-01T00:00:00.000Z', lease_expires_at: '2099-01-01T00:00:00.000Z',
+    }] }));
     const snapshot = readControlSnapshot(dir);
+    expect(snapshot.runs).toHaveLength(1);
     expect(snapshot.project).toBeNull();
     expect(snapshot.runs[0]).not.toHaveProperty('task_status');
     expect(snapshot.runs[0]).not.toHaveProperty('spec_revision');
   });
 
   it('reports the project and each run\'s SQLite task status and pinned revision', () => {
+    seedState(dir);
     writeFileSync(join(dir, 'project.json'), JSON.stringify({ id: 'p1', name: 'product', target_repo_root: '/repo' }));
     initProjectTaskStore(dir);
     createProjectTask(dir, { feature: 'app', ref: 'snap', body_markdown: '# Snap\n' });

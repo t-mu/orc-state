@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -11,7 +11,7 @@ let dir: string;
 beforeEach(() => {
   dir = createTempStateDir('orc-review-submit-test-');
   // Minimal state dir — review-submit does not require claims or agents
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
+  seedProjectTasks(dir, []);
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
   writeFileSync(join(dir, 'events.jsonl'), '');

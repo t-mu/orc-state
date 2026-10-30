@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
+import { credentialHash } from './sessionCredentials.ts';
 import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
 import { requirePrincipal, requireProjectAuthor, requireProjectReader, resolveControlPrincipal } from './controlPrincipal.ts';
@@ -21,14 +22,16 @@ beforeEach(() => {
     run_id: runId, task_ref: `orch/task-${runId}`, agent_id: 'worker-a', state: 'in_progress' as const,
     claimed_at: '2026-01-01T00:00:00.000Z', started_at: '2026-01-01T00:00:01.000Z', lease_expires_at: '2099-01-01T00:00:00.000Z',
   })) });
+  // A project accepts only session secrets: each session's secret here is its own id.
   withEventDbTransaction(dir, (db) => {
-    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
-      VALUES ('session-master', NULL, 'master', 'codex', 'running', '2026-01-01', '2026-01-01'),
-        ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01'),
-        ('session-recoverable', 'run-r', 'worker-a', 'claude', 'recoverable', '2026-01-01', '2026-01-01'),
-        ('session-offline', 'run-o', 'worker-a', 'claude', 'offline', '2026-01-01', '2026-01-01'),
-        ('session-scout', NULL, 'scout-1', 'claude', 'running', '2026-01-01', '2026-01-01'),
-        ('session-runless', NULL, 'worker-c', 'claude', 'running', '2026-01-01', '2026-01-01')`).run();
+    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-master', NULL, 'master', 'codex', 'running', '2026-01-01', '2026-01-01', ?),
+        ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01', ?),
+        ('session-recoverable', 'run-r', 'worker-a', 'claude', 'recoverable', '2026-01-01', '2026-01-01', ?),
+        ('session-offline', 'run-o', 'worker-a', 'claude', 'offline', '2026-01-01', '2026-01-01', ?),
+        ('session-scout', NULL, 'scout-1', 'claude', 'running', '2026-01-01', '2026-01-01', ?),
+        ('session-runless', NULL, 'worker-c', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(...['session-master', 'session-a', 'session-recoverable', 'session-offline', 'session-scout', 'session-runless']
+        .map((id) => credentialHash(id)));
   });
 });
 

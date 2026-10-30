@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import {
+  createTempStateDir, cleanupTempStateDir, readBacklog as readProjectBacklog, seedProjectTasks, seedState as seedProjectState,
+} from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -116,9 +118,7 @@ describe('cli/delegate-task.ts', () => {
         lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
       }],
     }));
-    const backlog = readBacklog();
-    backlog.features[0].tasks.push({ ref: 'docs/task-2', title: 'Task 2', status: 'todo', planning_state: 'ready_for_dispatch' });
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog));
+    seedProjectTasks(dir, [{ ref: 'docs/task-2', title: 'Task 2', status: 'todo', planning_state: 'ready_for_dispatch' }]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [
@@ -143,15 +143,13 @@ describe('cli/delegate-task.ts', () => {
   });
 
   it('clears stale owner when no eligible auto-target is found', () => {
-    const backlog = readBacklog();
-    backlog.features[0].tasks.push({
+    seedProjectTasks(dir, [{
       ref: 'docs/task-stale-owner',
       title: 'Stale owner task',
       status: 'todo',
       planning_state: 'ready_for_dispatch',
       owner: 'worker-01',
-    });
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog));
+    }]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [
@@ -177,7 +175,7 @@ describe('cli/delegate-task.ts', () => {
     expect(result.status).toBe(0);
 
     const task = readBacklog().features[0].tasks.find((entry: Record<string, unknown>) => entry.ref === 'docs/task-stale-owner');
-    expect(task.owner).toBeUndefined();
+    expect(task?.owner).toBeUndefined();
   });
 });
 
@@ -190,27 +188,17 @@ function runCli(args: string[]) {
 }
 
 function seedState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo', planning_state: 'ready_for_dispatch' }],
-    }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-    version: '1',
+  seedProjectState(dir, {
+    tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo', planning_state: 'ready_for_dispatch' }],
     agents: [
       { agent_id: 'worker-01', provider: 'codex', role: 'worker', status: 'running', session_handle: 'openai:session-worker-01', registered_at: new Date().toISOString() },
       { agent_id: 'reviewer-01', provider: 'claude', role: 'reviewer', capabilities: ['refactor'], status: 'running', session_handle: 'claude:session-reviewer-01', registered_at: new Date().toISOString() },
     ],
-  }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  });
 }
 
 function readBacklog() {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+  return readProjectBacklog(dir);
 }
 
 function readEvents() {

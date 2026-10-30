@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { resolve } from 'node:path';
+import { createTempStateDir, cleanupTempStateDir, readBacklog as readProjectBacklog, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
+import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -56,14 +56,7 @@ describe('cli/task-unblock.ts', () => {
   });
 
   it('exits 1 when task is not blocked', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{
-        ref: 'docs',
-        title: 'Docs',
-        tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }],
-      }],
-    }));
+    initProjectTaskStore(dir).applyTransition('docs/task-1', { cause: 'unblock', to: 'todo', actorId: 'human' });
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('not blocked');
@@ -79,21 +72,13 @@ function runCli(args: string[]) {
 }
 
 function seedState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'blocked', blocked_reason: 'awaiting external input' }],
-    }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  seedProjectState(dir, {
+    tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'blocked', blocked_reason: 'awaiting external input' }],
+  });
 }
 
-function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')) as { features: Array<{ tasks: Array<Record<string, unknown>> }> };
+function readBacklog() {
+  return readProjectBacklog(dir);
 }
 
 function readEvents() {

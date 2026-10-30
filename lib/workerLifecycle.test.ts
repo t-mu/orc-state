@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
+import { cleanupTempStateDir, createTempStateDir, seedProjectTasks, seedState } from '../test-fixtures/stateHelpers.ts';
+import { credentialHash } from './sessionCredentials.ts';
 import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
@@ -16,8 +17,8 @@ function claim(state: Claim['state']): Claim {
 
 function session(state: 'running' | 'recoverable' | 'unknown' | 'offline'): void {
   withEventDbTransaction(dir, (db) => {
-    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
-      VALUES ('session-a', 'run-a', 'worker-a', 'claude', ?, '2026-01-01', '2026-01-01')`).run(state);
+    db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-a', 'run-a', 'worker-a', 'claude', ?, '2026-01-01', '2026-01-01', ?)`).run(state, credentialHash('session-a'));
   });
 }
 
@@ -55,6 +56,8 @@ describe('authorizeLifecycle', () => {
     commitClaims(dir, { version: '1', claims: [claim('in_progress')] });
     session('offline');
     expect(() => authorizeLifecycle(dir, 'session-a', finish)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
+    // The coordinator has recorded the merge: the task is done and the run finished.
+    seedProjectTasks(dir, [{ ref: 'orch/task-a', status: 'done' }]);
     commitClaims(dir, { version: '1', claims: [claim('done')] });
     expect(() => authorizeLifecycle(dir, 'session-a', finish)).not.toThrow();
     expect(applyLifecycle(dir, finish).message).toBe('run_finished: run-a (worker-a)');

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionHandle } from '../adapters/pty.ts';
 
@@ -30,10 +30,7 @@ beforeEach(() => {
   process.env.ORC_REPO_ROOT = dir;
   process.env.ORC_SCOUT_READY_TIMEOUT_MS = '25';
   mkdirSync(join(dir, 'backlog'), { recursive: true });
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'project', title: 'Project', tasks: [] }],
-  }, null, 2));
+  seedProjectTasks(dir, []);
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }, null, 2));
   writeFileSync(join(dir, 'events.jsonl'), '');
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({

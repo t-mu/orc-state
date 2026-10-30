@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { nextEligibleTaskFromBacklog, nextEligibleTask } from './taskScheduler.ts';
 import { computeWorkerCapacity } from './workerCapacity.ts';
 import type { Agent } from '../types/index.ts';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -130,9 +130,9 @@ describe('nextEligibleTask', () => {
   });
 
   it('resolves agent by id from agents.json when given string agent id', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog([
+    seedProjectTasks(dir, [
       { ref: 'docs/a', title: 'A', status: 'todo', task_type: 'implementation' },
-    ])));
+    ]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{ agent_id: 'reviewer-01', role: 'reviewer', capabilities: [], status: 'running' }],
@@ -141,9 +141,9 @@ describe('nextEligibleTask', () => {
   });
 
   it('falls back safely when agents.json is missing', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog([
+    seedProjectTasks(dir, [
       { ref: 'docs/a', title: 'A', status: 'todo', task_type: 'implementation' },
-    ])));
+    ]);
     expect(nextEligibleTask(dir, 'worker-01')).toBe('docs/a');
   });
 });

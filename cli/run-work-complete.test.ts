@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readClaims, readBacklog } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -41,14 +41,7 @@ describe('cli/run-work-complete.ts', () => {
   });
 
   it('does not require runtime task status to already be done', () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{
-        ref: 'docs',
-        title: 'Docs',
-        tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }],
-      }],
-    }));
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
     const result = runCli(['--run-id=run-1', '--agent-id=worker-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete: run-1 (worker-1)');
@@ -70,14 +63,6 @@ function runCli(args: string[]) {
 }
 
 function seedState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'done' }],
-    }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
@@ -94,6 +79,7 @@ function seedState() {
       lease_expires_at: '2099-01-01T00:00:00Z',
     }],
   }));
+  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], readClaims(dir));
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 

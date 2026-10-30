@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { initProjectTaskStore } from '../lib/projectTasks.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -40,10 +41,6 @@ function claimSnapshot(runId: string): Record<string, unknown> | undefined {
 // ── Seed helpers ─────────────────────────────────────────────────────────────
 
 function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1' } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'claimed' }] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -70,14 +67,11 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
       finished_at: null,
     }],
   }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'claimed' }], readClaims().claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
 function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef = 'docs/task-1', finalizationState = null as string | null } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -104,16 +98,14 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
       finalization_blocked_reason: null,
     }],
   }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }], readClaims().claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
+/** Records the coordinator's merge confirmation, which moves the task to `done`. */
 function markTaskDone(taskRef = 'docs/task-1') {
-  const backlog = JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
-  for (const feature of backlog.features) {
-    const task = feature.tasks.find((t: { ref: string }) => t.ref === taskRef);
-    if (task) task.status = 'done';
-  }
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog));
+  const claim = readClaims().claims.find((c) => c.task_ref === taskRef);
+  initProjectTaskStore(dir).applyTransition(taskRef, { cause: 'merge_succeeded', to: 'done', runId: claim?.run_id as string, actorId: 'coordinator' });
 }
 
 // ── Agent-ID mismatch ────────────────────────────────────────────────────────
@@ -145,7 +137,6 @@ describe('agent-id mismatch', () => {
 
   it('run-work-complete rejects and emits no event when agent-id does not own the claim', () => {
     seedInProgressRun({ runId: 'run-mismatch-wc', agentId: 'worker-01' });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-mismatch-wc', '--agent-id=worker-99']);
 
@@ -206,7 +197,6 @@ describe('run-heartbeat deprecated no-op', () => {
 describe('run-work-complete invalid finalization state transitions', () => {
   it('rejects when finalization_state is awaiting_finalize', () => {
     seedInProgressRun({ runId: 'run-wc-awaiting', finalizationState: 'awaiting_finalize' });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-wc-awaiting', '--agent-id=worker-01']);
 
@@ -216,7 +206,6 @@ describe('run-work-complete invalid finalization state transitions', () => {
 
   it('rejects when finalization_state is finalize_rebase_requested', () => {
     seedInProgressRun({ runId: 'run-wc-requested', finalizationState: 'finalize_rebase_requested' });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-wc-requested', '--agent-id=worker-01']);
 
@@ -226,7 +215,6 @@ describe('run-work-complete invalid finalization state transitions', () => {
 
   it('rejects when finalization_state is ready_to_merge', () => {
     seedInProgressRun({ runId: 'run-wc-rtm', finalizationState: 'ready_to_merge' });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-wc-rtm', '--agent-id=worker-01']);
 
@@ -236,7 +224,6 @@ describe('run-work-complete invalid finalization state transitions', () => {
 
   it('rejects when finalization_state is blocked_finalize', () => {
     seedInProgressRun({ runId: 'run-wc-blocked', finalizationState: 'blocked_finalize' });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-wc-blocked', '--agent-id=worker-01']);
 
@@ -246,7 +233,6 @@ describe('run-work-complete invalid finalization state transitions', () => {
 
   it('accepts and emits work_complete when finalization_state is null (first call)', () => {
     seedInProgressRun({ runId: 'run-wc-null', finalizationState: null });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-wc-null', '--agent-id=worker-01']);
 
@@ -258,7 +244,6 @@ describe('run-work-complete invalid finalization state transitions', () => {
 
   it('accepts and emits ready_to_merge when finalization_state is finalize_rebase_in_progress', () => {
     seedInProgressRun({ runId: 'run-wc-rebase-ip', finalizationState: 'finalize_rebase_in_progress' });
-    markTaskDone();
 
     const result = runCli('run-work-complete.ts', ['--run-id=run-wc-rebase-ip', '--agent-id=worker-01']);
 
@@ -277,6 +262,7 @@ describe('run-work-complete invalid finalization state transitions', () => {
 describe('run-finish idempotent retry', () => {
   it('exits 0 on the second call without crashing (duplicate event is acceptable)', () => {
     seedInProgressRun({ runId: 'run-fin-retry', agentId: 'worker-01' });
+    markTaskDone();
 
     const first = runCli('run-finish.ts', ['--run-id=run-fin-retry', '--agent-id=worker-01']);
     expect(first.status).toBe(0);

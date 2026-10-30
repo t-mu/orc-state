@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedBacklogFromSpecs } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
+import { initProjectTaskStore } from '../lib/projectTasks.ts';
+import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
+import { markTaskDoneRuntimeOnly } from '../lib/taskCompletion.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
@@ -15,7 +18,6 @@ import { createSessionHandle } from '../adapters/pty.ts';
 const TASK_SPEC = `---
 ref: project/first-task
 feature: project
-status: todo
 ---
 
 # Task 1 — First Task
@@ -26,10 +28,6 @@ status: todo
 ## Acceptance criteria
 - [ ] Task completes successfully.
 `;
-
-function readBacklog(stateDir: string): { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
-  return JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'));
-}
 
 function readClaims(stateDir: string): Array<Record<string, unknown>> {
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8')).claims;
@@ -70,7 +68,8 @@ describe('consumer lifecycle e2e', () => {
   });
 
   it('completes a full task lifecycle from init to done', async () => {
-    // Phase 1: init — initialise orchestrator state (simulates `orc init`)
+    // Phase 1: init — initialise the project's state (simulates `orc project add`)
+    initProjectTaskStore(dir);
     ensureStateInitialized(dir);
 
     // Phase 2: task creation — write task spec markdown to backlog/ (simulates consumer authoring a task)
@@ -78,9 +77,9 @@ describe('consumer lifecycle e2e', () => {
     mkdirSync(backlogDir, { recursive: true });
     writeFileSync(join(backlogDir, '001-first-task.md'), TASK_SPEC, 'utf8');
 
-    // Phase 3: backlog sync — sync markdown specs to backlog.json
-    const syncResult = seedBacklogFromSpecs(dir, backlogDir);
-    expect(syncResult.added_tasks).toBe(1);
+    // Phase 3: task import — import the markdown specs into the project (simulates `orc project task import`)
+    const importResult = importTaskMarkdown(dir, backlogDir);
+    expect(importResult.imported.map((entry) => entry.action)).toEqual(['created']);
 
     const backlogAfterSync = readBacklog(dir);
     const taskAfterSync = backlogAfterSync.features
@@ -180,6 +179,7 @@ describe('consumer lifecycle e2e', () => {
     // (mirrors what `orc task-mark-done` + `orc run-finish` would do in the real flow)
     expect(dispatchedRunIds).toHaveLength(1);
     const runId = dispatchedRunIds[0];
+    markTaskDoneRuntimeOnly('project/first-task', 'human', dir);
     finishRun(dir, runId, spawnedAgentId!, { success: true });
 
     // Assert task status reached done

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
@@ -16,16 +16,13 @@ let stateDir: string;
 
 beforeEach(() => {
   stateDir = createTempStateDir('orc-mcp-server-test-');
-  writeFileSync(joinPath('backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'project', title: 'Project', tasks: [] }],
-  }));
   writeFileSync(joinPath('agents.json'), JSON.stringify({
     version: '1',
     agents: [{ agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' }],
   }));
   writeFileSync(joinPath('claims.json'), JSON.stringify({ version: '1', claims: [] }));
   writeFileSync(joinPath('events.jsonl'), '');
+  seedProjectTasks(stateDir, []);
 });
 
 afterEach(() => {
@@ -56,10 +53,10 @@ describe('orchestrator mcp server foundation', () => {
   });
 
   it('unblocks a blocked task through unblock_task and refuses one that is not blocked', () => {
-    writeFileSync(joinPath('backlog.json'), JSON.stringify({ version: '1', features: [{ ref: 'project', title: 'Project', tasks: [
+    seedProjectTasks(stateDir, [
       { ref: 'project/stuck', title: 'Stuck', status: 'blocked', blocked_reason: 'waiting' },
       { ref: 'project/fine', title: 'Fine', status: 'todo' },
-    ] }] }));
+    ]);
     expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/stuck', reason: 'resolved' }, { project: null })).toMatchObject({ unblocked: true });
     expect(() => invokeTool(stateDir, 'unblock_task', { task_ref: 'project/fine' }, { project: null })).toThrow(/not blocked/);
   });

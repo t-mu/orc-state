@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedBacklogFromSpecs } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { closeAllDatabases, queryEvents, withEventDb } from '../lib/eventLog.ts';
 import { recordProviderSession } from '../lib/runStore.ts';
+import { initProjectTaskStore } from '../lib/projectTasks.ts';
+import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
+import { markTaskDoneRuntimeOnly } from '../lib/taskCompletion.ts';
 
 // Task 203 acceptance: a structured provider (Codex app-server, played by
 // test-fixtures/fake-codex-app-server.ts) is claimed, ACKs the task envelope
@@ -15,7 +18,7 @@ import { recordProviderSession } from '../lib/runStore.ts';
 // coordinator's adapter (the path finalize/PR_REVIEW messages take) while the
 // worker's turn is still running, so it must wait in the queue. (The real
 // FINALIZE_SUCCESS notice follows the coordinator's own finishRun and is not
-// delivered to an ended run; this test has the worker finish instead.) The fake runs TURN_SCRIPT for
+// delivered to an ended run; this test records the merge and has the worker finish instead.) The fake runs TURN_SCRIPT for
 // each turn; the script drives the real `orc` CLI the way a worker would.
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -24,7 +27,6 @@ const fixtureBin = join(repoRoot, 'test-fixtures', 'bin');
 const TASK_SPEC = `---
 ref: project/structured-task
 feature: project
-status: todo
 ---
 
 # Task 1 — Structured task
@@ -122,10 +124,11 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
   });
 
   it('claims, ACKs, works, asks, receives the answer and finishes through durable commands', async () => {
+    initProjectTaskStore(dir);
     ensureStateInitialized(dir);
     mkdirSync(join(dir, 'backlog'), { recursive: true });
     writeFileSync(join(dir, 'backlog', '001-structured-task.md'), TASK_SPEC);
-    expect(seedBacklogFromSpecs(dir, join(dir, 'backlog')).added_tasks).toBe(1);
+    expect(importTaskMarkdown(dir, join(dir, 'backlog')).imported.map((entry) => entry.action)).toEqual(['created']);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{
@@ -173,6 +176,9 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     expect(readFileSync(join(dir, 'answer.txt'), 'utf8').trim()).toBe('teal');
     expect((request.payload as Record<string, unknown>).question).toBe('Which colour?');
     await waitFor(() => commands(dir).find((command) => command.kind === 'task_envelope' && command.state === 'completed'), 'envelope completed');
+
+    // The coordinator records the merge before FINALIZE_SUCCESS; the worker's run-finish requires it.
+    markTaskDoneRuntimeOnly('project/structured-task', 'coordinator', dir);
 
     // The dispatcher sweep delivers the held follow-up as the next turn once the
     // envelope turn has ended. (main() starts the sweep; here the test runs it.)

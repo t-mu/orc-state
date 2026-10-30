@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -94,20 +94,15 @@ describe('cli/watch.ts', () => {
 });
 
 function seedValidState({ agents = [] as unknown[], claims = [] as unknown[], runWorktrees = [] as unknown[] } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task', status: 'in_progress' }] }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-    version: '1',
+  seedState(dir, {
+    tasks: [{ ref: 'docs/task-1', title: 'Task', status: 'in_progress' }],
     agents: [
       { agent_id: 'master', provider: 'claude', role: 'master', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
       ...agents,
     ],
-  }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+    claims,
+  });
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({ version: '1', runs: runWorktrees }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
   writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({
     worker_pool: { max_workers: 2, provider: 'codex' },
   }));

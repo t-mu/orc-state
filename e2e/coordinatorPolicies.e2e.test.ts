@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import {
+  createTempStateDir,
+  cleanupTempStateDir,
+  readBacklog as readProjectBacklog,
+  seedProjectTasks,
+} from '../test-fixtures/stateHelpers.ts';
 import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
 
@@ -191,16 +196,13 @@ describe('coordinator policy e2e', () => {
 
   it('cleans up ephemeral worker and requeues task when dispatch send fails', async () => {
     // Use managed pool: master-only, ephemeral workers spawned on demand
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [{
-        ref: 'docs/task-1',
-        title: 'Task 1',
-        status: 'todo',
-        planning_state: 'ready_for_dispatch',
-        task_type: 'implementation',
-      }] }],
-    }));
+    seedProjectTasks(dir, [{
+      ref: 'docs/task-1',
+      title: 'Task 1',
+      status: 'todo',
+      planning_state: 'ready_for_dispatch',
+      task_type: 'implementation',
+    }]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{
@@ -431,16 +433,13 @@ describe('coordinator policy e2e', () => {
 
   it('dispatches task via ephemeral worker in managed pool', async () => {
     // Use managed pool: master-only, ephemeral workers spawned on demand
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [{
-        ref: 'docs/task-1',
-        title: 'Task 1',
-        status: 'todo',
-        planning_state: 'ready_for_dispatch',
-        task_type: 'implementation',
-      }] }],
-    }));
+    seedProjectTasks(dir, [{
+      ref: 'docs/task-1',
+      title: 'Task 1',
+      status: 'todo',
+      planning_state: 'ready_for_dispatch',
+      task_type: 'implementation',
+    }]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{
@@ -526,10 +525,6 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
     planning_state: 'ready_for_dispatch',
     task_type: 'implementation',
   };
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [task] }],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [{
@@ -551,10 +546,11 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
     version: '1',
     claims: claim ? [claim] : [],
   }));
+  seedProjectTasks(dir, [task], claim ? [claim] : []);
 }
 
 function readBacklog(): { features: Array<{ tasks: Array<Record<string, unknown>> }> } {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+  return readProjectBacklog(dir);
 }
 
 function readClaims(): { claims: Array<Record<string, unknown>> } {

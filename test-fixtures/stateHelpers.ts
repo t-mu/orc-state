@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SyncResult } from '../lib/backlogSync.ts';
-import type { Backlog } from '../types/backlog.ts';
+import { closeProjectTaskStores, initProjectTaskStore, prepareProjectTask, refreshBacklogProjection } from '../lib/projectTasks.ts';
+import type { TaskDispatchState } from '../lib/projectTaskStore.ts';
+import { readBacklog as readProjectStateBacklog } from '../lib/stateReader.ts';
+import type { Backlog, TaskStatus } from '../types/backlog.ts';
 
 export function createTempStateDir(prefix = 'orch-test-'): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -21,25 +24,76 @@ export function bridgeProjectEnv(dir: string, targetRepoRoot: string = dir): { O
 }
 
 export function cleanupTempStateDir(dir: string): void {
+  closeProjectTaskStores();
   rmSync(dir, { recursive: true, force: true });
 }
 
+/** A task as tests describe it: the legacy backlog task shape. */
+export type SeedTask = Record<string, unknown> & { ref: string; title?: string; status?: string };
+
 /**
- * Writes a minimal valid state directory: backlog.json (one 'orch' feature),
- * agents.json, claims.json, and an empty events.jsonl.
+ * Creates each task in the project task store (runtime.db), with its status
+ * reached through store transitions: claimed/in_progress tasks are claimed by
+ * the seeded claim for their ref (or a synthetic run), any other status is
+ * the task's first transition as a migration import would record it.
+ */
+export function seedProjectTasks(dir: string, tasks: readonly SeedTask[], claims: readonly unknown[] = []): void {
+  const store = initProjectTaskStore(dir);
+  store.inTransaction(() => {
+    for (const task of tasks) {
+      const slash = task.ref.indexOf('/');
+      const { spec } = prepareProjectTask(store, {
+        feature: typeof task.feature === 'string' ? task.feature : task.ref.slice(0, slash),
+        ref: task.ref.slice(slash + 1),
+        title: task.title ?? task.ref,
+        task_type: task.task_type, priority: task.priority, description: task.description,
+        acceptance_criteria: task.acceptance_criteria, depends_on: task.depends_on,
+        required_capabilities: task.required_capabilities, required_provider: task.required_provider,
+        model: task.model, review_level: task.review_level, merge_strategy: task.merge_strategy,
+      });
+      store.createTask({ ...spec, ...(typeof task.created_at === 'string' ? { createdAt: task.created_at } : {}) });
+      const status = (task.status ?? 'todo') as TaskStatus;
+      if (status === 'claimed' || status === 'in_progress') {
+        const claim = (claims as Array<Record<string, unknown>>).find((entry) => entry.task_ref === task.ref
+          && (entry.state === 'claimed' || entry.state === 'in_progress'));
+        const runId = typeof claim?.run_id === 'string' ? claim.run_id : `run-seed-${task.ref.replace(/[^a-z0-9]+/g, '-')}`;
+        const agentId = typeof claim?.agent_id === 'string' ? claim.agent_id : null;
+        store.applyTransition(task.ref, { cause: 'claim', to: 'claimed', runId, actorId: agentId });
+        store.bindRun(runId, task.ref, agentId);
+        if (status === 'in_progress') store.applyTransition(task.ref, { cause: 'run_start', to: 'in_progress', runId, actorId: agentId });
+      } else if (status !== 'todo') {
+        store.applyTransition(task.ref, {
+          cause: 'migration_import', to: status, actorId: 'human',
+          reason: typeof task.blocked_reason === 'string' ? task.blocked_reason : 'seeded test fixture',
+        });
+      }
+      const dispatch: Partial<TaskDispatchState> & { attemptCount?: number } = {
+        owner: typeof task.owner === 'string' ? task.owner : null,
+        planningState: (task.planning_state ?? null) as TaskDispatchState['planningState'],
+        delegatedBy: typeof task.delegated_by === 'string' ? task.delegated_by : null,
+        requeueEligibleAfter: typeof task.requeue_eligible_after === 'string' ? task.requeue_eligible_after : null,
+      };
+      if (typeof task.attempt_count === 'number') dispatch.attemptCount = task.attempt_count;
+      store.setDispatchState(task.ref, dispatch);
+    }
+  });
+  refreshBacklogProjection(dir);
+}
+
+/**
+ * Writes a minimal valid project state directory: the project task store
+ * (runtime.db) holding the seeded tasks, agents.json, claims.json, and an
+ * empty events.jsonl.
  */
 export function seedState(
   dir: string,
   options: { tasks?: unknown[]; claims?: unknown[]; agents?: unknown[] } = {}
 ): void {
   const { tasks = [], claims = [], agents = [] } = options;
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: tasks.length > 0 ? [{ ref: 'orch', title: 'Orch', tasks }] : [],
-  }));
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
   writeFileSync(join(dir, 'events.jsonl'), '');
+  seedProjectTasks(dir, tasks as SeedTask[], claims);
 }
 
 export function readStateFile<T = unknown>(dir: string, filename: string): T {
@@ -58,8 +112,9 @@ export function readClaims(dir: string): Array<Record<string, unknown>> {
   return readStateFile<{ claims: Array<Record<string, unknown>> }>(dir, 'claims.json').claims;
 }
 
+/** The project's tasks in the backlog shape, read from the project task store. */
 export function readBacklog(dir: string): { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
-  return readStateFile<{ features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> }>(dir, 'backlog.json');
+  return readProjectStateBacklog(dir) as unknown as { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> };
 }
 
 // ---------------------------------------------------------------------------

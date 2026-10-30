@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, type SeedTask } from '../test-fixtures/stateHelpers.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
+import { initProjectTaskStore, refreshBacklogProjection } from '../lib/projectTasks.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
 import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
 
@@ -10,9 +11,12 @@ function readClaims(stateDir: string): { claims: Array<Record<string, unknown>> 
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8'));
 }
 
-function readBacklog(stateDir: string): { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
-  return JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'));
+/** Records the coordinator's merge confirmation, which a worker's successful run-finish follows. */
+function recordMerge(stateDir: string, taskRef: string, runId: string) {
+  initProjectTaskStore(stateDir).applyTransition(taskRef, { cause: 'merge_succeeded', to: 'done', runId, actorId: 'coordinator' });
+  refreshBacklogProjection(stateDir);
 }
+
 function readAgents(stateDir: string): { agents: Array<Record<string, unknown>> } {
   return JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8'));
 }
@@ -67,21 +71,20 @@ function makeDynamicMockAdapter() {
   };
 }
 
+const DEFAULT_TASK = {
+  ref: 'docs/task-1',
+  title: 'Task 1',
+  status: 'todo',
+  planning_state: 'ready_for_dispatch',
+  task_type: 'implementation',
+};
+
 /**
  * Seeds state with only a master agent — ephemeral workers are spawned on demand
  * by the coordinator's executeDispatchPlan when ORC_MAX_WORKERS is set.
  */
-function seedManagedPoolState(stateDir: string, tasks: unknown[]) {
-  writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [
-      {
-        ref: 'docs',
-        title: 'Docs',
-        tasks,
-      },
-    ],
-  }));
+function seedManagedPoolState(stateDir: string, tasks: SeedTask[] = [DEFAULT_TASK]) {
+  seedProjectTasks(stateDir, tasks);
 
   writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({
     version: '1',
@@ -105,14 +108,6 @@ function seedManagedPoolState(stateDir: string, tasks: unknown[]) {
   writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
 }
 
-const DEFAULT_TASK = {
-  ref: 'docs/task-1',
-  title: 'Task 1',
-  status: 'todo',
-  planning_state: 'ready_for_dispatch',
-  task_type: 'implementation',
-};
-
 function readEvents(stateDir: string): Array<Record<string, unknown>> {
   return readEventsFromDb(join(stateDir, 'events.db')) as unknown as Array<Record<string, unknown>>;
 }
@@ -122,8 +117,6 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     vi.resetModules();
     vi.clearAllMocks();
     dir = createTempStateDir('orch-e2e-');
-    // Seed with master-only state — ephemeral workers are spawned on demand
-    seedManagedPoolState(dir, [DEFAULT_TASK]);
     process.env.ORC_STATE_DIR = dir;
     process.env.ORC_REPO_ROOT = dir;
     process.env.ORC_MAX_WORKERS = '1';
@@ -156,6 +149,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('dispatches task and records run_started/run_finished from agent CLI calls', async () => {
+    seedManagedPoolState(dir);
     const adapter = makeDynamicMockAdapter();
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -170,6 +164,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     const agentId = adapter.spawnedAgentIds[0];
     // Complete the run (deferred from send mock to avoid markTaskEnvelopeSent race)
+    recordMerge(dir, 'docs/task-1', adapter.dispatchedRunIds[0]);
     finishRun(dir, adapter.dispatchedRunIds[0], agentId, { success: true });
 
     // Tick 3: process terminal run events (run_started + run_finished)
@@ -186,24 +181,6 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   it('finalizes a work-complete run through the coordinator merge path', async () => {
     // This test directly calls processTerminalRunEvents — no dispatch involved.
     // Seed a pre-existing in_progress claim with a worker that has a session handle.
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [
-        {
-          ref: 'docs',
-          title: 'Docs',
-          tasks: [
-            {
-              ref: 'docs/task-1',
-              title: 'Task 1',
-              status: 'in_progress',
-              planning_state: 'ready_for_dispatch',
-              task_type: 'implementation',
-            },
-          ],
-        },
-      ],
-    }));
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [
@@ -249,6 +226,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
         },
       ],
     }));
+    seedProjectTasks(dir, [{ ...DEFAULT_TASK, status: 'in_progress' }], readClaims(dir).claims);
     const send = vi.fn().mockResolvedValue('');
     const stop = vi.fn().mockResolvedValue(undefined);
     const cleanupRunWorktree = vi.fn().mockReturnValue(true);
@@ -304,6 +282,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('transitions claim state to done and task status to done after agent calls run_finish', async () => {
+    seedManagedPoolState(dir);
     const adapter = makeDynamicMockAdapter();
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -315,6 +294,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     expect(adapter.dispatchedRunIds).toHaveLength(1);
     const agentId = adapter.spawnedAgentIds[0];
+    recordMerge(dir, 'docs/task-1', adapter.dispatchedRunIds[0]);
     finishRun(dir, adapter.dispatchedRunIds[0], agentId, { success: true });
 
     const claims = readClaims(dir);
@@ -328,6 +308,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('reuses adapter instance across ticks — createAdapter called once per provider', async () => {
+    seedManagedPoolState(dir);
     let createAdapterCalls = 0;
     const adapter = makeDynamicMockAdapter();
     vi.doMock('../adapters/index.ts', () => ({
@@ -338,16 +319,13 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     }));
 
     // Seed a second task so the second tick also has work to consider.
-    const backlogPath = join(dir, 'backlog.json');
-    const backlog = readBacklog(dir);
-    backlog.features[0].tasks.push({
+    seedProjectTasks(dir, [{
       ref: 'docs/task-2',
       title: 'Task 2',
       status: 'todo',
       planning_state: 'ready_for_dispatch',
       task_type: 'implementation',
-    });
-    writeFileSync(backlogPath, JSON.stringify(backlog));
+    }]);
 
     const coordinator = await import('../coordinator.ts');
     await coordinator.tick();
@@ -358,6 +336,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('handles agent calling run_fail — claim moves to failed and task is requeued', async () => {
+    seedManagedPoolState(dir);
     const adapter = makeDynamicMockAdapter();
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -387,6 +366,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('uses worker bootstrap template when starting a session for missing handle', async () => {
+    seedManagedPoolState(dir);
     // Ephemeral workers are spawned by the coordinator with WORKER_BOOTSTRAP prompt
     const prompts: string[] = [];
     const adapter = {
@@ -410,10 +390,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('does not bring a late-registered worker online before any task is assigned', async () => {
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-      version: '1',
-      features: [{ ref: 'docs', title: 'Docs', tasks: [] }],
-    }));
+    seedProjectTasks(dir, []);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [
@@ -480,6 +457,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('exports doShutdown and emits coordinator_stopped once', async () => {
+    seedManagedPoolState(dir);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const coordinator = await import('../coordinator.ts');
     await coordinator.doShutdown();
@@ -493,6 +471,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('cleans up ephemeral worker and emits startup failure events when adapter.start throws', async () => {
+    seedManagedPoolState(dir);
     const adapter = {
       start: vi.fn().mockRejectedValue(new Error('binary not found')),
       send: vi.fn().mockResolvedValue(''),
@@ -522,6 +501,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
   });
 
   it('coordinator spawns ephemeral worker and dispatches task', async () => {
+    seedManagedPoolState(dir);
     const adapter = makeDynamicMockAdapter();
     vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => adapter }));
 
@@ -581,6 +561,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
     const agentsAfterFirstDispatch = readAgents(dir).agents;
     expect(agentsAfterFirstDispatch.some((a) => a.agent_id === firstAgentId)).toBe(true);
 
+    recordMerge(dir, 'docs/task-1', adapter.dispatchedRunIds[0]);
     finishRun(dir, adapter.dispatchedRunIds[0], firstAgentId, { success: true });
     // Tick 3: process run_finished for task-1, claim task-2, start new session
     await coordinator.tick();
@@ -628,6 +609,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     expect(adapter.dispatchedRunIds).toHaveLength(1);
     const agentId = adapter.spawnedAgentIds[0]; // first successful spawn
+    recordMerge(dir, 'docs/task-1', adapter.dispatchedRunIds[0]);
     finishRun(dir, adapter.dispatchedRunIds[0], agentId, { success: true });
 
     backlog = readBacklog(dir);

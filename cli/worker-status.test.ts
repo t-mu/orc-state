@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -102,18 +102,8 @@ function runCli(args: string[]) {
 }
 
 function seedState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'docs',
-      title: 'Docs',
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }],
-    }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-    version: '1',
+  seedProjectState(dir, {
+    tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }],
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
-  }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  });
 }

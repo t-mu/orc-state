@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import type { ColorSupportLevel } from 'chalk';
 import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from './colorStatus.ts';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 
 let root: string;
 let stateDir: string;
@@ -26,17 +26,10 @@ beforeEach(() => {
     version: '1',
     claims: [],
   }));
-  writeFileSync(join(stateDir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{
-      ref: 'feat',
-      title: 'Feature',
-      tasks: [
-        { ref: 'feat/1', title: 'Task 1', status: 'done', owner: 'orc-1' },
-        { ref: 'feat/2', title: 'Task 2', status: 'blocked', owner: 'orc-1' },
-      ],
-    }],
-  }));
+  seedProjectTasks(stateDir, [
+    { ref: 'feat/1', title: 'Task 1', status: 'done', owner: 'orc-1' },
+    { ref: 'feat/2', title: 'Task 2', status: 'blocked', owner: 'orc-1' },
+  ]);
   writeFileSync(join(stateDir, 'run-worktrees.json'), JSON.stringify({
     version: '1',
     runs: [],

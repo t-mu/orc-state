@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog as readStoreBacklog, seedProjectTasks, type SeedTask } from '../test-fixtures/stateHelpers.ts';
+import { initProjectTaskStore, refreshBacklogProjection } from '../lib/projectTasks.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -36,8 +37,19 @@ import {
 
 let dir: string;
 
-function seedBacklog(features: unknown[]) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features }, null, 2));
+function seedBacklog(features: Array<{ ref: string; title: string; tasks: SeedTask[] }>) {
+  seedProjectTasks(dir, features.flatMap((feature) => feature.tasks));
+}
+
+/** Adds tasks to the project task store; claimed/in_progress ones bind to the matching claim. */
+function seedTasks(tasks: SeedTask[], claims: unknown[] = []) {
+  seedProjectTasks(dir, tasks, claims);
+}
+
+/** Sets a seeded task's runtime-owned dispatch fields in the project task store. */
+function setTaskOwner(taskRef: string, owner: string | null) {
+  initProjectTaskStore(dir).setDispatchState(taskRef, { owner });
+  refreshBacklogProjection(dir);
 }
 
 function seedAgents(agents: unknown[]) {
@@ -53,8 +65,8 @@ function seedEventsLines(lines: string[]) {
   writeFileSync(join(dir, 'events.jsonl'), body);
 }
 
-function readBacklog(): { version: string; features: Array<{ ref: string; title: string; tasks: Array<Record<string, unknown>> }>; next_task_seq?: number } {
-  return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
+function readBacklog(): { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
+  return readStoreBacklog(dir);
 }
 
 function writeSpec(taskRef: string, feature: string, title: string, status = 'todo') {
@@ -218,7 +230,7 @@ describe('mcp read handlers', () => {
     // Default excludes done/released to keep payload small.
     const all = handleListTasks(dir);
     expect(all).toHaveLength(2);
-    expect(all.map((task) => task.ref)).toEqual(['project/todo-one', 'infra/blocked-one']);
+    expect(all.map((task) => task.ref)).toEqual(['infra/blocked-one', 'project/todo-one']);
     expect(all.every((task) => typeof task.feature_ref === 'string')).toBe(true);
 
     // Verbose fields are stripped in list view.
@@ -239,8 +251,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleListTasks excludes cancelled tasks by default and returns them when requested', () => {
-    const backlog = readBacklog();
-    backlog.features[0].tasks.push({
+    seedTasks([{
       ref: 'project/cancelled-one',
       title: 'Cancelled one',
       status: 'cancelled',
@@ -248,9 +259,7 @@ describe('mcp read handlers', () => {
       planning_state: 'ready_for_dispatch',
       delegated_by: 'master',
       created_at: '2026-01-01T00:00:00.000Z',
-      updated_at: '2026-01-01T00:00:00.000Z',
-    });
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    }]);
 
     expect(handleListTasks(dir).some((task) => task.ref === 'project/cancelled-one')).toBe(false);
     expect(handleListTasks(dir, { status: 'cancelled' }).map((task) => task.ref)).toEqual(['project/cancelled-one']);
@@ -414,29 +423,26 @@ describe('mcp read handlers', () => {
   });
 
   it('handleGetStatus includes done and released counts when include_done_count=true', () => {
-    const backlog = readBacklog();
-    const project = backlog.features.find(feature => feature.ref === 'project')!;
-    (project.tasks as unknown[]).push({
-      ref: 'project/released-one',
-      title: 'Released one',
-      status: 'released',
-      task_type: 'implementation',
-      planning_state: 'ready_for_dispatch',
-      delegated_by: 'master',
-      created_at: '2026-01-01T00:00:00.000Z',
-      updated_at: '2026-01-01T00:00:00.000Z',
-    });
-    (project.tasks as unknown[]).push({
-      ref: 'project/cancelled-one',
-      title: 'Cancelled one',
-      status: 'cancelled',
-      task_type: 'implementation',
-      planning_state: 'ready_for_dispatch',
-      delegated_by: 'master',
-      created_at: '2026-01-01T00:00:00.000Z',
-      updated_at: '2026-01-01T00:00:00.000Z',
-    });
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    seedTasks([
+      {
+        ref: 'project/released-one',
+        title: 'Released one',
+        status: 'released',
+        task_type: 'implementation',
+        planning_state: 'ready_for_dispatch',
+        delegated_by: 'master',
+        created_at: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        ref: 'project/cancelled-one',
+        title: 'Cancelled one',
+        status: 'cancelled',
+        task_type: 'implementation',
+        planning_state: 'ready_for_dispatch',
+        delegated_by: 'master',
+        created_at: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
 
     const status = handleGetStatus(dir, { include_done_count: true });
     expect((status.task_counts as Record<string, unknown>).done).toBe(1);
@@ -518,26 +524,23 @@ describe('mcp read handlers', () => {
   });
 
   it('handleGetAgentWorkview includes blockers for owned tasks that are not actionable', () => {
-    const backlog = readBacklog();
-    backlog.features[0].tasks.push({
+    // The project store holds only ready_for_dispatch/archived planning states, so planning_state
+    // blockers cannot arise here; a dependency that is not done can.
+    seedTasks([{
       ref: 'project/owned-blocked',
       title: 'Owned blocked',
       status: 'todo',
       owner: 'orc-1',
       task_type: 'implementation',
-      planning_state: 'waiting_for_input',
       required_capabilities: ['sql'],
-      depends_on: ['project/missing-dep'],
+      depends_on: ['infra/blocked-one'],
       delegated_by: 'master',
       created_at: '2026-01-01T00:00:00.000Z',
-      updated_at: '2026-01-01T00:00:00.000Z',
-    });
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    }]);
 
     const workview = handleGetAgentWorkview(dir, { agent_id: 'orc-1' }) as Record<string, unknown>;
     const ownedBlocked = (workview.queued_tasks as Array<Record<string, unknown>>).find((task) => task.ref === 'project/owned-blocked') as Record<string, unknown>;
-    expect(ownedBlocked.blockers).toContain('planning_state:waiting_for_input');
-    expect(ownedBlocked.blockers).toContain('dependency_not_done:project/missing-dep');
+    expect(ownedBlocked.blockers).toContain('dependency_not_done:infra/blocked-one');
     expect(ownedBlocked.blockers).toContain('missing_capability:sql');
   });
 
@@ -558,8 +561,14 @@ describe('mcp read handlers', () => {
   });
 
   it('handleCreateTask and handleUpdateTask refuse a state directory without a project task store', () => {
-    expect(() => handleCreateTask(dir, { title: 'Anything' })).toThrow(/Project task store is missing.*orc project migrate/);
-    expect(() => handleUpdateTask(dir, { task_ref: 'project/todo-one', priority: 'high' })).toThrow(/Project task store is missing/);
+    // A legacy state directory: no runtime.db.
+    const legacyDir = createTempStateDir('orc-mcp-handlers-legacy-');
+    try {
+      expect(() => handleCreateTask(legacyDir, { title: 'Anything' })).toThrow(/Project task store is missing.*orc project migrate/);
+      expect(() => handleUpdateTask(legacyDir, { task_ref: 'project/todo-one', priority: 'high' })).toThrow(/Project task store is missing/);
+    } finally {
+      cleanupTempStateDir(legacyDir);
+    }
   });
 
   it('handleDelegateTask assigns explicit target and appends task_delegated event', () => {
@@ -619,13 +628,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleDelegateTask clears stale owner when no eligible worker exists', () => {
-    const backlog = readBacklog();
-    const feature = backlog.features.find((e) => e.ref === 'project');
-    if (!feature) throw new Error('test setup: feature not found');
-    const task = feature.tasks.find((candidate) => candidate.ref === 'project/todo-one');
-    if (!task) throw new Error('test setup: task not found');
-    task.owner = 'orc-1';
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    setTaskOwner('project/todo-one', 'orc-1');
 
     seedAgents([{ agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' }]);
     const result = handleDelegateTask(dir, {
@@ -651,9 +654,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleDelegateTask auto-selection uses round-robin across eligible workers (A then B then A)', () => {
-    const backlog = readBacklog();
-    const projectFeature = backlog.features.find(feature => feature.ref === 'project')!;
-    projectFeature.tasks.push(
+    seedTasks([
       {
         ref: 'project/todo-two',
         title: 'Todo two',
@@ -662,7 +663,6 @@ describe('mcp read handlers', () => {
         planning_state: 'ready_for_dispatch',
         delegated_by: 'master',
         created_at: '2026-01-01T00:00:00.000Z',
-        updated_at: '2026-01-01T00:00:00.000Z',
       },
       {
         ref: 'project/todo-three',
@@ -672,10 +672,8 @@ describe('mcp read handlers', () => {
         planning_state: 'ready_for_dispatch',
         delegated_by: 'master',
         created_at: '2026-01-01T00:00:00.000Z',
-        updated_at: '2026-01-01T00:00:00.000Z',
       },
-    );
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    ]);
     seedClaims([]);
     seedAgents([
       { agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' },
@@ -705,9 +703,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleDelegateTask in-memory round-robin state persists across calls', () => {
-    const backlog = readBacklog();
-    const projectFeature = backlog.features.find(feature => feature.ref === 'project')!;
-    projectFeature.tasks.push({
+    seedTasks([{
       ref: 'project/todo-two',
       title: 'Todo two',
       status: 'todo',
@@ -715,9 +711,7 @@ describe('mcp read handlers', () => {
       planning_state: 'ready_for_dispatch',
       delegated_by: 'master',
       created_at: '2026-01-01T00:00:00.000Z',
-      updated_at: '2026-01-01T00:00:00.000Z',
-    });
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    }]);
     seedClaims([]);
     seedAgents([
       { agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' },
@@ -791,18 +785,16 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask surfaces routing reasons for explicit target rejection', () => {
     seedClaims([]);
-    const backlog = readBacklog();
-    const task = backlog.features[0].tasks.find((entry) => entry.ref === 'project/todo-one')!;
-    task.required_capabilities = ['sql'];
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    // Required capabilities are part of the task definition, so seed a task that carries them.
+    seedTasks([{ ref: 'project/sql-one', title: 'Sql one', status: 'todo', task_type: 'implementation', required_capabilities: ['sql'] }]);
 
     expect(() => handleDelegateTask(dir, {
-      task_ref: 'project/todo-one',
+      task_ref: 'project/sql-one',
       target_agent_id: 'orc-1',
       actor_id: 'master',
     })).toThrow(/missing_capability:sql/);
     expect(() => handleDelegateTask(dir, {
-      task_ref: 'project/todo-one',
+      task_ref: 'project/sql-one',
       target_agent_id: 'orc-1',
       actor_id: 'master',
     })).toThrow(/missing required capability 'sql'/);
@@ -810,18 +802,16 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask surfaces provider mismatch for explicit target rejection', () => {
     seedClaims([]);
-    const backlog = readBacklog();
-    const task = backlog.features[0].tasks.find((entry) => entry.ref === 'project/todo-one')!;
-    task.required_provider = 'gemini';
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    // The required provider is part of the task definition, so seed a task that carries it.
+    seedTasks([{ ref: 'project/gemini-one', title: 'Gemini one', status: 'todo', task_type: 'implementation', required_provider: 'gemini' }]);
 
     expect(() => handleDelegateTask(dir, {
-      task_ref: 'project/todo-one',
+      task_ref: 'project/gemini-one',
       target_agent_id: 'orc-1',
       actor_id: 'master',
     })).toThrow(/provider_mismatch:gemini/);
     expect(() => handleDelegateTask(dir, {
-      task_ref: 'project/todo-one',
+      task_ref: 'project/gemini-one',
       target_agent_id: 'orc-1',
       actor_id: 'master',
     })).toThrow(/task requires provider 'gemini'/);
@@ -829,14 +819,10 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask returns owner and provider diagnostics when auto-selection fails', () => {
     seedClaims([]);
-    const backlog = readBacklog();
-    const task = backlog.features[0].tasks.find((entry) => entry.ref === 'project/todo-one')!;
-    task.owner = 'orc-2';
-    task.required_provider = 'gemini';
-    writeFileSync(join(dir, 'backlog.json'), JSON.stringify(backlog, null, 2));
+    seedTasks([{ ref: 'project/gemini-one', title: 'Gemini one', status: 'todo', task_type: 'implementation', owner: 'orc-2', required_provider: 'gemini' }]);
 
     const result = handleDelegateTask(dir, {
-      task_ref: 'project/todo-one',
+      task_ref: 'project/gemini-one',
       task_type: 'implementation',
       actor_id: 'master',
     });
@@ -863,7 +849,7 @@ describe('mcp read handlers', () => {
     })).toThrow(/Actor agent not found/);
   });
 
-  it('handleCancelTask sets todo task to blocked and returns cancelled=true', () => {
+  it('handleCancelTask sets todo task to cancelled and returns cancelled=true', () => {
     seedClaims([]);
     const result = handleCancelTask(dir, {
       task_ref: 'project/todo-one',
@@ -873,11 +859,11 @@ describe('mcp read handlers', () => {
     expect(result).toEqual({
       cancelled: true,
       task_ref: 'project/todo-one',
-      status: 'blocked',
+      status: 'cancelled',
     });
 
     const task = readBacklog().features.flatMap(feature => feature.tasks).find((entry) => entry.ref === 'project/todo-one')!;
-    expect(task.status).toBe('blocked');
+    expect(task.status).toBe('cancelled');
 
     const cancelledEvents = queryEvents(dir, { event_type: 'task_cancelled' });
     expect(cancelledEvents.length).toBeGreaterThanOrEqual(1);
@@ -925,7 +911,7 @@ describe('mcp read handlers', () => {
     expect(readBacklog()).toEqual(before);
   });
 
-  it('handleCancelTask is idempotent on blocked task and returns cancelled=true', () => {
+  it('handleCancelTask cancels a blocked task and reports a repeat cancel as already_terminal', () => {
     const first = handleCancelTask(dir, {
       task_ref: 'infra/blocked-one',
       actor_id: 'master',
@@ -935,8 +921,8 @@ describe('mcp read handlers', () => {
       actor_id: 'master',
     }) as Record<string, unknown>;
     expect(first.cancelled).toBe(true);
-    expect(second.cancelled).toBe(true);
-    expect(second.status).toBe('blocked');
+    expect(first.status).toBe('cancelled');
+    expect(second).toEqual({ error: 'already_terminal', task_ref: 'infra/blocked-one', status: 'cancelled' });
   });
 
   it('handleRespondInput clears awaiting_input state and appends input_response', () => {
@@ -1098,8 +1084,7 @@ describe('handleResetTask', () => {
     expect(result.previous_status).toBe('todo');
     expect(result.cancelled_claims).toBe(2); // run-1 and run-4 are in_progress
 
-    const backlog = readBacklog();
-    const task = backlog.features[0].tasks.find((t) => t.ref === 'project/todo-one');
+    const task = readBacklog().features.flatMap((feature) => feature.tasks).find((t) => t.ref === 'project/todo-one');
     expect(task?.status).toBe('todo');
   });
 

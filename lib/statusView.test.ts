@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
 import type { Agent, Task, Claim } from '../types/index.ts';
 
@@ -37,10 +37,7 @@ afterEach(() => { cleanupTempStateDir(root); });
 function writeState({ agents = [] as Agent[], claims = [] as Claim[], tasks = [] as Task[], runWorktrees = [] as unknown[] } = {}) {
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'orch', title: 'Orch', tasks }],
-  }));
+  seedProjectTasks(dir, tasks as unknown as Array<{ ref: string }>, claims);
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({
     version: '1',
     runs: runWorktrees,

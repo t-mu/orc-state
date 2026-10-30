@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, openSync, ftruncateSync, closeSync, rmSync, unl
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
-import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import {
+  bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, seedState as seedProjectState,
+} from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from '../lib/projectTasks.ts';
 import { spawnSync } from 'node:child_process';
@@ -200,7 +202,8 @@ describe('doctor on a registered project', () => {
 
 describe('doctor on a legacy installation', () => {
   it('fails and points at the migration', () => {
-    seedCleanState();
+    // A legacy state directory: no project task store, selected without a project.
+    writeLegacyStateFiles();
     const result = runCli(['--json']);
     const json = JSON.parse(result.stdout);
     expect(result.status).toBe(1);
@@ -324,7 +327,10 @@ function runCli(args: string[], env = process.env) {
 }
 
 function seedCleanState() {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ version: '1', features: [] }));
+  seedProjectState(dir);
+}
+
+function writeLegacyStateFiles() {
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
   writeFileSync(join(dir, 'events.jsonl'), '');
@@ -365,11 +371,5 @@ function seedMemoryDb(stateDir: string, opts: { corruptFts?: boolean } = {}) {
 }
 
 function seedState({ agents = [] as unknown[], claims = [] as unknown[] } = {}) {
-  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({
-    version: '1',
-    features: [{ ref: 'docs', title: 'Docs', tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }] }],
-  }));
-  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
-  writeFileSync(join(dir, 'events.jsonl'), '');
+  seedProjectState(dir, { tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }], agents, claims });
 }
