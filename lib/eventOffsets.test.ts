@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, readEventBatch, readEventsForRuns } from './eventLog.ts';
@@ -50,13 +50,13 @@ describe('durable event offsets', () => {
     expect(readEventBatch(join(dir, 'events.db'), readEventOffset(dir), 128).map((row) => row.seq)).toEqual([2, 3]);
     expect(initializeEventOffset(dir, 'notifications')).toBe(0);
     expect(queryEvents(dir, { fts_query: 'heartbeat' })).toHaveLength(3);
-    mkdirSync(join(dir, 'backlog'), { recursive: true });
     const doctor = spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
       cwd: join(import.meta.dirname, '..'),
       env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
       encoding: 'utf8',
     });
-    expect(doctor.status, doctor.stderr || doctor.stdout).toBe(0);
+    // A legacy fixture fails doctor overall (legacy installations no longer run); its state checks still pass.
+    expect(JSON.parse(doctor.stdout).checks.stateErrors, doctor.stderr || doctor.stdout).toEqual([]);
   });
 
   it('never migrates the cursor beyond events that exist', () => {

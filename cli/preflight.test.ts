@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
+import { closeProjectTaskStores, initProjectTaskStore } from '../lib/projectTasks.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -87,11 +88,23 @@ describe('cli/preflight.ts', () => {
     createFakeBinary('codex');
     const config = join(dir, 'orc-state.config.json');
     writeFileSync(config, JSON.stringify({ target_repo: '/tmp/some-product' }));
-    const result = runPreflight(['--json'], { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}`, ORC_CONFIG_FILE: config });
+    const result = runPreflight(['--json'], { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}`, ORC_CONFIG_FILE: config }, { legacy: true });
     expect(result.status).toBe(1);
     const json = JSON.parse(result.stdout);
     expect(json.checks.legacy_layout_supported).toBe(false);
     expect(json.warnings.some((w: string) => w.includes('orc project migrate'))).toBe(true);
+  });
+
+  it('fails a legacy attached installation and points at the migration', () => {
+    seedValidState({
+      agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
+    });
+    createFakeBinary('codex');
+    const result = runPreflight(['--json'], { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` }, { legacy: true });
+    expect(result.status).toBe(1);
+    const json = JSON.parse(result.stdout);
+    expect(json.checks.legacy_layout_supported).toBe(false);
+    expect(json.warnings.some((w: string) => w.includes('no longer runs') && w.includes('orc project migrate'))).toBe(true);
   });
 
   it('warns when not inside a git repository', () => {
@@ -118,10 +131,11 @@ describe('cli/preflight.ts', () => {
   });
 });
 
-function runPreflight(args: string[], env = process.env) {
+/** Runs preflight against the temp state as a project's, or as a legacy installation's. */
+function runPreflight(args: string[], env = process.env, { legacy = false } = {}) {
   return spawnSync(process.execPath, ['cli/preflight.ts', ...args], {
     cwd: repoRoot,
-    env: { ...env, ORC_STATE_DIR: dir },
+    env: { ...env, ...(legacy ? { ORC_STATE_DIR: dir, ORC_PROJECT_ID: '' } : bridgeProjectEnv(dir, repoRoot)) },
     encoding: 'utf8',
   });
 }
@@ -137,6 +151,8 @@ function seedValidState({
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
   writeFileSync(join(dir, 'events.jsonl'), '');
+  initProjectTaskStore(dir);
+  closeProjectTaskStores();
 }
 
 function createFakeBinary(name: string) {

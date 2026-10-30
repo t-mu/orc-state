@@ -8,7 +8,7 @@ import { ACTIVE_PROJECT, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
-import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
+import { findTask, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
@@ -231,8 +231,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     active_tasks: activeTasks,
     last_notification_seq: getLastNotificationSeq(stateDir),
     stalled_runs: handleListStalledRuns(stateDir).length,
-    next_task_seq: getNextTaskSeq(backlog),
-    // The registered project this state belongs to; null for a legacy installation (author tasks as backlog/ specs there).
+    // The registered project this state belongs to.
     project: (() => {
       const descriptor = readProjectDescriptor(stateDir);
       return descriptor ? { id: descriptor.id, name: descriptor.name, target_repo_root: descriptor.target_repo_root } : null;
@@ -358,8 +357,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     // Project tasks are database-only: no Markdown spec is required or written.
     const { actor_id = defaultActorId(stateDir), ...input } = args;
     assertActorId(stateDir, actor_id);
-    // Project refs carry no numeric sequence.
-    return { ...describeProjectTask(createProjectTask(stateDir, input, actor_id as string)), next_task_seq: undefined };
+    return describeProjectTask(createProjectTask(stateDir, input, actor_id as string));
   }
   throw legacyTaskWriteRefused(stateDir);
 }

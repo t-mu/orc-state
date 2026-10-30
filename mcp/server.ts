@@ -136,7 +136,7 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     const { actor_id, ...input } = args;
     const actorId = taskAuthorActor(stateDir, actor_id, credential);
     return submitProjectWrite<unknown>(stateDir, 'create_task', actorId,
-      async (client) => ({ ...(await client.createTask(input, actorId)).task, next_task_seq: undefined }),
+      async (client) => (await client.createTask(input, actorId)).task,
       (actor) => handlers.handleCreateTask(stateDir, { ...input, actor_id: actor }), { credential });
   }
   if (project && projectTaskStoreFor(stateDir) && name === 'update_task') {

@@ -40,6 +40,7 @@ export interface Feature {
 
 export interface Backlog {
   version: '1';
+  /** Legacy backlog.json files may still carry it; nothing reads it. */
   next_task_seq?: number | undefined;
   features: Feature[];
 }

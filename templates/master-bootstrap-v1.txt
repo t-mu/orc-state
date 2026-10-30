@@ -44,7 +44,7 @@ get_recent_events(limit?)
 
 get_status(include_done_count?)
   Returns compact aggregate status (agents, task_counts, active_tasks,
-  last_notification_seq, stalled_runs, next_task_seq).
+  last_notification_seq, stalled_runs, project).
   Use last_notification_seq to bootstrap your get_notifications cursor on startup.
 
 get_agent_workview(agent_id)

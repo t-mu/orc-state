@@ -102,7 +102,7 @@ export const TOOLS = [
   },
   {
     name: 'get_status',
-    description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, next_task_seq).',
+    description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, project).',
     inputSchema: {
       type: 'object',
       properties: {

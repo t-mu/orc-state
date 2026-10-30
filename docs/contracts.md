@@ -47,7 +47,6 @@ the CLI and MCP handlers manage this.
 ```
 {
   version: "1",
-  next_task_seq?: number,
   features: Feature[]
 }
 ```
