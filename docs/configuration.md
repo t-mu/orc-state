@@ -34,7 +34,7 @@ In project mode:
 
 ### Legacy installations
 
-An installation that keeps `.orc-state/`, `backlog/` and `orc-state.config.json` inside its repository (attached), or a separate orchestration home with `target_repo` (sibling), no longer runs. Without a registered project, `orc init`, `orc start-session`, the coordinator and the MCP server refuse to start, and `orc doctor` and `orc preflight` fail (exit 1); each points at `orc project migrate <root> --execute` (see **Migrating an existing installation**) or `orc project add <git-path>`. Nothing reads `backlog/` specs any more, except the migration itself.
+An installation that keeps `.orc-state/`, `backlog/` and `orc-state.config.json` inside its repository (attached), or a separate orchestration home with `target_repo` (sibling), no longer runs. Without a registered project, `orc init`, `orc start-session`, the coordinator and the MCP server refuse to start, every command that changes state (`delegate`, `task-reset`, `task-unblock`, `task-cancel`, `task-mark-done`, `run-expire`, the worker `run-*` and `progress` commands, `run-input-respond`, `memory-record`, `worker-remove`, `worker-gc` and `kill-all`) refuses to run, and `orc doctor` and `orc preflight` fail (exit 1); each points at `orc project migrate <root> --execute` (see **Migrating an existing installation**) or `orc project add <git-path>`. Nothing reads `backlog/` specs any more, except the migration itself.
 
 ### Selecting and switching projects
 

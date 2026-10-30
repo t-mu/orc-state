@@ -97,8 +97,7 @@ export function readProjectBacklog(store: ProjectTaskStore): Backlog {
 
 /** Rewrite the read-only backlog.json projection. A failed write never undoes SQLite. */
 export function refreshBacklogProjection(stateDir: string): void {
-  const store = projectTaskStoreFor(stateDir);
-  if (!store) return;
+  const store = requireProjectTaskStore(stateDir);
   try {
     atomicWriteJson(join(stateDir, 'backlog.json'), readProjectBacklog(store));
   } catch (error) {

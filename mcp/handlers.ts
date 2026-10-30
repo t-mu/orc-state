@@ -17,8 +17,8 @@ import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
-import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
-import { TERMINAL_STATUSES, cancelTask, delegateTask, masterActorId, resetTask, respondInput, unblockTask } from '../lib/operatorMutations.ts';
+import { createProjectTask, describeProjectTask, projectTaskStoreFor, requireProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
+import { TERMINAL_STATUSES, masterActorId } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -336,38 +336,21 @@ export function handleReadAgents(stateDir: string) {
   return readFileSync(join(stateDir, 'agents.json'), 'utf8');
 }
 
-/** Only a project task store accepts task writes; a missing database must fail rather than fall through to backlog.json. */
-function missingTaskStore(stateDir: string): Error {
-  return new Error(`Project task store is missing (${join(stateDir, 'runtime.db')}); restore it or re-run orc project migrate.`);
-}
-
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
-  if (projectTaskStoreFor(stateDir)) {
-    // Project tasks are database-only: no Markdown spec is required or written.
-    const { actor_id = defaultActorId(stateDir), ...input } = args;
-    assertActorId(stateDir, actor_id);
-    return describeProjectTask(createProjectTask(stateDir, input, actor_id as string));
-  }
-  throw missingTaskStore(stateDir);
+  // Project tasks are database-only: no Markdown spec is required or written. A missing database fails.
+  requireProjectTaskStore(stateDir);
+  const { actor_id = defaultActorId(stateDir), ...input } = args;
+  assertActorId(stateDir, actor_id);
+  return describeProjectTask(createProjectTask(stateDir, input, actor_id as string));
 }
 
 export function handleUpdateTask(stateDir: string, args: Record<string, unknown> = {}) {
-  if (projectTaskStoreFor(stateDir)) {
-    const { task_ref, expected_revision, actor_id = defaultActorId(stateDir), ...changes } = args;
-    if (typeof task_ref !== 'string' || !task_ref) throw new Error('task_ref is required');
-    assertActorId(stateDir, actor_id);
-    const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
-    return { ...describeProjectTask(task), changed };
-  }
-  throw missingTaskStore(stateDir);
-}
-
-export function handleDelegateTask(stateDir: string, args: Record<string, unknown> = {}) {
-  return delegateTask(stateDir, args);
-}
-
-export function handleCancelTask(stateDir: string, args: Record<string, unknown> = {}) {
-  return cancelTask(stateDir, args);
+  requireProjectTaskStore(stateDir);
+  const { task_ref, expected_revision, actor_id = defaultActorId(stateDir), ...changes } = args;
+  if (typeof task_ref !== 'string' || !task_ref) throw new Error('task_ref is required');
+  assertActorId(stateDir, actor_id);
+  const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
+  return { ...describeProjectTask(task), changed };
 }
 
 function readRunWorktreesState(stateDir?: string): RunWorktreesState {
@@ -688,14 +671,6 @@ export function handleQueryEvents(
   }
 }
 
-export function handleResetTask(stateDir: string, args: Record<string, unknown> = {}) {
-  return resetTask(stateDir, args);
-}
-
-export function handleUnblockTask(stateDir: string, args: Record<string, unknown> = {}) {
-  return unblockTask(stateDir, args);
-}
-
 export function handleListWorktrees(stateDir: string) {
   const worktrees = readRunWorktreesState(stateDir);
   const claims = readClaims(stateDir).claims;
@@ -718,10 +693,6 @@ export function handleListWorktrees(stateDir: string) {
       task_title: task?.title ?? null,
     };
   });
-}
-
-export function handleRespondInput(stateDir: string, args: Record<string, unknown> = {}) {
-  return respondInput(stateDir, args);
 }
 
 export function handleGetNotifications(stateDir: string, { after_seq }: { after_seq?: unknown } = {}) {

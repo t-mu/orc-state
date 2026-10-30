@@ -7,7 +7,6 @@ import type { Claim, FinalizationState } from '../types/claims.ts';
 
 export interface LifecycleIssue {
   code:
-    | 'duplicate_active_claims'
     | 'duplicate_active_agent_claims'
     | 'unknown_active_task_ref'
     | 'unknown_active_agent_id'
@@ -37,19 +36,6 @@ function activeClaims(claims: Claim[]): Claim[] {
 
 function expectedTaskStatus(claim: Claim): Task['status'] {
   return claim.state === 'in_progress' ? 'in_progress' : 'claimed';
-}
-
-function compareIsoAscending(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
-}
-
-export function selectDuplicateClaimWinner(claims: Claim[]): Claim {
-  return [...claims].sort((left, right) => {
-    const claimedAtOrder = compareIsoAscending(left.claimed_at, right.claimed_at);
-    if (claimedAtOrder !== 0) return claimedAtOrder;
-    return left.run_id.localeCompare(right.run_id, 'en');
-  })[0];
 }
 
 export function detectLifecycleIssues(stateDir: string): LifecycleIssue[] {
@@ -103,20 +89,6 @@ export function detectLifecycleIssues(stateDir: string): LifecycleIssue[] {
     }
   }
 
-  for (const [taskRef, duplicates] of activeByTask.entries()) {
-    if (duplicates.length <= 1) continue;
-    const winner = selectDuplicateClaimWinner(duplicates);
-    const losers = duplicates
-      .filter((claim) => claim.run_id !== winner.run_id)
-      .map((claim) => claim.run_id)
-      .join(', ');
-    issues.push({
-      code: 'duplicate_active_claims',
-      message: `multiple active claims for task ${taskRef}; keep oldest run ${winner.run_id}, fail newer run(s): ${losers}`,
-      hint: 'Coordinator reconcile should leave the oldest active claim and fail fresher duplicates.',
-    });
-  }
-
   for (const [agentId, duplicates] of activeByAgent.entries()) {
     if (duplicates.length <= 1) continue;
     issues.push({
@@ -127,8 +99,8 @@ export function detectLifecycleIssues(stateDir: string): LifecycleIssue[] {
   }
 
   for (const task of tasksByRef.values()) {
-    const duplicates = activeByTask.get(task.ref) ?? [];
-    const activeClaim = duplicates.length > 0 ? selectDuplicateClaimWinner(duplicates) : null;
+    // SQLite allows one active run per task (runs_one_active_task_idx).
+    const activeClaim = activeByTask.get(task.ref)?.[0] ?? null;
     if (ACTIVE_TASK_STATUSES.has(task.status) && !activeClaim) {
       issues.push({
         code: 'task_status_missing_active_claim',

@@ -21,7 +21,6 @@ import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
-import { projectTaskStoreFor } from '../lib/projectTasks.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -130,12 +129,12 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     masterForCredential(stateDir, credential);
   }
   // The master acts as itself: the coordinator records the session's agent.
-  if (projectTaskStoreFor(stateDir) && name === 'create_task') {
+  if (name === 'create_task') {
     return submitProjectWrite<unknown>(stateDir, 'create_task', undefined,
       async (client) => (await client.createTask(args, undefined)).task,
       (actor) => handlers.handleCreateTask(stateDir, { ...args, actor_id: actor }), { credential });
   }
-  if (projectTaskStoreFor(stateDir) && name === 'update_task') {
+  if (name === 'update_task') {
     const { task_ref, expected_revision, ...changes } = args;
     return submitProjectWrite<unknown>(stateDir, 'update_task', undefined,
       async (client) => {

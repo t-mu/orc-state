@@ -74,7 +74,7 @@ export function assertProjectMode(): void {
 //   coordinator.ts      resolveOrcBinSh(ORC_PACKAGE_ROOT)    (orc binary lookup)
 //   coordinator.ts      repoRoot: ORC_PACKAGE_ROOT → worker env (orc bin/ctx for workers)
 //   mcp/handlers.ts     RUN_WORKTREES_FILE
-//   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT ?? join(stateDir,'..')
+//   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT || TARGET_REPO_ROOT
 //                       (scout/agent working dir + orc bin; no git ops)
 //
 // TARGET-REPO consumers — git operations on product history/worktrees:

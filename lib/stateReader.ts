@@ -17,7 +17,8 @@ export function readJson(stateDir: string, file: string): unknown {
     const claims = readAuthoritativeClaims(stateDir);
     if (claims) return claims;
     if (existsSync(join(stateDir, 'claims.json'))) {
-      throw new Error(`claims.json was not imported into the run store (two active claims for one task?); repair ${join(stateDir, 'claims.json')}`);
+      // Migration refuses an installation with active claims, so only a hand-copied claims.json gets here.
+      throw new Error(`${join(stateDir, 'claims.json')} could not be imported into the run store (two active claims for one task); migrate the installation again with orc project migrate`);
     }
     return { version: '1', claims: [] } satisfies ClaimsState;
   }
