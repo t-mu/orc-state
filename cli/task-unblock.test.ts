@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readBacklog as readProjectBacklog, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
@@ -22,7 +22,7 @@ describe('cli/task-unblock.ts', () => {
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('task unblocked: docs/task-1');
-    const task = readBacklog().features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task?.status).toBe('todo');
     expect(task?.blocked_reason).toBeUndefined();
   });
@@ -75,10 +75,6 @@ function seedState() {
   seedProjectState(dir, {
     tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'blocked', blocked_reason: 'awaiting external input' }],
   });
-}
-
-function readBacklog() {
-  return readProjectBacklog(dir);
 }
 
 function readEvents() {

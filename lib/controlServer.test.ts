@@ -164,6 +164,25 @@ describe('local daemon control API', () => {
     expect((await master.listTasks()).tasks.map((entry) => entry.ref)).toEqual(['app/remote-task']);
   });
 
+  it('reports not_found for the task list when the state dir has no project task store', async () => {
+    // A legacy state directory: no runtime.db, no project.json.
+    const legacyDir = createTempStateDir('orch-control-legacy-');
+    writeFileSync(join(legacyDir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    initEventsDb(legacyDir);
+    withEventDbTransaction(legacyDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
+      VALUES ('session-master', NULL, 'master', 'codex', 'running', '2026-01-01', '2026-01-01')`).run());
+    const legacyServer = await startControlServer(legacyDir, { pollMs: 20 });
+    try {
+      expect(existsSync(join(legacyDir, 'runtime.db'))).toBe(false);
+      await expect(new ControlClient(legacyDir, { credential: 'session-master' }).listTasks()).rejects.toMatchObject({ code: 'not_found' });
+    } finally {
+      await legacyServer.close();
+      cleanupTempStateDir(legacyDir);
+    }
+  });
+
   it('lets an operator author and import project tasks while refusing worker and bearer-only callers', async () => {
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
       { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },

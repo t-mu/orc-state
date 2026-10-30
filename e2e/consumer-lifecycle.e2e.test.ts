@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readBacklog } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, readClaims, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
-import { markTaskDoneRuntimeOnly } from '../lib/taskCompletion.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
@@ -28,10 +27,6 @@ feature: project
 ## Acceptance criteria
 - [ ] Task completes successfully.
 `;
-
-function readClaims(stateDir: string): Array<Record<string, unknown>> {
-  return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8')).claims;
-}
 
 describe('consumer lifecycle e2e', () => {
   let dir: string;
@@ -175,21 +170,20 @@ describe('consumer lifecycle e2e', () => {
     //           sends TASK_START (adapter.send called), run transitions to in_progress
     await coordinator.tick();
 
-    // Phase 6: worker completion — simulate the fake provider completing the task
-    // (mirrors what `orc task-mark-done` + `orc run-finish` would do in the real flow)
+    // Phase 6: worker completion — the fake provider finishes its run; the task
+    // stays in_progress until the coordinator records the merge.
     expect(dispatchedRunIds).toHaveLength(1);
     const runId = dispatchedRunIds[0];
-    markTaskDoneRuntimeOnly('project/first-task', 'human', dir);
     finishRun(dir, runId, spawnedAgentId!, { success: true });
 
-    // Assert task status reached done
-    const backlogAfterRun = readBacklog(dir);
-    const completedTask = backlogAfterRun.features
+    const taskStatus = () => readBacklog(dir).features
       .flatMap((f) => f.tasks)
-      .find((t) => t.ref === 'project/first-task');
+      .find((t) => t.ref === 'project/first-task')?.status;
+    expect(taskStatus()).toBe('in_progress');
 
-    expect(completedTask).toBeDefined();
-    expect(completedTask!.status).toBe('done');
+    // Phase 7: the coordinator's merge confirmation records `done`
+    recordMergeConfirmation(dir, 'project/first-task');
+    expect(taskStatus()).toBe('done');
 
     // Assert no stale claims remain after completion
     const staleClaims = readClaims(dir).filter(

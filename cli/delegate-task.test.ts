@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
-  createTempStateDir, cleanupTempStateDir, readBacklog as readProjectBacklog, seedProjectTasks, seedState as seedProjectState,
+  createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, seedState as seedProjectState,
 } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
@@ -28,7 +28,7 @@ describe('cli/delegate-task.ts', () => {
       '--note=please execute',
     ]);
     expect(result.status).toBe(0);
-    const task = readBacklog().features[0].tasks[0];
+    const task = readBacklog(dir).features[0].tasks[0];
     expect(task.owner).toBe('worker-01');
     expect(task.planning_state).toBe('ready_for_dispatch');
     expect(task.delegated_by).toBe('human');
@@ -47,7 +47,7 @@ describe('cli/delegate-task.ts', () => {
       '--actor-id=worker-01',
     ]);
     expect(result.status).toBe(0);
-    const task = readBacklog().features[0].tasks[0];
+    const task = readBacklog(dir).features[0].tasks[0];
     expect(task.delegated_by).toBe('worker-01');
     const event = readEvents().find((e) => e.event === 'task_delegated');
     expect(event?.actor_type).toBe('agent');
@@ -62,7 +62,7 @@ describe('cli/delegate-task.ts', () => {
     const result = runCli(['--task-ref=docs/task-1', '--target-agent-id=worker-01']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Target agent worker-01 already has active run run-busy');
-    expect(readBacklog().features[0].tasks[0].owner).toBeUndefined();
+    expect(readBacklog(dir).features[0].tasks[0].owner).toBeUndefined();
   });
 
   it('auto-assigns matching refactor-capable target when none provided', () => {
@@ -71,7 +71,7 @@ describe('cli/delegate-task.ts', () => {
       '--task-type=refactor',
     ]);
     expect(result.status).toBe(0);
-    const task = readBacklog().features[0].tasks[0];
+    const task = readBacklog(dir).features[0].tasks[0];
     expect(task.owner).toBe('worker-01');
   });
 
@@ -103,7 +103,7 @@ describe('cli/delegate-task.ts', () => {
     ]);
     expect(result.status).toBe(0);
 
-    const delegated = readBacklog().features[0].tasks[0];
+    const delegated = readBacklog(dir).features[0].tasks[0];
     expect(delegated.owner).toBe('worker-01');
 
     // Mark worker busy, then delegate again without target.
@@ -174,7 +174,7 @@ describe('cli/delegate-task.ts', () => {
     ]);
     expect(result.status).toBe(0);
 
-    const task = readBacklog().features[0].tasks.find((entry: Record<string, unknown>) => entry.ref === 'docs/task-stale-owner');
+    const task = readBacklog(dir).features[0].tasks.find((entry: Record<string, unknown>) => entry.ref === 'docs/task-stale-owner');
     expect(task?.owner).toBeUndefined();
   });
 });
@@ -195,10 +195,6 @@ function seedState() {
       { agent_id: 'reviewer-01', provider: 'claude', role: 'reviewer', capabilities: ['refactor'], status: 'running', session_handle: 'claude:session-reviewer-01', registered_at: new Date().toISOString() },
     ],
   });
-}
-
-function readBacklog() {
-  return readProjectBacklog(dir);
 }
 
 function readEvents() {

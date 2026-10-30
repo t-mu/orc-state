@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readBacklog as readProjectBacklog, seedState } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, seedState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -24,7 +24,7 @@ describe('cli/task-mark-done.ts', () => {
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
 
-    const task = readBacklog().features[0].tasks.find((entry) => entry.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'docs/task-1');
     expect(task?.status).toBe('done');
 
     const event = readEvents().find((entry) => entry.event === 'task_updated' && entry.task_ref === 'docs/task-1');
@@ -67,7 +67,7 @@ describe('cli/task-mark-done.ts', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('invalid task transition');
-    expect(readBacklog().features[0].tasks[0].status).toBe('todo');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
   });
 
   it('rejects completion from blocked', () => {
@@ -116,10 +116,6 @@ function writeSpec(taskRef: string, feature: string, title: string, status: stri
 
 function seedBacklogTask(status: string) {
   seedState(dir, { tasks: [{ ref: 'docs/task-1', title: 'Task 1', status }] });
-}
-
-function readBacklog() {
-  return readProjectBacklog(dir);
 }
 
 function readEvents() {

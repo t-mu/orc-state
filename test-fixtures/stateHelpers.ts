@@ -32,16 +32,19 @@ export function cleanupTempStateDir(dir: string): void {
 export type SeedTask = Record<string, unknown> & { ref: string; title?: string; status?: string };
 
 /**
- * Creates each task in the project task store (runtime.db), with its status
+ * Makes `dir` a project state directory (descriptor and task store) and creates
+ * each task in the project task store (runtime.db), with its status
  * reached through store transitions: claimed/in_progress tasks are claimed by
  * the seeded claim for their ref (or a synthetic run), any other status is
  * the task's first transition as a migration import would record it.
  */
 export function seedProjectTasks(dir: string, tasks: readonly SeedTask[], claims: readonly unknown[] = []): void {
+  bridgeProjectEnv(dir);
   const store = initProjectTaskStore(dir);
   store.inTransaction(() => {
     for (const task of tasks) {
       const slash = task.ref.indexOf('/');
+      if (slash < 1) throw new Error(`Seeded task ref must be feature/slug: ${task.ref}`);
       const { spec } = prepareProjectTask(store, {
         feature: typeof task.feature === 'string' ? task.feature : task.ref.slice(0, slash),
         ref: task.ref.slice(slash + 1),
@@ -77,6 +80,16 @@ export function seedProjectTasks(dir: string, tasks: readonly SeedTask[], claims
       store.setDispatchState(task.ref, dispatch);
     }
   });
+  refreshBacklogProjection(dir);
+}
+
+/**
+ * Records the coordinator's merge confirmation for an in_progress task: the
+ * only way a project task becomes done.
+ */
+export function recordMergeConfirmation(dir: string, taskRef: string): void {
+  const store = initProjectTaskStore(dir);
+  store.transition(taskRef, 'merge_succeeded', 'done');
   refreshBacklogProjection(dir);
 }
 

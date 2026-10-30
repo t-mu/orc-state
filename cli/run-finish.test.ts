@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readClaims, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
-import { initProjectTaskStore } from '../lib/projectTasks.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -67,22 +66,20 @@ function seedState() {
     version: '1',
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: 'run-1',
-      task_ref: 'docs/task-1',
-      agent_id: 'worker-1',
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00Z',
-      started_at: '2026-01-01T00:01:00Z',
-      lease_expires_at: '2099-01-01T00:00:00Z',
-    }],
-  }));
+  const claims = [{
+    run_id: 'run-1',
+    task_ref: 'docs/task-1',
+    agent_id: 'worker-1',
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00Z',
+    started_at: '2026-01-01T00:01:00Z',
+    lease_expires_at: '2099-01-01T00:00:00Z',
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
   writeFileSync(join(dir, 'events.jsonl'), '');
-  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], readClaims(dir));
+  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], claims);
   // run-finish follows the coordinator's merge confirmation, which records `done`.
-  initProjectTaskStore(dir).applyTransition('docs/task-1', { cause: 'merge_succeeded', to: 'done', runId: 'run-1', actorId: 'coordinator' });
+  recordMergeConfirmation(dir, 'docs/task-1');
 }
 
 function readEvents() {

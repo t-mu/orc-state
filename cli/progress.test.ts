@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readClaims as readSeededClaims, readBacklog } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { initEventsDb, queryEvents } from '../lib/eventLog.ts';
 import Database from 'better-sqlite3';
@@ -65,9 +65,8 @@ describe('cli/progress.ts', () => {
 
   it('commits run_finished with the completed run', () => {
     // A worker finishes only after the coordinator's merge confirmation records `done`.
-    const store = initProjectTaskStore(dir);
-    store.applyTransition('docs/task-1', { cause: 'run_start', to: 'in_progress', runId: 'run-1', actorId: 'bob' });
-    store.applyTransition('docs/task-1', { cause: 'merge_succeeded', to: 'done', runId: 'run-1', actorId: 'coordinator' });
+    initProjectTaskStore(dir).applyTransition('docs/task-1', { cause: 'run_start', to: 'in_progress', runId: 'run-1', actorId: 'bob' });
+    recordMergeConfirmation(dir, 'docs/task-1');
     const result = runProgress(['--event=run_finished', '--run-id=run-1', '--agent-id=bob']);
     expect(result.status).toBe(0);
     expect(readClaims().claims[0].state).toBe('done');
@@ -127,21 +126,19 @@ function seedState(stateDir: string) {
     version: '1',
     agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z', session_handle: 'openai:session-bob', provider_ref: null }],
   }));
-  writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: 'run-1',
-      task_ref: 'docs/task-1',
-      agent_id: 'bob',
-      state: 'claimed',
-      claimed_at: '2026-01-01T00:00:00Z',
-      lease_expires_at: '2099-01-01T00:00:00Z',
-      last_heartbeat_at: null,
-      started_at: null,
-      finished_at: null,
-    }],
-  }));
-  seedProjectTasks(stateDir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed', depends_on: [], acceptance_criteria: ['a', 'b', 'c'] }], readSeededClaims(stateDir));
+  const claims = [{
+    run_id: 'run-1',
+    task_ref: 'docs/task-1',
+    agent_id: 'bob',
+    state: 'claimed',
+    claimed_at: '2026-01-01T00:00:00Z',
+    lease_expires_at: '2099-01-01T00:00:00Z',
+    last_heartbeat_at: null,
+    started_at: null,
+    finished_at: null,
+  }];
+  writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(stateDir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed', depends_on: [], acceptance_criteria: ['a', 'b', 'c'] }], claims);
   writeFileSync(join(stateDir, 'events.jsonl'), '');
 }
 

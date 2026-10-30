@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readBacklog as readStoreBacklog, seedProjectTasks, type SeedTask } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, TEST_PROJECT_ID, type SeedTask } from '../test-fixtures/stateHelpers.ts';
 import { initProjectTaskStore, refreshBacklogProjection } from '../lib/projectTasks.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryEvents } from '../lib/eventLog.ts';
@@ -41,9 +41,9 @@ function seedBacklog(features: Array<{ ref: string; title: string; tasks: SeedTa
   seedProjectTasks(dir, features.flatMap((feature) => feature.tasks));
 }
 
-/** Adds tasks to the project task store; claimed/in_progress ones bind to the matching claim. */
-function seedTasks(tasks: SeedTask[], claims: unknown[] = []) {
-  seedProjectTasks(dir, tasks, claims);
+/** Adds tasks to the project task store. */
+function seedTasks(tasks: SeedTask[]) {
+  seedProjectTasks(dir, tasks);
 }
 
 /** Sets a seeded task's runtime-owned dispatch fields in the project task store. */
@@ -63,10 +63,6 @@ function seedClaims(claims: unknown[]) {
 function seedEventsLines(lines: string[]) {
   const body = lines.length > 0 ? `${lines.join('\n')}\n` : '';
   writeFileSync(join(dir, 'events.jsonl'), body);
-}
-
-function readBacklog(): { features: Array<{ ref?: string; tasks: Array<Record<string, unknown>> }> } {
-  return readStoreBacklog(dir);
 }
 
 function writeSpec(taskRef: string, feature: string, title: string, status = 'todo') {
@@ -419,7 +415,7 @@ describe('mcp read handlers', () => {
     expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done' || task.status === 'released')).toBe(false);
     expect(status.last_notification_seq).toBe(0);
     expect(status.stalled_runs).toBe(3);
-    expect(status.project).toBeNull();
+    expect(status.project).toMatchObject({ id: TEST_PROJECT_ID });
   });
 
   it('handleGetStatus includes done and released counts when include_done_count=true', () => {
@@ -544,6 +540,45 @@ describe('mcp read handlers', () => {
     expect(ownedBlocked.blockers).toContain('missing_capability:sql');
   });
 
+  it('handleGetAgentWorkview reports planning_state and missing-dependency blockers from an in-memory backlog', async () => {
+    // The project store cannot hold a waiting_for_input planning state or a dependency on an
+    // unknown ref, so serve the handler an in-memory backlog that does.
+    const backlog = {
+      version: '1',
+      features: [{
+        ref: 'project',
+        title: 'Project',
+        tasks: [{
+          ref: 'project/owned-blocked',
+          title: 'Owned blocked',
+          status: 'todo',
+          owner: 'orc-1',
+          task_type: 'implementation',
+          planning_state: 'waiting_for_input',
+          depends_on: ['project/missing-dep'],
+          delegated_by: 'master',
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:00.000Z',
+        }],
+      }],
+    };
+    vi.resetModules();
+    vi.doMock('../lib/stateReader.ts', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../lib/stateReader.ts')>()),
+      readBacklog: () => backlog,
+    }));
+    try {
+      const { handleGetAgentWorkview: workviewOver } = await import('./handlers.ts');
+      const workview = workviewOver(dir, { agent_id: 'orc-1' }) as Record<string, unknown>;
+      const ownedBlocked = (workview.queued_tasks as Array<Record<string, unknown>>).find((task) => task.ref === 'project/owned-blocked') as Record<string, unknown>;
+      expect(ownedBlocked.blockers).toContain('planning_state:waiting_for_input');
+      expect(ownedBlocked.blockers).toContain('dependency_not_done:project/missing-dep');
+    } finally {
+      vi.doUnmock('../lib/stateReader.ts');
+      vi.resetModules();
+    }
+  });
+
   it('throws validation errors for invalid filter inputs', () => {
     expect(() => handleListTasks(dir, { status: 'invalid' })).toThrow(/Invalid status/);
     expect(() => handleListAgents(dir, { role: 'invalid' })).toThrow(/Invalid role/);
@@ -581,7 +616,7 @@ describe('mcp read handlers', () => {
     });
     expect(result).toEqual({ task_ref: 'project/todo-one', assigned_to: 'orc-1' });
 
-    const backlog = readBacklog();
+    const backlog = readBacklog(dir);
     const projectFeature = backlog.features.find(feature => feature.ref === 'project');
     const updated = projectFeature?.tasks.find((task) => task.ref === 'project/todo-one');
     expect(updated?.owner).toBe('orc-1');
@@ -595,7 +630,7 @@ describe('mcp read handlers', () => {
 
   it('handleDelegateTask transitions blocked task to todo and updates planning fields', () => {
     seedClaims([]);
-    const before = readBacklog().features.find(feature => feature.ref === 'infra')?.tasks
+    const before = readBacklog(dir).features.find(feature => feature.ref === 'infra')?.tasks
       .find((task) => task.ref === 'infra/blocked-one');
     expect(before?.status).toBe('blocked');
 
@@ -607,7 +642,7 @@ describe('mcp read handlers', () => {
     });
     expect(result).toEqual({ task_ref: 'infra/blocked-one', assigned_to: 'orc-1' });
 
-    const after = readBacklog().features.find(feature => feature.ref === 'infra')?.tasks
+    const after = readBacklog(dir).features.find(feature => feature.ref === 'infra')?.tasks
       .find((task) => task.ref === 'infra/blocked-one');
     expect(after?.status).toBe('todo');
     expect(after?.planning_state).toBe('ready_for_dispatch');
@@ -638,7 +673,7 @@ describe('mcp read handlers', () => {
     });
     expect(result.warning).toBe('no_eligible_worker');
     expect(result.task_ref).toBe('project/todo-one');
-    const refreshed = readBacklog().features.find(feature => feature.ref === 'project')?.tasks
+    const refreshed = readBacklog(dir).features.find(feature => feature.ref === 'project')?.tasks
       .find((candidate) => candidate.ref === 'project/todo-one');
     expect(refreshed).not.toHaveProperty('owner');
   });
@@ -862,7 +897,7 @@ describe('mcp read handlers', () => {
       status: 'cancelled',
     });
 
-    const task = readBacklog().features.flatMap(feature => feature.tasks).find((entry) => entry.ref === 'project/todo-one')!;
+    const task = readBacklog(dir).features.flatMap(feature => feature.tasks).find((entry) => entry.ref === 'project/todo-one')!;
     expect(task.status).toBe('cancelled');
 
     const cancelledEvents = queryEvents(dir, { event_type: 'task_cancelled' });
@@ -898,7 +933,7 @@ describe('mcp read handlers', () => {
   });
 
   it('handleCancelTask returns already_terminal on done task without state change', () => {
-    const before = readBacklog();
+    const before = readBacklog(dir);
     const result = handleCancelTask(dir, {
       task_ref: 'project/done-one',
       actor_id: 'master',
@@ -908,7 +943,7 @@ describe('mcp read handlers', () => {
       task_ref: 'project/done-one',
       status: 'done',
     });
-    expect(readBacklog()).toEqual(before);
+    expect(readBacklog(dir)).toEqual(before);
   });
 
   it('handleCancelTask cancels a blocked task and reports a repeat cancel as already_terminal', () => {
@@ -1084,7 +1119,7 @@ describe('handleResetTask', () => {
     expect(result.previous_status).toBe('todo');
     expect(result.cancelled_claims).toBe(2); // run-1 and run-4 are in_progress
 
-    const task = readBacklog().features.flatMap((feature) => feature.tasks).find((t) => t.ref === 'project/todo-one');
+    const task = readBacklog(dir).features.flatMap((feature) => feature.tasks).find((t) => t.ref === 'project/todo-one');
     expect(task?.status).toBe('todo');
   });
 

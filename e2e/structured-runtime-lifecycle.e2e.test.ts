@@ -2,13 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readClaims, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { closeAllDatabases, queryEvents, withEventDb } from '../lib/eventLog.ts';
 import { recordProviderSession } from '../lib/runStore.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
-import { markTaskDoneRuntimeOnly } from '../lib/taskCompletion.ts';
 
 // Task 203 acceptance: a structured provider (Codex app-server, played by
 // test-fixtures/fake-codex-app-server.ts) is claimed, ACKs the task envelope
@@ -61,10 +60,6 @@ function commands(dir: string): CommandRow[] {
   return withEventDb(dir, (db) => db.prepare('SELECT command_id, kind, state, actor_id, acknowledged_at FROM commands ORDER BY rowid').all() as CommandRow[]);
 }
 
-function claims(dir: string): Array<Record<string, unknown>> {
-  return (JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')) as { claims: Array<Record<string, unknown>> }).claims;
-}
-
 async function waitFor<T>(probe: () => T | null | undefined | false, label: string, timeoutMs = 20_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -115,7 +110,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     const coordinator = await import('../coordinator.ts');
     coordinator.getCoordinatorCommandDispatcher().stop();
     const adapter = coordinator.getCoordinatorAdapter('codex');
-    for (const claim of claims(dir)) await adapter.stop(`app:${String(claim.agent_id)}`);
+    for (const claim of readClaims(dir)) await adapter.stop(`app:${String(claim.agent_id)}`);
     closeAllDatabases();
     vi.doUnmock('../lib/runWorktree.ts');
     for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
@@ -148,7 +143,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     // ready without report-for-duty, and the envelope goes out as a durable command.
     await coordinator.tick();
     await coordinator.tick();
-    const claim = await waitFor(() => claims(dir).find((entry) => entry.task_ref === 'project/structured-task'), 'claim');
+    const claim = await waitFor(() => readClaims(dir).find((entry) => entry.task_ref === 'project/structured-task'), 'claim');
     const runId = String(claim.run_id);
     const agentId = String(claim.agent_id);
     const envelope = await waitFor(() => commands(dir).find((command) => command.kind === 'task_envelope'), 'task envelope command');
@@ -157,7 +152,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
 
     // The worker started the run and is blocked on a question inside its turn.
     const request = await waitFor(() => queryEvents(dir, { run_id: runId, event_type: 'input_requested' })[0], 'input request');
-    expect(claims(dir).find((entry) => entry.run_id === runId)?.state).toBe('in_progress');
+    expect(readClaims(dir).find((entry) => entry.run_id === runId)?.state).toBe('in_progress');
     expect(commands(dir).find((command) => command.kind === 'task_envelope')?.state).toBe('running');
 
     // Input for a session whose turn is running: a nudge is skipped outright and a
@@ -177,14 +172,15 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     expect((request.payload as Record<string, unknown>).question).toBe('Which colour?');
     await waitFor(() => commands(dir).find((command) => command.kind === 'task_envelope' && command.state === 'completed'), 'envelope completed');
 
-    // The coordinator records the merge before FINALIZE_SUCCESS; the worker's run-finish requires it.
-    markTaskDoneRuntimeOnly('project/structured-task', 'coordinator', dir);
+    // The coordinator records the merge before FINALIZE_SUCCESS; the worker's CLI
+    // run-finish is refused until it does, so the merge is recorded first here.
+    recordMergeConfirmation(dir, 'project/structured-task');
 
     // The dispatcher sweep delivers the held follow-up as the next turn once the
     // envelope turn has ended. (main() starts the sweep; here the test runs it.)
     const { getCoordinatorCommandDispatcher } = coordinator;
     getCoordinatorCommandDispatcher().start();
-    await waitFor(() => ['done', 'released'].includes(String(claims(dir).find((entry) => entry.run_id === runId)?.state)) || null, 'run finished');
+    await waitFor(() => ['done', 'released'].includes(String(readClaims(dir).find((entry) => entry.run_id === runId)?.state)) || null, 'run finished');
 
     const followUp = await waitFor(() => commands(dir).find((command) => command.kind === 'coordinator_message' && command.state === 'completed'), 'follow-up completed');
     expect(followUp.actor_id).toBe('coordinator');

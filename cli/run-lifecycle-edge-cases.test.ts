@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
-import { initProjectTaskStore } from '../lib/projectTasks.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -53,21 +52,19 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'claimed',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      started_at: null,
-      finished_at: null,
-    }],
-  }));
-  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'claimed' }], readClaims().claims);
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'claimed',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    started_at: null,
+    finished_at: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'claimed' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
@@ -81,31 +78,23 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      started_at: '2026-01-01T00:01:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      finished_at: null,
-      finalization_state: finalizationState,
-      finalization_retry_count: 0,
-      finalization_blocked_reason: null,
-    }],
-  }));
-  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }], readClaims().claims);
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    started_at: '2026-01-01T00:01:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    finished_at: null,
+    finalization_state: finalizationState,
+    finalization_retry_count: 0,
+    finalization_blocked_reason: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
-}
-
-/** Records the coordinator's merge confirmation, which moves the task to `done`. */
-function markTaskDone(taskRef = 'docs/task-1') {
-  const claim = readClaims().claims.find((c) => c.task_ref === taskRef);
-  initProjectTaskStore(dir).applyTransition(taskRef, { cause: 'merge_succeeded', to: 'done', runId: claim?.run_id as string, actorId: 'coordinator' });
 }
 
 // ── Agent-ID mismatch ────────────────────────────────────────────────────────
@@ -262,7 +251,7 @@ describe('run-work-complete invalid finalization state transitions', () => {
 describe('run-finish idempotent retry', () => {
   it('exits 0 on the second call without crashing (duplicate event is acceptable)', () => {
     seedInProgressRun({ runId: 'run-fin-retry', agentId: 'worker-01' });
-    markTaskDone();
+    recordMergeConfirmation(dir, 'docs/task-1');
 
     const first = runCli('run-finish.ts', ['--run-id=run-fin-retry', '--agent-id=worker-01']);
     expect(first.status).toBe(0);

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readBacklog as readProjectBacklog, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, readBacklog, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
@@ -23,7 +23,7 @@ describe('cli/task-reset.ts', () => {
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('task reset: docs/task-1');
-    const task = readBacklog().features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task?.status).toBe('todo');
   });
 
@@ -74,7 +74,7 @@ describe('cli/task-reset.ts', () => {
     const result = runCli(['docs/task-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('task reset: docs/task-1');
-    const task = readBacklog().features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
+    const task = readBacklog(dir).features[0].tasks.find((t: Record<string, unknown>) => t.ref === 'docs/task-1');
     expect(task?.status).toBe('todo');
     expect(task?.blocked_reason).toBeUndefined();
   });
@@ -102,10 +102,6 @@ function seedState() {
       lease_expires_at: '2099-01-01T00:00:00Z',
     }],
   });
-}
-
-function readBacklog() {
-  return readProjectBacklog(dir);
 }
 
 function readClaims(): Array<Record<string, unknown>> {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readClaims } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from '../lib/eventLog.ts';
 import { bridgeInputRequest } from '../lib/messageBridge.ts';
@@ -128,21 +128,19 @@ function seedState() {
     version: '1',
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: 'run-1',
-      task_ref: 'docs/task-1',
-      agent_id: 'worker-1',
-      state: 'in_progress',
-      input_state: 'awaiting_input',
-      claimed_at: '2026-01-01T00:00:00Z',
-      started_at: '2026-01-01T00:01:00Z',
-      lease_expires_at: '2099-01-01T00:00:00Z',
-    }],
-  }));
+  const claims = [{
+    run_id: 'run-1',
+    task_ref: 'docs/task-1',
+    agent_id: 'worker-1',
+    state: 'in_progress',
+    input_state: 'awaiting_input',
+    claimed_at: '2026-01-01T00:00:00Z',
+    started_at: '2026-01-01T00:01:00Z',
+    lease_expires_at: '2099-01-01T00:00:00Z',
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
   // The worker asked; a test that needs a different question overwrites this.
-  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], readClaims(dir));
+  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), JSON.stringify({
     seq: 1, ts: '2026-01-01T00:02:00Z', event: 'input_requested', actor_type: 'agent', actor_id: 'worker-1',
     run_id: 'run-1', task_ref: 'docs/task-1', agent_id: 'worker-1', payload: { question: 'ready?', request_id: 'req-0' },

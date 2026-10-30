@@ -36,33 +36,31 @@ beforeEach(() => {
       },
     ],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [
-      {
-        run_id: 'run-1',
-        task_ref: 'docs/task-1',
-        agent_id: 'orc-1',
-        state: 'claimed',
-        claimed_at: '2026-01-01T00:00:00Z',
-        lease_expires_at: '2099-01-01T00:00:00Z',
-      },
-      {
-        run_id: 'run-2',
-        task_ref: 'docs/task-2',
-        agent_id: 'orc-1',
-        state: 'in_progress',
-        claimed_at: '2026-01-01T00:00:00Z',
-        lease_expires_at: '2099-01-01T00:00:00Z',
-      },
-    ],
-  }));
+  const claims = [
+    {
+      run_id: 'run-1',
+      task_ref: 'docs/task-1',
+      agent_id: 'orc-1',
+      state: 'claimed',
+      claimed_at: '2026-01-01T00:00:00Z',
+      lease_expires_at: '2099-01-01T00:00:00Z',
+    },
+    {
+      run_id: 'run-2',
+      task_ref: 'docs/task-2',
+      agent_id: 'orc-1',
+      state: 'in_progress',
+      claimed_at: '2026-01-01T00:00:00Z',
+      lease_expires_at: '2099-01-01T00:00:00Z',
+    },
+  ];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
   writeFileSync(join(dir, 'events.jsonl'), '');
   seedProjectTasks(dir, [
     { ref: 'docs/task-1', title: 'Task 1', status: 'claimed' },
     { ref: 'docs/task-2', title: 'Task 2', status: 'in_progress' },
     { ref: 'docs/task-3', title: 'Task 3', status: 'done' },
-  ], JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')).claims);
+  ], claims);
 });
 
 afterEach(() => {

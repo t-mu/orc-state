@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
 import { queryEvents, appendSequencedEvent } from '../lib/eventLog.ts';
 import { finishRun } from '../lib/claimManager.ts';
-import { initProjectTaskStore } from '../lib/projectTasks.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -63,24 +62,22 @@ function seedInputRequestState({ agentId = 'worker-01', runId = 'run-input-001' 
     version: '1',
     agents: [{ agent_id: agentId, provider: 'claude', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: 'docs/task-1',
-      agent_id: agentId,
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      started_at: '2026-01-01T00:01:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      finished_at: null,
-      finalization_state: null,
-      finalization_retry_count: 0,
-      finalization_blocked_reason: null,
-    }],
-  }));
-  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], readClaims().claims);
+  const claims = [{
+    run_id: runId,
+    task_ref: 'docs/task-1',
+    agent_id: agentId,
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    started_at: '2026-01-01T00:01:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    finished_at: null,
+    finalization_state: null,
+    finalization_retry_count: 0,
+    finalization_blocked_reason: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
@@ -97,21 +94,19 @@ function seedClaimedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'claimed',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      started_at: null,
-      finished_at: null,
-    }],
-  }));
-  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'claimed' }], readClaims().claims);
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'claimed',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    started_at: null,
+    finished_at: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'claimed' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
@@ -128,24 +123,22 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      started_at: '2026-01-01T00:01:00.000Z',
-      lease_expires_at: '2099-01-01T00:00:00.000Z',
-      last_heartbeat_at: null,
-      finished_at: null,
-      finalization_state: null,
-      finalization_retry_count: 0,
-      finalization_blocked_reason: null,
-    }],
-  }));
-  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }], readClaims().claims);
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    started_at: '2026-01-01T00:01:00.000Z',
+    lease_expires_at: '2099-01-01T00:00:00.000Z',
+    last_heartbeat_at: null,
+    finished_at: null,
+    finalization_state: null,
+    finalization_retry_count: 0,
+    finalization_blocked_reason: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'in_progress' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
 }
 
@@ -162,30 +155,23 @@ function _seedFailedRun({ runId = 'run-test-001', agentId = 'worker-01', taskRef
       registered_at: '2026-01-01T00:00:00Z',
     }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: runId,
-      task_ref: taskRef,
-      agent_id: agentId,
-      state: 'failed',
-      claimed_at: '2026-01-01T00:00:00.000Z',
-      started_at: '2026-01-01T00:01:00.000Z',
-      finished_at: '2026-01-01T00:10:00.000Z',
-      lease_expires_at: '2026-01-01T00:10:00.000Z',
-      last_heartbeat_at: null,
-      finalization_state: null,
-      finalization_retry_count: 0,
-      finalization_blocked_reason: null,
-    }],
-  }));
-  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'todo' }], readClaims().claims);
+  const claims = [{
+    run_id: runId,
+    task_ref: taskRef,
+    agent_id: agentId,
+    state: 'failed',
+    claimed_at: '2026-01-01T00:00:00.000Z',
+    started_at: '2026-01-01T00:01:00.000Z',
+    finished_at: '2026-01-01T00:10:00.000Z',
+    lease_expires_at: '2026-01-01T00:10:00.000Z',
+    last_heartbeat_at: null,
+    finalization_state: null,
+    finalization_retry_count: 0,
+    finalization_blocked_reason: null,
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: taskRef, title: 'Task 1', status: 'todo' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
-}
-
-/** Records the coordinator's merge confirmation, which run-finish waits for. */
-function markTaskDone(runId: string, taskRef = 'docs/task-1') {
-  initProjectTaskStore(dir).applyTransition(taskRef, { cause: 'merge_succeeded', to: 'done', runId, actorId: 'coordinator' });
 }
 
 function claimSnapshot(runId: string): Record<string, unknown> | undefined {
@@ -407,7 +393,7 @@ describe('orc-run-work-complete', () => {
 describe('orc-run-finish', () => {
   it('commits run_finished with the completed claim', () => {
     seedInProgressRun({ runId: 'run-fin-001', agentId: 'worker-01' });
-    markTaskDone('run-fin-001');
+    recordMergeConfirmation(dir, 'docs/task-1');
 
     const result = runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
 
@@ -513,7 +499,7 @@ describe('orc-run-fail', () => {
     const cases = [
       { script: 'run-start.ts', args: ['--run-id=run-lock-start', '--agent-id=worker-01'], seed: () => seedClaimedRun({ runId: 'run-lock-start', agentId: 'worker-01' }) },
       { script: 'run-heartbeat.ts', args: ['--run-id=run-lock-heartbeat', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-heartbeat', agentId: 'worker-01' }) },
-      { script: 'run-finish.ts', args: ['--run-id=run-lock-finish', '--agent-id=worker-01'], seed: () => { seedInProgressRun({ runId: 'run-lock-finish', agentId: 'worker-01' }); markTaskDone('run-lock-finish'); } },
+      { script: 'run-finish.ts', args: ['--run-id=run-lock-finish', '--agent-id=worker-01'], seed: () => { seedInProgressRun({ runId: 'run-lock-finish', agentId: 'worker-01' }); recordMergeConfirmation(dir, 'docs/task-1'); } },
       { script: 'run-fail.ts', args: ['--run-id=run-lock-fail', '--agent-id=worker-01', '--reason=boom'], seed: () => seedInProgressRun({ runId: 'run-lock-fail', agentId: 'worker-01' }) },
       { script: 'run-work-complete.ts', args: ['--run-id=run-lock-complete', '--agent-id=worker-01'], seed: () => { seedInProgressRun({ runId: 'run-lock-complete', agentId: 'worker-01' }); } },
     ];

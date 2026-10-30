@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readClaims as readSeededClaims } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readClaims } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -30,7 +30,7 @@ describe('cli/run-start.ts', () => {
 
   it('transitions claim state to in_progress', () => {
     runCli(['--run-id=run-1', '--agent-id=worker-1']);
-    const claims = readClaims();
+    const claims = readClaims(dir);
     const claim = claims.find((c: Record<string, unknown>) => c.run_id === 'run-1');
     expect(claim?.state).toBe('in_progress');
   });
@@ -91,23 +91,17 @@ function seedState() {
     version: '1',
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
   }));
-  writeFileSync(join(dir, 'claims.json'), JSON.stringify({
-    version: '1',
-    claims: [{
-      run_id: 'run-1',
-      task_ref: 'docs/task-1',
-      agent_id: 'worker-1',
-      state: 'claimed',
-      claimed_at: '2026-01-01T00:00:00Z',
-      lease_expires_at: '2099-01-01T00:00:00Z',
-    }],
-  }));
-  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }], readSeededClaims(dir));
+  const claims = [{
+    run_id: 'run-1',
+    task_ref: 'docs/task-1',
+    agent_id: 'worker-1',
+    state: 'claimed',
+    claimed_at: '2026-01-01T00:00:00Z',
+    lease_expires_at: '2099-01-01T00:00:00Z',
+  }];
+  writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims }));
+  seedProjectTasks(dir, [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }], claims);
   writeFileSync(join(dir, 'events.jsonl'), '');
-}
-
-function readClaims(): Array<Record<string, unknown>> {
-  return (JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')) as { claims: Array<Record<string, unknown>> }).claims;
 }
 
 function readEvents() {
