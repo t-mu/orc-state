@@ -1,7 +1,6 @@
-import { writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { stripNestedProviderEnv } from '../../lib/providerChildEnv.ts';
-import type { RuntimeRepo } from './runtimeRepo.ts';
+import { withoutOrcEnv, type RuntimeRepo } from './runtimeRepo.ts';
 import { writeOrcWrapper } from './orcWrapper.ts';
 
 export interface RuntimeEnv {
@@ -10,48 +9,41 @@ export interface RuntimeEnv {
 }
 
 /**
- * Pins all orchestrator-managed runtime paths into the given temp repo and
- * returns the env object + cwd that coordinator and worker launches must use.
+ * Configures the temp repo's registered project and returns the env object +
+ * cwd that coordinator and worker launches must use: the temp `ORC_DATA_HOME`
+ * and the project's `ORC_PROJECT_ID`, with every other orc variable removed.
  *
- * Also writes a minimal orc-state.config.json with `worker_pool.max_workers = 1`
- * to prevent coordinator fan-out during real-provider tests.
+ * Stores the provider settings as project settings (`orc project config set`),
+ * including `worker_pool.max_workers = 1` to prevent coordinator fan-out
+ * during real-provider tests.
  *
  * @param provider - Worker provider for the coordinator config (default: 'claude').
  */
 export function buildRuntimeEnv(repo: RuntimeRepo, provider = 'claude'): RuntimeEnv {
-  const configPath = join(repo.repoRoot, 'orc-state.config.json');
-  const orcWrapperPath = writeOrcWrapper(repo.repoRoot);
-  const wrapperBinDir = join(repo.repoRoot, 'bin');
+  // The wrapper lives beside the target repo so nothing orc-specific lands in its working tree.
+  const orcWrapperPath = writeOrcWrapper(repo.root);
+  const wrapperBinDir = join(repo.root, 'bin');
 
-  const config = {
-    default_provider: provider,
-    default_execution_mode: 'full-access',
-    master: {
-      provider,
-      model: null,
-      execution_mode: 'full-access',
-    },
-    worker_pool: {
-      max_workers: 1,
-      provider,
-      model: null,
-      execution_mode: 'full-access',
-    },
-  };
-
-  writeFileSync(configPath, JSON.stringify(config, null, 2));
+  const settings: Array<[string, string]> = [
+    ['default_provider', provider],
+    ['default_execution_mode', 'full-access'],
+    ['master.provider', provider],
+    ['master.execution_mode', 'full-access'],
+    ['worker_pool.max_workers', '1'],
+    ['worker_pool.provider', provider],
+    ['worker_pool.execution_mode', 'full-access'],
+  ];
+  for (const [key, value] of settings) repo.orc(['project', 'config', 'set', key, value]);
 
   // Strip provider session-control env vars so the coordinator and the worker
   // sessions it launches do not inherit the parent agent's CLI sandbox/session.
-  const baseEnv = stripNestedProviderEnv(process.env);
+  const baseEnv = stripNestedProviderEnv(withoutOrcEnv());
 
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
     PATH: [wrapperBinDir, baseEnv.PATH ?? process.env.PATH ?? ''].filter(Boolean).join(delimiter),
-    ORC_STATE_DIR: repo.stateDir,
-    ORC_REPO_ROOT: repo.repoRoot,
-    ORC_WORKTREES_DIR: repo.worktreesDir,
-    ORC_CONFIG_FILE: configPath,
+    ORC_DATA_HOME: repo.dataHome,
+    ORC_PROJECT_ID: repo.projectId,
     ORC_WORKER_BOOTSTRAP_PROFILE: 'smoke',
     ORC_WORKER_STARTUP_PROFILE: 'real-provider-smoke',
     ORC_BIN: orcWrapperPath,

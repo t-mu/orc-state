@@ -13,7 +13,7 @@
  *   - Coordinator dispatches task-scoped workers for both sequential tasks
  *   - Worker completes task 2 via the full phased lifecycle
  *   - Lifecycle events appear in the event log in correct order
- *   - All orchestrator-managed paths (state, worktrees) remain inside the temp repo
+ *   - All orchestrator-managed paths (project state, worktrees) remain inside the temp root
  *
  * What this test does NOT cover:
  *   - orc start-session / real master startup
@@ -23,8 +23,6 @@
  *   - Cross-provider master/worker combinations
  */
 import { describe, it, beforeAll, afterAll } from 'vitest';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { createRuntimeRepo, type RuntimeRepo } from './harness/runtimeRepo.ts';
 import { buildRuntimeEnv } from './harness/runtimeEnv.ts';
 import { seedManagedWorkerBaseline } from './harness/managedWorkerSeed.ts';
@@ -78,27 +76,18 @@ describe.skipIf(!ENABLED)('coordinator + real Codex worker smoke', () => {
     repo = createRuntimeRepo();
     const runtimeEnv = buildRuntimeEnv(repo, 'codex');
 
-    // Write blessed task specs into the temp repo's backlog directory.
-    writeFileSync(
-      join(repo.backlogDir, BLESSED_TASK_1.specFile),
-      buildBlessedTaskSpec(BLESSED_TASK_1, repo.repoRoot),
-    );
-    writeFileSync(
-      join(repo.backlogDir, BLESSED_TASK_2.specFile),
-      buildBlessedTaskSpec(BLESSED_TASK_2, repo.repoRoot),
-    );
-    repo.commitAll('chore: add smoke backlog specs');
-
-    // Seed the task-scoped worker dispatch baseline (no master session needed).
-    // Task 2 depends_on task 1 to enforce sequential dispatch order.
-    seedManagedWorkerBaseline(
-      repo.stateDir,
-      [
-        { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
-        { ref: BLESSED_TASK_2.ref, title: BLESSED_TASK_2.title, depends_on: [BLESSED_TASK_1.ref] },
-      ],
-      { provider: 'codex' },
-    );
+    // Seed the task-scoped worker dispatch baseline in the registered project
+    // (no master session needed). Task 2 depends_on task 1 to enforce
+    // sequential dispatch order.
+    seedManagedWorkerBaseline(repo, [
+      { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title, body: buildBlessedTaskSpec(BLESSED_TASK_1) },
+      {
+        ref: BLESSED_TASK_2.ref,
+        title: BLESSED_TASK_2.title,
+        depends_on: [BLESSED_TASK_1.ref],
+        body: buildBlessedTaskSpec(BLESSED_TASK_2),
+      },
+    ]);
 
     // Start the real coordinator. It will dispatch task 1 on its first tick.
     coordinator = await startCoordinator(runtimeEnv, {
@@ -145,8 +134,8 @@ describe.skipIf(!ENABLED)('coordinator + real Codex worker smoke', () => {
       });
 
       // ── Path containment ────────────────────────────────────────────────
-      // All coordinator-managed paths must remain inside the temp repo.
-      assertRuntimePathsInside(repo.stateDir, repo.repoRoot);
+      // All coordinator-managed paths must remain inside the temp root.
+      assertRuntimePathsInside(repo.stateDir, repo.root);
     },
     OVERALL_TIMEOUT_MS,
   );
