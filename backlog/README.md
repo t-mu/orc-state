@@ -12,7 +12,6 @@ migration. Nothing reads them at runtime, and task status is runtime-owned.
    (`body_markdown`). No file needs to be added here.
 
 Tasks in `legacy/` are historical specs from the original monorepo.
-They are excluded from active backlog validation and repair.
 Tasks numbered 160+ are orchestrator-only work.
 
 ## Conventions for Implementors
