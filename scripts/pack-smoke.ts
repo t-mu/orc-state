@@ -274,11 +274,9 @@ export function verifyPackedPackage(root: string): void {
     throw new Error('installed orc binary did not print expected help output');
   }
 
-  run(process.execPath, [
-    '--input-type=module',
-    '-e',
-    "import('./dist/lib/mcpConfig.js').then((m) => { const p = m.defaultServerPath(); if (!p.endsWith('/mcp/server.js')) throw new Error(`unexpected server path: ${p}`); console.log('mcp-path-ok'); })",
-  ], root);
+  if (!existsSync(join(root, 'dist', 'mcp', 'server.js'))) {
+    throw new Error('installed package is missing dist/mcp/server.js');
+  }
 
   const watchBundle = readFileSync(join(root, 'dist', 'cli', 'watch.js'), 'utf8');
   if (watchBundle.includes('.tsx') || watchBundle.includes('server.ts')) {

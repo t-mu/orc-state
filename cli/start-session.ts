@@ -239,28 +239,19 @@ function resolveInvocationCwd(cwd: string = process.cwd()) {
   return cwd;
 }
 
-// ── Find master ────────────────────────────────────────────────────────────
-
-const agents = listAgents(STATE_DIR);
-let master = agents.find((a) => a.role === 'master') ?? null;
-const deprecatedWorkerId = flag('worker-id');
-const deprecatedWorkerProvider = flag('worker-provider');
-
-if (deprecatedWorkerId || deprecatedWorkerProvider) {
-  console.error('Deprecated flags: --worker-id and --worker-provider are no longer supported by orc start-session.');
-  console.error('Normal startup is master-only. Configure worker capacity via ORC_MAX_WORKERS / ORC_WORKER_PROVIDER or orc-state.config.json.');
-  console.error('Use orc register-worker or orc start-worker-session only for debug/recovery workflows.');
-  process.exit(1);
-}
-
-// ── Startup wizard ─────────────────────────────────────────────────────────
-
 try {
   assertProjectMode();
 } catch (error) {
   console.error((error as Error).message);
   process.exit(1);
 }
+
+// ── Find master ────────────────────────────────────────────────────────────
+
+const agents = listAgents(STATE_DIR);
+let master = agents.find((a) => a.role === 'master') ?? null;
+
+// ── Startup wizard ─────────────────────────────────────────────────────────
 
 const { running: coordinatorRunning, pid: coordinatorPid } = coordinatorStatus();
 const coordinatorAction = await promptCoordinatorAction(coordinatorRunning ? coordinatorPid : null);

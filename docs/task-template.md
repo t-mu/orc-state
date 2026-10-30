@@ -3,11 +3,10 @@ ref: <feature>/<slug>
 feature: <feature-ref>
 review_level: full
 priority: normal
-status: todo
 # merge_strategy: direct
 ---
 
-# Task <N> — <Imperative Title>
+# <Imperative Title>
 
 Independent.
 <!-- Replace with a dependency line when needed, e.g.: "Depends on Task N-1. Blocks Task N+1." -->

@@ -30,10 +30,9 @@ orc init --provider=claude,codex   # multiple providers
 `orc init` writes nothing into the
 repository: it records the provider choices as project settings in the registry
 (`default_provider`, `worker_pool.provider`, and `worker_pool.max_workers` when unset),
-completes the external state directory, and points at `orc install --global --skip-mcp`
+completes the external state directory, and points at `orc install --global`
 for skills and agents (`orc start-session` wires the MCP server). It needs no Git checkout in the current
-directory when the project is selected with `--project`, asks no install questions, ignores
-`--skip-skills`/`--skip-agents`/`--skip-mcp`/`--feature`/`--feature-title` (with a note), and refuses `--force`.
+directory when the project is selected with `--project`, asks no install questions, and refuses `--force`.
 
 **Flags:** `[--provider=<providers>]` `[--worker-provider=<name>]`
 
@@ -126,12 +125,12 @@ orc preflight
 ## Setup
 
 `orc init` does not run these. Install skills and agents for your user with
-`orc install --global --skip-mcp --provider=<providers>`; `orc start-session`
+`orc install --global --provider=<providers>`; `orc start-session`
 wires the orchestrator MCP server into the master itself.
 
 | Command | Description |
 |---------|-------------|
-| `install` | Install skills, agents, and MCP config for configured providers. |
+| `install` | Install skills and agents for the given providers (default: the active project's provider settings). Writes no MCP config. |
 | `install-skills` | Install skill definitions for supported provider targets. |
 | `install-agents` | Install agent configuration files for supported provider targets. |
 
@@ -139,7 +138,7 @@ wires the orchestrator MCP server into the master itself.
 
 | Command | Flags |
 |---------|-------|
-| `install` | `[--provider=<providers>]` `[--global]` `[--dry-run]` `[--skip-skills]` `[--skip-agents]` `[--skip-mcp]` |
+| `install` | `[--provider=<providers>]` `[--global]` `[--dry-run]` `[--skip-skills]` `[--skip-agents]` |
 | `install-agents` | `[--provider=<providers>]` `[--global]` `[--dry-run]` |
 | `install-skills` | `[--provider=<providers>]` `[--global]` `[--dry-run]` |
 
@@ -266,7 +265,7 @@ files in the format below, and `orc project plan export` writes it. Tasks are au
 - `plan_id` numbering is an independent sequence from task numbers.
   Collisions across the two sequences are expected and benign.
 
-See `plans/TEMPLATE.md` for a skeleton that `orc project plan import` accepts. The parser
+See `docs/plan-template.md` for a skeleton that `orc project plan import` accepts. The parser
 lives in `lib/planDocs.ts` (`parsePlan`).
 
 ---

@@ -18,7 +18,6 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
-import { isProjectStateDir } from '../lib/projectContext.ts';
 import { TERMINAL_STATUSES, cancelTask, delegateTask, masterActorId, resetTask, respondInput, unblockTask } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
@@ -341,15 +340,9 @@ export function handleReadAgents(stateDir: string) {
   return readFileSync(join(stateDir, 'agents.json'), 'utf8');
 }
 
-/**
- * Only a project task store accepts task writes. A legacy installation authors tasks as backlog/ Markdown,
- * and a project whose task database is missing must fail rather than fall through to backlog.json.
- */
-function legacyTaskWriteRefused(stateDir: string): Error {
-  if (isProjectStateDir(stateDir)) {
-    return new Error(`Project task store is missing (${join(stateDir, 'runtime.db')}); restore it or re-run orc project migrate.`);
-  }
-  return new Error('Task writes require a registered project; run orc project migrate, or edit the backlog/ Markdown spec in a legacy installation.');
+/** Only a project task store accepts task writes; a missing database must fail rather than fall through to backlog.json. */
+function missingTaskStore(stateDir: string): Error {
+  return new Error(`Project task store is missing (${join(stateDir, 'runtime.db')}); restore it or re-run orc project migrate.`);
 }
 
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
@@ -359,7 +352,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     assertActorId(stateDir, actor_id);
     return describeProjectTask(createProjectTask(stateDir, input, actor_id as string));
   }
-  throw legacyTaskWriteRefused(stateDir);
+  throw missingTaskStore(stateDir);
 }
 
 export function handleUpdateTask(stateDir: string, args: Record<string, unknown> = {}) {
@@ -370,7 +363,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
     return { ...describeProjectTask(task), changed };
   }
-  throw legacyTaskWriteRefused(stateDir);
+  throw missingTaskStore(stateDir);
 }
 
 export function handleDelegateTask(stateDir: string, args: Record<string, unknown> = {}) {

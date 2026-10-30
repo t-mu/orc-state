@@ -37,10 +37,6 @@ if (boolFlag('force')) {
   cliError(`orc init --force would reset the live state of project ${project.name}; reset tasks with orc task-reset instead.`);
 }
 
-// init installs nothing into the repository; these legacy options do not apply.
-const ignored = ['skip-skills', 'skip-agents', 'skip-mcp', 'feature', 'feature-title'].filter((name) => flag(name) !== null || boolFlag(name));
-if (ignored.length > 0) console.warn(`Note: ${ignored.map((name) => `--${name}`).join(', ')} has no effect in a registered project.`);
-
 ensureStateInitialized(STATE_DIR);
 initProjectTaskStore(STATE_DIR);
 
@@ -108,7 +104,7 @@ try {
 console.log('');
 console.log(`Project ${project.name} (${project.id}) configured; settings are in the project registry (orc project config list).`);
 console.log('Nothing was written into the target repository. orc start-session wires the orchestrator MCP server;');
-console.log(`install skills and agents for your user with: orc install --global --skip-mcp --provider=${providers.join(',')}`);
+console.log(`install skills and agents for your user with: orc install --global --provider=${providers.join(',')}`);
 console.log('');
 console.log('Next steps:');
 console.log('  orc start-session');

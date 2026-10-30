@@ -3,23 +3,22 @@
  * cli/install.ts
  * Usage:
  *   orc install [--provider=claude,codex,gemini] [--global] [--dry-run]
- *               [--skip-skills] [--skip-agents] [--skip-mcp]
+ *               [--skip-skills] [--skip-agents]
  *
- * Unified installer: copies skills, agents, and merges MCP config in one shot.
- * If --provider is not passed, autodetects from orc-state.config.json.
+ * Copies orc's skills and agents for the given providers. If --provider is not
+ * passed, it uses the active project's provider settings. orc start-session
+ * wires the orchestrator MCP server itself, so install writes no MCP config.
  *
  * --global       installs to ~/  instead of cwd
  * --dry-run      prints what would happen without writing anything
  * --skip-skills  skip skill installation
  * --skip-agents  skip agent installation
- * --skip-mcp     skip MCP config merge
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { installSkills } from './install-skills.ts';
 import { installAgents } from './install-agents.ts';
-import { mergeMcpConfig, defaultServerPath } from '../lib/mcpConfig.ts';
+import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { isMainModule } from './orc.ts';
 
 export interface InstallOptions {
@@ -28,30 +27,25 @@ export interface InstallOptions {
   dryRun: boolean;
   skipSkills: boolean;
   skipAgents: boolean;
-  skipMcp: boolean;
 }
 
-export function detectProviders(base: string): string[] {
-  const configPath = join(base, 'orc-state.config.json');
-  if (!existsSync(configPath)) return [];
-  let config: Record<string, unknown>;
+/** The providers a project's settings name (default, master and worker pool). */
+export function detectProviders(projectId: string, registry: ProjectRegistry = new ProjectRegistry()): string[] {
+  let settings: Record<string, unknown>;
   try {
-    config = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return [];
+    settings = registry.effectiveSettings(projectId);
+  } finally {
+    registry.close();
   }
   const providers = new Set<string>();
-  if (typeof config.default_provider === 'string') providers.add(config.default_provider);
-  const master = config.master as Record<string, unknown> | undefined;
-  if (typeof master?.provider === 'string') providers.add(master.provider);
-  const workerPool = config.worker_pool as Record<string, unknown> | undefined;
-  if (typeof workerPool?.provider === 'string') providers.add(workerPool.provider);
+  for (const key of ['default_provider', 'master.provider', 'worker_pool.provider']) {
+    if (typeof settings[key] === 'string') providers.add(settings[key]);
+  }
   return [...providers];
 }
 
-// Exported for programmatic use by cli/init.ts (Task 104)
 export function runInstall(options: InstallOptions): void {
-  const { providers, base, dryRun, skipSkills, skipAgents, skipMcp } = options;
+  const { providers, base, dryRun, skipSkills, skipAgents } = options;
 
   let skillsCount = 0;
   let agentsCount = 0;
@@ -70,33 +64,15 @@ export function runInstall(options: InstallOptions): void {
     console.log('Skipping agent installation.');
   }
 
-  if (!skipMcp) {
-    const serverPath = defaultServerPath();
-    const stateDir = join(base, '.orc-state');
-    const result = mergeMcpConfig(base, serverPath, stateDir, dryRun);
-    if (dryRun) {
-      console.log(`(would write) ${result.path}`);
-    } else if (result.created) {
-      console.log(`Created ${result.path}`);
-    } else if (result.updated) {
-      console.log(`Updated ${result.path}`);
-    } else {
-      console.log(`${result.path} already up to date.`);
-    }
-  } else {
-    console.log('Skipping MCP config merge.');
-  }
-
   console.log(`\n${dryRun ? 'Dry run complete.' : 'Install complete.'} skills=${skillsCount} agents=${agentsCount}`);
 }
 
-function parseArgs(): InstallOptions {
+async function parseArgs(): Promise<InstallOptions> {
   const args = process.argv.slice(2);
   const isGlobal  = args.includes('--global');
   const dryRun    = args.includes('--dry-run');
   const skipSkills = args.includes('--skip-skills');
   const skipAgents = args.includes('--skip-agents');
-  const skipMcp    = args.includes('--skip-mcp');
 
   const base = isGlobal ? homedir() : resolve('.');
 
@@ -109,10 +85,11 @@ function parseArgs(): InstallOptions {
       .map((p) => p.trim())
       .filter(Boolean);
   } else {
-    providers = detectProviders(base);
+    const { ACTIVE_PROJECT } = await import('../lib/paths.ts');
+    providers = ACTIVE_PROJECT ? detectProviders(ACTIVE_PROJECT.id) : [];
     if (providers.length === 0) {
       console.error(
-        'Error: no --provider specified and no provider found in orc-state.config.json.\n' +
+        'Error: no --provider specified and no provider set for the active project (orc init records it).\n' +
         'Run: orc install --provider=claude  (or codex, gemini)',
       );
       process.exit(1);
@@ -120,10 +97,10 @@ function parseArgs(): InstallOptions {
     console.log(`Autodetected provider(s): ${providers.join(', ')}`);
   }
 
-  return { providers, base, dryRun, skipSkills, skipAgents, skipMcp };
+  return { providers, base, dryRun, skipSkills, skipAgents };
 }
 
 if (isMainModule(process.argv[1], import.meta.url)) {
-  const options = parseArgs();
+  const options = await parseArgs();
   runInstall(options);
 }
