@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { initEventsDb, queryEvents } from './eventLog.ts';
+import { queryEvents } from './eventLog.ts';
+import { recordProviderSession } from './runStore.ts';
 import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession, restoreVolatileRuntimeStateFromSnapshot } from './sessionState.ts';
 import { readAgents } from './stateReader.ts';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog } from '../test-fixtures/stateHelpers.ts';
@@ -69,9 +70,11 @@ afterEach(() => {
 
 describe('resetVolatileRuntimeStateForSession', () => {
   it('closes provider sessions on reset and restores their identities on rollback', () => {
-    initEventsDb(dir);
+    recordProviderSession(dir, {
+      sessionId: 'session-master', runId: null, agentId: 'master', provider: 'claude', providerRef: null, startedAt: '2026-01-01T00:00:00Z',
+    });
     const before = readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token;
-    expect(before).toMatch(/^legacy-/);
+    expect(before).toBe('session-master');
     const reset = resetVolatileRuntimeStateForSession(dir);
     expect(readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token).toBeNull();
     restoreVolatileRuntimeStateFromSnapshot(dir, reset.snapshot);

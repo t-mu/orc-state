@@ -143,11 +143,11 @@ export interface SandboxRootsOptions {
   readOnly: boolean;
   /** The provider's launch cwd — the assigned worktree for task workers. */
   cwd: string;
-  /** Orchestration state dir; a legacy worker's `orc` CLI calls write here. */
+  /** The project state dir; a session never writes it (it holds the operator token the session must not read). */
   stateDir: string;
-  /** Repo whose `.git` backs the worktree (the registered target repo in project mode). */
+  /** Repo whose `.git` backs the worktree: the registered target repo. */
   gitRepoRoot: string;
-  /** Project mode: the coordinator's control socket the worker may connect to. */
+  /** The coordinator's control socket the worker may connect to. */
   controlSocket?: string | null;
 }
 
@@ -159,31 +159,27 @@ export interface SandboxRootsOptions {
  * covers the worktree's files. Two things the worker legitimately writes live
  * outside it:
  *
- *   - its lifecycle state. A legacy installation's `orc` calls write the
- *     orchestration state dir directly, so it is granted. A project worker
- *     (one handed a control socket) sends them to the coordinator instead
- *     (Task 229): it gets only the socket, never the state dir, so it cannot
+ *   - its lifecycle requests, which it sends to the coordinator (Task 229):
+ *     it gets only the control socket, never the state dir, so it cannot
  *     write the project's SQLite or claims;
  *   - the backing repo's `.git` — a linked worktree shares its main repo's
  *     object store, refs and per-worktree state, so commits and rebases write
- *     there. This holds in BOTH layouts: in the attached layout the backing
- *     repo is the installation's own repo, in project mode the registered target repo.
+ *     there; the backing repo is the project's registered target repo.
  *     We grant only TARGET_GIT_WRITABLE_SUBPATHS — never `.git` wholesale, so
  *     the worker cannot write `hooks/` or `config`.
  *
  * Roots already inside the cwd are dropped (e.g. a scout launched at the
  * orchestration root). Read-only (scouts) get no writable roots at all.
  */
-/** The control socket a project-mode worker was given (blank or absent in legacy mode). */
+/** The control socket a session was given (blank or absent when it has none, e.g. in a unit test). */
 export function controlSocketOf(config: Record<string, unknown>): string | null {
   return (config.env as Record<string, string> | undefined)?.ORC_CONTROL_SOCKET || null;
 }
 
 export function sandboxExtraWritableRoots(opts: SandboxRootsOptions): string[] {
   if (opts.readOnly) return [];
-  // A project worker reaches its state only through the socket itself.
-  const lifecycle = opts.controlSocket ? [opts.controlSocket] : [opts.stateDir];
-  const roots = [...lifecycle, ...targetGitWritableRoots(opts.gitRepoRoot)];
+  // A worker reaches its state only through the socket itself.
+  const roots = [...(opts.controlSocket ? [opts.controlSocket] : []), ...targetGitWritableRoots(opts.gitRepoRoot)];
   return roots.filter((root) => !isWithin(opts.cwd, root));
 }
 
@@ -387,13 +383,11 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
       };
       const rootsOptions = sandboxRootsOptions(config, cwd);
       const filesystem = claudeSandboxFilesystem(rootsOptions);
-      // A project session must not read the operator's credential (task 231): the sandbox
+      // A session must not read the operator's credential (task 231): the sandbox
       // hides it from shell commands, a permission rule from the Read tool (`//` marks an absolute path).
-      const operatorToken = rootsOptions.controlSocket ? join(rootsOptions.stateDir, OPERATOR_TOKEN_FILE) : null;
-      if (filesystem || operatorToken) {
-        sandboxConfig.filesystem = { ...(filesystem ?? {}), ...(operatorToken ? { denyRead: [operatorToken] } : {}) };
-      }
-      if (operatorToken) settings.permissions = { deny: [`Read(/${operatorToken})`] };
+      const operatorToken = join(rootsOptions.stateDir, OPERATOR_TOKEN_FILE);
+      sandboxConfig.filesystem = { ...(filesystem ?? {}), denyRead: [operatorToken] };
+      settings.permissions = { deny: [`Read(/${operatorToken})`] };
       // Read-only scouts need the socket too: their report-for-duty goes through the coordinator.
       if (rootsOptions.controlSocket) {
         sandboxConfig.network = claudeSandboxNetwork(rootsOptions.controlSocket, sandboxNetworkOf(config));

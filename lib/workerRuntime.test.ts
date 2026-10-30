@@ -77,7 +77,7 @@ describe('normalizeWorkerEnv', () => {
     expect(env.PAGER).toBe('cat');
   });
 
-  it('carries ORC_REPO_ROOT and ORC_HOME into the launch env', async () => {
+  it('resolves ORC_BIN from the installation root and sets no legacy discovery variables', async () => {
     vi.stubEnv('HOME', '/home/tester');
     vi.doMock('node:fs', async () => {
       const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -91,9 +91,8 @@ describe('normalizeWorkerEnv', () => {
     const env = normalizeWorkerEnv({ ORC_STATE_DIR: '/tmp/state' }, '/repo/root');
 
     expect(env.ORC_STATE_DIR).toBe('/tmp/state');
-    expect(env.ORC_REPO_ROOT).toBe('/repo/root');
-    // ORC_HOME is the orchestration-root signal for worker orc resolution.
-    expect(env.ORC_HOME).toBe('/repo/root');
+    expect(env.ORC_REPO_ROOT).toBeUndefined();
+    expect(env.ORC_HOME).toBeUndefined();
     expect(env.ORC_BIN).toBe('/repo/root/cli/orc.ts');
   });
 
@@ -163,26 +162,6 @@ describe('worker ORC_HOME resolution from inside a target-repo worktree', () => 
   afterEach(() => {
     vi.unstubAllEnvs();
     rmSync(tmp, { recursive: true, force: true });
-  });
-
-  it('ORC_HOME from the worker env drives resolution, overriding walk-up', async () => {
-    // Distinct orchestration home NOT on the worktree's ancestry, so walk-up
-    // (which would find `orch`) and ORC_HOME (which points at `orch2`) give
-    // different answers — proving the ORC_HOME branch, not walk-up, decides.
-    const orch2 = join(tmp, 'orch2');
-    mkdirSync(join(orch2, '.orc-state'), { recursive: true });
-    writeFileSync(join(orch2, 'orc-state.config.json'), '{}');
-
-    const { normalizeWorkerEnv } = await import('./workerRuntime.ts');
-    // Source ORC_HOME from the real coordinator seam (repoRoot = orch2).
-    const workerEnv = normalizeWorkerEnv({ ORC_STATE_DIR: join(orch2, '.orc-state') }, orch2);
-    expect(workerEnv.ORC_HOME).toBe(orch2);
-
-    vi.stubEnv('ORC_HOME', workerEnv.ORC_HOME);
-    vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
-    const { resolveOrchestrationRoot } = await import('./repoRoot.ts');
-    // From the worktree cwd, walk-up would resolve to `orch`; ORC_HOME wins → orch2.
-    expect(resolveOrchestrationRoot(worktree)).toBe(orch2);
   });
 
   it('resolves the orchestration root via walk-up when ORC_HOME is unset', async () => {
@@ -257,8 +236,12 @@ describe('launchWorkerSession execution mode', () => {
 
   let adapterStartSpy: ReturnType<typeof vi.fn>;
   let adapter: TestAdapter;
+  let stateDir: string;
 
   beforeEach(() => {
+    // Every launch happens in a registered project, whose coordinator wrote its descriptor.
+    stateDir = mkdtempSync(join(tmpdir(), 'orc-launch-test-'));
+    writeFileSync(join(stateDir, 'project.json'), JSON.stringify({ id: 'test-project', name: 'test', target_repo_root: '/repo' }));
     adapterStartSpy = vi.fn().mockResolvedValue({ session_handle: 'handle-1', provider_ref: null });
     adapter = { start: adapterStartSpy as unknown as TestAdapter['start'] };
     vi.doMock('./agentRegistry.ts', () => ({ updateAgentRuntime: vi.fn() }));
@@ -271,6 +254,7 @@ describe('launchWorkerSession execution mode', () => {
   });
 
   afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.resetModules();
   });
@@ -278,7 +262,7 @@ describe('launchWorkerSession execution mode', () => {
   it('passes execution_mode to adapter.start', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent();
-    await launchWorkerSession('/tmp/state', agent, {
+    await launchWorkerSession(stateDir, agent, {
       adapter,
       workingDirectory: '/tmp/work',
       executionMode: 'sandbox',
@@ -292,8 +276,8 @@ describe('launchWorkerSession execution mode', () => {
 
   it('requires a git checkout for workers but not scouts (task 204)', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
-    await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
-    await launchWorkerSession('/tmp/state', makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
+    await launchWorkerSession(stateDir, makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
+    await launchWorkerSession(stateDir, makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
     expect(adapterStartSpy.mock.calls[0][1]).toMatchObject({ require_git_checkout: true });
     expect(adapterStartSpy.mock.calls[1][1]).toMatchObject({ require_git_checkout: false });
   });
@@ -303,8 +287,8 @@ describe('launchWorkerSession execution mode', () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     adapterStartSpy.mockResolvedValue({ session_handle: 'app:test-worker', provider_ref: { protocol_ready: true } });
     const agent = makeAgent();
-    await launchWorkerSession('/tmp/state', agent, { adapter, workingDirectory: '/tmp/work', runtime: 'structured', emit: vi.fn() });
-    await launchWorkerSession('/tmp/state', makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', runtime: 'structured', emit: vi.fn() });
+    await launchWorkerSession(stateDir, agent, { adapter, workingDirectory: '/tmp/work', runtime: 'structured', emit: vi.fn() });
+    await launchWorkerSession(stateDir, makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', runtime: 'structured', emit: vi.fn() });
 
     expect(adapterStartSpy.mock.calls[0][1]).toMatchObject({ runtime: 'structured' });
     expect(adapterStartSpy.mock.calls[1][1]).not.toHaveProperty('runtime');
@@ -315,10 +299,10 @@ describe('launchWorkerSession execution mode', () => {
 
   it('passes the sandbox network opt-in to the adapter (task 230)', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
-    await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', sandboxNetwork: 'open', emit: vi.fn() });
-    await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
+    await launchWorkerSession(stateDir, makeAgent(), { adapter, workingDirectory: '/tmp/work', sandboxNetwork: 'open', emit: vi.fn() });
+    await launchWorkerSession(stateDir, makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
     // A project scout reports for duty over the socket too, so it follows the same opt-in.
-    await launchWorkerSession('/tmp/state', makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', sandboxNetwork: 'open', emit: vi.fn() });
+    await launchWorkerSession(stateDir, makeAgent({ role: 'scout' }), { adapter, workingDirectory: '/tmp/work', sandboxNetwork: 'open', emit: vi.fn() });
     expect(adapterStartSpy.mock.calls[0][1]).toMatchObject({ sandbox_network: 'open' });
     expect(adapterStartSpy.mock.calls[1][1]).not.toHaveProperty('sandbox_network');
     expect(adapterStartSpy.mock.calls[2][1]).toMatchObject({ read_only: true, sandbox_network: 'open' });
@@ -327,7 +311,7 @@ describe('launchWorkerSession execution mode', () => {
   it('leaves CLI sessions waiting for report-for-duty', async () => {
     const registry = await import('./agentRegistry.ts');
     const { launchWorkerSession } = await import('./workerRuntime.ts');
-    await launchWorkerSession('/tmp/state', makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
+    await launchWorkerSession(stateDir, makeAgent(), { adapter, workingDirectory: '/tmp/work', emit: vi.fn() });
     expect(adapterStartSpy.mock.calls[0][1]).not.toHaveProperty('runtime');
     expect(vi.mocked(registry.updateAgentRuntime).mock.calls[0][2].session_ready_at).toBeNull();
   });
@@ -335,7 +319,7 @@ describe('launchWorkerSession execution mode', () => {
   it('scout override: always sandbox regardless of input', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ role: 'scout' });
-    await launchWorkerSession('/tmp/state', agent, {
+    await launchWorkerSession(stateDir, agent, {
       adapter,
       workingDirectory: '/tmp/work',
       executionMode: 'full-access',
@@ -350,7 +334,7 @@ describe('launchWorkerSession execution mode', () => {
   it('defaults to full-access when executionMode omitted', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent();
-    await launchWorkerSession('/tmp/state', agent, {
+    await launchWorkerSession(stateDir, agent, {
       adapter,
       workingDirectory: '/tmp/work',
       emit: vi.fn(),
@@ -364,7 +348,7 @@ describe('launchWorkerSession execution mode', () => {
   it('non-scout workers receive configured mode', async () => {
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ role: 'worker' });
-    await launchWorkerSession('/tmp/state', agent, {
+    await launchWorkerSession(stateDir, agent, {
       adapter,
       workingDirectory: '/tmp/work',
       executionMode: 'full-access',
@@ -382,7 +366,7 @@ describe('launchWorkerSession execution mode', () => {
     vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ provider: 'codex' });
-    await launchWorkerSession('/tmp/state', agent, {
+    await launchWorkerSession(stateDir, agent, {
       adapter,
       workingDirectory: '/tmp/work',
       emit: vi.fn(),
@@ -411,7 +395,7 @@ describe('launchWorkerSession execution mode', () => {
     vi.resetModules();
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ provider: 'codex' });
-    await launchWorkerSession('/tmp/state', agent, {
+    await launchWorkerSession(stateDir, agent, {
       adapter,
       workingDirectory: '/tmp/work',
       emit: vi.fn(),
@@ -444,6 +428,7 @@ describe('spawnEphemeralWorker', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'orc-worker-test-'));
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
+    writeFileSync(join(dir, 'project.json'), JSON.stringify({ id: 'test-project', name: 'test', target_repo_root: '/repo' }));
     // Override the agentRegistry mock from the outer describe block so that
     // registerAgent and removeAgent remain real (using vi.importActual).
     vi.doMock('./agentRegistry.ts', async () => {

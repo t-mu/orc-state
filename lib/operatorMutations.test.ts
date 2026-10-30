@@ -18,6 +18,8 @@ import { PROJECT_DESCRIPTOR } from './projectRegistry.ts';
 import type { Claim } from '../types/claims.ts';
 
 let dir: string;
+/** A test state directory stands in for the registered project the CLI would refuse to run without. */
+const inProject = () => {};
 
 const task = (ref: string, status: string) => ({ ref, title: ref, status, task_type: 'implementation', created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' });
 const agent = (agent_id: string, role: string) => ({ agent_id, provider: 'claude', role, status: 'running', capabilities: [], registered_at: '2026-01-01T00:00:00.000Z' });
@@ -142,37 +144,37 @@ describe('master and operator mutations through the coordinator (task 232)', () 
 
   it('a shell inside a worker session presents it and is refused; only the master answers input', async () => {
     const workerEnv = { ORC_SESSION_SECRET: 'session-a' };
-    await expect(submitOperatorMutation({ op: 'reset-task', task_ref: 'orch/todo' }, { env: workerEnv, project: 'p', stateDir: dir }))
+    await expect(submitOperatorMutation({ op: 'reset-task', task_ref: 'orch/todo' }, { env: workerEnv, requireProject: inProject, stateDir: dir }))
       .rejects.toMatchObject({ code: 'forbidden' });
     bridgeInputRequest(dir, 'run-a', 'worker-a', 'req-1', 'Proceed?');
     const answer = { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'go ahead' } as const;
-    await expect(submitOperatorMutation(answer, { env: {}, project: 'p', stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+    await expect(submitOperatorMutation(answer, { env: {}, requireProject: inProject, stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, requireProject: inProject, stateDir: dir }))
       .resolves.toMatchObject({ ok: true, responded_by: 'master' });
     expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'master', payload: expect.objectContaining({ response: 'go ahead' }) })]);
   });
 
   it('respond_input refuses a run that never asked instead of reporting a delivered answer', async () => {
     const answer = { op: 'respond-input', run_id: 'run-typo', agent_id: 'worker-a', response: 'go ahead' } as const;
-    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+    await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, requireProject: inProject, stateDir: dir }))
       .rejects.toThrow('Input request is not pending');
-    await expect(submitOperatorMutation({ ...answer, run_id: 'run-a' }, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+    await expect(submitOperatorMutation({ ...answer, run_id: 'run-a' }, { env: { ORC_MASTER_SECRET: 'session-master' }, requireProject: inProject, stateDir: dir }))
       .rejects.toThrow('Input request is not pending');
     expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([]);
   });
 
   it('a CLI run with the master session in its environment acts as the master', async () => {
-    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: { ORC_MASTER_SECRET: 'session-master' }, project: 'p', stateDir: dir }))
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: { ORC_MASTER_SECRET: 'session-master' }, requireProject: inProject, stateDir: dir }))
       .resolves.toMatchObject({ unblocked: true });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
   });
 
   it('the master MCP tools act as the master, and respond_input needs its session', async () => {
     // A master tool's actor_id is ignored in a project: the master acts as itself.
-    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo', actor_id: 'human' }, { project: 'p', credential: 'session-master' }))
+    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo', actor_id: 'human' }, { requireProject: inProject, credential: 'session-master' }))
       .resolves.toMatchObject({ reset: true });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
-    expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { project: 'p', credential: null }))
+    expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { requireProject: inProject, credential: null }))
       .toThrow(/respond_input needs the master session.*Only the master can do this/);
   });
 
@@ -183,32 +185,32 @@ describe('master and operator mutations through the coordinator (task 232)', () 
       ['delegate_task', { task_ref: 'orch/todo' }], ['memory_store', { content: 'note' }],
       ['create_task', { title: 'New' }], ['update_task', { task_ref: 'orch/todo', expected_revision: 1 }],
     ] as const) {
-      expect(() => invokeTool(dir, tool, args, { project: 'p', credential: null }))
+      expect(() => invokeTool(dir, tool, args, { requireProject: inProject, credential: null }))
         .toThrow(expect.objectContaining({ name: 'ForbiddenError', message: expect.stringContaining('use the orc CLI instead: orc ') }));
     }
     // No CLI does these for the operator: only the master can.
     for (const [tool, args] of [['request_scout', { objective: 'look' }], ['remove_scout', { agent_id: 'scout-1' }]] as const) {
-      expect(() => invokeTool(dir, tool, args, { project: 'p', credential: null }))
+      expect(() => invokeTool(dir, tool, args, { requireProject: inProject, credential: null }))
         .toThrow(expect.objectContaining({ name: 'ForbiddenError', message: expect.stringContaining('Only the master can do this') }));
     }
     expect(status('orch/todo')).toBe(before);
     // Reads stay open.
-    expect(() => invokeTool(dir, 'list_tasks', {}, { project: 'p', credential: null })).not.toThrow();
+    expect(() => invokeTool(dir, 'list_tasks', {}, { requireProject: inProject, credential: null })).not.toThrow();
   });
 
   it('an MCP server inside a worker session presents it and is refused, not promoted to the operator', async () => {
     const before = status('orch/todo');
-    await expect(invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo' }, { project: 'p', credential: 'session-a' }))
+    await expect(invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo' }, { requireProject: inProject, credential: 'session-a' }))
       .rejects.toMatchObject({ code: 'forbidden' });
-    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo' }, { project: 'p', credential: 'session-a' }))
+    await expect(invokeTool(dir, 'reset_task', { task_ref: 'orch/todo' }, { requireProject: inProject, credential: 'session-a' }))
       .rejects.toMatchObject({ code: 'forbidden' });
     expect(status('orch/todo')).toBe(before);
-    expect(() => invokeTool(dir, 'request_scout', { objective: 'look around' }, { project: 'p', credential: 'session-a' }))
+    expect(() => invokeTool(dir, 'request_scout', { objective: 'look around' }, { requireProject: inProject, credential: 'session-a' }))
       .toThrow(expect.objectContaining({ code: 'forbidden' }));
   });
 
   it('the master MCP tools are routed to the coordinator in a project', async () => {
-    const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { project: 'p', credential: 'session-master' });
+    const result = await invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo', reason: 'dropped' }, { requireProject: inProject, credential: 'session-master' });
     expect(result).toMatchObject({ cancelled: true, status: 'cancelled' });
     expect(queryEvents(dir, { event_type: 'task_cancelled' }).at(-1)).toMatchObject({ actor_id: 'master' });
   });
@@ -230,7 +232,7 @@ describe('operator mutations in a project state directory (task 231)', () => {
     expect(() => authorizeOperator(dir, { credential: 'session-master', operator: false }, reset)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
     expect(() => authorizeOperator(dir, { credential: 'secret-a', operator: false }, reset)).toThrow(expect.objectContaining({ code: 'forbidden' }));
     // The direct path applies the same rule with the coordinator down.
-    const offline = { project: 'p', stateDir: dir, warn: vi.fn() };
+    const offline = { requireProject: inProject, stateDir: dir, warn: vi.fn() };
     await expect(submitOperatorMutation(reset, { ...offline, env: { ORC_MASTER_SECRET: 'session-master' } })).rejects.toMatchObject({ code: 'unauthenticated' });
     await expect(submitOperatorMutation(reset, { ...offline, env: { ORC_MASTER_SECRET: 'secret-master' } })).resolves.toMatchObject({ reset: true });
   });
@@ -238,7 +240,7 @@ describe('operator mutations in a project state directory (task 231)', () => {
 
 describe('submitOperatorMutation without a coordinator (task 232)', () => {
   it('applies the coordinator\'s rule on the direct path too', async () => {
-    const offline = { project: 'p', stateDir: dir, warn: vi.fn() };
+    const offline = { requireProject: inProject, stateDir: dir, warn: vi.fn() };
     // A shell inside a worker session cannot use the direct path to act as the operator.
     await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { ...offline, env: { ORC_SESSION_SECRET: 'session-a' } }))
       .rejects.toMatchObject({ code: 'forbidden' });
@@ -251,7 +253,7 @@ describe('submitOperatorMutation without a coordinator (task 232)', () => {
 
   it('applies the mutation directly and says so', async () => {
     const warn = vi.fn();
-    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn }))
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, requireProject: inProject, stateDir: dir, warn }))
       .resolves.toEqual({ unblocked: true, task_ref: 'orch/blocked' });
     expect(warn).toHaveBeenCalledWith('coordinator is not running; applying unblock-task directly');
     expect(status('orch/blocked')).toBe('todo');
@@ -260,21 +262,23 @@ describe('submitOperatorMutation without a coordinator (task 232)', () => {
   it('leaves the write to a live coordinator whose control API is not answering', async () => {
     writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
     const warn = vi.fn();
-    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn }))
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, requireProject: inProject, stateDir: dir, warn }))
       .rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(`coordinator (pid ${process.pid}) is running`) });
     expect(warn).not.toHaveBeenCalled();
     expect(status('orch/blocked')).toBe('blocked');
     // A lock whose PID now belongs to another process (a reused PID) holds nothing.
     writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), process_start: 'proc:0' }));
-    await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, project: 'p', stateDir: dir, warn });
+    await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, requireProject: inProject, stateDir: dir, warn });
     expect(warn).toHaveBeenCalledWith('coordinator is not running; applying unblock-task directly');
     expect(status('orch/blocked')).toBe('todo');
   });
 
-  it('applies a legacy installation\'s mutation directly without a warning', async () => {
+  it('refuses a state directory outside a registered project', async () => {
     const warn = vi.fn();
-    await submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { project: null, stateDir: dir, warn });
+    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { stateDir: dir, warn }))
+      .rejects.toThrow('No registered project here');
     expect(warn).not.toHaveBeenCalled();
+    expect(status('orch/blocked')).toBe('blocked');
   });
 });
 
@@ -308,7 +312,7 @@ describe('remaining recovery writes through the coordinator (task 234)', () => {
     const control = await startControlServer(dir);
     try {
       writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
-      const options = { project: 'p', stateDir: dir, env: {}, warn: vi.fn() };
+      const options = { requireProject: inProject, stateDir: dir, env: {}, warn: vi.fn() };
       await expect(submitOperatorMutation({ op: 'run-expire', run_id: 'run-a' }, options))
         .resolves.toMatchObject({ expired: true, task_ref: 'orch/active' });
       expect(status('orch/active')).toBe('todo');

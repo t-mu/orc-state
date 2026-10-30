@@ -135,6 +135,7 @@ describe('buildStatus', () => {
           task_ref: 'a/1',
           agent_id: 'orc-1',
           state: 'in_progress',
+          claimed_at: '2026-01-01T00:00:00Z',
           lease_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
         } as Claim,
         {
@@ -142,6 +143,7 @@ describe('buildStatus', () => {
           task_ref: 'a/2',
           agent_id: 'orc-1',
           state: 'done',
+          claimed_at: '2026-01-01T00:00:00Z',
         } as Claim,
       ],
     });

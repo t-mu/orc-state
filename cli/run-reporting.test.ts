@@ -2,11 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { DEFAULT_INPUT_REQUEST_TIMEOUT_MS } from '../lib/inputRequestConfig.ts';
 import { queryEvents, appendSequencedEvent } from '../lib/eventLog.ts';
 import { finishRun } from '../lib/claimManager.ts';
+import { openWorkerSession, recordMasterSession, runProjectCli, runWorkerCli } from '../test-fixtures/projectCli.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -15,16 +16,22 @@ beforeEach(() => {
   dir = createTempStateDir('orch-run-reporting-test-');
 });
 
-afterEach(() => {
+const openSessions: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+  for (const close of openSessions.splice(0)) await close();
   cleanupTempStateDir(dir);
 });
 
+/** The environment of a worker session whose lifecycle requests a control server answers until the test ends. */
+async function workerSession(agentId: string, runId: string): Promise<NodeJS.ProcessEnv> {
+  const session = await openWorkerSession(dir, agentId, runId);
+  openSessions.push(session.close);
+  return session.env;
+}
+
 function runCli(script: string, args: string[] = []) {
-  return spawnSync('node', [`cli/${script}`, ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runWorkerCli(dir, script, args);
 }
 
 function readClaims(): { claims: Array<Record<string, unknown>> } {
@@ -183,10 +190,10 @@ function assertClaimUnchanged(runId: string, before: Record<string, unknown> | u
 }
 
 describe('orc-run-start', () => {
-  it('appends run_started and transitions claim to in_progress', () => {
+  it('appends run_started and transitions claim to in_progress', async () => {
     seedClaimedRun({ runId: 'run-abc-001', agentId: 'worker-01' });
 
-    const result = runCli('run-start.ts', ['--run-id=run-abc-001', '--agent-id=worker-01']);
+    const result = await runCli('run-start.ts', ['--run-id=run-abc-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_started');
@@ -204,26 +211,26 @@ describe('orc-run-start', () => {
     expect(events.some((e) => e.event === 'run_started' && e.run_id === 'run-abc-001')).toBe(true);
   });
 
-  it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-start.ts', []);
+  it('exits with code 1 and prints usage when args are missing', async () => {
+    const result = await runCli('run-start.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 
-  it('exits with code 1 when run_id does not exist', () => {
+  it('exits with code 1 when run_id does not exist', async () => {
     seedClaimedRun();
-    const result = runCli('run-start.ts', ['--run-id=nonexistent', '--agent-id=worker-01']);
+    const result = await runCli('run-start.ts', ['--run-id=nonexistent', '--agent-id=worker-01']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Error');
   });
 
-  it('exits 0 without emitting a duplicate event when claim is already in_progress', () => {
+  it('exits 0 without emitting a duplicate event when claim is already in_progress', async () => {
     // Duplicate worker acknowledgements must remain harmless once the run has
     // already transitioned to in_progress.
     seedInProgressRun({ runId: 'run-dup-start', agentId: 'worker-01' });
     const eventsBefore = readEvents();
 
-    const result = runCli('run-start.ts', ['--run-id=run-dup-start', '--agent-id=worker-01']);
+    const result = await runCli('run-start.ts', ['--run-id=run-dup-start', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_started');
@@ -235,10 +242,10 @@ describe('orc-run-start', () => {
 });
 
 describe('orc-report-for-duty', () => {
-  it('records readiness for the current session token', () => {
+  it('records readiness for the current session token', async () => {
     seedClaimedRun({ runId: 'run-duty-001', agentId: 'worker-01' });
 
-    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-id=session-token-1']);
+    const result = await runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-id=session-token-1']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('reported_for_duty');
@@ -251,38 +258,38 @@ describe('orc-report-for-duty', () => {
     expect(events.some((e) => e.event === 'reported_for_duty' && e.agent_id === 'worker-01')).toBe(true);
   });
 
-  it('rejects a stale or mismatched session token', () => {
+  it('rejects a stale or mismatched session token', async () => {
     seedClaimedRun({ runId: 'run-duty-002', agentId: 'worker-01' });
 
-    const result = runCli('report-for-duty.ts', ['--agent-id=worker-01', '--session-id=wrong-token']);
+    const result = await runWorkerCli(dir, 'report-for-duty.ts', ['--agent-id=worker-01', '--session-id=wrong-token'], {}, { sessionId: 'session-token-1' });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Session id mismatch');
+    expect(result.stderr).toContain('must present the caller\'s own session id');
   });
 });
 
 describe('orc-run-heartbeat (deprecated no-op)', () => {
-  it('exits 0 with deprecation warning regardless of state', () => {
+  it('exits 0 with deprecation warning regardless of state', async () => {
     seedInProgressRun({ runId: 'run-hb-001', agentId: 'worker-01' });
 
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-hb-001', '--agent-id=worker-01']);
+    const result = await runCli('run-heartbeat.ts', ['--run-id=run-hb-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain('deprecated');
   });
 
-  it('exits 0 with deprecation warning even without arguments', () => {
-    const result = runCli('run-heartbeat.ts', []);
+  it('exits 0 with deprecation warning even without arguments', async () => {
+    const result = await runCli('run-heartbeat.ts', []);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain('deprecated');
   });
 
-  it('does not emit events or mutate state', () => {
+  it('does not emit events or mutate state', async () => {
     seedInProgressRun({ runId: 'run-hb-noop', agentId: 'worker-01' });
     const before = claimSnapshot('run-hb-noop');
 
-    runCli('run-heartbeat.ts', ['--run-id=run-hb-noop', '--agent-id=worker-01']);
+    await runCli('run-heartbeat.ts', ['--run-id=run-hb-noop', '--agent-id=worker-01']);
 
     assertClaimUnchanged('run-hb-noop', before);
     const events = readEvents();
@@ -291,11 +298,11 @@ describe('orc-run-heartbeat (deprecated no-op)', () => {
 });
 
 describe('orc-run-work-complete', () => {
-  it('emits a non-terminal work_complete event without mutating finalization state', () => {
+  it('emits a non-terminal work_complete event without mutating finalization state', async () => {
     seedInProgressRun({ runId: 'run-work-001', agentId: 'worker-01' });
     const before = claimSnapshot('run-work-001');
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-work-001', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-work-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete');
@@ -310,24 +317,24 @@ describe('orc-run-work-complete', () => {
         && (e.payload as Record<string, unknown>)?.retry_count === undefined)).toBe(true);
   });
 
-  it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-work-complete.ts', []);
+  it('exits with code 1 and prints usage when args are missing', async () => {
+    const result = await runCli('run-work-complete.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 
-  it('accepts finalize_rebase_started and ready_to_merge through progress reporting without mutating claims', () => {
+  it('accepts finalize_rebase_started and ready_to_merge through progress reporting without mutating claims', async () => {
     seedInProgressRun({ runId: 'run-work-002', agentId: 'worker-01' });
-    runCli('progress.ts', ['--event=work_complete', '--run-id=run-work-002', '--agent-id=worker-01']);
+    await runCli('progress.ts', ['--event=work_complete', '--run-id=run-work-002', '--agent-id=worker-01']);
     const claims = readClaims();
     claims.claims[0].finalization_state = 'finalize_rebase_requested';
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
     const before = claimSnapshot('run-work-002');
 
-    const started = runCli('progress.ts', ['--event=finalize_rebase_started', '--run-id=run-work-002', '--agent-id=worker-01']);
+    const started = await runCli('progress.ts', ['--event=finalize_rebase_started', '--run-id=run-work-002', '--agent-id=worker-01']);
     expect(started.status).toBe(0);
 
-    const ready = runCli('progress.ts', ['--event=ready_to_merge', '--run-id=run-work-002', '--agent-id=worker-01']);
+    const ready = await runCli('progress.ts', ['--event=ready_to_merge', '--run-id=run-work-002', '--agent-id=worker-01']);
     expect(ready.status).toBe(0);
 
     assertClaimUnchanged('run-work-002', before);
@@ -337,7 +344,7 @@ describe('orc-run-work-complete', () => {
     expect(events.some((e) => e.event === 'ready_to_merge' && (e.payload as Record<string, unknown>)?.status === 'ready_to_merge')).toBe(true);
   });
 
-  it('emits ready_to_merge when run-work-complete is called after a finalize rebase', () => {
+  it('emits ready_to_merge when run-work-complete is called after a finalize rebase', async () => {
     seedInProgressRun({ runId: 'run-work-003', agentId: 'worker-01' });
     const claims = readClaims();
     claims.claims[0].finalization_state = 'finalize_rebase_in_progress';
@@ -345,7 +352,7 @@ describe('orc-run-work-complete', () => {
     writeFileSync(join(dir, 'claims.json'), JSON.stringify(claims));
     const before = claimSnapshot('run-work-003');
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-work-003', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-work-003', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('ready_to_merge');
@@ -359,10 +366,10 @@ describe('orc-run-work-complete', () => {
         && (e.payload as Record<string, unknown>)?.status === 'ready_to_merge'
         && (e.payload as Record<string, unknown>)?.retry_count === undefined)).toBe(true);
   });
-  it('still appends work_complete when the claim is still claimed', () => {
+  it('still appends work_complete when the claim is still claimed', async () => {
     seedClaimedRun({ runId: 'run-work-claimed', agentId: 'worker-01' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-work-claimed', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-work-claimed', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete');
@@ -371,19 +378,19 @@ describe('orc-run-work-complete', () => {
     expect(events.some((e) => e.event === 'work_complete' && e.run_id === 'run-work-claimed')).toBe(true);
   });
 
-  it('accepts run-work-complete even when runtime task status is not done yet', () => {
+  it('accepts run-work-complete even when runtime task status is not done yet', async () => {
     seedInProgressRun({ runId: 'run-work-gate', agentId: 'worker-01' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-work-gate', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-work-gate', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete');
   });
 
-  it('does not require task-mark-done before run-work-complete', () => {
+  it('does not require task-mark-done before run-work-complete', async () => {
     seedInProgressRun({ runId: 'run-work-mark-done', agentId: 'worker-01' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-work-mark-done', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-work-mark-done', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete');
@@ -391,11 +398,11 @@ describe('orc-run-work-complete', () => {
 });
 
 describe('orc-run-finish', () => {
-  it('commits run_finished with the completed claim', () => {
+  it('commits run_finished with the completed claim', async () => {
     seedInProgressRun({ runId: 'run-fin-001', agentId: 'worker-01' });
     recordMergeConfirmation(dir, 'docs/task-1');
 
-    const result = runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
+    const result = await runCli('run-finish.ts', ['--run-id=run-fin-001', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_finished');
@@ -410,18 +417,18 @@ describe('orc-run-finish', () => {
     expect(events.some((e) => e.event === 'run_finished' && e.run_id === 'run-fin-001')).toBe(true);
   });
 
-  it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-finish.ts', []);
+  it('exits with code 1 and prints usage when args are missing', async () => {
+    const result = await runCli('run-finish.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 });
 
 describe('orc-run-fail', () => {
-  it('commits run_failed with the failed claim and requeues the task', () => {
+  it('commits run_failed with the failed claim and requeues the task', async () => {
     seedInProgressRun({ runId: 'run-fail-001', agentId: 'worker-01' });
 
-    const result = runCli('run-fail.ts', [
+    const result = await runCli('run-fail.ts', [
       '--run-id=run-fail-001',
       '--agent-id=worker-01',
       '--reason=build error',
@@ -447,10 +454,10 @@ describe('orc-run-fail', () => {
     expect((failedEvent!.payload as Record<string, unknown>).policy).toBe('requeue');
   });
 
-  it('accepts --policy=block and blocks the task', () => {
+  it('accepts --policy=block and blocks the task', async () => {
     seedInProgressRun({ runId: 'run-fail-002', agentId: 'worker-01' });
 
-    const result = runCli('run-fail.ts', [
+    const result = await runCli('run-fail.ts', [
       '--run-id=run-fail-002',
       '--agent-id=worker-01',
       '--reason=unrecoverable error',
@@ -467,14 +474,14 @@ describe('orc-run-fail', () => {
     expect((failedEvent!.payload as Record<string, unknown>).policy).toBe('block');
   });
 
-  it('exits with code 1 and prints usage when args are missing', () => {
-    const result = runCli('run-fail.ts', []);
+  it('exits with code 1 and prints usage when args are missing', async () => {
+    const result = await runCli('run-fail.ts', []);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage');
   });
 
-  it('exits with code 1 when --policy is invalid', () => {
-    const result = runCli('run-fail.ts', [
+  it('exits with code 1 when --policy is invalid', async () => {
+    const result = await runCli('run-fail.ts', [
       '--run-id=run-fail-003',
       '--agent-id=worker-01',
       '--policy=blok',
@@ -485,9 +492,9 @@ describe('orc-run-fail', () => {
     expect(result.stderr).toContain('block');
   });
 
-  it('accepts --policy=requeue without validation error', () => {
+  it('accepts --policy=requeue without validation error', async () => {
     seedInProgressRun({ runId: 'run-fail-004', agentId: 'worker-01' });
-    const result = runCli('run-fail.ts', [
+    const result = await runCli('run-fail.ts', [
       '--run-id=run-fail-004',
       '--agent-id=worker-01',
       '--policy=requeue',
@@ -495,7 +502,7 @@ describe('orc-run-fail', () => {
     expect(result.status).toBe(0);
   });
 
-  it('uses the state lock for transactional transitions and leaves event-only reporting available', () => {
+  it('uses the state lock for transactional transitions and leaves event-only reporting available', async () => {
     const cases = [
       { script: 'run-start.ts', args: ['--run-id=run-lock-start', '--agent-id=worker-01'], seed: () => seedClaimedRun({ runId: 'run-lock-start', agentId: 'worker-01' }) },
       { script: 'run-heartbeat.ts', args: ['--run-id=run-lock-heartbeat', '--agent-id=worker-01'], seed: () => seedInProgressRun({ runId: 'run-lock-heartbeat', agentId: 'worker-01' }) },
@@ -509,7 +516,7 @@ describe('orc-run-fail', () => {
       dir = createTempStateDir('orch-run-reporting-test-');
       testCase.seed();
       mkdirSync(join(dir, '.lock'));
-      const result = runCli(testCase.script, testCase.args);
+      const result = await runCli(testCase.script, testCase.args);
       const usesTransition = testCase.script === 'run-start.ts'
         || testCase.script === 'run-finish.ts'
         || testCase.script === 'run-fail.ts';
@@ -532,7 +539,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=20',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORC_STATE_DIR: dir },
+      env: await workerSession('worker-01', 'run-input-001'),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -582,9 +589,9 @@ describe('orc-run-input-request', () => {
     expect(readClaims().claims[0].input_state).toBeUndefined();
   });
 
-  it('exits 1 with a descriptive timeout message when no response arrives', () => {
+  it('exits 1 with a descriptive timeout message when no response arrives', async () => {
     seedInputRequestState();
-    const result = runCli('run-input-request.ts', [
+    const result = await runCli('run-input-request.ts', [
       '--run-id=run-input-001',
       '--agent-id=worker-01',
       '--question=Continue?',
@@ -622,7 +629,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=10',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORC_STATE_DIR: dir },
+      env: await workerSession('worker-01', 'run-input-001'),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -660,7 +667,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=40',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORC_STATE_DIR: dir },
+      env: await workerSession('worker-01', 'run-input-001'),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -722,7 +729,7 @@ describe('orc-run-input-request', () => {
       '--poll-ms=20',
     ], {
       cwd: repoRoot,
-      env: { ...process.env, ORC_STATE_DIR: dir },
+      env: await workerSession('worker-01', 'run-input-001'),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -773,15 +780,15 @@ describe('orc-run-input-request', () => {
     expect(stderr).toBe('');
   });
 
-  it('exits 1 with usage when required args are missing', () => {
-    const result = runCli('run-input-request.ts', ['--run-id=run-input-003']);
+  it('exits 1 with usage when required args are missing', async () => {
+    const result = await runCli('run-input-request.ts', ['--run-id=run-input-003']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-input-request');
   });
 
-  it('writes input_response through the dedicated response CLI', () => {
+  it('writes input_response through the dedicated response CLI', async () => {
     seedInputRequestState({ runId: 'run-input-001' });
-    runCli('run-input-request.ts', [
+    await runCli('run-input-request.ts', [
       '--run-id=run-input-001',
       '--agent-id=worker-01',
       '--question=Continue?',
@@ -789,11 +796,15 @@ describe('orc-run-input-request', () => {
       '--poll-ms=5',
     ]);
 
-    const result = runCli('run-input-respond.ts', [
+    // Only the master session answers an input request.
+    const agents = readAgents();
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ ...agents, agents: [...agents.agents,
+      { agent_id: 'master', provider: 'claude', role: 'master', status: 'running', registered_at: '2026-01-01T00:00:00Z' }] }));
+    const result = runProjectCli(dir, 'cli/run-input-respond.ts', [
       '--run-id=run-input-001',
       '--agent-id=worker-01',
       '--response=yes',
-    ]);
+    ], { ORC_MASTER_SECRET: recordMasterSession(dir) });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('input_response');

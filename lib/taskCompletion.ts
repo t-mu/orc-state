@@ -3,7 +3,7 @@ import { withLock } from './lock.ts';
 import { appendSequencedEvent } from './eventLog.ts';
 import { readBacklog, findTask } from './stateReader.ts';
 import { STATE_DIR } from './paths.ts';
-import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
+import { commitBacklog, requireProjectTaskStore } from './projectTasks.ts';
 import { ConflictError, NotFoundError } from './domainErrors.ts';
 
 const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'released', 'cancelled']);
@@ -31,7 +31,7 @@ export function markTaskDoneRuntimeOnly(
       task.updated_at = now;
       delete task.blocked_reason;
       // Recorded once per completion: the status guard above makes a repeated confirmation a no-op.
-      const runId = projectTaskStoreFor(stateDir)?.activeRunId(taskRef) ?? null;
+      const runId = requireProjectTaskStore(stateDir).activeRunId(taskRef);
       commitBacklog(stateDir, backlog, { [taskRef]: { cause: 'merge_succeeded', actorId, runId } });
     }
 

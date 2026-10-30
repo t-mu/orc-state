@@ -17,10 +17,9 @@ import type { Claim } from '../types/claims.ts';
 import type { EventFinalizationStatus, OrcEvent, OrcEventInput } from '../types/events.ts';
 
 /**
- * Worker lifecycle requests (Task 229). A legacy installation applies them in
- * the worker's own process; in a registered project the worker sends them to
- * its coordinator's control socket and the coordinator applies them, so it is
- * the only writer of the project's state.
+ * Worker lifecycle requests (Task 229). The worker sends them to its
+ * coordinator's control socket and the coordinator applies them, so it is the
+ * only writer of the project's state.
  */
 export type LifecycleRequest =
   | { op: 'run-start' | 'run-finish' | 'run-work-complete' | 'input-timeout'; run_id: string; agent_id: string }
@@ -284,8 +283,8 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
  * launched for that run. The `--agent-id` a worker passes is no longer trusted
  * on its own. A `recoverable` or `unknown` session (one the coordinator cannot
  * type into, or whose process identity it could not confirm after a restart)
- * still reports its lifecycle: the session id it presents is the credential,
- * not its PID.
+ * still reports its lifecycle: the secret it presents is the credential, not
+ * its PID.
  */
 export function authorizeLifecycle(stateDir: string, credential: string, request: LifecycleRequest): { live: boolean } {
   let session;

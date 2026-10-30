@@ -43,10 +43,8 @@ export interface ControlServer {
 }
 
 /**
- * A running session's secret is the caller's actor credential (task 231): a
- * project accepts only that, so a session id read from the state directory
- * proves nothing. A legacy installation also accepts the id of a session
- * recorded without a secret. Same-user processes can still open the state
+ * A running session's secret is the caller's actor credential (task 231), so
+ * a session id read from the state directory proves nothing. Same-user processes can still open the state
  * databases directly; the provider sandbox, not this check, stops that.
  */
 export function sessionAuthenticator(stateDir: string): CommandAuthenticator {

@@ -11,11 +11,6 @@
       "type": "string",
       "const": "1"
     },
-    "next_task_seq": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Legacy counter some old backlog.json files still carry; nothing reads it."
-    },
     "features": {
       "type": "array",
       "items": { "$ref": "#/definitions/Feature" }

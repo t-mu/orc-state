@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readBacklog, readClaims, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, readBacklog, readClaims, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
@@ -66,6 +66,8 @@ describe('consumer lifecycle e2e', () => {
     // Phase 1: init — initialise the project's state (simulates `orc project add`)
     initProjectTaskStore(dir);
     ensureStateInitialized(dir);
+    // The project descriptor the coordinator writes on start (main()); workers launch only in a project.
+    bridgeProjectEnv(dir);
 
     // Phase 2: task creation — write task spec markdown to backlog/ (simulates consumer authoring a task)
     const backlogDir = join(dir, 'backlog');

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SyncResult } from '../lib/backlogSync.ts';
+import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SyncResult } from '../lib/migration/backlogSync.ts';
 import { closeProjectTaskStores, initProjectTaskStore, prepareProjectTask, refreshBacklogProjection } from '../lib/projectTasks.ts';
 import type { TaskDispatchState } from '../lib/projectTaskStore.ts';
 import { readBacklog as readProjectStateBacklog } from '../lib/stateReader.ts';

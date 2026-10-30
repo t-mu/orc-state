@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTempStateDir, cleanupTempStateDir, seedBacklogFromSpecs } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedBacklogFromSpecs } from '../../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 

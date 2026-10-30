@@ -1,13 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
+import type { Backlog, Feature, Task, TaskStatus } from '../../types/backlog.ts';
 
 const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;
-// Legacy (unmigrated) installations register task *definitions* from Markdown:
-// a new spec is added as `todo`, and titles, dependencies, review level and
-// merge strategy follow their specs. Status is runtime-owned and never read
-// from a spec — runtime commands (`orc task-reset`, `run-fail`, merge) change
-// it. Project state directories do not sync at all.
+// Migration only (lib/projectMigration.ts): a legacy installation registered
+// task *definitions* from Markdown — a new spec was added as `todo`, and titles,
+// dependencies, review level and merge strategy followed their specs. Status is
+// runtime-owned and never read from a spec. Project state directories do not
+// sync at all.
 const ACTIVE_STATUSES = new Set<TaskStatus>(['claimed', 'in_progress']);
 // The retired status mirror, still applied when planning a migration
 // (`mirrorStatus`): a spec edited under the old mirror may hold a newer

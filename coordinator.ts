@@ -40,7 +40,6 @@ import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
 import { checkSandboxControlSocket } from './lib/sandboxDeps.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
-import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError } from './lib/promptInjectionScan.ts';
 import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
@@ -230,15 +229,6 @@ const WORKER_STALE_NUDGE_MS = intFlag('worker-stale-nudge-ms', COORD_CONFIG.work
 const WORKER_STALE_FORCE_FAIL_MS = intFlag('worker-stale-force-fail-ms', COORD_CONFIG.worker_stale_force_fail_ms);
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
-// Orchestration root: where the orc framework lives — the `orc` binary,
-// backlog specs, plans, config, and state dir. Coordinator-launched processes
-// (worker sessions, orc CLI invocations) and spec-relative path math key off
-// this. In the single-repo (attached) layout it equals TARGET_REPO_ROOT.
-// This stays resolveRepoRoot() (an orchestration-root consumer); the git ops
-// below use the imported TARGET_REPO_ROOT. See the authoritative repo-root
-// call-site classification table in lib/paths.ts (task 185).
-// A project has no orchestration repository; its workers find orc through the installation.
-const REPO_ROOT = ACTIVE_PROJECT ? ORC_PACKAGE_ROOT : resolveRepoRoot();
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -402,7 +392,7 @@ function buildReportForDutyNudge(agent: Agent) {
     `session_id: ${agent.session_token ?? '(missing)'}`,
     'Missing required reported_for_duty acknowledgement for this PTY session.',
     'Call this command immediately via your Bash tool:',
-    `${resolveOrcBinSh(REPO_ROOT)} report-for-duty --agent-id=${agent.agent_id} --session-id=${agent.session_token ?? ''}`,
+    `${resolveOrcBinSh(ORC_PACKAGE_ROOT)} report-for-duty --agent-id=${agent.agent_id} --session-id=${agent.session_token ?? ''}`,
     'SESSION_NUDGE_END',
   ].join('\n');
 }
@@ -781,7 +771,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig, eve
       review_level: task?.review_level ?? 'full',
       acceptance_criteria: task?.acceptance_criteria?.join('\n') ?? '',
       worktree_path: runWorktree.worktree_path ?? '',
-      orc_bin: resolveOrcBinSh(REPO_ROOT),
+      orc_bin: resolveOrcBinSh(ORC_PACKAGE_ROOT),
     });
     try {
       await getAdapter(workerAgent.provider).send(workerAgent.session_handle, prReviewMessage);
@@ -1599,7 +1589,7 @@ async function executeDispatchPlan(
         provider,
         adapter,
         workingDirectory: runWorktree.worktree_path,
-        repoRoot: REPO_ROOT,
+        repoRoot: ORC_PACKAGE_ROOT,
         runId,
         taskRef,
         taskModel: task?.model ?? null,
@@ -1697,7 +1687,7 @@ export function buildTaskEnvelope(taskRef: string, runId: string, agentId: strin
     task_spec_sha256: snapshot?.sha256 ?? '(not pinned)',
     task_spec_revision_status: snapshot ? taskSnapshotStatus(snapshot, STATE_DIR) : 'unknown',
     assigned_worktree: runWorktree?.worktree_path ?? join(WORKTREES_DIR, runId),
-    orc_bin: resolveOrcBinSh(REPO_ROOT),
+    orc_bin: resolveOrcBinSh(ORC_PACKAGE_ROOT),
   });
 }
 
@@ -1708,7 +1698,7 @@ function buildRunStartNudge(claim: Claim) {
     `task_ref: ${claim.task_ref}`,
     `Missing required run_started acknowledgement.`,
     `Call this command immediately via your Bash tool:`,
-    `${resolveOrcBinSh(REPO_ROOT)} run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
+    `${resolveOrcBinSh(ORC_PACKAGE_ROOT)} run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     `RUN_NUDGE_END`,
   ].join('\n');
 }

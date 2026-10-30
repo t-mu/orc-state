@@ -73,9 +73,13 @@ describe('readAgents', () => {
 });
 
 describe('readClaims', () => {
-  it('returns parsed claims file when present', () => {
-    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [{ run_id: 'run-1' }] }));
-    expect(readClaims(dir).claims).toHaveLength(1);
+  it('imports a migrated claims.json into the run store once and reads the store after', () => {
+    const claim = { run_id: 'run-1', task_ref: 'orch/task-1', agent_id: 'worker-1', state: 'done', claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: '2026-01-01T01:00:00Z' };
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [claim] }));
+    expect(readClaims(dir).claims.map((entry) => entry.run_id)).toEqual(['run-1']);
+    // The file is a projection from now on: editing it changes nothing.
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
+    expect(readClaims(dir).claims.map((entry) => entry.run_id)).toEqual(['run-1']);
   });
 
   it('returns empty default when missing', () => {

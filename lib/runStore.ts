@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eventLog.ts';
@@ -10,7 +9,6 @@ import type { Agent, AgentsState } from '../types/agents.ts';
 import { logger } from './logger.ts';
 
 const CUTOVER_NAME = 'runs';
-const SESSION_CUTOVER_NAME = 'sessions';
 
 function rawClaims(stateDir: string): ClaimsState {
   return JSON.parse(readFileSync(join(stateDir, 'claims.json'), 'utf8')) as ClaimsState;
@@ -57,35 +55,9 @@ function importLegacyClaims(db: Database.Database, stateDir: string): boolean {
   return true;
 }
 
-function importLegacyAgentSessions(db: Database.Database, stateDir: string): void {
-  if (db.prepare('SELECT 1 FROM runtime_cutovers WHERE name = ?').get(SESSION_CUTOVER_NAME)) return;
-  const path = join(stateDir, 'agents.json');
-  if (!existsSync(path)) return;
-  importLegacyClaims(db, stateDir);
-  if (existsSync(join(stateDir, 'claims.json')) && !db.prepare('SELECT 1 FROM runtime_cutovers WHERE name = ?').get(CUTOVER_NAME)) return;
-  const state = JSON.parse(readFileSync(path, 'utf8')) as AgentsState;
-  for (const agent of state.agents) {
-    if (!agent.session_handle || agent.status !== 'running') continue;
-    const sessionId = agent.session_token
-      || `legacy-${createHash('sha256').update(`${agent.agent_id}\0${agent.session_handle}`).digest('hex').slice(0, 24)}`;
-    const run = db.prepare("SELECT run_id FROM runs WHERE agent_id = ? AND state IN ('claimed', 'in_progress') ORDER BY created_at DESC LIMIT 1")
-      .get(agent.agent_id) as { run_id: string } | undefined;
-    const startedAt = agent.session_started_at ?? agent.registered_at;
-    db.prepare(`
-      INSERT OR IGNORE INTO sessions (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at)
-      VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
-    `).run(sessionId, run?.run_id ?? null, agent.agent_id, agent.provider,
-      agent.provider_ref == null ? null : JSON.stringify(agent.provider_ref), startedAt, startedAt);
-  }
-  db.prepare("INSERT INTO runtime_cutovers (name, imported_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
-    .run(SESSION_CUTOVER_NAME);
-}
-
-/** Overlay the stable provider session ID onto the legacy agent registry. */
+/** Overlay the stable provider session ID onto the agent registry. */
 export function withAuthoritativeAgentSessions(stateDir: string, state: AgentsState): AgentsState {
   if (!existsSync(join(stateDir, 'events.db'))) return state;
-  const imported = withEventDb(stateDir, (db) => Boolean(db.prepare('SELECT 1 FROM runtime_cutovers WHERE name = ?').get(SESSION_CUTOVER_NAME)));
-  if (!imported) withEventDbTransaction(stateDir, (db) => importLegacyAgentSessions(db, stateDir));
   return withEventDb(stateDir, (db) => {
     const sessions = db.prepare('SELECT agent_id, session_id, state FROM sessions ORDER BY rowid').all() as Array<{
       agent_id: string; session_id: string; state: string;
@@ -103,9 +75,13 @@ export function withAuthoritativeAgentSessions(stateDir: string, state: AgentsSt
   });
 }
 
-/** Return the SQLite claim projection, or null until a legacy claims file exists. */
+/**
+ * Return the SQLite claims, importing a migrated installation's claims.json
+ * once; null while there is neither a run store nor a claims file, or when the
+ * file could not be imported.
+ */
 export function readAuthoritativeClaims(stateDir: string): ClaimsState | null {
-  if (!existsSync(join(stateDir, 'events.db'))) return null;
+  if (!existsSync(join(stateDir, 'events.db')) && !existsSync(join(stateDir, 'claims.json'))) return null;
   const alreadyImported = withEventDb(stateDir, (db) => Boolean(db.prepare('SELECT 1 FROM runtime_cutovers WHERE name = ?').get(CUTOVER_NAME)));
   let imported = false;
   if (!alreadyImported && existsSync(join(stateDir, 'claims.json'))) {
@@ -154,7 +130,6 @@ export function recordProviderSession(stateDir: string, session: {
     throw new Error('Provider session ID must differ from agent and run IDs');
   }
   return withEventDbTransaction(stateDir, (db) => {
-    importLegacyAgentSessions(db, stateDir);
     if (session.runId !== null && !db.prepare('SELECT 1 FROM runs WHERE run_id = ?').get(session.runId)) return false;
     db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
       .run(session.startedAt, session.agentId, session.sessionId);
@@ -178,7 +153,6 @@ export function recordProviderSession(stateDir: string, session: {
 export function closeProviderSessionsForAgent(stateDir: string, agentId: string, at: string): void {
   if (!existsSync(join(stateDir, 'events.db'))) return;
   withEventDbTransaction(stateDir, (db) => {
-    importLegacyAgentSessions(db, stateDir);
     db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'session closed', updated_at = ? WHERE agent_id = ? AND state <> 'offline'").run(at, agentId);
   });
 }
@@ -187,7 +161,6 @@ export function closeProviderSessionsForAgent(stateDir: string, agentId: string,
 export function restoreProviderSessionsForAgents(stateDir: string, agents: Agent[], at: string): void {
   if (!existsSync(join(stateDir, 'events.db'))) return;
   withEventDbTransaction(stateDir, (db) => {
-    importLegacyAgentSessions(db, stateDir);
     const latest = db.prepare('SELECT session_id FROM sessions WHERE agent_id = ? ORDER BY rowid DESC LIMIT 1');
     const reactivate = db.prepare("UPDATE sessions SET state = 'running', updated_at = ? WHERE session_id = ?");
     for (const agent of agents) {

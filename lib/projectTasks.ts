@@ -15,14 +15,12 @@ import type { TaskTransitionCause } from './projectContract.ts';
 import type { Claim } from '../types/claims.ts';
 
 /**
- * Project task authority. A state directory whose `runtime.db` exists is a
- * project state directory: its task definitions live in SQLite and
- * `backlog.json` is a read-only projection. Other state directories keep the
- * legacy Markdown-synced backlog until they are migrated.
+ * Project task authority: a project's task definitions live in SQLite
+ * (`runtime.db`) and `backlog.json` is a read-only projection of them.
  */
 const stores = new Map<string, ProjectTaskStore>();
 
-/** The cached store for a project state directory, or null for a legacy one. */
+/** The cached store for a project state directory, or null while its task database does not exist. */
 export function projectTaskStoreFor(stateDir: string): ProjectTaskStore | null {
   const cached = stores.get(stateDir);
   if (cached?.withDatabase((db) => db.open)) return cached;
@@ -99,8 +97,7 @@ export function readProjectBacklog(store: ProjectTaskStore): Backlog {
 
 /** Rewrite the read-only backlog.json projection. A failed write never undoes SQLite. */
 export function refreshBacklogProjection(stateDir: string): void {
-  const store = projectTaskStoreFor(stateDir);
-  if (!store) return;
+  const store = requireProjectTaskStore(stateDir);
   try {
     atomicWriteJson(join(stateDir, 'backlog.json'), readProjectBacklog(store));
   } catch (error) {
@@ -140,11 +137,7 @@ function normalizedDefinition(task: Task): string {
  * The backlog.json projection is refreshed afterwards.
  */
 export function commitBacklog(stateDir: string, backlog: Backlog, changes: Record<string, TaskStatusChange> = {}): void {
-  const store = projectTaskStoreFor(stateDir);
-  if (!store) {
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-    return;
-  }
+  const store = requireProjectTaskStore(stateDir);
   store.inTransaction(() => {
     for (const task of backlog.features.flatMap((feature) => feature.tasks ?? [])) {
       const current = store.getTask(task.ref);
@@ -184,11 +177,7 @@ export function commitBacklog(stateDir: string, backlog: Backlog, changes: Recor
  * backlog.json from the snapshot.
  */
 export function restoreBacklogStatuses(stateDir: string, backlog: Backlog, claims: readonly Claim[]): void {
-  const store = projectTaskStoreFor(stateDir);
-  if (!store) {
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-    return;
-  }
+  const store = requireProjectTaskStore(stateDir);
   store.inTransaction(() => {
     for (const task of backlog.features.flatMap((feature) => feature.tasks ?? [])) {
       if (task.status !== 'claimed' && task.status !== 'in_progress') continue;
@@ -216,9 +205,10 @@ export function assertRunMayFinish(stateDir: string, taskRef: string): void {
   }
 }
 
+/** The project's task store; a missing task database is an error, never a reason to fall back to JSON. */
 export function requireProjectTaskStore(stateDir: string): ProjectTaskStore {
   const store = projectTaskStoreFor(stateDir);
-  if (!store) throw new Error(`Not a project state directory (no runtime.db): ${stateDir}`);
+  if (!store) throw new NotFoundError(`Project task store is missing: ${join(stateDir, 'runtime.db')}; restore it or re-run orc project migrate`);
   return store;
 }
 

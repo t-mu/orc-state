@@ -1,8 +1,6 @@
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
-import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
 import { DEFAULT_LEASE_MS } from './constants.ts';
-import { atomicWriteJson } from './atomicWrite.ts';
 import { commitClaims } from './runStore.ts';
 import { readJson, findTask } from './stateReader.ts';
 import type { ClaimsState } from '../types/claims.ts';
@@ -10,8 +8,7 @@ import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
 import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
 import { writeRunRevisionSnapshot } from './documentIndex.ts';
-import { commitBacklog, projectTaskStoreFor, refreshBacklogProjection } from './projectTasks.ts';
-import { isProjectStateDir } from './projectContext.ts';
+import { commitBacklog, refreshBacklogProjection, requireProjectTaskStore } from './projectTasks.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 
@@ -73,13 +70,11 @@ export function claimTask(
     const now    = new Date();
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
     // A project task pins its latest SQLite revision; the worker receives that exact body.
-    const projectStore = projectTaskStoreFor(stateDir);
-    // A project whose task database is missing must not dispatch a run without its pinned spec.
-    if (!projectStore && isProjectStateDir(stateDir)) throw new NotFoundError(`Project task store is missing: ${join(stateDir, 'runtime.db')}`);
+    const projectStore = requireProjectTaskStore(stateDir);
     // Project SQLite verifies status and dependencies, records the claim and binds the run in one transaction.
-    const revision = projectStore?.claimTask(taskRef, run_id, agentId);
+    const revision = projectStore.claimTask(taskRef, run_id, agentId);
     try {
-      const taskSpecSnapshot = revision ? writeRunRevisionSnapshot(stateDir, run_id, revision) : undefined;
+      const taskSpecSnapshot = writeRunRevisionSnapshot(stateDir, run_id, revision);
 
       task.status = 'claimed';
 
@@ -91,7 +86,7 @@ export function claimTask(
         finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
         input_state: null, input_requested_at: null,
         session_start_retry_count: 0, session_start_retry_next_at: null, session_start_last_error: null,
-        ...(taskSpecSnapshot ? { task_spec_snapshot: taskSpecSnapshot } : {}),
+        task_spec_snapshot: taskSpecSnapshot,
       });
       commitClaims(stateDir, claims, [{
         ts: now.toISOString(), event: 'claim_created',
@@ -101,15 +96,14 @@ export function claimTask(
       }]);
     } catch (error) {
       // The claim never became a live run: return the task to the queue without counting an attempt.
-      projectStore?.inTransaction(() => {
+      projectStore.inTransaction(() => {
         projectStore.applyTransition(taskRef, { cause: 'failure_requeue', to: 'todo', runId: run_id, reason: 'claim_not_committed', actorId: agentId });
         projectStore.abandonRun(run_id);
       });
-      if (projectStore) refreshBacklogProjection(stateDir);
+      refreshBacklogProjection(stateDir);
       throw error;
     }
-    if (projectStore) refreshBacklogProjection(stateDir);
-    else atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
+    refreshBacklogProjection(stateDir);
 
     return { run_id, lease_expires_at };
   });
@@ -264,14 +258,13 @@ export function finishRun(
     claim.finalization_blocked_reason = null;
     const backlog = readJson(stateDir, 'backlog.json') as Backlog;
     const found   = findTask(backlog, claim.task_ref);
-    // In project SQLite a task an operator already moved off this run (reset, cancel, done) keeps its status.
-    const task    = found && (!projectTaskStoreFor(stateDir) || ['claimed', 'in_progress'].includes(found.status)) ? found : null;
+    // A task an operator already moved off this run (reset, cancel, done) keeps its status.
+    const task    = found && ['claimed', 'in_progress'].includes(found.status) ? found : null;
     const previousStatus = task?.status;
-    if (task) {
-      if (success) {
-        // Project SQLite records done only from the coordinator's merge confirmation (markTaskDoneRuntimeOnly).
-        if (!projectTaskStoreFor(stateDir)) task.status = 'done';
-      } else if (policy === 'block') {
+    // A finished run leaves its task in progress: done is recorded only from the coordinator's merge
+    // confirmation (markTaskDoneRuntimeOnly).
+    if (task && !success) {
+      if (policy === 'block') {
         task.status = 'blocked';
       } else {
         // Requeue path: increment attempt counter, auto-block at MAX_ATTEMPTS.

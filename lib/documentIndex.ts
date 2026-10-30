@@ -26,16 +26,12 @@ export function writeRunRevisionSnapshot(stateDir: string, runId: string, revisi
   };
 }
 
-/** A pinned project revision is stale once a newer revision exists; a file source once its content changes. */
+/** A pinned project revision is stale once a newer revision exists. */
 export function taskSnapshotStatus(snapshot: TaskSpecSnapshot, stateDir?: string): 'current' | 'stale' | 'missing' {
-  if (snapshot.task_revision !== undefined) {
-    const taskRef = snapshot.source_path.replace(/^project-task:/, '').replace(/@\d+$/, '');
-    const latest = stateDir ? projectTaskStoreFor(stateDir)?.getTask(taskRef) : null;
-    if (!latest) return 'missing';
-    return latest.revision === snapshot.task_revision ? 'current' : 'stale';
-  }
-  if (!existsSync(snapshot.source_path)) return 'missing';
-  return documentHash(readFileSync(snapshot.source_path, 'utf8')) === snapshot.sha256 ? 'current' : 'stale';
+  const taskRef = snapshot.source_path.replace(/^project-task:/, '').replace(/@\d+$/, '');
+  const latest = stateDir ? projectTaskStoreFor(stateDir)?.getTask(taskRef) : null;
+  if (!latest || snapshot.task_revision === undefined) return 'missing';
+  return latest.revision === snapshot.task_revision ? 'current' : 'stale';
 }
 
 export function verifyRunTaskSnapshot(snapshot: TaskSpecSnapshot): void {

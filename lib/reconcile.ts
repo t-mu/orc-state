@@ -1,13 +1,12 @@
 import { join } from 'node:path';
 import { withLock } from './lock.ts';
 import { readJson } from './stateReader.ts';
-import { selectDuplicateClaimWinner } from './lifecycleDiagnostics.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
 import type { OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { commitClaims, refreshClaimsProjection } from './runStore.ts';
-import { commitBacklog, projectTaskStoreFor, type TaskStatusChange } from './projectTasks.ts';
+import { commitBacklog, type TaskStatusChange } from './projectTasks.ts';
 
 const ACTIVE_CLAIM_STATES = new Set(['claimed', 'in_progress']);
 
@@ -23,7 +22,6 @@ export function reconcileState(stateDir: string): void {
     let backlogModified = false;
     const failedClaims: Array<{ claim: Claim; reason: string }> = [];
     const changes: Record<string, TaskStatusChange> = {};
-    const projectMode = projectTaskStoreFor(stateDir) !== null;
 
     const knownTaskRefs = new Set<string>();
     for (const feature of backlog.features ?? []) {
@@ -32,7 +30,7 @@ export function reconcileState(stateDir: string): void {
       }
     }
 
-    const activeClaimsByTaskRef = new Map<string, Claim[]>();
+    // SQLite allows one active run per task (runs_one_active_task_idx), so a task has at most one.
     const activeClaimByTaskRef = new Map<string, Claim>();
     for (const claim of claims.claims ?? []) {
       if (!ACTIVE_CLAIM_STATES.has(claim.state)) continue;
@@ -45,25 +43,7 @@ export function reconcileState(stateDir: string): void {
         continue;
       }
 
-      const current = activeClaimsByTaskRef.get(claim.task_ref) ?? [];
-      current.push(claim);
-      activeClaimsByTaskRef.set(claim.task_ref, current);
-    }
-
-    for (const [taskRef, activeClaims] of activeClaimsByTaskRef) {
-      if (activeClaims.length > 1) {
-        const keepClaim = selectDuplicateClaimWinner(activeClaims);
-        const staleClaims = activeClaims.filter((claim) => claim.run_id !== keepClaim.run_id);
-        for (const staleClaim of staleClaims) {
-          logger.info(`[reconcile] duplicate active claim ${staleClaim.run_id} for task ${taskRef} -> failed (kept ${keepClaim.run_id})`);
-          staleClaim.state = 'failed';
-          failedClaims.push({ claim: staleClaim, reason: 'reconcile_duplicate_claim' });
-          claimsModified = true;
-        }
-        activeClaimByTaskRef.set(taskRef, keepClaim);
-      } else {
-        activeClaimByTaskRef.set(taskRef, activeClaims[0]);
-      }
+      activeClaimByTaskRef.set(claim.task_ref, claim);
     }
 
     for (const feature of backlog.features ?? []) {
@@ -75,8 +55,8 @@ export function reconcileState(stateDir: string): void {
         if (activeClaim) {
           const expectedStatus = activeClaim.state === 'in_progress' ? 'in_progress' : 'claimed';
           // A merged task whose run has not finished yet is in the finalize window; finalize retries own it.
-          if (projectMode && (task.status === 'done' || task.status === 'released')) continue;
-          if (projectMode && task.status !== expectedStatus && !(task.status === 'claimed' && expectedStatus === 'in_progress')) {
+          if (task.status === 'done' || task.status === 'released') continue;
+          if (task.status !== expectedStatus && !(task.status === 'claimed' && expectedStatus === 'in_progress')) {
             // Project SQLite is authoritative: a claim its task row does not reflect is the orphan.
             logger.info(`[reconcile] claim ${activeClaim.run_id} does not match task ${taskRef} status ${task.status} -> failed`);
             activeClaim.state = 'failed';

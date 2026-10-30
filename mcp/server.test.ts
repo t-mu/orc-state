@@ -52,13 +52,21 @@ describe('orchestrator mcp server foundation', () => {
     expect(names).toContain('respond_input');
   });
 
-  it('unblocks a blocked task through unblock_task and refuses one that is not blocked', () => {
+  it('unblocks a blocked task through unblock_task and refuses one that is not blocked', async () => {
     seedProjectTasks(stateDir, [
       { ref: 'project/stuck', title: 'Stuck', status: 'blocked', blocked_reason: 'waiting' },
       { ref: 'project/fine', title: 'Fine', status: 'todo' },
     ]);
-    expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/stuck', reason: 'resolved' }, { project: null })).toMatchObject({ unblocked: true });
-    expect(() => invokeTool(stateDir, 'unblock_task', { task_ref: 'project/fine' }, { project: null })).toThrow(/not blocked/);
+    initEventsDb(stateDir);
+    withEventDbTransaction(stateDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-master', NULL, 'master', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('master-secret')));
+    const asMaster = { credential: 'master-secret', requireProject: () => {} };
+    try {
+      await expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/stuck', reason: 'resolved' }, asMaster)).resolves.toMatchObject({ unblocked: true });
+      await expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/fine' }, asMaster)).rejects.toThrow(/not blocked/);
+    } finally {
+      closeAllDatabases();
+    }
   });
 
   it('refuses a worker session on the master\'s scout and unblock tools in a project', async () => {
@@ -72,7 +80,7 @@ describe('orchestrator mcp server foundation', () => {
       claimed_at: '2026-01-01T00:00:00.000Z', started_at: '2026-01-01T00:00:01.000Z', lease_expires_at: '2099-01-01T00:00:00.000Z' }] });
     withEventDbTransaction(stateDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
       VALUES ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('worker-secret')));
-    const asWorker = { project: { id: 'p' }, credential: 'worker-secret' };
+    const asWorker = { credential: 'worker-secret', requireProject: () => {} };
     try {
       for (const [tool, args] of [['get_scout_report', { agent_id: 'scout-1' }], ['remove_scout', { agent_id: 'scout-1' }], ['unblock_task', { task_ref: 'project/x' }]] as const) {
         await expect(Promise.resolve().then(() => invokeTool(stateDir, tool, args, asWorker))).rejects.toMatchObject({ code: 'forbidden', status: 403 });

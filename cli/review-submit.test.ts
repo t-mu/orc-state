@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runWorkerCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -22,11 +21,7 @@ afterEach(() => {
 });
 
 function runCli(args: string[] = []) {
-  return spawnSync('node', ['cli/review-submit.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runWorkerCli(dir, 'review-submit.ts', args);
 }
 
 function readEvents(): Array<Record<string, unknown>> {
@@ -35,8 +30,8 @@ function readEvents(): Array<Record<string, unknown>> {
 }
 
 describe('orc review-submit', () => {
-  it('writes review_submitted event to SQLite on success', () => {
-    const result = runCli([
+  it('writes review_submitted event to SQLite on success', async () => {
+    const result = await runCli([
       '--run-id=run-abc',
       '--agent-id=reviewer-1',
       '--outcome=approved',
@@ -50,8 +45,8 @@ describe('orc review-submit', () => {
     expect(events.some((e) => e.event === 'review_submitted' && e.run_id === 'run-abc')).toBe(true);
   });
 
-  it('stores outcome=approved with findings text in payload', () => {
-    runCli([
+  it('stores outcome=approved with findings text in payload', async () => {
+    await runCli([
       '--run-id=run-abc',
       '--agent-id=reviewer-1',
       '--outcome=approved',
@@ -65,8 +60,8 @@ describe('orc review-submit', () => {
     expect((ev!.payload as Record<string, unknown>).findings).toBe('LGTM');
   });
 
-  it('stores outcome=findings with full findings text', () => {
-    runCli([
+  it('stores outcome=findings with full findings text', async () => {
+    await runCli([
       '--run-id=run-abc',
       '--agent-id=reviewer-1',
       '--outcome=findings',
@@ -80,8 +75,8 @@ describe('orc review-submit', () => {
     expect((ev!.payload as Record<string, unknown>).findings).toBe('Line 42: missing null check');
   });
 
-  it('exits 1 when --outcome is not approved or findings', () => {
-    const result = runCli([
+  it('exits 1 when --outcome is not approved or findings', async () => {
+    const result = await runCli([
       '--run-id=run-abc',
       '--agent-id=reviewer-1',
       '--outcome=invalid',
@@ -92,8 +87,8 @@ describe('orc review-submit', () => {
     expect(result.stderr).toContain("'approved' or 'findings'");
   });
 
-  it('exits 1 when --reason is absent', () => {
-    const result = runCli([
+  it('exits 1 when --reason is absent', async () => {
+    const result = await runCli([
       '--run-id=run-abc',
       '--agent-id=reviewer-1',
       '--outcome=approved',
@@ -103,8 +98,8 @@ describe('orc review-submit', () => {
     expect(result.stderr).toContain('--reason');
   });
 
-  it('exits 1 when --run-id is missing', () => {
-    const result = runCli([
+  it('exits 1 when --run-id is missing', async () => {
+    const result = await runCli([
       '--agent-id=reviewer-1',
       '--outcome=approved',
       '--reason=LGTM',
@@ -114,8 +109,8 @@ describe('orc review-submit', () => {
     expect(result.stderr).toContain('Usage');
   });
 
-  it('exits 1 when --agent-id is missing', () => {
-    const result = runCli([
+  it('exits 1 when --agent-id is missing', async () => {
+    const result = await runCli([
       '--run-id=run-abc',
       '--outcome=approved',
       '--reason=LGTM',
@@ -125,7 +120,7 @@ describe('orc review-submit', () => {
     expect(result.stderr).toContain('Usage');
   });
 
-  it('stores two events when called twice with same agent-id (no dedup at write)', () => {
+  it('stores two events when called twice with same agent-id (no dedup at write)', async () => {
     const args = [
       '--run-id=run-abc',
       '--agent-id=reviewer-1',
@@ -133,8 +128,8 @@ describe('orc review-submit', () => {
       '--reason=LGTM',
     ];
 
-    const r1 = runCli(args);
-    const r2 = runCli(args);
+    const r1 = await runCli(args);
+    const r2 = await runCli(args);
 
     expect(r1.status).toBe(0);
     expect(r2.status).toBe(0);

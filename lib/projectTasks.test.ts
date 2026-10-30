@@ -10,7 +10,6 @@ import { parseBodyAcceptanceCriteria, parseBodyTitle, RevisionConflictError } fr
 import {
   closeProjectTaskStores, createProjectTask, initProjectTaskStore, refreshBacklogProjection, reviseProjectTask,
 } from './projectTasks.ts';
-import { isProjectStateDir } from './projectContext.ts';
 import { ProjectRegistry } from './projectRegistry.ts';
 import { readBacklog, readClaims } from './stateReader.ts';
 import { handleCreateTask, handleGetTask, handleUpdateTask } from '../mcp/handlers.ts';
@@ -79,17 +78,6 @@ describe('storage-neutral task authoring', () => {
     expect(store.listRevisions('app/edit').map((revision) => revision.revision)).toEqual([1, 2]);
     expect(store.getRevision('app/edit', 1)?.bodyMarkdown).toBe('# Edit me\n\nv1\n');
     expect(store.getTask('app/edit')?.contentHash).not.toBe(store.getRevision('app/edit', 1)?.contentHash);
-  });
-
-  it('treats a state directory with only the project descriptor as a project too', () => {
-    const descriptorOnly = createTempStateDir('orc-descriptor-only-');
-    try {
-      expect(isProjectStateDir(descriptorOnly)).toBe(false);
-      writeFileSync(join(descriptorOnly, 'project.json'), JSON.stringify({ id: 'p1', name: 'p', target_repo_root: '/tmp/p' }));
-      expect(isProjectStateDir(descriptorOnly)).toBe(true);
-    } finally {
-      cleanupTempStateDir(descriptorOnly);
-    }
   });
 
   it('pins a claimed run to its revision and delivers that exact body even after later edits', () => {
@@ -182,7 +170,7 @@ describe('orc project task', () => {
     const registry = new ProjectRegistry(join(dir, 'data'));
     try {
       const project = runProjectCommand(['add', realpathSync(repo)], registry) as { id: string; stateDir: string };
-      expect(isProjectStateDir(project.stateDir)).toBe(true);
+      expect(existsSync(join(project.stateDir, 'runtime.db'))).toBe(true);
       const bodyFile = join(dir, 'outside.md');
       writeFileSync(bodyFile, '# External\n\nFrom a file outside the repo.\n');
       const flag = `--project=${project.id}`;

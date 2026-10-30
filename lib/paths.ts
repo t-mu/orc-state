@@ -71,17 +71,11 @@ export function assertProjectMode(): void {
 // ORCHESTRATION-ROOT consumers — framework home (orc binary, config, state). These are correct as-is and were NOT changed by task 185:
 //   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
 //                       WORKTREES_DIR, ORC_CONFIG_FILE
-//   coordinator.ts      resolveOrcBinSh(REPO_ROOT)           (orc binary lookup)
-//   coordinator.ts      repoRoot: REPO_ROOT → worker env     (orc bin/ctx for workers)
+//   coordinator.ts      resolveOrcBinSh(ORC_PACKAGE_ROOT)    (orc binary lookup)
+//   coordinator.ts      repoRoot: ORC_PACKAGE_ROOT → worker env (orc bin/ctx for workers)
 //   mcp/handlers.ts     RUN_WORKTREES_FILE
-//   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT ?? join(stateDir,'..')
+//   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT || TARGET_REPO_ROOT
 //                       (scout/agent working dir + orc bin; no git ops)
-//   NOTE: coordinator's REPO_ROOT is still resolveRepoRoot(), NOT the paths.ts
-//   ORCHESTRATION_ROOT constant. They coincide in production (coordinator cwd
-//   is the orchestration root) but can diverge in tests that set ORC_STATE_DIR
-//   to a temp dir whose parent is not a git root. Left on resolveRepoRoot() in
-//   task 185 to preserve behavior; reconciling the two anchors is deferred and
-//   only matters if that divergence ever becomes load-bearing.
 //
 // TARGET-REPO consumers — git operations on product history/worktrees:
 //   coordinator.ts      branchContainsMain / pushMain / mergeTaskBranch
@@ -92,7 +86,6 @@ export function assertProjectMode(): void {
 //                       no additional git op needing classification here.
 //   lib/runWorktree.ts  git worktree add/remove/branch (cwd)   → task 186
 //   lib/gitHosts/github.ts  gh/git via implicit process.cwd()  → task 186
-//   lib/gitignore.ts    ensureGitignore (must skip target repo) → task 188
 //   cli/doctor.ts, cli/preflight.ts, cli/init.ts  git-dir probes → task 191
 // Deferred consumers stay on resolveRepoRoot()/process.cwd() (== target root in
 // single-repo mode) and are handed to the tasks that own their test rewrites.

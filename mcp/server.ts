@@ -14,14 +14,13 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
-import { ACTIVE_PROJECT, assertProjectMode, STATE_DIR } from '../lib/paths.ts';
+import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
 import { ForbiddenError } from '../lib/domainErrors.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
-import { projectTaskStoreFor } from '../lib/projectTasks.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -108,33 +107,34 @@ const MASTER_WRITE_TOOLS: Readonly<Record<string, string>> = {
 const MASTER_ONLY_TOOLS: ReadonlySet<string> = new Set(['respond_input', 'request_scout', 'remove_scout']);
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
-  { project = ACTIVE_PROJECT, credential = clientCredential(process.env) }: { project?: unknown; credential?: string | null } = {}) {
-  if (project && !credential && (Object.hasOwn(MASTER_WRITE_TOOLS, name) || MASTER_ONLY_TOOLS.has(name))) {
+  { credential = clientCredential(process.env), requireProject = assertProjectMode }: { credential?: string | null; requireProject?: () => void } = {}) {
+  // startServer refuses a non-project state directory, so every tool runs in a registered project.
+  if (!credential && (Object.hasOwn(MASTER_WRITE_TOOLS, name) || MASTER_ONLY_TOOLS.has(name))) {
     const instead = MASTER_WRITE_TOOLS[name];
     throw new ForbiddenError(`${name} needs the master session (ORC_MASTER_SECRET, set by orc start-session). `
       + (instead ? `As the operator, use the orc CLI instead: ${instead}` : 'Only the master can do this; start it with orc start-session'));
   }
   const op = OPERATOR_TOOLS[name];
-  if (op && project) {
+  if (op) {
     // The server presents the session it runs in: the master's (from start-session) acts as the master,
     // and a worker's is refused like its shell.
-    return submitOperatorMutation({ op, ...args }, { credential, project, stateDir });
+    return submitOperatorMutation({ op, ...args }, { credential, stateDir, requireProject });
   }
-  if (name === 'request_scout' && project) {
+  if (name === 'request_scout') {
     // Only the master's session may launch scouts; it acts as itself.
     return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential!) });
   }
-  if ((name === 'get_scout_report' || name === 'remove_scout') && project && credential) {
+  if ((name === 'get_scout_report' || name === 'remove_scout') && credential) {
     // Scouts are the master's: a worker session cannot read or stop them.
     masterForCredential(stateDir, credential);
   }
   // The master acts as itself: the coordinator records the session's agent.
-  if (project && projectTaskStoreFor(stateDir) && name === 'create_task') {
+  if (name === 'create_task') {
     return submitProjectWrite<unknown>(stateDir, 'create_task', undefined,
       async (client) => (await client.createTask(args, undefined)).task,
       (actor) => handlers.handleCreateTask(stateDir, { ...args, actor_id: actor }), { credential });
   }
-  if (project && projectTaskStoreFor(stateDir) && name === 'update_task') {
+  if (name === 'update_task') {
     const { task_ref, expected_revision, ...changes } = args;
     return submitProjectWrite<unknown>(stateDir, 'update_task', undefined,
       async (client) => {
@@ -164,28 +164,16 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleCreateTask(stateDir, args);
     case 'update_task':
       return handlers.handleUpdateTask(stateDir, args);
-    case 'delegate_task':
-      return handlers.handleDelegateTask(stateDir, args);
-    case 'cancel_task':
-      return handlers.handleCancelTask(stateDir, args);
-    case 'request_scout':
-      return handlers.handleRequestScout(stateDir, args);
     case 'get_scout_report':
       return handlers.handleGetScoutReport(stateDir, args);
     case 'remove_scout':
       return handlers.handleRemoveScout(stateDir, args);
-    case 'respond_input':
-      return handlers.handleRespondInput(stateDir, args);
     case 'get_run':
       return handlers.handleGetRun(stateDir, args);
     case 'list_waiting_input':
       return handlers.handleListWaitingInput(stateDir);
     case 'query_events':
       return handlers.handleQueryEvents(stateDir, args);
-    case 'reset_task':
-      return handlers.handleResetTask(stateDir, args);
-    case 'unblock_task':
-      return handlers.handleUnblockTask(stateDir, args);
     case 'list_worktrees':
       return handlers.handleListWorktrees(stateDir);
     case 'get_notifications':

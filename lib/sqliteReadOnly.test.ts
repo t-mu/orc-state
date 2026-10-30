@@ -131,7 +131,7 @@ describe.skipIf(asRoot)('state stores without write access to the state director
       const reviews = await readViaCoordinator(
         async (client) => (await client.reviews('run-a')).reviews,
         () => readRunReviews(dir, 'run-a'),
-        { project: 'p', client: () => new ControlClient(dir) },
+        { client: () => new ControlClient(dir) },
       );
       expect(reviews.map((review) => review.payload.findings)).toEqual(['ok']);
     } finally {

@@ -6,8 +6,7 @@ import Database from 'better-sqlite3';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { claimTask } from './claimManager.ts';
 import { closeAllDatabases, initEventsDb, queryEvents } from './eventLog.ts';
-import { readAgents, readClaims } from './stateReader.ts';
-import { reconcileState } from './reconcile.ts';
+import { readClaims } from './stateReader.ts';
 import { closeProviderSessionsForAgent, commitClaims, recordProviderSession, refreshClaimsProjection } from './runStore.ts';
 import type { Claim } from '../types/claims.ts';
 import type { OrcEventInput } from '../types/events.ts';
@@ -110,49 +109,6 @@ describe('SQLite run authority', () => {
     expect(refreshClaimsProjection(dir)).toBe(true);
     expect((JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')) as { claims: Claim[] }).claims.map((claim) => claim.run_id))
       .toEqual(['run-committed']);
-  });
-
-  it('imports a legacy running agent session with a stable separate ID', () => {
-    seedState(dir, { claims: [makeClaim('run-legacy')] });
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [{
-      agent_id: 'worker-1', provider: 'codex', status: 'running',
-      session_handle: 'pty:worker-1', registered_at: '2026-01-01T00:00:00Z',
-    }] }));
-    initEventsDb(dir);
-    const first = readAgents(dir).agents[0].session_token;
-    expect(first).toMatch(/^legacy-/);
-    closeAllDatabases();
-    expect(readAgents(dir).agents[0].session_token).toBe(first);
-    const db = new Database(join(dir, 'events.db'), { readonly: true });
-    try {
-      expect(db.prepare('SELECT session_id, run_id FROM sessions').get()).toEqual({ session_id: first, run_id: 'run-legacy' });
-      expect(db.prepare("SELECT count(*) AS count FROM runtime_cutovers WHERE name = 'sessions'").get()).toEqual({ count: 1 });
-    } finally {
-      db.close();
-    }
-  });
-
-  it('leaves duplicate legacy claims visible until reconciliation repairs them', () => {
-    seedState(dir, {
-      tasks: [{ ref: 'orch/task-1', title: 'Task 1', status: 'claimed' }],
-      claims: [makeClaim('run-old'), makeClaim('run-new')],
-    });
-    initEventsDb(dir);
-    expect(readClaims(dir).claims.filter((claim) => claim.state === 'claimed')).toHaveLength(2);
-    const before = new Database(join(dir, 'events.db'), { readonly: true });
-    try {
-      expect(before.prepare("SELECT count(*) AS count FROM runtime_cutovers WHERE name = 'runs'").get()).toEqual({ count: 0 });
-    } finally {
-      before.close();
-    }
-    reconcileState(dir);
-    expect(readClaims(dir).claims.filter((claim) => claim.state === 'claimed')).toHaveLength(1);
-    const after = new Database(join(dir, 'events.db'), { readonly: true });
-    try {
-      expect(after.prepare("SELECT count(*) AS count FROM runtime_cutovers WHERE name = 'runs'").get()).toEqual({ count: 1 });
-    } finally {
-      after.close();
-    }
   });
 
   it('rejects concurrent claims for the same task across processes', async () => {

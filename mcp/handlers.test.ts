@@ -18,13 +18,9 @@ import {
   handleReadBacklog,
   handleCreateTask,
   handleUpdateTask,
-  handleDelegateTask,
-  handleCancelTask,
-  handleRespondInput,
   handleGetRun,
   handleListWaitingInput,
   handleQueryEvents,
-  handleResetTask,
   handleListWorktrees,
   handleGetNotifications,
   handleMemoryWakeUp,
@@ -34,6 +30,7 @@ import {
   handleMemoryStatus,
   closeMemoryDb,
 } from './handlers.ts';
+import { cancelTask, delegateTask, resetTask, respondInput } from '../lib/operatorMutations.ts';
 
 let dir: string;
 
@@ -190,16 +187,6 @@ beforeEach(() => {
       last_heartbeat_at: null,
       lease_expires_at: '2026-01-01T00:10:00.000Z',
     },
-    {
-      run_id: 'run-4',
-      task_ref: 'project/todo-one',
-      agent_id: 'orc-1',
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:19:30.000Z',
-      started_at: '2026-01-01T00:19:35.000Z',
-      last_heartbeat_at: '2026-01-01T00:19:50.000Z',
-      lease_expires_at: '2026-01-01T00:30:00.000Z',
-    },
   ]);
   seedEventsLines([
     JSON.stringify({ seq: 1, event: 'task_added', task_ref: 'project/todo-one' }),
@@ -300,7 +287,7 @@ describe('mcp read handlers', () => {
 
   it('handleListActiveRuns returns only claimed/in_progress claims', () => {
     const active = handleListActiveRuns(dir);
-    expect(active.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2', 'run-4']);
+    expect(active.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2']);
   });
 
   it('handleListStalledRuns returns stale runs with stale_for_ms', () => {
@@ -433,7 +420,7 @@ describe('mcp read handlers', () => {
       ['ref', 'title', 'status', 'feature_ref', 'owner'].every((key) => Object.hasOwn(task, key)))).toBe(true);
     expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done' || task.status === 'released')).toBe(false);
     expect(status.last_notification_seq).toBe(0);
-    expect(status.stalled_runs).toBe(3);
+    expect(status.stalled_runs).toBe(2);
     expect(status.project).toMatchObject({ id: TEST_PROJECT_ID });
   });
 
@@ -623,9 +610,9 @@ describe('mcp read handlers', () => {
     }
   });
 
-  it('handleDelegateTask assigns explicit target and appends task_delegated event', () => {
+  it('delegateTask assigns explicit target and appends task_delegated event', () => {
     seedClaims([]);
-    const result = handleDelegateTask(dir, {
+    const result = delegateTask(dir, {
       task_ref: 'project/todo-one',
       target_agent_id: 'orc-1',
       task_type: 'implementation',
@@ -645,13 +632,13 @@ describe('mcp read handlers', () => {
     expect(delegatedEvent.agent_id).toBe('orc-1');
   });
 
-  it('handleDelegateTask transitions blocked task to todo and updates planning fields', () => {
+  it('delegateTask transitions blocked task to todo and updates planning fields', () => {
     seedClaims([]);
     const before = readBacklog(dir).features.find(feature => feature.ref === 'infra')?.tasks
       .find((task) => task.ref === 'infra/blocked-one');
     expect(before?.status).toBe('blocked');
 
-    const result = handleDelegateTask(dir, {
+    const result = delegateTask(dir, {
       task_ref: 'infra/blocked-one',
       target_agent_id: 'orc-1',
       task_type: 'refactor',
@@ -666,9 +653,9 @@ describe('mcp read handlers', () => {
     expect(after?.updated_at).not.toBe(before?.updated_at);
   });
 
-  it('handleDelegateTask returns warning when no eligible worker exists', () => {
+  it('delegateTask returns warning when no eligible worker exists', () => {
     seedAgents([{ agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' }]);
-    const result = handleDelegateTask(dir, {
+    const result = delegateTask(dir, {
       task_ref: 'project/todo-one',
       task_type: 'implementation',
       actor_id: 'master',
@@ -679,11 +666,11 @@ describe('mcp read handlers', () => {
     expect(Array.isArray(result.candidate_diagnostics)).toBe(true);
   });
 
-  it('handleDelegateTask clears stale owner when no eligible worker exists', () => {
+  it('delegateTask clears stale owner when no eligible worker exists', () => {
     setTaskOwner('project/todo-one', 'orc-1');
 
     seedAgents([{ agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' }]);
-    const result = handleDelegateTask(dir, {
+    const result = delegateTask(dir, {
       task_ref: 'project/todo-one',
       task_type: 'implementation',
       actor_id: 'master',
@@ -695,9 +682,9 @@ describe('mcp read handlers', () => {
     expect(refreshed).not.toHaveProperty('owner');
   });
 
-  it('handleDelegateTask auto-selects first eligible worker when target is omitted', () => {
+  it('delegateTask auto-selects first eligible worker when target is omitted', () => {
     seedClaims([]);
-    const result = handleDelegateTask(dir, {
+    const result = delegateTask(dir, {
       task_ref: 'project/todo-one',
       task_type: 'implementation',
       actor_id: 'master',
@@ -705,7 +692,7 @@ describe('mcp read handlers', () => {
     expect(result).toEqual({ task_ref: 'project/todo-one', assigned_to: 'orc-1' });
   });
 
-  it('handleDelegateTask auto-selection uses round-robin across eligible workers (A then B then A)', () => {
+  it('delegateTask auto-selection uses round-robin across eligible workers (A then B then A)', () => {
     seedTasks([
       {
         ref: 'project/todo-two',
@@ -733,17 +720,17 @@ describe('mcp read handlers', () => {
       { agent_id: 'orc-2', provider: 'codex', role: 'worker', status: 'running' },
     ]);
 
-    const first = handleDelegateTask(dir, {
+    const first = delegateTask(dir, {
       task_ref: 'project/todo-one',
       task_type: 'implementation',
       actor_id: 'master',
     });
-    const second = handleDelegateTask(dir, {
+    const second = delegateTask(dir, {
       task_ref: 'project/todo-two',
       task_type: 'implementation',
       actor_id: 'master',
     });
-    const third = handleDelegateTask(dir, {
+    const third = delegateTask(dir, {
       task_ref: 'project/todo-three',
       task_type: 'implementation',
       actor_id: 'master',
@@ -754,7 +741,7 @@ describe('mcp read handlers', () => {
     expect(third.assigned_to).toBe(first.assigned_to);
   });
 
-  it('handleDelegateTask in-memory round-robin state persists across calls', () => {
+  it('delegateTask in-memory round-robin state persists across calls', () => {
     seedTasks([{
       ref: 'project/todo-two',
       title: 'Todo two',
@@ -773,12 +760,12 @@ describe('mcp read handlers', () => {
 
     // In-memory round-robin state persists across calls: consecutive delegations
     // always alternate between workers regardless of which agent was last assigned.
-    const first = handleDelegateTask(dir, {
+    const first = delegateTask(dir, {
       task_ref: 'project/todo-one',
       task_type: 'implementation',
       actor_id: 'master',
     });
-    const second = handleDelegateTask(dir, {
+    const second = delegateTask(dir, {
       task_ref: 'project/todo-two',
       task_type: 'implementation',
       actor_id: 'master',
@@ -788,27 +775,27 @@ describe('mcp read handlers', () => {
     expect(['orc-1', 'orc-2']).toContain(second.assigned_to);
   });
 
-  it('handleDelegateTask errors on invalid target and missing task', () => {
-    expect(() => handleDelegateTask(dir, {
+  it('delegateTask errors on invalid target and missing task', () => {
+    expect(() => delegateTask(dir, {
       task_ref: 'project/todo-one',
       target_agent_id: 'missing-worker',
       actor_id: 'master',
     })).toThrow(/Target agent not found/);
-    expect(() => handleDelegateTask(dir, {
+    expect(() => delegateTask(dir, {
       task_ref: 'project/missing-task',
       actor_id: 'master',
     })).toThrow(/Task not found/);
   });
 
-  it('handleDelegateTask rejects explicit target when agent already has an active run', () => {
-    expect(() => handleDelegateTask(dir, {
+  it('delegateTask rejects explicit target when agent already has an active run', () => {
+    expect(() => delegateTask(dir, {
       task_ref: 'project/todo-one',
       target_agent_id: 'orc-1',
       actor_id: 'master',
     })).toThrow(/Target agent orc-1 already has active run run-1/);
   });
 
-  it('handleDelegateTask explicit target is unaffected by round-robin state', () => {
+  it('delegateTask explicit target is unaffected by round-robin state', () => {
     seedClaims([]);
     seedAgents([
       { agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' },
@@ -817,7 +804,7 @@ describe('mcp read handlers', () => {
     ]);
 
     // Explicit target always wins regardless of in-memory round-robin state.
-    const result = handleDelegateTask(dir, {
+    const result = delegateTask(dir, {
       task_ref: 'project/todo-one',
       target_agent_id: 'orc-1',
       task_type: 'implementation',
@@ -826,8 +813,8 @@ describe('mcp read handlers', () => {
     expect(result).toEqual({ task_ref: 'project/todo-one', assigned_to: 'orc-1' });
   });
 
-  it('handleDelegateTask rejects targets that cannot execute task type', () => {
-    expect(() => handleDelegateTask(dir, {
+  it('delegateTask rejects targets that cannot execute task type', () => {
+    expect(() => delegateTask(dir, {
       task_ref: 'project/todo-one',
       target_agent_id: 'master',
       task_type: 'implementation',
@@ -835,28 +822,28 @@ describe('mcp read handlers', () => {
     })).toThrow(/cannot execute task: role_ineligible:master/);
   });
 
-  it('handleDelegateTask surfaces provider mismatch for explicit target rejection', () => {
+  it('delegateTask surfaces provider mismatch for explicit target rejection', () => {
     seedClaims([]);
     // The required provider is part of the task definition, so seed a task that carries it.
     seedTasks([{ ref: 'project/gemini-one', title: 'Gemini one', status: 'todo', task_type: 'implementation', required_provider: 'gemini' }]);
 
-    expect(() => handleDelegateTask(dir, {
+    expect(() => delegateTask(dir, {
       task_ref: 'project/gemini-one',
       target_agent_id: 'orc-1',
       actor_id: 'master',
     })).toThrow(/provider_mismatch:gemini/);
-    expect(() => handleDelegateTask(dir, {
+    expect(() => delegateTask(dir, {
       task_ref: 'project/gemini-one',
       target_agent_id: 'orc-1',
       actor_id: 'master',
     })).toThrow(/task requires provider 'gemini'/);
   });
 
-  it('handleDelegateTask returns owner and provider diagnostics when auto-selection fails', () => {
+  it('delegateTask returns owner and provider diagnostics when auto-selection fails', () => {
     seedClaims([]);
     seedTasks([{ ref: 'project/gemini-one', title: 'Gemini one', status: 'todo', task_type: 'implementation', owner: 'orc-2', required_provider: 'gemini' }]);
 
-    const result = handleDelegateTask(dir, {
+    const result = delegateTask(dir, {
       task_ref: 'project/gemini-one',
       task_type: 'implementation',
       actor_id: 'master',
@@ -877,16 +864,16 @@ describe('mcp read handlers', () => {
     );
   });
 
-  it('handleDelegateTask validates actor_id registration for non-human actors', () => {
-    expect(() => handleDelegateTask(dir, {
+  it('delegateTask validates actor_id registration for non-human actors', () => {
+    expect(() => delegateTask(dir, {
       task_ref: 'project/todo-one',
       actor_id: 'ghost-agent',
     })).toThrow(/Actor agent not found/);
   });
 
-  it('handleCancelTask sets todo task to cancelled and returns cancelled=true', () => {
+  it('cancelTask sets todo task to cancelled and returns cancelled=true', () => {
     seedClaims([]);
-    const result = handleCancelTask(dir, {
+    const result = cancelTask(dir, {
       task_ref: 'project/todo-one',
       reason: 'cancelled by operator',
       actor_id: 'master',
@@ -907,8 +894,8 @@ describe('mcp read handlers', () => {
     expect(event.task_ref).toBe('project/todo-one');
   });
 
-  it('handleCancelTask removes active in_progress claim, emits run_cancelled, and deposits TASK_COMPLETE notification', () => {
-    const result = handleCancelTask(dir, {
+  it('cancelTask removes active in_progress claim, emits run_cancelled, and deposits TASK_COMPLETE notification', () => {
+    const result = cancelTask(dir, {
       task_ref: 'project/todo-one',
       reason: 'manual cancellation',
       actor_id: 'master',
@@ -918,7 +905,6 @@ describe('mcp read handlers', () => {
 
     const remainingClaims = readFileSync(join(dir, 'claims.json'), 'utf8');
     expect(remainingClaims).not.toContain('"run_id":"run-1"');
-    expect(remainingClaims).not.toContain('"run_id":"run-4"');
 
     const allEvents = queryEvents(dir, {});
     const eventTypes = allEvents.map((e) => (e as unknown as Record<string, unknown>).event);
@@ -926,15 +912,14 @@ describe('mcp read handlers', () => {
     expect(eventTypes).toContain('task_cancelled');
     const runIds = allEvents.map((e) => (e as unknown as Record<string, unknown>).run_id).filter(Boolean);
     expect(runIds).toContain('run-1');
-    expect(runIds).toContain('run-4');
 
     const cancelledEvents = queryEvents(dir, { event_type: 'run_cancelled' });
-    expect(cancelledEvents.filter((e) => (e as unknown as Record<string, unknown>).task_ref === 'project/todo-one')).toHaveLength(2);
+    expect(cancelledEvents.filter((e) => (e as unknown as Record<string, unknown>).task_ref === 'project/todo-one')).toHaveLength(1);
   });
 
-  it('handleCancelTask returns already_terminal on done task without state change', () => {
+  it('cancelTask returns already_terminal on done task without state change', () => {
     const before = readBacklog(dir);
-    const result = handleCancelTask(dir, {
+    const result = cancelTask(dir, {
       task_ref: 'project/done-one',
       actor_id: 'master',
     });
@@ -946,12 +931,12 @@ describe('mcp read handlers', () => {
     expect(readBacklog(dir)).toEqual(before);
   });
 
-  it('handleCancelTask cancels a blocked task and reports a repeat cancel as already_terminal', () => {
-    const first = handleCancelTask(dir, {
+  it('cancelTask cancels a blocked task and reports a repeat cancel as already_terminal', () => {
+    const first = cancelTask(dir, {
       task_ref: 'infra/blocked-one',
       actor_id: 'master',
     }) as Record<string, unknown>;
-    const second = handleCancelTask(dir, {
+    const second = cancelTask(dir, {
       task_ref: 'infra/blocked-one',
       actor_id: 'master',
     }) as Record<string, unknown>;
@@ -960,7 +945,7 @@ describe('mcp read handlers', () => {
     expect(second).toEqual({ error: 'already_terminal', task_ref: 'infra/blocked-one', status: 'cancelled' });
   });
 
-  it('handleRespondInput clears awaiting_input state and appends input_response', () => {
+  it('respondInput clears awaiting_input state and appends input_response', () => {
     seedClaims([{
       run_id: 'run-input-1',
       task_ref: 'project/todo-one',
@@ -991,7 +976,7 @@ describe('mcp read handlers', () => {
       }),
     ]);
 
-    const result = handleRespondInput(dir, {
+    const result = respondInput(dir, {
       run_id: 'run-input-1',
       agent_id: 'orc-1',
       response: 'yes',
@@ -1112,31 +1097,31 @@ describe('handleQueryEvents', () => {
   });
 });
 
-describe('handleResetTask', () => {
+describe('resetTask', () => {
   it('resets task to todo and cancels active claims', () => {
-    const result = handleResetTask(dir, { task_ref: 'project/todo-one', actor_id: 'master' }) as Record<string, unknown>;
+    const result = resetTask(dir, { task_ref: 'project/todo-one', actor_id: 'master' }) as Record<string, unknown>;
     expect(result.reset).toBe(true);
     expect(result.previous_status).toBe('todo');
-    expect(result.cancelled_claims).toBe(2); // run-1 and run-4 are in_progress
+    expect(result.cancelled_claims).toBe(1); // run-1 is in_progress
 
     const task = readBacklog(dir).features.flatMap((feature) => feature.tasks).find((t) => t.ref === 'project/todo-one');
     expect(task?.status).toBe('todo');
   });
 
   it('uses human as default actor_id', () => {
-    expect(() => handleResetTask(dir, { task_ref: 'project/todo-one' })).not.toThrow();
+    expect(() => resetTask(dir, { task_ref: 'project/todo-one' })).not.toThrow();
   });
 
   it('throws on missing task_ref', () => {
-    expect(() => handleResetTask(dir, {})).toThrow('task_ref is required');
+    expect(() => resetTask(dir, {})).toThrow('task_ref is required');
   });
 
   it('throws on invalid actor_id', () => {
-    expect(() => handleResetTask(dir, { task_ref: 'project/todo-one', actor_id: 'INVALID!' })).toThrow('Invalid actor_id');
+    expect(() => resetTask(dir, { task_ref: 'project/todo-one', actor_id: 'INVALID!' })).toThrow('Invalid actor_id');
   });
 
   it('throws when task not found', () => {
-    expect(() => handleResetTask(dir, { task_ref: 'no/such-task', actor_id: 'master' })).toThrow('task not found');
+    expect(() => resetTask(dir, { task_ref: 'no/such-task', actor_id: 'master' })).toThrow('task not found');
   });
 });
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { projectCliEnv } from '../test-fixtures/projectCli.ts';
 import { spawnSync }     from 'node:child_process';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -15,6 +16,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.env.ORC_PROJECT_ID = '';
+  delete process.env.ORC_STATE_DIR;
   cleanupTempStateDir(dir);
 });
 
@@ -45,13 +48,13 @@ function readAgents() {
 }
 
 function setEnv(stateDir: string) {
-  process.env.ORC_STATE_DIR = stateDir;
+  Object.assign(process.env, bridgeProjectEnv(stateDir));
 }
 
 function spawnKillAll(stateDir: string, extraArgs: string[] = []) {
   return spawnSync('node', ['cli/kill-all.ts', ...extraArgs], {
     cwd:      repoRoot,
-    env:      { ...process.env, ORC_STATE_DIR: stateDir },
+    env:      projectCliEnv(stateDir),
     encoding: 'utf8',
   });
 }
@@ -59,13 +62,16 @@ function spawnKillAll(stateDir: string, extraArgs: string[] = []) {
 // ── spawnSync tests (no adapter needed) ────────────────────────────────────
 
 describe('cli/kill-all.ts', () => {
-  describe('when state dir is absent', () => {
-    it('exits 0 and prints "not running" and "Cleared 0"', () => {
-      const missingDir = join(dir, 'does-not-exist');
-      const result = spawnKillAll(missingDir);
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain('not running');
-      expect(result.stdout).toContain('Cleared 0');
+  describe('outside a registered project', () => {
+    it('refuses and stops nothing', () => {
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ORC_')));
+      const result = spawnSync('node', ['cli/kill-all.ts'], {
+        cwd: repoRoot, encoding: 'utf8',
+        env: { ...env, ORC_DATA_HOME: '/nonexistent/orc-test-data-home', ORC_STATE_DIR: join(dir, 'legacy') },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('No registered project here');
+      expect(result.stdout).not.toContain('Cleared');
     });
   });
 

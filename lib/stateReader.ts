@@ -1,32 +1,33 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState } from '../types/agents.ts';
 import type { ClaimsState } from '../types/claims.ts';
 import { logger } from './logger.ts';
 import { readAuthoritativeClaims, withAuthoritativeAgentSessions } from './runStore.ts';
-import { projectTaskStoreFor, readProjectBacklog } from './projectTasks.ts';
+import { readProjectBacklog, requireProjectTaskStore } from './projectTasks.ts';
 
+/**
+ * A state file's contents. Claims come from the run store and the backlog from
+ * the project task store; their JSON files are only projections and are never
+ * read back.
+ */
 export function readJson(stateDir: string, file: string): unknown {
   if (file === 'claims.json') {
-    const authoritative = readAuthoritativeClaims(stateDir);
-    if (authoritative) return authoritative;
+    const claims = readAuthoritativeClaims(stateDir);
+    if (claims) return claims;
+    if (existsSync(join(stateDir, 'claims.json'))) {
+      // Migration refuses an installation with active claims, so only a hand-copied claims.json gets here.
+      throw new Error(`${join(stateDir, 'claims.json')} could not be imported into the run store (two active claims for one task); migrate the installation again with orc project migrate`);
+    }
+    return { version: '1', claims: [] } satisfies ClaimsState;
   }
-  if (file === 'backlog.json') {
-    const store = projectTaskStoreFor(stateDir);
-    if (store) return readProjectBacklog(store);
-  }
+  if (file === 'backlog.json') return readProjectBacklog(requireProjectTaskStore(stateDir));
   return JSON.parse(readFileSync(join(stateDir, file), 'utf8'));
 }
 
 export function readBacklog(stateDir: string): Backlog {
-  const raw = readJson(stateDir, 'backlog.json') as Record<string, unknown>;
-  // Backward compat: JSON written before the epics→features rename.
-  if (!raw.features && Array.isArray(raw.epics)) {
-    raw.features = raw.epics;
-    delete raw.epics;
-  }
-  return raw as unknown as Backlog;
+  return readJson(stateDir, 'backlog.json') as Backlog;
 }
 
 export function readAgents(stateDir: string): AgentsState {

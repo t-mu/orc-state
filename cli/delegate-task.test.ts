@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import {
   createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, seedState as seedProjectState,
 } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runProjectCli } from '../test-fixtures/projectCli.ts';
+import { commitClaims } from '../lib/runStore.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -78,7 +78,8 @@ describe('cli/delegate-task.ts', () => {
   it('fails when actor-id is invalid format', () => {
     const result = runCli(['--task-ref=docs/task-1', '--actor-id=INVALID']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Invalid actor-id');
+    // The operator authorization refuses it before the delegation's own format check.
+    expect(result.stderr).toContain('Actor agent not found: INVALID');
   });
 
   it('fails when actor-id is non-human but not registered', () => {
@@ -107,7 +108,7 @@ describe('cli/delegate-task.ts', () => {
     expect(delegated.owner).toBe('worker-01');
 
     // Mark worker busy, then delegate again without target.
-    writeFileSync(join(dir, 'claims.json'), JSON.stringify({
+    commitClaims(dir, {
       version: '1',
       claims: [{
         run_id: 'run-1',
@@ -117,7 +118,7 @@ describe('cli/delegate-task.ts', () => {
         claimed_at: new Date().toISOString(),
         lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
       }],
-    }));
+    });
     seedProjectTasks(dir, [{ ref: 'docs/task-2', title: 'Task 2', status: 'todo', planning_state: 'ready_for_dispatch' }]);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
@@ -180,11 +181,7 @@ describe('cli/delegate-task.ts', () => {
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['cli/delegate-task.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runProjectCli(dir, 'cli/delegate-task.ts', args);
 }
 
 function seedState() {

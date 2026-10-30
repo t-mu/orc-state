@@ -67,22 +67,16 @@ describe('cli/watch.ts', () => {
         { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
         { agent_id: 'orc-2', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
       ],
+      // A run blocked in finalization without a reason (two active runs for one task cannot be stored).
       claims: [
         {
           run_id: 'run-old',
           task_ref: 'docs/task-1',
           agent_id: 'orc-1',
-          state: 'claimed',
+          state: 'in_progress',
           claimed_at: '2026-01-01T00:00:00Z',
           lease_expires_at: '2099-01-01T00:00:00Z',
-        },
-        {
-          run_id: 'run-new',
-          task_ref: 'docs/task-1',
-          agent_id: 'orc-2',
-          state: 'claimed',
-          claimed_at: '2026-01-01T00:05:00Z',
-          lease_expires_at: '2099-01-01T00:00:00Z',
+          finalization_state: 'blocked_finalize',
         },
       ],
     });
@@ -90,7 +84,7 @@ describe('cli/watch.ts', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Orchestrator Status');
     expect(result.stdout).toContain('State validation warnings:');
-    expect(result.stdout).toContain('keep oldest run run-old');
+    expect(result.stdout).toContain('claim run-old is blocked_finalize without a blocked reason');
   });
 });
 

@@ -6,7 +6,7 @@
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACTIVE_PROJECT, STATE_DIR } from '../lib/paths.ts';
+import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { closeMemoryDb } from '../lib/memoryStore.ts';
 import { flag, intFlag } from '../lib/args.ts';
 import { applyLifecycle } from '../lib/workerLifecycle.ts';
@@ -33,7 +33,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   }
   const opts = { content, wing: flag('wing'), hall: flag('hall'), room: flag('room'), importance: intFlag('importance', 5) };
   // A session (worker or master) records through its coordinator; an operator shell writes directly.
-  if (ACTIVE_PROJECT && clientCredential()) {
+  try {
+    assertProjectMode();
+  } catch (error) {
+    cliError(error);
+  }
+  if (clientCredential()) {
     try {
       console.log((await submitLifecycle({ op: 'memory-record', ...opts })).message);
     } catch (error) {

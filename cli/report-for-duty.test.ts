@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runWorkerCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 const TOKEN = 'token-abc-123';
@@ -20,64 +19,60 @@ afterEach(() => {
 });
 
 describe('cli/report-for-duty.ts', () => {
-  it('reports for duty successfully with correct token', () => {
-    const result = runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
+  it('reports for duty successfully with correct token', async () => {
+    const result = await runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('reported_for_duty: worker-1');
   });
 
-  it('accepts the older --session-token name', () => {
-    const result = runCli(['--agent-id=worker-1', `--session-token=${TOKEN}`]);
+  it('accepts the older --session-token name', async () => {
+    const result = await runCli(['--agent-id=worker-1', `--session-token=${TOKEN}`]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('reported_for_duty: worker-1');
   });
 
-  it('emits reported_for_duty event', () => {
-    runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
+  it('emits reported_for_duty event', async () => {
+    await runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
     const events = readEvents();
     const event = events.find((e) => e.event === 'reported_for_duty' && e.agent_id === 'worker-1');
     expect(event).toBeDefined();
     expect((event?.payload as Record<string, unknown>)?.session_token).toBe(TOKEN);
   });
 
-  it('updates agent session_ready_at timestamp', () => {
-    runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
+  it('updates agent session_ready_at timestamp', async () => {
+    await runCli(['--agent-id=worker-1', `--session-id=${TOKEN}`]);
     const agents = readAgents();
     const agent = agents.find((a: Record<string, unknown>) => a.agent_id === 'worker-1');
     expect(agent?.session_ready_at).toBeTruthy();
   });
 
-  it('exits 1 when --agent-id is missing', () => {
-    const result = runCli([`--session-id=${TOKEN}`]);
+  it('exits 1 when --agent-id is missing', async () => {
+    const result = await runCli([`--session-id=${TOKEN}`]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc report-for-duty');
   });
 
-  it('exits 1 when --session-id is missing', () => {
-    const result = runCli(['--agent-id=worker-1']);
+  it('exits 1 when --session-id is missing', async () => {
+    const result = await runCli(['--agent-id=worker-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc report-for-duty');
   });
 
-  it('exits 1 when agent is not found', () => {
-    const result = runCli(['--agent-id=nonexistent', `--session-id=${TOKEN}`]);
+  it('exits 1 when agent is not found', async () => {
+    const result = await runCli(['--agent-id=nonexistent', `--session-id=${TOKEN}`]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Agent not found');
   });
 
-  it('exits 1 when the session id does not match', () => {
-    const result = runCli(['--agent-id=worker-1', '--session-id=wrong-token']);
+  it('exits 1 when the session id does not match', async () => {
+    const result = await runWorkerCli(dir, 'report-for-duty.ts', ['--agent-id=worker-1', '--session-id=wrong-token'], {}, { sessionId: TOKEN });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Session id mismatch');
+    expect(result.stderr).toContain('must present the caller\'s own session id');
   });
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['cli/report-for-duty.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runWorkerCli(dir, 'report-for-duty.ts', args);
 }
 
 function seedState() {

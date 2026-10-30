@@ -89,38 +89,6 @@ describe('reconcileState', () => {
     expect(backlog.features[0].tasks[0].status).toBe('todo');
   });
 
-  it('marks newer duplicate active claim as failed and keeps the oldest claim', () => {
-    writeState({
-      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'claimed' }],
-      claims: [
-        {
-          run_id: 'run-old',
-          task_ref: 'docs/task-1',
-          agent_id: 'a1',
-          state: 'claimed',
-          claimed_at: '2026-01-01T00:00:00.000Z',
-          lease_expires_at: '2026-01-01T01:00:00.000Z',
-        },
-        {
-          run_id: 'run-new',
-          task_ref: 'docs/task-1',
-          agent_id: 'a2',
-          state: 'claimed',
-          claimed_at: '2026-01-01T00:10:00.000Z',
-          lease_expires_at: '2026-01-01T01:10:00.000Z',
-        },
-      ],
-    });
-
-    reconcileState(dir);
-    const claims = readStateFile<{ claims: Array<Record<string, unknown>> }>(dir, 'claims.json').claims;
-    expect(claims.find((c) => c['run_id'] === 'run-old')?.['state']).toBe('claimed');
-    expect(claims.find((c) => c['run_id'] === 'run-new')?.['state']).toBe('failed');
-    expect(queryEvents(dir, { event_type: 'run_failed' })).toMatchObject([
-      { run_id: 'run-new', payload: { reason: 'reconcile_duplicate_claim' } },
-    ]);
-  });
-
   it('marks orphan active claim as failed', () => {
     writeState({
       tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }],

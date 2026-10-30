@@ -8,7 +8,7 @@ import { commitClaims } from './runStore.ts';
 import { buildSessionBootstrap } from './sessionBootstrap.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { markTaskDoneRuntimeOnly } from './taskCompletion.ts';
-import { handleCancelTask, handleResetTask } from '../mcp/handlers.ts';
+import { cancelTask, resetTask } from './operatorMutations.ts';
 
 let dir: string;
 
@@ -108,7 +108,7 @@ describe('project run lifecycle', () => {
 
   it('leaves a task the operator already reset untouched when its old run finishes', () => {
     const { run_id } = claimTask(dir, 'app/base', 'worker-a');
-    handleResetTask(dir, { task_ref: 'app/base' });
+    resetTask(dir, { task_ref: 'app/base' });
     expect(task('app/base').status).toBe('todo');
     expect(runs('app/base')).toEqual([{ run_id, state: 'cancelled' }]);
     finishRun(dir, run_id, 'worker-a', { success: true });
@@ -125,7 +125,7 @@ describe('project run lifecycle', () => {
 
   it('cancels into the terminal cancelled status and closes the run as cancelled', () => {
     const { run_id } = claimTask(dir, 'app/base', 'worker-a');
-    handleCancelTask(dir, { task_ref: 'app/base', reason: 'not needed', actor_id: 'human' });
+    cancelTask(dir, { task_ref: 'app/base', reason: 'not needed', actor_id: 'human' });
     expect(task('app/base').status).toBe('cancelled');
     expect(transitions('app/base').at(-1)).toMatchObject({ cause: 'cancel', reason: 'not needed' });
     expect(runs('app/base')).toEqual([{ run_id, state: 'cancelled' }]);
@@ -145,7 +145,7 @@ describe('project run lifecycle', () => {
     startRun(dir, first.run_id, 'worker-a');
     markTaskDoneRuntimeOnly('app/base', 'coordinator', dir);
     finishRun(dir, first.run_id, 'worker-a', { success: true });
-    handleResetTask(dir, { task_ref: 'app/base' });
+    resetTask(dir, { task_ref: 'app/base' });
     const second = claimTask(dir, 'app/base', 'worker-b');
     startRun(dir, second.run_id, 'worker-b');
     markTaskDoneRuntimeOnly('app/base', 'coordinator', dir);
