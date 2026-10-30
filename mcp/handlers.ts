@@ -5,11 +5,10 @@ import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory,
 
 import { createAdapter } from '../adapters/index.ts';
 import { ACTIVE_PROJECT, TARGET_REPO_ROOT } from '../lib/paths.ts';
-import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
-import { findTask, getNextTaskSeq, readClaims } from '../lib/stateReader.ts';
+import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
@@ -20,7 +19,7 @@ import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
 import { isProjectStateDir } from '../lib/projectContext.ts';
-import { TERMINAL_STATUSES, backlogDocsDirForState, cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput, unblockTask } from '../lib/operatorMutations.ts';
+import { TERMINAL_STATUSES, cancelTask, delegateTask, masterActorId, resetTask, respondInput, unblockTask } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -70,7 +69,7 @@ export function handleListTasks(stateDir: string, { status, feature }: { status?
   if (feature != null && typeof feature !== 'string') {
     throw new Error('feature must be a string');
   }
-  const backlog = readBacklogFresh(stateDir);
+  const backlog = readBacklog(stateDir);
   let tasks = backlog.features.flatMap((featureObj) =>
     featureObj.tasks.map((task): Task & { feature_ref: string } => ({ ...task, feature_ref: featureObj.ref })),
   );
@@ -143,7 +142,7 @@ export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unkno
     const projectTask = store.getTask(task_ref as string);
     return projectTask ? describeProjectTask(projectTask) : { error: 'not_found', task_ref };
   }
-  const backlog = readBacklogFresh(stateDir);
+  const backlog = readBacklog(stateDir);
   const task = findTask(backlog, task_ref as string);
   if (!task) return { error: 'not_found', task_ref };
   return task;
@@ -178,7 +177,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     throw new Error('include_done_count must be a boolean');
   }
 
-  const backlog = readBacklogFresh(stateDir);
+  const backlog = readBacklog(stateDir);
   const claims = readClaims(stateDir).claims;
   const agents = listAgents(stateDir).filter((agent) => agent.status !== 'dead');
 
@@ -244,7 +243,7 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
 export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_id?: unknown } = {}) {
   if (!agent_id) throw new Error('agent_id is required');
 
-  const backlog = readBacklogFresh(stateDir);
+  const backlog = readBacklog(stateDir);
   const claims = readClaims(stateDir).claims;
   const agents = listAgents(stateDir);
   const agent = agents.find((entry) => entry.agent_id === agent_id);
@@ -336,8 +335,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
 }
 
 export function handleReadBacklog(stateDir: string) {
-  syncBacklogFromSpecs(stateDir, backlogDocsDirForState(stateDir));
-  return readFileSync(join(stateDir, 'backlog.json'), 'utf8');
+  return JSON.stringify(readBacklog(stateDir), null, 2);
 }
 
 export function handleReadAgents(stateDir: string) {
@@ -440,7 +438,7 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
   const claim = claims.find((c) => c.run_id === run_id);
   if (!claim) return { error: 'not_found', run_id };
 
-  const backlog = readBacklogFresh(stateDir);
+  const backlog = readBacklog(stateDir);
   const task = findTask(backlog, claim.task_ref);
   const taskTitle = task?.title ?? null;
 
@@ -714,7 +712,7 @@ export function handleUnblockTask(stateDir: string, args: Record<string, unknown
 export function handleListWorktrees(stateDir: string) {
   const worktrees = readRunWorktreesState(stateDir);
   const claims = readClaims(stateDir).claims;
-  const backlog = readBacklogFresh(stateDir);
+  const backlog = readBacklog(stateDir);
 
   const claimByRunId = new Map(claims.map((c) => [c.run_id, c]));
 

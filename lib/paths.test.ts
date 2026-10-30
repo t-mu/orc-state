@@ -61,19 +61,20 @@ describe('paths', () => {
   it('never targets a configured sibling target_repo; it is detected and refused instead', async () => {
     mockRepoRoot('/tmp/orch-root', { targetRepoRoot: '/tmp/product-repo' });
 
-    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT, LEGACY_SIBLING_TARGET, assertSupportedLayout } = await import('./paths.ts');
+    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT, LEGACY_SIBLING_TARGET, assertProjectMode } = await import('./paths.ts');
     expect(TARGET_REPO_ROOT).toBe(ORCHESTRATION_ROOT);
     expect(LEGACY_SIBLING_TARGET).toBe('/tmp/product-repo');
-    expect(() => assertSupportedLayout()).toThrow('orc project migrate /tmp/orch-root --execute');
+    expect(() => assertProjectMode()).toThrow('sibling orchestration home');
+    expect(() => assertProjectMode()).toThrow('orc project migrate /tmp/orch-root --execute');
   });
 
-  it('ORC_REPO_ROOT forces the target root of a legacy installation', async () => {
+  it('refuses to run a legacy attached installation', async () => {
     mockRepoRoot('/tmp/orch-root');
     vi.stubEnv('ORC_REPO_ROOT', '/tmp/forced');
 
-    const { TARGET_REPO_ROOT, assertSupportedLayout } = await import('./paths.ts');
+    const { TARGET_REPO_ROOT, assertProjectMode } = await import('./paths.ts');
     expect(TARGET_REPO_ROOT).toBe('/tmp/forced');
-    expect(() => assertSupportedLayout()).not.toThrow();
+    expect(() => assertProjectMode()).toThrow(/Legacy \.orc-state installations no longer run.*orc project add/);
   });
 
   it('still honors ORC_STATE_DIR overrides explicitly', async () => {

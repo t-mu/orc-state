@@ -14,7 +14,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
-import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { masterActorId, masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
@@ -257,7 +257,7 @@ function isEntryPoint() {
 }
 
 export async function startServer() {
-  assertSupportedLayout();
+  assertProjectMode();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   process.stderr.write('[orc-mcp] server started\n');

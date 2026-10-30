@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedBacklogFromSpecs } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
-import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
 import { createSessionHandle } from '../adapters/pty.ts';
@@ -82,7 +81,7 @@ describe('consumer lifecycle e2e', () => {
     writeFileSync(join(backlogDir, '001-first-task.md'), TASK_SPEC, 'utf8');
 
     // Phase 3: backlog sync — sync markdown specs to backlog.json
-    const syncResult = syncBacklogFromSpecs(dir, backlogDir);
+    const syncResult = seedBacklogFromSpecs(dir, backlogDir);
     expect(syncResult.added_tasks).toBe(1);
 
     const backlogAfterSync = readBacklog(dir);

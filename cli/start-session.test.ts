@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync }     from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
 
@@ -37,6 +37,7 @@ afterEach(() => {
     process.env.PWD = originalPwd;
   }
   delete process.env.ORC_STATE_DIR;
+  delete process.env.ORC_PROJECT_ID;
   delete process.env.ORC_REPO_ROOT;
   cleanupTempStateDir(dir);
 });
@@ -101,7 +102,7 @@ function seedActiveRuntimeState() {
 }
 
 function setEnv(stateDir: string) {
-  process.env.ORC_STATE_DIR = stateDir;
+  Object.assign(process.env, bridgeProjectEnv(stateDir));
   process.env.ORC_REPO_ROOT = stateDir;
 }
 
@@ -189,10 +190,11 @@ describe('cli/start-session.ts', () => {
   describe('state auto-init', () => {
     it('creates all four state files when the state dir is absent', () => {
       const freshDir = join(dir, 'fresh-state');
-      // freshDir does not exist yet
+      // freshDir holds only the project descriptor
+      mkdirSync(freshDir);
       spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
-        env:      { ...process.env, ORC_STATE_DIR: freshDir },
+        env:      { ...process.env, ...bridgeProjectEnv(freshDir) },
         encoding: 'utf8',
       });
       expect(existsSync(join(freshDir, 'backlog.json'))).toBe(true);
@@ -209,7 +211,7 @@ describe('cli/start-session.ts', () => {
 
       spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
-        env:      { ...process.env, ORC_STATE_DIR: dir },
+        env:      { ...process.env, ...bridgeProjectEnv(dir) },
         encoding: 'utf8',
       });
 
@@ -249,7 +251,7 @@ describe('cli/start-session.ts', () => {
       seedState(); // no agents
       const result = spawnSync('node', ['cli/start-session.ts'], {
         cwd:      repoRoot,
-        env:      { ...process.env, ORC_STATE_DIR: dir },
+        env:      { ...process.env, ...bridgeProjectEnv(dir) },
         encoding: 'utf8',
       });
       expect(result.status).toBe(1);
@@ -260,7 +262,7 @@ describe('cli/start-session.ts', () => {
       seedState([masterAgent()]);
       const result = spawnSync('node', ['cli/start-session.ts', '--worker-id=orc-9', '--worker-provider=codex'], {
         cwd: repoRoot,
-        env: { ...process.env, ORC_STATE_DIR: dir },
+        env: { ...process.env, ...bridgeProjectEnv(dir) },
         encoding: 'utf8',
       });
       expect(result.status).toBe(1);
@@ -1017,185 +1019,32 @@ describe('cli/start-session.ts', () => {
       expect(config.mcpServers.orchestrator.env.ORC_STATE_DIR).toBe(dir);
     });
 
-    it('writes project-scoped Codex MCP config and passes codex bootstrap as the initial prompt', async () => {
+    it('passes the Codex MCP server as -c overrides, writes no config file, and sends the bootstrap as the initial prompt', async () => {
       seedState([masterAgent({ provider: 'codex' })]);
       const checkoutRoot = join(dir, 'checkout');
-      const nestedCwd = join(checkoutRoot, 'packages', 'app');
-      mkdirSync(nestedCwd, { recursive: true });
+      mkdirSync(checkoutRoot, { recursive: true });
       const spawnMock = makeSpawnMock();
-      const spawnSyncMock = vi.fn().mockImplementation((command: string, args: string[] = [], options?: { cwd?: string }) => {
-        if (command === 'git' && args.includes('--show-toplevel')) {
-          expect(options?.cwd).toBe(nestedCwd);
-          return { status: 0, stdout: `${checkoutRoot}\n` };
-        }
-        if (command === 'ps') {
-          return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-        }
-        return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-      });
-      mockSpawn(spawnMock, spawnSyncMock);
+      mockSpawn(spawnMock);
       mockBinaryCheck(true);
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.chdir(nestedCwd);
-      process.env.PWD = nestedCwd;
+      process.chdir(checkoutRoot);
+      process.env.PWD = checkoutRoot;
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
 
       expect(existsSync(join(dir, 'mcp-config.json'))).toBe(false);
-      const codexConfigPath = join(checkoutRoot, '.codex', 'config.toml');
-      expect(existsSync(codexConfigPath)).toBe(true);
-      const codexConfig = readFileSync(codexConfigPath, 'utf8');
-      expect(codexConfig).toContain('[mcp_servers.orchestrator]');
-      expect(codexConfig).toContain(`command = ${JSON.stringify(process.execPath)}`);
-      expect(codexConfig).toContain(`ORC_STATE_DIR = ${JSON.stringify(dir)}`);
-      expect(codexConfig).toContain(`cwd = ${JSON.stringify(checkoutRoot)}`);
+      expect(existsSync(join(checkoutRoot, '.codex', 'config.toml'))).toBe(false);
       const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[], Record<string, unknown>] | undefined;
       expect(providerCall).toBeTruthy();
-      expect(providerCall![1]).not.toContain('--mcp-config');
-      expect(providerCall![1]).not.toContain('--instructions');
-      expect(providerCall![1]).toContain('--dangerously-bypass-approvals-and-sandbox');
-      expect(providerCall![1]).toHaveLength(2);
-      expect(providerCall![1][1]).toContain('MASTER_BOOTSTRAP v2');
-      expect(providerCall![2]).toEqual(expect.objectContaining({ cwd: nestedCwd }));
-    });
-
-    it('uses the active checkout root instead of ORC_REPO_ROOT for Codex config placement', async () => {
-      seedState([masterAgent({ provider: 'codex' })]);
-      const checkoutRoot = join(dir, 'checkout');
-      const nestedCwd = join(checkoutRoot, 'packages', 'app');
-      mkdirSync(nestedCwd, { recursive: true });
-      const spawnMock = makeSpawnMock();
-      const spawnSyncMock = vi.fn().mockImplementation((command: string, args: string[] = [], options?: { cwd?: string }) => {
-        if (command === 'git' && args.includes('--show-toplevel')) {
-          expect(options?.cwd).toBe(nestedCwd);
-          return { status: 0, stdout: `${checkoutRoot}\n` };
-        }
-        if (command === 'ps') {
-          return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-        }
-        return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-      });
-      mockSpawn(spawnMock, spawnSyncMock);
-      mockBinaryCheck(true);
-
-      setEnv(dir);
-      seedCoordinatorRunning();
-      process.chdir(nestedCwd);
-      process.env.PWD = nestedCwd;
-      process.argv = ['node', 'start-session.ts'];
-      await import('./start-session.ts');
-
-      expect(existsSync(join(checkoutRoot, '.codex', 'config.toml'))).toBe(true);
-      expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(false);
-      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[], Record<string, unknown>] | undefined;
-      expect(providerCall?.[2]).toEqual(expect.objectContaining({ cwd: nestedCwd }));
-    });
-
-    it('falls back to ORC_REPO_ROOT for Codex config placement when git root detection fails', async () => {
-      seedState([masterAgent({ provider: 'codex' })]);
-      const nestedCwd = join(dir, 'outside', 'packages', 'app');
-      mkdirSync(nestedCwd, { recursive: true });
-      const spawnMock = makeSpawnMock();
-      const spawnSyncMock = vi.fn().mockImplementation((command: string, args: string[] = [], options?: { cwd?: string }) => {
-        if (command === 'git' && args.includes('--show-toplevel')) {
-          expect(options?.cwd).toBe(nestedCwd);
-          return { status: 1, stdout: '', stderr: 'fatal: not a git repository\n' };
-        }
-        if (command === 'ps') {
-          return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-        }
-        return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-      });
-      mockSpawn(spawnMock, spawnSyncMock);
-      mockBinaryCheck(true);
-
-      setEnv(dir);
-      seedCoordinatorRunning();
-      process.chdir(nestedCwd);
-      process.env.PWD = nestedCwd;
-      process.argv = ['node', 'start-session.ts'];
-      await import('./start-session.ts');
-
-      expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(true);
-      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[], Record<string, unknown>] | undefined;
-      expect(providerCall?.[2]).toEqual(expect.objectContaining({ cwd: nestedCwd }));
-    });
-
-    it('prefers the shell PWD spelling when it aliases the active checkout path', async () => {
-      seedState([masterAgent({ provider: 'codex' })]);
-      const checkoutRoot = join(dir, 'checkout');
-      const realNestedCwd = join(checkoutRoot, 'packages', 'app');
-      const shellCheckoutRoot = join(dir, 'checkout-shell');
-      const shellNestedCwd = join(shellCheckoutRoot, 'packages', 'app');
-      mkdirSync(realNestedCwd, { recursive: true });
-      symlinkSync(checkoutRoot, shellCheckoutRoot, 'dir');
-      const spawnMock = makeSpawnMock();
-      const spawnSyncMock = vi.fn().mockImplementation((command: string, args: string[] = [], options?: { cwd?: string }) => {
-        if (command === 'git' && args.includes('--show-toplevel')) {
-          expect(options?.cwd).toBe(shellNestedCwd);
-          return { status: 0, stdout: `${shellCheckoutRoot}\n` };
-        }
-        if (command === 'ps') {
-          return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-        }
-        return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-      });
-      mockSpawn(spawnMock, spawnSyncMock);
-      mockBinaryCheck(true);
-
-      setEnv(dir);
-      seedCoordinatorRunning();
-      process.chdir(realNestedCwd);
-      process.env.PWD = shellNestedCwd;
-      process.argv = ['node', 'start-session.ts'];
-      await import('./start-session.ts');
-
-      expect(existsSync(join(shellCheckoutRoot, '.codex', 'config.toml'))).toBe(true);
-      const providerCall = spawnMock.mock.calls.find((args: unknown[]) => String(args[0]).endsWith('codex')) as [string, string[], Record<string, unknown>] | undefined;
-      expect(providerCall?.[2]).toEqual(expect.objectContaining({ cwd: shellNestedCwd }));
-    });
-
-    it('replaces an existing Codex orchestrator stanza instead of duplicating it', async () => {
-      seedState([masterAgent({ provider: 'codex' })]);
-      const checkoutRoot = join(dir, 'checkout');
-      mkdirSync(join(checkoutRoot, '.codex'), { recursive: true });
-      writeFileSync(join(checkoutRoot, '.codex', 'config.toml'), [
-        '[mcp_servers.orchestrator]',
-        'command = "old-node"',
-        'args = ["old-server"]',
-        '',
-        '[mcp_servers.orchestrator.env]',
-        'ORC_STATE_DIR = "old-state"',
-        '',
-        '[mcp_servers.other]',
-        'command = "keep-me"',
-      ].join('\n'));
-      const spawnMock = makeSpawnMock();
-      const spawnSyncMock = vi.fn().mockImplementation((command: string, args: string[] = []) => {
-        if (command === 'git' && args.includes('--show-toplevel')) {
-          return { status: 0, stdout: `${checkoutRoot}\n` };
-        }
-        if (command === 'ps') {
-          return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-        }
-        return { status: 0, stdout: `node ${coordinatorScriptPath}` };
-      });
-      mockSpawn(spawnMock, spawnSyncMock);
-      mockBinaryCheck(true);
-
-      setEnv(dir);
-      seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.ts'];
-      await import('./start-session.ts');
-
-      const codexConfig = readFileSync(join(checkoutRoot, '.codex', 'config.toml'), 'utf8');
-      expect(codexConfig.match(/\[mcp_servers\.orchestrator\]/g)).toHaveLength(1);
-      expect(codexConfig).not.toContain('old-node');
-      expect(codexConfig).not.toContain('old-server');
-      expect(codexConfig).toContain('[mcp_servers.other]');
-      expect(codexConfig).toContain('command = "keep-me"');
+      const args = providerCall![1];
+      expect(args[0]).toBe('--dangerously-bypass-approvals-and-sandbox');
+      expect(args).toContain(`mcp_servers.orchestrator.env={ORC_PROJECT_ID="test-project", ORC_STATE_DIR=${JSON.stringify(dir)}}`);
+      expect(args).toContain('mcp_servers.orchestrator.env_vars=["ORC_MASTER_SECRET"]');
+      expect(args.join(' ')).not.toMatch(/ORC_MASTER_SECRET=/);
+      expect(args.at(-1)).toContain('MASTER_BOOTSTRAP v2');
+      expect(providerCall![2]).toEqual(expect.objectContaining({ cwd: checkoutRoot }));
     });
 
     it('writes mcp-config.json and spawns gemini with mcp and system-instruction flags', async () => {

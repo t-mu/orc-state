@@ -2,9 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedBacklogFromSpecs } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
-import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { closeAllDatabases, queryEvents, withEventDb } from '../lib/eventLog.ts';
 import { recordProviderSession } from '../lib/runStore.ts';
 
@@ -127,7 +126,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     ensureStateInitialized(dir);
     mkdirSync(join(dir, 'backlog'), { recursive: true });
     writeFileSync(join(dir, 'backlog', '001-structured-task.md'), TASK_SPEC);
-    expect(syncBacklogFromSpecs(dir, join(dir, 'backlog')).added_tasks).toBe(1);
+    expect(seedBacklogFromSpecs(dir, join(dir, 'backlog')).added_tasks).toBe(1);
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{

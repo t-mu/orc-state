@@ -3621,19 +3621,18 @@ describe('lifecycle reducer integration', () => {
 });
 
 describe('main startup validation', () => {
-  it('exits with code 1 when backlog.json is missing', () => {
+  it('refuses to start a legacy installation', () => {
     const stateDir = createTempStateDir('orc-coord-startup-test-');
     writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
     writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
-    writeFileSync(join(stateDir, 'events.jsonl'), '');
 
     const result = spawnSync(process.execPath, [COORDINATOR_PATH, '--mode=monitor'], {
-      env: { ...process.env, ORC_STATE_DIR: stateDir },
+      env: { ...process.env, ORC_STATE_DIR: stateDir, ORC_PROJECT_ID: '' },
       encoding: 'utf8',
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('required state file missing: backlog.json');
+    expect(result.stderr).toContain('Legacy .orc-state installations no longer run');
 
     cleanupTempStateDir(stateDir);
   });

@@ -1,6 +1,6 @@
 import { unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -129,7 +129,7 @@ beforeEach(async () => {
 
   const serverPath = resolve(import.meta.dirname, 'server.ts');
   child = spawn(process.execPath, [serverPath], {
-    env: { ...process.env, ORC_STATE_DIR: stateDir },
+    env: { ...process.env, ...bridgeProjectEnv(stateDir) },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   child.stdout!.on('data', onStdoutData);

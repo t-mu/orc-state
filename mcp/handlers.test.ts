@@ -258,15 +258,6 @@ describe('mcp read handlers', () => {
     expect(handleListTasks(dir, { status: 'cancelled' }).map((task) => task.ref)).toEqual(['project/cancelled-one']);
   });
 
-  it('syncs authoritative markdown before serving backlog-backed reads', () => {
-    writeSpec('project/todo-one', 'project', 'Todo one renamed');
-    const tasks = handleListTasks(dir);
-    expect(tasks.find((task) => task.ref === 'project/todo-one')?.title).toBe('Todo one renamed');
-
-    const task = handleGetTask(dir, { task_ref: 'project/todo-one' }) as Record<string, unknown>;
-    expect(task.title).toBe('Todo one renamed');
-  });
-
   it('handleListAgents omits dead by default, includes dead when requested, and supports role filter', () => {
     const all = handleListAgents(dir) as Array<Record<string, unknown>>;
     expect(all).toHaveLength(2);

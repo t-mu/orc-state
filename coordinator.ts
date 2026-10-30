@@ -35,7 +35,7 @@ import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, t
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
 import { renderTemplate } from './lib/templateRender.ts';
-import { ACTIVE_PROJECT, assertSupportedLayout, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
+import { ACTIVE_PROJECT, assertProjectMode, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, BACKLOG_DOCS_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
@@ -44,8 +44,7 @@ import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktre
 import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError, readTaskSpecSections } from './lib/taskSpecReader.ts';
-import { syncBacklogFromSpecs } from './lib/backlogSync.ts';
-import { rebuildDocumentIndex, pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
+import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
 import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
@@ -2182,9 +2181,6 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
   }
 }
 
-// Legacy specs whose non-todo status kept them out of the runtime; each is logged once.
-const reportedSkippedSpecs = new Set<string>();
-
 // ── Coordinator presence lock ──────────────────────────────────────────────
 // Prevents two coordinator processes from running against the same state dir.
 
@@ -2275,12 +2271,6 @@ async function reconcileSupervisedSessions() {
 // ── Main loop ──────────────────────────────────────────────────────────────
 
 export async function main() {
-  try {
-    assertSupportedLayout();
-  } catch (error) {
-    console.error(`[coordinator] ERROR: ${(error as Error).message}. Aborting.`);
-    process.exit(1);
-  }
   // A migrated legacy state directory is history; running it again would fork the project's state.
   const migrated = ACTIVE_PROJECT ? null : readMigrationMarker(STATE_DIR);
   if (migrated) {
@@ -2339,16 +2329,9 @@ export async function main() {
   } catch { /* memory system not initialized */ }
 
   try {
-    const synced = syncBacklogFromSpecs(STATE_DIR, BACKLOG_DOCS_DIR);
-    for (const spec of synced.skipped_specs ?? []) {
-      if (reportedSkippedSpecs.has(spec.ref)) continue;
-      reportedSkippedSpecs.add(spec.ref);
-      log(`spec ${spec.ref} has status ${spec.status}; not registered (status is runtime-owned) — run orc project migrate to carry it`);
-    }
-    rebuildDocumentIndex(STATE_DIR, BACKLOG_DOCS_DIR, PLANS_DIR);
     pruneOrphanRunTaskSnapshots(STATE_DIR);
   } catch (error) {
-    log(`backlog sync from specs skipped: ${(error as Error).message}`);
+    log(`run task snapshot pruning skipped: ${(error as Error).message}`);
   }
 
   reconcileState(STATE_DIR);
@@ -2449,5 +2432,11 @@ export async function doShutdown() {
 export { tick, getAdapter as getCoordinatorAdapter, getCommandDispatcher as getCoordinatorCommandDispatcher };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try {
+    assertProjectMode();
+  } catch (error) {
+    console.error(`[coordinator] ERROR: ${(error as Error).message}. Aborting.`);
+    process.exit(1);
+  }
   main().catch(err => { console.error(err); process.exit(1); });
 }
