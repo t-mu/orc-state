@@ -438,13 +438,14 @@ result = request_scout(objective, ...)   ← capture result.agent_id
 # poll get_scout_report about every 10 s, for up to ~5 minutes:
 report = get_scout_report(result.agent_id)
   status "reported" → report.report holds the SCOUT_REPORT block
+  status "truncated" → the report was too long to read back; ask a narrower question
   status "ended"    → the session ended without a report
   status "running"  → keep polling; after ~5 minutes treat the scout as failed
 
 cleanup: remove_scout(result.agent_id)   ← always, once done or timed out
 ```
 
-To check how long a scout has been running: `get_scout_report` (and `get_agent_workview`) return a `launched_at` timestamp.
+To check how long a scout has been running: `get_scout_report` returns its `launched_at` (registration) timestamp.
 
 Scouts do not heartbeat and are not coordinated by the run lifecycle. They are ephemeral — clean up with `remove_scout(<scout-id>)` once the report is read.
 

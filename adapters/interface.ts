@@ -37,8 +37,8 @@
  *   Tear down the session and release associated resources (e.g. clear
  *   conversation history from memory). No-op if session not found.
  *
- * getOutputTail(sessionHandle) → string | null
- *   Return the last 8 KB of the session's output log, stripped of ANSI escape
+ * getOutputTail(sessionHandle, maxBytes?) → string | null
+ *   Return the last 8 KB (or maxBytes) of the session's output log, stripped of ANSI escape
  *   codes and trimmed of leading/trailing blank lines. Return '' if the log
  *   file does not exist. Return null on any other error (e.g. invalid handle).
  *
@@ -62,7 +62,7 @@ export interface AdapterInterface {
   attach(sessionHandle: string): void;
   heartbeatProbe(sessionHandle: string): Promise<boolean>;
   stop(sessionHandle: string): Promise<void>;
-  getOutputTail(sessionHandle: string): string | null;
+  getOutputTail(sessionHandle: string, maxBytes?: number): string | null;
 }
 
 /**

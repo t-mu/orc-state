@@ -4,11 +4,11 @@ import { sessionForCredential } from './sessionCredentials.ts';
 
 /**
  * Identity established by a session secret or the coordinator's operator token.
- * A worker is scoped to its run (`runId` null only for a session recorded
- * without one, which then owns no run); a scout and the master own none.
+ * A worker (or reviewer) is always scoped to one run; a scout and the master
+ * own none. A worker session without a run authenticates nobody.
  */
 export type ControlPrincipal =
-  | { kind: 'worker'; agentId: string; runId: string | null; sessionId: string; live: boolean; running: boolean }
+  | { kind: 'worker'; agentId: string; runId: string; sessionId: string; live: boolean; running: boolean }
   | { kind: 'scout'; agentId: string; runId: null; sessionId: string; live: boolean; running: boolean }
   | { kind: 'master'; agentId: string; runId: null; sessionId: string; live: boolean; running: boolean }
   | { kind: 'operator'; agentId: null; runId: null; sessionId: null; live: true; running: true };
@@ -20,11 +20,13 @@ export function resolveControlPrincipal(stateDir: string, credential: string | n
   if (credential) {
     const session = sessionForCredential(stateDir, credential);
     if (!session) throw new ControlError('unauthenticated', 'Caller is not authenticated', 401);
-    const role = listAgents(stateDir).find((agent) => agent.agent_id === session.agent_id)?.role;
+    // Registration defaults a missing role to worker; a reviewer works one run like a worker.
+    const role = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id)?.role ?? 'worker';
     const common = { agentId: session.agent_id, sessionId: session.session_id, live: session.state !== 'offline', running: session.state === 'running' };
     if (role === 'master') return { kind: 'master', runId: null, ...common };
     if (role === 'scout') return { kind: 'scout', runId: null, ...common };
-    return { kind: 'worker', runId: session.run_id ?? null, ...common };
+    if ((role === 'worker' || role === 'reviewer') && session.run_id) return { kind: 'worker', runId: session.run_id, ...common };
+    throw new ControlError('unauthenticated', 'Caller is not authenticated', 401);
   }
   return operator ? { kind: 'operator', agentId: null, runId: null, sessionId: null, live: true, running: true } : null;
 }

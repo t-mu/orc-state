@@ -68,6 +68,14 @@ describe('renderTemplate', () => {
     expect(rendered).not.toContain('keeps it alive while you are registered');
   });
 
+  it('never points a worker or scout at an MCP tool, since they start without the orchestrator server', () => {
+    const vars = { agent_id: 'w', orc_bin: 'orc', provider: 'claude', session_token: 't' };
+    for (const template of ['worker-bootstrap-v2.txt', 'scout-bootstrap-v1.txt', 'scout-brief-v1.txt', 'task-envelope-v2.txt']) {
+      const rendered = renderTemplate(template, vars);
+      for (const tool of TOOLS) expect(rendered, `${template} mentions MCP tool ${tool.name}`).not.toMatch(new RegExp(`\\b${tool.name}\\b`));
+    }
+  });
+
   it('renders compact task envelope context for fresh workers', () => {
     const rendered = renderTemplate('task-envelope-v2.txt', {
       task_ref: 'orch/task-142',

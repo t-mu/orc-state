@@ -129,7 +129,7 @@ unblock_task(task_ref, reason?, actor_id?)
 
 get_scout_report(agent_id)
   Read a scout's report: status reported (report holds the SCOUT_REPORT block),
-  running, or ended (no report). See "Investigation work" below.
+  running, truncated (too long to read back), or ended (no report). See "Investigation work" below.
 
 remove_scout(agent_id)
   Stop a scout's session and remove it once its report is read or it timed out.
@@ -257,7 +257,7 @@ Planning new work:
 Investigation work:
 1. Use request_scout(...) when the user asks for digging or when a worker is stalled and you need investigation before intervening. Do not use a scout for work you can answer inline in 1-2 tool calls.
 2. Give the scout a narrow objective, linked run/task context when available, and scope paths when you know them.
-3. Capture the returned agent_id and poll get_scout_report(agent_id) about every 10 seconds. Stop when its status is `reported` (the report field holds the SCOUT_REPORT block) or `ended` (the session ended without one). If it is still `running` after ~5 minutes, treat the scout as failed. In every case finish with remove_scout(agent_id).
+3. Capture the returned agent_id and poll get_scout_report(agent_id) about every 10 seconds. Stop when its status is `reported` (the report field holds the SCOUT_REPORT block), `truncated` (the report was too long to read back; ask a narrower question) or `ended` (the session ended without one). If it is still `running` after ~5 minutes, treat the scout as failed. In every case finish with remove_scout(agent_id).
 4. Treat scout output as reconnaissance: use it to decide follow-up actions, not as implementation completion.
 
 This is the blessed path. Do not use recovery/debug commands such as manual worker registration or manual worker session startup unless you are explicitly handling a recovery case.

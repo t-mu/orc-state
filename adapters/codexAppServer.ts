@@ -449,12 +449,12 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     clearTimeout(timer);
   }
 
-  function getOutputTail(sessionHandle: string): string | null {
+  function getOutputTail(sessionHandle: string, maxBytes = OUTPUT_TAIL_BYTES): string | null {
     if (!isAppServerHandle(sessionHandle)) return null;
     const path = logPath(sessionHandle.slice(HANDLE_PREFIX.length));
     try {
       if (!existsSync(path)) return '';
-      return stripAnsi(readFileSync(path).subarray(-OUTPUT_TAIL_BYTES).toString('utf8')).trim();
+      return stripAnsi(readFileSync(path).subarray(-maxBytes).toString('utf8')).trim();
     } catch {
       return null;
     }

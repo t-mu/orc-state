@@ -29,7 +29,7 @@ Call **one** tool. Do not chain multiple tools unless the first result is insuff
 | Is X stuck? / Why is X not responding? | `get_agent_workview(agent_id: X)` — check `input_state` field in the result |
 | Is anyone waiting for input? / Are any workers blocked on a question? | `list_waiting_input()` |
 | Details on a specific run? / What's run Y doing? | `get_run(run_id: Y)` |
-| Show X's raw PTY log output | `orc attach <agent_id>` *(bash — no MCP equivalent)* |
+| Show worker X's raw PTY log output | `orc attach <agent_id>` *(bash — no MCP equivalent; for a scout use `get_scout_report`)* |
 | What happened recently with X? | `get_recent_events(agent_id: X)` |
 | Has scout X reported? / What did scout X find? | `get_scout_report(agent_id: X)` — then `remove_scout(agent_id: X)` once read |
 

@@ -376,6 +376,13 @@ export function handleReadAgents(stateDir: string) {
   return readFileSync(join(stateDir, 'agents.json'), 'utf8');
 }
 
+/** A project directory whose task database is missing must fail, never fall through to legacy backlog.json writes. */
+function assertLegacyTaskStore(stateDir: string): void {
+  if (isProjectStateDir(stateDir)) {
+    throw new Error(`Project task store is missing (${join(stateDir, 'runtime.db')}); restore it or re-run orc project migrate. Legacy task writes are refused in a project.`);
+  }
+}
+
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
   if (projectTaskStoreFor(stateDir)) {
     // Project tasks are database-only: no Markdown spec is required or written.
@@ -384,6 +391,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     // Project refs carry no numeric sequence.
     return { ...describeProjectTask(createProjectTask(stateDir, input, actor_id as string)), next_task_seq: undefined };
   }
+  assertLegacyTaskStore(stateDir);
   assertNoProjectOnlyFields(args);
   const {
     feature,
@@ -491,6 +499,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
     return { ...describeProjectTask(task), changed };
   }
+  assertLegacyTaskStore(stateDir);
   assertNoProjectOnlyFields(args);
   const {
     task_ref,
@@ -783,18 +792,37 @@ export async function handleRequestScout(stateDir: string, {
   };
 }
 
+/** A scout's report spans a few kilobytes of TUI output; read well past the default 8 KiB tail. */
+const SCOUT_OUTPUT_BYTES = 64 * 1024;
+const MARKER_PREFIX = String.raw`^[^\w\n]*`;
+const REPORT_START = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT[ \t]*$`);
+const REPORT_END = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT_END[ \t]*$`);
+const REPORT_HEADERS = ['findings', 'likely_cause', 'recommended_action'].map((header) => new RegExp(`${MARKER_PREFIX}${header}:`, 'm'));
+
 /**
- * The scout's final SCOUT_REPORT block, or null. The bootstrap and brief echo
- * the report template (whose fields are `<placeholders>`), so the last block
- * that is not the template is the report.
+ * Find a scout's final SCOUT_REPORT block in its session output. Markers count
+ * only on their own line (a prompt glyph or indentation may precede them), and
+ * a block counts only with all three report headers and no `<placeholder>`
+ * from the echoed template, so quoted examples and the template are ignored.
+ * `truncated` means an end marker whose start fell outside the output read.
  */
-export function extractScoutReport(output: string): string | null {
-  // PTY output may prefix the markers (prompt glyphs, indentation), so pair each end marker with the nearest start before it.
-  const blocks = output.split('SCOUT_REPORT_END').slice(0, -1).map((before) => {
-    const start = before.lastIndexOf('SCOUT_REPORT');
-    return start < 0 ? null : before.slice(start + 'SCOUT_REPORT'.length).trim();
+export function extractScoutReport(output: string): { report: string | null; truncated: boolean } {
+  let start: number | null = null;
+  let report: string | null = null;
+  let truncated = false;
+  const lines = output.split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (REPORT_START.test(line)) { start = index; return; }
+    if (!REPORT_END.test(line)) return;
+    if (start === null) { truncated = true; return; }
+    const block = lines.slice(start + 1, index).join('\n').trim();
+    start = null;
+    if (!block.includes('<what you found') && REPORT_HEADERS.every((header) => header.test(block))) {
+      report = block;
+      truncated = false;
+    }
   });
-  return blocks.filter((block): block is string => block !== null && block !== '' && !block.includes('<what you found')).at(-1) ?? null;
+  return { report, truncated: report === null && truncated };
 }
 
 function requireScout(stateDir: string, agentId: unknown) {
@@ -805,19 +833,26 @@ function requireScout(stateDir: string, agentId: unknown) {
   return agent;
 }
 
-/** Read a scout's report from its session output: `reported` with the block, `running`, or `ended` without one. */
+/**
+ * Read a scout's report from its session output: `reported` with the block,
+ * `truncated` (an end marker without its start, so the report is unreadable),
+ * `running`, or `ended` without one.
+ */
 export async function handleGetScoutReport(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
   const scout = requireScout(stateDir, agent_id);
-  const launchedAt = scout.last_heartbeat_at ?? scout.registered_at ?? null;
+  const launchedAt = scout.registered_at ?? null;
   if (!scout.session_handle) return { agent_id: scout.agent_id, status: 'ended', report: null, launched_at: launchedAt };
   const adapter = createAdapter(scout.provider);
-  const report = extractScoutReport(adapter.getOutputTail(scout.session_handle) ?? '');
-  const status = report ? 'reported' : (await adapter.heartbeatProbe(scout.session_handle)) ? 'running' : 'ended';
+  const { report, truncated } = extractScoutReport(adapter.getOutputTail(scout.session_handle, SCOUT_OUTPUT_BYTES) ?? '');
+  const status = report ? 'reported' : truncated ? 'truncated'
+    : (await adapter.heartbeatProbe(scout.session_handle)) ? 'running' : 'ended';
   return { agent_id: scout.agent_id, status, report, launched_at: launchedAt };
 }
 
 /** Stop a scout's session and remove its registration; only scouts, never workers or the master. */
 export async function handleRemoveScout(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
+  // Removing a scout that is already gone is a no-op, so cleanup can always be called.
+  if (typeof agent_id === 'string' && agent_id && !getAgent(stateDir, agent_id)) return { agent_id, removed: false, reason: 'not_found' };
   const scout = requireScout(stateDir, agent_id);
   let stopError: string | null = null;
   if (scout.session_handle) {
@@ -886,8 +921,8 @@ export function handleResetTask(stateDir: string, args: Record<string, unknown> 
   return resetTask(stateDir, args);
 }
 
-export function handleUnblockTask(stateDir: string, { actor_id = defaultActorId(stateDir), ...args }: Record<string, unknown> = {}) {
-  return unblockTask(stateDir, { ...args, actor_id });
+export function handleUnblockTask(stateDir: string, args: Record<string, unknown> = {}) {
+  return unblockTask(stateDir, args);
 }
 
 export function handleListWorktrees(stateDir: string) {

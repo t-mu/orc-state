@@ -8,6 +8,9 @@ import { TOOLS } from './tools-list.ts';
 import { asToolResult, invokeTool, isExpectedToolError, readResource, validateToolArguments } from './server.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { RevisionConflictError } from '../lib/projectTaskStore.ts';
+import { initEventsDb, withEventDbTransaction, closeAllDatabases } from '../lib/eventLog.ts';
+import { credentialHash } from '../lib/sessionCredentials.ts';
+import { commitClaims } from '../lib/runStore.ts';
 
 let stateDir: string;
 
@@ -52,13 +55,34 @@ describe('orchestrator mcp server foundation', () => {
     expect(names).toContain('respond_input');
   });
 
-  it('unblocks a blocked task through unblock_task, recorded as the master, and refuses one that is not blocked', () => {
+  it('unblocks a blocked task through unblock_task and refuses one that is not blocked', () => {
     writeFileSync(joinPath('backlog.json'), JSON.stringify({ version: '1', features: [{ ref: 'project', title: 'Project', tasks: [
       { ref: 'project/stuck', title: 'Stuck', status: 'blocked', blocked_reason: 'waiting' },
       { ref: 'project/fine', title: 'Fine', status: 'todo' },
     ] }] }));
     expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/stuck', reason: 'resolved' }, { project: null })).toMatchObject({ unblocked: true });
     expect(() => invokeTool(stateDir, 'unblock_task', { task_ref: 'project/fine' }, { project: null })).toThrow(/not blocked/);
+  });
+
+  it('refuses a worker session on the master\'s scout and unblock tools in a project', async () => {
+    writeFileSync(joinPath('agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'claude', role: 'master', status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'worker-a', provider: 'claude', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    initEventsDb(stateDir);
+    commitClaims(stateDir, { version: '1', claims: [{ run_id: 'run-a', task_ref: 'project/x', agent_id: 'worker-a', state: 'in_progress',
+      claimed_at: '2026-01-01T00:00:00.000Z', started_at: '2026-01-01T00:00:01.000Z', lease_expires_at: '2099-01-01T00:00:00.000Z' }] });
+    withEventDbTransaction(stateDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('worker-secret')));
+    const asWorker = { project: { id: 'p' }, credential: 'worker-secret' };
+    try {
+      for (const [tool, args] of [['get_scout_report', { agent_id: 'scout-1' }], ['remove_scout', { agent_id: 'scout-1' }], ['unblock_task', { task_ref: 'project/x' }]] as const) {
+        await expect(Promise.resolve().then(() => invokeTool(stateDir, tool, args, asWorker))).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+      }
+    } finally {
+      closeAllDatabases();
+    }
   });
 
   it('server module does not write debug output to stdout', () => {

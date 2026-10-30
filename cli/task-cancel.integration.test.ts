@@ -8,9 +8,9 @@ const ORC = resolve(import.meta.dirname, 'orc.ts');
 let temp: string;
 let repo: string;
 
-function orc(args: string[]) {
+function orc(args: string[], extra: Record<string, string> = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ORC_')));
-  return spawnSync(process.execPath, [ORC, ...args], { cwd: repo, env: { ...env, ORC_DATA_HOME: join(temp, 'data') }, encoding: 'utf8' });
+  return spawnSync(process.execPath, [ORC, ...args], { cwd: repo, env: { ...env, ORC_DATA_HOME: join(temp, 'data'), ...extra }, encoding: 'utf8' });
 }
 
 beforeEach(() => {
@@ -38,6 +38,13 @@ describe('orc task-cancel', { timeout: 30_000 }, () => {
     const again = orc(['task-cancel', 'app/doomed']);
     expect(again.status).toBe(1);
     expect(again.stderr).toContain('already_terminal');
+  });
+
+  it('refuses a shell that holds a session secret but is not the master, even with no coordinator', () => {
+    const result = orc(['task-cancel', 'app/doomed'], { ORC_SESSION_SECRET: 'not-the-master' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain('applying cancel-task directly');
+    expect(orc(['project', 'task', 'show', 'app/doomed']).stdout).toContain('"status": "todo"');
   });
 
   it('prints usage without a task ref', () => {

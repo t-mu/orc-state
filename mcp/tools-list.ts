@@ -250,7 +250,7 @@ export const TOOLS = [
   },
   {
     name: 'get_scout_report',
-    description: 'Read a scout\'s SCOUT_REPORT. status is reported (report holds the block), running (keep polling), or ended (the session ended without a report). Poll every ~10 s; give up after ~5 minutes and call remove_scout.',
+    description: 'Read a scout\'s SCOUT_REPORT. status is reported (report holds the block), running (keep polling), truncated (the report was too long to read back; ask a narrower question) or ended (the session ended without a report). launched_at is the scout\'s registration time. Poll every ~10 s; give up after ~5 minutes and call remove_scout.',
     inputSchema: {
       type: 'object',
       required: ['agent_id'],
@@ -260,7 +260,7 @@ export const TOOLS = [
   },
   {
     name: 'remove_scout',
-    description: 'Stop a scout\'s session and remove its registration. Call it once the report is read or the scout timed out. Refuses any agent that is not a scout.',
+    description: 'Stop a scout\'s session and remove its registration. Call it once the report is read or the scout timed out. Refuses any agent that is not a scout; a scout that is already gone returns { removed: false, reason: "not_found" }.',
     inputSchema: {
       type: 'object',
       required: ['agent_id'],
@@ -437,7 +437,7 @@ export const TOOLS = [
   },
   {
     name: 'unblock_task',
-    description: 'Move a blocked task back to todo so the coordinator can dispatch it again. Same logic as orc task-unblock. A task that is not blocked is a tool error.',
+    description: 'Move a blocked task back to todo so the coordinator can dispatch it again. Same logic as orc task-unblock. Returns { unblocked: true, task_ref }; a task that is not blocked is a tool error.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -446,7 +446,7 @@ export const TOOLS = [
         reason: { type: 'string', description: 'Optional reason, recorded on the transition' },
         actor_id: {
           type: 'string',
-          description: 'Actor performing the unblock. Defaults to the master agent. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
+          description: 'Actor performing the unblock. Defaults to human in a legacy installation and to the master agent in a registered project (where orc task-unblock records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
         },
       },
       additionalProperties: false,

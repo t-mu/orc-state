@@ -586,7 +586,7 @@ and a recoverable master can still act.
 The MCP server presents the session it runs in. Started by `orc start-session`
 it holds the master's secret and is recorded as the master. Run without one, it
 reaches the coordinator as the operator, and its master tools (`create_task`,
-`update_task`, `cancel_task`, `reset_task`, `delegate_task`) still record the
+`update_task`, `cancel_task`, `reset_task`, `unblock_task`, `delegate_task`) still record the
 master's agent id unless the call names an `actor_id`, because they act on the
 master's behalf; a raw operator client is recorded as `human` by default. Delivery of queued commands to a provider transport is also not
 wired yet; commands stay `queued` until a dispatcher with a transport runs. A sandboxed worker may retry a SQLite read-only open only while usable WAL/SHM files remain, such as after a coordinator crash or during version skew. If they are absent, the read fails until the coordinator starts.

@@ -44,7 +44,6 @@ describe('resolveControlPrincipal', () => {
     ['recoverable worker session', 'session-recoverable', false, { kind: 'worker', live: true, running: false }],
     ['offline worker session', 'session-offline', false, { kind: 'worker', live: false, running: false }],
     ['scout session', 'session-scout', false, { kind: 'scout', agentId: 'scout-1', runId: null, running: true }],
-    ['run-less worker session', 'session-runless', false, { kind: 'worker', runId: null }],
     ['operator token', null, true, { kind: 'operator', agentId: null, live: true, running: true }],
     ['a session wins over the operator token', 'session-a', true, { kind: 'worker', agentId: 'worker-a' }],
   ] as const)('resolves a %s', (_label, credential, operator, expected) => {
@@ -54,6 +53,8 @@ describe('resolveControlPrincipal', () => {
   it('returns null for a bearer-only caller and refuses an unknown credential', () => {
     expect(resolveControlPrincipal(dir, null, false)).toBeNull();
     expect(() => resolveControlPrincipal(dir, 'not-a-session', false)).toThrow(expect.objectContaining({ code: 'unauthenticated', status: 401 }));
+    // A worker session without a run owns nothing, so it authenticates nobody.
+    expect(() => resolveControlPrincipal(dir, 'session-runless', false)).toThrow(expect.objectContaining({ code: 'unauthenticated', status: 401 }));
   });
 });
 

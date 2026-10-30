@@ -78,7 +78,7 @@ export function createAdapter(provider: string, options: Record<string, unknown>
     attach: (sessionHandle: string) => route(sessionHandle).attach(sessionHandle),
     heartbeatProbe: (sessionHandle: string) => route(sessionHandle).heartbeatProbe(sessionHandle),
     stop: (sessionHandle: string) => route(sessionHandle).stop(sessionHandle),
-    getOutputTail: (sessionHandle: string) => route(sessionHandle).getOutputTail(sessionHandle),
+    getOutputTail: (sessionHandle: string, maxBytes?: number) => route(sessionHandle).getOutputTail(sessionHandle, maxBytes),
     ownsSession: (sessionHandle: string) => route(sessionHandle).ownsSession(sessionHandle),
     detectInputBlock: (sessionHandle: string) => route(sessionHandle).detectInputBlock(sessionHandle),
     inspectSession: (sessionHandle: string) => route(sessionHandle).inspectSession(sessionHandle),

@@ -61,12 +61,10 @@ export function sessionIdFromEnv(env: NodeJS.ProcessEnv = process.env): string |
 }
 
 /**
- * A project state directory accepts secrets only. It is recognised by its
- * project descriptor or its task store, so losing one of them does not make
- * it accept readable session ids.
+ * resolveSessionCredential against a state directory's event store. A project
+ * state directory (isProjectStateDir: descriptor or task store, so losing one
+ * does not downgrade it) accepts secrets only, never readable session ids.
  */
-
-/** resolveSessionCredential against a state directory's event store. */
 export function sessionForCredential(stateDir: string, credential: string): CredentialSession | null {
   const only = isProjectStateDir(stateDir);
   return withEventDb(stateDir, (db) => resolveSessionCredential(db, credential, { secretsOnly: only }));

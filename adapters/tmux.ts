@@ -108,10 +108,10 @@ function capture(agentId: string): string | null {
   return result.status === 0 ? result.stdout : null;
 }
 
-function readLogTail(agentId: string): string {
+function readLogTail(agentId: string, maxBytes = OUTPUT_TAIL_BYTES): string {
   const path = logPath(agentId);
   if (!existsSync(path)) return '';
-  return readFileSync(path).subarray(-OUTPUT_TAIL_BYTES).toString('utf8');
+  return readFileSync(path).subarray(-maxBytes).toString('utf8');
 }
 
 /** Bracketed paste keeps multi-line text intact; a separate Enter submits it. */
@@ -237,11 +237,12 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       }
     },
 
-    getOutputTail(sessionHandle: string): string | null {
+    getOutputTail(sessionHandle: string, maxBytes?: number): string | null {
       try {
         const agentId = parseHandle(sessionHandle);
-        const text = capture(agentId) ?? stripAnsi(readLogTail(agentId));
-        return text.slice(-OUTPUT_TAIL_BYTES).trim();
+        // A caller asking for more than the visible pane reads the full output log.
+        const text = (maxBytes === undefined ? capture(agentId) : null) ?? stripAnsi(readLogTail(agentId, maxBytes));
+        return text.slice(-(maxBytes ?? OUTPUT_TAIL_BYTES)).trim();
       } catch {
         return null;
       }
