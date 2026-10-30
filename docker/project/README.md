@@ -71,7 +71,7 @@ to inspect runtime health.
 Docker is required for the opt-in integration suite:
 
 ```bash
-ORC_DOCKER_SMOKE=1 npm test -- docker/project/project.integration.test.ts
+RUN_DOCKER_SMOKE=1 npm test -- docker/project/project.integration.test.ts
 ```
 
 For a manual two-worker check, set `ORC_MAX_WORKERS=2`, provide two independent

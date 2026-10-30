@@ -28,7 +28,7 @@ lifecycle, and surfaces status to the foreground master agent.
 ```bash
 nvm use 24        # activate correct Node version
 npm install       # install dependencies
-npm test          # run full test suite
+npm test          # run full test suite (inherited ORC_* is stripped: safe inside a worker session)
 ```
 
 Never use version range matchers (`~`, `^`) in `package.json` — always exact pinned versions.
