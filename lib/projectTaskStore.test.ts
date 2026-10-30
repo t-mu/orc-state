@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ConflictError } from './domainErrors.ts';
 import { migrateProjectTaskSchema, PROJECT_TASK_SCHEMA_VERSION, ProjectTaskStore } from './projectTaskStore.ts';
 
 let dir: string;
@@ -48,12 +49,17 @@ describe('project task SQLite schema', () => {
   it('enforces lifecycle transitions, reason and attempt tracking at the database boundary', () => {
     store.createTask({ ref: 'feature/1', title: 'First', bodyMarkdown: '# First' });
     expect(() => store.transition('feature/1', 'merge_succeeded', 'done')).toThrow('invalid task transition');
+    // A refused move is a typed conflict naming the transition, not a raw SQLite abort.
+    expect(() => store.transition('feature/1', 'merge_succeeded', 'done'))
+      .toThrow(expect.objectContaining({ name: 'ConflictError', message: 'invalid task transition for feature/1: todo -> done (cause merge_succeeded)' }));
+    expect(() => store.transition('feature/1', 'merge_succeeded', 'done')).toThrow(ConflictError);
     expect(() => store.transition('feature/1', 'manual_block', 'blocked')).toThrow();
     store.transition('feature/1', 'claim', 'claimed');
     // Attempts follow the failure policy and are set by lifecycle writers, not by the claim itself.
     expect(store.getTask('feature/1')).toMatchObject({ status: 'claimed', attemptCount: 0 });
     store.transition('feature/1', 'run_start', 'in_progress');
-    expect(() => store.transition('feature/1', 'failure_block', 'blocked', '')).toThrow();
+    // Other store failures, here a missing block reason, stay raw SQLite errors.
+    expect(() => store.transition('feature/1', 'failure_block', 'blocked', '')).toThrow(Database.SqliteError);
     store.transition('feature/1', 'failure_block', 'blocked', 'Needs credential');
     expect(store.getTask('feature/1')).toMatchObject({ status: 'blocked', blockedReason: 'Needs credential' });
     store.transition('feature/1', 'unblock', 'todo');

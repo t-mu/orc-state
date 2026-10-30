@@ -523,8 +523,16 @@ export class ProjectTaskStore {
     if (!task) throw new Error(`Task not found: ${ref}`);
     if (input.idempotencyKey && this.db.prepare('SELECT 1 FROM task_transitions WHERE task_ref = ? AND idempotency_key = ?').get(ref, input.idempotencyKey)) return;
     const now = new Date().toISOString();
-    this.db.prepare('INSERT INTO task_transitions (task_ref, from_status, to_status, cause, reason, run_id, actor_id, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(ref, task.status, input.to, input.cause, input.reason ?? null, input.runId ?? null, input.actorId ?? null, input.idempotencyKey ?? null, now);
+    try {
+      this.db.prepare('INSERT INTO task_transitions (task_ref, from_status, to_status, cause, reason, run_id, actor_id, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(ref, task.status, input.to, input.cause, input.reason ?? null, input.runId ?? null, input.actorId ?? null, input.idempotencyKey ?? null, now);
+    } catch (error) {
+      // The transitions_validate trigger refuses the move; callers see a conflict, not a storage fault.
+      if (error instanceof Database.SqliteError && error.code === 'SQLITE_CONSTRAINT_TRIGGER' && error.message === 'invalid task transition') {
+        throw new ConflictError(`invalid task transition for ${ref}: ${task.status} -> ${input.to} (cause ${input.cause})`);
+      }
+      throw error;
+    }
     if (input.cause === 'run_start') {
       this.db.prepare("UPDATE task_runs SET state = 'in_progress', updated_at = ? WHERE task_ref = ? AND state = 'claimed'").run(now, ref);
     }
