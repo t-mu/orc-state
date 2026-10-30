@@ -72,13 +72,14 @@ function rawGet(headers: Record<string, string>, path = '/v1/snapshot'): Promise
   });
 }
 
-function rawPost(headers: Record<string, string>, path: string, body: unknown): Promise<{ status: number }> {
+function rawPost(headers: Record<string, string>, path: string, body: unknown): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
     const text = JSON.stringify(body);
     const req = request({ socketPath: server.endpoint.path, path, method: 'POST',
       headers: { ...headers, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(text)) } }, (res) => {
-      res.resume();
-      res.on('end', () => resolve({ status: res.statusCode ?? 0 }));
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
     });
     req.on('error', reject);
     req.end(text);
@@ -187,6 +188,7 @@ describe('local daemon control API', () => {
     // An older client sending a coordinator-side path is told to update.
     const legacyImport = await rawPost({ ...headers, ...operator() }, '/v1/tasks/import', { path: '/tmp/x.md' });
     expect(legacyImport.status).toBe(400);
+    expect(legacyImport.text).toContain('update orc on the client');
   });
 
   it('maps task input mistakes and duplicates by type, ignores a master\'s named actor, and explains status edits', async () => {
