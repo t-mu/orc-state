@@ -83,13 +83,6 @@ function classifyWorkerSlot(slot: Agent, activeClaim: Claim | null): string {
   return 'available';
 }
 
-function classifyScoutSlot(agent: Agent): string {
-  if (agent.status === 'offline') return 'unavailable';
-  if (agent.status === 'running' && !agent.session_handle) return 'warming';
-  if (agent.status === 'running') return 'investigating';
-  return 'idle';
-}
-
 interface FailureEntry {
   ts: string | null;
   run_id: string | null;
@@ -210,7 +203,6 @@ export function buildActiveClaimMetrics(
 
 export function buildSlotSummary(
   workerSlots: Agent[],
-  scoutAgents: Agent[],
   activeClaimByAgentId: Map<string, ReturnType<typeof buildActiveClaimMetrics>[number]>,
 ) {
   const slotDetails = workerSlots.map((slot) => {
@@ -229,18 +221,19 @@ export function buildSlotSummary(
       last_heartbeat_at: slot.last_heartbeat_at ?? null,
     };
   });
-  const scoutDetails = scoutAgents.map((agent) => ({
+  return slotDetails;
+}
+
+/** Scouts are ad-hoc sessions, not capacity: list each one by id and state. */
+export function buildScoutList(scoutAgents: Agent[]) {
+  return scoutAgents.map((agent) => ({
     agent_id: agent.agent_id,
-    role: agent.role,
     provider: agent.provider,
     model: agent.model ?? null,
     status: agent.status,
     session_handle: agent.session_handle ?? null,
-    slot_state: classifyScoutSlot(agent),
-    last_status_change_at: agent.last_status_change_at ?? null,
-    last_heartbeat_at: agent.last_heartbeat_at ?? null,
+    launched_at: agent.registered_at ?? null,
   }));
-  return { slotDetails, scoutDetails };
 }
 
 /**
@@ -304,7 +297,8 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
   );
   const liveWorkers = agents.filter((agent) => agent.role === 'worker');
   const scoutAgents = agents.filter((agent) => agent.role === 'scout');
-  const { slotDetails, scoutDetails } = buildSlotSummary(liveWorkers, scoutAgents, activeClaimByAgentId);
+  const slotDetails = buildSlotSummary(liveWorkers, activeClaimByAgentId);
+  const scouts = buildScoutList(scoutAgents);
   const dispatchReadyTasks = listDispatchReadyTasks(backlogFile);
   const capacity = computeWorkerCapacity(agents, workerPoolConfig.max_workers);
   const availableSlots = capacity.available;
@@ -359,14 +353,7 @@ export function buildStatus(stateDir: string): Record<string, unknown> {
       dispatch_ready_count: dispatchReadyTasks.length,
       waiting_for_capacity: Math.max(0, dispatchReadyTasks.length - availableSlots),
     },
-    scout_capacity: {
-      total_slots: scoutDetails.length,
-      investigating_slots: scoutDetails.filter((slot) => slot.slot_state === 'investigating').length,
-      idle_slots: scoutDetails.filter((slot) => slot.slot_state === 'idle').length,
-      warming_slots: scoutDetails.filter((slot) => slot.slot_state === 'warming').length,
-      unavailable_slots: scoutDetails.filter((slot) => slot.slot_state === 'unavailable').length,
-      slots: scoutDetails,
-    },
+    scouts,
     tasks,
     claims: {
       active: activeClaimsWithMetrics,
@@ -441,14 +428,7 @@ export function formatStatus(status: Record<string, unknown>): string {
     dispatch_ready_tasks: Array<{ ref: string }>;
     slots: Array<{ session_handle: string | null; agent_id: string; role: string; slot_state: string; status: string; active_run_id: string | null; active_task_ref: string | null }>;
   };
-  const scoutCapacity = status['scout_capacity'] as {
-    total_slots: number;
-    investigating_slots: number;
-    idle_slots: number;
-    warming_slots: number;
-    unavailable_slots: number;
-    slots: Array<{ session_handle: string | null; agent_id: string; role: string; slot_state: string; status: string }>;
-  };
+  const scouts = (status['scouts'] ?? []) as Array<{ agent_id: string; status: string; session_handle: string | null }>;
   const claims = status['claims'] as {
     total: number;
     awaiting_run_started: number;
@@ -521,26 +501,23 @@ export function formatStatus(status: Record<string, unknown>): string {
       lines.push(`  queue:               +${workerCapacity.dispatch_ready_tasks.length - 3} more`);
     }
   }
-  const visibleSlots = [
-    ...workerCapacity.slots
-      .filter((slot) => slot.session_handle !== null)
-      .map((slot) => ({ ...slot, attached: true })),
-    ...scoutCapacity.slots
-      .map((slot) => ({ ...slot, attached: slot.session_handle !== null })),
-  ];
+  const visibleSlots = workerCapacity.slots.filter((slot) => slot.session_handle !== null);
   if (visibleSlots.length === 0) {
     lines.push('  slots: (none spawned)');
   } else {
     for (const slot of visibleSlots) {
-      const runId = 'active_run_id' in slot && typeof slot.active_run_id === 'string'
-        ? slot.active_run_id
-        : null;
-      const taskRef = 'active_task_ref' in slot && typeof slot.active_task_ref === 'string'
-        ? slot.active_task_ref
-        : null;
-      const suffix = runId ? ` run=${runId} task=${taskRef ?? 'n/a'}` : '';
-      const attached = slot.attached ? 'attached' : 'detached';
-      lines.push(`  ${slot.agent_id.padEnd(12)} ${slot.role.padEnd(8)} ${slot.slot_state.padEnd(14)} ${slot.status.padEnd(10)} ${attached}${suffix}`);
+      const suffix = slot.active_run_id ? ` run=${slot.active_run_id} task=${slot.active_task_ref ?? 'n/a'}` : '';
+      lines.push(`  ${slot.agent_id.padEnd(12)} ${slot.role.padEnd(8)} ${slot.slot_state.padEnd(14)} ${slot.status.padEnd(10)} attached${suffix}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`Scouts (${scouts.length}):`);
+  if (scouts.length === 0) {
+    lines.push('  (none)');
+  } else {
+    for (const scout of scouts) {
+      lines.push(`  ${scout.agent_id.padEnd(12)} ${scout.status.padEnd(10)} ${scout.session_handle ? 'attached' : 'detached'}`);
     }
   }
 

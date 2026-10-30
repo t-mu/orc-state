@@ -121,14 +121,7 @@ describe('buildWorkerSlotViewModels — live workers only', () => {
       waiting_for_capacity: 0,
       slots: [],
     },
-    scout_capacity: {
-      total_slots: 0,
-      investigating_slots: 0,
-      idle_slots: 0,
-      warming_slots: 0,
-      unavailable_slots: 0,
-      slots: [],
-    },
+    scouts: [],
     tasks: { counts: {}, total: 0 },
     claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
     failures: { startup: [], lifecycle: [] },
@@ -184,20 +177,21 @@ describe('buildWorkerSlotViewModels — phases', () => {
       waiting_for_capacity: 0,
       slots: [liveSlot],
     },
-    scout_capacity: {
-      total_slots: 0,
-      investigating_slots: 0,
-      idle_slots: 0,
-      warming_slots: 0,
-      unavailable_slots: 0,
-      slots: [],
-    },
+    scouts: [],
     tasks: { counts: {}, total: 0 },
     claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
     failures: { startup: [], lifecycle: [] },
     recentEvents: [],
     eventReadError: '',
   };
+
+  it('shows a scout by its agent status, with no slot classification', () => {
+    const vms = buildWorkerSlotViewModels({
+      ...baseStatus,
+      scouts: [{ agent_id: 'scout-1', provider: 'claude', model: null, status: 'running', session_handle: 'pty:s', launched_at: null }],
+    });
+    expect(vms[1]).toMatchObject({ slot_id: 'scout-1', role: 'scout', slot_state: 'running', run_state: null, sprite_state: 'work' });
+  });
 
   it('returns empty phases array when no run is active', () => {
     const vms = buildWorkerSlotViewModels(baseStatus);

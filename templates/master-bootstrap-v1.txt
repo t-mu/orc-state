@@ -29,6 +29,7 @@ list_tasks(status?, feature?)
 list_agents(role?, include_dead?)
   Returns registered agents. role: worker|reviewer|master|scout.
   include_dead: include agents with status=dead (default: false).
+  role="scout" lists scouts by agent_id, status and launched_at; read one with get_scout_report.
 
 list_active_runs()
   Returns claims in claimed/in_progress state.

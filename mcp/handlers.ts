@@ -105,10 +105,21 @@ export function handleListAgents(stateDir: string, { role, include_dead = false 
       activeClaimsByAgent.set(claim.agent_id, claim.task_ref ?? null);
     }
   }
-  return agents.map((agent) => ({
-    ...agent,
-    active_task_ref: activeClaimsByAgent.get(agent.agent_id) ?? null,
-  }));
+  return agents.map((agent) => (agent.role === 'scout'
+    // A scout holds no claim; list it by id and state, as get_scout_report reports it.
+    ? {
+      agent_id: agent.agent_id,
+      role: agent.role,
+      provider: agent.provider,
+      model: agent.model ?? null,
+      status: agent.status,
+      session_handle: agent.session_handle ?? null,
+      launched_at: agent.registered_at ?? null,
+    }
+    : {
+      ...agent,
+      active_task_ref: activeClaimsByAgent.get(agent.agent_id) ?? null,
+    }));
 }
 
 export function handleListActiveRuns(stateDir: string) {

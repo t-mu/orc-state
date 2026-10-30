@@ -76,28 +76,16 @@ describe('App', () => {
         ],
       },
       tasks: { counts: { todo: 2 }, total: 2 },
-      scout_capacity: {
-        total_slots: 1,
-        investigating_slots: 1,
-        idle_slots: 0,
-        warming_slots: 0,
-        unavailable_slots: 0,
-        slots: [
-          {
-            agent_id: 'scout-1',
-            role: 'scout',
-            provider: 'codex',
-            model: null,
-            status: 'running',
-            session_handle: 'pty:scout-1',
-            slot_state: 'investigating',
-            active_run_id: null,
-            active_task_ref: null,
-            last_status_change_at: null,
-            last_heartbeat_at: null,
-          },
-        ],
-      },
+      scouts: [
+        {
+          agent_id: 'scout-1',
+          provider: 'codex',
+          model: null,
+          status: 'running',
+          session_handle: 'pty:scout-1',
+          launched_at: null,
+        },
+      ],
       claims: {
         active: [
           {
@@ -149,14 +137,7 @@ describe('App', () => {
           slots: [],
         },
         tasks: { counts: { todo: 0 }, total: 0 },
-        scout_capacity: {
-          total_slots: 0,
-          investigating_slots: 0,
-          idle_slots: 0,
-          warming_slots: 0,
-          unavailable_slots: 0,
-          slots: [],
-        },
+        scouts: [],
         claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
         failures: { startup: [], lifecycle: [] },
         recentEvents: [],
@@ -189,28 +170,16 @@ describe('App', () => {
           ],
         },
         tasks: { counts: { todo: 1 }, total: 1 },
-        scout_capacity: {
-          total_slots: 1,
-          investigating_slots: 0,
-          idle_slots: 1,
-          warming_slots: 0,
-          unavailable_slots: 0,
-          slots: [
-            {
-              agent_id: 'scout-1',
-              role: 'scout',
-              provider: 'codex',
-              model: null,
-              status: 'idle',
-              session_handle: null,
-              slot_state: 'idle',
-              active_run_id: null,
-              active_task_ref: null,
-              last_status_change_at: null,
-              last_heartbeat_at: null,
-            },
-          ],
+        scouts: [
+        {
+          agent_id: 'scout-1',
+          provider: 'codex',
+          model: null,
+          status: 'idle',
+          session_handle: null,
+          launched_at: null,
         },
+      ],
         claims: {
           active: [
             {
@@ -255,7 +224,7 @@ describe('App', () => {
         slots: [],
       },
       tasks: { counts: {}, total: 0 },
-      scout_capacity: { total_slots: 0, investigating_slots: 0, idle_slots: 0, warming_slots: 0, unavailable_slots: 0, slots: [] },
+      scouts: [],
       claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
       failures: { startup: [], lifecycle: [] },
       recentEvents: [
@@ -301,7 +270,7 @@ describe('App', () => {
         ],
       },
       tasks: { counts: { in_progress: 1 }, total: 1 },
-      scout_capacity: { total_slots: 0, investigating_slots: 0, idle_slots: 0, warming_slots: 0, unavailable_slots: 0, slots: [] },
+      scouts: [],
       claims: {
         active: [
           {
