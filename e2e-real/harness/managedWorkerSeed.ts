@@ -1,75 +1,53 @@
 /**
  * e2e-real/harness/managedWorkerSeed.ts
  *
- * Seeds the exact coordinator/runtime state needed for task-scoped worker
- * dispatch in the temp repo. The coordinator should pick up these seeds on its
- * first tick and launch a real worker session without needing a master session.
+ * Seeds the tasks needed for task-scoped worker dispatch into the temp repo's
+ * registered project. The coordinator should pick them up on its first tick
+ * and launch a real worker session without needing a master session.
  *
- * This mirrors the blessed coordinator dispatch path:
- *   - agents.json starts empty; workers are registered dynamically at dispatch
- *   - backlog.json has the provided tasks as `todo` + `ready_for_dispatch`
- *   - claims.json is empty
- *   - events.db is initialized
+ * This mirrors the blessed task-authoring path: each task is created with
+ * `orc project task create` in the project's SQLite store (`todo`,
+ * `ready_for_dispatch`), with its `depends_on` and Markdown body. Registering
+ * the project already initialized empty agents, claims and events.
  *
  * Invariant: no master-only state is seeded.
  */
-import { mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Task } from '../../types/backlog.ts';
-import { initEventsDb } from '../../lib/eventLog.ts';
-import { atomicWriteJson } from '../../lib/atomicWrite.ts';
+import type { RuntimeRepo } from './runtimeRepo.ts';
 
-export interface SeedOptions {
-  /** Provider retained for call-site compatibility (default: 'claude'). */
-  provider?: string;
-  /** Feature ref to group tasks under (default: 'smoke'). */
-  featureRef?: string;
+export interface SeedTask extends Pick<Task, 'ref' | 'title'> {
+  depends_on?: string[];
+  /** Task body Markdown; without one the store renders a body from the title. */
+  body?: string;
 }
 
 /**
- * Seed the task-scoped worker dispatch baseline into `stateDir`.
+ * Create `tasks` (refs of the form `<feature>/<slug>`) in the repo's project.
  *
- * After seeding, the coordinator can be started against the temp repo and it
+ * After seeding, the coordinator can be started against the project and it
  * will take the managed dispatch path on its first tick.
  */
-export function seedManagedWorkerBaseline(
-  stateDir: string,
-  tasks: (Pick<Task, 'ref' | 'title'> & { depends_on?: string[] })[],
-  options: SeedOptions = {},
-): void {
-  const { provider: _provider = 'claude', featureRef = 'smoke' } = options;
+export function seedManagedWorkerBaseline(repo: RuntimeRepo, tasks: SeedTask[]): void {
+  // Bodies are written outside the target repo; create reads them in this process.
+  const bodyDir = mkdtempSync(join(repo.root, 'task-bodies-'));
 
-  mkdirSync(stateDir, { recursive: true });
-
-  atomicWriteJson(join(stateDir, 'agents.json'), {
-    version: '1',
-    agents: [],
-  });
-
-  // Backlog tasks: ready for dispatch, preserving depends_on for sequential dispatch
-  const backlogTasks = tasks.map((t) => ({
-    ref: t.ref,
-    title: t.title,
-    status: 'todo',
-    planning_state: 'ready_for_dispatch',
-    task_type: 'implementation',
-    ...(t.depends_on != null && t.depends_on.length > 0 ? { depends_on: t.depends_on } : {}),
-  }));
-
-  atomicWriteJson(join(stateDir, 'backlog.json'), {
-    version: '1',
-    features: [
-      {
-        ref: featureRef,
-        title: featureRef.charAt(0).toUpperCase() + featureRef.slice(1),
-        tasks: backlogTasks,
-      },
-    ],
-  });
-
-  // Empty claims
-  atomicWriteJson(join(stateDir, 'claims.json'), { version: '1', claims: [] });
-
-  // Initialize events DB
-  initEventsDb(stateDir);
+  for (const task of tasks) {
+    const slash = task.ref.indexOf('/');
+    if (slash <= 0) throw new Error(`seedManagedWorkerBaseline: task ref must be <feature>/<slug>: ${task.ref}`);
+    const args = [
+      'project', 'task', 'create',
+      `--feature=${task.ref.slice(0, slash)}`,
+      `--ref=${task.ref.slice(slash + 1)}`,
+      `--title=${task.title}`,
+    ];
+    if (task.depends_on != null && task.depends_on.length > 0) args.push(`--depends-on=${task.depends_on.join(',')}`);
+    if (task.body != null) {
+      const bodyFile = join(bodyDir, `${task.ref.replace(/\//g, '-')}.md`);
+      writeFileSync(bodyFile, task.body);
+      args.push(`--body-file=${bodyFile}`);
+    }
+    repo.orc(args);
+  }
 }

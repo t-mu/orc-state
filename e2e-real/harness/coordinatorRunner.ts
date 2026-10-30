@@ -3,8 +3,9 @@
  *
  * Start and stop the real coordinator process against a temp repo.
  *
- * The coordinator is launched as a child process with all runtime paths pinned
- * into the temp repo via the RuntimeEnv helper. stdout and stderr are captured
+ * The coordinator is launched as a child process in project mode: the
+ * RuntimeEnv helper pins the temp ORC_DATA_HOME and the temp repo's
+ * ORC_PROJECT_ID. stdout and stderr are captured
  * for failure diagnostics.
  *
  * Lifecycle:
@@ -52,7 +53,7 @@ export interface CoordinatorRunner {
 }
 
 /**
- * Spawn the real coordinator against the temp repo described by `runtimeEnv`.
+ * Spawn the real coordinator against the project described by `runtimeEnv`.
  *
  * The coordinator is started with `--mode=autonomous` and a short tick interval
  * so it dispatches quickly during tests.

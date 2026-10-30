@@ -47,7 +47,7 @@ async function waitUntil(
 /**
  * Wait for a task to reach the specified status.
  *
- * @param stateDir - Path to `.orc-state` in the temp repo.
+ * @param stateDir - The temp repo's project state directory.
  * @param taskRef  - Task ref string (e.g. `'smoke/task-1'`).
  * @param status   - Target status to wait for.
  * @param options  - Stage label and timeout.
@@ -77,7 +77,7 @@ export async function waitForTaskStatus(
 /**
  * Wait for a specific lifecycle event for a run to appear in the event log.
  *
- * @param stateDir  - Path to `.orc-state` in the temp repo.
+ * @param stateDir  - The temp repo's project state directory.
  * @param runId     - The run_id to match.
  * @param eventName - The `event` field to wait for (e.g. `'run_finished'`).
  * @param options   - Stage label and timeout.
@@ -107,7 +107,7 @@ export async function waitForRunEvent(
 /**
  * Wait for `run_started` events to appear for all expected task refs.
  *
- * @param stateDir - Path to `.orc-state` in the temp repo.
+ * @param stateDir - The temp repo's project state directory.
  * @param taskRefs - Task refs that must each have a corresponding `run_started`.
  * @param options  - Stage label and timeout.
  */
@@ -139,7 +139,7 @@ export async function waitForWorkerDispatches(
 // ── Path containment assertions ─────────────────────────────────────────────
 
 /**
- * Assert that all provided named paths are inside `repoRoot`.
+ * Assert that all provided named paths are inside `repoRoot` (a temp root).
  *
  * Throws with a descriptive message listing any escaped paths.
  */
@@ -165,13 +165,14 @@ export function assertPathsInside(repoRoot: string, paths: Record<string, string
 }
 
 /**
- * Assert that all orchestrator-managed runtime paths are inside `repoRoot`.
+ * Assert that all orchestrator-managed runtime paths are inside `rootDir`
+ * (the temp root holding the target repo and its data home).
  *
- * Checks the stateDir, worktreesDir, and any worktree paths listed in
- * `run-worktrees.json`. Throws with a descriptive message on violation.
+ * Checks the project stateDir, its worktrees directory, and any worktree paths
+ * listed in `run-worktrees.json`. Throws with a descriptive message on violation.
  */
-export function assertRuntimePathsInside(stateDir: string, repoRoot: string): void {
-  const resolvedRoot = resolve(repoRoot);
+export function assertRuntimePathsInside(stateDir: string, rootDir: string): void {
+  const resolvedRoot = resolve(rootDir);
   const escaped: string[] = [];
 
   function check(path: string, label: string): void {
@@ -184,7 +185,7 @@ export function assertRuntimePathsInside(stateDir: string, repoRoot: string): vo
   }
 
   check(stateDir, 'stateDir');
-  check(join(repoRoot, '.worktrees'), 'worktreesDir');
+  check(join(stateDir, 'worktrees'), 'worktreesDir');
 
   // Check worktree paths from run-worktrees.json if it exists
   const runWorktreesPath = join(stateDir, 'run-worktrees.json');
@@ -205,7 +206,7 @@ export function assertRuntimePathsInside(stateDir: string, repoRoot: string): vo
 
   if (escaped.length > 0) {
     throw new Error(
-      `[assertions] orchestrator-managed paths escaped the temp repo root!\n` +
+      `[assertions] orchestrator-managed paths escaped the temp root!\n` +
       escaped.map((e) => `  - ${e}`).join('\n'),
     );
   }

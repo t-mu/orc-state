@@ -83,12 +83,24 @@ enforced by `vitest.real-providers.config.mjs` (`fileParallelism: false`,
 `singleFork: true`). Real provider sessions are expensive and must not overlap.
 
 Each smoke test:
-1. Creates an isolated temp git repo (outside the real checkout)
-2. Seeds coordinator/worker runtime state (no real master session)
-3. Starts a real coordinator process pointed at the temp repo
+1. Creates an isolated temp root (outside the real checkout) holding a clean
+   target git repo and a temp `ORC_DATA_HOME`, and registers the repo there with
+   `orc project add` — no orc files are written into the repo
+2. Stores the provider settings with `orc project config set`
+   (`worker_pool.max_workers = 1`) and seeds the tasks with
+   `orc project task create` (no real master session)
+3. Starts a real coordinator process with `ORC_DATA_HOME` and the project's
+   `ORC_PROJECT_ID`; every other inherited `ORC_*` variable is removed, so the
+   suite never touches the project it is run from
 4. Dispatches two sequential tasks to a real provider worker
 5. Polls for task completion and lifecycle events
 6. Asserts path containment and cleans up
+
+The harness's own tests (`e2e-real/harness/harness.test.ts`) need no provider
+credentials or `RUN_REAL_PROVIDERS`: they exercise registration, seeding, the
+runtime env and a real coordinator start with no tasks, so no worker is
+launched. Run them alone with
+`npm run test:real-providers -- e2e-real/harness/harness.test.ts`.
 
 ### Timeouts
 
@@ -109,7 +121,7 @@ If a test times out, check:
 For each case, the test validates:
 - Two sequential task completions (task 2 depends on task 1)
 - Lifecycle event sequencing (`run_started` appears for each run)
-- Path containment (all state, worktrees, and artifacts stay inside the temp repo)
+- Path containment (the project state directory, its run worktrees, and artifacts stay inside the temp root)
 
 ### What the suite does NOT cover
 
@@ -131,16 +143,18 @@ boundary test. Path containment is verified at the filesystem level via
 - Check that the provider binary is installed and on `$PATH`.
 
 **Coordinator startup timeout:**
-- The coordinator must produce output within 15 seconds of starting.
-- Check for startup errors: run `orc doctor` in the project root.
+- The coordinator must produce output within the test's startup timeout.
+- Check for startup errors: run `orc doctor` with the temp `ORC_DATA_HOME` and
+  `ORC_PROJECT_ID` from the test.
 
 **Task completion timeout:**
 - The worker session may be stalled at an interactive prompt.
 - Run the provider CLI manually (`claude` or `codex`) and check for first-run auth flows.
 
 **Path containment failure:**
-- An orchestrator-managed path escaped the temp repo root.
-- Check `run-worktrees.json` in the temp repo's `.orc-state/` directory.
+- An orchestrator-managed path escaped the temp root.
+- Check `run-worktrees.json` in the project state directory
+  (`<temp root>/data/projects/<project-id>/`).
 - This is a coordinator bug — open an issue with the coordinator stdout from the test failure.
 
 ---

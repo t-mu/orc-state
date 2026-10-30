@@ -1,7 +1,7 @@
 /**
  * e2e-real/fixtures/blessedTasks.ts
  *
- * Static blessed-path backlog task specs for real-provider smoke tests.
+ * Static blessed-path task specs for real-provider smoke tests.
  *
  * These two tasks are designed for sequential dispatch in a temp repo:
  *   - Task 1 completes first (creates a module + test)
@@ -20,8 +20,6 @@ export interface BlessedTask {
   title: string;
   /** Source file the worker should create — used as an existence check. */
   sourceFile: string;
-  /** Numbered backlog markdown filename used by active spec discovery. */
-  specFile: string;
 }
 
 /**
@@ -31,7 +29,6 @@ export const BLESSED_TASK_1: BlessedTask = {
   ref: 'smoke/task-1',
   title: 'Smoke task 1: create marker-1 module',
   sourceFile: 'lib/marker-1.mjs',
-  specFile: '101-smoke-task-1.md',
 };
 
 /**
@@ -42,7 +39,6 @@ export const BLESSED_TASK_2: BlessedTask = {
   ref: 'smoke/task-2',
   title: 'Smoke task 2: create marker-2 module',
   sourceFile: 'lib/marker-2.mjs',
-  specFile: '102-smoke-task-2.md',
 };
 
 /**
@@ -73,7 +69,8 @@ export function blessedTask2BacklogEntry(): Record<string, unknown> {
 }
 
 /**
- * Build a markdown task spec for a blessed smoke task.
+ * Build the markdown task body for a blessed smoke task, as stored in the
+ * project task store with `orc project task create --body-file`.
  *
  * The spec describes a trivially implementable task (create a module that
  * exports a marker value, plus a test using node:test). The worker follows
@@ -81,16 +78,9 @@ export function blessedTask2BacklogEntry(): Record<string, unknown> {
  * including npm test, git commit, rebase, and lifecycle commands, but
  * intentionally skipping the reviewer sub-agent round.
  */
-export function buildBlessedTaskSpec(task: BlessedTask, _repoRoot: string): string {
+export function buildBlessedTaskSpec(task: BlessedTask): string {
   const num = task.ref.endsWith('task-1') ? '1' : '2';
   return [
-    '---',
-    `ref: ${task.ref}`,
-    'feature: smoke',
-    'priority: normal',
-    'status: todo',
-    '---',
-    '',
     `# ${task.title}`,
     '',
     '## Objective',

@@ -43,23 +43,29 @@ afterEach(() => {
 // ── Managed worker seed ─────────────────────────────────────────────────────
 
 describe('seedManagedWorkerBaseline', () => {
-  it('can commit smoke backlog specs into the temp repo before dispatch', () => {
+  it('stores blessed task bodies in the project task store', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    writeFileSync(join(repo.backlogDir, BLESSED_TASK_1.specFile), buildBlessedTaskSpec(BLESSED_TASK_1, repo.repoRoot));
-    repo.commitAll('chore: add smoke backlog specs');
+    seedManagedWorkerBaseline(repo, [
+      { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title, body: buildBlessedTaskSpec(BLESSED_TASK_1) },
+    ]);
 
-    const log = spawnSync('git', ['log', '--oneline', '-n', '1'], { cwd: repo.repoRoot, encoding: 'utf8' });
-    expect(log.status).toBe(0);
-    expect(log.stdout).toContain('chore: add smoke backlog specs');
+    const task = JSON.parse(repo.orc(['project', 'task', 'show', BLESSED_TASK_1.ref])) as Record<string, unknown>;
+    expect(task.title).toBe(BLESSED_TASK_1.title);
+    expect(task.feature_ref).toBe('smoke');
+    expect(task.body_markdown).toBe(buildBlessedTaskSpec(BLESSED_TASK_1));
+
+    // Nothing is written into the target repo's working tree.
+    const status = spawnSync('git', ['status', '--porcelain'], { cwd: repo.repoRoot, encoding: 'utf8' });
+    expect(status.stdout).toBe('');
   });
 
   it('seeds the task-scoped worker dispatch baseline without a master session', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    seedManagedWorkerBaseline(repo.stateDir, [
+    seedManagedWorkerBaseline(repo, [
       { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
     ]);
 
@@ -87,7 +93,7 @@ describe('seedManagedWorkerBaseline', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    seedManagedWorkerBaseline(repo.stateDir, [
+    seedManagedWorkerBaseline(repo, [
       { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
       { ref: BLESSED_TASK_2.ref, title: BLESSED_TASK_2.title },
     ]);
@@ -127,8 +133,8 @@ describe('checkProviderReadiness', () => {
     const runtimeEnv = buildRuntimeEnv(repo, 'codex');
     expect(runtimeEnv.env.ORC_WORKER_BOOTSTRAP_PROFILE).toBe('smoke');
     expect(runtimeEnv.env.ORC_WORKER_STARTUP_PROFILE).toBe('real-provider-smoke');
-    expect(runtimeEnv.env.ORC_BIN).toBe(join(repo.repoRoot, 'bin', 'orc'));
-    expect(runtimeEnv.env.PATH?.split(':')[0]).toBe(join(repo.repoRoot, 'bin'));
+    expect(runtimeEnv.env.ORC_BIN).toBe(join(repo.root, 'bin', 'orc'));
+    expect(runtimeEnv.env.PATH?.split(':')[0]).toBe(join(repo.root, 'bin'));
   });
 });
 
@@ -139,10 +145,10 @@ describe('assertPathsInside / assertRuntimePathsInside', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    // Escape: stateDir set to /tmp directly (outside repoRoot)
-    expect(() => assertPathsInside(repo.repoRoot, {
+    // Escape: stateDir set to /tmp directly (outside the temp root)
+    expect(() => assertPathsInside(repo.root, {
       stateDir: '/tmp',
-      backlogDir: repo.backlogDir,
+      repoRoot: repo.repoRoot,
     })).toThrow(/escaped the temp repo root/);
   });
 
@@ -150,9 +156,10 @@ describe('assertPathsInside / assertRuntimePathsInside', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    expect(() => assertPathsInside(repo.repoRoot, {
+    expect(() => assertPathsInside(repo.root, {
+      repoRoot: repo.repoRoot,
+      dataHome: repo.dataHome,
       stateDir: repo.stateDir,
-      backlogDir: repo.backlogDir,
       worktreesDir: repo.worktreesDir,
       artifactsDir: repo.artifactsDir,
     })).not.toThrow();
@@ -172,16 +179,16 @@ describe('assertPathsInside / assertRuntimePathsInside', () => {
       ],
     });
 
-    expect(() => assertRuntimePathsInside(repo.stateDir, repo.repoRoot)).toThrow(/escaped/);
+    expect(() => assertRuntimePathsInside(repo.stateDir, repo.root)).toThrow(/escaped/);
   });
 
   it('passes runtime path check when all managed paths are inside the temp root', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    seedManagedWorkerBaseline(repo.stateDir, [{ ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title }]);
+    seedManagedWorkerBaseline(repo, [{ ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title }]);
 
-    expect(() => assertRuntimePathsInside(repo.stateDir, repo.repoRoot)).not.toThrow();
+    expect(() => assertRuntimePathsInside(repo.stateDir, repo.root)).not.toThrow();
   });
 });
 
@@ -192,7 +199,7 @@ describe('waitForTaskStatus', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    seedManagedWorkerBaseline(repo.stateDir, [
+    seedManagedWorkerBaseline(repo, [
       { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
     ]);
 
@@ -210,7 +217,7 @@ describe('waitForTaskStatus', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    seedManagedWorkerBaseline(repo.stateDir, [
+    seedManagedWorkerBaseline(repo, [
       { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
     ]);
 
@@ -281,14 +288,16 @@ describe('createRuntimeRepo', () => {
     repos.push(repo);
 
     // Temp dir uses the expected prefix.
-    expect(repo.repoRoot).toMatch(/orc-real-provider-/);
+    expect(repo.root).toMatch(/orc-real-provider-/);
 
     expect(existsSync(repo.repoRoot)).toBe(true);
     expect(existsSync(join(repo.repoRoot, '.git'))).toBe(true);
-    expect(existsSync(repo.stateDir)).toBe(true);
-    expect(existsSync(repo.backlogDir)).toBe(true);
-    expect(existsSync(repo.worktreesDir)).toBe(true);
     expect(existsSync(repo.artifactsDir)).toBe(true);
+
+    // No legacy layout in the target repo: it is a clean registered project.
+    expect(existsSync(join(repo.repoRoot, '.orc-state'))).toBe(false);
+    expect(existsSync(join(repo.repoRoot, 'backlog'))).toBe(false);
+    expect(existsSync(join(repo.repoRoot, 'orc-state.config.json'))).toBe(false);
 
     // Git repo is initialized and on the `main` branch.
     const result = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
@@ -306,13 +315,27 @@ describe('createRuntimeRepo', () => {
     expect(logResult.status).toBe(0);
     expect(logResult.stdout.trim().length).toBeGreaterThan(0);
 
-    // All paths are inside the temp repo.
-    assertPathsInside(repo.repoRoot, {
+    // All paths are inside the temp root.
+    assertPathsInside(repo.root, {
+      repoRoot: repo.repoRoot,
+      dataHome: repo.dataHome,
       stateDir: repo.stateDir,
-      backlogDir: repo.backlogDir,
       worktreesDir: repo.worktreesDir,
       artifactsDir: repo.artifactsDir,
     });
+  });
+
+  it('registers the temp repo as a project in a temp data home', () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    expect(repo.stateDir).toBe(join(repo.dataHome, 'projects', repo.projectId));
+    expect(repo.worktreesDir).toBe(join(repo.stateDir, 'worktrees'));
+    expect(existsSync(join(repo.stateDir, 'project.json'))).toBe(true);
+
+    const project = JSON.parse(repo.orc(['project', 'show'])) as Record<string, unknown>;
+    expect(project.id).toBe(repo.projectId);
+    expect(project.canonicalGitRoot).toBe(repo.repoRoot);
   });
 
   it('does not overlap with the real repo root', () => {
@@ -328,35 +351,39 @@ describe('createRuntimeRepo', () => {
 // ── buildRuntimeEnv ─────────────────────────────────────────────────────────
 
 describe('buildRuntimeEnv', () => {
-  it('pins all runtime env paths into the temp repo', () => {
-    const repo = createRuntimeRepo();
-    repos.push(repo);
+  it('selects the temp project and drops legacy path overrides', () => {
+    process.env.ORC_STATE_DIR = '/tmp/inherited-state';
+    process.env.ORC_REPO_ROOT = '/tmp/inherited-repo';
 
-    const { env, cwd } = buildRuntimeEnv(repo);
+    try {
+      const repo = createRuntimeRepo();
+      repos.push(repo);
 
-    expect(env.ORC_STATE_DIR).toBe(repo.stateDir);
-    expect(env.ORC_REPO_ROOT).toBe(repo.repoRoot);
-    expect(env.ORC_WORKTREES_DIR).toBe(repo.worktreesDir);
-    expect(env.ORC_CONFIG_FILE).toBe(join(repo.repoRoot, 'orc-state.config.json'));
-    expect(cwd).toBe(repo.repoRoot);
+      const { env, cwd } = buildRuntimeEnv(repo);
 
-    // Config file must be inside the temp repo.
-    assertPathsInside(repo.repoRoot, {
-      ORC_CONFIG_FILE: env.ORC_CONFIG_FILE as string,
-    });
+      expect(env.ORC_DATA_HOME).toBe(repo.dataHome);
+      expect(env.ORC_PROJECT_ID).toBe(repo.projectId);
+      expect(env.ORC_STATE_DIR).toBeUndefined();
+      expect(env.ORC_REPO_ROOT).toBeUndefined();
+      expect(env.ORC_CONFIG_FILE).toBeUndefined();
+      expect(cwd).toBe(repo.repoRoot);
+
+      assertPathsInside(repo.root, { ORC_DATA_HOME: env.ORC_DATA_HOME as string });
+    } finally {
+      delete process.env.ORC_STATE_DIR;
+      delete process.env.ORC_REPO_ROOT;
+    }
   });
 
-  it('writes a temp orc-state.config.json with max_workers = 1', () => {
+  it('stores max_workers = 1 as a project setting', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    buildRuntimeEnv(repo);
+    buildRuntimeEnv(repo, 'codex');
 
-    const configPath = join(repo.repoRoot, 'orc-state.config.json');
-    expect(existsSync(configPath)).toBe(true);
-
-    const config = JSON.parse(readFileSync(configPath, 'utf8')) as { worker_pool: { max_workers: number } };
-    expect(config.worker_pool.max_workers).toBe(1);
+    expect(JSON.parse(repo.orc(['project', 'config', 'get', 'worker_pool.max_workers'])).value).toBe(1);
+    expect(JSON.parse(repo.orc(['project', 'config', 'get', 'worker_pool.provider'])).value).toBe('codex');
+    expect(existsSync(join(repo.repoRoot, 'orc-state.config.json'))).toBe(false);
   });
 
   it('strips nested provider env vars from the coordinator runtime env', () => {
@@ -418,7 +445,7 @@ describe('blessedTasks fixtures', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 
-    seedManagedWorkerBaseline(repo.stateDir, [
+    seedManagedWorkerBaseline(repo, [
       { ref: BLESSED_TASK_1.ref, title: BLESSED_TASK_1.title },
       { ref: BLESSED_TASK_2.ref, title: BLESSED_TASK_2.title, depends_on: [BLESSED_TASK_1.ref] },
     ]);
@@ -490,7 +517,7 @@ describe('waitForWorkerDispatches', () => {
         timeoutMs: 1000,
         pollMs: 50,
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toHaveLength(2);
   });
 
   it('resolves when later lifecycle noise pushes the second run_started past the default event window', async () => {
@@ -540,13 +567,29 @@ describe('waitForWorkerDispatches', () => {
         timeoutMs: 1000,
         pollMs: 50,
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toHaveLength(2);
   });
 });
 
-// ── startCoordinator failure paths ─────────────────────────────────────────
+// ── startCoordinator ────────────────────────────────────────────────────────
 
 describe('startCoordinator', () => {
+  it('starts the real coordinator against the registered project', async () => {
+    const repo = createRuntimeRepo();
+    repos.push(repo);
+
+    // No tasks are seeded, so the coordinator dispatches no provider worker.
+    const runner = await startCoordinator(buildRuntimeEnv(repo), { startupTimeoutMs: 30_000, tickIntervalMs: 1000 });
+    try {
+      // Give a refusing coordinator time to exit after its first output.
+      await new Promise((r) => setTimeout(r, 2000));
+      expect(runner.process.exitCode, runner.stdout() + runner.stderr()).toBeNull();
+      expect(existsSync(join(repo.stateDir, 'coordinator.pid'))).toBe(true);
+    } finally {
+      await runner.stop();
+    }
+  });
+
   it('rejects with a stage-specific diagnostic when coordinator exits during startup', async () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
