@@ -8,18 +8,19 @@ import { CommandDispatcher, type CommandAuthenticator } from './commandDelivery.
 import {
   CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER, defaultSocketPath,
-  type AckState, type ControlEndpoint, type ControlErrorCode, type StreamFrame, type SubmitCommandRequest,
+  type AckState, type ControlEndpoint, type StreamFrame, type SubmitCommandRequest,
 } from './controlProtocol.ts';
 import { readEventBatch } from './eventLog.ts';
-import { sessionForCredential } from './sessionCredentials.ts';
 import { readControlSnapshot } from './statusProjection.ts';
 import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
-import { listAgents } from './agentRegistry.ts';
+import { resolveControlPrincipal, requirePrincipal, requireProjectAuthor, requireProjectReader, type ControlPrincipal } from './controlPrincipal.ts';
+import { ConflictError, ForbiddenError, InputError, NotFoundError, UnauthenticatedError } from './domainErrors.ts';
 import { RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
+import { importTaskMarkdown } from './taskMarkdown.ts';
 import { DEFAULT_WAKE_UP_BUDGET, isWakeUpBudget, readMemoryWakeUp, readRunReviews } from './projectReads.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -48,84 +49,37 @@ export interface ControlServer {
  */
 export function sessionAuthenticator(stateDir: string): CommandAuthenticator {
   return (credential) => {
-    const session = sessionForCredential(stateDir, credential);
-    return session?.state === 'running' ? { agentId: session.agent_id, sessionId: session.session_id } : null;
+    try {
+      const principal = resolveControlPrincipal(stateDir, credential, false);
+      return principal && principal.kind !== 'operator' && principal.running
+        ? { agentId: principal.agentId, sessionId: principal.sessionId } : null;
+    } catch (error) {
+      if (error instanceof ControlError && error.code === 'unauthenticated') return null;
+      throw error;
+    }
   };
-}
-
-/** Task authoring is an operator action: only the master's running session may create or revise tasks. */
-function taskAuthor(stateDir: string, credential: string): string {
-  const principal = sessionAuthenticator(stateDir)(credential);
-  if (!principal) throw new ControlError('unauthenticated', 'Command caller is not authenticated', 401);
-  const agent = listAgents(stateDir).find((entry) => entry.agent_id === principal.agentId);
-  if (agent?.role !== 'master') throw new ControlError('forbidden', 'Only the master session may author tasks', 403);
-  return principal.agentId;
 }
 
 /** Map storage-neutral task API failures to protocol errors; anything unexpected is internal. */
 function taskError(error: unknown): ControlError {
   if (error instanceof ControlError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof RevisionConflictError || message.startsWith('Task already exists')) return new ControlError('conflict', message, 409);
-  if (message.startsWith('Task not found')) return new ControlError('not_found', message, 404);
-  if (error instanceof TaskInputError) return new ControlError('bad_request', message, 400);
-  return classify(error);
-}
-
-/** Operator mutation refusals carry the CLI's text: a missing target is 404, bad input 400, a refused transition 409. */
-const OPERATOR_REFUSALS: Array<[RegExp, ControlErrorCode, number]> = [
-  [/not found/i, 'not_found', 404],
-  [/is required|^Invalid|must be/, 'bad_request', 400],
-  [/^task is not blocked|already has active run|cannot execute task|^Input request|^Input response|^Message actor is not scoped/, 'conflict', 409],
-];
-
-function operatorError(error: unknown): ControlError {
-  if (error instanceof ControlError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  for (const [match, code, status] of OPERATOR_REFUSALS) if (match.test(message)) return new ControlError(code, message, status);
+  if (error instanceof RevisionConflictError || error instanceof ConflictError) return new ControlError('conflict', message, 409);
+  if (error instanceof NotFoundError) return new ControlError('not_found', message, 404);
+  if (error instanceof TaskInputError || error instanceof InputError) return new ControlError('bad_request', message, 400);
   return classify(error);
 }
 
 function digest(value: string): Buffer { return createHash('sha256').update(value).digest(); }
 
-// Exact command-delivery failure messages; anything else is an internal error.
-const DOMAIN_ERRORS: Array<[string | RegExp, ControlErrorCode, number]> = [
-  [/^Message (sender is not scoped|recipient does not match|actor does not match|reply is not scoped)/, 'forbidden', 403],
-  [/^Message (session is not running|run is not active or owned|recipient has no active run)/, 'forbidden', 403],
-  ['Master message must target its run', 'forbidden', 403],
-  ['Review requires two worker sessions', 'bad_request', 400],
-  ['Review request requires artifact references', 'bad_request', 400],
-  ['Invalid semantic message', 'bad_request', 400],
-  ['Invalid artifact references', 'bad_request', 400],
-  ['Invalid parent message', 'bad_request', 400],
-  ['Result requires a parent message', 'bad_request', 400],
-  ['Review result requires a review request', 'bad_request', 400],
-  ['Message idempotency key conflicts', 'conflict', 409],
-  ['Message not found', 'not_found', 404],
-  ['Command caller is not authenticated', 'unauthenticated', 401],
-  ['Authenticated session is not running', 'forbidden', 403],
-  ['Authenticated actor does not match session', 'forbidden', 403],
-  ['Authenticated recipient does not match session', 'forbidden', 403],
-  ['Actor is not scoped to the run', 'forbidden', 403],
-  ['Recipient is not scoped to the run', 'forbidden', 403],
-  ['ACK from wrong recipient', 'forbidden', 403],
-  ['Run not found', 'not_found', 404],
-  ['Command not found', 'not_found', 404],
-  ['Run is not active', 'conflict', 409],
-  ['Idempotency key conflicts with existing command', 'conflict', 409],
-  [/^Cannot acknowledge \w+ as \w+$/, 'conflict', 409],
-  ['Command key and kind are required', 'bad_request', 400],
-  ['maxAttempts must be positive', 'bad_request', 400],
-  ['Invalid deadline', 'bad_request', 400],
-  ['Payload must be JSON serializable', 'bad_request', 400],
-];
-
 function classify(error: unknown): ControlError {
   if (error instanceof ControlError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  for (const [match, code, status] of DOMAIN_ERRORS) {
-    if (typeof match === 'string' ? message === match : match.test(message)) return new ControlError(code, message, status);
-  }
+  if (error instanceof NotFoundError) return new ControlError('not_found', message, 404);
+  if (error instanceof ConflictError || error instanceof RevisionConflictError) return new ControlError('conflict', message, 409);
+  if (error instanceof InputError || error instanceof TaskInputError) return new ControlError('bad_request', message, 400);
+  if (error instanceof ForbiddenError) return new ControlError('forbidden', message, 403);
+  if (error instanceof UnauthenticatedError) return new ControlError('unauthenticated', message, 401);
   return new ControlError('internal', message, 500);
 }
 
@@ -219,16 +173,9 @@ export async function startControlServer(stateDir: string, options: ControlServe
    * operator (by its token); the bearer token alone is not enough. `runId` is
    * the run a worker session is limited to, null for the master and the operator.
    */
-  function readerScope(req: IncomingMessage): { runId: string | null } {
-    const header = req.headers[SESSION_HEADER];
-    if (typeof header === 'string' && header) {
-      const session = sessionForCredential(stateDir, header);
-      if (!session || session.state === 'offline') throw new ControlError('unauthenticated', 'Reader is not an authenticated session', 401);
-      const role = listAgents(stateDir).find((entry) => entry.agent_id === session.agent_id)?.role;
-      return { runId: role === 'master' ? null : session.run_id ?? '' };
-    }
-    if (isOperator(req)) return { runId: null };
-    throw new ControlError('unauthenticated', 'Reads need a session secret or the operator token', 401);
+  function principal(req: IncomingMessage): ControlPrincipal | null {
+    const credential = req.headers[SESSION_HEADER];
+    return resolveControlPrincipal(stateDir, typeof credential === 'string' && credential ? credential : null, isOperator(req));
   }
 
   /**
@@ -237,7 +184,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
    * scoped routes, so it is refused here even though it holds the bearer token.
    */
   function projectReader(req: IncomingMessage): void {
-    if (readerScope(req).runId !== null) throw new ControlError('forbidden', 'Only the master or the operator may use this route', 403);
+    requireProjectReader(principal(req));
   }
 
   function actorCredential(req: IncomingMessage): string {
@@ -294,9 +241,10 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return ok(readControlSnapshot(stateDir));
     }
     if (url.pathname === '/v1/messages') {
-      const principal = sessionAuthenticator(stateDir)(actorCredential(req));
-      if (!principal) throw new ControlError('unauthenticated', 'Message caller is not authenticated', 401);
-      if (req.method === 'GET') return ok({ messages: listMessages(stateDir, principal, url.searchParams.get('include_consumed') === '1') });
+      const caller = requirePrincipal(principal(req));
+      if (caller.kind === 'operator') throw new ControlError('forbidden', 'Messages require a session', 403);
+      const messageActor = { agentId: caller.agentId, sessionId: caller.sessionId };
+      if (req.method === 'GET') return ok({ messages: listMessages(stateDir, messageActor, url.searchParams.get('include_consumed') === '1') });
       if (req.method === 'POST') {
         const body = await readBody(req);
         if (typeof body.run_id !== 'string' || typeof body.recipient_session_id !== 'string' || typeof body.idempotency_key !== 'string'
@@ -306,14 +254,14 @@ export async function startControlServer(stateDir: string, options: ControlServe
           ...(body.artifact_refs === undefined ? {} : { artifactRefs: body.artifact_refs as string[] }),
           ...(body.parent_message_id === undefined ? {} : { parentMessageId: body.parent_message_id as string }),
         };
-        return ok({ message: sendMessage(stateDir, principal, input, commands) }, 202);
+        return ok({ message: sendMessage(stateDir, messageActor, input, commands) }, 202);
       }
     }
     const messageAck = /^\/v1\/messages\/([^/]+)\/consume$/.exec(url.pathname);
     if (req.method === 'POST' && messageAck) {
-      const principal = sessionAuthenticator(stateDir)(actorCredential(req));
-      if (!principal) throw new ControlError('unauthenticated', 'Message caller is not authenticated', 401);
-      return ok({ message: consumeMessage(stateDir, principal, decodeURIComponent(messageAck[1])) });
+      const caller = requirePrincipal(principal(req));
+      if (caller.kind === 'operator') throw new ControlError('forbidden', 'Messages require a session', 403);
+      return ok({ message: consumeMessage(stateDir, { agentId: caller.agentId, sessionId: caller.sessionId }, decodeURIComponent(messageAck[1])) });
     }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       projectReader(req);
@@ -327,13 +275,13 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (req.method === 'GET' && reviews) {
       const runId = decodePathSegment(reviews[1]);
       // A worker session reads only its own run's reviews; the operator and the master read any.
-      const reader = readerScope(req);
+      const reader = requirePrincipal(principal(req));
       if (reader.runId !== null && reader.runId !== runId) throw new ControlError('forbidden', `Session is not scoped to run ${runId}`, 403);
       return ok({ reviews: readRunReviews(stateDir, runId) });
     }
     if (req.method === 'GET' && url.pathname === '/v1/memory/wake-up') {
       // Memories belong to the project: any authenticated session or the operator reads them.
-      readerScope(req);
+      requirePrincipal(principal(req));
       const budget = Number(url.searchParams.get('budget') ?? DEFAULT_WAKE_UP_BUDGET);
       if (!isWakeUpBudget(budget)) throw new ControlError('bad_request', 'budget must be a positive integer', 400);
       return ok(readMemoryWakeUp(stateDir, { wing: url.searchParams.get('wing'), budget }));
@@ -376,6 +324,16 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (url.pathname === '/v1/tasks' || url.pathname.startsWith('/v1/tasks/')) {
       const store = projectTaskStoreFor(stateDir);
       if (!store) throw new ControlError('not_found', 'Task API requires a project state directory', 404);
+      if (req.method === 'POST' && url.pathname === '/v1/tasks/import') {
+        const caller = principal(req);
+        const body = await readBody(req);
+        if (body.actor_id !== undefined && typeof body.actor_id !== 'string') throw new InputError('actor_id must be a string');
+        const actor = requireProjectAuthor(stateDir, caller, typeof body.actor_id === 'string' ? body.actor_id : undefined);
+        if (typeof body.path !== 'string' || !body.path) throw new InputError('path is required');
+        if (body.strict !== undefined && typeof body.strict !== 'boolean') throw new InputError('strict must be a boolean');
+        assertOpen();
+        return ok(importTaskMarkdown(stateDir, body.path, { strict: body.strict === true, actorId: actor }));
+      }
       const match = /^\/v1\/tasks(?:\/([^/]+)(\/revisions)?)?$/.exec(url.pathname);
       if (!match) throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
       const ref = match[1] === undefined ? null : decodeURIComponent(match[1]);
@@ -384,16 +342,18 @@ export async function startControlServer(stateDir: string, options: ControlServe
         if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
         if (req.method === 'GET' && !match[2]) {
           const task = store.getTask(ref!);
-          if (!task) throw new Error(`Task not found: ${ref}`);
+          if (!task) throw new NotFoundError(`Task not found: ${ref}`);
           return ok({ task: describeProjectTask(task) });
         }
         if (req.method === 'GET') {
-          if (!store.getTask(ref!)) throw new Error(`Task not found: ${ref}`);
+          if (!store.getTask(ref!)) throw new NotFoundError(`Task not found: ${ref}`);
           return ok({ revisions: store.listRevisions(ref!) });
         }
         if (req.method === 'POST') {
-          const actor = taskAuthor(stateDir, actorCredential(req));
           const body = await readBody(req);
+          if (body.actor_id !== undefined && typeof body.actor_id !== 'string') throw new InputError('actor_id must be a string');
+          const actor = requireProjectAuthor(stateDir, principal(req), typeof body.actor_id === 'string' ? body.actor_id : undefined);
+          delete body.actor_id;
           assertOpen();
           if (ref === null) return ok({ task: describeProjectTask(createProjectTask(stateDir, body, actor)) }, 201);
           if (match[2]) {
@@ -414,25 +374,13 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const { live } = authorizeLifecycle(stateDir, credential, request);
       // An ended session may still poll, but never renews a lease (a superseded session's run may be someone else's now).
       const scoped = !live && request.op === 'input-poll' ? { ...request, heartbeat: false } : request;
-      try {
-        return ok(applyLifecycle(stateDir, scoped));
-      } catch (error) {
-        // A rejected transition (wrong state, wrong owner) is the caller's conflict, reported verbatim.
-        if (error instanceof ControlError) throw error;
-        throw new ControlError('conflict', error instanceof Error ? error.message : String(error), 409);
-      }
+      return ok(applyLifecycle(stateDir, scoped));
     }
     if (req.method === 'POST' && url.pathname === '/v1/operator') {
-      const header = req.headers[SESSION_HEADER];
-      const credential = typeof header === 'string' && header ? header : null;
       const request = parseOperatorRequest(await readBody(req));
       assertOpen();
-      const { actorId } = authorizeOperator(stateDir, { credential, operator: isOperator(req) }, request);
-      try {
-        return ok(applyOperatorMutation(stateDir, { ...request, actor_id: actorId }));
-      } catch (error) {
-        throw operatorError(error);
-      }
+      const { actorId } = authorizeOperator(stateDir, principal(req), request);
+      return ok(applyOperatorMutation(stateDir, { ...request, actor_id: actorId }));
     }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
       const credential = actorCredential(req);

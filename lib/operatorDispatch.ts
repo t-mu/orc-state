@@ -5,6 +5,7 @@ import { runningCoordinatorPid } from './coordinatorLiveness.ts';
 import { applyOperatorMutation, authorizeOperator, type OperatorRequest } from './operatorMutations.ts';
 import { ACTIVE_PROJECT, STATE_DIR } from './paths.ts';
 import { clientCredential } from './sessionCredentials.ts';
+import { resolveControlPrincipal } from './controlPrincipal.ts';
 
 /** Coordinator requests are applied once received, so a timeout is never retried (see lifecycleDispatch). */
 const OPERATOR_REQUEST_TIMEOUT_MS = 120_000;
@@ -50,7 +51,7 @@ export async function submitOperatorMutation(
     throw new ControlError('unavailable', `The coordinator (pid ${pid}) is running but its control API is not answering; retry ${request.op} in a moment. If pid ${pid} is not an orc coordinator, remove ${join(stateDir, 'coordinator.pid')}`, 503);
   }
   // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
-  const { actorId } = authorizeOperator(stateDir, { credential, operator: credential === null }, request);
+  const { actorId } = authorizeOperator(stateDir, resolveControlPrincipal(stateDir, credential, credential === null), request);
   warn(`coordinator is not running; applying ${request.op} directly`);
   return applyOperatorMutation(stateDir, { ...request, actor_id: actorId });
 }

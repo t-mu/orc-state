@@ -1,3 +1,4 @@
+import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
 import { basename, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { withLock, lockPath } from './lock.ts';
@@ -22,7 +23,7 @@ export { markTaskEnvelopeSent, setRunFinalizationState, setRunInputState, setRun
 
 function assertValidTimestamp(ts: string, label: string): void {
   if (!Number.isFinite(new Date(ts).getTime())) {
-    throw new Error(`Invalid ${label} timestamp: ${ts}`);
+    throw new InputError(`Invalid ${label} timestamp: ${ts}`);
   }
 }
 
@@ -60,16 +61,16 @@ export function claimTask(
     const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
 
     const task = findTask(backlog, taskRef);
-    if (!task) throw new Error(`Task not found: ${taskRef}`);
-    if (task.status !== 'todo') throw new Error(`Task not claimable (status: ${task.status}): ${taskRef}`);
+    if (!task) throw new NotFoundError(`Task not found: ${taskRef}`);
+    if (task.status !== 'todo') throw new ConflictError(`Task not claimable (status: ${task.status}): ${taskRef}`);
     if (task.owner && task.owner !== agentId) {
-      throw new Error(`Task ${taskRef} is reserved for agent "${task.owner}" - claiming agent "${agentId}" is not the owner`);
+      throw new ConflictError(`Task ${taskRef} is reserved for agent "${task.owner}" - claiming agent "${agentId}" is not the owner`);
     }
 
     const active = claims.claims.find(
       (c) => c.task_ref === taskRef && ['claimed', 'in_progress'].includes(c.state),
     );
-    if (active) throw new Error(`Task already claimed by ${active.agent_id} (${active.run_id}): ${taskRef}`);
+    if (active) throw new ConflictError(`Task already claimed by ${active.agent_id} (${active.run_id}): ${taskRef}`);
 
     const run_id = makeRunId();
     const now    = new Date();
@@ -78,7 +79,7 @@ export function claimTask(
     const projectStore = projectTaskStoreFor(stateDir);
     // Older in-memory test states have no Markdown directory. Real orchestration
     // roots do; a missing or invalid spec there must block a new claim.
-    if (!projectStore && requireSpec && !existsSync(docsDir)) throw new Error(`Markdown spec directory not found: ${docsDir}`);
+    if (!projectStore && requireSpec && !existsSync(docsDir)) throw new NotFoundError(`Markdown spec directory not found: ${docsDir}`);
     // Project SQLite verifies status and dependencies, records the claim and binds the run in one transaction.
     const revision = projectStore?.claimTask(taskRef, run_id, agentId);
     try {
@@ -137,11 +138,11 @@ export function startRun(
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
+    if (!claim) throw new NotFoundError(`Claim not found: ${runId}`);
+    if (claim.agent_id !== agentId) throw new ConflictError(`Claim ${runId} belongs to ${claim.agent_id}`);
     // Idempotent: if already in_progress, silently return without error or duplicate event
     if (claim.state === 'in_progress') return;
-    if (claim.state !== 'claimed') throw new Error(`Claim ${runId} is not in 'claimed' state (got: ${claim.state})`);
+    if (claim.state !== 'claimed') throw new ConflictError(`Claim ${runId} is not in 'claimed' state (got: ${claim.state})`);
 
     assertValidTimestamp(at, 'startRun');
     claim.state = 'in_progress';
@@ -176,16 +177,16 @@ export function heartbeat(
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
+    if (!claim) throw new NotFoundError(`Claim not found: ${runId}`);
+    if (claim.agent_id !== agentId) throw new ConflictError(`Claim ${runId} belongs to ${claim.agent_id}`);
     if (!['claimed', 'in_progress'].includes(claim.state)) {
-      throw new Error(`Cannot heartbeat claim in state: ${claim.state}`);
+      throw new ConflictError(`Cannot heartbeat claim in state: ${claim.state}`);
     }
 
     assertValidTimestamp(at, 'heartbeat');
     const now = new Date(at);
     if (claim.lease_expires_at && new Date(claim.lease_expires_at) < now) {
-      throw new Error(`Lease has already expired for run ${runId} (expired at ${claim.lease_expires_at})`);
+      throw new ConflictError(`Lease has already expired for run ${runId} (expired at ${claim.lease_expires_at})`);
     }
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
     claim.last_heartbeat_at = at;
@@ -242,8 +243,8 @@ export function finishRun(
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
     const claim  = claims.claims.find((c) => c.run_id === runId);
-    if (!claim) throw new Error(`Claim not found: ${runId}`);
-    if (claim.agent_id !== agentId) throw new Error(`Claim ${runId} belongs to ${claim.agent_id}`);
+    if (!claim) throw new NotFoundError(`Claim not found: ${runId}`);
+    if (claim.agent_id !== agentId) throw new ConflictError(`Claim ${runId} belongs to ${claim.agent_id}`);
 
     assertValidTimestamp(at, 'finishRun');
     if (claim.state === 'done' || claim.state === 'failed') {

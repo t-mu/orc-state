@@ -1,10 +1,11 @@
-import { sessionForCredential } from './sessionCredentials.ts';
+import { resolveControlPrincipal } from './controlPrincipal.ts';
+import { ConflictError, NotFoundError } from './domainErrors.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { appendSequencedEvent, readEventsSince, withEventDb } from './eventLog.ts';
-import { validateProgressCommandInput, validateProgressInput } from './progressValidation.ts';
+import { validateProgressCommandInput as validateCommand, validateProgressInput as validateInput, type ProgressInput } from './progressValidation.ts';
 import { finishRun, heartbeat, startRun } from './claimManager.ts';
 import { readClaims } from './stateReader.ts';
 import { bridgeInputRequest, bridgeReviewFeedback } from './messageBridge.ts';
@@ -57,6 +58,16 @@ function loadClaim(stateDir: string, runId: string): Claim | null {
   }
 }
 
+/** Validation is pure; its ordinary Error is an expected rejected transition. */
+function validated(input: ProgressInput, claim: Claim | null, strict = false): { claim: Claim } {
+  try {
+    return (strict ? validateInput : validateCommand)(input, claim);
+  } catch (error) {
+    if (error?.constructor === Error) throw new ConflictError((error as Error).message);
+    throw error;
+  }
+}
+
 function isActiveRunClaim(claim: Claim | null, agentId: string): claim is Claim {
   return claim != null && claim.agent_id === agentId && ['claimed', 'in_progress'].includes(claim.state);
 }
@@ -76,7 +87,7 @@ function nextFinalizationTransition(claim: Claim | null) {
   if (currentState === 'finalize_rebase_in_progress') {
     return { event: 'ready_to_merge', status: 'ready_to_merge', message: 'ready to merge after finalize rebase' };
   }
-  throw new Error(`run-work-complete cannot be reported from finalization_state '${currentState}'`);
+  throw new ConflictError(`run-work-complete cannot be reported from finalization_state '${currentState}'`);
 }
 
 function command(event: string, request: { run_id: string; agent_id: string }, extra: { reason?: string | null; policy?: string | null; phase?: string | null } = {}) {
@@ -112,26 +123,26 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       const claim = loadClaim(stateDir, request.run_id);
       // Idempotent: if coordinator already auto-acked this run, treat as no-op success
       if (!(claim?.state === 'in_progress' && claim.agent_id === request.agent_id)) {
-        validateProgressCommandInput(command('run_started', request), claim);
+        validated(command('run_started', request), claim);
         startRun(stateDir, request.run_id, request.agent_id, { at });
       }
       return { message: `run_started: ${request.run_id} (${request.agent_id})` };
     }
     case 'run-fail': {
-      validateProgressCommandInput(command('run_failed', request, request), loadClaim(stateDir, request.run_id));
+      validated(command('run_failed', request, request), loadClaim(stateDir, request.run_id));
       finishRun(stateDir, request.run_id, request.agent_id, {
         success: false, failureReason: request.reason, failureCode: request.code, policy: request.policy, at,
       });
       return { message: `run_failed: ${request.run_id} (${request.agent_id}) reason=${request.reason}` };
     }
     case 'run-finish': {
-      const { claim } = validateProgressCommandInput(command('run_finished', request), loadClaim(stateDir, request.run_id));
+      const { claim } = validated(command('run_finished', request), loadClaim(stateDir, request.run_id));
       assertRunMayFinish(stateDir, claim.task_ref);
       finishRun(stateDir, request.run_id, request.agent_id, { success: true, at });
       return { message: `run_finished: ${request.run_id} (${request.agent_id})` };
     }
     case 'run-work-complete': {
-      const { claim } = validateProgressCommandInput(command('work_complete', request), loadClaim(stateDir, request.run_id));
+      const { claim } = validated(command('work_complete', request), loadClaim(stateDir, request.run_id));
       const transition = nextFinalizationTransition(claim);
       appendSequencedEvent(stateDir, {
         ts: at, event: transition.event as 'work_complete' | 'ready_to_merge',
@@ -144,8 +155,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       const { event, run_id: runId, agent_id: agentId, phase = null, reason = null } = request;
       const policy = request.policy ?? 'requeue';
       const claim = loadClaim(stateDir, runId);
-      const validator = event === 'heartbeat' ? validateProgressInput : validateProgressCommandInput;
-      const { claim: validatedClaim } = validator({ event, runId, agentId, phase, reason, policy }, claim);
+      const { claim: validatedClaim } = validated({ event, runId, agentId, phase, reason, policy }, claim, event === 'heartbeat');
       if (event === 'run_started') {
         // Idempotent like run-start: the coordinator may already have acknowledged the run.
         if (validatedClaim.state !== 'in_progress') startRun(stateDir, runId, agentId, { at });
@@ -186,7 +196,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       return { message: `review_submitted: run=${request.run_id} agent=${request.agent_id} outcome=${request.outcome}` };
     }
     case 'input-request': {
-      const { claim } = validateProgressCommandInput(
+      const { claim } = validated(
         command('need_input', request, { reason: 'master_input_required' }), loadClaim(stateDir, request.run_id));
       // Not yet started: the caller reports the same timeout a stale request would.
       if (claim.state !== 'in_progress') return { message: 'run is not in progress', active: false };
@@ -230,8 +240,8 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
     }
     case 'report-for-duty': {
       const agent = getAgent(stateDir, request.agent_id);
-      if (!agent) throw new Error(`Agent not found: ${request.agent_id}`);
-      if (agent.session_token !== request.session_token) throw new Error(`Session id mismatch for ${request.agent_id}`);
+      if (!agent) throw new NotFoundError(`Agent not found: ${request.agent_id}`);
+      if (agent.session_token !== request.session_token) throw new ConflictError(`Session id mismatch for ${request.agent_id}`);
       appendSequencedEvent(stateDir, {
         ts: at, event: 'reported_for_duty', actor_type: 'agent', actor_id: request.agent_id, agent_id: request.agent_id,
         payload: { session_token: request.session_token },
@@ -278,13 +288,21 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
  * not its PID.
  */
 export function authorizeLifecycle(stateDir: string, credential: string, request: LifecycleRequest): { live: boolean } {
-  const session = sessionForCredential(stateDir, credential) ?? undefined;
-  const sessionId = session?.session_id;
+  let session;
+  try {
+    session = resolveControlPrincipal(stateDir, credential, false);
+  } catch (error) {
+    if (error instanceof ControlError && error.code === 'unauthenticated') {
+      throw new ControlError('unauthenticated', 'Lifecycle caller is not an authenticated running session', 401);
+    }
+    throw error;
+  }
+  const sessionId = session?.sessionId;
   // After the merge the coordinator finishes the run and closes its session. The
   // worker's own run-finish may still follow and repeats a finished run as a
   // no-op; a waiting input request learns from its poll that the run ended.
-  const live = session !== undefined && session.state !== 'offline';
-  const ownRun = session !== undefined && 'run_id' in request && session.run_id === request.run_id;
+  const live = session?.live === true;
+  const ownRun = session !== null && 'run_id' in request && session.runId === request.run_id;
   const finishing = request.op === 'run-finish' || (request.op === 'progress' && request.event === 'run_finished');
   const endedRunAllowed = ownRun && (request.op === 'input-poll'
     || (finishing && loadClaim(stateDir, request.run_id)?.state === 'done'));
@@ -293,10 +311,10 @@ export function authorizeLifecycle(stateDir: string, credential: string, request
   }
   // A memory belongs to the project, not a run: any running session may record one.
   if (request.op === 'memory-record') return { live };
-  if (session.agent_id !== request.agent_id) {
-    throw new ControlError('forbidden', `Session belongs to ${session.agent_id}, not ${request.agent_id}`, 403);
+  if (session.agentId !== request.agent_id) {
+    throw new ControlError('forbidden', `Session belongs to ${session.agentId}, not ${request.agent_id}`, 403);
   }
-  if ('run_id' in request && session.run_id !== request.run_id) {
+  if ('run_id' in request && session.runId !== request.run_id) {
     throw new ControlError('forbidden', `Session is not scoped to run ${request.run_id}`, 403);
   }
   if (request.op === 'report-for-duty' && request.session_token !== sessionId) {

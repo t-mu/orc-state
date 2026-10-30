@@ -1,3 +1,4 @@
+import { ConflictError, ForbiddenError, InputError, NotFoundError, UnauthenticatedError } from './domainErrors.ts';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eventLog.ts';
@@ -56,17 +57,17 @@ const TERMINAL = new Set<CommandState>(['completed', 'failed', 'cancelled']);
 function now(): string { return new Date().toISOString(); }
 function row(db: Database.Database, commandId: string): DurableCommand {
   const command = db.prepare('SELECT * FROM commands WHERE command_id = ?').get(commandId) as DurableCommand | undefined;
-  if (!command) throw new Error('Command not found');
+  if (!command) throw new NotFoundError('Command not found');
   return command;
 }
 function run(db: Database.Database, runId: string): Run {
   const value = db.prepare('SELECT run_id, task_ref, agent_id, state FROM runs WHERE run_id = ?').get(runId) as Run | undefined;
-  if (!value) throw new Error('Run not found');
+  if (!value) throw new NotFoundError('Run not found');
   return value;
 }
 function session(db: Database.Database, sessionId: string): Session {
   const value = db.prepare('SELECT session_id, agent_id, run_id, state FROM sessions WHERE session_id = ?').get(sessionId) as Session | undefined;
-  if (!value || value.state !== 'running') throw new Error('Authenticated session is not running');
+  if (!value || value.state !== 'running') throw new ForbiddenError('Authenticated session is not running');
   return value;
 }
 function event(stateDir: string, db: Database.Database, command: DurableCommand, name: CommandEventName, reason?: string): void {
@@ -92,25 +93,25 @@ function transition(stateDir: string, db: Database.Database, command: DurableCom
  * session credential and is never reachable through the control API.
  */
 function enqueueCommand(stateDir: string, principal: CommandPrincipal | 'coordinator', input: EnqueueCommand): DurableCommand {
-  if (!input.idempotencyKey || !input.kind) throw new Error('Command key and kind are required');
-  if (!Number.isInteger(input.maxAttempts ?? 3) || (input.maxAttempts ?? 3) < 1) throw new Error('maxAttempts must be positive');
-  if (input.deadlineAt && !Number.isFinite(Date.parse(input.deadlineAt))) throw new Error('Invalid deadline');
+  if (!input.idempotencyKey || !input.kind) throw new InputError('Command key and kind are required');
+  if (!Number.isInteger(input.maxAttempts ?? 3) || (input.maxAttempts ?? 3) < 1) throw new InputError('maxAttempts must be positive');
+  if (input.deadlineAt && !Number.isFinite(Date.parse(input.deadlineAt))) throw new InputError('Invalid deadline');
   const payload = JSON.stringify(input.payload);
-  if (payload === undefined) throw new Error('Payload must be JSON serializable');
+  if (payload === undefined) throw new InputError('Payload must be JSON serializable');
   return withEventDbTransaction(stateDir, (db) => {
     const owner = run(db, input.runId);
-    if (!['claimed', 'in_progress'].includes(owner.state)) throw new Error('Run is not active');
+    if (!['claimed', 'in_progress'].includes(owner.state)) throw new ConflictError('Run is not active');
     let actor: { session_id: string | null; agent_id: string } = { session_id: null, agent_id: 'coordinator' };
     if (principal !== 'coordinator') {
       const actorSession = session(db, principal.sessionId);
-      if (actorSession.agent_id !== principal.agentId) throw new Error('Authenticated actor does not match session');
+      if (actorSession.agent_id !== principal.agentId) throw new ForbiddenError('Authenticated actor does not match session');
       if (actorSession.agent_id !== 'master' && (actorSession.agent_id !== owner.agent_id || actorSession.run_id !== input.runId)) {
-        throw new Error('Actor is not scoped to the run');
+        throw new ForbiddenError('Actor is not scoped to the run');
       }
       actor = actorSession;
     }
     const recipient = session(db, input.recipientSessionId);
-    if (recipient.run_id !== input.runId || recipient.agent_id !== owner.agent_id) throw new Error('Recipient is not scoped to the run');
+    if (recipient.run_id !== input.runId || recipient.agent_id !== owner.agent_id) throw new ForbiddenError('Recipient is not scoped to the run');
     const existing = db.prepare('SELECT * FROM commands WHERE run_id = ? AND idempotency_key = ?')
       .get(input.runId, input.idempotencyKey) as DurableCommand | undefined;
     if (existing) {
@@ -118,7 +119,7 @@ function enqueueCommand(stateDir: string, principal: CommandPrincipal | 'coordin
         || existing.kind !== input.kind || existing.payload !== payload
         || existing.side_effecting !== (input.sideEffecting === false ? 0 : 1)
         || existing.max_attempts !== (input.maxAttempts ?? 3)
-        || existing.deadline_at !== (input.deadlineAt ?? null)) throw new Error('Idempotency key conflicts with existing command');
+        || existing.deadline_at !== (input.deadlineAt ?? null)) throw new ConflictError('Idempotency key conflicts with existing command');
       return existing;
     }
     const commandId = `cmd-${randomUUID()}`;
@@ -158,10 +159,10 @@ export function reserveCommand(stateDir: string, at = now()): DurableCommand | n
 export function markSendStarted(stateDir: string, commandId: string): DurableCommand {
   return withEventDbTransaction(stateDir, (db) => {
     const command = row(db, commandId);
-    if (command.state !== 'dispatching' || command.send_started_at) throw new Error('Command is not reserved for send');
-    if (!['claimed', 'in_progress'].includes(run(db, command.run_id).state)) throw new Error('Run is no longer active');
+    if (command.state !== 'dispatching' || command.send_started_at) throw new ConflictError('Command is not reserved for send');
+    if (!['claimed', 'in_progress'].includes(run(db, command.run_id).state)) throw new ConflictError('Run is no longer active');
     const recipient = session(db, command.session_id!);
-    if (recipient.run_id !== command.run_id || recipient.agent_id !== command.recipient_id) throw new Error('Recipient session changed');
+    if (recipient.run_id !== command.run_id || recipient.agent_id !== command.recipient_id) throw new ConflictError('Recipient session changed');
     db.prepare('UPDATE commands SET send_started_at = ? WHERE command_id = ?').run(now(), commandId);
     const updated = row(db, commandId);
     event(stateDir, db, updated, 'command_send_started');
@@ -190,7 +191,7 @@ const ACK_ALLOWED: Record<AckState, string[]> = {
 
 function applyAck(stateDir: string, db: Database.Database, command: DurableCommand, state: AckState, reason?: string): DurableCommand {
   if (!ACK_ALLOWED[state].includes(command.state) || (command.state === 'dispatching' && !command.send_started_at)) {
-    throw new Error(`Cannot acknowledge ${command.state} as ${state}`);
+    throw new ConflictError(`Cannot acknowledge ${command.state} as ${state}`);
   }
   const stamp = now();
   db.prepare('UPDATE commands SET state = ?, acknowledged_at = coalesce(acknowledged_at, ?), terminal_at = ?, last_error = coalesce(?, last_error) WHERE command_id = ?')
@@ -204,9 +205,9 @@ function acknowledgeCommand(stateDir: string, commandId: string, principal: Comm
   return withEventDbTransaction(stateDir, (db) => {
     const command = row(db, commandId);
     const recipient = session(db, principal.sessionId);
-    if (recipient.agent_id !== principal.agentId) throw new Error('Authenticated recipient does not match session');
+    if (recipient.agent_id !== principal.agentId) throw new ForbiddenError('Authenticated recipient does not match session');
     if (recipient.session_id !== command.session_id || recipient.run_id !== command.run_id
-      || recipient.agent_id !== command.recipient_id) throw new Error('ACK from wrong recipient');
+      || recipient.agent_id !== command.recipient_id) throw new ForbiddenError('ACK from wrong recipient');
     return applyAck(stateDir, db, command, state);
   });
 }
@@ -225,9 +226,9 @@ const ACK_RANK: Record<string, number> = { dispatching: 0, sent: 0, outcome_unkn
 export function acknowledgeFromRuntime(stateDir: string, commandId: string, sessionId: string, state: AckState, reason?: string): DurableCommand {
   return withEventDbTransaction(stateDir, (db) => {
     let command = row(db, commandId);
-    if (command.session_id !== sessionId) throw new Error('Runtime ACK from wrong session');
+    if (command.session_id !== sessionId) throw new ForbiddenError('Runtime ACK from wrong session');
     if (command.state === 'queued' || (command.state === 'dispatching' && !command.send_started_at)) {
-      throw new Error(`Cannot acknowledge ${command.state} as ${state}`);
+      throw new ConflictError(`Cannot acknowledge ${command.state} as ${state}`);
     }
     if ((ACK_RANK[command.state] ?? 0) >= ACK_RANK[state]) return command;
     if (command.state !== 'accepted' && command.state !== 'running') command = applyAck(stateDir, db, command, 'accepted');
@@ -291,11 +292,11 @@ export function reconcileCommands(stateDir: string, at = now(), staleAfterMs = 3
 
 /** An operator must supply a current master session and an explicit outcome. */
 function resolveUnknownCommand(stateDir: string, commandId: string, principal: CommandPrincipal, outcome: 'completed' | 'failed' | 'cancelled', reason: string): DurableCommand {
-  if (!reason.trim()) throw new Error('Resolution reason is required');
+  if (!reason.trim()) throw new InputError('Resolution reason is required');
   return withEventDbTransaction(stateDir, (db) => {
-    if (principal.agentId !== 'master' || session(db, principal.sessionId).agent_id !== principal.agentId) throw new Error('Master session required');
+    if (principal.agentId !== 'master' || session(db, principal.sessionId).agent_id !== principal.agentId) throw new ForbiddenError('Master session required');
     const command = row(db, commandId);
-    if (command.state !== 'outcome_unknown') throw new Error('Command outcome is not unknown');
+    if (command.state !== 'outcome_unknown') throw new ConflictError('Command outcome is not unknown');
     return transition(stateDir, db, command, outcome, `command_${outcome}` as CommandEventName, reason);
   });
 }
@@ -350,7 +351,7 @@ export class CommandDispatcher {
   private readonly operationTimeoutMs: number;
   private readonly authenticate: CommandAuthenticator;
   constructor(stateDir: string, transport: CommandTransport, authenticate: CommandAuthenticator, sweepMs = 1000, operationTimeoutMs = 30000) {
-    if (sweepMs < 1 || operationTimeoutMs < 1) throw new Error('Intervals must be positive');
+    if (sweepMs < 1 || operationTimeoutMs < 1) throw new InputError('Intervals must be positive');
     this.stateDir = stateDir;
     this.transport = transport;
     this.authenticate = authenticate;
@@ -370,7 +371,7 @@ export class CommandDispatcher {
   wake(): void { queueMicrotask(() => { void this.tick(); }); }
   private principal(credential: string): CommandPrincipal {
     const principal = this.authenticate(credential);
-    if (!principal) throw new Error('Command caller is not authenticated');
+    if (!principal) throw new UnauthenticatedError('Command caller is not authenticated');
     return principal;
   }
   enqueue(credential: string, input: EnqueueCommand): DurableCommand {

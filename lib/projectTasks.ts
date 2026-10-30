@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
 import { join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { AGENT_ID_RE, TASK_PRIORITIES, TASK_REF_RE, TASK_TYPES } from './constants.ts';
@@ -217,7 +218,7 @@ export function assertRunMayFinish(stateDir: string, taskRef: string): void {
   const store = projectTaskStoreFor(stateDir);
   const status = store?.getTask(taskRef)?.status;
   if (store && status !== 'done' && status !== 'released') {
-    throw new Error(`run-finish for ${taskRef} must wait until the coordinator records the merge (task status: ${status ?? 'missing'}); run run-work-complete and wait for FINALIZE_SUCCESS`);
+    throw new ConflictError(`run-finish for ${taskRef} must wait until the coordinator records the merge (task status: ${status ?? 'missing'}); run run-work-complete and wait for FINALIZE_SUCCESS`);
   }
 }
 
@@ -263,7 +264,7 @@ export function withTaskAuthoringBatch<T>(stateDir: string, operation: () => T):
 }
 
 /** A rejected caller input, as opposed to a storage failure. */
-export class TaskInputError extends Error {
+export class TaskInputError extends InputError {
   constructor(message: string) {
     super(message);
     this.name = 'TaskInputError';
@@ -375,7 +376,7 @@ export function prepareProjectTask(store: Pick<ProjectTaskStore, 'getTask'>, inp
   if (requiredProvider !== null && !isSupportedProvider(requiredProvider)) throw new TaskInputError(`Invalid required_provider: ${JSON.stringify(requiredProvider)}. Must be codex, claude, or gemini.`);
   const owner = optionalString(input.owner, 'owner');
   if (owner !== undefined && !AGENT_ID_RE.test(owner)) throw new TaskInputError(`Invalid owner: ${owner}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (store.getTask(ref)) throw new TaskInputError(`Task already exists: ${ref}`);
+  if (store.getTask(ref)) throw new ConflictError(`Task already exists: ${ref}`);
 
   const metadata = definitionMetadata(input, { feature, task_type: 'implementation' }, bodyMarkdown);
   // A body rendered from fields is re-rendered when those fields are edited.
@@ -426,7 +427,7 @@ export function reviseProjectTask(
   const rejected = Object.keys(input).filter((key) => input[key] !== undefined && !REVISABLE_FIELDS.has(key));
   if (rejected.length > 0) throw new TaskInputError(`Task edits cannot change: ${rejected.join(', ')}`);
   const current = store.getTask(ref);
-  if (!current) throw new TaskInputError(`Task not found: ${ref}`);
+  if (!current) throw new NotFoundError(`Task not found: ${ref}`);
   const bodyMarkdown = optionalString(input.body_markdown, 'body_markdown');
   const dependsOn = input.depends_on === null ? [] : optionalStringArray(input.depends_on, 'depends_on');
   validateDependencyRefs(dependsOn);

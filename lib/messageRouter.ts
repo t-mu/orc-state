@@ -1,3 +1,4 @@
+import { ConflictError, ForbiddenError, InputError, NotFoundError } from './domainErrors.ts';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
@@ -36,54 +37,54 @@ type Session = { session_id: string; run_id: string | null; agent_id: string; st
 
 function session(db: Database.Database, id: string): Session {
   const row = db.prepare('SELECT session_id, run_id, agent_id, state FROM sessions WHERE session_id = ?').get(id) as Session | undefined;
-  if (!row || row.state !== 'running') throw new Error('Message session is not running');
+  if (!row || row.state !== 'running') throw new ForbiddenError('Message session is not running');
   return row;
 }
 
 function ownedRun(db: Database.Database, runId: string, agentId: string): void {
   const row = db.prepare('SELECT agent_id, state FROM runs WHERE run_id = ?').get(runId) as { agent_id: string; state: string } | undefined;
-  if (!row || !['claimed', 'in_progress'].includes(row.state) || row.agent_id !== agentId) throw new Error('Message run is not active or owned by recipient');
+  if (!row || !['claimed', 'in_progress'].includes(row.state) || row.agent_id !== agentId) throw new ForbiddenError('Message run is not active or owned by recipient');
 }
 
 function read(db: Database.Database, id: string): SemanticMessage {
   const row = db.prepare('SELECT * FROM messages WHERE message_id = ?').get(id) as SemanticMessage | undefined;
-  if (!row) throw new Error('Message not found');
+  if (!row) throw new NotFoundError('Message not found');
   return row;
 }
 
 /** Text remains data; only a fixed semantic kind can be routed. */
 export function sendMessage(stateDir: string, principal: CommandPrincipal, input: SendMessageInput, commands?: CommandDispatcher): SemanticMessage {
-  if (!input.idempotencyKey || !KINDS.has(input.kind) || typeof input.text !== 'string' || !input.text.trim()) throw new Error('Invalid semantic message');
+  if (!input.idempotencyKey || !KINDS.has(input.kind) || typeof input.text !== 'string' || !input.text.trim()) throw new InputError('Invalid semantic message');
   if (input.kind === 'review_request' && (!Array.isArray(input.artifactRefs) || !input.artifactRefs.length
     || input.artifactRefs.some((ref) => typeof ref !== 'string' || !ref.trim()))) {
-    throw new Error('Review request requires artifact references');
+    throw new InputError('Review request requires artifact references');
   }
-  if (input.artifactRefs && (!Array.isArray(input.artifactRefs) || input.artifactRefs.some((ref) => typeof ref !== 'string'))) throw new Error('Invalid artifact references');
-  if (input.parentMessageId !== undefined && (typeof input.parentMessageId !== 'string' || !input.parentMessageId)) throw new Error('Invalid parent message');
+  if (input.artifactRefs && (!Array.isArray(input.artifactRefs) || input.artifactRefs.some((ref) => typeof ref !== 'string'))) throw new InputError('Invalid artifact references');
+  if (input.parentMessageId !== undefined && (typeof input.parentMessageId !== 'string' || !input.parentMessageId)) throw new InputError('Invalid parent message');
   const payload = JSON.stringify({ text: input.text, artifact_refs: input.artifactRefs ?? [] });
   const message = withEventDbTransaction(stateDir, (db) => {
     const sender = session(db, principal.sessionId);
-    if (sender.agent_id !== principal.agentId || (sender.agent_id !== 'master' && sender.run_id !== input.runId)) throw new Error('Message sender is not scoped to the run');
+    if (sender.agent_id !== principal.agentId || (sender.agent_id !== 'master' && sender.run_id !== input.runId)) throw new ForbiddenError('Message sender is not scoped to the run');
     const recipient = session(db, input.recipientSessionId);
     if (recipient.run_id) ownedRun(db, recipient.run_id, recipient.agent_id);
-    else if (recipient.agent_id !== 'master') throw new Error('Message recipient has no active run');
+    else if (recipient.agent_id !== 'master') throw new ForbiddenError('Message recipient has no active run');
     if (sender.agent_id !== 'master') ownedRun(db, input.runId, sender.agent_id);
-    else if (!recipient.run_id || recipient.run_id !== input.runId) throw new Error('Master message must target its run');
-    if (input.kind === 'review_request' && (!sender.run_id || !recipient.run_id || sender.session_id === recipient.session_id)) throw new Error('Review requires two worker sessions');
-    if (input.kind === 'result' && !input.parentMessageId) throw new Error('Result requires a parent message');
+    else if (!recipient.run_id || recipient.run_id !== input.runId) throw new ForbiddenError('Master message must target its run');
+    if (input.kind === 'review_request' && (!sender.run_id || !recipient.run_id || sender.session_id === recipient.session_id)) throw new InputError('Review requires two worker sessions');
+    if (input.kind === 'result' && !input.parentMessageId) throw new InputError('Result requires a parent message');
     if (input.parentMessageId) {
       const parent = read(db, input.parentMessageId);
-      if (input.kind === 'result' && parent.kind !== 'review_request') throw new Error('Review result requires a review request');
+      if (input.kind === 'result' && parent.kind !== 'review_request') throw new InputError('Review result requires a review request');
       if (parent.sender_id !== recipient.agent_id || parent.recipient_id !== sender.agent_id
         || parent.run_id !== (recipient.run_id ?? input.runId) || parent.recipient_run_id !== sender.run_id) {
-        throw new Error('Message reply is not scoped to its request');
+        throw new ForbiddenError('Message reply is not scoped to its request');
       }
     }
     const existing = db.prepare('SELECT * FROM messages WHERE idempotency_key = ?').get(input.idempotencyKey) as SemanticMessage | undefined;
     if (existing) {
       if (existing.run_id !== input.runId || existing.sender_id !== sender.agent_id || existing.recipient_id !== recipient.agent_id
         || existing.recipient_run_id !== recipient.run_id
-        || existing.kind !== input.kind || existing.payload !== payload || existing.parent_message_id !== (input.parentMessageId ?? null)) throw new Error('Message idempotency key conflicts');
+        || existing.kind !== input.kind || existing.payload !== payload || existing.parent_message_id !== (input.parentMessageId ?? null)) throw new ConflictError('Message idempotency key conflicts');
       if (existing.recipient_session_id !== recipient.session_id && existing.state === 'queued') {
         db.prepare('UPDATE messages SET recipient_session_id = ?, command_id = NULL WHERE message_id = ?').run(recipient.session_id, existing.message_id);
         return read(db, existing.message_id);
@@ -112,7 +113,7 @@ export function sendMessage(stateDir: string, principal: CommandPrincipal, input
 export function listMessages(stateDir: string, principal: CommandPrincipal, includeConsumed = false): SemanticMessage[] {
   return withEventDb(stateDir, (db) => {
     const actor = session(db, principal.sessionId);
-    if (actor.agent_id !== principal.agentId) throw new Error('Message actor does not match session');
+    if (actor.agent_id !== principal.agentId) throw new ForbiddenError('Message actor does not match session');
     return db.prepare(`SELECT * FROM messages WHERE recipient_id = ? AND recipient_run_id IS ? ${includeConsumed ? '' : "AND state = 'queued'"} ORDER BY created_at, rowid`)
       .all(actor.agent_id, actor.run_id) as SemanticMessage[];
   });
@@ -122,7 +123,7 @@ export function consumeMessage(stateDir: string, principal: CommandPrincipal, me
   return withEventDbTransaction(stateDir, (db) => {
     const actor = session(db, principal.sessionId);
     const message = read(db, messageId);
-    if (actor.agent_id !== principal.agentId || actor.agent_id !== message.recipient_id || actor.run_id !== message.recipient_run_id) throw new Error('Message recipient does not match session');
+    if (actor.agent_id !== principal.agentId || actor.agent_id !== message.recipient_id || actor.run_id !== message.recipient_run_id) throw new ForbiddenError('Message recipient does not match session');
     db.prepare("UPDATE messages SET state = 'consumed', consumed_at = coalesce(consumed_at, ?) WHERE message_id = ?")
       .run(new Date().toISOString(), messageId);
     return read(db, messageId);

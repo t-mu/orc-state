@@ -8,11 +8,11 @@
  * no Markdown spec mirrors it.
  */
 import { flag } from '../lib/args.ts';
-import { markTaskDoneRuntimeOnly } from '../lib/taskCompletion.ts';
+import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
 
 const taskRef = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
-const actorId = flag('actor-id') ?? 'human';
+const actorId = flag('actor-id');
 
 if (!taskRef) {
   console.error('Usage: orc task-mark-done <task_ref> [--actor-id=<id>]');
@@ -20,7 +20,8 @@ if (!taskRef) {
 }
 
 try {
-  markTaskDoneRuntimeOnly(taskRef, actorId);
+  const result = await submitOperatorMutation({ op: 'task-mark-done', task_ref: taskRef, ...(actorId ? { actor_id: actorId } : {}) });
+  console.log(`task marked done: ${taskRef} (was: ${String(result.previous_status)})`);
 } catch (err) {
   cliError(err);
 }

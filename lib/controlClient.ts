@@ -174,13 +174,18 @@ export class ControlClient {
     return this.call('GET', `/v1/tasks/${encodeURIComponent(ref)}`);
   }
 
-  createTask(input: Record<string, unknown>): Promise<{ task: Record<string, unknown> }> {
-    return this.call('POST', '/v1/tasks', input);
+  createTask(input: Record<string, unknown>, actorId?: string): Promise<{ task: Record<string, unknown> }> {
+    return this.call('POST', '/v1/tasks', { ...input, ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
   /** Fails with `conflict` when `expectedRevision` is no longer the latest revision. */
-  reviseTask(ref: string, expectedRevision: number, changes: Record<string, unknown>): Promise<{ task: Record<string, unknown>; changed: boolean }> {
-    return this.call('POST', `/v1/tasks/${encodeURIComponent(ref)}/revisions`, { ...changes, expected_revision: expectedRevision });
+  reviseTask(ref: string, expectedRevision: number, changes: Record<string, unknown>, actorId?: string): Promise<{ task: Record<string, unknown>; changed: boolean }> {
+    return this.call('POST', `/v1/tasks/${encodeURIComponent(ref)}/revisions`, { ...changes, expected_revision: expectedRevision,
+      ...(actorId === undefined ? {} : { actor_id: actorId }) });
+  }
+
+  importTasks(path: string, strict = false, actorId?: string): Promise<{ imported: unknown[]; skipped: string[] }> {
+    return this.call('POST', '/v1/tasks/import', { path, strict, ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
   openTerminal(kind: 'provider' | 'shell', runId: string): Promise<{ terminal: TerminalRecord }> {

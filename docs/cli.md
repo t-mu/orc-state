@@ -227,6 +227,8 @@ the master itself. An answer from `run-input-respond` is recorded with
 | `project migrate [legacy-path] [--execute [--name=N] \| --cleanup-report]` | Move an attached or sibling installation into a registered project. Without flags it is a dry run (inventory, conflicts, blockers; nothing is written). `--execute` backs up, imports tasks with their effective runtime status, copies history, imports plans and settings, verifies parity, and cuts over; a retry is safe. `--cleanup-report` lists leftover legacy files after the cutover; nothing is deleted. Exits 1 when `--execute` is `blocked` or `verification_failed`. See configuration.md → Migrating an existing installation. |
 | `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
+In a registered project, task create, edit and import, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
+
 **Flags:**
 
 | Command | Flags |
