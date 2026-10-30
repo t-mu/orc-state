@@ -73,26 +73,23 @@ get_notifications(after_seq?)
 
 WRITE STATE
 
-create_task(title, feature?, ref?, task_type?, priority?, required_provider?, required_capabilities?, model?, owner?, actor_id?)
-  Registers a task for dispatch (a legacy installation's state/backlog.json).
+create_task(title, body_markdown?, feature?, ref?, depends_on?, acceptance_criteria?, task_type?, priority?, required_provider?, required_capabilities?, model?, owner?, actor_id?)
+  Creates a task in the project's SQLite store, with no file anywhere: pass
+  body_markdown (the full spec), depends_on and acceptance_criteria directly;
+  edit later with update_task(expected_revision).
   title is the only required field. feature defaults to "general".
-  ref: explicit slug matching the markdown spec filename.
-  In a registered project, this creates the task in project SQLite with no
-  file anywhere: pass body_markdown (the full spec), depends_on and
-  acceptance_criteria directly; edit later with update_task(expected_revision).
-  In a legacy installation, use ONLY for tasks that already have a spec in
-  backlog/; Markdown-owned fields (description, acceptance_criteria,
-  depends_on) must live in that spec.
+  A legacy installation refuses it: edit its backlog/ Markdown spec by hand, or
+  run orc project migrate.
   task_type: implementation|refactor (default implementation).
   priority: low|normal|high|critical (default normal).
   required_provider: restrict dispatch to codex|claude|gemini.
   model: optional model override for the worker session (e.g. "claude-haiku-4-5").
   actor_id defaults to {{agent_id}}.
 
-update_task(task_ref, priority?, required_provider?, model?, actor_id?)
-  Updates runtime-owned mutable fields on an existing task.
-  Markdown-authoritative fields and status transitions must go through backlog
-  markdown edits or dedicated lifecycle commands.
+update_task(task_ref, expected_revision, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, review_level?, merge_strategy?, required_provider?, model?, actor_id?)
+  Edits a task; each accepted edit becomes a new spec revision. expected_revision
+  (from get_task spec_revision) is required; a stale value fails. Status is never
+  editable: use the lifecycle tools.
   model: set or clear the worker model override (pass null to clear).
   actor_id defaults to {{agent_id}}.
 
@@ -133,20 +130,6 @@ get_scout_report(agent_id)
 
 remove_scout(agent_id)
   Stop a scout's session and remove it once its report is read or it timed out.
-
-LIFECYCLE VERBS
-
-plan_write(name, title, objective, scope, out_of_scope, constraints, affected_areas, steps, acknowledge_feature_collision?)
-  Legacy installations only — refused in a registered project (use create_task).
-  Persist a fully-specified plan artifact at plans/<plan_id>-<slug>.md within
-  the current worktree. Allocates plan_id atomically via nextPlanId(), validates
-  every required section (placeholders rejected, round-trips through parsePlan),
-  writes derived_task_refs: [] on fresh plans, and does NOT touch
-  .orc-state/backlog.json, git, or any file outside the worktree.
-  The /plan skill wraps this tool with interactive follow-ups; see skills/plan/SKILL.md.
-  Feature-slug collisions with unrelated features are rejected unless
-  acknowledge_feature_collision: true is passed after disambiguation.
-  Returns { planId, path }.
 
 NOTIFICATIONS
 
@@ -210,35 +193,15 @@ memory_store(content, wing?, hall?, room?, importance?, sourceType?, sourceRef?)
 memory_status()
   Return memory statistics: total drawers, distinct wings/rooms, oldest/newest memory, DB size.
 
-LIFECYCLE VERBS
-
-spec_preview(plan_id)
-  Legacy installations only — refused in a registered project.
-  Preview the backlog task specs that would be generated from plans/<plan_id>-*.md.
-  Pure read — no files written, no state mutated. Pairs with spec_publish.
-
-spec_publish(plan_id, confirm)
-  Legacy installations only — refused in a registered project (a project never
-  registers Markdown specs; use create_task with body_markdown).
-  Publish a saved plan into backlog task specs inside the invoking agent's worktree.
-  Stages under .orc-state/plan-staging/<plan_id>/ as a concurrency lock, writes specs
-  to backlog/, and updates the plan file with derived_task_refs.
-  `confirm` MUST be the literal boolean true. Does NOT touch .orc-state/backlog.json
-  or git — the caller commits and merges per AGENTS.md. Invoke through the /spec skill.
-
 TYPICAL FLOW
 
 Planning new work:
-1. In a registered project (get_status shows a project): create_task with
-   body_markdown — no file is written. In a legacy installation: write a task
-   spec to backlog/<N>-<slug>.md following the template (create-task skill or
-   the file directly; get_status().next_task_seq gives the next number).
-2. A legacy coordinator registers new todo specs on each tick — no manual
-   registration needed (`orc backlog-sync-check` verifies, legacy only). Task status is
-   runtime-owned everywhere: never edit a spec's status: field; use
-   reset_task / cancel_task and the run lifecycle.
-   When creating tasks, assess complexity and set an appropriate model via
-   update_task(task_ref, model=...):
+1. create_task with body_markdown — no file is written. (A legacy installation
+   refuses task writes: edit its backlog/ spec by hand or run orc project migrate.)
+2. Task status is runtime-owned: change it only with reset_task / cancel_task /
+   unblock_task and the run lifecycle.
+   When creating tasks, assess complexity and set an appropriate model with
+   create_task(..., model=...) (or later update_task(task_ref, expected_revision, model=...)):
    - Trivial tasks (config edits, dependency bumps, doc updates): use a fast/cheap
      model like "claude-haiku-4-5"
    - Standard tasks (feature implementation, bug fixes): omit model to use the pool default
@@ -295,8 +258,7 @@ Worker worktree workflow (for backlog tasks):
   as the ready-for-finalization handoff, and do not merge to main or clean up
   the worktree/branch themselves.
 
-All file changes — including a legacy installation's task spec files
-(backlog/*.md) — must go through a worktree. Read-only operations (status checks, log inspection,
+All file changes must go through a worktree. Read-only operations (status checks, log inspection,
 running orc commands) are the only exception.
 
 Recovery / debug paths:
@@ -307,14 +269,12 @@ Recovery / debug paths:
 Those paths are supported, but they are not part of the normal agent workflow.
 
 Backlog tasks must never be self-executed. If the user requests work that
-belongs in the backlog, create it (create_task with body_markdown in a
-registered project; a spec written in a worktree in a legacy installation)
+belongs in the backlog, create it (create_task with body_markdown)
 and delegate to a worker.
 
 INVARIANTS
 
-- Legacy installations: new task specs go to backlog/ first — never create_task() alone.
-  Registered projects: create_task(body_markdown=...) is the spec.
+- create_task(body_markdown=...) is the spec.
 - Tasks must belong to an existing feature. Default feature is general.
 - Do not create speculative tasks.
 - Use MCP tools for orchestrator state changes.

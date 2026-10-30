@@ -141,15 +141,6 @@ describe('cli/doctor.ts', () => {
     expect(json.checks.lifecycleIssues.some((issue: Record<string, unknown>) => issue.code === 'missing_finalization_blocked_reason')).toBe(true);
   });
 
-  it('reports authoritative backlog drift in structured output', () => {
-    seedState({ agents: [], claims: [] });
-    writeFileSync(join(dir, 'backlog', '999-task-1.md'), ['---', 'ref: docs/task-1', 'feature: docs', 'status: todo', '---', '', '# Task 999 - Different Title', ''].join('\n'));
-    const result = runCli(['--json']);
-    const json = JSON.parse(result.stdout);
-    expect(result.status).toBe(1);
-    expect(json.checks.backlogSync.mismatches.some((issue: Record<string, unknown>) => issue.field === 'title')).toBe(true);
-  });
-
   it('reports state validation errors when events storage is missing', () => {
     seedState({ agents: [], claims: [] });
     // Remove the events file so doctor detects missing storage

@@ -4,38 +4,25 @@ import { join } from 'node:path';
 import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory, storeDrawer } from '../lib/memoryStore.ts';
 
 import { createAdapter } from '../adapters/index.ts';
-import { atomicWriteJson } from '../lib/atomicWrite.ts';
-import { PlanAuthoringError, writePlan, type WritePlanInput } from '../lib/planAuthoring.ts';
-import { ACTIVE_PROJECT, PLANS_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { syncBacklogFromSpecs } from '../lib/backlogSync.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
-import { withLock } from '../lib/lock.ts';
-import { findTask, getNextTaskSeq, readBacklog, readClaims } from '../lib/stateReader.ts';
+import { findTask, getNextTaskSeq, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
-import { assertTaskRegistrationFieldsAllowed, assertTaskSpecMatchesRegistration, assertTaskUpdateAllowed } from '../lib/taskAuthority.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
-import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
-import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
-import { createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
+import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
 import { isProjectStateDir } from '../lib/projectContext.ts';
 import { TERMINAL_STATUSES, backlogDocsDirForState, cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput, unblockTask } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
-
-function slugify(text: string) {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48);
-}
 
 function assertStringArray(value: unknown, field: string) {
   if (value == null) return;
@@ -60,25 +47,6 @@ function assertActorId(stateDir: string, actorId: unknown) {
   }
 }
 
-function assertNoProjectOnlyFields(args: Record<string, unknown>) {
-  const fields = PROJECT_ONLY_TASK_FIELDS.filter((field) => args[field] !== undefined);
-  if (fields.length > 0) {
-    throw new Error(`${fields.join(', ')} require(s) a project state directory; edit the backlog markdown spec instead.`);
-  }
-}
-
-function plansDirForState(stateDir: string) {
-  const colocatedPlansDir = join(stateDir, 'plans');
-  if (existsSync(colocatedPlansDir)) return colocatedPlansDir;
-  const parentPlansDir = join(stateDir, '..', 'plans');
-  if (existsSync(parentPlansDir)) return parentPlansDir;
-  return PLANS_DIR;
-}
-
-
-// `next_task_seq` always means "the next available numeric sequence from this state snapshot".
-// Before create_task mutates backlog.json, it is the number to consume next.
-// After create_task commits, it becomes the next number after the task just created.
 
 // Fields returned by list_tasks (summary view). Use get_task() for full detail.
 
@@ -376,11 +344,15 @@ export function handleReadAgents(stateDir: string) {
   return readFileSync(join(stateDir, 'agents.json'), 'utf8');
 }
 
-/** A project directory whose task database is missing must fail, never fall through to legacy backlog.json writes. */
-function assertLegacyTaskStore(stateDir: string): void {
+/**
+ * Only a project task store accepts task writes. A legacy installation authors tasks as backlog/ Markdown,
+ * and a project whose task database is missing must fail rather than fall through to backlog.json.
+ */
+function legacyTaskWriteRefused(stateDir: string): Error {
   if (isProjectStateDir(stateDir)) {
-    throw new Error(`Project task store is missing (${join(stateDir, 'runtime.db')}); restore it or re-run orc project migrate. Legacy task writes are refused in a project.`);
+    return new Error(`Project task store is missing (${join(stateDir, 'runtime.db')}); restore it or re-run orc project migrate.`);
   }
+  return new Error('Task writes require a registered project; run orc project migrate, or edit the backlog/ Markdown spec in a legacy installation.');
 }
 
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
@@ -391,104 +363,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     // Project refs carry no numeric sequence.
     return { ...describeProjectTask(createProjectTask(stateDir, input, actor_id as string)), next_task_seq: undefined };
   }
-  assertLegacyTaskStore(stateDir);
-  assertNoProjectOnlyFields(args);
-  const {
-    feature,
-    title,
-    ref,
-    task_type = 'implementation',
-    priority = 'normal',
-    description,
-    acceptance_criteria,
-    depends_on,
-    required_capabilities,
-    required_provider,
-    model,
-    owner,
-    actor_id = defaultActorId(stateDir),
-  } = args;
-
-  const resolvedFeature = typeof feature === 'string' && (feature).trim().length > 0 ? feature : 'general';
-  if (!title) throw new Error('title is required');
-  if (!TASK_TYPES.includes(task_type as string)) throw new Error(`Invalid task_type: ${String(task_type)}`);
-  if (!TASK_PRIORITIES.includes(priority as string)) throw new Error(`Invalid priority: ${String(priority)}`);
-  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  if (owner && !AGENT_ID_RE.test(owner as string)) throw new Error(`Invalid owner: ${typeof owner === 'string' ? owner : '(unknown)'}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-
-  assertStringArray(acceptance_criteria, 'acceptance_criteria');
-  assertStringArray(depends_on, 'depends_on');
-  assertStringArray(required_capabilities, 'required_capabilities');
-  if (required_provider != null && !isSupportedProvider(required_provider)) {
-    throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
-  }
-  if (model != null && typeof model !== 'string') {
-    throw new Error(`Invalid model: must be a string or null.`);
-  }
-
-  const now = new Date().toISOString();
-  const taskSlug = (ref as string) ?? slugify(title as string);
-  const taskRef = `${resolvedFeature}/${taskSlug}`;
-  if (!taskSlug || !/^[a-z0-9-]+\/[a-z0-9-]+$/.test(taskRef)) {
-    throw new Error(`Invalid task ref: ${taskRef}`);
-  }
-  assertTaskRegistrationFieldsAllowed({ description, acceptance_criteria, depends_on });
-
-  return withLock(join(stateDir, '.lock'), () => {
-    if (actor_id !== 'human') {
-      const allAgents = listAgents(stateDir);
-      const actorExists = allAgents.some((agent) => agent.agent_id === actor_id);
-      if (!actorExists) {
-        throw new Error(`Actor agent not found: ${String(actor_id)}. Registered agents: ${allAgents.map((agent) => agent.agent_id).join(', ') || '(none)'}`);
-      }
-    }
-
-    const backlog = readBacklog(stateDir);
-
-    const existing = findTask(backlog, taskRef);
-    if (existing) throw new Error(`Task already exists: ${taskRef}`);
-
-    assertTaskSpecMatchesRegistration({
-      taskRef,
-      featureRef: resolvedFeature,
-      title: title as string,
-    });
-
-    const syncedBacklog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
-    const currentNextTaskSeq = getNextTaskSeq(syncedBacklog);
-    const newTask = findTask(syncedBacklog, taskRef);
-    if (!newTask) throw new Error(`Task spec did not sync into orchestrator state: ${taskRef}`);
-    newTask.task_type = task_type as Task['task_type'];
-    newTask.priority = priority as Task['priority'];
-    newTask.planning_state = 'ready_for_dispatch';
-    newTask.delegated_by = actor_id as string;
-    newTask.created_at ??= now;
-    newTask.updated_at = now;
-    if ((required_capabilities as string[] | undefined)?.length) {
-      newTask.required_capabilities = required_capabilities as string[];
-    }
-    if (owner) newTask.owner = owner as string;
-    if (required_provider != null) newTask.required_provider = required_provider as Task['required_provider'];
-    if (model != null) newTask.model = model;
-
-    syncedBacklog.next_task_seq = currentNextTaskSeq + 1;
-    atomicWriteJson(join(stateDir, 'backlog.json'), syncedBacklog);
-
-    appendSequencedEvent(
-      stateDir,
-      {
-        ts: now,
-        event: 'task_added',
-        actor_type: actor_id === 'human' ? 'human' : 'agent',
-        actor_id: actor_id as string,
-        task_ref: taskRef,
-        payload: { title, task_type, feature_ref: resolvedFeature },
-      },
-      { lockAlreadyHeld: true },
-    );
-    // Return the post-write value so callers can immediately see the next available sequence.
-    return { ...newTask, next_task_seq: syncedBacklog.next_task_seq };
-  });
+  throw legacyTaskWriteRefused(stateDir);
 }
 
 export function handleUpdateTask(stateDir: string, args: Record<string, unknown> = {}) {
@@ -499,103 +374,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
     return { ...describeProjectTask(task), changed };
   }
-  assertLegacyTaskStore(stateDir);
-  assertNoProjectOnlyFields(args);
-  const {
-    task_ref,
-    title,
-    description,
-    priority,
-    acceptance_criteria,
-    depends_on,
-    required_provider,
-    model,
-    actor_id = defaultActorId(stateDir),
-  } = args;
-
-  if (!task_ref) throw new Error('task_ref is required');
-  if (!AGENT_ID_RE.test(actor_id as string)) throw new Error(`Invalid actor_id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
-  assertStringArray(acceptance_criteria, 'acceptance_criteria');
-  assertStringArray(depends_on, 'depends_on');
-  if (priority !== undefined && !TASK_PRIORITIES.includes(priority as string)) {
-    throw new Error(`Invalid priority: ${typeof priority === 'string' ? priority : '(unknown)'}`);
-  }
-  if (required_provider !== undefined && required_provider !== null && !isSupportedProvider(required_provider)) {
-    throw new Error(`Invalid required_provider: ${typeof required_provider === 'string' ? required_provider : '(unknown)'}. Must be codex, claude, or gemini.`);
-  }
-  if (model !== undefined && model !== null && typeof model !== 'string') {
-    throw new Error(`Invalid model: must be a string or null.`);
-  }
-
-  const now = new Date().toISOString();
-  const changedFields: string[] = [];
-
-  return withLock(join(stateDir, '.lock'), () => {
-    const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
-    const task = findTask(backlog, task_ref as string);
-    if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
-    const authoritativeUpdates: Partial<Pick<Task, 'title' | 'description' | 'acceptance_criteria' | 'depends_on'>> = {};
-    if (title !== undefined) authoritativeUpdates.title = title as Task['title'];
-    if (description !== undefined) authoritativeUpdates.description = description as Task['description'];
-    if (acceptance_criteria !== undefined) authoritativeUpdates.acceptance_criteria = acceptance_criteria as Task['acceptance_criteria'];
-    if (depends_on !== undefined) authoritativeUpdates.depends_on = depends_on as Task['depends_on'];
-    assertTaskUpdateAllowed(task, authoritativeUpdates);
-
-    if (title !== undefined) {
-      task.title = title as string;
-      changedFields.push('title');
-    }
-    if (description !== undefined) {
-      task.description = description as string;
-      changedFields.push('description');
-    }
-    if (priority !== undefined) {
-      task.priority = priority as Task['priority'];
-      changedFields.push('priority');
-    }
-    if (acceptance_criteria !== undefined) {
-      task.acceptance_criteria = acceptance_criteria as string[];
-      changedFields.push('acceptance_criteria');
-    }
-    if (depends_on !== undefined) {
-      task.depends_on = depends_on as string[];
-      changedFields.push('depends_on');
-    }
-    if (required_provider !== undefined) {
-      if (required_provider === null) {
-        delete task.required_provider;
-      } else {
-        task.required_provider = required_provider as Task['required_provider'];
-      }
-      changedFields.push('required_provider');
-    }
-    if (model !== undefined) {
-      if (model === null) {
-        delete task.model;
-      } else {
-        task.model = model;
-      }
-      changedFields.push('model');
-    }
-
-    task.updated_at = now;
-    atomicWriteJson(join(stateDir, 'backlog.json'), backlog);
-
-    appendSequencedEvent(
-      stateDir,
-      {
-        ts: now,
-        event: 'task_updated',
-        actor_type: actor_id === 'human' ? 'human' : 'agent',
-        actor_id: actor_id as string,
-        task_ref: task_ref as string,
-        payload: { status: task.status, fields: changedFields },
-      },
-      { lockAlreadyHeld: true },
-    );
-
-    return task;
-  });
+  throw legacyTaskWriteRefused(stateDir);
 }
 
 export function handleDelegateTask(stateDir: string, args: Record<string, unknown> = {}) {
@@ -972,95 +751,6 @@ export function handleGetNotifications(stateDir: string, { after_seq }: { after_
   return { notifications, last_seq: lastSeq };
 }
 
-/**
- * The /plan and /spec verbs write Markdown that only a legacy installation registers; a project's
- * coordinator never reads it, so their output would silently never become tasks.
- */
-function assertLegacyVerb(stateDir: string, tool: string) {
-  if (!isProjectStateDir(stateDir)) return;
-  throw new Error(`${tool} is legacy-only: a registered project does not register Markdown plans or specs. `
-    + 'Create tasks with create_task (body_markdown) or orc project task import, and plans with orc project plan import');
-}
-
-export async function handlePlanWrite(stateDir: string, args: Record<string, unknown> = {}) {
-  assertLegacyVerb(stateDir, 'plan_write');
-  const {
-    name,
-    title,
-    objective,
-    scope,
-    out_of_scope,
-    constraints,
-    affected_areas,
-    steps,
-    acknowledge_feature_collision,
-  } = args;
-
-  if (typeof name !== 'string') throw new Error('name is required');
-  if (typeof title !== 'string') throw new Error('title is required');
-  if (typeof objective !== 'string') throw new Error('objective is required');
-  if (typeof scope !== 'string') throw new Error('scope is required');
-  if (typeof out_of_scope !== 'string') throw new Error('out_of_scope is required');
-  if (typeof constraints !== 'string') throw new Error('constraints is required');
-  if (typeof affected_areas !== 'string') throw new Error('affected_areas is required');
-  if (!Array.isArray(steps) || steps.length === 0) {
-    throw new Error('steps must be a non-empty array');
-  }
-  if (
-    acknowledge_feature_collision !== undefined
-    && typeof acknowledge_feature_collision !== 'boolean'
-  ) {
-    throw new Error('acknowledge_feature_collision must be a boolean');
-  }
-
-  const normalizedSteps: WritePlanInput['steps'] = [];
-  for (let i = 0; i < steps.length; i += 1) {
-    const step = steps[i] as Record<string, unknown>;
-    if (!step || typeof step !== 'object') {
-      throw new Error(`steps[${i + 1}] must be an object`);
-    }
-    if (typeof step.title !== 'string') throw new Error(`steps[${i + 1}].title is required`);
-    if (typeof step.body !== 'string') throw new Error(`steps[${i + 1}].body is required`);
-    const depends = step.depends_on;
-    const normalized: WritePlanInput['steps'][number] = {
-      title: step.title,
-      body: step.body,
-    };
-    if (depends !== undefined) {
-      if (!Array.isArray(depends) || depends.some((d) => !Number.isInteger(d))) {
-        throw new Error(`steps[${i + 1}].depends_on must be an array of integers`);
-      }
-      normalized.dependsOn = depends as number[];
-    }
-    normalizedSteps.push(normalized);
-  }
-
-  try {
-    return await writePlan(
-      {
-        name,
-        title,
-        objective,
-        scope,
-        outOfScope: out_of_scope,
-        constraints,
-        affectedAreas: affected_areas,
-        steps: normalizedSteps,
-      },
-      {
-        stateDir,
-        plansDir: plansDirForState(stateDir),
-        acknowledgeFeatureCollision: acknowledge_feature_collision === true,
-      },
-    );
-  } catch (err) {
-    if (err instanceof PlanAuthoringError) {
-      throw new Error(err.message);
-    }
-    throw err;
-  }
-}
-
 /** "Not initialized" only when the state directory is missing; any other failure keeps its own text. */
 function memoryFailure(stateDir: string, err: unknown): string {
   if (!existsSync(stateDir)) return 'memory system not initialized';
@@ -1137,38 +827,6 @@ export function handleMemoryStatus(stateDir: string, _args: Record<string, unkno
   } catch (err) {
     return { error: memoryFailure(stateDir, err) };
   }
-}
-
-function specOptsFromArgs(stateDir: string, args: Record<string, unknown>) {
-  const { worktree_path } = args;
-  if (worktree_path !== undefined && typeof worktree_path !== 'string') {
-    throw new Error('worktree_path must be a string');
-  }
-  return {
-    stateDir,
-    ...(typeof worktree_path === 'string' ? { worktreePath: worktree_path } : {}),
-  };
-}
-
-export function handleSpecPreview(stateDir: string, args: Record<string, unknown> = {}) {
-  assertLegacyVerb(stateDir, 'spec_preview');
-  const { plan_id } = args;
-  if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
-    throw new Error('plan_id must be a non-negative integer');
-  }
-  return previewSpec(plan_id, specOptsFromArgs(stateDir, args));
-}
-
-export function handleSpecPublish(stateDir: string, args: Record<string, unknown> = {}) {
-  assertLegacyVerb(stateDir, 'spec_publish');
-  const { plan_id, confirm } = args;
-  if (typeof plan_id !== 'number' || !Number.isInteger(plan_id)) {
-    throw new Error('plan_id must be a non-negative integer');
-  }
-  if (confirm !== true) {
-    throw new Error('confirm must be true to publish');
-  }
-  return publishSpec(plan_id, { confirm: true, ...specOptsFromArgs(stateDir, args) });
 }
 
 export { closeMemoryDb };

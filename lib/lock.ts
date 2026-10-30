@@ -170,31 +170,3 @@ export function withLock<T>(lockPath: string, fn: () => T): T {
   }
   return value as T;
 }
-
-/**
- * Async version of withLock. Awaits the promise returned by fn before releasing.
- */
-export async function withLockAsync<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
-  acquireLock(lockPath);
-  let value: T | undefined;
-  let fnError: unknown = null;
-  try {
-    value = await fn();
-  } catch (error) {
-    fnError = error;
-  }
-  try {
-    releaseLock(lockPath);
-  } catch (releaseError) {
-    if (fnError) {
-      throw new Error(`Lock release failed after callback error: ${(releaseError as Error).message}`, { cause: fnError });
-    }
-    throw releaseError;
-  }
-  if (fnError) {
-    if (fnError instanceof Error) throw fnError;
-    const msg = typeof fnError === 'string' ? fnError : JSON.stringify(fnError);
-    throw new Error(msg);
-  }
-  return value as T;
-}

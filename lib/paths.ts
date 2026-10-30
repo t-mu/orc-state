@@ -72,11 +72,10 @@ export function assertSupportedLayout(): void {
 // config, state). These are correct as-is and were NOT changed by task 185:
 //   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
 //                       WORKTREES_DIR, BACKLOG_DOCS_DIR, PLANS_DIR, ORC_CONFIG_FILE
-//   lib/planSpecTask.ts resolveRepoRoot() fallback → plans/backlog/staging dirs
 //   coordinator.ts      resolveOrcBinSh(REPO_ROOT)           (orc binary lookup)
 //   coordinator.ts      relative(REPO_ROOT, source_path)     (backlog spec path math)
 //   coordinator.ts      repoRoot: REPO_ROOT → worker env     (orc bin/ctx for workers)
-//   mcp/handlers.ts     PLANS_DIR / BACKLOG_DOCS_DIR / RUN_WORKTREES_FILE
+//   mcp/handlers.ts     RUN_WORKTREES_FILE
 //   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT ?? join(stateDir,'..')
 //                       (scout/agent working dir + orc bin; no git ops)
 //   NOTE: coordinator's REPO_ROOT is still resolveRepoRoot(), NOT the paths.ts

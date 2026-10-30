@@ -1,20 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { PLANS_DIR } from './paths.ts';
-import { atomicWriteJson } from './atomicWrite.ts';
-import { withLockAsync } from './lock.ts';
+import { readFileSync } from 'node:fs';
 
 export class PlanValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'PlanValidationError';
-  }
-}
-
-export class PlanLookupError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PlanLookupError';
   }
 }
 
@@ -54,7 +43,6 @@ const NAME_SLUG_RE = /^[a-z][a-z0-9-]*$/;
 const STEP_HEADING_RE = /^###\s+Step\s+(\d+)(?:\s*[—-]\s*(.+))?\s*$/;
 const DEPENDS_ON_LINE_RE = /^Depends\s+on:\s*(.+)$/i;
 const DEPENDS_ON_VALUE_RE = /^\d+(\s*,\s*\d+)*$/;
-const PLAN_FILE_RE = /^(\d+)-[^/]+\.md$/;
 
 function readPlanFileBytes(path: string): string {
   const buf = readFileSync(path);
@@ -290,79 +278,4 @@ export function parsePlan(path: string): ParsedPlan {
     affectedAreas: sections.get('affected areas')!.body,
     steps,
   };
-}
-
-export function findPlanById(planId: number, dir: string = PLANS_DIR): string {
-  if (!Number.isInteger(planId) || planId < 0) {
-    throw new PlanLookupError(`plan_id must be a non-negative integer, got ${planId}`);
-  }
-  if (!existsSync(dir)) {
-    throw new PlanLookupError(`No plan found for plan_id ${planId}: plans directory does not exist (${dir})`);
-  }
-  const prefix = `${planId}-`;
-  const matches = readdirSync(dir).filter((name) => {
-    if (!name.endsWith('.md')) return false;
-    if (!name.startsWith(prefix)) return false;
-    const numMatch = PLAN_FILE_RE.exec(name);
-    if (!numMatch) return false;
-    return parseInt(numMatch[1], 10) === planId;
-  });
-  if (matches.length === 0) {
-    throw new PlanLookupError(`No plan found for plan_id ${planId} in ${dir}`);
-  }
-  if (matches.length > 1) {
-    throw new PlanLookupError(
-      `Duplicate plans for plan_id ${planId}: ${matches.join(', ')}`,
-    );
-  }
-  return join(dir, matches[0]);
-}
-
-function scanMaxPlanId(dir: string): number {
-  if (!existsSync(dir)) return 0;
-  let max = 0;
-  for (const entry of readdirSync(dir)) {
-    const m = PLAN_FILE_RE.exec(entry);
-    if (!m) continue;
-    const n = parseInt(m[1], 10);
-    if (n > max) max = n;
-  }
-  return max;
-}
-
-interface PlanIdCounter {
-  last: number;
-}
-
-function readCounter(path: string): number {
-  if (!existsSync(path)) return 0;
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as PlanIdCounter;
-    return typeof parsed.last === 'number' && Number.isInteger(parsed.last) && parsed.last >= 0
-      ? parsed.last
-      : 0;
-  } catch {
-    return 0;
-  }
-}
-
-let inProcessAllocChain: Promise<unknown> = Promise.resolve();
-
-export async function nextPlanId(dir: string = PLANS_DIR): Promise<number> {
-  const chained = inProcessAllocChain.then(() => allocateNextPlanId(dir));
-  inProcessAllocChain = chained.catch(() => undefined);
-  return chained;
-}
-
-async function allocateNextPlanId(dir: string): Promise<number> {
-  mkdirSync(dir, { recursive: true });
-  const lockFile = join(dir, '.lock');
-  const counterFile = join(dir, '.next-id.json');
-  return withLockAsync(lockFile, () => {
-    const fileMax = scanMaxPlanId(dir);
-    const counterMax = readCounter(counterFile);
-    const next = Math.max(fileMax, counterMax) + 1;
-    atomicWriteJson(counterFile, { last: next });
-    return Promise.resolve(next);
-  });
 }

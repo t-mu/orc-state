@@ -207,7 +207,7 @@ Use these as the default workflow. Treat everything else as recovery/debug unles
 4. Worker dispatch: automatic — on each tick the coordinator spawns a task-scoped worker when capacity is available. Workers are assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`), unique among currently-active workers. The provider is resolved from the task's `required_provider` field or the configured default. `orc register-worker` is for recovery only.
 5. Task completion: the coordinator marks the task done itself after merge; task status is runtime-owned and no spec is edited (`orc task-mark-done` is the operator's recovery command)
 6. Worker lifecycle: `run-start` -> `run-work-complete` -> `run-finish`
-7. Normal inspection: `orc status`, `orc doctor` (and, in a legacy installation only, `orc backlog-sync-check`)
+7. Normal inspection: `orc status`, `orc doctor`
 8. Memory (worker): `orc memory-wake-up` (session start), `orc memory-record --content="..."` (store a memory)
 
 Outside the blessed workflow, commands are for observability, setup, or recovery only — not the default path.
@@ -299,7 +299,7 @@ orc memory-record --content="..." [--wing=X] [--hall=Y] \
 
 Normal task-authoring path:
 - Registered project: `orc project task create|edit|import` or the MCP `create_task`/`update_task` tools; no `backlog/` file is written anywhere.
-- Legacy installation: edit the markdown spec in `backlog/`; the coordinator registers new `todo` spec definitions on each tick. No explicit sync-check call is needed; `orc backlog-sync-check` remains an ad-hoc operator inspection tool. Do not treat generic runtime mutation as a substitute for backlog markdown edits there.
+- Legacy installation: edit the markdown spec in `backlog/`; the coordinator registers new `todo` spec definitions on each tick. Task-authoring tools (`create_task`, `update_task`) refuse it; run `orc project migrate`.
 - In both, task status is runtime-owned: change it only through lifecycle commands, never through a spec's `status:`.
 
 ### Artifact directories
@@ -314,41 +314,8 @@ exports Markdown explicitly with `orc project task|plan import|export`):
   documented on-disk contract (required frontmatter, required sections,
   placeholder rejection rules, and the plans-only `Depends on: N[, N...]`
   dependency cue). Plan ids are an independent sequence from backlog task
-  numbers. See `plans/TEMPLATE.md` and `docs/cli.md` → **Plans** for the full
-  contract. Parser, lookup, and id-allocator helpers live in `lib/planDocs.ts`.
-
-### Lifecycle verbs
-
-Lifecycle verbs are agent-agnostic MCP-backed workflows any caller (master,
-worker, automation) can invoke from inside a fresh worktree. They serve legacy
-installations only: a registered project refuses `plan_write`, `spec_preview`
-and `spec_publish`, because it never registers Markdown — author tasks there
-with `create_task` (`body_markdown`) or `orc project task import`. They author and
-publish artifacts under `plans/` and `backlog/`. Each verb pairs a skill
-(prompt/UI surface) with one or more MCP tools (engine + state contract):
-
-- `/plan` — interactive plan authoring. See `skills/plan/SKILL.md`. Backed
-  by the `plan_write` MCP tool, which writes `plans/<plan_id>-<slug>.md`
-  **only inside the current worktree**. The tool does not touch
-  `.orc-state/backlog.json`, main, or git. Feature-slug collisions with
-  unrelated existing features are rejected unless the caller sets
-  `acknowledge_feature_collision: true` after disambiguating with the user.
-- `/spec plan <id>` and `/spec` (conversational fallback) — handled by
-  `skills/spec/SKILL.md`, backed by the `spec_preview` and `spec_publish`
-  MCP tools. Produces backlog task specs from a saved plan artifact. Stages
-  files under `.orc-state/plan-staging/<plan_id>/` as a concurrency lock
-  before moving them into the worktree's `backlog/`. Hard-fails on a
-  pre-existing non-empty `derived_task_refs` or a stale staging directory
-  — there are no override flags. The conversational form calls `plan_write`
-  to persist the extracted plan before proceeding through the same
-  preview/publish pipeline.
-
-Invocation contract for every verb: run inside a fresh `.worktrees/<run_id>`
-worktree per the worker worktree workflow above, then commit, merge to main,
-and clean up in the order specified under **Worktree cleanup ordering**.
-The coordinator's auto-sync tick picks up the new specs on its next pass —
-verbs do not mutate `.orc-state/backlog.json` directly and do not call
-`orc backlog-sync-check` as part of the flow.
+  numbers. See `docs/cli.md` → **Plans** for the full contract; the parser lives
+  in `lib/planDocs.ts` and also reads `orc project plan import` files.
 
 ### Execution Modes
 
@@ -469,7 +436,6 @@ New task specs follow `backlog/TASK_TEMPLATE.md` (the body of a project task use
 ### Task Creation Completion
 - Registered project: the turn is complete when `orc project task create` or `create_task` returns; no file is written.
 - Legacy installation: save the markdown spec under the backlog directory; the coordinator registers the new spec's definition on its next tick, so saving the file completes the authoring turn.
-- `orc backlog-sync-check` remains available as an ad-hoc operator inspection tool, but is not part of the normal task-creation flow.
 
 ---
 

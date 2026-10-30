@@ -136,17 +136,6 @@ describe('project task review fixes', () => {
     expect(task.contentHash).not.toBe(initProjectTaskStore(dir).getRevision('app/hash', 1)!.contentHash);
   });
 
-  it('rejects project-only fields in a legacy state directory', () => {
-    const legacy = createTempStateDir('orc-legacy-');
-    try {
-      seedState(legacy, { tasks: [{ ref: 'orch/a', title: 'A', status: 'todo' }] });
-      expect(() => handleUpdateTask(legacy, { task_ref: 'orch/a', merge_strategy: 'pr', actor_id: 'human' })).toThrow('project state directory');
-      expect(() => handleCreateTask(legacy, { feature: 'orch', title: 'B', review_level: 'none', actor_id: 'human' })).toThrow('project state directory');
-    } finally {
-      closeAllDatabases();
-      cleanupTempStateDir(legacy);
-    }
-  });
 });
 
 describe('MCP task tools in a project state directory', () => {

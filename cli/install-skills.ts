@@ -41,21 +41,21 @@ function parseArgs() {
   return { isGlobal, isDryRun, providers };
 }
 
-function shouldSkipSkillEntry(skillName: string, relativePath: string): boolean {
-  return relativePath === '.npmignore' || (skillName === 'spec' && relativePath === 'evals');
+function shouldSkipSkillEntry(relativePath: string): boolean {
+  return relativePath === '.npmignore';
 }
 
-function copyDir(src: string, dest: string, dryRun: boolean, skillName: string, relativeRoot = ''): Array<{ src: string; dest: string }> {
+function copyDir(src: string, dest: string, dryRun: boolean, relativeRoot = ''): Array<{ src: string; dest: string }> {
   const entries = readdirSync(src, { withFileTypes: true });
   const copied: Array<{ src: string; dest: string }> = [];
   for (const entry of entries) {
     const relativePath = relativeRoot ? `${relativeRoot}/${entry.name}` : entry.name;
-    if (shouldSkipSkillEntry(skillName, relativePath)) continue;
+    if (shouldSkipSkillEntry(relativePath)) continue;
     const srcPath  = join(src, entry.name);
     const destPath = join(dest, entry.name);
     if (entry.isDirectory()) {
       if (!dryRun) mkdirSync(destPath, { recursive: true });
-      copied.push(...copyDir(srcPath, destPath, dryRun, skillName, relativePath));
+      copied.push(...copyDir(srcPath, destPath, dryRun, relativePath));
     } else {
       copied.push({ src: srcPath, dest: destPath });
       if (!dryRun) {
@@ -113,7 +113,7 @@ export function installSkills(providers: string[], base: string, dryRun: boolean
     for (const skill of skills) {
       const src    = join(SKILLS_ROOT, skill);
       const dest   = join(destBase, skill);
-      const copied = copyDir(src, dest, dryRun, skill);
+      const copied = copyDir(src, dest, dryRun);
       for (const { dest: d } of copied) {
         console.log(`  ${dryRun ? '(would copy) ' : ''}${relative(base, d)}`);
         allCopied.push(d);

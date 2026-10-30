@@ -227,7 +227,6 @@ agent; any other id (such as `coordinator`) is refused. The same rule applies to
 | `delegate` | Dispatch a task to an available worker agent. |
 | `project task <list\|show\|revisions\|create\|edit\|import\|export>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`, `import <file-or-dir> [--strict]`, `export <dir-or-file.md> [--ref=a,b]`; `project plan <list\|show\|import\|export>` stores and renders plans. All accept `--project=<id>`; `create`, `edit` and `import` also accept `--actor-id=<id>`. See configuration.md → Project tasks. |
 | `project migrate [legacy-path] [--execute [--name=N] \| --cleanup-report]` | Move an attached or sibling installation into a registered project. Without flags it is a dry run (inventory, conflicts, blockers; nothing is written). `--execute` backs up, imports tasks with their effective runtime status, copies history, imports plans and settings, verifies parity, and cuts over; a retry is safe. `--cleanup-report` lists leftover legacy files after the cutover; nothing is deleted. Exits 1 when `--execute` is `blocked` or `verification_failed`. See configuration.md → Migrating an existing installation. |
-| `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
 In a registered project, `orc project task create|edit|import`, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
 
@@ -240,39 +239,14 @@ In a registered project, `orc project task create|edit|import`, MCP task authori
 | `task-unblock` | `<task-ref>` `[--reason=<text>]` `[--actor-id=<id>]` |
 | `task-cancel` | `<task-ref>` `[--reason=<text>]` `[--actor-id=<id>]` |
 | `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` |
-| `feature-create` | `<ref>` `[--title=<text>]` |
-
----
-
-## Backlog
-
-Commands for inspecting and repairing the backlog — the set of markdown task
-specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
-
-| Command | Description |
-|---------|-------------|
-| `backlog-sync` | Legacy installations: repair runtime state from markdown specs. Refused (exit 1) in a registered project. |
-| `backlog-sync-check` | Legacy installations: check that todo specs are registered and titles/features match runtime state (status is never compared). Unregistered non-todo specs are listed as skipped. Exits 1 on mismatch, and in a registered project. |
-| `backlog-orient` | Legacy installations: print backlog summary: next task seq, features, task counts. |
-
-**Flags:**
-
-| Command | Flags |
-|---------|-------|
-| `backlog-sync-check` | `[--refs=<ref1,ref2,...>]` |
 
 ---
 
 ## Plans
 
-The Markdown plan and spec verbs (`plan_write`, `spec_preview`, `spec_publish`) serve legacy
-installations only. A registered project refuses them, because it never registers Markdown; use
-`orc project plan import` for plans and `create_task` (`body_markdown`) or `orc project task import`
-for tasks.
-
-Plans live alongside the backlog as a first-class artifact directory. A plan
-artifact is a markdown file at `plans/<plan_id>-<slug>.md` that captures the
-approved design for a chunk of work before it becomes backlog tasks.
+A project stores plans in its SQLite store. `orc project plan import` reads plan Markdown
+files in the format below, and `orc project plan export` writes it. Tasks are authored with
+`create_task` (`body_markdown`) or `orc project task import`.
 
 **On-disk contract:**
 
@@ -291,39 +265,8 @@ approved design for a chunk of work before it becomes backlog tasks.
 - `plan_id` numbering is an independent sequence from backlog task numbers.
   Collisions across the two sequences are expected and benign.
 
-See `plans/TEMPLATE.md` for the baseline artifact. Parsing, lookup
-(`findPlanById`), and id allocation (`nextPlanId`) helpers live in
-`lib/planDocs.ts`.
-
-### Turning a plan into backlog tasks — `/spec`
-
-`/spec` is an agent-agnostic skill (`skills/spec/SKILL.md`) that converts a
-plan into backlog task specs. It has two invocation forms; both flow through
-the same MCP tools (`spec_preview`, `spec_publish`) and the same file-backed
-engine (`lib/planToBacklog.ts`).
-
-- **`/spec plan <id>`** — reads the saved plan at `plans/<id>-*.md`, shows a
-  preview of the proposed backlog specs, asks for confirmation, then
-  publishes. Runs entirely inside the invoking agent's worktree.
-- **`/spec` (no args)** — conversational fallback. Extracts the most recent
-  numbered plan printed in the conversation, persists it via `plan_write`
-  into `plans/`, then continues through the same preview/publish pipeline so
-  every plan ends up on disk with the same contract.
-
-`spec_publish` stages generated specs under
-`.orc-state/plan-staging/<plan_id>/` as its concurrency lock, then moves them
-into the worktree's `backlog/` and writes `derived_task_refs` back into the
-plan file. It does NOT touch `.orc-state/backlog.json` or git — the skill
-commits the worktree and merges to main using the AGENTS.md cleanup ordering.
-The coordinator's auto-sync tick picks up the new specs from main on its
-next pass.
-
-Hard failures (no overrides):
-
-- `confirm !== true` on `spec_publish`
-- plan already has non-empty `derived_task_refs` (regeneration is a future
-  task — create a new plan instead)
-- stale `.orc-state/plan-staging/<plan_id>/` directory already exists
+See `plans/TEMPLATE.md` for a skeleton that `orc project plan import` accepts. The parser
+lives in `lib/planDocs.ts` (`parsePlan`).
 
 ---
 
@@ -506,48 +449,6 @@ into `.claude/skills/` or `.codex/skills/`. The packaged skills include:
 
 | Skill | Purpose |
 |-------|---------|
-| `create-task` | Create a single backlog task spec file. |
-| `plan` | Interactive plan authoring. Normalizes a user request into a candidate feature slug and title, asks only the high-value follow-ups needed to remove ambiguity, and persists a validated plan artifact under `plans/<plan_id>-<slug>.md` via the `plan_write` MCP tool. Run in a fresh worktree; commit and merge to main follow the standard worker worktree workflow. |
-| `spec` | Convert a saved plan artifact (`plans/<plan_id>-*.md`, preferred) or a conversational plan (fallback) into a full batch of registered backlog task specs. Invoked as `/spec plan <id>` or `/spec`. |
 | `orc-commands` | Inline reference for orc CLI subcommands. |
 | `worker-inspect` | Inspect worker state via MCP orchestrator tools. |
 
-The `spec` skill delegates structural decisions to a pure engine at
-[`lib/planToBacklog.ts`](../lib/planToBacklog.ts) (authoritative source of the
-`PlanInput` and `ProposedTask` types). Given a parsed plan input, the engine
-returns a list of proposed backlog tasks with inferred dependencies and
-grouped steps. Each `ProposedTask` carries a title, a `<N>-<kebab-title>`
-slug, a `<feature>/<slug>` ref, a description, an intra-batch `dependsOn`
-ref list, a `reviewLevel` matching the enum consumed by
-`lib/backlogSync.ts`, the merged plan step numbers, and a `feature` stamp
-copied from the plan's `name` field.
-
-### `/plan` lifecycle verb
-
-`/plan` is an agent-agnostic interactive workflow that produces a plan
-artifact any later caller can pick up via `/spec plan <id>`. Invoke from a
-fresh worktree:
-
-1. The skill normalizes the request into a candidate kebab-case `name` and
-   human-readable `title`.
-2. It checks `.orc-state/backlog.json` for feature-slug collisions. If the
-   derived slug matches an unrelated feature, the skill prompts the invoker
-   to disambiguate (new slug or cancel). Same-feature re-use is accepted
-   explicitly.
-3. It asks only the high-value follow-ups needed to fill every required
-   section (`Objective`, `Scope`, `Out of Scope`, `Constraints`,
-   `Affected Areas`, `Implementation Steps`).
-4. Once every section is concrete, it calls the `plan_write` MCP tool,
-   which allocates the next `plan_id` atomically via `nextPlanId()`,
-   validates the rendered artifact through `parsePlan` (round-trip), and
-   writes `plans/<plan_id>-<slug>.md` inside the current worktree. The
-   tool does not touch `.orc-state/backlog.json`, main, or git.
-5. The skill commits the new plan file in the worktree and merges to main
-   following the worker worktree workflow in AGENTS.md.
-
-The `plan_write` MCP tool accepts the fields listed in the `/plan` skill:
-`name`, `title`, `objective`, `scope`, `out_of_scope`, `constraints`,
-`affected_areas`, `steps: [{ title, body, depends_on? }]`, and the optional
-`acknowledge_feature_collision: boolean` flag used by the skill to accept a
-same-feature collision after confirming with the user. The tool returns
-`{ planId, path }` on success.

@@ -81,7 +81,7 @@ describe('consumer lifecycle e2e', () => {
     mkdirSync(backlogDir, { recursive: true });
     writeFileSync(join(backlogDir, '001-first-task.md'), TASK_SPEC, 'utf8');
 
-    // Phase 3: backlog sync — sync markdown specs to backlog.json (simulates `orc backlog-sync`)
+    // Phase 3: backlog sync — sync markdown specs to backlog.json
     const syncResult = syncBacklogFromSpecs(dir, backlogDir);
     expect(syncResult.added_tasks).toBe(1);
 
