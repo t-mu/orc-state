@@ -804,7 +804,10 @@ const REPORT_HEADERS = ['findings', 'likely_cause', 'recommended_action'].map((h
  * only on their own line (a prompt glyph or indentation may precede them), and
  * a block counts only with all three report headers and no `<placeholder>`
  * from the echoed template, so quoted examples and the template are ignored.
- * `truncated` means an end marker whose start fell outside the output read.
+ * `truncated` means the last end marker is a real report's whose start fell
+ * outside the output read; the echoed template's own end marker (its
+ * `<placeholder>` lines just before it) never counts, so a scout whose tail
+ * begins inside the template is still `running`.
  */
 export function extractScoutReport(output: string): { report: string | null; truncated: boolean } {
   let start: number | null = null;
@@ -814,7 +817,11 @@ export function extractScoutReport(output: string): { report: string | null; tru
   lines.forEach((line, index) => {
     if (REPORT_START.test(line)) { start = index; return; }
     if (!REPORT_END.test(line)) return;
-    if (start === null) { truncated = true; return; }
+    if (start === null) {
+      truncated = !lines.slice(Math.max(0, index - 3), index).join('\n').includes('<concrete next step');
+      return;
+    }
+    truncated = false;
     const block = lines.slice(start + 1, index).join('\n').trim();
     start = null;
     if (!block.includes('<what you found') && REPORT_HEADERS.every((header) => header.test(block))) {

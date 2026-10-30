@@ -43,6 +43,13 @@ describe('extractScoutReport', () => {
     expect(extractScoutReport('SCOUT_REPORT\nnot a report\nSCOUT_REPORT_END').report).toBeNull();
   });
 
+  it('keeps a scout running when its tail begins inside the echoed template', () => {
+    const cut = template.slice(template.indexOf('likely_cause:'));
+    expect(extractScoutReport(`${cut}\nstill investigating...`)).toEqual({ report: null, truncated: false });
+    // A later, complete report still wins.
+    expect(extractScoutReport(`${cut}\n${report}`).report).toContain('clock skew');
+  });
+
   it('reports truncation when the end marker survives but the start fell outside the output read', () => {
     expect(extractScoutReport(`likely_cause:\nclock skew\nSCOUT_REPORT_END`)).toEqual({ report: null, truncated: true });
   });
