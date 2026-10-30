@@ -9,7 +9,7 @@ import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { recordProviderSession } from './runStore.ts';
-import { ACTIVE_PROJECT } from './paths.ts';
+import { readProjectDescriptor } from './projectContext.ts';
 import { defaultSocketPath } from './controlProtocol.ts';
 import { SESSION_OWNER_TTL_MS, currentSessionOwnerId } from './sessionSupervisor.ts';
 import type { WorkerBootstrapProfile } from './sessionBootstrap.ts';
@@ -42,9 +42,9 @@ export function normalizeWorkerEnv(
     env.PATH = process.env.PATH;
   }
   if (project) {
-    // Project mode: the worker finds its state through the project identity
-    // and talks to the coordinator over the local control endpoint. Legacy
-    // discovery variables are blanked so a value inherited from the
+    // The worker finds its state through the project identity and talks to
+    // the coordinator over the local control endpoint. Legacy discovery
+    // variables are blanked so a value inherited from the
     // coordinator's environment cannot redirect it.
     env.ORC_PROJECT_ID = project.id;
     env.ORC_STATE_DIR = project.stateDir; // temporary bridge for readers that predate project identity
@@ -60,18 +60,6 @@ export function normalizeWorkerEnv(
     env.ORC_HOME = '';
     env.ORC_REPO_ROOT = '';
     env.ORC_CONFIG_FILE = '';
-  } else if (repoRoot) {
-    // A legacy attached installation: ORC_REPO_ROOT is its root, which is
-    // also its target repository. Workers run git in their worktree cwd, and
-    // the PR adapter defaults to process.cwd() (task 186).
-    env.ORC_REPO_ROOT = repoRoot;
-    // ORC_HOME is the top-precedence orchestration-root signal (see
-    // resolveOrchestrationRoot). A worker is launched in its assigned worktree
-    // (task 204). Pinning ORC_HOME makes every `orc` invocation from a
-    // worker shell resolve the orchestration state dir regardless of cwd; the
-    // walk-up fallback (worktrees live under the orchestration root) covers the
-    // case where ORC_HOME is somehow unset.
-    env.ORC_HOME = repoRoot;
   }
   // Prevent interactive editors, pagers, and merge-tool prompts from blocking
   // headless PTY sessions. Workers never need an interactive editor.
@@ -210,10 +198,13 @@ export async function launchWorkerSession(
   try {
     const nowIso = new Date().toISOString();
     const effectiveMode: ExecutionMode = agent.role === 'scout' ? 'sandbox' : (executionMode ?? 'full-access');
-    const sessionSecret = ACTIVE_PROJECT ? newSessionSecret() : null;
+    // The coordinator writes its project's descriptor on start; a session never launches outside a project.
+    const project = readProjectDescriptor(stateDir);
+    if (!project) throw new Error(`Not a registered project's state directory (no project descriptor): ${stateDir}`);
+    const sessionSecret = newSessionSecret();
     const workerEnv = stripWorkerProfileControlEnv(normalizeWorkerEnv({
       ORC_STATE_DIR: stateDir,
-    }, repoRoot, ACTIVE_PROJECT ? { id: ACTIVE_PROJECT.id, stateDir, sessionId, ...(sessionSecret ? { sessionSecret } : {}) } : null));
+    }, repoRoot, { id: project.id, stateDir, sessionId, sessionSecret }));
     const workerBootstrapProfile = resolveWorkerBootstrapProfile();
     const workerStartupProfile = resolveWorkerStartupProfile();
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
@@ -262,7 +253,7 @@ export async function launchWorkerSession(
       processStart: typeof ref.process_start === 'string' ? ref.process_start : null,
       ownerId: currentSessionOwnerId(),
       ownerExpiresAt: new Date(Date.now() + SESSION_OWNER_TTL_MS).toISOString(),
-      credentialHash: sessionSecret ? credentialHash(sessionSecret) : null,
+      credentialHash: credentialHash(sessionSecret),
     });
     updateAgentRuntime(stateDir, agent.agent_id, updates);
     syncAgentRuntime(agent, updates);

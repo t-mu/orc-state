@@ -2,8 +2,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { ControlClient } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
 import { clientCredential } from './sessionCredentials.ts';
-import { ACTIVE_PROJECT, STATE_DIR } from './paths.ts';
-import { applyLifecycle, type LifecycleRequest, type LifecycleResult } from './workerLifecycle.ts';
+import { assertProjectMode, STATE_DIR } from './paths.ts';
+import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
 
 /** How long a worker waits for a stopped or restarting coordinator before giving up. */
 const DEFAULT_RETRY_MS = 120_000;
@@ -45,16 +45,15 @@ export async function sendLifecycle(
 }
 
 /**
- * Apply a worker lifecycle request in the active layout. A registered project
- * sends it to the coordinator over its control socket with the worker's
- * session credential; a legacy installation still applies it in this process.
+ * Send a worker lifecycle request to the project's coordinator over its
+ * control socket with the worker's session credential.
  */
 export async function submitLifecycle(request: LifecycleRequest, env: NodeJS.ProcessEnv = process.env): Promise<LifecycleResult> {
-  if (!ACTIVE_PROJECT) return applyLifecycle(STATE_DIR, request);
+  assertProjectMode();
   // A worker presents its own secret; the master's shell (memory-record) its master secret.
   const credential = clientCredential(env);
   if (!credential) {
-    throw new Error(`In a registered project the coordinator applies ${request.op}; run it from the worker session (ORC_SESSION_SECRET is not set)`);
+    throw new Error(`The coordinator applies ${request.op}; run it from the worker session (ORC_SESSION_SECRET is not set)`);
   }
   return sendLifecycle(new ControlClient(STATE_DIR, { credential, timeoutMs: REQUEST_TIMEOUT_MS }), request);
 }

@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runWorkerCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -17,11 +16,7 @@ afterEach(() => {
 });
 
 function runCli(script: string, args: string[] = []) {
-  return spawnSync('node', [`cli/${script}`, ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runWorkerCli(dir, script, args);
 }
 
 function readEvents(): Array<Record<string, unknown>> {
@@ -103,10 +98,10 @@ function seedInProgressRun({ runId = 'run-test-001', agentId = 'worker-01', task
 // the claim owner. No event should be emitted in any of these cases.
 
 describe('agent-id mismatch', () => {
-  it('run-start rejects and emits no event when agent-id does not own the claim', () => {
+  it('run-start rejects and emits no event when agent-id does not own the claim', async () => {
     seedClaimedRun({ runId: 'run-mismatch-start', agentId: 'worker-01' });
 
-    const result = runCli('run-start.ts', ['--run-id=run-mismatch-start', '--agent-id=worker-99']);
+    const result = await runCli('run-start.ts', ['--run-id=run-mismatch-start', '--agent-id=worker-99']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('worker-01');
@@ -114,40 +109,40 @@ describe('agent-id mismatch', () => {
     expect(claimSnapshot('run-mismatch-start')?.state).toBe('claimed');
   });
 
-  it('run-heartbeat is a deprecated no-op regardless of agent-id', () => {
+  it('run-heartbeat is a deprecated no-op regardless of agent-id', async () => {
     seedInProgressRun({ runId: 'run-mismatch-hb', agentId: 'worker-01' });
 
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-mismatch-hb', '--agent-id=worker-99']);
+    const result = await runCli('run-heartbeat.ts', ['--run-id=run-mismatch-hb', '--agent-id=worker-99']);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain('deprecated');
     expect(readEvents().some((e) => e.event === 'heartbeat')).toBe(false);
   });
 
-  it('run-work-complete rejects and emits no event when agent-id does not own the claim', () => {
+  it('run-work-complete rejects and emits no event when agent-id does not own the claim', async () => {
     seedInProgressRun({ runId: 'run-mismatch-wc', agentId: 'worker-01' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-mismatch-wc', '--agent-id=worker-99']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-mismatch-wc', '--agent-id=worker-99']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('worker-01');
     expect(readEvents().some((e) => e.event === 'work_complete')).toBe(false);
   });
 
-  it('run-finish rejects and emits no event when agent-id does not own the claim', () => {
+  it('run-finish rejects and emits no event when agent-id does not own the claim', async () => {
     seedInProgressRun({ runId: 'run-mismatch-finish', agentId: 'worker-01' });
 
-    const result = runCli('run-finish.ts', ['--run-id=run-mismatch-finish', '--agent-id=worker-99']);
+    const result = await runCli('run-finish.ts', ['--run-id=run-mismatch-finish', '--agent-id=worker-99']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('worker-01');
     expect(readEvents().some((e) => e.event === 'run_finished')).toBe(false);
   });
 
-  it('run-fail rejects and emits no event when agent-id does not own the claim', () => {
+  it('run-fail rejects and emits no event when agent-id does not own the claim', async () => {
     seedInProgressRun({ runId: 'run-mismatch-fail', agentId: 'worker-01' });
 
-    const result = runCli('run-fail.ts', ['--run-id=run-mismatch-fail', '--agent-id=worker-99', '--reason=oops']);
+    const result = await runCli('run-fail.ts', ['--run-id=run-mismatch-fail', '--agent-id=worker-99', '--reason=oops']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('worker-01');
@@ -162,15 +157,15 @@ describe('agent-id mismatch', () => {
 // handled automatically by the coordinator via PID probing and phase events.
 
 describe('run-heartbeat deprecated no-op', () => {
-  it('exits 0 with deprecation warning even when lease has expired', () => {
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-expired-requeued', '--agent-id=worker-01']);
+  it('exits 0 with deprecation warning even when lease has expired', async () => {
+    const result = await runCli('run-heartbeat.ts', ['--run-id=run-expired-requeued', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain('deprecated');
   });
 
-  it('exits 0 with deprecation warning even when claim is done', () => {
-    const result = runCli('run-heartbeat.ts', ['--run-id=run-done-hb', '--agent-id=worker-01']);
+  it('exits 0 with deprecation warning even when claim is done', async () => {
+    const result = await runCli('run-heartbeat.ts', ['--run-id=run-done-hb', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain('deprecated');
@@ -184,46 +179,46 @@ describe('run-heartbeat deprecated no-op', () => {
 // be rejected to protect the coordinator finalization protocol.
 
 describe('run-work-complete invalid finalization state transitions', () => {
-  it('rejects when finalization_state is awaiting_finalize', () => {
+  it('rejects when finalization_state is awaiting_finalize', async () => {
     seedInProgressRun({ runId: 'run-wc-awaiting', finalizationState: 'awaiting_finalize' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-wc-awaiting', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-wc-awaiting', '--agent-id=worker-01']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('awaiting_finalize');
   });
 
-  it('rejects when finalization_state is finalize_rebase_requested', () => {
+  it('rejects when finalization_state is finalize_rebase_requested', async () => {
     seedInProgressRun({ runId: 'run-wc-requested', finalizationState: 'finalize_rebase_requested' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-wc-requested', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-wc-requested', '--agent-id=worker-01']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('finalize_rebase_requested');
   });
 
-  it('rejects when finalization_state is ready_to_merge', () => {
+  it('rejects when finalization_state is ready_to_merge', async () => {
     seedInProgressRun({ runId: 'run-wc-rtm', finalizationState: 'ready_to_merge' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-wc-rtm', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-wc-rtm', '--agent-id=worker-01']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('ready_to_merge');
   });
 
-  it('rejects when finalization_state is blocked_finalize', () => {
+  it('rejects when finalization_state is blocked_finalize', async () => {
     seedInProgressRun({ runId: 'run-wc-blocked', finalizationState: 'blocked_finalize' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-wc-blocked', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-wc-blocked', '--agent-id=worker-01']);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('blocked_finalize');
   });
 
-  it('accepts and emits work_complete when finalization_state is null (first call)', () => {
+  it('accepts and emits work_complete when finalization_state is null (first call)', async () => {
     seedInProgressRun({ runId: 'run-wc-null', finalizationState: null });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-wc-null', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-wc-null', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('work_complete');
@@ -231,10 +226,10 @@ describe('run-work-complete invalid finalization state transitions', () => {
       e.event === 'work_complete' && e.run_id === 'run-wc-null')).toBe(true);
   });
 
-  it('accepts and emits ready_to_merge when finalization_state is finalize_rebase_in_progress', () => {
+  it('accepts and emits ready_to_merge when finalization_state is finalize_rebase_in_progress', async () => {
     seedInProgressRun({ runId: 'run-wc-rebase-ip', finalizationState: 'finalize_rebase_in_progress' });
 
-    const result = runCli('run-work-complete.ts', ['--run-id=run-wc-rebase-ip', '--agent-id=worker-01']);
+    const result = await runCli('run-work-complete.ts', ['--run-id=run-wc-rebase-ip', '--agent-id=worker-01']);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('ready_to_merge');
@@ -249,30 +244,30 @@ describe('run-work-complete invalid finalization state transitions', () => {
 // document the current retry-safe behavior so regressions are caught.
 
 describe('run-finish idempotent retry', () => {
-  it('exits 0 on the second call without crashing (duplicate event is acceptable)', () => {
+  it('exits 0 on the second call without crashing (duplicate event is acceptable)', async () => {
     seedInProgressRun({ runId: 'run-fin-retry', agentId: 'worker-01' });
     recordMergeConfirmation(dir, 'docs/task-1');
 
-    const first = runCli('run-finish.ts', ['--run-id=run-fin-retry', '--agent-id=worker-01']);
+    const first = await runCli('run-finish.ts', ['--run-id=run-fin-retry', '--agent-id=worker-01']);
     expect(first.status).toBe(0);
     expect(first.stdout).toContain('run_finished');
 
     // Second call on the same in_progress claim: must not crash.
-    const second = runCli('run-finish.ts', ['--run-id=run-fin-retry', '--agent-id=worker-01']);
+    const second = await runCli('run-finish.ts', ['--run-id=run-fin-retry', '--agent-id=worker-01']);
     expect(second.status).toBe(0);
     expect(second.stdout).toContain('run_finished');
   });
 });
 
 describe('run-fail idempotent retry', () => {
-  it('exits 0 on the second call without crashing', () => {
+  it('exits 0 on the second call without crashing', async () => {
     seedInProgressRun({ runId: 'run-fail-retry', agentId: 'worker-01' });
 
-    const first = runCli('run-fail.ts', ['--run-id=run-fail-retry', '--agent-id=worker-01', '--reason=transient error']);
+    const first = await runCli('run-fail.ts', ['--run-id=run-fail-retry', '--agent-id=worker-01', '--reason=transient error']);
     expect(first.status).toBe(0);
 
     // Second call: must not crash.
-    const second = runCli('run-fail.ts', ['--run-id=run-fail-retry', '--agent-id=worker-01', '--reason=transient error']);
+    const second = await runCli('run-fail.ts', ['--run-id=run-fail-retry', '--agent-id=worker-01', '--reason=transient error']);
     expect(second.status).toBe(0);
   });
 });
@@ -284,10 +279,10 @@ describe('run-fail idempotent retry', () => {
 // counter in the coordinator. Verify the CLI surfaces them correctly.
 
 describe('run-fail --code flag', () => {
-  it('records a custom failure code in the event payload', () => {
+  it('records a custom failure code in the event payload', async () => {
     seedInProgressRun({ runId: 'run-fail-code', agentId: 'worker-01' });
 
-    const result = runCli('run-fail.ts', [
+    const result = await runCli('run-fail.ts', [
       '--run-id=run-fail-code',
       '--agent-id=worker-01',
       '--reason=dispatch failed',
@@ -302,10 +297,10 @@ describe('run-fail --code flag', () => {
     expect((failEvent!.payload as Record<string, unknown>).reason).toBe('dispatch failed');
   });
 
-  it('defaults to ERR_WORKER_REPORTED_FAILURE when --code is omitted', () => {
+  it('defaults to ERR_WORKER_REPORTED_FAILURE when --code is omitted', async () => {
     seedInProgressRun({ runId: 'run-fail-nocode', agentId: 'worker-01' });
 
-    const result = runCli('run-fail.ts', [
+    const result = await runCli('run-fail.ts', [
       '--run-id=run-fail-nocode',
       '--agent-id=worker-01',
       '--reason=unknown error',

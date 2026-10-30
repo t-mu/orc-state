@@ -11,7 +11,14 @@
  */
 import { listAgents, removeAgent } from '../lib/agentRegistry.ts';
 import { readClaims } from '../lib/stateReader.ts';
-import { STATE_DIR } from '../lib/paths.ts';
+import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
+import { cliError } from './shared.ts';
+
+try {
+  assertProjectMode();
+} catch (error) {
+  cliError(error);
+}
 
 const claimed = new Set((readClaims(STATE_DIR).claims ?? [])
   .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))

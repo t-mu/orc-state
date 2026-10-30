@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runWorkerCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -18,8 +17,8 @@ afterEach(() => {
 });
 
 describe('cli/run-finish.ts', () => {
-  it('emits run_finished event for an in_progress claim', () => {
-    const result = runCli(['--run-id=run-1', '--agent-id=worker-1']);
+  it('emits run_finished event for an in_progress claim', async () => {
+    const result = await runCli(['--run-id=run-1', '--agent-id=worker-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_finished: run-1 (worker-1)');
     const events = readEvents();
@@ -28,37 +27,33 @@ describe('cli/run-finish.ts', () => {
     expect(event?.agent_id).toBe('worker-1');
   });
 
-  it('exits 1 when --run-id is missing', () => {
-    const result = runCli(['--agent-id=worker-1']);
+  it('exits 1 when --run-id is missing', async () => {
+    const result = await runCli(['--agent-id=worker-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-finish');
   });
 
-  it('exits 1 when --agent-id is missing', () => {
-    const result = runCli(['--run-id=run-1']);
+  it('exits 1 when --agent-id is missing', async () => {
+    const result = await runCli(['--run-id=run-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-finish');
   });
 
-  it('exits 1 when run-id does not exist in claims', () => {
-    const result = runCli(['--run-id=run-missing', '--agent-id=worker-1']);
+  it('exits 1 when run-id does not exist in claims', async () => {
+    const result = await runCli(['--run-id=run-missing', '--agent-id=worker-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Error:');
   });
 
-  it('exits 1 when agent-id does not match claim', () => {
-    const result = runCli(['--run-id=run-1', '--agent-id=wrong-agent']);
+  it('exits 1 when agent-id does not match claim', async () => {
+    const result = await runCli(['--run-id=run-1', '--agent-id=wrong-agent']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Error:');
   });
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['cli/run-finish.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runWorkerCli(dir, 'run-finish.ts', args);
 }
 
 function seedState() {

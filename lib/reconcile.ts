@@ -7,7 +7,7 @@ import type { ClaimsState, Claim } from '../types/claims.ts';
 import type { OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { commitClaims, refreshClaimsProjection } from './runStore.ts';
-import { commitBacklog, projectTaskStoreFor, type TaskStatusChange } from './projectTasks.ts';
+import { commitBacklog, type TaskStatusChange } from './projectTasks.ts';
 
 const ACTIVE_CLAIM_STATES = new Set(['claimed', 'in_progress']);
 
@@ -23,7 +23,6 @@ export function reconcileState(stateDir: string): void {
     let backlogModified = false;
     const failedClaims: Array<{ claim: Claim; reason: string }> = [];
     const changes: Record<string, TaskStatusChange> = {};
-    const projectMode = projectTaskStoreFor(stateDir) !== null;
 
     const knownTaskRefs = new Set<string>();
     for (const feature of backlog.features ?? []) {
@@ -75,8 +74,8 @@ export function reconcileState(stateDir: string): void {
         if (activeClaim) {
           const expectedStatus = activeClaim.state === 'in_progress' ? 'in_progress' : 'claimed';
           // A merged task whose run has not finished yet is in the finalize window; finalize retries own it.
-          if (projectMode && (task.status === 'done' || task.status === 'released')) continue;
-          if (projectMode && task.status !== expectedStatus && !(task.status === 'claimed' && expectedStatus === 'in_progress')) {
+          if (task.status === 'done' || task.status === 'released') continue;
+          if (task.status !== expectedStatus && !(task.status === 'claimed' && expectedStatus === 'in_progress')) {
             // Project SQLite is authoritative: a claim its task row does not reflect is the orphan.
             logger.info(`[reconcile] claim ${activeClaim.run_id} does not match task ${taskRef} status ${task.status} -> failed`);
             activeClaim.state = 'failed';

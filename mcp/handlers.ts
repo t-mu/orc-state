@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory, storeDrawer } from '../lib/memoryStore.ts';
 
 import { createAdapter } from '../adapters/index.ts';
-import { ACTIVE_PROJECT, TARGET_REPO_ROOT } from '../lib/paths.ts';
+import { TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
 import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
@@ -464,8 +464,8 @@ export async function handleRequestScout(stateDir: string, {
   }
   const resolvedProvider = (typeof provider === 'string' ? provider : actor?.provider ?? 'codex');
   const scoutId = nextAvailableScoutId(stateDir);
-  // Blank means unset (project workers blank it); a project's scouts start in the target repository.
-  const repoRoot = process.env.ORC_REPO_ROOT || (ACTIVE_PROJECT ? TARGET_REPO_ROOT : join(stateDir, '..'));
+  // Blank means unset (project workers blank it); scouts start in the target repository.
+  const repoRoot = process.env.ORC_REPO_ROOT || TARGET_REPO_ROOT;
   const worktrees = readRunWorktreesState(stateDir);
   const recordedWorktree = typeof run_id === 'string'
     ? (worktrees.runs.find((entry) => entry.run_id === run_id)?.worktree_path ?? null)
@@ -475,9 +475,9 @@ export async function handleRequestScout(stateDir: string, {
   const linkedWorktree = recordedWorktree != null && existsSync(recordedWorktree) ? recordedWorktree : null;
   const workingDirectory = linkedWorktree ?? repoRoot;
 
-  // A project scout reports for duty over the control socket, under the same opt-in as workers.
+  // A scout reports for duty over the control socket, under the same opt-in as workers.
   // Resolved before registering, so an invalid setting leaves no scout behind.
-  const sandboxNetwork = ACTIVE_PROJECT ? loadWorkerPoolConfig().sandbox_network : undefined;
+  const sandboxNetwork = loadWorkerPoolConfig().sandbox_network;
 
   const scout = registerAgent(stateDir, {
     agent_id: scoutId,

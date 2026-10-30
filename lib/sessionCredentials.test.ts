@@ -1,14 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './eventLog.ts';
-import { clientCredential, credentialHash, newSessionSecret, sessionForCredential, sessionIdFromEnv } from './sessionCredentials.ts';
+import { clientCredential, credentialHash, newSessionSecret, sessionForCredential } from './sessionCredentials.ts';
 
 let dir: string;
 
 beforeEach(() => {
-  // A legacy layout (no task store); the project test adds runtime.db itself.
   dir = createTempStateDir('orch-credentials-');
   initEventsDb(dir);
   withEventDbTransaction(dir, (db) => {
@@ -33,33 +30,19 @@ describe('session credentials (task 231)', () => {
     expect(credentialHash(secret)).not.toContain(secret);
   });
 
-  it('a project accepts a session secret and nothing read from the state', () => {
-    writeFileSync(join(dir, 'runtime.db'), '');
+  it('accepts a session secret and nothing read from the state', () => {
     expect(sessionForCredential(dir, 'secret-a')?.session_id).toBe('session-a');
     expect(sessionForCredential(dir, 'session-a')).toBeNull();
     expect(sessionForCredential(dir, 'session-old')).toBeNull();
+    expect(sessionForCredential(dir, 'legacy-worker-c')).toBeNull();
     expect(sessionForCredential(dir, credentialHash('secret-a'))).toBeNull();
     expect(sessionForCredential(dir, '')).toBeNull();
-  });
-
-  it('a legacy installation also accepts the id of a session recorded without a secret', () => {
-    expect(sessionForCredential(dir, 'secret-a')?.session_id).toBe('session-a');
-    expect(sessionForCredential(dir, 'session-old')?.session_id).toBe('session-old');
-    // A session that has a secret is never proven by its id, and imported ids never authenticate.
-    expect(sessionForCredential(dir, 'session-a')).toBeNull();
-    expect(sessionForCredential(dir, 'legacy-worker-c')).toBeNull();
   });
 
   it('clients present the master\'s secret, else the session\'s own', () => {
     expect(clientCredential({ ORC_MASTER_SECRET: 'm', ORC_SESSION_SECRET: 's' })).toBe('m');
     expect(clientCredential({ ORC_MASTER_SECRET: '', ORC_SESSION_SECRET: 's' })).toBe('s');
     expect(clientCredential({ ORC_SESSION_ID: 'session-a', ORC_SESSION_TOKEN: 'session-a' })).toBeNull();
-  });
-
-  it('the session id comes from ORC_SESSION_ID, else the legacy ORC_SESSION_TOKEN', () => {
-    expect(sessionIdFromEnv({ ORC_SESSION_ID: 'id-new', ORC_SESSION_TOKEN: 'id-old' })).toBe('id-new');
-    expect(sessionIdFromEnv({ ORC_SESSION_ID: '', ORC_SESSION_TOKEN: 'id-old' })).toBe('id-old');
-    expect(sessionIdFromEnv({ ORC_SESSION_ID: ' ', ORC_SESSION_TOKEN: '' })).toBeNull();
   });
 
   it('a relaunch of the same session keeps its hash unless it brings a new one', async () => {

@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runWorkerCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -18,9 +17,9 @@ afterEach(() => {
 });
 
 describe('cli/run-input-request.ts', () => {
-  it('emits input_requested event before timing out', { timeout: 10_000 }, () => {
+  it('emits input_requested event before timing out', { timeout: 10_000 }, async () => {
     // Use very short timeout so test completes quickly
-    const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--question=what to do?', '--timeout-ms=50', '--poll-ms=10']);
+    const result = await runCli(['--run-id=run-1', '--agent-id=worker-1', '--question=what to do?', '--timeout-ms=50', '--poll-ms=10']);
     // Expected to exit 1 (timeout) but input_requested event should have been emitted
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Timed out');
@@ -30,25 +29,25 @@ describe('cli/run-input-request.ts', () => {
     expect((event?.payload as Record<string, unknown>)?.question).toBe('what to do?');
   });
 
-  it('exits 1 when --run-id is missing', () => {
-    const result = runCli(['--agent-id=worker-1', '--question=hello?']);
+  it('exits 1 when --run-id is missing', async () => {
+    const result = await runCli(['--agent-id=worker-1', '--question=hello?']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-input-request');
   });
 
-  it('exits 1 when --agent-id is missing', () => {
-    const result = runCli(['--run-id=run-1', '--question=hello?']);
+  it('exits 1 when --agent-id is missing', async () => {
+    const result = await runCli(['--run-id=run-1', '--question=hello?']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-input-request');
   });
 
-  it('exits 1 when --question is missing', () => {
-    const result = runCli(['--run-id=run-1', '--agent-id=worker-1']);
+  it('exits 1 when --question is missing', async () => {
+    const result = await runCli(['--run-id=run-1', '--agent-id=worker-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-input-request');
   });
 
-  it('exits immediately when claim is not in_progress', { timeout: 10_000 }, () => {
+  it('exits immediately when claim is not in_progress', { timeout: 10_000 }, async () => {
     writeFileSync(join(dir, 'claims.json'), JSON.stringify({
       version: '1',
       claims: [{
@@ -60,19 +59,14 @@ describe('cli/run-input-request.ts', () => {
         lease_expires_at: '2099-01-01T00:00:00Z',
       }],
     }));
-    const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--question=hello?', '--timeout-ms=100']);
+    const result = await runCli(['--run-id=run-1', '--agent-id=worker-1', '--question=hello?', '--timeout-ms=100']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Timed out');
   });
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['cli/run-input-request.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-    timeout: 9_000,
-  });
+  return runWorkerCli(dir, 'run-input-request.ts', args);
 }
 
 function seedState() {

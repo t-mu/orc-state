@@ -6,24 +6,22 @@ import { clientCredential } from './sessionCredentials.ts';
 import { queryEvents } from './eventLog.ts';
 import { getMemoryDb, memoryWakeUp } from './memoryStore.ts';
 import { readBridgedReviewFeedback } from './messageBridge.ts';
-import { ACTIVE_PROJECT, STATE_DIR } from './paths.ts';
+import { STATE_DIR } from './paths.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 /**
- * Read project state the way a sandboxed worker can. A registered project
- * asks its running coordinator, which holds the databases open. Only when no
+ * Read project state the way a sandboxed worker can: ask the project's running coordinator, which holds the databases open. Only when no
  * coordinator answers (none running, or one that predates the route) does the
  * read fall back to the state directory, which a session without write
  * access opens read-only. Any other failure — a refused or timed-out
  * connection — is reported, so a sandbox that blocks the socket is not
- * hidden. A legacy installation always reads directly.
+ * hidden.
  */
 export async function readViaCoordinator<T>(
   remote: (client: ControlClient) => Promise<T>,
   local: () => T,
-  { project = ACTIVE_PROJECT, client = () => new ControlClient(STATE_DIR, { credential: clientCredential() }) }: { project?: unknown; client?: () => ControlClient } = {},
+  { client = () => new ControlClient(STATE_DIR, { credential: clientCredential() }) }: { client?: () => ControlClient } = {},
 ): Promise<T> {
-  if (!project) return local();
   let unanswered: ControlError;
   try {
     return await remote(client());

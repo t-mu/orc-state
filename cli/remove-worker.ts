@@ -9,9 +9,9 @@
 import { getAgent, removeAgent } from '../lib/agentRegistry.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { createAdapter } from '../adapters/index.ts';
-import { STATE_DIR } from '../lib/paths.ts';
+import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { boolFlag } from '../lib/args.ts';
-import { formatErrorMessage } from './shared.ts';
+import { cliError, formatErrorMessage } from './shared.ts';
 
 const workerId = process.argv[2];
 const keepSession = boolFlag('keep-session');
@@ -19,6 +19,11 @@ const keepSession = boolFlag('keep-session');
 if (!workerId) {
   console.error('Usage: orc worker-remove <worker_id> [--keep-session]');
   process.exit(1);
+}
+try {
+  assertProjectMode();
+} catch (error) {
+  cliError(error);
 }
 
 const worker = getAgent(STATE_DIR, workerId);

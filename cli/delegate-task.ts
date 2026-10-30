@@ -4,10 +4,9 @@
  * Usage:
  *   node cli/delegate-task.ts --task-ref=<feature/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]
  *
- * In a registered project the running coordinator applies the delegation.
+ * The project's running coordinator applies the delegation.
  */
 import { flag } from '../lib/args.ts';
-import { ACTIVE_PROJECT } from '../lib/paths.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
 
@@ -15,8 +14,8 @@ const taskRef = flag('task-ref');
 const targetAgentId = flag('target-agent-id');
 const taskType = flag('task-type') ?? 'implementation';
 const note = flag('note') ?? null;
-// Without --actor-id: the caller (operator or master session), or human in a legacy installation.
-const actorId = flag('actor-id') ?? (ACTIVE_PROJECT ? null : 'human');
+// Without --actor-id: the caller (operator or master session).
+const actorId = flag('actor-id');
 
 if (!taskRef) {
   console.error('Usage: orc delegate --task-ref=<feature/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]');

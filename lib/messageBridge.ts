@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictError, ForbiddenError } from './domainErrors.ts';
+import { ConflictError } from './domainErrors.ts';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
 
 type Run = { run_id: string; agent_id: string | null; state: string };
@@ -39,8 +39,7 @@ export function bridgeInputRequest(stateDir: string, runId: string, agentId: str
 }
 
 /** Returns null for legacy event-only requests; otherwise binds response to one request. */
-export function bridgeInputResponse(stateDir: string, runId: string, agentId: string, response: string, requestId?: string | null,
-  authority: { sessionId?: string | null | undefined; trustedMaster?: boolean } = {}): string | null {
+export function bridgeInputResponse(stateDir: string, runId: string, agentId: string, response: string, requestId?: string | null): string | null {
   return withEventDbTransaction(stateDir, (db) => {
     const run = db.prepare('SELECT agent_id, state FROM runs WHERE run_id = ?').get(runId) as Pick<Run, 'agent_id' | 'state'> | undefined;
     if (!run) return null;
@@ -53,10 +52,6 @@ export function bridgeInputResponse(stateDir: string, runId: string, agentId: st
     if (!request) {
       if (requestId && db.prepare('SELECT 1 FROM input_requests WHERE run_id = ?').get(runId)) throw new ConflictError('Input request is not pending for this run');
       return null;
-    }
-    if (!authority.trustedMaster) {
-      const master = authority.sessionId ? runningSession(db, 'master', null) : null;
-      if (!master || master.session_id !== authority.sessionId) throw new ForbiddenError('Input response requires a running master session');
     }
     if (request.state === 'answered') {
       if (request.response !== response) throw new ConflictError('Input request already has a different response');

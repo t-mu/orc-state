@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDbTransaction } from '../lib/eventLog.ts';
 import { bridgeInputRequest } from '../lib/messageBridge.ts';
+import { recordMasterSession, runProjectCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -57,12 +56,12 @@ describe('cli/run-input-respond.ts', () => {
     expect(event?.actor_id).toBe('master');
   });
 
-  it('uses provided --actor-id', () => {
+  it('records the master session even when --actor-id names another agent', () => {
     const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=done', '--actor-id=orc-master-1']);
     expect(result.status).toBe(0);
     const events = readEvents();
     const event = events.find((e) => e.event === 'input_response');
-    expect(event?.actor_id).toBe('orc-master-1');
+    expect(event?.actor_id).toBe('master');
   });
 
   it('exits 1 and records nothing when the run never asked', () => {
@@ -85,48 +84,45 @@ describe('cli/run-input-respond.ts', () => {
   });
 });
 
-describe('cli/run-input-respond.ts durable request in a legacy installation', () => {
+describe('cli/run-input-respond.ts durable request', () => {
   beforeEach(() => {
     // The durable request below is the only one.
     writeFileSync(join(dir, 'events.jsonl'), '');
     initEventsDb(dir);
     withEventDbTransaction(dir, (db) => {
       db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-1', 'docs/task-1', 'worker-1', 'in_progress', 'now', 'now')").run();
-      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
-        VALUES ('master-1', NULL, 'master', 'claude', 'running', 'now', 'now')`).run();
     });
     bridgeInputRequest(dir, 'run-1', 'worker-1', 'req-1', 'Which approach?');
     closeAllDatabases();
   });
 
-  it('answers as the master named by --session-id', () => {
-    expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A', '--session-id=master-1']).status).toBe(0);
+  it('answers as the master session', () => {
+    expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A']).status).toBe(0);
   });
 
-  it('accepts the older --session-token name and the legacy ORC_SESSION_TOKEN variable', () => {
-    expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A', '--session-token=master-1']).status).toBe(0);
-    expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A'], { ORC_SESSION_TOKEN: 'master-1' }).status).toBe(0);
-  });
-
-  it('refuses without the master session id', () => {
-    const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('running master session');
+  it('refuses a shell without the master session, and ignores a session id', () => {
+    for (const env of [{ ORC_MASTER_SECRET: '' }, { ORC_MASTER_SECRET: '', ORC_SESSION_ID: 'session-master', ORC_SESSION_TOKEN: 'session-master' }]) {
+      const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A'], env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('requires the master session');
+    }
   });
 });
 
 function runCli(args: string[], env: Record<string, string> = {}) {
-  return spawnSync('node', ['cli/run-input-respond.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir, ORC_SESSION_ID: '', ORC_SESSION_TOKEN: '', ORC_SESSION_SECRET: '', ORC_MASTER_SECRET: '', ...env },
-    encoding: 'utf8',
-  });
+  // Registered just before the call: opening the event store imports the events.jsonl a test seeded.
+  const masterSecret = recordMasterSession(dir);
+  closeAllDatabases();
+  return runProjectCli(dir, 'cli/run-input-respond.ts', args, { ORC_MASTER_SECRET: masterSecret, ...env });
 }
 
 function seedState() {
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({
     version: '1',
-    agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' }],
+    agents: [
+      { agent_id: 'master', provider: 'claude', role: 'master', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'claude:session-1', registered_at: '2026-01-01T00:00:00Z' },
+    ],
   }));
   const claims = [{
     run_id: 'run-1',

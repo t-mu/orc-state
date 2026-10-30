@@ -17,6 +17,7 @@ describe('ensureStateInitialized', () => {
 
     ensureStateInitialized(stateDir);
 
+    expect(existsSync(join(stateDir, 'runtime.db'))).toBe(true);
     expect(existsSync(join(stateDir, 'backlog.json'))).toBe(true);
     expect(existsSync(join(stateDir, 'agents.json'))).toBe(true);
     expect(existsSync(join(stateDir, 'claims.json'))).toBe(true);
@@ -29,15 +30,8 @@ describe('ensureStateInitialized', () => {
 
     ensureStateInitialized(stateDir);
 
-    const backlog = JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8')) as {
-      version: string;
-      features: { ref: string; title: string; tasks: unknown[] }[];
-    };
-    expect(backlog.version).toBe('1');
-    expect(backlog.features).toHaveLength(1);
-    expect(backlog.features[0].ref).toBe('project');
-    expect(backlog.features[0].title).toBe('Project');
-    expect(backlog.features[0].tasks).toEqual([]);
+    // backlog.json is the (empty) task store's projection, not a hand-built default.
+    expect(JSON.parse(readFileSync(join(stateDir, 'backlog.json'), 'utf8'))).toEqual({ version: '1', features: [] });
 
     const agents = JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')) as {
       version: string;

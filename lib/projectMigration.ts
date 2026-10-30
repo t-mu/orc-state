@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import Database from 'better-sqlite3';
-import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SpecEntry } from './backlogSync.ts';
+import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SpecEntry } from './migration/backlogSync.ts';
 import { closeAllDatabases } from './eventLog.ts';
 import { closeMemoryDb } from './memoryStore.ts';
 import { parsePlan } from './planDocs.ts';

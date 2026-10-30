@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -15,7 +15,13 @@ afterEach(() => {
   cleanupTempStateDir(dir);
 });
 
+/** Selects the test's state dir as a registered project; any other value restores the saved one as is. */
 function setStateDirEnv(value: string | undefined) {
+  if (value === dir) {
+    Object.assign(process.env, bridgeProjectEnv(dir));
+    return;
+  }
+  process.env.ORC_PROJECT_ID = '';
   if (value == null) delete process.env.ORC_STATE_DIR;
   else process.env.ORC_STATE_DIR = value;
 }

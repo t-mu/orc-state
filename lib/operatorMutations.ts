@@ -8,7 +8,7 @@ import { withLock } from './lock.ts';
 import { storeDrawer, wingFromTaskRef } from './memoryStore.ts';
 import { ControlError } from './controlProtocol.ts';
 import { bridgeInputResponse } from './messageBridge.ts';
-import { commitBacklog, projectTaskStoreFor } from './projectTasks.ts';
+import { commitBacklog } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
 import { resolveControlPrincipal, requireProjectAuthor, type ControlPrincipal } from './controlPrincipal.ts';
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
@@ -20,10 +20,9 @@ import type { Task } from '../types/backlog.ts';
 
 /**
  * Master and operator mutations (task 232): cancel, reset, unblock and
- * delegate a task, and answer a worker's input request. In a registered
- * project the coordinator applies them (POST /v1/operator); the MCP tools
- * and operator CLIs apply them in their own process only in a legacy
- * installation or while no coordinator is running.
+ * delegate a task, and answer a worker's input request. The project's
+ * coordinator applies them (POST /v1/operator); the MCP tools and operator
+ * CLIs apply them in their own process only while no coordinator is running.
  */
 
 /** Task statuses no lifecycle transition leaves (other than an operator reset). */
@@ -201,17 +200,10 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
       })));
     }
 
-    if (projectTaskStoreFor(stateDir)) {
-      // Project SQLite follows the contract: cancellation is its own terminal status.
-      task.status = 'cancelled';
-      delete task.blocked_reason;
-      commitBacklog(stateDir, backlog, { [task_ref as string]: { cause: 'cancel', actorId: actor_id as string, reason: (reason as string | null) ?? null } });
-    } else {
-      task.status = 'blocked';
-      task.updated_at = now;
-      task.blocked_reason = (reason as string | null) ?? 'cancelled';
-      commitBacklog(stateDir, backlog);
-    }
+    // Cancellation is its own terminal status.
+    task.status = 'cancelled';
+    delete task.blocked_reason;
+    commitBacklog(stateDir, backlog, { [task_ref as string]: { cause: 'cancel', actorId: actor_id as string, reason: (reason as string | null) ?? null } });
 
     appendSequencedEvent(
       stateDir,
@@ -334,13 +326,8 @@ export function unblockTask(stateDir: string, { task_ref, reason = null, actor_i
   });
 }
 
-/**
- * Answer a worker's input request. `authority` is how the caller proved it may
- * answer: the coordinator and the master's own tools are trusted; a direct
- * operator call must name the running master session.
- */
-export function respondInput(stateDir: string, { run_id, agent_id, response, actor_id, request_id, record_memory = false }: Record<string, unknown> = {},
-  authority: { sessionId?: string | null; trustedMaster?: boolean } = { trustedMaster: true }) {
+/** Answer a worker's input request; the caller has already been authorized as the master. */
+export function respondInput(stateDir: string, { run_id, agent_id, response, actor_id, request_id, record_memory = false }: Record<string, unknown> = {}) {
   if (!run_id) throw new InputError('run_id is required');
   if (!agent_id) throw new InputError('agent_id is required');
   if (typeof response !== 'string' || (response).length === 0) {
@@ -363,7 +350,7 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
     : inputRequests.at(-1)) as unknown as Record<string, unknown> | undefined ?? null;
   const latestRequestId = request_id ?? (latestRequest?.payload as Record<string, unknown> | undefined)?.request_id;
   const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
-    typeof latestRequestId === 'string' ? latestRequestId : null, authority);
+    typeof latestRequestId === 'string' ? latestRequestId : null);
   if (request_id && !messageId) throw new ConflictError('Input request is not pending for this run');
   // Nothing to answer: an unknown run, or one that never asked. A run that asked and then ended keeps the event-only answer.
   if (!messageId && !latestRequest) throw new ConflictError('Input request is not pending for this run');
@@ -461,15 +448,14 @@ export function authorizeOperator(stateDir: string, caller: ControlPrincipal | {
 }
 
 /** Apply an authorized operator mutation; the coordinator calls this, as does a direct fallback. */
-export function applyOperatorMutation(stateDir: string, request: OperatorRequest,
-  authority: { sessionId?: string | null; trustedMaster?: boolean } = { trustedMaster: true }): Record<string, unknown> {
+export function applyOperatorMutation(stateDir: string, request: OperatorRequest): Record<string, unknown> {
   const { op, ...args } = request;
   switch (op) {
     case 'cancel-task': return cancelTask(stateDir, args) as Record<string, unknown>;
     case 'reset-task': return resetTask(stateDir, args);
     case 'unblock-task': return unblockTask(stateDir, args);
     case 'delegate-task': return delegateTask(stateDir, args) as Record<string, unknown>;
-    case 'respond-input': return respondInput(stateDir, args, authority);
+    case 'respond-input': return respondInput(stateDir, args);
     case 'run-expire': return expireRun(stateDir, args.run_id, args.actor_id as string);
     case 'task-mark-done': {
       const result = markTaskDoneRuntimeOnly(args.task_ref as string, args.actor_id as string, stateDir);

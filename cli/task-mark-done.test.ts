@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, readBacklog, seedState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { projectCliEnv } from '../test-fixtures/projectCli.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -92,7 +93,7 @@ describe('cli/task-mark-done.ts', () => {
 function runCli(args: string[], { cwd = dir }: { cwd?: string } = {}) {
   return spawnSync('node', [join(repoRoot, 'cli/task-mark-done.ts'), ...args], {
     cwd,
-    env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+    env: projectCliEnv(dir),
     encoding: 'utf8',
   });
 }

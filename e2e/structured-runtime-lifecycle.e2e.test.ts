@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, readClaims, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, readClaims, recordMergeConfirmation } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { closeAllDatabases, queryEvents, withEventDb } from '../lib/eventLog.ts';
 import { recordProviderSession } from '../lib/runStore.ts';
+import { startControlServer, type ControlServer } from '../lib/controlServer.ts';
+import { credentialHash } from '../lib/sessionCredentials.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
 
@@ -73,6 +76,7 @@ async function waitFor<T>(probe: () => T | null | undefined | false, label: stri
 describe('structured runtime lifecycle e2e (task 203)', () => {
   let dir: string;
   let worktree: string;
+  let control: ControlServer | null = null;
   const savedEnv = { ...process.env };
 
   beforeEach(() => {
@@ -107,6 +111,8 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
   });
 
   afterEach(async () => {
+    await control?.close();
+    control = null;
     const coordinator = await import('../coordinator.ts');
     coordinator.getCoordinatorCommandDispatcher().stop();
     const adapter = coordinator.getCoordinatorAdapter('codex');
@@ -121,6 +127,8 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
   it('claims, ACKs, works, asks, receives the answer and finishes through durable commands', async () => {
     initProjectTaskStore(dir);
     ensureStateInitialized(dir);
+    // The project descriptor the coordinator writes on start (main()); workers launch only in a project.
+    bridgeProjectEnv(dir);
     mkdirSync(join(dir, 'backlog'), { recursive: true });
     writeFileSync(join(dir, 'backlog', '001-structured-task.md'), TASK_SPEC);
     expect(importTaskMarkdown(dir, join(dir, 'backlog')).imported.map((entry) => entry.action)).toEqual(['created']);
@@ -134,10 +142,12 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     }));
     recordProviderSession(dir, {
       sessionId: 'master-e2e', runId: null, agentId: 'master', provider: 'claude',
-      providerRef: null, startedAt: new Date().toISOString(),
+      providerRef: null, startedAt: new Date().toISOString(), credentialHash: credentialHash('master-e2e-secret'),
     });
 
     const coordinator = await import('../coordinator.ts');
+    // Workers report through the control API, which main() serves; here the test serves it.
+    control = await startControlServer(dir, { commands: coordinator.getCoordinatorCommandDispatcher() });
 
     // Claim + launch on the app-server runtime; the handshake makes the session
     // ready without report-for-duty, and the envelope goes out as a durable command.
@@ -165,8 +175,14 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     expect(held).toMatchObject({ state: 'queued', acknowledged_at: null });
     expect(queryEvents(dir, { run_id: runId, event_type: 'command_queued' }).some((event) => (event.payload as Record<string, unknown>).reason === 'recipient busy')).toBe(true);
 
-    const respond = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'run-input-respond', `--run-id=${runId}`, `--agent-id=${agentId}`, '--response=teal', '--session-id=master-e2e'], { encoding: 'utf8' });
-    expect(respond.status, respond.stderr).toBe(0);
+    // The master answers with its session secret; the coordinator serving this process applies it.
+    const respond = spawn(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'run-input-respond', `--run-id=${runId}`, `--agent-id=${agentId}`, '--response=teal'], {
+      env: { ...process.env, ...bridgeProjectEnv(dir), ORC_MASTER_SECRET: 'master-e2e-secret' },
+    });
+    let respondStderr = '';
+    respond.stderr.on('data', (chunk: Buffer) => { respondStderr += chunk.toString(); });
+    const [respondStatus] = await once(respond, 'close');
+    expect(respondStatus, respondStderr).toBe(0);
     await waitFor(() => queryEvents(dir, { run_id: runId, event_type: 'work_complete' })[0], 'work complete');
     expect(readFileSync(join(dir, 'answer.txt'), 'utf8').trim()).toBe('teal');
     expect((request.payload as Record<string, unknown>).question).toBe('Which colour?');

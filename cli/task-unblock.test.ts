@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { resolve } from 'node:path';
+
 import { createTempStateDir, cleanupTempStateDir, readBacklog, seedState as seedProjectState } from '../test-fixtures/stateHelpers.ts';
 import { initProjectTaskStore } from '../lib/projectTasks.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runProjectCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -64,11 +63,7 @@ describe('cli/task-unblock.ts', () => {
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['cli/task-unblock.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runProjectCli(dir, 'cli/task-unblock.ts', args);
 }
 
 function seedState() {

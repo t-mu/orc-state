@@ -23,21 +23,20 @@ describe('legacy input and review message bridge', () => {
   it('keeps late answers to an ended run on the legacy event path but rejects another agent', () => {
     bridgeInputRequest(dir, 'run-a', 'worker-a', 'request-1', 'Choose A?');
     withEventDbTransaction(dir, (db) => db.prepare("UPDATE runs SET state = 'failed' WHERE run_id = 'run-a'").run());
-    expect(bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', null, { trustedMaster: true })).toBeNull();
-    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-b', 'yes', null, { trustedMaster: true })).toThrow('not scoped');
+    expect(bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', null)).toBeNull();
+    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-b', 'yes', null)).toThrow('not scoped');
   });
 
   it('binds a human answer to one pending request and preserves it after reconnect', () => {
     const first = bridgeInputRequest(dir, 'run-a', 'worker-a', 'request-1', 'Choose A?');
     bridgeInputRequest(dir, 'run-b', 'worker-b', 'request-2', 'Choose B?');
     expect(first).toBeTruthy();
-    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'wrong request', 'request-2', { trustedMaster: true })).toThrow('not pending');
-    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1')).toThrow('running master session');
+    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'wrong request', 'request-2')).toThrow('not pending');
     expect(readDurableInputResponse(dir, 'request-1')).toBeNull();
-    const answer = bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1', { sessionId: 'master-1' });
+    const answer = bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1');
     expect(answer).toBeTruthy();
-    expect(bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1', { sessionId: 'master-1' })).toBe(answer);
-    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'no', 'request-1', { sessionId: 'master-1' })).toThrow('different response');
+    expect(bridgeInputResponse(dir, 'run-a', 'worker-a', 'yes', 'request-1')).toBe(answer);
+    expect(() => bridgeInputResponse(dir, 'run-a', 'worker-a', 'no', 'request-1')).toThrow('different response');
     expect(readDurableInputResponse(dir, 'request-1')).toBe('yes');
     expect(readDurableInputResponse(dir, 'request-2')).toBeNull();
     expect(withEventDb(dir, (db) => db.prepare('SELECT parent_message_id FROM messages WHERE message_id = ?').get(answer)))

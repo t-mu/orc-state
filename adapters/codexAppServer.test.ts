@@ -124,7 +124,10 @@ describe('codex app-server runtime: session start', () => {
     await startSession(adapter, { execution_mode: 'sandbox' });
     const params = frames('thread/start')[0].params as Record<string, unknown>;
     expect(params.sandbox).toBe('workspace-write');
-    expect((params.config as Record<string, string[]>)['sandbox_workspace_write.writable_roots']).toContain(dir);
+    // The backing repo's .git subtrees, never the state dir.
+    const roots = (params.config as Record<string, string[]>)['sandbox_workspace_write.writable_roots'];
+    expect(roots.some((root) => root.endsWith('/.git/objects'))).toBe(true);
+    expect(roots).not.toContain(dir);
     // Network access is only for a project worker's control socket.
     expect((params.config as Record<string, unknown>)['sandbox_workspace_write.network_access']).toBeUndefined();
 

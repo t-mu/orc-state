@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readClaims } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync } from 'node:child_process';
 import { queryEvents } from '../lib/eventLog.ts';
+import { runWorkerCli } from '../test-fixtures/projectCli.ts';
 
-const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
 
 beforeEach(() => {
@@ -18,8 +17,8 @@ afterEach(() => {
 });
 
 describe('cli/run-start.ts', () => {
-  it('succeeds with a valid claimed run and emits run_started event', () => {
-    const result = runCli(['--run-id=run-1', '--agent-id=worker-1']);
+  it('succeeds with a valid claimed run and emits run_started event', async () => {
+    const result = await runCli(['--run-id=run-1', '--agent-id=worker-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_started: run-1 (worker-1)');
     const events = readEvents();
@@ -28,14 +27,14 @@ describe('cli/run-start.ts', () => {
     expect(event?.agent_id).toBe('worker-1');
   });
 
-  it('transitions claim state to in_progress', () => {
-    runCli(['--run-id=run-1', '--agent-id=worker-1']);
+  it('transitions claim state to in_progress', async () => {
+    await runCli(['--run-id=run-1', '--agent-id=worker-1']);
     const claims = readClaims(dir);
     const claim = claims.find((c: Record<string, unknown>) => c.run_id === 'run-1');
     expect(claim?.state).toBe('in_progress');
   });
 
-  it('is idempotent when claim is already in_progress', () => {
+  it('is idempotent when claim is already in_progress', async () => {
     writeFileSync(join(dir, 'claims.json'), JSON.stringify({
       version: '1',
       claims: [{
@@ -48,42 +47,38 @@ describe('cli/run-start.ts', () => {
         lease_expires_at: '2099-01-01T00:00:00Z',
       }],
     }));
-    const result = runCli(['--run-id=run-1', '--agent-id=worker-1']);
+    const result = await runCli(['--run-id=run-1', '--agent-id=worker-1']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('run_started: run-1 (worker-1)');
   });
 
-  it('exits 1 when --run-id is missing', () => {
-    const result = runCli(['--agent-id=worker-1']);
+  it('exits 1 when --run-id is missing', async () => {
+    const result = await runCli(['--agent-id=worker-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-start');
   });
 
-  it('exits 1 when --agent-id is missing', () => {
-    const result = runCli(['--run-id=run-1']);
+  it('exits 1 when --agent-id is missing', async () => {
+    const result = await runCli(['--run-id=run-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc run-start');
   });
 
-  it('exits 1 when run-id does not exist in claims', () => {
-    const result = runCli(['--run-id=run-missing', '--agent-id=worker-1']);
+  it('exits 1 when run-id does not exist in claims', async () => {
+    const result = await runCli(['--run-id=run-missing', '--agent-id=worker-1']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Error:');
   });
 
-  it('exits 1 when agent-id does not match claim', () => {
-    const result = runCli(['--run-id=run-1', '--agent-id=wrong-agent']);
+  it('exits 1 when agent-id does not match claim', async () => {
+    const result = await runCli(['--run-id=run-1', '--agent-id=wrong-agent']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Error:');
   });
 });
 
 function runCli(args: string[]) {
-  return spawnSync('node', ['cli/run-start.ts', ...args], {
-    cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
-    encoding: 'utf8',
-  });
+  return runWorkerCli(dir, 'run-start.ts', args);
 }
 
 function seedState() {

@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { withEventDb } from './eventLog.ts';
-import { isProjectStateDir } from './projectContext.ts';
 
 /**
  * Per-session secrets (task 231). Each launched session — worker, scout,
@@ -23,18 +22,10 @@ export interface CredentialSession { session_id: string; agent_id: string; run_i
 
 const SESSION_COLUMNS = 'session_id, agent_id, run_id, state';
 
-/**
- * The session a presented credential proves, or null. A project state
- * directory accepts only a session secret. A legacy installation also accepts
- * the session id of a session recorded without one (its sessions predate
- * secrets), never an imported `legacy-` id derived from a public name.
- */
-export function resolveSessionCredential(db: Database.Database, credential: string, { secretsOnly }: { secretsOnly: boolean }): CredentialSession | null {
+/** The session a presented secret proves, or null. A session id is never a credential. */
+export function resolveSessionCredential(db: Database.Database, credential: string): CredentialSession | null {
   if (!credential) return null;
-  const bySecret = db.prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE credential_hash = ?`).get(credentialHash(credential)) as CredentialSession | undefined;
-  if (bySecret) return bySecret;
-  if (secretsOnly || credential.startsWith('legacy-')) return null;
-  return (db.prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE session_id = ? AND credential_hash IS NULL`).get(credential) as CredentialSession | undefined) ?? null;
+  return (db.prepare(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE credential_hash = ?`).get(credentialHash(credential)) as CredentialSession | undefined) ?? null;
 }
 
 /**
@@ -51,21 +42,7 @@ export function clientCredential(env: NodeJS.ProcessEnv = process.env): string |
   return null;
 }
 
-/**
- * The session's identifier (not a credential): ORC_SESSION_ID, or the legacy
- * ORC_SESSION_TOKEN that predates it. A legacy installation still accepts it as
- * the credential of a session recorded without a secret.
- */
-export function sessionIdFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env.ORC_SESSION_ID?.trim() || env.ORC_SESSION_TOKEN?.trim() || null;
-}
-
-/**
- * resolveSessionCredential against a state directory's event store. A project
- * state directory (isProjectStateDir: descriptor or task store, so losing one
- * does not downgrade it) accepts secrets only, never readable session ids.
- */
+/** resolveSessionCredential against a state directory's event store. */
 export function sessionForCredential(stateDir: string, credential: string): CredentialSession | null {
-  const only = isProjectStateDir(stateDir);
-  return withEventDb(stateDir, (db) => resolveSessionCredential(db, credential, { secretsOnly: only }));
+  return withEventDb(stateDir, (db) => resolveSessionCredential(db, credential));
 }

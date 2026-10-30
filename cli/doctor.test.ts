@@ -120,14 +120,6 @@ describe('cli/doctor.ts', () => {
       agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
       claims: [
         {
-          run_id: 'run-old',
-          task_ref: 'docs/task-1',
-          agent_id: 'bob',
-          state: 'claimed',
-          claimed_at: '2026-01-01T00:00:00Z',
-          lease_expires_at: '2099-01-01T00:00:00Z',
-        },
-        {
           run_id: 'run-new',
           task_ref: 'docs/task-1',
           agent_id: 'bob',
@@ -141,7 +133,6 @@ describe('cli/doctor.ts', () => {
     const result = runCli(['--json']);
     const json = JSON.parse(result.stdout);
     expect(result.status).toBe(1);
-    expect(json.checks.lifecycleIssues.some((issue: Record<string, unknown>) => issue.code === 'duplicate_active_claims')).toBe(true);
     expect(json.checks.lifecycleIssues.some((issue: Record<string, unknown>) => issue.code === 'missing_finalization_blocked_reason')).toBe(true);
   });
 

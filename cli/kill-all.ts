@@ -16,7 +16,7 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join }                     from 'node:path';
 import { listAgents }               from '../lib/agentRegistry.ts';
 import { createAdapter }            from '../adapters/index.ts';
-import { STATE_DIR }                from '../lib/paths.ts';
+import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { atomicWriteJson }          from '../lib/atomicWrite.ts';
 import { withLock }                 from '../lib/lock.ts';
 import { cleanupRunWorktree }       from '../lib/runWorktree.ts';
@@ -24,11 +24,17 @@ import { RUN_WORKTREES_FILE }       from '../lib/paths.ts';
 import { readBacklog, readClaims }  from '../lib/stateReader.ts';
 import { closeProviderSessionsForAgent, commitClaims } from '../lib/runStore.ts';
 import { boolFlag }                 from '../lib/args.ts';
-import { formatErrorMessage } from './shared.ts';
+import { cliError, formatErrorMessage } from './shared.ts';
 import { commitBacklog } from '../lib/projectTasks.ts';
 import { isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
 
 const keepSessions = boolFlag('keep-sessions');
+
+try {
+  assertProjectMode();
+} catch (error) {
+  cliError(error);
+}
 
 // ── Step 1: Kill coordinator ────────────────────────────────────────────────
 

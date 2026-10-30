@@ -190,16 +190,6 @@ beforeEach(() => {
       last_heartbeat_at: null,
       lease_expires_at: '2026-01-01T00:10:00.000Z',
     },
-    {
-      run_id: 'run-4',
-      task_ref: 'project/todo-one',
-      agent_id: 'orc-1',
-      state: 'in_progress',
-      claimed_at: '2026-01-01T00:19:30.000Z',
-      started_at: '2026-01-01T00:19:35.000Z',
-      last_heartbeat_at: '2026-01-01T00:19:50.000Z',
-      lease_expires_at: '2026-01-01T00:30:00.000Z',
-    },
   ]);
   seedEventsLines([
     JSON.stringify({ seq: 1, event: 'task_added', task_ref: 'project/todo-one' }),
@@ -300,7 +290,7 @@ describe('mcp read handlers', () => {
 
   it('handleListActiveRuns returns only claimed/in_progress claims', () => {
     const active = handleListActiveRuns(dir);
-    expect(active.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2', 'run-4']);
+    expect(active.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2']);
   });
 
   it('handleListStalledRuns returns stale runs with stale_for_ms', () => {
@@ -433,7 +423,7 @@ describe('mcp read handlers', () => {
       ['ref', 'title', 'status', 'feature_ref', 'owner'].every((key) => Object.hasOwn(task, key)))).toBe(true);
     expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done' || task.status === 'released')).toBe(false);
     expect(status.last_notification_seq).toBe(0);
-    expect(status.stalled_runs).toBe(3);
+    expect(status.stalled_runs).toBe(2);
     expect(status.project).toMatchObject({ id: TEST_PROJECT_ID });
   });
 
@@ -918,7 +908,6 @@ describe('mcp read handlers', () => {
 
     const remainingClaims = readFileSync(join(dir, 'claims.json'), 'utf8');
     expect(remainingClaims).not.toContain('"run_id":"run-1"');
-    expect(remainingClaims).not.toContain('"run_id":"run-4"');
 
     const allEvents = queryEvents(dir, {});
     const eventTypes = allEvents.map((e) => (e as unknown as Record<string, unknown>).event);
@@ -926,10 +915,9 @@ describe('mcp read handlers', () => {
     expect(eventTypes).toContain('task_cancelled');
     const runIds = allEvents.map((e) => (e as unknown as Record<string, unknown>).run_id).filter(Boolean);
     expect(runIds).toContain('run-1');
-    expect(runIds).toContain('run-4');
 
     const cancelledEvents = queryEvents(dir, { event_type: 'run_cancelled' });
-    expect(cancelledEvents.filter((e) => (e as unknown as Record<string, unknown>).task_ref === 'project/todo-one')).toHaveLength(2);
+    expect(cancelledEvents.filter((e) => (e as unknown as Record<string, unknown>).task_ref === 'project/todo-one')).toHaveLength(1);
   });
 
   it('handleCancelTask returns already_terminal on done task without state change', () => {
@@ -1117,7 +1105,7 @@ describe('handleResetTask', () => {
     const result = handleResetTask(dir, { task_ref: 'project/todo-one', actor_id: 'master' }) as Record<string, unknown>;
     expect(result.reset).toBe(true);
     expect(result.previous_status).toBe('todo');
-    expect(result.cancelled_claims).toBe(2); // run-1 and run-4 are in_progress
+    expect(result.cancelled_claims).toBe(1); // run-1 is in_progress
 
     const task = readBacklog(dir).features.flatMap((feature) => feature.tasks).find((t) => t.ref === 'project/todo-one');
     expect(task?.status).toBe('todo');
