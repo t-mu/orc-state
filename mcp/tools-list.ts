@@ -173,7 +173,6 @@ export const TOOLS = [
           type: ['string', 'null'],
           description: 'Model override for the worker session. Omit to use pool default.',
         },
-        actor_id: { type: 'string', description: 'Without the master session only: recorded actor (human or a registered agent; defaults to master agent_id). With the master session the task is recorded as the master and this is ignored.' },
       },
       additionalProperties: false,
     },
@@ -211,7 +210,6 @@ export const TOOLS = [
         depends_on: { type: ['array', 'null'], items: { type: 'string' } },
         review_level: { type: ['string', 'null'], enum: ['none', 'light', 'full', null] },
         merge_strategy: { type: ['string', 'null'], enum: ['direct', 'pr', null] },
-        actor_id: { type: 'string', description: 'Without the master session only: recorded actor (human or a registered agent; defaults to master agent_id). With the master session the task is recorded as the master and this is ignored.' },
       },
       additionalProperties: false,
     },
@@ -239,10 +237,6 @@ export const TOOLS = [
         note: {
           type: 'string',
           description: 'Optional note for delegation context',
-        },
-        actor_id: {
-          type: 'string',
-          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -320,10 +314,6 @@ export const TOOLS = [
           type: 'string',
           description: 'Optional cancellation reason',
         },
-        actor_id: {
-          type: 'string',
-          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
-        },
       },
       additionalProperties: false,
     },
@@ -346,10 +336,6 @@ export const TOOLS = [
         response: {
           type: 'string',
           description: 'Response text to send back to the waiting worker',
-        },
-        actor_id: {
-          type: 'string',
-          description: 'Defaults to the current master agent id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -427,10 +413,6 @@ export const TOOLS = [
           type: 'string',
           description: 'Full task ref to reset',
         },
-        actor_id: {
-          type: 'string',
-          description: 'Actor performing the reset. Defaults to the master agent (orc task-reset records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
-        },
       },
       additionalProperties: false,
     },
@@ -444,10 +426,6 @@ export const TOOLS = [
       properties: {
         task_ref: { type: 'string', description: 'Full task ref to unblock' },
         reason: { type: 'string', description: 'Optional reason, recorded on the transition' },
-        actor_id: {
-          type: 'string',
-          description: 'Actor performing the unblock. Defaults to the master agent (orc task-unblock records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
-        },
       },
       additionalProperties: false,
     },

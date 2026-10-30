@@ -172,7 +172,27 @@ describe('master and operator mutations through the coordinator (task 232)', () 
       .resolves.toMatchObject({ reset: true });
     expect(queryEvents(dir, { event_type: 'task_updated' }).at(-1)).toMatchObject({ actor_id: 'master' });
     expect(() => invokeTool(dir, 'respond_input', { run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }, { project: 'p', credential: null }))
-      .toThrow('respond_input needs the master session');
+      .toThrow(/respond_input needs the master session.*Only the master can do this/);
+  });
+
+  it('the MCP write tools refuse a server without the master session; the operator uses the CLI', () => {
+    const before = status('orch/todo');
+    for (const [tool, args] of [
+      ['cancel_task', { task_ref: 'orch/todo' }], ['reset_task', { task_ref: 'orch/todo' }], ['unblock_task', { task_ref: 'orch/todo' }],
+      ['delegate_task', { task_ref: 'orch/todo' }], ['memory_store', { content: 'note' }],
+      ['create_task', { title: 'New' }], ['update_task', { task_ref: 'orch/todo', expected_revision: 1 }],
+    ] as const) {
+      expect(() => invokeTool(dir, tool, args, { project: 'p', credential: null }))
+        .toThrow(expect.objectContaining({ name: 'ForbiddenError', message: expect.stringContaining('use the orc CLI instead: orc ') }));
+    }
+    // No CLI does these for the operator: only the master can.
+    for (const [tool, args] of [['request_scout', { objective: 'look' }], ['remove_scout', { agent_id: 'scout-1' }]] as const) {
+      expect(() => invokeTool(dir, tool, args, { project: 'p', credential: null }))
+        .toThrow(expect.objectContaining({ name: 'ForbiddenError', message: expect.stringContaining('Only the master can do this') }));
+    }
+    expect(status('orch/todo')).toBe(before);
+    // Reads stay open.
+    expect(() => invokeTool(dir, 'list_tasks', {}, { project: 'p', credential: null })).not.toThrow();
   });
 
   it('an MCP server inside a worker session presents it and is refused, not promoted to the operator', async () => {

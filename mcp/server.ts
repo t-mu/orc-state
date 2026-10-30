@@ -15,7 +15,8 @@ import {
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
 import { ACTIVE_PROJECT, assertProjectMode, STATE_DIR } from '../lib/paths.ts';
-import { masterActorId, masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
+import { masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
+import { ForbiddenError } from '../lib/domainErrors.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
@@ -90,61 +91,54 @@ export function validateToolArguments(name: string, args: Record<string, unknown
   return { ok: false, error: `Invalid arguments for ${name}: ${path} ${first.message}` };
 }
 
-let warnedWithoutMasterSession = false;
-
 /** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */
 const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
   cancel_task: 'cancel-task', reset_task: 'reset-task', unblock_task: 'unblock-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
 };
 
-/** With a session the server acts as that session (a named actor is ignored); without one, as the named actor or the master. */
-function taskAuthorActor(stateDir: string, actorId: unknown, credential: string | null): string | undefined {
-  if (credential) return undefined;
-  return typeof actorId === 'string' ? actorId : masterActorId(stateDir);
-}
+/**
+ * Tools that change orchestration state, with what an operator without the master session can do instead.
+ * Only the master session may call them.
+ */
+const MASTER_WRITE_TOOLS: Readonly<Record<string, string>> = {
+  create_task: 'orc project task create', update_task: 'orc project task edit',
+  cancel_task: 'orc task-cancel', reset_task: 'orc task-reset', unblock_task: 'orc task-unblock', delegate_task: 'orc delegate',
+  memory_store: 'orc memory-record',
+};
+const MASTER_ONLY_TOOLS: ReadonlySet<string> = new Set(['respond_input', 'request_scout', 'remove_scout']);
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
   { project = ACTIVE_PROJECT, credential = clientCredential(process.env) }: { project?: unknown; credential?: string | null } = {}) {
+  if (project && !credential && (Object.hasOwn(MASTER_WRITE_TOOLS, name) || MASTER_ONLY_TOOLS.has(name))) {
+    const instead = MASTER_WRITE_TOOLS[name];
+    throw new ForbiddenError(`${name} needs the master session (ORC_MASTER_SECRET, set by orc start-session). `
+      + (instead ? `As the operator, use the orc CLI instead: ${instead}` : 'Only the master can do this; start it with orc start-session'));
+  }
   const op = OPERATOR_TOOLS[name];
   if (op && project) {
     // The server presents the session it runs in: the master's (from start-session) acts as the master,
-    // and a worker's is refused like its shell. Without one it acts as the operator, still recorded as
-    // the master, and says so once.
-    if (credential) {
-      const { actor_id: _ignored, ...own } = args;
-      return submitOperatorMutation({ op, ...own }, { credential, project, stateDir });
-    }
-    if (op === 'respond-input') {
-      throw new Error('respond_input needs the master session in a registered project (ORC_MASTER_SECRET, set by orc start-session); restart the master with orc start-session');
-    }
-    if (!warnedWithoutMasterSession) {
-      warnedWithoutMasterSession = true;
-      process.stderr.write('[orc-mcp] ORC_MASTER_SECRET is not set; master tools reach the coordinator as the operator\n');
-    }
-    return submitOperatorMutation({ op, ...args, ...(args.actor_id !== undefined ? {} : { actor_id: masterActorId(stateDir) }) },
-      { credential: null, project, stateDir });
+    // and a worker's is refused like its shell.
+    return submitOperatorMutation({ op, ...args }, { credential, project, stateDir });
   }
-  if (name === 'request_scout' && project && credential) {
+  if (name === 'request_scout' && project) {
     // Only the master's session may launch scouts; it acts as itself.
-    return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential) });
+    return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential!) });
   }
   if ((name === 'get_scout_report' || name === 'remove_scout') && project && credential) {
     // Scouts are the master's: a worker session cannot read or stop them.
     masterForCredential(stateDir, credential);
   }
+  // The master acts as itself: the coordinator records the session's agent.
   if (project && projectTaskStoreFor(stateDir) && name === 'create_task') {
-    const { actor_id, ...input } = args;
-    const actorId = taskAuthorActor(stateDir, actor_id, credential);
-    return submitProjectWrite<unknown>(stateDir, 'create_task', actorId,
-      async (client) => (await client.createTask(input, actorId)).task,
-      (actor) => handlers.handleCreateTask(stateDir, { ...input, actor_id: actor }), { credential });
+    return submitProjectWrite<unknown>(stateDir, 'create_task', undefined,
+      async (client) => (await client.createTask(args, undefined)).task,
+      (actor) => handlers.handleCreateTask(stateDir, { ...args, actor_id: actor }), { credential });
   }
   if (project && projectTaskStoreFor(stateDir) && name === 'update_task') {
-    const { task_ref, expected_revision, actor_id, ...changes } = args;
-    const actorId = taskAuthorActor(stateDir, actor_id, credential);
-    return submitProjectWrite<unknown>(stateDir, 'update_task', actorId,
+    const { task_ref, expected_revision, ...changes } = args;
+    return submitProjectWrite<unknown>(stateDir, 'update_task', undefined,
       async (client) => {
-        const result = await client.reviseTask(task_ref as string, expected_revision as number, changes, actorId);
+        const result = await client.reviseTask(task_ref as string, expected_revision as number, changes, undefined);
         return { ...result.task, changed: result.changed };
       },
       (actor) => handlers.handleUpdateTask(stateDir, { ...args, actor_id: actor }), { credential });
