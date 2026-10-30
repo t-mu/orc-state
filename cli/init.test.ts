@@ -45,7 +45,7 @@ describe('cli/init.ts --sibling', () => {
   it('is retired and points at project registration, writing nothing', () => {
     const orch = join(dir, 'orch');
     mkdirSync(orch, { recursive: true });
-    const result = runSibling(orch, ['--sibling=../target', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    const result = runSibling(orch, ['--sibling=../target', '--provider=claude']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('orc init --sibling is retired');
     expect(result.stderr).toContain('orc project add');
