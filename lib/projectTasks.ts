@@ -425,6 +425,10 @@ export function reviseProjectTask(
     throw new TaskInputError('expected_revision is required for project task edits');
   }
   const rejected = Object.keys(input).filter((key) => input[key] !== undefined && !REVISABLE_FIELDS.has(key));
+  // Status is runtime-owned; say which commands change it, whichever path (coordinator or direct) the edit took.
+  if (rejected.includes('status')) {
+    throw new TaskInputError('Task edits cannot change status. Use lifecycle commands such as task-mark-done, task-reset, task-unblock, cancel_task or delegate_task.');
+  }
   if (rejected.length > 0) throw new TaskInputError(`Task edits cannot change: ${rejected.join(', ')}`);
   const current = store.getTask(ref);
   if (!current) throw new NotFoundError(`Task not found: ${ref}`);

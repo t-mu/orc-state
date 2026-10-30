@@ -71,6 +71,7 @@ describe('orchestrator mcp server foundation', () => {
     expect(isExpectedToolError(new Error('Input request is not pending for this run'))).toBe(true);
     expect(isExpectedToolError(Object.assign(new Error('ENOENT: no such file'), { errno: -2, code: 'ENOENT' }))).toBe(false);
     expect(isExpectedToolError(new TypeError('x is undefined'))).toBe(false);
+    expect(isExpectedToolError(new ControlError('internal', 'disk I/O error', 500))).toBe(false);
     expect(isExpectedToolError('boom')).toBe(false);
   });
 

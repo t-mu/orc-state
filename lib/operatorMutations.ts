@@ -465,7 +465,7 @@ export function parseOperatorRequest(body: Record<string, unknown>): OperatorReq
 /** The master agent a live session credential belongs to; any other session is refused. */
 export function masterForCredential(stateDir: string, credential: string): string {
   const principal = resolveControlPrincipal(stateDir, credential, false);
-  if (principal?.kind !== 'master' || !principal.live) throw new ControlError(principal ? 'forbidden' : 'unauthenticated', 'Only the running master session may act as master', principal ? 403 : 401);
+  if (principal?.kind !== 'master' || !principal.live) throw new ControlError(principal ? 'forbidden' : 'unauthenticated', 'Only a master session that is not offline may act as master', principal ? 403 : 401);
   return principal.agentId;
 }
 

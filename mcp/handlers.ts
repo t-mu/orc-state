@@ -486,9 +486,6 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   if (projectTaskStoreFor(stateDir)) {
     const { task_ref, expected_revision, actor_id = defaultActorId(stateDir), ...changes } = args;
     if (typeof task_ref !== 'string' || !task_ref) throw new Error('task_ref is required');
-    if (changes.status !== undefined) {
-      throw new Error('update_task cannot change status directly. Use lifecycle commands such as task-mark-done, task-reset, task-unblock, delegate_task, or coordinator-owned transitions.');
-    }
     assertActorId(stateDir, actor_id);
     const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
     return { ...describeProjectTask(task), changed };

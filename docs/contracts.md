@@ -131,7 +131,7 @@ the CLI and MCP handlers manage this.
 |------------|---------|-----|
 | `todo` -> `claimed` | `orc delegate` | Coordinator |
 | `claimed` -> `in_progress` | `orc run-start` | Worker |
-| `in_progress` -> `done` | Post-merge runtime completion (`orc task-mark-done <ref>`) | Coordinator |
+| `in_progress` -> `done` | Post-merge runtime completion, applied by the coordinator in its own process (`orc task-mark-done <ref>` is the operator's recovery command) | Coordinator |
 | `done` -> `released` | Post-merge release | Coordinator |
 | `any` -> `blocked` | `orc run-fail --policy=block` | Worker |
 | `blocked/claimed/in_progress` -> `todo` | `orc task-reset <ref>` | Operator |
@@ -574,7 +574,14 @@ names its caller. One principal resolver classifies a live master session, a wor
 the master's session secret or the operator token: a worker session gets
 `403 forbidden`, a caller with neither `401`. A worker reads its own run's
 reviews and the project's memories through the scoped routes below. Worker lifecycle
-requests (`/v1/lifecycle`) are checked against the caller's own run. Delivery of queued commands to a provider transport is also not
+requests (`/v1/lifecycle`) are checked against the caller's own run.
+
+**Session states.** A session is `running`, `recoverable`, `unknown` or
+`offline`. Commands (`/v1/commands…`) and messages (`/v1/messages…`) need a
+`running` session: any other session, and the operator token, get `401`.
+Every other route accepts a session that is not `offline`, so a worker whose
+session is `recoverable` after a coordinator restart can still report its run,
+and a recoverable master can still act. Delivery of queued commands to a provider transport is also not
 wired yet; commands stay `queued` until a dispatcher with a transport runs. A sandboxed worker may retry a SQLite read-only open only while usable WAL/SHM files remain, such as after a coordinator crash or during version skew. If they are absent, the read fails until the coordinator starts.
 
 | Method | Path | Result |
@@ -585,12 +592,12 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs. A sa
 | `GET` | `/v1/runs/<run_id>/reviews` | `{ reviews }`: the run's `review_submitted` events plus bridged reviewer feedback, latest per agent (what `orc review-read` prints). Needs a session secret (a worker reads only its own run, `403` otherwise; the master any run) or the operator token (`x-orc-operator`); else `401` |
 | `GET` | `/v1/memory/wake-up?wing=<w>&budget=<tokens>` | `{ initialized, text }` (what `orc memory-wake-up` prints); `initialized` is false without a memory store. `budget` defaults to 800. Memories are project-wide: any session secret or the operator token reads them; else `401` |
 | `POST` | `/v1/lifecycle` | Worker lifecycle request `{ op, agent_id, run_id?, ... }`, applied by the coordinator. `op` is `run-start`, `run-fail` (`reason`, `code`, `policy`), `run-finish`, `run-work-complete`, `progress` (`event`, `phase?`, `reason?`, `policy?`), `review-submit` (`outcome`, `reason`), `input-request` (`question`) -> `{ request_id, request_seq, active }`, `input-poll` (`request_id`, `request_seq`, `heartbeat?`) -> `{ response, active }`, `input-timeout`, `memory-record` (`content`, `wing?`, `hall?`, `room?`, `importance?`; no `agent_id`) or `report-for-duty` (`session_token`, the session id). Result `{ message, ... }`. The session must not be `offline` (`running`, `recoverable` or `unknown`) and must be launched for that agent and run (else `403 forbidden`; an unrecognised or offline session `401`). An offline session may still send `input-poll` for its own run (its heartbeat is ignored) and `run-finish` or `progress` `run_finished` once that run is `done`. A rejected transition is `409 conflict`; an unexpected lifecycle failure is `500 internal` |
-| `POST` | `/v1/operator` | Master or operator mutation `{ op, actor_id?, ... }`, applied by the coordinator (task 232). `op` is `cancel-task` (`task_ref`, `reason?`), `reset-task` (`task_ref`), `unblock-task` (`task_ref`, `reason?`), `delegate-task` (`task_ref`, `target_agent_id?`, `task_type?`, `note?`), `run-expire` (`run_id`), `task-mark-done` (`task_ref`) or `respond-input` (`run_id`, `agent_id`, `response`, `request_id?`, `record_memory?`); the result is the MCP tool's. With `x-orc-session` the credential must be the master's session secret, its session not `offline` (a worker's is `403 forbidden`, an unknown one `401`), and `actor_id`, if sent, must be the master's own. Without it the caller must send `x-orc-operator` with the operator token (else `401`) and acts as the operator, recorded as `actor_id` (`human` or a registered agent) or `human`; `respond-input` always needs the master session (`403`). A missing task or agent is `404 not_found`, bad input `400 bad_request`, a refused transition `409 conflict`, using typed domain errors; anything unexpected is `500 internal` |
+| `POST` | `/v1/operator` | Master or operator mutation `{ op, actor_id?, ... }`, applied by the coordinator (task 232). `op` is `cancel-task` (`task_ref`, `reason?`), `reset-task` (`task_ref`), `unblock-task` (`task_ref`, `reason?`), `delegate-task` (`task_ref`, `target_agent_id?`, `task_type?`, `note?`), `run-expire` (`run_id`), `task-mark-done` (`task_ref`) or `respond-input` (`run_id`, `agent_id`, `response`, `request_id?`, `record_memory?`); the result is the MCP tool's. With `x-orc-session` the credential must be the master's session secret, its session not `offline` (a worker's is `403 forbidden`, an unknown one `401`), and is recorded as the master: an `actor_id` it sends is ignored. Without it the caller must send `x-orc-operator` with the operator token (else `401`) and acts as the operator, recorded as `actor_id` (`human` or a registered agent, else `400 bad_request`) or `human`; `respond-input` always needs the master session (`403`). A missing task or agent is `404 not_found`, bad input `400 bad_request`, a refused transition `409 conflict`, using typed domain errors; anything unexpected is `500 internal` |
 | `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |
 | `POST` | `/v1/commands/<id>/ack` | Recipient ACK `{ state: accepted\|running\|completed\|failed }` -> `{ command }` |
-| `POST` | `/v1/messages` | Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |
-| `GET` | `/v1/messages?include_consumed=1` | Caller mailbox `{ messages }`; consumed messages are omitted by default |
-| `POST` | `/v1/messages/<id>/consume` | Idempotently acknowledge a mailbox item -> `{ message }` |
+| `POST` | `/v1/messages` | Needs a `running` session (else `401`). Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |
+| `GET` | `/v1/messages?include_consumed=1` | Needs a `running` session (else `401`). Caller mailbox `{ messages }`; consumed messages are omitted by default |
+| `POST` | `/v1/messages/<id>/consume` | Needs a `running` session (else `401`). Idempotently acknowledge a mailbox item -> `{ message }` |
 | `POST` | `/v1/terminals/provider` | Master or operator only. `{ run_id }` -> `{ terminal }`: observe the run's tmux provider session (what `orc terminal provider` uses) |
 | `POST` | `/v1/terminals/shell` | Master or operator only. `{ run_id }` -> `{ terminal }`: a shell the coordinator starts in the run's worktree, outside any provider sandbox |
 | `GET` | `/v1/terminals/<id>?after=<seq>` | Master or operator only. `{ terminal, screen, output, cursor }` |
@@ -599,9 +606,9 @@ wired yet; commands stay `queued` until a dispatcher with a transport runs. A sa
 | `GET` | `/v1/tasks` | Master or operator only. Project state directories only (else `404 not_found`): `{ tasks }`, each with `spec_revision`, `content_hash` and `body_markdown` |
 | `GET` | `/v1/tasks/<ref>` | Master or operator only. `{ task }`; unknown ref -> `404 not_found`. Encode the ref (`app%2Flogin`) |
 | `GET` | `/v1/tasks/<ref>/revisions` | Master or operator only. `{ revisions }` (immutable, oldest first, without bodies); unknown ref -> `404` |
-| `POST` | `/v1/tasks` | Master or operator only (else `403 forbidden`). Create a database-only task `{ feature?, ref?, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, required_provider?, ... }` -> `201 { task }`; existing ref -> `409 conflict`; invalid field -> `400 bad_request` |
-| `POST` | `/v1/tasks/<ref>/revisions` | Master or operator only. Edit `{ expected_revision, ...fields }` -> `{ task, changed }`; a stale `expected_revision` -> `409 conflict`; `status` is never editable |
-| `POST` | `/v1/tasks/import` | Master or operator only. Import `{ path, strict?, actor_id? }` from a file or directory on the coordinator host; the import is atomic and returns `{ imported, skipped }` |
+| `POST` | `/v1/tasks` | Master or operator only: a worker session gets `403`, a caller with neither `401`. The master is recorded as itself (an `actor_id` it sends is ignored); the operator as `actor_id` (`human` or a registered agent, else `400`) or `human`. Create a database-only task `{ feature?, ref?, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, required_provider?, ... }` -> `201 { task }`; existing ref -> `409 conflict`; invalid field -> `400 bad_request` |
+| `POST` | `/v1/tasks/<ref>/revisions` | Master or operator only, as for `POST /v1/tasks`. Edit `{ expected_revision, ...fields }` -> `{ task, changed }`; a stale `expected_revision` -> `409 conflict`, one below 1 or a self-dependency `400 bad_request`; `status` is never editable (`400`, naming the lifecycle commands to use) |
+| `POST` | `/v1/tasks/import` | Master or operator only, as for `POST /v1/tasks`. Import `{ files: [{ path, text }], strict?, actor_id? }`: the client reads the specs and sends their text (up to 32 MiB); `path` only labels results and errors, and the coordinator never opens it. Every file must be a spec (`400` otherwise); the import is atomic and returns `{ imported }` |
 
 Message kinds are `message`, `question`, `review_request`, `feedback`, and
 `result`. A review request needs explicit artifact refs; a result needs a

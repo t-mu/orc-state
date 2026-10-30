@@ -31,8 +31,8 @@ export function openReadOnlyDatabase(path: string): Database.Database {
   const db = new Database(path, { readonly: true, fileMustExist: true });
   try {
     // Opening is lazy; the first read touches the WAL index. WAL/SHM may
-  // survive a coordinator crash or a version-skewed client, so this is only
-  // a limited read fallback, never an alternate write path.
+    // survive a coordinator crash or a version-skewed client, so this is only
+    // a limited read fallback, never an alternate write path.
     db.pragma('schema_version', { simple: true });
     return db;
   } catch (error) {

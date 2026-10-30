@@ -212,14 +212,16 @@ and `reset_task` also clear `requeue_eligible_after` and record a
 eligibility check, refusing a target that already has an active run, with the
 routing reasons in the error; `task-unblock` records `--actor-id` when given.
 Without `--actor-id` the coordinator records the caller (the master session as the
-master, an operator as `human`); with the master's session, `--actor-id` must name
-the master itself. An answer from `run-input-respond` is recorded with
+master, an operator as `human`); with the master's session, `--actor-id` is ignored and
+the master is recorded. As the operator, `--actor-id` must be `human` or a registered
+agent; any other id (such as `coordinator`) is refused. The same rule applies to
+`run-expire`, `task-mark-done` and project task authoring. An answer from `run-input-respond` is recorded with
 `actor_type: agent` for an agent actor such as `master` (it used to be `human`).
 
 | Command | Description |
 |---------|-------------|
 | `task-create` | Register a task from an existing markdown spec in `backlog/`. In a project state directory (one with `runtime.db`) it creates a database-only task instead, and no spec file is read. |
-| `task-mark-done <task-ref>` | Mark a task done in runtime state (coordinator, after merge). No spec file is changed. |
+| `task-mark-done <task-ref>` | Operator recovery: mark a task done in runtime state. The coordinator marks merged tasks done itself. No spec file is changed. |
 | `task-reset <task-ref>` | Reset a task to `todo`, cancelling any active claims. |
 | `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
 | `delegate` | Dispatch a task to an available worker agent. |
@@ -227,7 +229,7 @@ the master itself. An answer from `run-input-respond` is recorded with
 | `project migrate [legacy-path] [--execute [--name=N] \| --cleanup-report]` | Move an attached or sibling installation into a registered project. Without flags it is a dry run (inventory, conflicts, blockers; nothing is written). `--execute` backs up, imports tasks with their effective runtime status, copies history, imports plans and settings, verifies parity, and cuts over; a retry is safe. `--cleanup-report` lists leftover legacy files after the cutover; nothing is deleted. Exits 1 when `--execute` is `blocked` or `verification_failed`. See configuration.md → Migrating an existing installation. |
 | `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
-In a registered project, task create, edit and import, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
+In a registered project, `orc project task create|edit|import`, `orc task-create`, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
 
 **Flags:**
 

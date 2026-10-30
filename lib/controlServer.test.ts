@@ -5,7 +5,7 @@ import { request } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { appendSequencedEvent, closeAllDatabases, initEventsDb, withEventDb, withEventDbTransaction } from './eventLog.ts';
+import { appendSequencedEvent, closeAllDatabases, initEventsDb, readEventBatch, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
 import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
 import { ControlClient, type EventRow } from './controlClient.ts';
@@ -69,6 +69,19 @@ function rawGet(headers: Record<string, string>, path = '/v1/snapshot'): Promise
     });
     req.on('error', reject);
     req.end();
+  });
+}
+
+function rawPost(headers: Record<string, string>, path: string, body: unknown): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const text = JSON.stringify(body);
+    const req = request({ socketPath: server.endpoint.path, path, method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(text)) } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode ?? 0 }));
+    });
+    req.on('error', reject);
+    req.end(text);
   });
 }
 
@@ -158,12 +171,40 @@ describe('local daemon control API', () => {
     const created = await operatorClient.createTask({ feature: 'app', title: 'Operator task' });
     expect(created.task).toMatchObject({ ref: 'app/operator-task', spec_revision: 1 });
     expect(await operatorClient.reviseTask('app/operator-task', 1, { priority: 'high' })).toMatchObject({ changed: true });
-    const importPath = join(dir, 'import.md');
-    writeFileSync(importPath, '---\nref: app/imported-task\nfeature: app\ntitle: Imported task\n---\n\n# Imported task\n');
-    expect(await operatorClient.importTasks(importPath)).toMatchObject({ imported: [expect.objectContaining({ ref: 'app/imported-task' })] });
-    await expect(new ControlClient(dir, { credential: 'secret-a' }).importTasks(importPath)).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    // The client sends the specs' text; the path is only a label, never opened by the coordinator.
+    const files = [{ path: '/client-only/import.md', text: '---\nref: app/imported-task\nfeature: app\ntitle: Imported task\n---\n\n# Imported task\n' }];
+    expect(await operatorClient.importTasks(files)).toMatchObject({ imported: [expect.objectContaining({ ref: 'app/imported-task', path: '/client-only/import.md' })] });
+    await expect(new ControlClient(dir, { credential: 'secret-a' }).importTasks(files)).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    await expect(operatorClient.importTasks([{ path: 'notes.md', text: '# Not a spec\n' }])).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     const headers = { authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8')}`, [PROTOCOL_HEADER]: String(CONTROL_PROTOCOL_VERSION) };
     expect((await rawGet(headers, '/v1/tasks')).status).toBe(401);
+    for (const [path, body] of [['/v1/tasks/import', { files }], ['/v1/tasks', { feature: 'app', title: 'Anon' }], ['/v1/operator', { op: 'reset-task', task_ref: 'app/operator-task' }]] as const) {
+      expect((await rawPost(headers, path, body)).status).toBe(401);
+    }
+  });
+
+  it('maps task input mistakes and duplicates by type, ignores a master\'s named actor, and explains status edits', async () => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    initProjectTaskStore(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare('UPDATE sessions SET credential_hash = ? WHERE session_id = ?').run(credentialHash('secret-master'), 'session-master');
+    });
+    const master = new ControlClient(dir, { credential: 'secret-master' });
+    expect((await master.createTask({ feature: 'app', title: 'Named actor' }, 'human')).task).toMatchObject({ ref: 'app/named-actor' });
+    const added = readEventBatch(join(dir, 'events.db'), 0, 1000).map((row) => row.event as unknown as Record<string, unknown>)
+      .find((event) => event.event === 'task_added' && event.task_ref === 'app/named-actor');
+    expect(added).toMatchObject({ actor_id: 'master' });
+    await expect(master.createTask({ feature: 'app', ref: 'loop', title: 'Loop', depends_on: ['app/loop'] })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    await expect(master.reviseTask('app/named-actor', 0, { priority: 'high' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    await expect(master.reviseTask('app/named-actor', 1, { status: 'done' })).rejects.toMatchObject({ code: 'bad_request', status: 400, message: expect.stringContaining('task-mark-done') });
+  });
+
+  it('refuses messages to the operator and to a session that is not running with 401', async () => {
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'recoverable' WHERE session_id = 'session-a'").run());
+    await expect(new ControlClient(dir, { credential: 'session-a' }).messages()).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
+    await expect(new ControlClient(dir).messages()).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
   });
 
   it('returns 500 for an unexpected lifecycle failure', async () => {

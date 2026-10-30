@@ -18,6 +18,7 @@ import { ACTIVE_PROJECT, assertSupportedLayout, STATE_DIR } from '../lib/paths.t
 import { masterActorId, masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
+import { ControlError } from '../lib/controlProtocol.ts';
 import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 import { projectTaskStoreFor } from '../lib/projectTasks.ts';
 import * as handlers from './handlers.ts';
@@ -66,11 +67,13 @@ function asToolError(message: unknown) {
 }
 
 /**
- * A refusal the agent can act on: the coordinator's errors, task input and revision conflicts, lifecycle
+ * A refusal the agent can act on: the coordinator's refusals (not its `internal` failures), task input and revision conflicts, lifecycle
  * rules. A system or SQLite failure, or a programming error, is internal; its stack goes to stderr.
  */
 export function isExpectedToolError(err: unknown) {
   if (!(err instanceof Error)) return false;
+  // The coordinator's own unexpected failure is internal too, not a refusal the agent should act on.
+  if (err instanceof ControlError) return err.code !== 'internal';
   if ('errno' in err || err.name === 'SqliteError') return false;
   return !(err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError || err instanceof SyntaxError);
 }
@@ -93,6 +96,12 @@ let warnedWithoutMasterSession = false;
 const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
   cancel_task: 'cancel-task', reset_task: 'reset-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
 };
+
+/** With a session the server acts as that session (a named actor is ignored); without one, as the named actor or the master. */
+function taskAuthorActor(stateDir: string, actorId: unknown, credential: string | null): string | undefined {
+  if (credential) return undefined;
+  return typeof actorId === 'string' ? actorId : masterActorId(stateDir);
+}
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
   { project = ACTIVE_PROJECT, credential = clientCredential(process.env) }: { project?: unknown; credential?: string | null } = {}) {
@@ -121,14 +130,14 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
   }
   if (project && projectTaskStoreFor(stateDir) && name === 'create_task') {
     const { actor_id, ...input } = args;
-    const actorId = typeof actor_id === 'string' ? actor_id : masterActorId(stateDir);
+    const actorId = taskAuthorActor(stateDir, actor_id, credential);
     return submitProjectWrite<unknown>(stateDir, 'create_task', actorId,
       async (client) => ({ ...(await client.createTask(input, actorId)).task, next_task_seq: undefined }),
       (actor) => handlers.handleCreateTask(stateDir, { ...input, actor_id: actor }), { credential });
   }
   if (project && projectTaskStoreFor(stateDir) && name === 'update_task') {
     const { task_ref, expected_revision, actor_id, ...changes } = args;
-    const actorId = typeof actor_id === 'string' ? actor_id : masterActorId(stateDir);
+    const actorId = taskAuthorActor(stateDir, actor_id, credential);
     return submitProjectWrite<unknown>(stateDir, 'update_task', actorId,
       async (client) => {
         const result = await client.reviseTask(task_ref as string, expected_revision as number, changes, actorId);
