@@ -175,6 +175,20 @@ describe('master and operator mutations through the coordinator (task 232)', () 
       .toThrow('respond_input needs the master session');
   });
 
+  it('the MCP write tools refuse a server without the master session; the operator uses the CLI', () => {
+    const before = status('orch/todo');
+    for (const [tool, args] of [
+      ['cancel_task', { task_ref: 'orch/todo' }], ['reset_task', { task_ref: 'orch/todo' }], ['delegate_task', { task_ref: 'orch/todo' }],
+      ['create_task', { title: 'New' }], ['update_task', { task_ref: 'orch/todo', expected_revision: 1 }], ['request_scout', { objective: 'look' }],
+    ] as const) {
+      expect(() => invokeTool(dir, tool, args, { project: 'p', credential: null }))
+        .toThrow(expect.objectContaining({ name: 'ForbiddenError', message: expect.stringContaining('orc CLI') }));
+    }
+    expect(status('orch/todo')).toBe(before);
+    // Reads stay open.
+    expect(() => invokeTool(dir, 'list_tasks', {}, { project: 'p', credential: null })).not.toThrow();
+  });
+
   it('an MCP server inside a worker session presents it and is refused, not promoted to the operator', async () => {
     const before = status('orch/todo');
     await expect(invokeTool(dir, 'cancel_task', { task_ref: 'orch/todo' }, { project: 'p', credential: 'session-a' }))
