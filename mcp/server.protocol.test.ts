@@ -201,6 +201,14 @@ describe('mcp stdio protocol', () => {
   });
 
   it('returns tool-level isError for domain/runtime failures', async () => {
+    const result = await callTool('get_task', { task_ref: 'project/missing-task' }) as Record<string, unknown>;
+    expect(result.isError).toBe(true);
+    const content = result.content as Array<Record<string, unknown>>;
+    expect(content[0].text).toContain('not_found');
+    expect(() => JSON.parse(content[0].text as string)).not.toThrow();
+  });
+
+  it('refuses a write tool without the master session as a tool-level error', async () => {
     // Without the master session a write tool is refused; the operator uses the orc CLI.
     const result = await callTool('delegate_task', {
       task_ref: 'project/missing-task',

@@ -96,14 +96,23 @@ const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
   cancel_task: 'cancel-task', reset_task: 'reset-task', unblock_task: 'unblock-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
 };
 
-/** Tools that change orchestration state. Only the master session may call them; the operator uses the orc CLI. */
-const MASTER_WRITE_TOOLS: ReadonlySet<string> = new Set([...Object.keys(OPERATOR_TOOLS), 'create_task', 'update_task', 'request_scout', 'remove_scout']);
+/**
+ * Tools that change orchestration state, with what an operator without the master session can do instead.
+ * Only the master session may call them.
+ */
+const MASTER_WRITE_TOOLS: Readonly<Record<string, string>> = {
+  create_task: 'orc project task create', update_task: 'orc project task edit',
+  cancel_task: 'orc task-cancel', reset_task: 'orc task-reset', unblock_task: 'orc task-unblock', delegate_task: 'orc delegate',
+  memory_store: 'orc memory-record',
+};
+const MASTER_ONLY_TOOLS: ReadonlySet<string> = new Set(['respond_input', 'request_scout', 'remove_scout']);
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
   { project = ACTIVE_PROJECT, credential = clientCredential(process.env) }: { project?: unknown; credential?: string | null } = {}) {
-  if (project && MASTER_WRITE_TOOLS.has(name) && !credential) {
-    throw new ForbiddenError(`${name} needs the master session (ORC_MASTER_SECRET, set by orc start-session). As the operator, use the orc CLI instead: `
-      + 'orc project task create|edit, orc task-cancel|task-reset|task-unblock, orc delegate, orc run-input-respond');
+  if (project && !credential && (name in MASTER_WRITE_TOOLS || MASTER_ONLY_TOOLS.has(name))) {
+    const instead = MASTER_WRITE_TOOLS[name];
+    throw new ForbiddenError(`${name} needs the master session (ORC_MASTER_SECRET, set by orc start-session). `
+      + (instead ? `As the operator, use the orc CLI instead: ${instead}` : 'Only the master can do this; start it with orc start-session'));
   }
   const op = OPERATOR_TOOLS[name];
   if (op && project) {
@@ -111,9 +120,9 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     // and a worker's is refused like its shell.
     return submitOperatorMutation({ op, ...args }, { credential, project, stateDir });
   }
-  if (name === 'request_scout' && project && credential) {
+  if (name === 'request_scout' && project) {
     // Only the master's session may launch scouts; it acts as itself.
-    return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential) });
+    return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential!) });
   }
   if ((name === 'get_scout_report' || name === 'remove_scout') && project && credential) {
     // Scouts are the master's: a worker session cannot read or stop them.

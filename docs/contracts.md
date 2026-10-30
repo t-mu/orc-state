@@ -583,7 +583,7 @@ and a recoverable master can still act.
 The MCP server presents the session it runs in. Started by `orc start-session`
 it holds the master's secret and is recorded as the master. Run without one, its
 write tools (`create_task`, `update_task`, `cancel_task`, `reset_task`,
-`unblock_task`, `delegate_task`, `respond_input`, `request_scout`, `remove_scout`)
+`unblock_task`, `delegate_task`, `respond_input`, `request_scout`, `remove_scout`, `memory_store`)
 refuse and point at the orc CLI; its read tools still work. The operator acts
 through the CLI, recorded as `human` by default. Delivery of queued commands to a provider transport is also not
 wired yet; commands stay `queued` until a dispatcher with a transport runs. A sandboxed worker may retry a SQLite read-only open only while usable WAL/SHM files remain, such as after a coordinator crash or during version skew. If they are absent, the read fails until the coordinator starts.
