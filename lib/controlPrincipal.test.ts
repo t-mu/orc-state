@@ -15,6 +15,7 @@ beforeEach(() => {
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
     { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
     { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    { agent_id: 'scout-1', provider: 'claude', role: 'scout', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
   ] }));
   commitClaims(dir, { version: '1', claims: ['run-a', 'run-r', 'run-o'].map((runId) => ({
     run_id: runId, task_ref: `orch/task-${runId}`, agent_id: 'worker-a', state: 'in_progress' as const,
@@ -25,7 +26,9 @@ beforeEach(() => {
       VALUES ('session-master', NULL, 'master', 'codex', 'running', '2026-01-01', '2026-01-01'),
         ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01'),
         ('session-recoverable', 'run-r', 'worker-a', 'claude', 'recoverable', '2026-01-01', '2026-01-01'),
-        ('session-offline', 'run-o', 'worker-a', 'claude', 'offline', '2026-01-01', '2026-01-01')`).run();
+        ('session-offline', 'run-o', 'worker-a', 'claude', 'offline', '2026-01-01', '2026-01-01'),
+        ('session-scout', NULL, 'scout-1', 'claude', 'running', '2026-01-01', '2026-01-01'),
+        ('session-runless', NULL, 'worker-c', 'claude', 'running', '2026-01-01', '2026-01-01')`).run();
   });
 });
 
@@ -40,7 +43,9 @@ describe('resolveControlPrincipal', () => {
     ['worker session', 'session-a', false, { kind: 'worker', agentId: 'worker-a', runId: 'run-a', live: true, running: true }],
     ['recoverable worker session', 'session-recoverable', false, { kind: 'worker', live: true, running: false }],
     ['offline worker session', 'session-offline', false, { kind: 'worker', live: false, running: false }],
-    ['operator token', null, true, { kind: 'operator', agentId: null, live: true }],
+    ['scout session', 'session-scout', false, { kind: 'scout', agentId: 'scout-1', runId: null, running: true }],
+    ['run-less worker session', 'session-runless', false, { kind: 'worker', runId: null }],
+    ['operator token', null, true, { kind: 'operator', agentId: null, live: true, running: true }],
     ['a session wins over the operator token', 'session-a', true, { kind: 'worker', agentId: 'worker-a' }],
   ] as const)('resolves a %s', (_label, credential, operator, expected) => {
     expect(resolveControlPrincipal(dir, credential, operator)).toMatchObject(expected);
@@ -65,6 +70,7 @@ describe('principal requirements', () => {
     expect(requireProjectReader(resolve('session-master'))).toMatchObject({ kind: 'master' });
     expect(requireProjectReader(resolve(null, true))).toMatchObject({ kind: 'operator' });
     expect(() => requireProjectReader(resolve('session-a'))).toThrow(expect.objectContaining({ code: 'forbidden', status: 403 }));
+    expect(() => requireProjectReader(resolve('session-scout'))).toThrow(expect.objectContaining({ code: 'forbidden', status: 403 }));
   });
 
   it('records the master as itself and the operator as human or a registered agent', () => {

@@ -85,10 +85,10 @@ These commands are for observability. They are supported, but they are not alter
 
 | Command | Usage | Notes |
 |---------|-------|-------|
-| `task-create` | `orc task-create --feature=<ref> --title=<text> [options]` | Add a task to backlog. In a project state directory it creates a database-only task. In a legacy installation it is a recovery path — the normal path is to save a `backlog/<N>-<slug>.md` spec, whose definition the coordinator registers on its next tick. |
 | `task-mark-done` | `orc task-mark-done <feature/task>` | Mark a task done in runtime state (the coordinator does this after merge). No spec is edited; status is runtime-owned. |
 | `task-reset` | `orc task-reset <feature/task>` | Reset a task to `todo`, cancelling any active claim. Use when a blocked or stuck task needs another attempt. |
 | `task-unblock` | `orc task-unblock <feature/task>` | Transition a blocked task back to `todo`. |
+| `task-cancel` | `orc task-cancel <feature/task> [--reason=<text>]` | Cancel a task that is not yet terminal (the master's `cancel_task`). |
 | `backlog-sync` | `orc backlog-sync` | Legacy installations (refused in a project): register spec definitions (new `todo` specs, titles, dependencies) into runtime state. Never changes status; lists unregistered non-todo specs as skipped. |
 | `backlog-sync-check` | `orc backlog-sync-check` | Legacy installations (refused in a project): validate that todo specs are registered and titles/features match (status is not compared). Ad-hoc only — not part of the task-creation flow. |
 | `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |

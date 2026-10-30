@@ -228,12 +228,12 @@ describe('pty adapter start()', () => {
   it('uses provider binary mapping for codex and gemini', async () => {
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', { execution_mode: 'full-access' });
-    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'], expect.any(Object));
+    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers={}'], expect.any(Object));
 
     vi.resetModules();
     const gemini = await makeAdapter({ provider: 'gemini' });
     await gemini.adapter.start('g', { execution_mode: 'full-access' });
-    expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
+    expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), ['--allowed-mcp-server-names', 'orc-no-mcp-servers'], expect.any(Object));
   });
 
   it('passes codex bootstrap as a CLI prompt argument', async () => {
@@ -242,7 +242,7 @@ describe('pty adapter start()', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'BOOTSTRAP TEXT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers={}', 'BOOTSTRAP TEXT'],
       expect.any(Object),
     );
     expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
@@ -255,7 +255,7 @@ describe('pty adapter start()', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', 'SCOUT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers={}', 'SCOUT'],
       expect.any(Object),
     );
     expect(ptyProcess.write).toHaveBeenNthCalledWith(1, '\r');
@@ -387,15 +387,22 @@ describe('buildStartArgs execution mode', () => {
     expect(args).toContain('never');
   });
 
-  it('gemini: no flags in either mode', async () => {
+  it('starts every provider with no MCP servers, so a worker cannot reach the master\'s orchestrator tools', async () => {
+    const claude = await makeAdapter({ provider: 'claude' });
+    await claude.adapter.start('w', { execution_mode: 'full-access' });
+    expect(claude.spawnSpy.mock.calls[0][1]).toContain('--strict-mcp-config');
+    expect(claude.spawnSpy.mock.calls[0][1]).not.toContain('--mcp-config');
+  });
+
+  it('gemini: only the MCP isolation flag in either mode', async () => {
     const gemini1 = await makeAdapter({ provider: 'gemini' });
     await gemini1.adapter.start('g', { execution_mode: 'full-access' });
-    expect(gemini1.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
+    expect(gemini1.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), ['--allowed-mcp-server-names', 'orc-no-mcp-servers'], expect.any(Object));
 
     vi.resetModules();
     const gemini2 = await makeAdapter({ provider: 'gemini' });
     await gemini2.adapter.start('g', { execution_mode: 'sandbox' });
-    expect(gemini2.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.any(Object));
+    expect(gemini2.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), ['--allowed-mcp-server-names', 'orc-no-mcp-servers'], expect.any(Object));
   });
 
   it('undefined execution_mode defaults to full-access behavior (claude)', async () => {
@@ -583,11 +590,11 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     const roots = ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify([socket, ...gitRoots(target)])}`];
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', { execution_mode: 'sandbox', working_directory: worktree, env: { ORC_CONTROL_SOCKET: socket } });
-    expect(codex.spawnSpy.mock.calls[0][1]).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...roots, '--enable', 'multi_agent']);
+    expect(codex.spawnSpy.mock.calls[0][1]).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...roots, '--enable', 'multi_agent', '-c', 'mcp_servers={}']);
     await codex.adapter.start('d', { execution_mode: 'sandbox', sandbox_network: 'open', working_directory: worktree, env: { ORC_CONTROL_SOCKET: socket } });
     expect(codex.spawnSpy.mock.calls[1][1]).toEqual([
       '--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...roots,
-      '-c', 'sandbox_workspace_write.network_access=true', '--enable', 'multi_agent',
+      '-c', 'sandbox_workspace_write.network_access=true', '--enable', 'multi_agent', '-c', 'mcp_servers={}',
     ]);
     const { codexSandboxNetworkArgs } = await import('./pty.ts');
     expect(codexSandboxNetworkArgs({ readOnly: true, cwd: worktree, stateDir, gitRepoRoot: target, controlSocket: socket }, 'open')).toEqual([]);
@@ -606,21 +613,21 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', join(orch, '.orc-state'), ...gitRoots(orch)]);
   });
 
-  it('codex grants the same roots, and gemini stays flag-free, with two roots', async () => {
+  it('codex grants the same roots, and gemini gets no sandbox flags, with two roots', async () => {
     const { target, worktree, stateDir } = twoRootLayout();
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', { execution_mode: 'sandbox', working_directory: worktree });
     expect(codex.spawnSpy.mock.calls[0][1]).toEqual([
       '--sandbox', 'workspace-write', '--ask-for-approval', 'never',
       '-c', `sandbox_workspace_write.writable_roots=${JSON.stringify([stateDir, ...gitRoots(target)])}`,
-      '--enable', 'multi_agent',
+      '--enable', 'multi_agent', '-c', 'mcp_servers={}',
     ]);
     expect(codex.spawnSpy.mock.calls[0][2]).toMatchObject({ cwd: worktree });
 
     vi.resetModules();
     const gemini = await makeAdapter({ provider: 'gemini' });
     await gemini.adapter.start('g', { execution_mode: 'sandbox', working_directory: worktree });
-    expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), [], expect.objectContaining({ cwd: worktree }));
+    expect(gemini.spawnSpy).toHaveBeenCalledWith(binaryMatcher('gemini'), ['--allowed-mcp-server-names', 'orc-no-mcp-servers'], expect.objectContaining({ cwd: worktree }));
   });
 });
 

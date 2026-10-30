@@ -21,7 +21,8 @@ describe('cli/orc.ts', () => {
     expect(result.stdout).toContain('Supported inspection commands:');
     expect(result.stdout).toContain('Advanced / specialized commands:');
     expect(result.stdout).toContain('start-session');
-    expect(result.stdout).toContain('task-create');
+    expect(result.stdout).toContain('task-mark-done');
+    expect(result.stdout).not.toContain('task-create');
     expect(result.stdout).toContain('register-worker');
     expect(result.stdout).toContain('events-tail');
     expect(result.stdout).toContain('install-agents');

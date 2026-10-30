@@ -98,11 +98,11 @@ Every incoming request logs method, path, and duration.
 - [ ] No changes to files outside the stated scope
 ```
 
-Register it with the orchestrator:
+Import it into the project's task store (the file itself stays outside the
+orchestrator; edit and re-import, or use `orc project task edit`):
 
 ```bash
-orc task-create
-orc backlog-sync-check   # legacy installations: verify spec definitions are registered
+orc project task import path/to/task.md
 ```
 
 ## Dispatch work

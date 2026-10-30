@@ -915,11 +915,6 @@ describe('mcp read handlers', () => {
       title: 'Updated title',
       actor_id: 'master',
     })).toThrow(/markdown-authoritative/);
-    expect(() => handleUpdateTask(dir, {
-      task_ref: 'project/todo-one',
-      status: 'done',
-      actor_id: 'master',
-    })).toThrow(/cannot change status directly/);
   });
 
   it('handleUpdateTask throws when priority is invalid', () => {

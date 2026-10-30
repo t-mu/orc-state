@@ -56,7 +56,7 @@ orc project task edit app/add-login --expected-revision=1 [--body-file=...] [--t
 
 All commands accept `--project=<id>`. Every accepted edit creates a new immutable revision with a SHA-256 content hash over its title, body and parsed metadata (title from the first `# ` heading and acceptance criteria from an `Acceptance criteria` checklist unless stated explicitly). `--expected-revision` must name the current revision; a stale value fails instead of overwriting a concurrent edit, and an edit that changes nothing creates no revision. Status is never editable this way. A body that was rendered from fields (no explicit body) is re-rendered when those fields are edited; an explicit body is kept as written. When a run is claimed it is pinned to the task's latest revision, and the worker receives that exact body as its read-only run spec; later edits only affect future runs.
 
-The same API is available as the MCP `create_task`/`update_task`/`get_task` tools (`body_markdown`, `expected_revision`, `spec_revision`) and on the control daemon as `GET /v1/tasks`, `GET /v1/tasks/<ref>`, `GET /v1/tasks/<ref>/revisions`, `POST /v1/tasks` and `POST /v1/tasks/<ref>/revisions` (mutations require the master session credential; a stale `expected_revision` returns `409 conflict`). `orc task-create` creates a database-only task when `ORC_STATE_DIR` is a project state directory.
+The same API is available as the MCP `create_task`/`update_task`/`get_task` tools (`body_markdown`, `expected_revision`, `spec_revision`) and on the control daemon as `GET /v1/tasks`, `GET /v1/tasks/<ref>`, `GET /v1/tasks/<ref>/revisions`, `POST /v1/tasks` and `POST /v1/tasks/<ref>/revisions` (mutations require the master session credential; a stale `expected_revision` returns `409 conflict`).
 
 ### Task lifecycle in project SQLite
 
@@ -350,6 +350,8 @@ an operator resolves it.
 ## Execution Modes
 
 Execution modes control the trust level and sandbox behaviour of agent processes. Two presets are available.
+
+In every mode, workers and scouts start with no MCP servers (`--strict-mcp-config` for Claude, `-c mcp_servers={}` for Codex and its app-server runtime, `--allowed-mcp-server-names` with no matching name for Gemini). The repository's `.mcp.json`, `.codex/config.toml` or `.gemini/settings.json` would otherwise start the master's orchestrator MCP server inside them; workers reach the orchestrator only through the `orc` CLI. Only the master session gets the orchestrator MCP server.
 
 ### Presets
 

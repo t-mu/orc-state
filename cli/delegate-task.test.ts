@@ -132,6 +132,10 @@ describe('cli/delegate-task.ts', () => {
       '--task-type=implementation',
     ]);
     expect(second.status).toBe(0);
+    // The waiting task is reported on stderr with why each candidate was skipped.
+    expect(second.stdout).toContain('task delegated: docs/task-2');
+    expect(second.stderr).toContain('warning: no_eligible_worker');
+    expect(second.stderr).toContain('worker-01');
     const event = readEvents().at(-1);
     expect(event.event).toBe('task_delegated');
     expect(event.agent_id).toBeUndefined();

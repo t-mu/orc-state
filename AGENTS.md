@@ -235,10 +235,10 @@ orc start-session                                 # start coordinator + master s
 orc kill-all                                      # ⚠️ stop coordinator + clear ALL agents; use only to fully reset
 
 # Task management
-orc task-create                                   # project: create a task in SQLite (prefer orc project task create); legacy: register a matching markdown spec (recovery)
 orc task-mark-done <task-ref>                     # operator recovery: mark runtime state done (the coordinator does this itself after merge)
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
+orc task-cancel <task-ref>                        # cancel a task that is not yet terminal (operator; the master uses cancel_task)
 orc delegate                                      # assign/dispatch a task to an agent
 
 # Worker management — recovery/debug only
@@ -379,8 +379,8 @@ A task is eligible to claim when `status == "todo"` and all `depends_on` refs ar
 | `in_progress → done` | Coordinator, after merge (`orc task-mark-done <ref>` is the operator's recovery command) |
 | `done → released` | Coordinator (after merge) |
 | `claimed/in_progress → blocked` | Worker (`orc run-fail --policy=block`) |
-| `todo/claimed/in_progress/blocked → cancelled` | Master (`cancel_task`); a registered project only — a legacy installation records cancellation as `blocked` |
-| `blocked → todo` | Operator (`orc task-unblock <ref>`) |
+| `todo/claimed/in_progress/blocked → cancelled` | Master (`cancel_task`) or operator (`orc task-cancel <ref>`); a registered project only — a legacy installation records cancellation as `blocked` |
+| `blocked → todo` | Operator (`orc task-unblock <ref>`) or master (`unblock_task`) |
 | any non-`todo` status `→ todo` | Operator (`orc task-reset <ref>`), including a completed or cancelled task |
 
 ### Worker liveness
@@ -417,7 +417,7 @@ Do NOT use a scout for work you can answer inline in one or two tool calls.
 
 - Inspect code, logs, git history, runtime state, and optionally the web
 - Return a structured `SCOUT_REPORT` block with findings, likely cause, and recommended next action
-- The master reads output via `orc attach <scout-id>`
+- The master reads the report with the `get_scout_report` MCP tool
 
 ### What scouts must NOT do
 
@@ -432,23 +432,21 @@ Scout IDs are assigned sequentially (`scout-1`, `scout-2`, …). The assigned ID
 ```
 result = request_scout(objective, ...)   ← capture result.agent_id
                                → scout-N spawned and briefed
-                               → scout investigates (read-only PTY session)
+                               → scout investigates (read-only session)
                                → scout outputs SCOUT_REPORT block
 
-# poll loop — orc attach is one-shot (prints log tail, then exits):
-for i in $(seq 1 30); do
-  orc attach <result.agent_id> 2>/dev/null | grep -q "SCOUT_REPORT_END" && break
-  [ "$i" -eq 30 ] && { orc worker-remove <result.agent_id>; break; }  # timed out
-  sleep 10
-done
+# poll get_scout_report about every 10 s, for up to ~5 minutes:
+report = get_scout_report(result.agent_id)
+  status "reported" → report.report holds the SCOUT_REPORT block
+  status "ended"    → the session ended without a report
+  status "running"  → keep polling; after ~5 minutes treat the scout as failed
 
-read: extract SCOUT_REPORT…SCOUT_REPORT_END block from: orc attach <result.agent_id>
-cleanup: orc worker-remove <result.agent_id>
+cleanup: remove_scout(result.agent_id)   ← always, once done or timed out
 ```
 
-To check how long a scout has been running: `get_agent_workview(<agent_id>)` returns a `launched_at` timestamp.
+To check how long a scout has been running: `get_scout_report` (and `get_agent_workview`) return a `launched_at` timestamp.
 
-Scouts do not heartbeat and are not coordinated by the run lifecycle. They are ephemeral — clean up with `orc worker-remove <scout-id>` once the report is read.
+Scouts do not heartbeat and are not coordinated by the run lifecycle. They are ephemeral — clean up with `remove_scout(<scout-id>)` once the report is read.
 
 ### Scout lifecycle (scout perspective)
 

@@ -63,7 +63,7 @@ export const TOOLS = [
   },
   {
     name: 'get_task',
-    description: 'Get a single task by ref. Returns { error: "not_found" } if absent.',
+    description: 'Get a single task by ref. An unknown ref returns { error: "not_found", task_ref } as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -116,7 +116,7 @@ export const TOOLS = [
   },
   {
     name: 'get_agent_workview',
-    description: 'Return a compact actionable work summary for one agent.',
+    description: 'Return a compact actionable work summary for one agent. An unknown agent returns { error: "not_found", agent_id } as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['agent_id'],
@@ -242,9 +242,29 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
+          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
         },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_scout_report',
+    description: 'Read a scout\'s SCOUT_REPORT. status is reported (report holds the block), running (keep polling), or ended (the session ended without a report). Poll every ~10 s; give up after ~5 minutes and call remove_scout.',
+    inputSchema: {
+      type: 'object',
+      required: ['agent_id'],
+      properties: { agent_id: { type: 'string', description: 'The scout id request_scout returned, e.g. scout-1' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'remove_scout',
+    description: 'Stop a scout\'s session and remove its registration. Call it once the report is read or the scout timed out. Refuses any agent that is not a scout.',
+    inputSchema: {
+      type: 'object',
+      required: ['agent_id'],
+      properties: { agent_id: { type: 'string', description: 'The scout id, e.g. scout-1' } },
       additionalProperties: false,
     },
   },
@@ -302,7 +322,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
+          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
         },
       },
       additionalProperties: false,
@@ -329,7 +349,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to the current master agent id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
+          description: 'Defaults to the current master agent id. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
         },
       },
       additionalProperties: false,
@@ -337,7 +357,7 @@ export const TOOLS = [
   },
   {
     name: 'get_run',
-    description: 'Get full details for a specific run by run_id. Returns claim object merged with task_title and worktree_path. Returns {error:"not_found"} if absent.',
+    description: 'Get full details for a specific run by run_id. Returns claim object merged with task_title and worktree_path. An unknown run returns { error: "not_found", run_id } as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['run_id'],
@@ -409,7 +429,24 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Actor performing the reset. Defaults to human in a legacy installation and to the master agent in a registered project (where orc task-reset records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
+          description: 'Actor performing the reset. Defaults to human in a legacy installation and to the master agent in a registered project (where orc task-reset records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'unblock_task',
+    description: 'Move a blocked task back to todo so the coordinator can dispatch it again. Same logic as orc task-unblock. A task that is not blocked is a tool error.',
+    inputSchema: {
+      type: 'object',
+      required: ['task_ref'],
+      properties: {
+        task_ref: { type: 'string', description: 'Full task ref to unblock' },
+        reason: { type: 'string', description: 'Optional reason, recorded on the transition' },
+        actor_id: {
+          type: 'string',
+          description: 'Actor performing the unblock. Defaults to the master agent. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
         },
       },
       additionalProperties: false,

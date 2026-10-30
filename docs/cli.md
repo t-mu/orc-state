@@ -191,8 +191,8 @@ Commands for creating, completing, and managing tasks. In normal operation,
 the master agent handles task creation and the coordinator handles dispatch.
 These are available for manual intervention and debugging.
 
-In a registered project, `task-reset`, `task-unblock`, `delegate` and
-`run-input-respond` (like the master's `cancel_task`, `reset_task`,
+In a registered project, `task-cancel`, `task-reset`, `task-unblock`, `delegate` and
+`run-input-respond` (like the master's `cancel_task`, `reset_task`, `unblock_task`,
 `delegate_task` and `respond_input`) are applied by the running coordinator
 through its control API; the CLI sends them as the operator, the master's tools
 with the master's session, and a shell inside a worker session (one with
@@ -220,25 +220,25 @@ agent; any other id (such as `coordinator`) is refused. The same rule applies to
 
 | Command | Description |
 |---------|-------------|
-| `task-create` | Register a task from an existing markdown spec in `backlog/`. In a project state directory (one with `runtime.db`) it creates a database-only task instead, and no spec file is read. |
 | `task-mark-done <task-ref>` | Operator recovery: mark a task done in runtime state. The coordinator marks merged tasks done itself. No spec file is changed. |
 | `task-reset <task-ref>` | Reset a task to `todo`, cancelling any active claims. |
 | `task-unblock <task-ref>` | Transition a blocked task back to `todo`. |
+| `task-cancel <task-ref>` | Cancel a task that is not yet terminal, ending any active run (`cancelled` in a project, recorded as `blocked` in a legacy installation). Exits 1 for a task that is already done, released or cancelled. |
 | `delegate` | Dispatch a task to an available worker agent. |
 | `project task <list\|show\|revisions\|create\|edit\|import\|export>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`, `import <file-or-dir> [--strict]`, `export <dir-or-file.md> [--ref=a,b]`; `project plan <list\|show\|import\|export>` stores and renders plans. All accept `--project=<id>`; `create`, `edit` and `import` also accept `--actor-id=<id>`. See configuration.md → Project tasks. |
 | `project migrate [legacy-path] [--execute [--name=N] \| --cleanup-report]` | Move an attached or sibling installation into a registered project. Without flags it is a dry run (inventory, conflicts, blockers; nothing is written). `--execute` backs up, imports tasks with their effective runtime status, copies history, imports plans and settings, verifies parity, and cuts over; a retry is safe. `--cleanup-report` lists leftover legacy files after the cutover; nothing is deleted. Exits 1 when `--execute` is `blocked` or `verification_failed`. See configuration.md → Migrating an existing installation. |
 | `feature-create <ref>` | Create a new feature grouping in the backlog. |
 
-In a registered project, `orc project task create|edit|import`, `orc task-create`, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
+In a registered project, `orc project task create|edit|import`, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
 
 **Flags:**
 
 | Command | Flags |
 |---------|-------|
-| `task-create` | `--feature=<ref>` `--title=<text>` `[--ref=<slug>]` `[--task-type=implementation\|refactor]` `[--description=<text>]` `[--ac=<criterion>]` `[--depends-on=<task-ref>]` `[--owner=<agent_id>]` `[--required-capabilities=<cap>]` `[--required-provider=<provider>]` `[--body-file=<path>]` (project state directories only) |
 | `task-mark-done` | `<task-ref>` `[--actor-id=<id>]` |
 | `task-reset` | `<task-ref>` `[--actor-id=<id>]` |
 | `task-unblock` | `<task-ref>` `[--reason=<text>]` `[--actor-id=<id>]` |
+| `task-cancel` | `<task-ref>` `[--reason=<text>]` `[--actor-id=<id>]` |
 | `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` |
 | `feature-create` | `<ref>` `[--title=<text>]` |
 
@@ -253,8 +253,6 @@ specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
 |---------|-------------|
 | `backlog-sync` | Legacy installations: repair runtime state from markdown specs. Refused (exit 1) in a registered project. |
 | `backlog-sync-check` | Legacy installations: check that todo specs are registered and titles/features match runtime state (status is never compared). Unregistered non-todo specs are listed as skipped. Exits 1 on mismatch, and in a registered project. |
-| `backlog-ready` | List tasks eligible for dispatch (todo + deps satisfied). |
-| `backlog-blocked` | List blocked tasks with reasons. |
 | `backlog-orient` | Legacy installations: print backlog summary: next task seq, features, task counts. |
 
 **Flags:**
@@ -262,8 +260,6 @@ specs in `backlog/` and their runtime state in `.orc-state/backlog.json`.
 | Command | Flags |
 |---------|-------|
 | `backlog-sync-check` | `[--refs=<ref1,ref2,...>]` |
-| `backlog-ready` | `[--json]` |
-| `backlog-blocked` | `[--json]` |
 
 ---
 

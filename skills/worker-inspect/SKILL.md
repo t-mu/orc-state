@@ -31,6 +31,7 @@ Call **one** tool. Do not chain multiple tools unless the first result is insuff
 | Details on a specific run? / What's run Y doing? | `get_run(run_id: Y)` |
 | Show X's raw PTY log output | `orc attach <agent_id>` *(bash — no MCP equivalent)* |
 | What happened recently with X? | `get_recent_events(agent_id: X)` |
+| Has scout X reported? / What did scout X find? | `get_scout_report(agent_id: X)` — then `remove_scout(agent_id: X)` once read |
 
 **Always prefer MCP tools over bash `orc` commands** — they return structured JSON
 with no parsing needed. Fall back to `orc attach <agent_id>` only when raw PTY

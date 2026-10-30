@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { discoverActiveTaskSpecs } from './backlogSync.ts';
 import type { Task } from '../types/backlog.ts';
 
-const SPEC_OWNED_UPDATE_FIELDS = ['title', 'description', 'acceptance_criteria', 'depends_on', 'status'] as const;
+const SPEC_OWNED_UPDATE_FIELDS = ['title', 'description', 'acceptance_criteria', 'depends_on'] as const;
 const SPEC_OWNED_REGISTRATION_FIELDS = ['description', 'acceptance_criteria', 'depends_on'] as const;
 
 function activeBacklogDocsDir(): string {
@@ -51,14 +51,10 @@ export function assertTaskRegistrationFieldsAllowed(
 
 export function assertTaskUpdateAllowed(
   task: Task,
-  updates: Partial<Pick<Task, 'title' | 'description' | 'acceptance_criteria' | 'depends_on' | 'status'>>,
+  updates: Partial<Pick<Task, 'title' | 'description' | 'acceptance_criteria' | 'depends_on'>>,
 ) {
   const blocked = SPEC_OWNED_UPDATE_FIELDS.filter((field) => updates[field] !== undefined);
   if (blocked.length === 0) return;
-
-  if (blocked.length === 1 && blocked[0] === 'status') {
-    throw new Error('update_task cannot change status directly. Use lifecycle commands such as task-mark-done, task-reset, task-unblock, delegate_task, or coordinator-owned transitions.');
-  }
 
   const active = task.status === 'claimed' || task.status === 'in_progress';
   const scope = active ? 'while the task is active' : 'through runtime update_task';

@@ -285,6 +285,20 @@ function sandboxRootsOptions(config: Record<string, unknown>, cwd: string): Sand
   };
 }
 
+/**
+ * Workers and scouts start with no MCP servers: the repository's `.mcp.json`,
+ * `.codex/config.toml` or `.gemini/settings.json` would otherwise start the
+ * master's orchestrator server inside them, with tools that do not check who
+ * calls them. They reach the orchestrator through the `orc` CLI only.
+ */
+export function isolatedMcpArgs(provider: string): string[] {
+  if (provider === 'claude') return ['--strict-mcp-config'];
+  if (provider === 'codex') return ['-c', 'mcp_servers={}'];
+  // Gemini starts only the named servers; no server has this name.
+  if (provider === 'gemini') return ['--allowed-mcp-server-names', 'orc-no-mcp-servers'];
+  return [];
+}
+
 function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: string, claudeSettingsPath?: string) {
   // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
   // 'full-access' for backward compatibility when field is absent.
@@ -306,7 +320,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
     // Enable multi-agent support so Codex workers can spawn sub-agent reviewers.
-    args.push('--enable', 'multi_agent');
+    args.push('--enable', 'multi_agent', ...isolatedMcpArgs('codex'));
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
@@ -322,13 +336,11 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
       args.push('--dangerously-skip-permissions');
     }
     if (claudeSettingsPath) args.push('--settings', claudeSettingsPath);
+    args.push(...isolatedMcpArgs('claude'));
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     return args;
   }
-  if (typeof config.model === 'string' && config.model) {
-    return ['--model', config.model];
-  }
-  return [];
+  return [...isolatedMcpArgs(provider), ...(typeof config.model === 'string' && config.model ? ['--model', config.model] : [])];
 }
 
 export interface ProviderLaunch {

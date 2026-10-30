@@ -21,6 +21,15 @@ export interface ActiveProject {
 
 const LEGACY_CONFIG = 'orc-state.config.json';
 
+/**
+ * The one test for "is this a registered project's state directory": it has
+ * the project task database or the project descriptor. Everything else is a
+ * legacy installation.
+ */
+export function isProjectStateDir(stateDir: string): boolean {
+  return existsSync(join(stateDir, 'runtime.db')) || readProjectDescriptor(stateDir) !== null;
+}
+
 export function readProjectDescriptor(stateDir: string): { id: string; name: string; target_repo_root: string } | null {
   try {
     const parsed = JSON.parse(readFileSync(join(stateDir, DESCRIPTOR), 'utf8')) as Record<string, unknown>;

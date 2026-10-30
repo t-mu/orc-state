@@ -186,13 +186,7 @@ Run the sync check to see which tasks are mismatched:
 orc backlog-sync-check
 ```
 
-Re-register the affected task to bring runtime state in sync with the spec:
-
-```bash
-orc task-create   # if the runtime record is missing entirely
-```
-
-Or edit the spec frontmatter to match the runtime state, then re-run the sync check.
+Then edit the spec frontmatter to match the runtime state, and re-run the sync check.
 
 ---
 

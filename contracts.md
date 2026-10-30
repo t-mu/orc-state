@@ -137,7 +137,6 @@ Subcommands:
 - `orc watch`
 - `orc init`
 - `orc progress`
-- `orc task-create`
 - `orc delegate`
 - `orc attach`
 - `orc start-session`

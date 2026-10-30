@@ -30,7 +30,7 @@ import { stripAnsi } from '../lib/ansi.ts';
 import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import { controlSocketOf, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
+import { controlSocketOf, isolatedMcpArgs, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
 import type { SessionInspection } from './interface.ts';
 import {
   CapabilityRefusal,
@@ -326,7 +326,7 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
 
     const env = withoutApiBillingEnv({ ...stripNestedProviderEnv(process.env), ...(config.env as Record<string, string> | undefined ?? {}) });
     const binary = resolveBinary(process.env.ORC_CODEX_BINARY ?? 'codex', env);
-    const child = spawn(binary, ['app-server', '--listen', 'stdio://', '--enable', 'multi_agent'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(binary, ['app-server', '--listen', 'stdio://', '--enable', 'multi_agent', ...isolatedMcpArgs('codex')], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     const spawnError = new Promise<never>((_, reject) => child.once('error', reject));
     spawnError.catch(() => { /* surfaced through the handshake below */ });
     const session: CodexSession = {

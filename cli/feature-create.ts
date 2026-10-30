@@ -13,7 +13,7 @@ import { atomicWriteJson } from '../lib/atomicWrite.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readBacklog } from '../lib/stateReader.ts';
 import { cliError } from './shared.ts';
-import { isProjectStateDir } from '../lib/projectTasks.ts';
+import { isProjectStateDir } from '../lib/projectContext.ts';
 
 const featureRef = process.argv[2];
 if (!featureRef || featureRef.startsWith('--')) {

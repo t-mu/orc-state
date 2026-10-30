@@ -22,16 +22,13 @@ import type { Claim } from '../types/claims.ts';
  */
 const stores = new Map<string, ProjectTaskStore>();
 
-export function isProjectStateDir(stateDir: string): boolean {
-  return existsSync(join(stateDir, 'runtime.db'));
-}
-
 /** The cached store for a project state directory, or null for a legacy one. */
 export function projectTaskStoreFor(stateDir: string): ProjectTaskStore | null {
   const cached = stores.get(stateDir);
   if (cached?.withDatabase((db) => db.open)) return cached;
   stores.delete(stateDir);
-  if (!isProjectStateDir(stateDir)) return null;
+  // The store opens only where its database exists (a project's is created by `orc project add`).
+  if (!existsSync(join(stateDir, 'runtime.db'))) return null;
   const store = new ProjectTaskStore(stateDir);
   stores.set(stateDir, store);
   return store;

@@ -302,7 +302,7 @@ export function authorizeLifecycle(stateDir: string, credential: string, request
   // worker's own run-finish may still follow and repeats a finished run as a
   // no-op; a waiting input request learns from its poll that the run ended.
   const live = session?.live === true;
-  const ownRun = session !== null && 'run_id' in request && session.runId === request.run_id;
+  const ownRun = session !== null && 'run_id' in request && session.runId !== null && session.runId === request.run_id;
   const finishing = request.op === 'run-finish' || (request.op === 'progress' && request.event === 'run_finished');
   const endedRunAllowed = ownRun && (request.op === 'input-poll'
     || (finishing && loadClaim(stateDir, request.run_id)?.state === 'done'));
@@ -314,7 +314,7 @@ export function authorizeLifecycle(stateDir: string, credential: string, request
   if (session.agentId !== request.agent_id) {
     throw new ControlError('forbidden', `Session belongs to ${session.agentId}, not ${request.agent_id}`, 403);
   }
-  if ('run_id' in request && session.runId !== request.run_id) {
+  if ('run_id' in request && (session.runId === null || session.runId !== request.run_id)) {
     throw new ControlError('forbidden', `Session is not scoped to run ${request.run_id}`, 403);
   }
   if (request.op === 'report-for-duty' && request.session_token !== sessionId) {

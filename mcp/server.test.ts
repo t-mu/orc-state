@@ -52,6 +52,15 @@ describe('orchestrator mcp server foundation', () => {
     expect(names).toContain('respond_input');
   });
 
+  it('unblocks a blocked task through unblock_task, recorded as the master, and refuses one that is not blocked', () => {
+    writeFileSync(joinPath('backlog.json'), JSON.stringify({ version: '1', features: [{ ref: 'project', title: 'Project', tasks: [
+      { ref: 'project/stuck', title: 'Stuck', status: 'blocked', blocked_reason: 'waiting' },
+      { ref: 'project/fine', title: 'Fine', status: 'todo' },
+    ] }] }));
+    expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/stuck', reason: 'resolved' }, { project: null })).toMatchObject({ unblocked: true });
+    expect(() => invokeTool(stateDir, 'unblock_task', { task_ref: 'project/fine' }, { project: null })).toThrow(/not blocked/);
+  });
+
   it('server module does not write debug output to stdout', () => {
     const serverSource = readFileSync(resolve(import.meta.dirname, 'server.ts'), 'utf8');
     expect(serverSource).not.toContain('console.log(');
@@ -72,6 +81,10 @@ describe('orchestrator mcp server foundation', () => {
     expect(isExpectedToolError(Object.assign(new Error('ENOENT: no such file'), { errno: -2, code: 'ENOENT' }))).toBe(false);
     expect(isExpectedToolError(new TypeError('x is undefined'))).toBe(false);
     expect(isExpectedToolError(new ControlError('internal', 'disk I/O error', 500))).toBe(false);
+  });
+
+  it('rejects a status edit at the update_task schema, before any handler runs', () => {
+    expect(validateToolArguments('update_task', { task_ref: 'orch/t', status: 'done' })).toMatchObject({ ok: false });
     expect(isExpectedToolError('boom')).toBe(false);
   });
 
