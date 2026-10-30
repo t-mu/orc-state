@@ -144,7 +144,8 @@ re-dispatched (this releases the claim):
 orc task-reset <task-ref>
 ```
 
-Then remove stale workers (offline, or with a dead session; a worker that still
+A running coordinator removes the stale worker record itself. With no
+coordinator running, remove offline and dead workers (a worker that still
 holds an active claim is kept):
 
 ```bash

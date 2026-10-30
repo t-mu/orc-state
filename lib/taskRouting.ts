@@ -8,18 +8,12 @@ interface AgentLike {
   agent_id?: string | undefined;
   role?: string | undefined;
   provider?: string | undefined;
-  capabilities?: string[] | undefined;
 }
 
 interface TaskLike {
   task_type?: string | undefined;
   owner?: string | undefined;
   required_provider?: string | undefined;
-  required_capabilities?: string[] | undefined;
-}
-
-function toCapSet(agent: AgentLike | null | undefined): Set<string> {
-  return new Set(agent?.capabilities ?? []);
 }
 
 const KNOWN_TASK_TYPES = new Set(TASK_TYPES);
@@ -41,21 +35,11 @@ function describeReason(reason: string): string {
   if (reason.startsWith('provider_mismatch:')) {
     return `task requires provider '${reason.split(':', 2)[1]}'`;
   }
-  if (reason.startsWith('missing_capability:')) {
-    return `missing required capability '${reason.split(':', 2)[1]}'`;
-  }
   return reason;
 }
 
 export function taskTypeOf(task: TaskLike | null | undefined): string {
   return task?.task_type ?? 'implementation';
-}
-
-export function hasRequiredCapabilities(task: TaskLike | null | undefined, agent: AgentLike | null | undefined): boolean {
-  const required = task?.required_capabilities ?? [];
-  if (!Array.isArray(required) || required.length === 0) return true;
-  const capSet = toCapSet(agent);
-  return required.every((cap) => capSet.has(cap));
 }
 
 export interface EligibilityResult {
@@ -83,14 +67,6 @@ export function evaluateTaskEligibility(task: TaskLike | null | undefined, agent
 
   if (task?.required_provider && task.required_provider !== agent?.provider) {
     addReason(reasons, `provider_mismatch:${task.required_provider}`);
-  }
-
-  const required = task?.required_capabilities ?? [];
-  if (Array.isArray(required)) {
-    const capSet = toCapSet(agent);
-    for (const capability of required) {
-      if (!capSet.has(capability)) addReason(reasons, `missing_capability:${capability}`);
-    }
   }
 
   return {

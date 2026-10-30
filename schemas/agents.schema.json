@@ -44,20 +44,10 @@
           "description": "Model identifier within the provider (e.g. 'claude-sonnet-4-6', 'o4-mini'). Optional for human slots."
         },
         "status": { "$ref": "#/definitions/AgentStatus" },
-        "dispatch_mode": {
-          "type": ["string", "null"],
-          "enum": ["autonomous", "supervised", "human-commanded", null],
-          "description": "How tasks are assigned to this agent. Overrides global dispatch_mode if set."
-        },
         "role": {
           "type": "string",
           "enum": ["worker", "reviewer", "master", "scout"],
           "description": "Primary orchestration role. Workers and reviewers execute tasks; master creates and delegates tasks; scouts investigate in read-only mode."
-        },
-        "capabilities": {
-          "type": "array",
-          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-          "description": "Optional capability tags used for routing and delegation."
         },
         "session_handle": {
           "type": ["string", "null"],

@@ -36,7 +36,6 @@ const COMMANDS: Record<string, string> = {
   'status':             'status.ts',
   'watch':              'watch.ts',
   'attach':             'attach.ts',
-  'control-worker':     'control-worker.ts',
   'task-mark-done':     'task-mark-done.ts',
   'delegate':           'delegate-task.ts',
   'progress':           'progress.ts',
@@ -108,7 +107,6 @@ const BLESSED = [
 
 const RECOVERY_DEBUG = [
   'attach',
-  'control-worker',
   'worker-remove',
   'worker-gc',
   'kill-all',

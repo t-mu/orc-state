@@ -52,6 +52,15 @@ describe('Markdown task import', () => {
     expect(() => parseFrontmatter('---\na: 1\na: 2\n---\n', 'f')).toThrow('duplicate');
   });
 
+  it('ignores the retired required_capabilities key that older exports carry', () => {
+    const file = join(outside, 'legacy-caps.md');
+    writeFileSync(file, '---\nref: app/caps\nfeature: app\nrequired_capabilities:\n  - sql\n---\n# Caps\n');
+    expect(importTaskMarkdown(dir, file, { strict: true }).imported[0]).toMatchObject({ action: 'created', ignored_fields: ['required_capabilities'] });
+    expect(initProjectTaskStore(dir).getTask('app/caps')!.metadata).not.toHaveProperty('required_capabilities');
+    writeFileSync(file, '---\nref: app/caps\nfeature: app\nrequired_capabilities: []\n---\n# Caps\n');
+    expect(importTaskMarkdown(dir, file).imported[0]).toMatchObject({ action: 'unchanged', revision: 1 });
+  });
+
   it('imports a file from outside any repository without carrying lifecycle status', () => {
     const file = join(outside, 'login.md');
     writeFileSync(file, SPEC);
@@ -140,7 +149,7 @@ describe('Markdown task export', () => {
     const text = readFileSync(written.path, 'utf8');
     expect(text).toContain('ref: app/database-task\nfeature: app\ntitle: Database task\n');
     expect(text).toContain('depends_on:\n  - app/other\n');
-    expect(text).toContain('required_provider: codex\ndepends_on:\n  - app/other\nrequired_capabilities: []\nspec_revision: 1\n');
+    expect(text).toContain('required_provider: codex\ndepends_on:\n  - app/other\nspec_revision: 1\n');
     expect(text).not.toMatch(/^status:/m);
     expect(text).toContain('# Database task\n\nFrom SQLite only.\n');
     expect(importTaskMarkdown(dir, join(outside, 'export')).imported[0]).toMatchObject({ action: 'unchanged', revision: 1 });

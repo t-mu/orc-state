@@ -242,9 +242,9 @@ orc delegate                                      # assign/dispatch a task to an
 
 # Worker management — recovery/debug only
 orc attach <id>                                   # print tail of worker PTY output log (read-only)
-orc control-worker <id>                           # inspect a running worker session
+orc terminal <provider|shell> <run_id> [--write]   # observe a run's tmux provider terminal or open a worktree shell
 orc worker-remove <id>                            # stop a worker's session and remove it (refused while it holds a claim)
-orc worker-gc                                     # remove offline, dead and unreachable workers that hold no claim (not master/scouts)
+orc worker-gc                                     # remove offline and dead workers that hold no claim when no coordinator runs (not master/scouts)
 ```
 
 ### Run Lifecycle (Worker Commands — blessed path)

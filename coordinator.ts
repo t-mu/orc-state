@@ -14,9 +14,8 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
-import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ExecutionMode, ProviderName, SandboxNetwork, WorkerRuntime } from './lib/providers.ts';
+import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ProviderName } from './lib/providers.ts';
 import { resolveWorkerProvider } from './lib/providers.ts';
-import { isManagedSlot } from './lib/workerSlots.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
 // Distributive Omit — preserves discriminated union across all members
@@ -24,7 +23,7 @@ type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : ne
 // Allow processTerminalRunEvents to accept events without seq/actor fields (e.g. in tests)
 type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor_id' | 'event_id'>
   & { seq?: number; actor_type?: ActorType; actor_id?: string; event_id?: string };
-import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
+import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter, resolveSessionTransport } from './adapters/index.ts';
@@ -45,14 +44,14 @@ import { resolveRepoRoot } from './lib/repoRoot.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError } from './lib/promptInjectionScan.ts';
 import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
-import { clearWorkerSessionRuntime, launchWorkerSession, markWorkerOffline, spawnEphemeralWorker } from './lib/workerRuntime.ts';
+import { spawnEphemeralWorker } from './lib/workerRuntime.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './lib/controlServer.ts';
 import {
-  IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, UNWRITABLE_REASON, currentSessionForAgent, currentSessionOwnerId,
+  IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, currentSessionForAgent, currentSessionOwnerId,
   identityMismatch, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession,
 } from './lib/sessionSupervisor.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
@@ -72,7 +71,7 @@ import { isCoordinatorLockHeld, type CoordinatorLock } from './lib/coordinatorLi
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
-// multiple coordinator functions (ensureSessionReady, nudge, dispatch).
+// multiple coordinator functions (session probes, nudge, dispatch).
 
 const adapterInstances = new Map<string, ReturnType<typeof createAdapter>>();
 function getAdapter(provider: string): ReturnType<typeof createAdapter> {
@@ -225,8 +224,6 @@ const RUN_START_NUDGE_INTERVAL_MS = Math.floor(RUN_START_TIMEOUT_MS * 0.2);
 const RUN_INACTIVE_NUDGE_MS = intFlag('run-inactive-nudge-ms', COORD_CONFIG.run_inactive_nudge_ms);
 const RUN_INACTIVE_NUDGE_INTERVAL_MS = intFlag('run-inactive-nudge-interval-ms', COORD_CONFIG.run_inactive_nudge_interval_ms);
 const CONCURRENCY_LIMIT = COORD_CONFIG.concurrency_limit;
-const MANAGED_SESSION_START_MAX_ATTEMPTS = COORD_CONFIG.session_start_max_attempts;
-const MANAGED_SESSION_START_RETRY_DELAY_MS = COORD_CONFIG.session_start_retry_delay_ms;
 const MEMORY_PRUNE_INTERVAL_MS = intFlag('memory-prune-interval-ms', COORD_CONFIG.memory_prune_interval_ms);
 const WORKER_STALE_SOFT_MS = intFlag('worker-stale-soft-ms', COORD_CONFIG.worker_stale_soft_ms);
 const WORKER_STALE_NUDGE_MS = intFlag('worker-stale-nudge-ms', COORD_CONFIG.worker_stale_nudge_ms);
@@ -359,73 +356,7 @@ async function executeNudgeBatch(nudgeThunks: Array<() => Promise<unknown>>): Pr
   return nudgedAgentIds;
 }
 
-async function ensureSessionReady(agent: Agent, launchConfig: Record<string, unknown> | null = null) {
-  const adapter = getAdapter(agent.provider);
-
-  if (agent.session_handle) {
-    const alive = await adapter.heartbeatProbe(agent.session_handle);
-    if (!alive) {
-      if (agent.session_token) {
-        setSessionState(STATE_DIR, agent.session_token, 'offline', 'session process exited', { outcome: 'exited' });
-      }
-      updateAgentRuntime(STATE_DIR, agent.agent_id, {
-        status: 'idle',   // session dead; coordinator will recreate on next tick
-        session_handle: null,
-        provider_ref: null,
-        last_status_change_at: new Date().toISOString(),
-      });
-      agent.status = 'idle';
-      agent.session_handle = null;
-      agent.provider_ref = null;
-      log(`worker ${agent.agent_id} session unreachable; cleared stale handle for recreation`);
-      return { ok: false, reason: 'session unreachable' };
-    }
-    // A live session this coordinator cannot confirm or write to (for example
-    // a PTY that outlived its coordinator) is never killed or redispatched
-    // here. It stays visible until it exits or an operator stops it; an
-    // existing recoverable/unknown decision is kept as recorded.
-    const session = currentSessionForAgent(STATE_DIR, agent.agent_id);
-    if (session && (session.state === 'recoverable' || session.state === 'unknown')) {
-      return { ok: false, reason: `session ${session.state}: ${session.state_reason ?? 'not writable'}` };
-    }
-    if (session && identityMismatch(session, await adapterInspectSession(adapter, agent.session_handle))) {
-      setSessionState(STATE_DIR, session.session_id, 'unknown', IDENTITY_MISMATCH_REASON, { outcome: 'unknown' });
-      log(`worker ${agent.agent_id} session no longer matches its recorded process; marked unknown`);
-      return { ok: false, reason: `session unknown: ${IDENTITY_MISMATCH_REASON}` };
-    }
-    if (!adapterOwnsSession(adapter, agent.session_handle)) {
-      if (agent.session_token && setSessionState(STATE_DIR, agent.session_token, 'recoverable', UNWRITABLE_REASON, { outcome: 'recoverable' })) {
-        log(`worker ${agent.agent_id} session is alive but not owned by this coordinator; marked recoverable`);
-      }
-      return { ok: false, reason: 'session recoverable: not writable by this coordinator' };
-    }
-    return { ok: true };
-  }
-
-  if (!launchConfig) {
-    return { ok: false, reason: 'no launch config provided' };
-  }
-
-  const result = await launchWorkerSession(STATE_DIR, agent, {
-    adapter,
-    workingDirectory: launchConfig.working_directory as string | null | undefined,
-    repoRoot: REPO_ROOT,
-    runId: (launchConfig.run_id ?? null) as string | null,
-    taskRef: (launchConfig.task_ref ?? null) as string | null,
-    taskModel: (launchConfig.task_model ?? null) as string | null,
-    retryable: launchConfig.retryable === true,
-    ...(launchConfig.execution_mode != null ? { executionMode: launchConfig.execution_mode as ExecutionMode } : {}),
-    ...(launchConfig.sandbox_network != null ? { sandboxNetwork: launchConfig.sandbox_network as SandboxNetwork } : {}),
-    ...(launchConfig.runtime != null ? { runtime: launchConfig.runtime as WorkerRuntime } : {}),
-    emit,
-  });
-  if (!result.ok) {
-    console.error(`[coordinator] Failed to start session for '${agent.agent_id}': ${result.reason}`);
-  }
-  return { ok: result.ok, reason: result.reason };
-}
-
-async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, workerPoolConfig: WorkerPoolConfig) {
+async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string) {
   const adapter = getAdapter(agent.provider);
   const envelope = buildTaskEnvelope(taskRef, runId, agent.agent_id);
   try {
@@ -452,10 +383,7 @@ async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string, wo
       failureCode: 'ERR_DISPATCH_FAILURE',
       policy: 'requeue',
     });
-    const alive = await adapter.heartbeatProbe(agent.session_handle!);
-    await cleanupRunCapacity(agent.agent_id, workerPoolConfig, {
-      offlineReason: alive ? null : 'dispatch_failed_session_unreachable',
-    });
+    await cleanupRunCapacity(agent.agent_id);
     throw err;
   }
 }
@@ -479,11 +407,7 @@ function buildReportForDutyNudge(agent: Agent) {
   ].join('\n');
 }
 
-async function processClaimedSessionReadiness(
-  agents: Agent[],
-  claims: Claim[],
-  workerPoolConfig: WorkerPoolConfig,
-) {
+async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) {
   const nowMs = Date.now();
   const byAgent = new Map(agents.map((agent) => [agent.agent_id, agent]));
   const nudgeWork = [];
@@ -497,55 +421,26 @@ async function processClaimedSessionReadiness(
       sessionReadyNudgeAtMs.delete(claim.run_id);
       continue;
     }
-    if (
-      claim.session_start_retry_count
-      && claim.session_start_retry_next_at
-      && nowMs < new Date(claim.session_start_retry_next_at).getTime()
-    ) {
-      continue;
-    }
-
     const agent = byAgent.get(claim.agent_id);
     if (!agent || agent.status === 'offline') continue;
 
     if (!agent.session_handle) {
-      const claimedTask = findTask(readBacklog(STATE_DIR), claim.task_ref);
-      const ready = await ensureSessionReady(agent, {
-        working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? null,
-        run_id: claim.run_id,
-        task_ref: claim.task_ref,
-        task_model: claimedTask?.model ?? null,
-        // Legacy: only orc-N format agents get retried; ephemeral workers with
-        // two-word names return false here and take the fail-and-requeue path,
-        // which is correct — their sessions are managed externally.
-        retryable: isManagedSlot(agent.agent_id, workerPoolConfig.max_workers),
-        execution_mode: workerPoolConfig.execution_mode,
-        sandbox_network: workerPoolConfig.sandbox_network,
-        runtime: workerPoolConfig.runtime,
+      // A task-scoped worker's session is launched once at dispatch and never
+      // relaunched: a claim whose session is gone is requeued for a fresh worker.
+      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+        success: false,
+        failureReason: 'session_start_failed: worker session is gone before reported_for_duty',
+        failureCode: 'ERR_SESSION_START_FAILED',
+        policy: 'requeue',
       });
-      if (!ready.ok || !agent.session_handle) {
-        if (isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
-          setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
-            retryCount: Math.max(claim.session_start_retry_count ?? 0, 1),
-            nextRetryAt: new Date(nowMs + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
-            lastError: ready.reason ?? 'worker session could not be relaunched while awaiting reported_for_duty',
-          });
-        } else if (!isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
-          const failReason = ready.reason ?? 'worker session could not be relaunched while awaiting reported_for_duty';
-          finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
-            success: false,
-            failureReason: `session_start_failed: ${failReason}`,
-            failureCode: 'ERR_SESSION_START_FAILED',
-            policy: 'requeue',
-          });
-        }
-        continue;
-      }
+      await cleanupRunCapacity(claim.agent_id);
+      sessionReadyNudgeAtMs.delete(claim.run_id);
+      continue;
     }
 
     if (isAgentSessionReady(agent)) {
       try {
-        await sendTaskEnvelope(agent, claim.task_ref, claim.run_id, workerPoolConfig);
+        await sendTaskEnvelope(agent, claim.task_ref, claim.run_id);
       } catch (err) {
         log(`ERROR dispatching pending envelope for ${claim.task_ref} to ${claim.agent_id}: ${(err as Error).message}`);
       }
@@ -565,7 +460,7 @@ async function processClaimedSessionReadiness(
         failureCode: 'ERR_SESSION_READY_TIMEOUT',
         policy: 'requeue',
       });
-      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      await cleanupRunCapacity(claim.agent_id);
       sessionReadyNudgeAtMs.delete(claim.run_id);
       log(`run ${claim.run_id} timed out waiting for reported_for_duty; requeued ${claim.task_ref}`);
       continue;
@@ -586,79 +481,6 @@ async function processClaimedSessionReadiness(
   }
 
   await executeNudgeBatch(nudgeWork);
-}
-
-async function processManagedSessionStartRetries(
-  agents: Agent[],
-  claims: Claim[],
-  workerPoolConfig: WorkerPoolConfig,
-) {
-  const nowMs = Date.now();
-  const agentsById = new Map(agents.map((agent) => [agent.agent_id, agent]));
-  for (const claim of claims) {
-    const retryCount = claim.session_start_retry_count ?? 0;
-    const nextRetryAt = claim.session_start_retry_next_at ?? null;
-    if (claim.state !== 'claimed' || retryCount <= 0 || nextRetryAt == null) continue;
-
-    const agent = agentsById.get(claim.agent_id);
-    if (!agent || !isManagedSlot(claim.agent_id, workerPoolConfig.max_workers)) {
-      continue;
-    }
-    if (nowMs < new Date(nextRetryAt).getTime()) continue;
-
-    const retryTask = findTask(readBacklog(STATE_DIR), claim.task_ref);
-    const ready = await ensureSessionReady(agent, {
-      working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? null,
-      run_id: claim.run_id,
-      task_ref: claim.task_ref,
-      task_model: retryTask?.model ?? null,
-      retryable: true,
-      execution_mode: workerPoolConfig.execution_mode,
-      sandbox_network: workerPoolConfig.sandbox_network,
-      runtime: workerPoolConfig.runtime,
-    });
-    if (ready.ok && agent.session_handle && agent.status !== 'offline') {
-      setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
-        retryCount: 0,
-      });
-      continue;
-    }
-
-    const nextFailedAttempts = retryCount + 1;
-    if (nextFailedAttempts >= MANAGED_SESSION_START_MAX_ATTEMPTS) {
-      const failReason = ready.reason ?? 'worker session could not be launched in assigned worktree';
-      emit({
-        event: 'session_start_failed',
-        actor_type: 'coordinator',
-        actor_id: 'coordinator',
-        run_id: claim.run_id,
-        task_ref: claim.task_ref,
-        agent_id: claim.agent_id,
-        payload: {
-          reason: failReason,
-          code: 'ERR_SESSION_START_FAILED',
-          working_directory: getRunWorktree(STATE_DIR, claim.run_id)?.worktree_path ?? undefined,
-        },
-      });
-      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
-        success: false,
-        failureReason: `session_start_failed: ${failReason}`,
-        failureCode: 'ERR_SESSION_START_FAILED',
-        policy: 'requeue',
-      });
-      if (agent.status !== 'offline') {
-        await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
-      }
-      console.error(`[coordinator] Failed to start session for '${claim.agent_id}': bounded retries exhausted — ${failReason}`);
-      continue;
-    }
-
-    setRunSessionStartRetryState(STATE_DIR, claim.run_id, claim.agent_id, {
-      retryCount: nextFailedAttempts,
-      nextRetryAt: new Date(nowMs + MANAGED_SESSION_START_RETRY_DELAY_MS).toISOString(),
-      lastError: ready.reason ?? claim.session_start_last_error ?? 'worker session could not be launched in assigned worktree',
-    });
-  }
 }
 
 function claimAwaitingInput(claim: Claim) {
@@ -738,7 +560,7 @@ async function markFinalizeBlocked(claim: Claim, workerPoolConfig: WorkerPoolCon
   } catch {
     return false;
   }
-  await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+  await cleanupRunCapacity(claim.agent_id);
   log(`run ${claim.run_id} blocked during finalization: ${reason}`);
   return true;
 }
@@ -825,7 +647,7 @@ async function mergeAndFinishDirectRun(claim: Claim, runWorktree: { branch: stri
 
   finishRun(STATE_DIR, claim.run_id, claim.agent_id, { success: true });
   await sendCoordinatorMessage(claim.agent_id, buildFinalizeSuccessNotice(claim, runWorktree.branch));
-  await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+  await cleanupRunCapacity(claim.agent_id);
   try {
     const cleaned = cleanupRunWorktree(STATE_DIR, claim.run_id);
     if (!cleaned) {
@@ -874,7 +696,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig, eve
 
     finishRun(STATE_DIR, claim.run_id, claim.agent_id, { success: true });
     await sendCoordinatorMessage(claim.agent_id, buildFinalizeSuccessNotice(claim, runWorktree.branch));
-    await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+    await cleanupRunCapacity(claim.agent_id);
     try {
       const cleaned = cleanupRunWorktree(STATE_DIR, claim.run_id);
       if (!cleaned) {
@@ -1040,27 +862,12 @@ async function stopAgentSession(agent: Agent | null | undefined) {
 }
 
 
-async function cleanupRunCapacity(agentId: string, workerPoolConfig: WorkerPoolConfig, { offlineReason = null as string | null } = {}) {
+/** Every worker is task-scoped: stop its session and drop its registry entry. */
+async function cleanupRunCapacity(agentId: string) {
   const agent = getAgent(STATE_DIR, agentId);
   if (!agent) return;
   await stopAgentSession(agent);
-  // Coordinator-spawned ephemeral workers are removed entirely on cleanup.
-  // They exist only for the duration of one task-scoped run.
-  if (agent.ephemeral === true) {
-    removeAgent(STATE_DIR, agentId);
-    return;
-  }
-  // Legacy managed slots (orc-N) and operator-registered workers retain their
-  // registry entry; only their session runtime state is cleared.
-  if (offlineReason && !isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
-    markWorkerOffline(STATE_DIR, agent, { emit, reason: offlineReason });
-    return;
-  }
-  if (agent.status === 'offline' && !isManagedSlot(agent.agent_id, workerPoolConfig.max_workers)) {
-    clearWorkerSessionRuntime(STATE_DIR, agent, { status: 'offline' });
-    return;
-  }
-  clearWorkerSessionRuntime(STATE_DIR, agent, { status: 'idle' });
+  removeAgent(STATE_DIR, agentId);
 }
 
 function hasOtherActiveClaim(agentId: string, runId: string) {
@@ -1076,68 +883,53 @@ function hasOtherActiveClaim(agentId: string, runId: string) {
   }
 }
 
-async function ensureSessionPoolReady(agents: Agent[], _workerPoolConfig: WorkerPoolConfig) {
-  const candidates = (agents ?? []).filter(
-    (agent) => agent?.role !== 'master'
-      && agent?.role !== 'scout'
-      && agent.status !== 'offline'
-      && agent.status !== 'dead'
-      && agent.session_handle,
-  );
-  const results = await runBounded(candidates.map((agent) => async () => {
-    try {
-      await ensureSessionReady(agent);
-    } catch (error) {
-      throw new Error(`ensuring session for ${agent.agent_id}: ${(error as Error).message}`);
-    }
-  }));
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      log(`warning: failed to ensure worker session: ${(result.reason as Error)?.message ?? 'unknown error'}`);
-    }
-  }
-}
-
-function markStaleAgentsDead(agents: Agent[], claims: Claim[], nowMs = Date.now()) {
+/**
+ * Remove worker records that no run needs any more: offline or dead workers,
+ * workers whose session process has exited, and workers silent past the dead
+ * TTL. Workers holding an active claim are left to the run lifecycle; the
+ * master and scouts (removed with remove_scout) are never touched.
+ */
+async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date.now()) {
   const busyAgents = activeClaimAgents(claims);
+  let removed = false;
   for (const agent of agents ?? []) {
     if (!agent?.agent_id) continue;
-    if (agent.role === 'master') continue;
-    if (agent.role === 'scout') continue; // scouts are ephemeral; the master removes them with remove_scout
-    if (agent.status === 'dead') continue;
+    if (agent.role === 'master' || agent.role === 'scout') continue;
     if (busyAgents.has(agent.agent_id)) continue;
-    if (typeof agent.last_heartbeat_at !== 'string') continue;
 
-    const lastHeartbeatMs = new Date(agent.last_heartbeat_at).getTime();
-    if (!Number.isFinite(lastHeartbeatMs)) continue;
-
-    const elapsedMs = nowMs - lastHeartbeatMs;
-    if (elapsedMs < AGENT_DEAD_TTL_MS) continue;
-
-    updateAgentRuntime(STATE_DIR, agent.agent_id, {
-      status: 'dead',
-      session_handle: null,
-      provider_ref: null,
-      last_status_change_at: new Date(nowMs).toISOString(),
-    });
-    emit({
-      event: 'agent_marked_dead',
-      actor_type: 'coordinator',
-      actor_id: 'coordinator',
-      agent_id: agent.agent_id,
-      payload: { elapsed_ms: elapsedMs },
-    });
-    agent.status = 'dead';
-    agent.session_handle = null;
-    agent.provider_ref = null;
+    let reason: string | null = null;
+    if (agent.status === 'offline' || agent.status === 'dead') {
+      reason = `status ${agent.status}`;
+    } else {
+      const lastHeartbeatMs = typeof agent.last_heartbeat_at === 'string'
+        ? new Date(agent.last_heartbeat_at).getTime()
+        : Number.NaN;
+      const elapsedMs = nowMs - lastHeartbeatMs;
+      if (Number.isFinite(elapsedMs) && elapsedMs >= AGENT_DEAD_TTL_MS) {
+        emit({
+          event: 'agent_marked_dead',
+          actor_type: 'coordinator',
+          actor_id: 'coordinator',
+          agent_id: agent.agent_id,
+          payload: { elapsed_ms: elapsedMs },
+        });
+        reason = 'heartbeat expired';
+      } else if (agent.session_handle && !(await getAdapter(agent.provider).heartbeatProbe(agent.session_handle))) {
+        reason = 'session exited';
+      }
+    }
+    if (!reason) continue;
+    await cleanupRunCapacity(agent.agent_id);
+    log(`removed worker ${agent.agent_id} (${reason})`);
+    removed = true;
   }
+  return removed;
 }
 
 async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
   const nowMs = Date.now();
   const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
   const nudgeWork = [];
-  const workerPoolConfig = loadWorkerPoolConfig();
 
   for (const claim of claims ?? []) {
     if (claim.state !== 'claimed') {
@@ -1165,7 +957,7 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
         failureCode: 'ERR_RUN_START_TIMEOUT',
         policy: 'requeue',
       });
-      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      await cleanupRunCapacity(claim.agent_id);
       runStartNudgeAtMs.delete(claim.run_id);
       log(`run ${claim.run_id} timed out waiting for run_started; requeued ${claim.task_ref}`);
       continue;
@@ -1214,7 +1006,6 @@ async function executeRemediation(
   message: string,
   claim: Claim,
   agent: Agent,
-  workerPoolConfig: WorkerPoolConfig,
 ) {
   const emitRemediationEvent = () => {
     emit({
@@ -1255,7 +1046,7 @@ async function executeRemediation(
         failureCode: action === 'block' ? 'ERR_REMEDIATION_BLOCK' : 'ERR_REMEDIATION_REQUEUE',
         policy,
       });
-      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      await cleanupRunCapacity(claim.agent_id);
       runInactiveNudgeAtMs.delete(claim.run_id);
       runNudgeCount.delete(claim.run_id);
       runLastPhase.delete(claim.run_id);
@@ -1366,7 +1157,7 @@ async function enforceInProgressLifecycle(
 
     // Remediation requires agent record for signal collection (heartbeat
     // probe, session handle). Skip policy evaluation when agent is missing
-    // (e.g. managed slot not currently provisioned) but fall through to the
+    // (e.g. the worker record was already removed) but fall through to the
     // existing time-based escalation which handles agentless claims.
     if (agent) {
       let sessionAlive = false;
@@ -1392,7 +1183,7 @@ async function enforceInProgressLifecycle(
 
       const remediationResult = evaluateRemediationPolicies(REMEDIATION_POLICIES, signals);
       if (remediationResult) {
-        await executeRemediation(remediationResult.policy.id, remediationResult.policy.action, remediationResult.message, claim, agent, workerPoolConfig);
+        await executeRemediation(remediationResult.policy.id, remediationResult.policy.action, remediationResult.message, claim, agent);
         continue;
       }
     }
@@ -1407,7 +1198,7 @@ async function enforceInProgressLifecycle(
         failureCode: 'ERR_STALE_WORKER',
         policy: 'requeue',
       });
-      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      await cleanupRunCapacity(claim.agent_id);
       runInactiveNudgeAtMs.delete(claim.run_id);
       runNudgeCount.delete(claim.run_id);
       runLastPhase.delete(claim.run_id);
@@ -1516,14 +1307,15 @@ async function tick() {
 
   reconcileState(STATE_DIR);
   ({ agents, claims, backlog: tickBacklog } = reloadTickState(workerPoolConfig));
-  markStaleAgentsDead(agents, claims);
+  if (await removeStaleWorkers(agents, claims)) {
+    ({ agents, claims } = reloadTickState(workerPoolConfig));
+  }
 
   ({ agents, claims } = await processEventCheckpoint(agents, claims, workerPoolConfig));
   ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
   ({ agents, claims } = await probeActiveWorkerSessions(agents, claims, workerPoolConfig));
 
   checkMasterHealth(agents);
-  await processManagedSessionStartRetries(agents, claims, workerPoolConfig);
   ({ agents, claims } = reloadTickState(workerPoolConfig));
 
   const attemptsByTask = buildAttemptCountLookup();
@@ -1531,9 +1323,8 @@ async function tick() {
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
   const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun, attemptsByTask);
   ({ agents, claims } = reloadTickState(workerPoolConfig));
-  await processClaimedSessionReadiness(agents, claims, workerPoolConfig);
+  await processClaimedSessionReadiness(agents, claims);
   ({ agents, claims } = reloadTickState(workerPoolConfig));
-  await ensureSessionPoolReady(agents, workerPoolConfig);
   // Agents that received a nudge this tick are excluded from dispatch to avoid
   // sending them a new task envelope in the same tick as an in-flight nudge.
   const nudgedThisTick = new Set([...nudgedByRunStart, ...nudgedByInProgress]);
@@ -1637,7 +1428,7 @@ async function probeActiveWorkerSessions(
       failureCode: 'ERR_PTY_DEAD',
       policy: 'requeue',
     });
-    await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+    await cleanupRunCapacity(claim.agent_id);
     cleaned = true;
   }
 
@@ -1655,7 +1446,7 @@ async function expireAndCleanupStaleLeases(
   const expired = expireStaleLeasesDetailed(STATE_DIR);
   if (expired.length > 0) {
     for (const claim of expired) {
-      await cleanupRunCapacity(claim.agent_id, workerPoolConfig);
+      await cleanupRunCapacity(claim.agent_id);
     }
     log(`expired ${expired.length} stale lease(s): ${expired.map((claim) => claim.run_id).join(', ')}`);
     ({ agents, claims } = reloadTickState(workerPoolConfig));
@@ -1816,7 +1607,7 @@ async function executeDispatchPlan(
       const agent = spawnResult.agent!;
       if (isAgentSessionReady(agent)) {
         try {
-          await sendTaskEnvelope(agent, taskRef, runId, workerPoolConfig);
+          await sendTaskEnvelope(agent, taskRef, runId);
         } catch (err) {
           // sendTaskEnvelope called finishRun + cleanupRunCapacity internally on failure.
           // cleanupRunCapacity will remove the ephemeral agent.
@@ -1843,7 +1634,7 @@ async function executeDispatchPlan(
             failureCode: 'ERR_INJECTION_SCAN',
             policy: 'block',
           });
-          await cleanupRunCapacity(spawnedAgentId, workerPoolConfig);
+          await cleanupRunCapacity(spawnedAgentId);
         } else if (spawnedAgentId) {
           // Claim failed before runId was set — remove the agent directly
           removeAgent(STATE_DIR, spawnedAgentId);
@@ -1857,7 +1648,7 @@ async function executeDispatchPlan(
           failureCode: 'ERR_DISPATCH_FAILURE',
           policy: 'requeue',
         });
-        await cleanupRunCapacity(spawnedAgentId, workerPoolConfig);
+        await cleanupRunCapacity(spawnedAgentId);
       } else if (spawnedAgentId) {
         removeAgent(STATE_DIR, spawnedAgentId);
       }
@@ -2117,7 +1908,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
     // terminal event still triggers capacity release and worktree cleanup.
     if (event.event === 'run_finished' || event.event === 'run_failed') {
       if (!hasOtherActiveClaim(agentId, runId!)) {
-        await cleanupRunCapacity(agentId, workerPoolConfig);
+        await cleanupRunCapacity(agentId);
       }
       deleteRunWorktree(STATE_DIR, runId!);
 

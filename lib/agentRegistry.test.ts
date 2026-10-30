@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   registerAgent,
@@ -11,6 +11,7 @@ import {
   nextAvailableWorkerName,
   nextAvailableScoutId,
 } from './agentRegistry.ts';
+import { validateAgents } from './stateValidation.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -39,7 +40,6 @@ describe('registerAgent', () => {
     registerAgent(dir, { agent_id: 'agent-01', provider: 'codex' });
     const a = getAgent(dir, 'agent-01')!;
     expect(a.role).toBe('worker');
-    expect(a.capabilities).toEqual([]);
     expect(a.status).toBe('idle');
     expect(a.session_handle).toBeNull();
     expect(a.provider_ref).toBeNull();
@@ -47,23 +47,26 @@ describe('registerAgent', () => {
     expect(a.registered_at).toBeTruthy();
   });
 
-  it('persists optional dispatch_mode and keeps model unset', () => {
-    registerAgent(dir, { agent_id: 'agent-01', provider: 'claude', dispatch_mode: 'autonomous' });
-    const a = getAgent(dir, 'agent-01')!;
-    expect(a.model).toBeNull();
-    expect(a.dispatch_mode).toBe('autonomous');
+  it('keeps model unset on registration', () => {
+    registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
+    expect(getAgent(dir, 'agent-01')!.model).toBeNull();
   });
 
-  it('persists reviewer role and capabilities when provided', () => {
-    registerAgent(dir, {
-      agent_id: 'reviewer-01',
-      provider: 'claude',
-      role: 'reviewer',
-      capabilities: ['delegation', 'review'],
-    });
-    const a = getAgent(dir, 'reviewer-01')!;
-    expect(a.role).toBe('reviewer');
-    expect(a.capabilities).toEqual(['delegation', 'review']);
+  it('persists reviewer role when provided', () => {
+    registerAgent(dir, { agent_id: 'reviewer-01', provider: 'claude', role: 'reviewer' });
+    expect(getAgent(dir, 'reviewer-01')!.role).toBe('reviewer');
+  });
+
+  it('drops retired dispatch_mode and capabilities fields on the next registry write', () => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [{
+      agent_id: 'old-worker', provider: 'claude', role: 'worker', status: 'idle',
+      dispatch_mode: null, capabilities: [], registered_at: new Date().toISOString(),
+    }] }));
+    registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
+    const stored = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')) as { agents: Array<Record<string, unknown>> };
+    expect(stored.agents[0]).not.toHaveProperty('dispatch_mode');
+    expect(stored.agents[0]).not.toHaveProperty('capabilities');
+    expect(validateAgents(stored)).toEqual([]);
   });
 
   it('accepts master role when provided', () => {

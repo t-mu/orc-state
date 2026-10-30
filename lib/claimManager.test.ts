@@ -734,14 +734,6 @@ describe('nextEligibleTask', () => {
     ]);
     expect(nextEligibleTaskFromBacklog(backlog)).toBe('orch/b');
   });
-
-  it('routes only tasks matching required_capabilities', () => {
-    const backlog = makeBacklog([
-      { ...makeTask('orch/ai'), required_capabilities: ['ai'] },
-      { ...makeTask('orch/ui'), required_capabilities: ['ui'] },
-    ]);
-    expect(nextEligibleTaskFromBacklog(backlog, { agent_id: 'worker-1', capabilities: ['ui'] } as import('../types/index.ts').Agent)).toBe('orch/ui');
-  });
 });
 
 describe('nextEligibleTaskFromBacklog', () => {

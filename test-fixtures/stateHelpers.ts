@@ -51,7 +51,7 @@ export function seedProjectTasks(dir: string, tasks: readonly SeedTask[], claims
         title: task.title ?? task.ref,
         task_type: task.task_type, priority: task.priority, description: task.description,
         acceptance_criteria: task.acceptance_criteria, depends_on: task.depends_on,
-        required_capabilities: task.required_capabilities, required_provider: task.required_provider,
+        required_provider: task.required_provider,
         model: task.model, review_level: task.review_level, merge_strategy: task.merge_strategy,
       });
       store.createTask({ ...spec, ...(typeof task.created_at === 'string' ? { createdAt: task.created_at } : {}) });

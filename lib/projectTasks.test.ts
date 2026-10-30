@@ -8,7 +8,7 @@ import { taskSnapshotStatus } from './documentIndex.ts';
 import { closeAllDatabases, queryEvents } from './eventLog.ts';
 import { parseBodyAcceptanceCriteria, parseBodyTitle, RevisionConflictError } from './projectTaskStore.ts';
 import {
-  closeProjectTaskStores, createProjectTask, initProjectTaskStore, reviseProjectTask,
+  closeProjectTaskStores, createProjectTask, initProjectTaskStore, refreshBacklogProjection, reviseProjectTask,
 } from './projectTasks.ts';
 import { isProjectStateDir } from './projectContext.ts';
 import { ProjectRegistry } from './projectRegistry.ts';
@@ -17,6 +17,7 @@ import { handleCreateTask, handleGetTask, handleUpdateTask } from '../mcp/handle
 import { runProjectCommand } from '../cli/project.ts';
 import { runProjectCommandRouted } from '../cli/project.ts';
 import { startControlServer } from './controlServer.ts';
+import { validateBacklog } from './stateValidation.ts';
 
 let dir: string;
 
@@ -50,6 +51,18 @@ describe('storage-neutral task authoring', () => {
     expect(JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')).features[0].tasks[0].ref).toBe('app/add-login');
     expect(queryEvents(dir, { event_type: 'task_added' })).toHaveLength(1);
     expect(() => createProjectTask(dir, { feature: 'app', title: 'Add login' })).toThrow('already exists');
+  });
+
+  it('omits a retired required_capabilities key held in stored revision metadata from the projection', () => {
+    initProjectTaskStore(dir).createTask({ ref: 'app/legacy', bodyMarkdown: '# Legacy\n', metadata: { feature: 'app', task_type: 'implementation', required_capabilities: ['sql'] } });
+    refreshBacklogProjection(dir);
+    const backlog = readBacklog(dir);
+    expect(backlog.features[0].tasks[0]).toMatchObject({ ref: 'app/legacy' });
+    expect(backlog.features[0].tasks[0]).not.toHaveProperty('required_capabilities');
+    expect(validateBacklog(JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')))).toEqual([]);
+    expect(reviseProjectTask(dir, 'app/legacy', 1, { priority: 'high' }).task.revision).toBe(2);
+    expect(validateBacklog(readBacklog(dir))).toEqual([]);
+    expect(() => reviseProjectTask(dir, 'app/legacy', 2, { required_capabilities: ['sql'] })).toThrow('cannot change: required_capabilities');
   });
 
   it('saves each edit as an immutable revision and rejects stale expected revisions', () => {
