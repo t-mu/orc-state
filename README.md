@@ -26,7 +26,7 @@ npm install -g orc-state
 orc project add ~/code/my-project   # register the repository (or: orc project migrate <old-root> --execute)
 cd ~/code/my-project
 orc init                            # pick providers; stored in the project registry
-orc install --global --skip-mcp --provider=claude   # optional: skills and agents for your user
+orc install --global --provider=claude   # optional: skills and agents for your user
 orc start-session                   # start orchestrating
 ```
 

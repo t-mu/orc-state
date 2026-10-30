@@ -14,7 +14,7 @@
     "next_task_seq": {
       "type": "integer",
       "minimum": 1,
-      "description": "Optional global counter for the next docs/backlog task number."
+      "description": "Legacy counter some old backlog.json files still carry; nothing reads it."
     },
     "features": {
       "type": "array",

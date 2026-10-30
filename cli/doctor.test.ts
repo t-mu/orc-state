@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, openSync, ftruncateSync, closeSync, rmSync, unl
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { ensureStateInitialized } from '../lib/stateInit.ts';
+import { closeProjectTaskStores, initProjectTaskStore } from '../lib/projectTasks.ts';
 import { spawnSync } from 'node:child_process';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 
@@ -169,6 +171,29 @@ describe('cli/doctor.ts', () => {
       expect(json.checks.gitRepo).toBe(false);
     } finally {
       rmSync(tmpCwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('doctor on a registered project', () => {
+  it('passes for a fresh project', () => {
+    const target = mkdtempSync(join(tmpdir(), 'orc-doctor-target-'));
+    try {
+      spawnSync('git', ['init', '-q'], { cwd: target });
+      ensureStateInitialized(dir);
+      initProjectTaskStore(dir);
+      closeProjectTaskStores();
+      const result = spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
+        cwd: repoRoot,
+        env: { ...process.env, ...bridgeProjectEnv(dir, target) },
+        encoding: 'utf8',
+      });
+      const json = JSON.parse(result.stdout);
+      expect(result.status, result.stdout).toBe(0);
+      expect(json.ok).toBe(true);
+      expect(json.checks.legacyLayout).toBeNull();
+    } finally {
+      rmSync(target, { recursive: true, force: true });
     }
   });
 });

@@ -24,7 +24,7 @@ configuration: `orc start-session` wires the orchestrator MCP server into the
 master itself, and skills and agents are installed for your user with:
 
 ```bash
-orc install --global --skip-mcp --provider=claude,codex
+orc install --global --provider=claude,codex
 ```
 
 Already have an old `.orc-state` installation (state and `backlog/` inside

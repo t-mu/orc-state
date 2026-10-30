@@ -11,6 +11,7 @@ import type { ActorType, OrcEventInput } from '../types/events.ts';
 import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
 import { writeRunRevisionSnapshot } from './documentIndex.ts';
 import { commitBacklog, projectTaskStoreFor, refreshBacklogProjection } from './projectTasks.ts';
+import { isProjectStateDir } from './projectContext.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 
@@ -73,6 +74,8 @@ export function claimTask(
     const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
     // A project task pins its latest SQLite revision; the worker receives that exact body.
     const projectStore = projectTaskStoreFor(stateDir);
+    // A project whose task database is missing must not dispatch a run without its pinned spec.
+    if (!projectStore && isProjectStateDir(stateDir)) throw new NotFoundError(`Project task store is missing: ${join(stateDir, 'runtime.db')}`);
     // Project SQLite verifies status and dependencies, records the claim and binds the run in one transaction.
     const revision = projectStore?.claimTask(taskRef, run_id, agentId);
     try {

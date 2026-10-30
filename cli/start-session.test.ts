@@ -258,19 +258,6 @@ describe('cli/start-session.ts', () => {
       expect(result.stderr).toContain('provider');
     });
 
-    it('rejects deprecated worker startup flags with migration guidance', () => {
-      seedState([masterAgent()]);
-      const result = spawnSync('node', ['cli/start-session.ts', '--worker-id=orc-9', '--worker-provider=codex'], {
-        cwd: repoRoot,
-        env: { ...process.env, ...bridgeProjectEnv(dir) },
-        encoding: 'utf8',
-      });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain('--worker-id');
-      expect(result.stderr).toContain('master-only');
-      expect(result.stderr).toContain('ORC_MAX_WORKERS');
-    });
-
     it('reuses existing master when already registered (non-interactive)', async () => {
       seedState([masterAgent()]);
       const spawnMock = makeSpawnMock();

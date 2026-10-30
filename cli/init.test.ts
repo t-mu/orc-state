@@ -45,7 +45,7 @@ describe('cli/init.ts --sibling', () => {
   it('is retired and points at project registration, writing nothing', () => {
     const orch = join(dir, 'orch');
     mkdirSync(orch, { recursive: true });
-    const result = runSibling(orch, ['--sibling=../target', '--provider=claude', '--skip-skills', '--skip-agents', '--skip-mcp']);
+    const result = runSibling(orch, ['--sibling=../target', '--provider=claude']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('orc init --sibling is retired');
     expect(result.stderr).toContain('orc project add');
@@ -73,10 +73,9 @@ describe('cli/init.ts in a registered project', () => {
     expect(JSON.parse(settings.stdout)).toMatchObject({ default_provider: 'claude', 'worker_pool.provider': 'codex', 'worker_pool.max_workers': 1 });
     expect(existsSync(join(project.stateDir, 'runtime.db'))).toBe(true);
 
-    // Selected with --project from outside any checkout: no Git check in the cwd; repo-install options are noted as ignored.
-    const outside = spawnSync('node', [resolve(repoRoot, 'cli/orc.ts'), `--project=${project.id}`, 'init', '--provider=claude', '--skip-mcp'], { cwd: dir, env, encoding: 'utf8' });
+    // Selected with --project from outside any checkout: no Git check in the cwd.
+    const outside = spawnSync('node', [resolve(repoRoot, 'cli/orc.ts'), `--project=${project.id}`, 'init', '--provider=claude'], { cwd: dir, env, encoding: 'utf8' });
     expect(outside.status, outside.stderr).toBe(0);
-    expect(outside.stderr).toContain('--skip-mcp has no effect in a registered project');
 
     const forced = spawnSync('node', [resolve(repoRoot, 'cli/init.ts'), '--provider=claude', '--force'], { cwd: target, env, encoding: 'utf8' });
     expect(forced.status).toBe(1);

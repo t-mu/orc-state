@@ -64,18 +64,14 @@ export function assertProjectMode(): void {
 // ─── Repo-root call-site classification (authoritative; task 185) ────────────
 // Every consumer of a "repo root" is one of two kinds. This table is the
 // authority tasks 186/188/191 rely on; it lives here, beside the two root
-// constants, because those are what each consumer imports. In a legacy
-// attached installation all three of ORCHESTRATION_ROOT, TARGET_REPO_ROOT, and
-// resolveRepoRoot() resolve to the same directory, so the split below is a
-// no-op there; in project mode the orchestration root is the external project
-// state directory and the target is the registered repository.
+// constants, because those are what each consumer imports. The orchestration
+// root is the external project state directory and the target is the
+// registered repository.
 //
-// ORCHESTRATION-ROOT consumers — framework home (orc binary, specs, plans,
-// config, state). These are correct as-is and were NOT changed by task 185:
+// ORCHESTRATION-ROOT consumers — framework home (orc binary, config, state). These are correct as-is and were NOT changed by task 185:
 //   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
 //                       WORKTREES_DIR, ORC_CONFIG_FILE
 //   coordinator.ts      resolveOrcBinSh(REPO_ROOT)           (orc binary lookup)
-//   coordinator.ts      relative(REPO_ROOT, source_path)     (backlog spec path math)
 //   coordinator.ts      repoRoot: REPO_ROOT → worker env     (orc bin/ctx for workers)
 //   mcp/handlers.ts     RUN_WORKTREES_FILE
 //   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT ?? join(stateDir,'..')

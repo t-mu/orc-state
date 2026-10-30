@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
@@ -10,6 +10,7 @@ import { DEFAULT_LEASE_MS } from './lib/constants.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { initMemoryDb, listDrawers, closeMemoryDb } from './lib/memoryStore.ts';
 import {
+  bridgeProjectEnv,
   createTempStateDir,
   cleanupTempStateDir,
   seedState,
@@ -29,11 +30,6 @@ beforeEach(() => {
   dir = createTempStateDir('orc-coord-test-');
   process.env.ORC_STATE_DIR = dir;
   process.env.ORC_REPO_ROOT = dir;
-  mkdirSync(join(dir, 'backlog'));
-  for (const [index, ref] of ['proj/fix-bug', 'proj/task-a', 'proj/task-b', 'proj/claude-task', 'proj/codex-task'].entries()) {
-    writeFileSync(join(dir, 'backlog', `${900 + index}-fixture.md`),
-      `---\nref: ${ref}\nfeature: proj\nstatus: todo\n---\n\n# Task ${900 + index} — Fixture\n`);
-  }
 });
 
 afterEach(() => {
@@ -42,6 +38,7 @@ afterEach(() => {
   closeMemoryDb();
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
+  delete process.env.ORC_PROJECT_ID;
   delete process.env.ORC_REPO_ROOT;
   delete process.env.ORC_MAX_WORKERS;
   delete process.env.ORC_WORKER_PROVIDER;
@@ -3097,7 +3094,14 @@ describe('buildTaskEnvelope', () => {
   });
 });
 
+// main() runs only for a registered project.
+function runAsProject() {
+  Object.assign(process.env, bridgeProjectEnv(dir));
+}
+
 describe('doShutdown', () => {
+  beforeEach(runAsProject);
+
   it('stops all managed PTY sessions before coordinator_stopped event', async () => {
     process.env.ORC_MAX_WORKERS = '2';
     process.env.ORC_WORKER_PROVIDER = 'claude';
@@ -3336,6 +3340,8 @@ describe('doShutdown', () => {
 });
 
 describe('global error handlers', () => {
+  beforeEach(runAsProject);
+
   it('unhandledRejection triggers doShutdown and logs to stderr', async () => {
     seedState(dir);
 

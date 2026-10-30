@@ -131,7 +131,7 @@ export const TOOLS = [
   },
   {
     name: 'create_task',
-    description: 'Register a task. It is stored only in project SQLite (revision 1) and may carry body_markdown, description, acceptance_criteria and depends_on; no Markdown file is needed. A legacy installation refuses it: author backlog/ Markdown there, or run orc project migrate.',
+    description: 'Register a task. It is stored only in project SQLite (revision 1) and may carry body_markdown, description, acceptance_criteria and depends_on; no Markdown file is needed.',
     inputSchema: {
       type: 'object',
       required: ['title'],
@@ -180,7 +180,7 @@ export const TOOLS = [
   },
   {
     name: 'update_task',
-    description: 'Update an existing task. Every accepted edit becomes a new immutable spec revision and expected_revision (from get_task spec_revision) is required; a stale value fails instead of overwriting. A legacy installation refuses it. Status is never editable.',
+    description: 'Update an existing task. Every accepted edit becomes a new immutable spec revision and expected_revision (from get_task spec_revision) is required; a stale value fails instead of overwriting. Status is never editable.',
     inputSchema: {
       type: 'object',
       required: ['task_ref', 'expected_revision'],
@@ -242,7 +242,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
+          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -307,7 +307,7 @@ export const TOOLS = [
   },
   {
     name: 'cancel_task',
-    description: 'Cancel a task regardless of current non-terminal state. In a registered project the task becomes cancelled; a legacy installation records it as blocked (with blocked_reason). Active runs are cancelled and removed. A done, released or cancelled task returns { error: "already_terminal", task_ref, status } as a tool error.',
+    description: 'Cancel a task regardless of current non-terminal state. The task becomes cancelled. Active runs are cancelled and removed. A done, released or cancelled task returns { error: "already_terminal", task_ref, status } as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -322,7 +322,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
+          description: 'Defaults to master agent_id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -349,7 +349,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Defaults to the current master agent id. Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
+          description: 'Defaults to the current master agent id. Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -429,7 +429,7 @@ export const TOOLS = [
         },
         actor_id: {
           type: 'string',
-          description: 'Actor performing the reset. Defaults to human in a legacy installation and to the master agent in a registered project (where orc task-reset records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
+          description: 'Actor performing the reset. Defaults to the master agent (orc task-reset records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,
@@ -446,7 +446,7 @@ export const TOOLS = [
         reason: { type: 'string', description: 'Optional reason, recorded on the transition' },
         actor_id: {
           type: 'string',
-          description: 'Actor performing the unblock. Defaults to human in a legacy installation and to the master agent in a registered project (where orc task-unblock records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself). A legacy installation has no credentials and records it as given.',
+          description: 'Actor performing the unblock. Defaults to the master agent (orc task-unblock records human). Ignored when the master session secret is present (a master started by orc start-session acts as itself).',
         },
       },
       additionalProperties: false,

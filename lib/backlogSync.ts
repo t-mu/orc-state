@@ -95,7 +95,7 @@ export interface SpecEntry {
   depends_on: string[];
 }
 
-export function parseTaskSpecEntry(text: string, file: string): SpecEntry | null {
+function parseTaskSpecEntry(text: string, file: string): SpecEntry | null {
   const { ref, feature, status, review_level, merge_strategy, depends_on } = parseSpecFrontmatter(text, file);
   if (!ref || !feature || !status || !VALID_SPEC_STATUSES.has(status)) return null;
   return {

@@ -426,7 +426,7 @@ Follow the **Phased Workflow** above. The five phases are:
 4. **Complete** — rebase (direct mode) or skip rebase (PR mode), `orc run-work-complete` (gate: run-work-complete exits 0); never edit a spec's `status:`
 5. **Finalize** — direct mode: coordinator follow-up + `orc run-finish`; PR mode: remain in session, handle PR_REVIEW, then run-work-complete + run-finish (gate: terminal success)
 
-The body of a project task follows the sections in `backlog/TASK_TEMPLATE.md`.
+The body of a project task follows the sections in `docs/task-template.md`.
 
 ### Task Creation Completion
 The turn is complete when `orc project task create` or `create_task` returns; no file is written.

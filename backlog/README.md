@@ -6,7 +6,7 @@ migration. Nothing reads them at runtime, and task status is runtime-owned.
 
 ## Creating new tasks
 
-1. Write the body using `TASK_TEMPLATE.md` as the guide.
+1. Write the body using `../docs/task-template.md` as the guide.
 2. Create the task with `orc project task create --body-file=<file>`,
    `orc project task import <file>`, or the MCP `create_task` tool
    (`body_markdown`). No file needs to be added here.

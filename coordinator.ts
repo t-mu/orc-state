@@ -66,7 +66,7 @@ import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } f
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
 import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
 import type { Backlog } from './types/backlog.ts';
-import { readMigrationMarker, writeProjectDescriptor } from './lib/projectContext.ts';
+import { writeProjectDescriptor } from './lib/projectContext.ts';
 import { readProcessStart } from './lib/processIdentity.ts';
 import { isCoordinatorLockHeld, type CoordinatorLock } from './lib/coordinatorLiveness.ts';
 
@@ -2259,20 +2259,20 @@ async function reconcileSupervisedSessions() {
 // ── Main loop ──────────────────────────────────────────────────────────────
 
 export async function main() {
-  // A migrated legacy state directory is history; running it again would fork the project's state.
-  const migrated = ACTIVE_PROJECT ? null : readMigrationMarker(STATE_DIR);
-  if (migrated) {
-    console.error(`[coordinator] ERROR: ${STATE_DIR} was migrated to project ${migrated.project_name} (${migrated.project_id}); run orc with --project=${migrated.project_id}. Aborting.`);
+  try {
+    assertProjectMode();
+  } catch (error) {
+    console.error(`[coordinator] ERROR: ${(error as Error).message}. Aborting.`);
     process.exit(1);
   }
   // Project workers report their lifecycle only through the control API (Task 229).
-  if (ACTIVE_PROJECT && process.env.ORC_CONTROL_API === 'off') {
+  if (process.env.ORC_CONTROL_API === 'off') {
     console.error('[coordinator] ERROR: ORC_CONTROL_API=off is not supported for a registered project: its workers report lifecycle through the control API. Aborting.');
     process.exit(1);
   }
   acquireCoordinatorLock();
   // Workers resolve the project from its state directory without the global registry.
-  if (ACTIVE_PROJECT) writeProjectDescriptor(ACTIVE_PROJECT);
+  writeProjectDescriptor(ACTIVE_PROJECT!);
   getEventCursor();
   process.on('exit', releaseCoordinatorLock);
   function shutdown() {
@@ -2329,21 +2329,16 @@ export async function main() {
     log(`warning: ${(error as Error).message}`);
   }
   await reconcileSupervisedSessions();
-  // A legacy installation keeps working without the control API; a project's workers cannot.
-  if (process.env.ORC_CONTROL_API !== 'off') {
-    try {
-      controlServer = await startControlServer(STATE_DIR, { commands: getCommandDispatcher() });
-      log(`control API listening on ${controlServer.endpoint.path}`);
-    } catch (error) {
-      if (ACTIVE_PROJECT) {
-        console.error(`[coordinator] ERROR: control API unavailable: ${(error as Error).message}; project workers could not report. Aborting.`);
-        process.exit(1);
-      }
-      log(`warning: control API unavailable: ${(error as Error).message}`);
-    }
+  // Project workers cannot report without the control API.
+  try {
+    controlServer = await startControlServer(STATE_DIR, { commands: getCommandDispatcher() });
+    log(`control API listening on ${controlServer.endpoint.path}`);
+  } catch (error) {
+    console.error(`[coordinator] ERROR: control API unavailable: ${(error as Error).message}; project workers could not report. Aborting.`);
+    process.exit(1);
   }
   // Sandboxed project workers that cannot reach the control socket would fail every run (task 230).
-  const sandboxSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE_PROJECT) });
+  const sandboxSocket = checkSandboxControlSocket({ project: true });
   if (sandboxSocket.warning) log(`warning: ${sandboxSocket.warning}`);
   // Sweeps queued commands and reconciles in-flight ones whose session or run ended.
   getCommandDispatcher().start();
@@ -2420,11 +2415,5 @@ export async function doShutdown() {
 export { tick, getAdapter as getCoordinatorAdapter, getCommandDispatcher as getCoordinatorCommandDispatcher };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try {
-    assertProjectMode();
-  } catch (error) {
-    console.error(`[coordinator] ERROR: ${(error as Error).message}. Aborting.`);
-    process.exit(1);
-  }
   main().catch(err => { console.error(err); process.exit(1); });
 }

@@ -557,9 +557,9 @@ describe('mcp read handlers', () => {
     expect(agents.agents).toHaveLength(3);
   });
 
-  it('handleCreateTask and handleUpdateTask refuse a legacy installation', () => {
-    expect(() => handleCreateTask(dir, { title: 'Anything' })).toThrow(/require a registered project.*orc project migrate/);
-    expect(() => handleUpdateTask(dir, { task_ref: 'project/todo-one', priority: 'high' })).toThrow(/require a registered project/);
+  it('handleCreateTask and handleUpdateTask refuse a state directory without a project task store', () => {
+    expect(() => handleCreateTask(dir, { title: 'Anything' })).toThrow(/Project task store is missing.*orc project migrate/);
+    expect(() => handleUpdateTask(dir, { task_ref: 'project/todo-one', priority: 'high' })).toThrow(/Project task store is missing/);
   });
 
   it('handleDelegateTask assigns explicit target and appends task_delegated event', () => {
