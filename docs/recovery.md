@@ -176,7 +176,7 @@ The coordinator never kills or redispatches these sessions on its own.
    `orc task-reset <task_ref>` (or `orc task-cancel <task_ref>`), then run
    `orc worker-remove <agent_id>`, which refuses while a claim is active. The
    stop only signals the recorded process if its start time still matches.
-3. To avoid the case for future workers, keep `tmux` installed and leave
+2. To avoid the case for future workers, keep `tmux` installed and leave
    `ORC_SESSION_TRANSPORT` at `auto` (or set `tmux`). tmux sessions survive a
    coordinator restart and are adopted.
 
