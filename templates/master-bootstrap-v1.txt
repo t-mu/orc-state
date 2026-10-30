@@ -74,7 +74,7 @@ get_notifications(after_seq?)
 
 WRITE STATE
 
-create_task(title, body_markdown?, feature?, ref?, depends_on?, acceptance_criteria?, task_type?, priority?, required_provider?, required_capabilities?, model?, owner?)
+create_task(title, body_markdown?, feature?, ref?, depends_on?, acceptance_criteria?, task_type?, priority?, required_provider?, model?, owner?)
   Creates a task in the project's SQLite store, with no file anywhere: pass
   body_markdown (the full spec), depends_on and acceptance_criteria directly;
   edit later with update_task(expected_revision).

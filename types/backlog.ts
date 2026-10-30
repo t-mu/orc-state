@@ -13,7 +13,6 @@ export interface Task {
   planning_state?: 'ready_for_dispatch' | 'archived' | undefined;
   delegated_by?: string | undefined;
   parent_task_ref?: TaskRef | undefined;
-  required_capabilities?: string[] | undefined;
   required_provider?: ProviderName | undefined;
   model?: string | null | undefined;
   depends_on?: TaskRef[] | undefined;

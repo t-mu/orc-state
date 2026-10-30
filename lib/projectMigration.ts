@@ -191,7 +191,7 @@ function runtimeInput(feature: string, task: Task): TaskAuthoringInput {
     feature: task.ref.split('/')[0] ?? feature, ref: task.ref.split('/')[1], title: task.title,
     description: task.description, acceptance_criteria: task.acceptance_criteria, depends_on: task.depends_on,
     priority: task.priority, required_provider: task.required_provider, model: task.model,
-    review_level: task.review_level, merge_strategy: task.merge_strategy, required_capabilities: task.required_capabilities,
+    review_level: task.review_level, merge_strategy: task.merge_strategy,
     task_type: task.task_type,
   };
 }

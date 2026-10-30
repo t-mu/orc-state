@@ -75,9 +75,7 @@ describe('coordinator policy e2e', () => {
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
     expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
-    const agent = readAgents().agents[0];
-    expect(agent.status).toBe('idle');
-    expect(agent.session_handle).toBe(null);
+    expect(readAgents().agents).toEqual([]);
     const runFailed = readEvents().find((e) => e.event === 'run_failed' && e.run_id === 'run-timeout');
     expect(runFailed).toBeTruthy();
     expect((runFailed!.payload as Record<string, unknown>).code).toBe('ERR_RUN_START_TIMEOUT');
@@ -150,8 +148,7 @@ describe('coordinator policy e2e', () => {
     const claim = readClaims().claims[0];
     expect(claim.state).toBe('failed');
     expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
-    const agent = readAgents().agents[0];
-    expect(agent.session_handle).toBe(null);
+    expect(readAgents().agents).toEqual([]);
     const runFailed = readEvents().find((e) => e.event === 'run_failed' && e.run_id === 'run-inactive-timeout');
     expect(runFailed).toBeTruthy();
   });
@@ -531,7 +528,6 @@ function seedState({ taskStatus, claim, agentStatus = 'running' }: { taskStatus:
       agent_id: 'worker-01',
       provider: 'claude',
       role: 'worker',
-      capabilities: [],
       status: agentStatus,
       session_handle: agentStatus === 'offline' ? null : 'claude:session:worker-01',
       session_token: agentStatus === 'offline' ? null : 'tok-worker-01',

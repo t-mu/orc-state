@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   taskTypeOf,
-  hasRequiredCapabilities,
   canAgentExecuteTaskType,
   canAgentExecuteTask,
   evaluateTaskEligibility,
@@ -14,26 +13,6 @@ describe('taskTypeOf', () => {
 
   it('returns explicit task_type', () => {
     expect(taskTypeOf({ task_type: 'refactor' })).toBe('refactor');
-  });
-});
-
-describe('hasRequiredCapabilities', () => {
-  it('passes when no required capabilities', () => {
-    expect(hasRequiredCapabilities({}, { capabilities: [] })).toBe(true);
-  });
-
-  it('passes when all required capabilities exist', () => {
-    expect(hasRequiredCapabilities(
-      { required_capabilities: ['refactor', 'review'] },
-      { capabilities: ['refactor', 'review', 'extra'] },
-    )).toBe(true);
-  });
-
-  it('fails when any required capability is missing', () => {
-    expect(hasRequiredCapabilities(
-      { required_capabilities: ['refactor', 'review'] },
-      { capabilities: ['refactor'] },
-    )).toBe(false);
   });
 });
 
@@ -59,38 +38,24 @@ describe('canAgentExecuteTaskType', () => {
 });
 
 describe('canAgentExecuteTask', () => {
-  it('combines task type + required capabilities', () => {
+  it('combines task type + provider routing', () => {
     expect(canAgentExecuteTask(
-      { task_type: 'refactor', required_capabilities: ['refactor'] },
-      { role: 'reviewer', capabilities: ['refactor'] },
+      { task_type: 'refactor', required_provider: 'codex' },
+      { role: 'reviewer', provider: 'codex' },
     )).toBe(true);
 
     expect(canAgentExecuteTask(
-      { task_type: 'implementation', required_capabilities: ['sql'] },
-      { role: 'worker', capabilities: [] },
+      { task_type: 'implementation', required_provider: 'codex' },
+      { role: 'worker', provider: 'claude' },
     )).toBe(false);
   });
 });
 
 describe('evaluateTaskEligibility', () => {
-  it('explains capability mismatch with a stable reason', () => {
-    expect(evaluateTaskEligibility(
-      { task_type: 'implementation', required_capabilities: ['typescript'] },
-      { agent_id: 'orc-1', role: 'worker', capabilities: [] },
-    )).toEqual({
-      eligible: false,
-      reasons: ['missing_capability:typescript'],
-      reason_details: [{
-        code: 'missing_capability:typescript',
-        message: "missing required capability 'typescript'",
-      }],
-    });
-  });
-
   it('rejects master role with a role_ineligible reason', () => {
     expect(evaluateTaskEligibility(
       { task_type: 'implementation' },
-      { agent_id: 'master', role: 'master', capabilities: [] },
+      { agent_id: 'master', role: 'master' },
     )).toEqual({
       eligible: false,
       reasons: ['role_ineligible:master'],
@@ -104,7 +69,7 @@ describe('evaluateTaskEligibility', () => {
   it('rejects scout role with a role_ineligible reason', () => {
     expect(evaluateTaskEligibility(
       { task_type: 'implementation' },
-      { agent_id: 'scout-1', role: 'scout', capabilities: [] },
+      { agent_id: 'scout-1', role: 'scout' },
     )).toEqual({
       eligible: false,
       reasons: ['role_ineligible:scout'],
@@ -118,7 +83,7 @@ describe('evaluateTaskEligibility', () => {
   it('rejects unsupported task types with a stable reason', () => {
     expect(evaluateTaskEligibility(
       { task_type: 'planning' },
-      { agent_id: 'orc-1', role: 'worker', capabilities: [] },
+      { agent_id: 'orc-1', role: 'worker' },
     )).toEqual({
       eligible: false,
       reasons: ['unsupported_task_type:planning'],
@@ -132,7 +97,7 @@ describe('evaluateTaskEligibility', () => {
   it('rejects reserved owner conflicts when task is assigned to another agent', () => {
     expect(evaluateTaskEligibility(
       { task_type: 'implementation', owner: 'orc-2' },
-      { agent_id: 'orc-1', role: 'worker', capabilities: [] },
+      { agent_id: 'orc-1', role: 'worker' },
     )).toEqual({
       eligible: false,
       reasons: ['reserved_owner_conflict:orc-2'],
@@ -146,7 +111,7 @@ describe('evaluateTaskEligibility', () => {
   it('rejects provider mismatch with a stable reason', () => {
     expect(evaluateTaskEligibility(
       { task_type: 'implementation', required_provider: 'gemini' },
-      { agent_id: 'orc-1', role: 'worker', provider: 'codex', capabilities: [] },
+      { agent_id: 'orc-1', role: 'worker', provider: 'codex' },
     )).toEqual({
       eligible: false,
       reasons: ['provider_mismatch:gemini'],
@@ -159,8 +124,8 @@ describe('evaluateTaskEligibility', () => {
 
   it('returns no reasons for a valid task-agent pair', () => {
     expect(evaluateTaskEligibility(
-      { task_type: 'refactor', required_capabilities: ['sql'], required_provider: 'codex' },
-      { agent_id: 'orc-1', role: 'worker', provider: 'codex', capabilities: ['sql'] },
+      { task_type: 'refactor', required_provider: 'codex' },
+      { agent_id: 'orc-1', role: 'worker', provider: 'codex' },
     )).toEqual({
       eligible: true,
       reasons: [],

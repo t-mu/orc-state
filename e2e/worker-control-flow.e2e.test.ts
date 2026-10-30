@@ -22,9 +22,7 @@ function seedState(stateDir: string) {
         status: 'idle',
         session_handle: null,
         provider_ref: null,
-        capabilities: [],
         model: null,
-        dispatch_mode: null,
         registered_at: '2026-01-01T00:00:00.000Z',
         last_heartbeat_at: null,
       },
@@ -35,9 +33,7 @@ function seedState(stateDir: string) {
         status: 'running',
         session_handle: 'pty:orc-1',
         provider_ref: null,
-        capabilities: [],
         model: null,
-        dispatch_mode: null,
         registered_at: '2026-01-01T00:00:00.000Z',
         last_heartbeat_at: null,
       },
@@ -74,7 +70,7 @@ describe('worker control flow e2e', () => {
     vi.unmock('../adapters/index.ts');
   });
 
-  it('keeps workers headless in start-session and controls them via control-worker', async () => {
+  it('keeps workers headless in start-session', async () => {
     writeAgents(dir, [
       {
         agent_id: 'master',
@@ -83,9 +79,7 @@ describe('worker control flow e2e', () => {
         status: 'idle',
         session_handle: null,
         provider_ref: null,
-        capabilities: [],
         model: null,
-        dispatch_mode: null,
         registered_at: '2026-01-01T00:00:00.000Z',
         last_heartbeat_at: null,
       },
@@ -145,52 +139,5 @@ describe('worker control flow e2e', () => {
     expect(workerAfterStartSession).toBeUndefined();
     expect(spawnMock.mock.calls.some(([cmd]) => cmd === 'codex')).toBe(false);
     expect(ptySpawnMock).toHaveBeenCalled();
-
-    writeAgents(dir, [
-      {
-        agent_id: 'master',
-        provider: 'claude',
-        role: 'master',
-        status: 'idle',
-        session_handle: null,
-        provider_ref: null,
-        capabilities: [],
-        model: null,
-        dispatch_mode: null,
-        registered_at: '2026-01-01T00:00:00.000Z',
-        last_heartbeat_at: null,
-      },
-      {
-        agent_id: 'orc-1',
-        provider: 'codex',
-        role: 'worker',
-        status: 'running',
-        session_handle: 'pty:orc-1',
-        provider_ref: null,
-        capabilities: [],
-        model: null,
-        dispatch_mode: null,
-        registered_at: '2026-01-01T00:00:00.000Z',
-        last_heartbeat_at: null,
-      },
-    ]);
-
-    vi.resetModules();
-    const attach = vi.fn();
-    const heartbeatProbe = vi.fn().mockResolvedValue(true);
-    vi.doMock('@inquirer/prompts', () => ({
-      select: vi.fn(),
-    }));
-    vi.doMock('../adapters/index.ts', () => ({
-      createAdapter: () => ({ attach, heartbeatProbe }),
-    }));
-
-    const oldArgv2 = process.argv;
-    process.argv = ['node', 'cli/control-worker.ts', 'orc-1'];
-    await import('../cli/control-worker.ts');
-    process.argv = oldArgv2;
-
-    expect(heartbeatProbe).toHaveBeenCalledWith('pty:orc-1');
-    expect(attach).toHaveBeenCalledWith('pty:orc-1');
   });
 });

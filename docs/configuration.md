@@ -85,7 +85,7 @@ orc project plan export 3 ~/exports/plans/
 orc project plan list | show <id>
 ```
 
-Import reads the spec frontmatter subset (`ref`, `feature`, `title`, `priority`, `required_provider`, `review_level`, `merge_strategy`, `task_type`, `model`, `depends_on`, `required_capabilities`). The title comes from `title:`, else a `# Task N — Title` or first `# ` heading. The body after the frontmatter is stored as the revision body. In a directory, files without a valid `ref` (templates, notes) and anything under `legacy/` are skipped; a named file must be a task spec. A new ref creates revision 1. An existing ref gets a new revision, or nothing when the content is unchanged. Each import records its source path and file hash for diagnostics (`task_imports`).
+Import reads the spec frontmatter subset (`ref`, `feature`, `title`, `priority`, `required_provider`, `review_level`, `merge_strategy`, `task_type`, `model`, `depends_on`). The retired `required_capabilities` key, which older exports carry, is ignored and reported in `ignored_fields`. The title comes from `title:`, else a `# Task N — Title` or first `# ` heading. The body after the frontmatter is stored as the revision body. In a directory, files without a valid `ref` (templates, notes) and anything under `legacy/` are skipped; a named file must be a task spec. A new ref creates revision 1. An existing ref gets a new revision, or nothing when the content is unchanged. Each import records its source path and file hash for diagnostics (`task_imports`).
 
 Lifecycle fields (`status`, `attempt_count`, `blocked_reason`, `owner`, `planning_state`, …) are ignored and reported in `ignored_fields`; `--strict` rejects them instead. An import therefore cannot complete, block, or reopen a task. A file whose `status` is anything other than `todo` cannot create a new task, because it would start as dispatchable work: bring an existing installation's finished and blocked tasks over with `orc project migrate` (below), which carries runtime status, or remove the field to import the spec as new work.
 
@@ -277,8 +277,8 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `run_inactive_nudge_ms` | integer | `600000` | Delay before first nudge to an inactive run (ms) |
 | `run_inactive_escalate_ms` | integer | `900000` | Delay before escalating an inactive run (ms) |
 | `run_inactive_nudge_interval_ms` | integer | `300000` | Interval between inactivity nudges (ms) |
-| `session_start_max_attempts` | integer | `3` | Max retry attempts for starting a worker session |
-| `session_start_retry_delay_ms` | integer | `30000` | Delay between session start retries (ms) |
+| `session_start_max_attempts` | integer | `3` | Unused: workers are never relaunched, so session starts are not retried. Kept so stored settings still load; slated for removal. |
+| `session_start_retry_delay_ms` | integer | `30000` | Unused: workers are never relaunched, so session starts are not retried. Kept so stored settings still load; slated for removal. |
 | `memory_prune_interval_ms` | integer | `3600000` | Interval between periodic memory pruning runs (ms). Set to `0` to disable periodic pruning (startup prune still runs). Note: `0` can only be set via project settings — the CLI flag does not accept zero. |
 | `worker_stale_soft_ms` | integer | `1800000` | Inactivity before soft alert — emits `worker_needs_attention` notification (30 min). |
 | `worker_stale_nudge_ms` | integer | `3600000` | Inactivity before PTY nudge message (60 min). |

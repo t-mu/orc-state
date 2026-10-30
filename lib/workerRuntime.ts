@@ -188,7 +188,6 @@ export async function launchWorkerSession(
     runId = null,
     taskRef = null,
     taskModel = null,
-    retryable = false,
     executionMode,
     sandboxNetwork,
     runtime,
@@ -201,7 +200,6 @@ export async function launchWorkerSession(
     runId?: string | null;
     taskRef?: string | null;
     taskModel?: string | null;
-    retryable?: boolean;
     executionMode?: ExecutionMode;
     sandboxNetwork?: SandboxNetwork;
     runtime?: WorkerRuntime;
@@ -285,11 +283,6 @@ export async function launchWorkerSession(
     return { ok: true, session_handle, provider_ref };
   } catch (error) {
     const reason = (error as Error)?.message ?? String(error);
-    if (retryable) {
-      clearWorkerSessionRuntime(stateDir, agent, { status: 'idle' });
-      return { ok: false, reason };
-    }
-
     emitSessionStartFailed(emit, agent, { runId, taskRef, reason, workingDirectory });
     markWorkerOffline(stateDir, agent, {
       emit,
@@ -360,7 +353,6 @@ export async function spawnEphemeralWorker(
     runId,
     taskRef,
     taskModel,
-    retryable: false, // ephemeral workers fail-and-requeue on launch failure, no retries
     ...(executionMode !== undefined ? { executionMode } : {}),
     ...(sandboxNetwork !== undefined ? { sandboxNetwork } : {}),
     ...(runtime !== undefined ? { runtime } : {}),

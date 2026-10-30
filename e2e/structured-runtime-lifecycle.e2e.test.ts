@@ -127,7 +127,7 @@ describe('structured runtime lifecycle e2e (task 203)', () => {
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({
       version: '1',
       agents: [{
-        agent_id: 'master', provider: 'claude', role: 'master', capabilities: [], model: null, dispatch_mode: null,
+        agent_id: 'master', provider: 'claude', role: 'master',
         status: 'running', session_handle: 'pty:master', session_token: 'master-e2e', provider_ref: null, last_heartbeat_at: null,
         registered_at: new Date().toISOString(),
       }],

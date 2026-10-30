@@ -20,7 +20,10 @@ export const LIFECYCLE_FIELDS = ['status', 'attempt_count', 'blocked_reason', 'r
 const EXPORT_ONLY_FIELDS = ['spec_revision', 'content_hash', 'exported_at'] as const;
 
 const SCALAR_FIELDS = ['ref', 'feature', 'epic', 'title', 'priority', 'required_provider', 'review_level', 'merge_strategy', 'task_type', 'model'] as const;
-const LIST_FIELDS = ['depends_on', 'required_capabilities'] as const;
+const LIST_FIELDS = ['depends_on'] as const;
+
+/** Retired definition fields: older exports still carry them, so import ignores them. */
+const RETIRED_FIELDS = ['required_capabilities'] as const;
 
 type Frontmatter = Record<string, string | string[]>;
 
@@ -102,7 +105,7 @@ export function parseTaskMarkdown(text: string, sourcePath: string, { strict = f
   const feature = typeof frontmatter.feature === 'string' ? frontmatter.feature
     : typeof frontmatter.epic === 'string' ? frontmatter.epic : ref.split('/')[0];
   if (ref.split('/')[0] !== feature) throw new TaskInputError(`${sourcePath}: ref ${ref} does not belong to feature ${feature}`);
-  const known = new Set<string>([...SCALAR_FIELDS, ...LIST_FIELDS, ...EXPORT_ONLY_FIELDS, ...LIFECYCLE_FIELDS]);
+  const known = new Set<string>([...SCALAR_FIELDS, ...LIST_FIELDS, ...EXPORT_ONLY_FIELDS, ...LIFECYCLE_FIELDS, ...RETIRED_FIELDS]);
   const unknown = Object.keys(frontmatter).filter((key) => !known.has(key));
   if (unknown.length > 0) throw new TaskInputError(`${sourcePath}: unsupported frontmatter field(s): ${unknown.join(', ')}`);
   const ignoredFields: string[] = LIFECYCLE_FIELDS.filter((key) => key in frontmatter);
@@ -115,6 +118,7 @@ export function parseTaskMarkdown(text: string, sourcePath: string, { strict = f
     delete frontmatter.task_type;
     ignoredFields.push('task_type');
   }
+  for (const key of RETIRED_FIELDS) if (key in frontmatter) ignoredFields.push(key);
   for (const key of ['priority', 'required_provider', 'review_level', 'merge_strategy', 'task_type', 'model'] as const) {
     if (key in frontmatter) {
       if (typeof frontmatter[key] !== 'string') throw new TaskInputError(`${sourcePath}: ${key} must be a scalar`);
@@ -231,7 +235,7 @@ export function importTaskMarkdownSources(stateDir: string, sources: TaskMarkdow
       const result = reviseProjectTask(stateDir, spec.ref, spec.baseRevision ?? current.revision, {
         title: spec.title, body_markdown: spec.bodyMarkdown,
         priority: 'normal', required_provider: null, review_level: null, merge_strategy: null, model: null,
-        task_type: 'implementation', depends_on: [], required_capabilities: [],
+        task_type: 'implementation', depends_on: [],
         ...spec.fields,
       }, actorId);
       task = result.task;
@@ -257,7 +261,7 @@ export function renderTaskMarkdown(task: ProjectTask): string {
   }
   lines.push(`priority: ${task.priority}`);
   if (task.requiredProvider) lines.push(`required_provider: ${task.requiredProvider}`);
-  lines.push(...yamlList('depends_on', task.dependsOn), ...yamlList('required_capabilities', task.metadata.required_capabilities));
+  lines.push(...yamlList('depends_on', task.dependsOn));
   lines.push(`spec_revision: ${task.revision}`, `content_hash: ${task.contentHash}`, '---', '');
   return `${lines.join('\n')}${task.bodyMarkdown}`;
 }

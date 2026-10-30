@@ -26,8 +26,8 @@ export function nextEligibleTaskFromBacklog(
   const b = backlog as Backlog | null;
   const agentId = typeof agentOrId === 'string' ? agentOrId : (agentOrId?.agent_id ?? null);
   const agent: Agent = typeof agentOrId === 'string'
-    ? { agent_id: agentId ?? '', provider: 'codex', role: 'worker', capabilities: [], status: 'idle', registered_at: '' }
-    : (agentOrId ?? { agent_id: '', provider: 'codex', role: 'worker', capabilities: [], status: 'idle', registered_at: '' });
+    ? { agent_id: agentId ?? '', provider: 'codex', role: 'worker', status: 'idle', registered_at: '' }
+    : (agentOrId ?? { agent_id: '', provider: 'codex', role: 'worker', status: 'idle', registered_at: '' });
   const doneSet = new Set<string>();
 
   for (const feature of (b?.features ?? [])) {

@@ -64,9 +64,9 @@ function resetCheckpoint(stateDir: string) {
   }
 }
 
-// A minimal dispatchable task — required to reach ensureSessionReady, which
-// is only called inside the dispatch loop when an eligible task exists for
-// the agent. Without a seeded task, tick() skips dispatch entirely.
+// A minimal dispatchable task — required to reach worker spawning, which
+// happens only inside the dispatch loop when an eligible task exists.
+// Without a seeded task, tick() skips dispatch entirely.
 const DISPATCHABLE_TASK = {
   ref: 'proj/fix-bug',
   title: 'Fix bug',
@@ -80,7 +80,7 @@ const DISPATCHABLE_TASK = {
 
 const COORDINATOR_PATH = fileURLToPath(new URL('./coordinator.ts', import.meta.url));
 
-describe('ensureSessionReady: status invariant on session loss', () => {
+describe('worker session lifecycle', () => {
   it('requeues the task when ephemeral worker session launch fails', async () => {
     seedState(dir, {
       tasks: [DISPATCHABLE_TASK],
@@ -212,7 +212,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
   });
 
   it('does not refresh agent last_heartbeat_at just because a PTY session is reachable', async () => {
-    const staleTs = '2026-01-01T00:00:00.000Z';
+    const staleTs = new Date(Date.now() - 10 * 60_000).toISOString();
     seedState(dir, {
       agents: [{
         agent_id: 'worker-01',
@@ -235,7 +235,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(agent.last_heartbeat_at).toBe(staleTs);
   });
 
-  it('sets status=idle (not running) when heartbeatProbe returns false', async () => {
+  it('removes an unclaimed worker record when its session has exited', async () => {
     seedState(dir, {
       agents: [{
         agent_id: 'worker-01',
@@ -256,12 +256,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    // Read agents.json back from disk.
-    const agent = readAgents(dir).find((a) => a.agent_id === 'worker-01')!;
-
-    expect(agent).toBeDefined();
-    expect(agent.status).toBe('idle');
-    expect(agent.session_handle).toBeNull();
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-01')).toBeUndefined();
   });
 
   it('expires claim when heartbeatProbe returns false for active worker with in_progress claim', async () => {
@@ -308,9 +303,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     const claim = readClaims(dir).find((c) => c.run_id === 'run-pty-dead')!;
     expect(claim).toBeDefined();
     expect(claim.state).toBe('failed');
-
-    const agent = readAgents(dir).find((a) => a.agent_id === 'worker-01')!;
-    expect(agent.session_handle).toBeNull();
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-01')).toBeUndefined();
   });
 
   it('does not expire claim when heartbeatProbe returns true for active worker', async () => {
@@ -720,91 +713,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     expect(send.mock.calls[0][1]).toContain('TASK_START');
   });
 
-  it('relaunches and eventually requeues a claimed run when the pre-duty session is lost', async () => {
-    process.env.ORC_MAX_WORKERS = '1';
-    process.env.ORC_WORKER_PROVIDER = 'claude';
-    seedState(dir, {
-      agents: [{
-        agent_id: 'orc-1',
-        provider: 'claude',
-        role: 'worker',
-        status: 'running',
-        session_handle: null,
-        session_token: null,
-        session_started_at: null,
-        session_ready_at: null,
-        provider_ref: null,
-        registered_at: '2026-01-01T00:00:00.000Z',
-      }],
-      tasks: [{
-        ...DISPATCHABLE_TASK,
-        owner: 'orc-1',
-        status: 'claimed',
-      }],
-      claims: [{
-        run_id: 'run-lost-before-duty',
-        task_ref: 'proj/fix-bug',
-        agent_id: 'orc-1',
-        state: 'claimed',
-        claimed_at: '2026-01-01T00:00:00.000Z',
-        task_envelope_sent_at: null,
-        lease_expires_at: '2026-01-01T00:30:00.000Z',
-        last_heartbeat_at: null,
-        started_at: null,
-        finalization_state: null,
-        finalization_retry_count: 0,
-        finalization_blocked_reason: null,
-        input_state: null,
-        input_requested_at: null,
-        session_start_retry_count: 0,
-        session_start_retry_next_at: null,
-        session_start_last_error: null,
-      }],
-    });
-
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:03:00.000Z'));
-
-    const start = vi.fn().mockImplementation((_agentId: string, _config: Record<string, unknown>) => Promise.resolve({
-      session_handle: 'pty:orc-1',
-      provider_ref: { pid: 123, provider: 'claude', binary: 'claude' },
-    }));
-    const send = vi.fn().mockResolvedValue('');
-    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start, send }));
-    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
-      ensureRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-lost-before-duty',
-        branch: 'task/run-lost-before-duty',
-        worktree_path: '/tmp/orc-worktrees/run-lost-before-duty',
-      }),
-      getRunWorktree: vi.fn().mockReturnValue({
-        run_id: 'run-lost-before-duty',
-        branch: 'task/run-lost-before-duty',
-        worktree_path: '/tmp/orc-worktrees/run-lost-before-duty',
-      }),
-    }));
-
-    const originalArgv = process.argv;
-    process.argv = [...process.argv.slice(0, 2), '--session-ready-timeout-ms=120000', '--session-ready-nudge-ms=1000', '--session-ready-nudge-interval-ms=1000'];
-
-    try {
-      const { tick } = await import('./coordinator.ts');
-      await tick();
-      vi.setSystemTime(new Date('2026-01-01T00:05:01.000Z'));
-      await tick();
-    } finally {
-      process.argv = originalArgv;
-      vi.useRealTimers();
-    }
-
-    const claim = readClaims(dir).find((entry) => entry.run_id === 'run-lost-before-duty')!;
-    expect(start).toHaveBeenCalled();
-    expect(send).not.toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('TASK_START'));
-    expect(claim.state).toBe('failed');
-    expect(claim.failure_reason).toContain('reported_for_duty timeout');
-  });
-
-  it('requeues a claimed non-managed worker run when the pre-duty relaunch fails', async () => {
+  it('requeues a claimed run whose session is gone before reported_for_duty without relaunching it', async () => {
     seedState(dir, {
       agents: [{
         agent_id: 'worker-01',
@@ -844,7 +753,7 @@ describe('ensureSessionReady: status invariant on session loss', () => {
       }],
     });
 
-    const start = vi.fn().mockRejectedValue(new Error('spawn failed'));
+    const start = vi.fn();
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn().mockReturnValue({
@@ -863,9 +772,11 @@ describe('ensureSessionReady: status invariant on session loss', () => {
     await tick();
 
     const claim = readClaims(dir).find((entry) => entry.run_id === 'run-nonmanaged-lost-before-duty')!;
-    expect(start).toHaveBeenCalled();
     expect(claim.state).toBe('failed');
     expect(claim.failure_reason).toContain('session_start_failed');
+    expect(readAgents(dir).find((entry) => entry.agent_id === 'worker-01')).toBeUndefined();
+    // The requeued task goes to a freshly spawned worker, never back to worker-01.
+    expect(start).not.toHaveBeenCalledWith('worker-01', expect.anything());
   });
 
   it('starts missing-run_started nudges from task_envelope_sent_at instead of claimed_at', async () => {
@@ -1295,8 +1206,8 @@ describe('ensureSessionReady: status invariant on session loss', () => {
   });
 });
 
-describe('agent ttl dead marking', () => {
-  it('marks stale agent dead when heartbeat is older than 2 hours and agent has no active claim', async () => {
+describe('stale worker removal', () => {
+  it('removes a worker whose heartbeat is older than 2 hours and that has no active claim', async () => {
     const staleTs = new Date(Date.now() - (2 * 60 * 60 * 1000 + 10_000)).toISOString();
     seedState(dir, {
       agents: [{
@@ -1314,9 +1225,7 @@ describe('agent ttl dead marking', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const agents = readAgents(dir);
-    const worker = agents.find((a) => a.agent_id === 'worker-ttl')!;
-    expect(worker.status).toBe('dead');
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-ttl')).toBeUndefined();
 
     const events = readEvents(dir);
     const marked = events.find((event) => event.event === 'agent_marked_dead' && event.agent_id === 'worker-ttl')!;
@@ -1325,7 +1234,7 @@ describe('agent ttl dead marking', () => {
     expect((marked.payload as Record<string, unknown>).elapsed_ms).toBeGreaterThan(2 * 60 * 60 * 1000);
   });
 
-  it('does not mark stale agent dead when there is an active claim', async () => {
+  it('keeps a stale worker that holds an active claim', async () => {
     const staleTs = new Date(Date.now() - (2 * 60 * 60 * 1000 + 10_000)).toISOString();
     seedState(dir, {
       agents: [{
@@ -1356,13 +1265,69 @@ describe('agent ttl dead marking', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    const agents = readAgents(dir);
-    const worker = agents.find((a) => a.agent_id === 'worker-claimed')!;
-    expect(worker.status).toBe('idle');
-    expect(worker.last_heartbeat_at).toBe(staleTs);
-
     const events = readEvents(dir);
     expect(events.some((event) => event.event === 'agent_marked_dead' && event.agent_id === 'worker-claimed')).toBe(false);
+  });
+
+  it('removes offline and dead workers but never the master or scouts', async () => {
+    const now = new Date().toISOString();
+    seedState(dir, {
+      agents: [
+        { agent_id: 'gone-offline', provider: 'claude', role: 'worker', status: 'offline', session_handle: null, registered_at: now, last_heartbeat_at: now },
+        { agent_id: 'gone-dead', provider: 'claude', role: 'worker', status: 'dead', session_handle: null, registered_at: now, last_heartbeat_at: now },
+        { agent_id: 'master', provider: 'claude', role: 'master', status: 'offline', session_handle: null, registered_at: now, last_heartbeat_at: now },
+        { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'offline', session_handle: null, registered_at: now, last_heartbeat_at: now },
+      ],
+    });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(readAgents(dir).map((a) => a.agent_id).sort()).toEqual(['master', 'scout-1']);
+    const removals = readEvents(dir).filter((event) => event.event === 'agent_offline');
+    expect(removals.map((event) => [event.agent_id, (event.payload as Record<string, unknown>).code]).sort()).toEqual([
+      ['gone-dead', 'status_dead'],
+      ['gone-offline', 'status_offline'],
+    ]);
+  });
+
+  it('keeps an unclaimed worker and finishes the tick when its session probe throws', async () => {
+    const now = new Date().toISOString();
+    seedState(dir, {
+      agents: [{ agent_id: 'worker-probe', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-probe', registered_at: now, last_heartbeat_at: now }],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockRejectedValue(new Error('pty unavailable')),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await expect(tick()).resolves.toBeUndefined();
+
+    expect(readAgents(dir).map((a) => a.agent_id)).toEqual(['worker-probe']);
+  });
+
+  it('never stops or removes a stale worker whose session is recoverable', async () => {
+    const staleTs = new Date(Date.now() - (2 * 60 * 60 * 1000 + 10_000)).toISOString();
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-recoverable', provider: 'claude', role: 'worker', status: 'running',
+        session_handle: 'pty:worker-recoverable', session_token: 'sess-r', registered_at: staleTs, last_heartbeat_at: staleTs,
+      }],
+    });
+    const { initEventsDb, withEventDbTransaction } = await import('./lib/eventLog.ts');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, transport, process_pid, process_start, state_reason)
+        VALUES ('sess-r', NULL, 'worker-recoverable', 'claude', 'recoverable', 'now', 'now', 'pty', 4545, 'proc:45', 'not writable')`).run();
+    });
+    const stop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(readAgents(dir).map((a) => a.agent_id)).toEqual(['worker-recoverable']);
   });
 });
 
@@ -2059,9 +2024,7 @@ describe('processTerminalRunEvents', () => {
     expect(claim.state).toBe('done');
     const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/task-151')!;
     expect(task.status).toBe('done');
-    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
-    expect(agent.status).toBe('idle');
-    expect(agent.session_handle).toBeNull();
+    expect(readAgents(dir).find((entry) => entry.agent_id === 'orc-1')).toBeUndefined();
   });
 
   it('keeps merged runs done when cleanup is deferred after a successful merge', async () => {
@@ -2363,9 +2326,7 @@ describe('processTerminalRunEvents', () => {
     expect(claim.finalization_state).toBe('blocked_finalize');
     expect(claim.finalization_retry_count).toBe(2);
     expect(claim.finalization_blocked_reason).toContain('branch is not rebased onto latest main');
-    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
-    expect(agent.status).toBe('idle');
-    expect(agent.session_handle).toBeNull();
+    expect(readAgents(dir).find((entry) => entry.agent_id === 'orc-1')).toBeUndefined();
     expect(cleanupRunWorktree).not.toHaveBeenCalled();
   });
 
@@ -2726,10 +2687,8 @@ describe('processTerminalRunEvents', () => {
     // The task is recorded done only from the coordinator's merge confirmation.
     const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/test-task')!;
     expect(task.status).toBe('in_progress');
-    const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).toHaveBeenCalledWith('pty:orc-1');
-    expect(agent.status).toBe('idle');
-    expect(agent.session_handle).toBeNull();
+    expect(readAgents(dir).find((entry) => entry.agent_id === 'orc-1')).toBeUndefined();
   });
 
   it('does not duplicate TASK_COMPLETE notifications when replaying the same terminal event', async () => {

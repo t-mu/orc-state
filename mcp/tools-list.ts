@@ -158,11 +158,6 @@ export const TOOLS = [
           enum: ['low', 'normal', 'high', 'critical'],
           description: 'Default: normal',
         },
-        required_capabilities: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Native JSON array of capability strings — NOT a JSON-encoded string.',
-        },
         required_provider: {
           type: 'string',
           enum: ['codex', 'claude', 'gemini'],

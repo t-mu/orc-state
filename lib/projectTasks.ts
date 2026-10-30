@@ -52,7 +52,7 @@ export function closeProjectTaskStores(): void {
 }
 
 /** Definition fields kept in revision metadata, beyond the indexed priority/provider/dependencies. */
-const DEFINITION_FIELDS = ['feature', 'task_type', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'required_capabilities', 'model'] as const;
+const DEFINITION_FIELDS = ['feature', 'task_type', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'model'] as const;
 
 export function featureRefOf(task: Pick<ProjectTask, 'ref' | 'metadata'>): string {
   return typeof task.metadata.feature === 'string' ? task.metadata.feature : task.ref.split('/')[0];
@@ -120,7 +120,7 @@ export interface TaskStatusChange {
 }
 
 /** Fields owned by spec revisions; lifecycle writers must not change them. */
-const DEFINITION_KEYS = ['title', 'priority', 'required_provider', 'depends_on', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'required_capabilities', 'model'] as const;
+const DEFINITION_KEYS = ['title', 'priority', 'required_provider', 'depends_on', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'model'] as const;
 
 function normalizedDefinition(task: Task): string {
   const record = task as unknown as Record<string, unknown>;
@@ -275,7 +275,6 @@ export interface TaskAuthoringInput {
   description?: unknown;
   acceptance_criteria?: unknown;
   depends_on?: unknown;
-  required_capabilities?: unknown;
   required_provider?: unknown;
   model?: unknown;
   review_level?: unknown;
@@ -330,7 +329,6 @@ function definitionMetadata(input: TaskAuthoringInput, base: Record<string, unkn
   set('task_type', optionalChoice(input.task_type, 'task_type', TASK_TYPES));
   set('description', input.description === null ? null : optionalString(input.description, 'description'));
   set('acceptance_criteria', optionalStringArray(input.acceptance_criteria, 'acceptance_criteria'));
-  set('required_capabilities', optionalStringArray(input.required_capabilities, 'required_capabilities'));
   set('model', input.model === null ? null : optionalString(input.model, 'model'));
   set('review_level', input.review_level === null ? null : optionalChoice(input.review_level, 'review_level', ['none', 'light', 'full']));
   set('merge_strategy', input.merge_strategy === null ? null : optionalChoice(input.merge_strategy, 'merge_strategy', ['direct', 'pr']));
@@ -403,7 +401,7 @@ export function createProjectTask(stateDir: string, input: TaskAuthoringInput, a
 }
 
 /** Fields an edit may change. Lifecycle status is never editable here. */
-const REVISABLE_FIELDS = new Set(['title', 'body_markdown', 'task_type', 'priority', 'description', 'acceptance_criteria', 'depends_on', 'required_capabilities', 'required_provider', 'model', 'review_level', 'merge_strategy']);
+const REVISABLE_FIELDS = new Set(['title', 'body_markdown', 'task_type', 'priority', 'description', 'acceptance_criteria', 'depends_on', 'required_provider', 'model', 'review_level', 'merge_strategy']);
 
 /** Save an edit as a new immutable revision, failing if `expectedRevision` is stale. */
 export function reviseProjectTask(

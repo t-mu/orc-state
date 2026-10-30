@@ -78,7 +78,6 @@ the CLI and MCP handlers manage this.
 | `attempt_count` | number | no | How many times this task has been attempted |
 | `requeue_eligible_after` | ISO 8601 | no | Earliest time a requeued task can be re-claimed |
 | `blocked_reason` | string | no | Why the task is blocked |
-| `required_capabilities` | string[] | no | Capabilities the assigned agent must have |
 | `required_provider` | ProviderName | no | Force dispatch to a specific provider |
 | `parent_task_ref` | TaskRef | no | Parent task for subtask relationships |
 | `delegated_by` | string | no | Who delegated this task |
@@ -164,8 +163,6 @@ A task is eligible for dispatch when all of:
 | `model` | string | no | Specific model variant |
 | `status` | AgentStatus | yes | Current agent state |
 | `role` | `"worker"` \| `"reviewer"` \| `"master"` \| `"scout"` | no | Agent role |
-| `dispatch_mode` | `"autonomous"` \| `"supervised"` \| `"human-commanded"` | no | How tasks are dispatched |
-| `capabilities` | string[] | no | Declared capabilities for capability-based routing |
 | `session_handle` | string | no | PTY session handle (`pty:<agent_id>`) |
 | `session_token` | string | no | Id of the agent's current session (named for history; not a credential) |
 | `session_started_at` | ISO 8601 | no | When the PTY session was created |
@@ -184,7 +181,7 @@ A task is eligible for dispatch when all of:
 - **idle** -- registered and session alive, no active run
 - **running** -- actively executing a claimed task
 - **offline** -- session unreachable or shut down gracefully
-- **dead** -- marked dead by the coordinator after sustained unreachability; `orc worker-gc` removes it
+- **dead** -- legacy value, no longer set: the coordinator now removes a worker record instead of marking it dead. Records already holding it are removed by the coordinator, or by `orc worker-gc` when no coordinator runs
 
 ---
 
@@ -481,8 +478,8 @@ before upgrading an existing project.
 | `agent_registered` | Coordinator | New agent registered |
 | `agent_online` | Coordinator | Agent session confirmed alive |
 | `reported_for_duty` | Worker | Worker reports ready |
-| `agent_offline` | Coordinator | Agent session lost |
-| `agent_marked_dead` | Coordinator | Agent marked dead by GC |
+| `agent_offline` | Coordinator | Agent session lost, or (`reason: worker_record_removed`, `code` = `status_offline` \| `status_dead` \| `session_exited`) an unclaimed worker record was removed |
+| `agent_marked_dead` | Coordinator | An unclaimed worker's heartbeat passed the dead TTL; its record is removed |
 | `session_start_failed` | Coordinator | PTY session failed to start |
 | `session_reconciled` | Coordinator | Restart reconciliation or ownership decision for a provider session (`payload.session_id`, `state`, `outcome`, `reason`) |
 | `session_started` | Coordinator | PTY session launched successfully |

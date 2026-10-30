@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { withLock, lockPath } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { isSupportedProvider } from './providers.ts';
-import type { Agent, AgentsState, AgentRole, Provider, DispatchMode } from '../types/agents.ts';
+import type { Agent, AgentsState, AgentRole, Provider } from '../types/agents.ts';
 import { AGENT_ID_RE, AGENT_ROLES } from './constants.ts';
 import { logger } from './logger.ts';
 import { nextAvailableAgentName } from './agentNames.ts';
@@ -11,10 +11,17 @@ import { closeProviderSessionsForAgent, withAuthoritativeAgentSessions } from '.
 
 const VALID_ROLES = new Set<AgentRole>(AGENT_ROLES as AgentRole[]);
 
+// Fields earlier registries wrote on every agent; dropped on read so the next
+// registry write leaves agents.json valid against the current schema.
+const RETIRED_AGENT_FIELDS = ['dispatch_mode', 'capabilities'];
+
 function readAgentsFile(stateDir: string): AgentsState {
   try {
-    return withAuthoritativeAgentSessions(stateDir,
-      JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')) as AgentsState);
+    const file = JSON.parse(readFileSync(join(stateDir, 'agents.json'), 'utf8')) as AgentsState;
+    for (const agent of file.agents ?? []) {
+      for (const field of RETIRED_AGENT_FIELDS) delete (agent as unknown as Record<string, unknown>)[field];
+    }
+    return withAuthoritativeAgentSessions(stateDir, file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       logger.error('[agentRegistry] unexpected error reading agents.json:', err);
@@ -27,8 +34,6 @@ export interface AgentDefinition {
   agent_id: string;
   provider: string;
   role?: AgentRole;
-  dispatch_mode?: string | null;
-  capabilities?: string[];
   provider_ref?: Record<string, unknown> | null;
   /** Mark this agent as coordinator-spawned ephemeral. Ephemeral workers are
    * removed from the registry when their task-scoped session is cleaned up. */
@@ -52,10 +57,6 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
   if (!VALID_ROLES.has(role)) {
     throw new Error(`Unsupported role: ${role}`);
   }
-  const capabilities = agentDef.capabilities ?? [];
-  if (!Array.isArray(capabilities) || capabilities.some((c) => !AGENT_ID_RE.test(c))) {
-    throw new Error('capabilities must be an array of kebab-case strings');
-  }
 
   return withLock(lockPath(stateDir), () => {
     const file = readAgentsFile(stateDir);
@@ -68,9 +69,7 @@ export function registerAgent(stateDir: string, agentDef: AgentDefinition): Agen
       agent_id,
       provider: provider as Provider,
       model:            null,
-      dispatch_mode:    (agentDef.dispatch_mode ?? null) as DispatchMode | null,
       role,
-      capabilities,
       status:           'idle',
       session_handle:   null,
       session_token:    null,

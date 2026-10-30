@@ -137,7 +137,6 @@ beforeEach(() => {
       role: 'master',
       status: 'idle',
       session_handle: null,
-      capabilities: [],
       last_heartbeat_at: null,
       registered_at: '2026-01-01T00:00:00.000Z',
     },
@@ -147,7 +146,6 @@ beforeEach(() => {
       role: 'worker',
       status: 'running',
       session_handle: 'pty:1',
-      capabilities: ['typescript'],
       last_heartbeat_at: '2026-01-01T00:01:00.000Z',
       registered_at: '2026-01-01T00:00:00.000Z',
     },
@@ -157,7 +155,6 @@ beforeEach(() => {
       role: 'worker',
       status: 'dead',
       session_handle: null,
-      capabilities: ['typescript'],
       last_heartbeat_at: '2026-01-01T00:01:00.000Z',
       registered_at: '2026-01-01T00:00:00.000Z',
     },
@@ -528,7 +525,6 @@ describe('mcp read handlers', () => {
       status: 'todo',
       owner: 'orc-1',
       task_type: 'implementation',
-      required_capabilities: ['sql'],
       depends_on: ['infra/blocked-one'],
       delegated_by: 'master',
       created_at: '2026-01-01T00:00:00.000Z',
@@ -537,7 +533,6 @@ describe('mcp read handlers', () => {
     const workview = handleGetAgentWorkview(dir, { agent_id: 'orc-1' }) as Record<string, unknown>;
     const ownedBlocked = (workview.queued_tasks as Array<Record<string, unknown>>).find((task) => task.ref === 'project/owned-blocked') as Record<string, unknown>;
     expect(ownedBlocked.blockers).toContain('dependency_not_done:infra/blocked-one');
-    expect(ownedBlocked.blockers).toContain('missing_capability:sql');
   });
 
   it('handleGetAgentWorkview reports planning_state and missing-dependency blockers from an in-memory backlog', async () => {
@@ -816,23 +811,6 @@ describe('mcp read handlers', () => {
       task_type: 'implementation',
       actor_id: 'master',
     })).toThrow(/cannot execute task: role_ineligible:master/);
-  });
-
-  it('handleDelegateTask surfaces routing reasons for explicit target rejection', () => {
-    seedClaims([]);
-    // Required capabilities are part of the task definition, so seed a task that carries them.
-    seedTasks([{ ref: 'project/sql-one', title: 'Sql one', status: 'todo', task_type: 'implementation', required_capabilities: ['sql'] }]);
-
-    expect(() => handleDelegateTask(dir, {
-      task_ref: 'project/sql-one',
-      target_agent_id: 'orc-1',
-      actor_id: 'master',
-    })).toThrow(/missing_capability:sql/);
-    expect(() => handleDelegateTask(dir, {
-      task_ref: 'project/sql-one',
-      target_agent_id: 'orc-1',
-      actor_id: 'master',
-    })).toThrow(/missing required capability 'sql'/);
   });
 
   it('handleDelegateTask surfaces provider mismatch for explicit target rejection', () => {
