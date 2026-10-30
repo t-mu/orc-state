@@ -109,7 +109,7 @@ const MASTER_ONLY_TOOLS: ReadonlySet<string> = new Set(['respond_input', 'reques
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
   { project = ACTIVE_PROJECT, credential = clientCredential(process.env) }: { project?: unknown; credential?: string | null } = {}) {
-  if (project && !credential && (name in MASTER_WRITE_TOOLS || MASTER_ONLY_TOOLS.has(name))) {
+  if (project && !credential && (Object.hasOwn(MASTER_WRITE_TOOLS, name) || MASTER_ONLY_TOOLS.has(name))) {
     const instead = MASTER_WRITE_TOOLS[name];
     throw new ForbiddenError(`${name} needs the master session (ORC_MASTER_SECRET, set by orc start-session). `
       + (instead ? `As the operator, use the orc CLI instead: ${instead}` : 'Only the master can do this; start it with orc start-session'));

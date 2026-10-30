@@ -300,7 +300,7 @@ Returns `{ results: [{ id, snippet, wing, hall, room, importance, created_at, ra
 
 ### `memory_store`
 
-Store a new memory. Equivalent to `orc memory-record`.
+Store a new memory. Equivalent to `orc memory-record`. It needs the master session (`ORC_MASTER_SECRET`, set by `orc start-session`); without it the tool refuses and an operator uses `orc memory-record`.
 
 ```json
 {
