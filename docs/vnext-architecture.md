@@ -80,8 +80,8 @@ controls Docker directly.
    an active provider turn.
 5. **Existing two-root layout:** The brief depicts one project repo. A
    registered project keeps its state outside the target repo, whose
-   worktrees it creates; legacy attached installations run until migrated, and
-   the sibling layout is retired (plan 3).
+   worktrees it creates; legacy attached and sibling installations no longer
+   run and must be migrated with `orc project migrate` (plan 3).
 6. **Existing finalization:** The brief says the daemon resolves conflicts;
    current direct mode can ask a worker for a finalize rebase. Preserve this
    behavior initially and model it explicitly in the run state. A separate

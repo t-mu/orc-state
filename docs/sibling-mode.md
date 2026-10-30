@@ -14,7 +14,8 @@ mirrored into Markdown.
   Without flags it is a dry run; `--execute` backs up, imports, verifies, and
   cuts over. See [Configuration → Migrating an existing installation](./configuration.md#migrating-an-existing-installation).
 
-An unmigrated sibling home no longer runs. `orc start-session`, the
-coordinator and the MCP server refuse it, and `orc doctor`/`orc preflight`
-report it, so runs can never land in the orchestration home by mistake.
-`orc init --sibling` is retired.
+An unmigrated sibling home no longer runs, nor does any other legacy
+`.orc-state` installation. `orc init`, `orc start-session`, the coordinator and
+the MCP server refuse it, and `orc doctor`/`orc preflight` fail on it, so runs
+can never land in the orchestration home by mistake. `orc init --sibling` is
+retired.

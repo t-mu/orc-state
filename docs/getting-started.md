@@ -10,14 +10,30 @@
 
 ```bash
 npm install -g orc-state
-cd my-project
-orc init
+orc project add ~/code/my-project   # register the Git repository as a project
+cd ~/code/my-project
+orc init                            # pick providers (or: orc init --provider=claude,codex)
 ```
 
-The `init` command walks you through provider selection and installs
-skills, agents, and MCP configuration. Claude and Codex get skill/agent
-files installed automatically; Gemini remains available as a runtime
-provider, but `init` currently skips Gemini-specific skill/agent targets.
+`orc project add` registers the repository and gives it an external state
+directory; nothing is written into the repository. The `init` command walks
+you through provider selection (`--provider=...` and `--worker-provider=...`
+skip the prompts; `--provider` is required outside a TTY) and records it in
+the project registry. It does not install skills, agents, or MCP
+configuration: `orc start-session` wires the orchestrator MCP server into the
+master itself, and skills and agents are installed for your user with:
+
+```bash
+orc install --global --skip-mcp --provider=claude,codex
+```
+
+Already have an old `.orc-state` installation (state and `backlog/` inside
+the repository)? It no longer runs. Migrate it instead of `orc project add`:
+
+```bash
+orc project migrate <root>            # dry run
+orc project migrate <root> --execute  # import and cut over
+```
 
 Verify:
 
@@ -36,20 +52,19 @@ This launches two things:
 1. **Coordinator** — background process that dispatches tasks to workers, monitors heartbeats, and manages the run lifecycle
 2. **Master agent** — foreground interactive session where you direct the work
 
-The provider for master and worker sessions is configured during `orc init` and stored in `orc-state.config.json`. You can override per task via `required_provider` in the task spec, or mix providers across workers in the same session.
+The provider for master and worker sessions is configured during `orc init` and stored in the project settings (`orc project config list`). You can override per task via `required_provider` in the task spec, or mix providers across workers in the same session.
 
 ## Create your first task
 
-Tasks are markdown files in the `backlog/` directory. Each file is a self-contained spec that tells a worker exactly what to do.
+Tasks live in the project's task store, not in the repository. Each task is a self-contained spec that tells a worker exactly what to do. Ask the master to create one (`create_task`), use `orc project task create`, or import a Markdown spec.
 
-Create `backlog/1-add-logging.md`:
+Write a spec anywhere outside the orchestrator, e.g. `~/specs/add-logging.md`:
 
 ```markdown
 ---
 ref: general/1-add-logging
 feature: general
 priority: normal
-status: todo
 ---
 
 # Task 1 — Add request logging
@@ -102,7 +117,7 @@ Import it into the project's task store (the file itself stays outside the
 orchestrator; edit and re-import, or use `orc project task edit`):
 
 ```bash
-orc project task import path/to/task.md
+orc project task import ~/specs/add-logging.md
 ```
 
 ## Dispatch work
@@ -152,8 +167,8 @@ orc doctor
 1. **Coordinator claims the task** — status moves from `todo` to `claimed`
 2. **Worker starts** — `run-start` transitions the task to `in_progress`; the worker reads the spec, writes code, and runs tests in an isolated worktree
 3. **Self-review** — the worker spawns sub-agent reviewers that audit the diff against acceptance criteria
-4. **Completion** — the worker marks the task done, rebases onto main, and signals `run-work-complete`
-5. **Merge** — the coordinator merges the worktree branch and cleans up
+4. **Completion** — the worker rebases onto main and signals `run-work-complete`
+5. **Merge** — the coordinator merges the worktree branch, records the task `done`, and cleans up
 
 The coordinator monitors worker health by probing the worker process. If a worker dies, the coordinator expires the claim and requeues the task.
 

@@ -32,7 +32,7 @@ Key properties:
 
 ### Storage
 
-Memory is stored in `.orc-state/memory.db`, a SQLite database managed by `lib/memoryStore.ts`.
+Memory is stored in `memory.db` in the project state directory, a SQLite database managed by `lib/memoryStore.ts`.
 The coordinator initializes the database on first use. Workers never write to the file
 directly — all access goes through the `orc` CLI or MCP tools.
 

@@ -1,6 +1,6 @@
 # Configuration
 
-orc-state is configured through environment variables and an optional JSON config file. Environment variables take precedence over config file values.
+orc-state is configured through project settings in the global registry (`orc project config`) and environment variables. Environment variables take precedence over stored settings.
 
 ## Global project registry (new project API)
 
@@ -17,34 +17,34 @@ orc project config list --global
 orc project config unset worker_pool.max_workers --project=<project-id>
 ```
 
-Project lookup uses `--project`, then `ORC_PROJECT_ID`, then the current repository's canonical Git root, then the selected project only outside a Git repository. An unknown or ambiguous match is an error. Settings are validated against known non-secret config keys. Effective values resolve from CLI overrides, environment, project settings, then global settings. `project config list` shows effective values; `--global` shows stored global values. Commands run against a registered project as described below; a repository that still has a legacy layout keeps using it until it is migrated.
+Project lookup uses `--project`, then `ORC_PROJECT_ID`, then the current repository's canonical Git root, then the selected project only outside a Git repository. An unknown or ambiguous match is an error. Settings are validated against known non-secret config keys. Effective values resolve from CLI overrides, environment, project settings, then global settings. `project config list` shows effective values; `--global` shows stored global values. Commands run against a registered project as described below; a repository that still has a legacy layout must be migrated first.
 
 ### Running against a registered project
 
-An orc command runs in **project mode** when `ORC_PROJECT_ID` names a registered project. Otherwise, when no legacy override (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE`) is set, the current directory's canonical Git root selects its registered project (a root registered twice is an error), and outside every Git repository the project chosen with `orc project select` applies. A repository that still has a legacy `.orc-state/` or `orc-state.config.json` (between the current directory and its Git root) stays in legacy mode until it is migrated; once `orc project migrate` cuts it over, that layout, or a legacy override naming it, selects its project instead. `ORC_PROJECT_ID` overrides both. A project whose migration has not been cut over is not active yet: the repository keeps its legacy layout, and naming the project explicitly is an error. Each project state directory holds a `project.json` descriptor (id, name, target root), so a worker given `ORC_PROJECT_ID` and its state directory resolves the project without opening the global registry.
+An orc command runs in **project mode** when `ORC_PROJECT_ID` names a registered project. Otherwise, when no legacy override (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE`) is set, the current directory's canonical Git root selects its registered project (a root registered twice is an error), and outside every Git repository the project chosen with `orc project select` applies. A repository that still has a legacy `.orc-state/` or `orc-state.config.json` (between the current directory and its Git root) selects no project until it is migrated, and a legacy installation no longer runs (see **Legacy installations** below); once `orc project migrate` cuts it over, that layout, or a legacy override naming it, selects its project instead. `ORC_PROJECT_ID` overrides both. A project whose migration has not been cut over is not active yet, and naming the project explicitly is an error. Each project state directory holds a `project.json` descriptor (id, name, target root), so a worker given `ORC_PROJECT_ID` and its state directory resolves the project without opening the global registry.
 
 In project mode:
 
 - State, run worktrees (`<state>/worktrees/<run_id>`), PTY logs, provider settings, plans and exports live under the project's state directory in the data home. Git operations (worktrees, branches, merges) run against the registered target repository; only Git's own worktree metadata lands in the target's `.git`.
 - Settings come from the registry (`orc project config`), project over global, with environment and CLI overrides on top. No `orc-state.config.json` is read or needed.
 - Workers receive `ORC_PROJECT_ID`, their session id as `ORC_SESSION_ID` (it names the session, e.g. in `report-for-duty`; not a credential, and an inherited legacy `ORC_SESSION_TOKEN` is blanked), their session secret as `ORC_SESSION_SECRET` (their actor credential, task 231), and the control socket as `ORC_CONTROL_SOCKET`, which `orc control` and the worker lifecycle commands use in place of the recorded endpoint path; the daemon's bearer token is still read from `<state>/control.token`. `ORC_STATE_DIR` is still set as a temporary bridge, and `ORC_HOME`/`ORC_REPO_ROOT`/`ORC_CONFIG_FILE` are blanked (a blank value counts as unset) so an inherited legacy value cannot redirect them. A sandboxed worker that cannot open the registry runs on environment settings and defaults.
-- Worker lifecycle commands — `run-start`, `progress`, `run-work-complete`, `run-fail`, `run-finish`, `run-input-request`, `review-submit`, `memory-record` and `report-for-duty` — do not write the state directory in a project. Each is sent to the coordinator over `ORC_CONTROL_SOCKET` with the session secret, and the coordinator applies it, so no worker process writes `runtime.db`, `events.db` or `claims.json`. The credential must be a session that is not `offline` (`running`, `recoverable` or `unknown` — after a coordinator restart the session secret, not the process identity, is what proves the caller) launched for the named run (and agent); an `offline` session may still poll its own input request and repeat `run-finish` on a run that is already `done`, everything else is refused with `401`; `--agent-id` alone is not trusted, and a request for another run is refused with `403 forbidden`. Each launched session — worker, scout and master — gets a random secret that only its own process holds: it is passed in the environment, never written to the state directory, PTY logs, the bootstrap or events, and the `sessions` table keeps only its SHA-256 hash. A session id read from the state directory therefore authenticates nobody in a project (a legacy installation still accepts the id of a session recorded without a secret). The secret is only as private as the sandbox: a `full-access` worker runs as the same user and can read other processes' environments (`/proc/<pid>/environ`), and so can a worker in a sandbox without its own process namespace, such as Codex's; `worker_pool.sandbox_network: open` also lets a sandboxed worker reach other local sockets. The guarantee assumes a sandboxed worker with the default `restricted` network. Upgrading a project with runs in flight: workers launched before session secrets hold none, so their lifecycle commands fail with `ORC_SESSION_SECRET is not set`; drain or reset those tasks (`orc task-reset <ref>`) when upgrading. Without `ORC_SESSION_SECRET` these commands fail, except `memory-record`, which an operator shell still writes directly. While the coordinator is stopped or restarting a command retries for up to two minutes (`ORC_CONTROL_RETRY_MS`), and only when the request never reached it. A legacy installation keeps writing its state directory directly until it is migrated. A project coordinator therefore requires the control API: it refuses to start with `ORC_CONTROL_API=off` or when the socket cannot be served.
+- Worker lifecycle commands — `run-start`, `progress`, `run-work-complete`, `run-fail`, `run-finish`, `run-input-request`, `review-submit`, `memory-record` and `report-for-duty` — do not write the state directory in a project. Each is sent to the coordinator over `ORC_CONTROL_SOCKET` with the session secret, and the coordinator applies it, so no worker process writes `runtime.db`, `events.db` or `claims.json`. The credential must be a session that is not `offline` (`running`, `recoverable` or `unknown` — after a coordinator restart the session secret, not the process identity, is what proves the caller) launched for the named run (and agent); an `offline` session may still poll its own input request and repeat `run-finish` on a run that is already `done`, everything else is refused with `401`; `--agent-id` alone is not trusted, and a request for another run is refused with `403 forbidden`. Each launched session — worker, scout and master — gets a random secret that only its own process holds: it is passed in the environment, never written to the state directory, PTY logs, the bootstrap or events, and the `sessions` table keeps only its SHA-256 hash. A session id read from the state directory therefore authenticates nobody. The secret is only as private as the sandbox: a `full-access` worker runs as the same user and can read other processes' environments (`/proc/<pid>/environ`), and so can a worker in a sandbox without its own process namespace, such as Codex's; `worker_pool.sandbox_network: open` also lets a sandboxed worker reach other local sockets. The guarantee assumes a sandboxed worker with the default `restricted` network. Upgrading a project with runs in flight: workers launched before session secrets hold none, so their lifecycle commands fail with `ORC_SESSION_SECRET is not set`; drain or reset those tasks (`orc task-reset <ref>`) when upgrading. Without `ORC_SESSION_SECRET` these commands fail, except `memory-record`, which an operator shell still writes directly. While the coordinator is stopped or restarting a command retries for up to two minutes (`ORC_CONTROL_RETRY_MS`), and only when the request never reached it. A project coordinator therefore requires the control API: it refuses to start with `ORC_CONTROL_API=off` or when the socket cannot be served.
 - Master and operator mutations — MCP `cancel_task`, `reset_task`, `unblock_task`, `delegate_task`, `respond_input`, and `orc task-cancel`, `task-reset`, `task-unblock`, `delegate`, `run-input-respond` — are applied by the coordinator too (`POST /v1/operator`), under their own rule: a session credential must be the master's (not `offline`), which `orc start-session` puts in the master provider's environment as `ORC_MASTER_SECRET` (its MCP config only references it: `${ORC_MASTER_SECRET}` for Claude and Gemini, `env_vars` for Codex), so the master's tools and the commands its shell runs act as the master. A shell inside a worker session presents its own `ORC_SESSION_SECRET` and is refused with `403`; in a project the master's tools always act as the master (`actor_id` is ignored), and `respond_input` needs `ORC_MASTER_SECRET`. A shell without a session acts as the operator by presenting the operator token the coordinator writes to `<state>/operator.token` on every start (sandboxed Claude sessions are denied reading it, by the sandbox and by a permission rule for the Read tool; a Codex sandbox cannot deny reads, which matters only where a sandboxed Codex worker can reach the socket at all, i.e. with `sandbox_network: open`, or for `full-access` workers of any provider), and is recorded as `human` or a registered agent named with `--actor-id`. Answering an input request (`run-input-respond`) needs the master's credential in every case. With no coordinator running these commands — and the master's tools — write the state directly under the state lock, after the same authorization (a worker session is still refused), and print `coordinator is not running; applying <op> directly`; that is the documented recovery path. The master's session row is closed when `orc start-session`'s master exits or `start-session` receives SIGHUP or SIGTERM; only a SIGKILL leaves it open until the next `start-session`, and the secret it would need lives only in that master's process tree.
 - Sandboxed project workers may write their worktree, the target's `.git` object, ref and worktree-metadata subtrees, and the control socket — never the project state directory or the target working tree. Claude, Codex, and the Codex app-server runtime get the same writable roots. Reaching the socket is a network permission: only Claude's macOS sandbox allows that one path; Codex and Claude on Linux connect only with the opt-in `worker_pool.sandbox_network: open`, which widens the sandbox network (see **Execution Modes**), and `orc doctor` and the coordinator's startup log warn when the default worker provider could not connect. Read commands a worker runs ask the running coordinator: `review-read` and `memory-wake-up` use the control API (`GET /v1/runs/<run_id>/reviews`, `GET /v1/memory/wake-up`). When no coordinator answers they, like `status`, `runs-active` and `run-info`, read the state directory directly; a worker session (one with `ORC_SESSION_SECRET`) that cannot write it opens the databases read-only. That works while another process holds the database's WAL files open; with every process closed, a sandboxed read fails — `review-read` and `memory-wake-up` exit 1 asking to retry once the coordinator is running. Writer processes (the coordinator, the MCP server, operator shells) never fall back to read-only.
 
-### Legacy attached installations
+### Legacy installations
 
-An installation that keeps `.orc-state/`, `backlog/` and `orc-state.config.json` inside its repository still runs until it is migrated, and `orc doctor`/`orc preflight` remind you to migrate it. Its coordinator registers task **definitions** from `backlog/` specs (a new spec is added as `todo`; titles, dependencies, review level and merge strategy follow their specs). Status is never read from a spec and never written back: runtime commands own it (`run-fail`, `task-reset`, `task-unblock`, the coordinator's merge), workers do not edit `status:`, and a new spec whose `status:` is not `todo` is not registered (the coordinator logs it as skipped; `orc project migrate` carries such tasks with their status). The sibling layout is retired: a config with a separate `target_repo` is refused until migrated.
+An installation that keeps `.orc-state/`, `backlog/` and `orc-state.config.json` inside its repository (attached), or a separate orchestration home with `target_repo` (sibling), no longer runs. Without a registered project, `orc init`, `orc start-session`, the coordinator and the MCP server refuse to start, and `orc doctor` and `orc preflight` fail (exit 1); each points at `orc project migrate <root> --execute` (see **Migrating an existing installation**) or `orc project add <git-path>`. Nothing reads `backlog/` specs any more, except the migration itself.
 
 ### Selecting and switching projects
 
 Every `orc` command accepts `--project=<id>` (or `--project <id>`), before or after the subcommand; it is the highest-precedence selector and an unknown id is an error. Inside a registered repository the repository selects its project; outside every repository `orc project select <id>` sets the default. Switching changes only the registry selection or the flag — no repository file is written, and provider logins are untouched because they live in the providers' own stores.
 
-`orc status`, `orc watch` (TUI header), `orc doctor` and `orc preflight` print the active project (`project: <name> (<id>) → <target root>`; JSON output carries a `project` object). In project mode `doctor` and `preflight` check the target repository, the state directory, the project task store, and warn about orc artifacts left in the target working tree. `orc start-session` passes the project identity to the coordinator and the master's MCP server; a Codex master receives its MCP server as `-c` overrides instead of a `.codex/config.toml` in the repository. The control API snapshot carries the project identity, and each run row its task's SQLite `task_status` and pinned `spec_revision`.
+`orc status`, `orc watch` (TUI header), `orc doctor` and `orc preflight` print the active project (`project: <name> (<id>) → <target root>`; JSON output carries a `project` object). In project mode `doctor` and `preflight` check the target repository, the state directory, the project task store, and warn about orc artifacts left in the target working tree. `orc start-session` passes the project identity to the coordinator and the master's MCP server; a Codex master receives its MCP server as `-c` overrides, so nothing is written into the repository. The control API snapshot carries the project identity, and each run row its task's SQLite `task_status` and pinned `spec_revision`.
 
 ### Project tasks
 
-A registered project's state directory holds `runtime.db`, the SQLite task store. A state directory with `runtime.db` is SQLite-authoritative for task definitions: `backlog.json` there is a read-only projection, and Markdown files under `backlog/` are not synced into it. Tasks are created and edited through the store, with no Markdown file in any repository:
+A registered project's state directory holds `runtime.db`, the SQLite task store. A state directory with `runtime.db` is SQLite-authoritative for task definitions: `backlog.json` there is a read-only projection, and no Markdown file is synced into it. Tasks are created and edited through the store, with no Markdown file in any repository:
 
 ```bash
 orc project task create --feature=app --title="Add login" [--body-file=/any/path.md] [--depends-on=app/setup,app/db] [--priority=high]
@@ -65,8 +65,8 @@ In a project state directory, task status, attempts, dispatch fields (`owner`, `
 - **Claim** verifies in one transaction that the task is `todo`, that its owner (if any) is the claiming agent, and that every dependency is `done` or `released` in the same project; then it records the `claim` transition and binds the run to the latest revision. If the operational claim cannot be committed afterwards, the task returns to `todo` without counting an attempt.
 - **Run start, failure, lease expiry, reset, session reset, unblock and cancel** each update the task status, its run binding and the transition row in one transaction. Execution failures count an attempt and set a requeue backoff; infrastructure failures (dispatch, session start, run-start timeout) do not. A run that ends after an operator already reset or cancelled its task leaves the task alone.
 - **Work-complete** changes only the run's finalization state; the task stays `in_progress`. **`done`** is recorded only by the coordinator's merge confirmation (`merge_succeeded`, naming the merged run); a repeated `task-mark-done` or `run-finish` adds nothing, and a worker's `run-finish` before the merge is refused. A task reset after completion can be completed again by its next run.
-- **Cancel** (`cancel_task`) moves the task to the terminal `cancelled` status and closes its run as cancelled. Legacy state directories keep their existing behaviour of blocking the task.
-- A status change without a lifecycle cause, or a definition change outside a revision, is rejected. A stale Markdown file cannot requeue a completed task: backlog sync is off and ordinary imports never apply status.
+- **Cancel** (`cancel_task`) moves the task to the terminal `cancelled` status and closes its run as cancelled.
+- A status change without a lifecycle cause, or a definition change outside a revision, is rejected. A stale Markdown file cannot requeue a completed task: nothing syncs Markdown and ordinary imports never apply status.
 - `reconcile` returns a task left `claimed`/`in_progress` without an operational claim to `todo`, and fails an operational claim its `todo`/`blocked` task row does not reflect. A claim whose task is already `done` is in its finalize window and is left to finalization; lease expiry skips it too.
 
 The `events.db` stream still receives the usual lifecycle events after each commit; the authoritative audit record is the transition row written in the same transaction as the status and run change.
@@ -89,13 +89,13 @@ Import reads the spec frontmatter subset (`ref`, `feature`, `title`, `priority`,
 
 Lifecycle fields (`status`, `attempt_count`, `blocked_reason`, `owner`, `planning_state`, …) are ignored and reported in `ignored_fields`; `--strict` rejects them instead. An import therefore cannot complete, block, or reopen a task. A file whose `status` is anything other than `todo` cannot create a new task, because it would start as dispatchable work: bring an existing installation's finished and blocked tasks over with `orc project migrate` (below), which carries runtime status, or remove the field to import the spec as new work.
 
-For an existing task the file is the whole definition: an omitted field is cleared (dependencies, review level, provider) rather than kept, and `depends_on: []` is valid. The whole import runs in one transaction, so a file that fails any check leaves the project unchanged. Unlike backlog sync, the title falls back to the first `# ` heading rather than the slug, and duplicate dependencies are merged rather than rejected.
+For an existing task the file is the whole definition: an omitted field is cleared (dependencies, review level, provider) rather than kept, and `depends_on: []` is valid. The whole import runs in one transaction, so a file that fails any check leaves the project unchanged. Unlike the retired backlog sync, the title falls back to the first `# ` heading rather than the slug, and duplicate dependencies are merged rather than rejected.
 
 Export writes frontmatter for the definition fields plus `spec_revision` and `content_hash`, followed by the stored body. It never writes `status`. Re-importing an exported file uses its `spec_revision` as the expected revision, so editing a stale export fails with a revision conflict instead of overwriting newer work. Plans are stored whole in `plan_documents` after `parsePlan` validation and export byte-for-byte.
 
 ### Migrating an existing installation
 
-`orc project migrate` moves an attached installation (state, specs and plans inside the product repository) or a sibling installation (a separate orchestration home with `target_repo`) into a registered project:
+`orc project migrate` moves an attached installation (state, specs and plans inside the product repository) or a sibling installation (a separate orchestration home with `target_repo`) into a registered project. It is the only way to keep using such an installation, which no longer runs (see **Legacy installations**):
 
 ```bash
 orc project migrate [legacy-path]                      # dry run: inventory and conflicts, writes nothing
@@ -109,7 +109,7 @@ The dry run reports the layout, tasks by status and definition source, plans, cl
 
 Task status is the **effective runtime status**: `backlog.json`, where a spec status (from the retired status mirror, possibly newer than a stale runtime file) may only make a task less dispatchable: `todo` → `blocked`/`done`/`cancelled`, `blocked` → `done`/`cancelled`. So a finished, blocked or cancelled task is never reopened by a spec that still says `todo`, a completion recorded only in a spec is kept, and a spec that is not in the runtime yet is added with its spec status. Each spec becomes revision 1 of its task (with its import recorded in `task_imports`), keeping the runtime's `created_at`, attempts, block reason and dispatch fields; a non-`todo` status is the task's first `migration_import` transition, which the store allows only once per task, so a replay can never complete a task again. `events.db` and `memory.db` are copied whole, along with `claims.json`, `run-worktrees.json`, `event-checkpoint.json` and run spec snapshots; legacy agent sessions are cleared. Valid plans and settings are imported into project SQLite and the registry.
 
-`--execute` holds the legacy coordinator lock throughout, so a legacy coordinator cannot start mid-migration. A new project is registered with its `migration.json` already present, so it is never active half-imported. The command first copies the legacy state, specs, plans and config into `<state>/migration-backup/<time>/`. It then imports into the project state directory and verifies parity: every task's status, definition hash (title, body, metadata, priority, provider, dependencies), attempts, block reason and dispatch fields; database row counts, claims, run snapshots and plans; that the project's settings are exactly the imported ones; and that the legacy installation did not change since it was inventoried. Only then does it cut over: it writes `.orc-state/project-migration.json`, naming the project, into the legacy state directory, and marks the project's `migration.json` `cut_over`. A failed verification leaves the installation in legacy mode with the mismatches in `migration.json`. Every attempt before the cutover rebuilds the project state, and replaces the settings the previous attempt imported, from the unchanged legacy files, so a retry duplicates nothing; running it after the cutover reports `already_migrated`. `--execute` exits 1 when it is `blocked` or `verification_failed`.
+`--execute` holds the legacy coordinator lock throughout, so a coordinator of an older orc version cannot start on the installation mid-migration. A new project is registered with its `migration.json` already present, so it is never active half-imported. The command first copies the legacy state, specs, plans and config into `<state>/migration-backup/<time>/`. It then imports into the project state directory and verifies parity: every task's status, definition hash (title, body, metadata, priority, provider, dependencies), attempts, block reason and dispatch fields; database row counts, claims, run snapshots and plans; that the project's settings are exactly the imported ones; and that the legacy installation did not change since it was inventoried. Only then does it cut over: it writes `.orc-state/project-migration.json`, naming the project, into the legacy state directory, and marks the project's `migration.json` `cut_over`. A failed verification leaves the installation unmigrated with the mismatches in `migration.json`. Every attempt before the cutover rebuilds the project state, and replaces the settings the previous attempt imported, from the unchanged legacy files, so a retry duplicates nothing; running it after the cutover reports `already_migrated`. `--execute` exits 1 when it is `blocked` or `verification_failed`.
 
 After the cutover, running orc in the legacy root (Git checkout or not), its linked worktrees, or the target repository selects the project, also once `.orc-state/` has been removed (the project's migration record names its source). A legacy override (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE`) that points at the migrated installation, for example in an MCP config written by the legacy `start-session`, selects the project too, so nothing keeps writing to the frozen legacy state. If the registry cannot be opened, the coordinator and `orc doctor` refuse the migrated legacy state directory instead. Nothing is deleted. `--cleanup-report` lists what the project no longer needs, with suggested commands in a safe order (state directory last): legacy run worktrees still registered with Git, `.worktrees/`, `.orc-state/`, `backlog/`, `plans/`, `orc-state.config.json`, `.gitignore` entries, and orchestrator MCP entries in `.mcp.json`/`.codex/config.toml`.
 
@@ -119,16 +119,14 @@ After the cutover, running orc in the legacy root (Git checkout or not), its lin
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_STATE_DIR` | Root directory for all state files (backlog.json, agents.json, claims.json, events.db) | `<orchestration-root>/.orc-state` |
-| `ORC_HOME` | Force the orchestration root (where state, backlog, plans, and config live). Top precedence for orchestration-root resolution; the coordinator propagates it into a legacy installation's worker sessions so `orc` resolves the orchestration state dir from inside a worktree. | Walk-up to `orc-state.config.json`, else git root |
-| `ORC_REPO_ROOT` | Force the repository root path instead of auto-detecting via `git rev-parse`. Also forces the target repo root for git operations of a legacy installation. A forcing/recovery override. | Auto-detected from cwd |
-| `ORC_CONFIG_FILE` | Path to the config file | `<orchestration-root>/orc-state.config.json` |
-| `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<orchestration-root>/.worktrees` |
-| `ORC_BACKLOG_DIR` | Directory containing backlog task spec markdown files | `<orchestration-root>/backlog` |
-| `ORC_PLANS_DIR` | Directory containing plan artifact markdown files | `<orchestration-root>/plans` |
+| `ORC_DATA_HOME` | Directory of the global `registry.db` and the `projects/<id>` state directories | Platform data directory (see above) |
+| `ORC_PROJECT_ID` | Select a registered project (set by `--project` and for launched sessions) | — |
+| `ORC_STATE_DIR` | Set for launched sessions as a bridge to their project state directory. Otherwise a legacy path override: naming a migrated installation's state directory selects its project; naming an unmigrated one selects no project | The project state directory |
+| `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE` | Legacy path overrides (blanked for launched sessions). One naming a migrated installation selects its project; otherwise no project is selected, and a legacy installation no longer runs | — |
+| `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<state>/worktrees` |
 | `ORC_SESSION_TRANSPORT` | Transport for new worker sessions: `auto` (tmux if installed, else node-pty), `tmux` or `pty`. tmux sessions survive a coordinator restart | `auto` |
 | `ORC_TMUX_BIN` | tmux binary used by the tmux session transport | `tmux` |
-| `ORC_CONTROL_API` | Set to `off` to stop the coordinator serving the local control API (`control.sock`, `control.json`, `control.token` in the state dir). Legacy installations only: a project coordinator refuses to start without it, since its workers report through it | on |
+| `ORC_CONTROL_API` | The coordinator serves the local control API (`control.sock`, `control.json`, `control.token` in the state dir). A project coordinator refuses to start with `off`, since its workers report through it | on |
 | `ORC_CONTROL_RETRY_MS` | How long a project worker's lifecycle command retries while its coordinator is unreachable (no endpoint, refused connection, or shutting down) | `120000` |
 
 ### Worker Pool
@@ -159,7 +157,7 @@ After the cutover, running orc in the legacy root (Git checkout or not), its lin
 
 ## Config File
 
-Location: `orc-state.config.json` in the repository root (sibling of `.orc-state/`). Override the path with `ORC_CONFIG_FILE`.
+A project has no config file: its settings are stored in the registry, project over global, with dotted keys for nested fields (`orc project config set worker_pool.max_workers 2`). The schema below shows the settings as the nested object the loaders see; `orc init` records `default_provider`, `worker_pool.provider` and `worker_pool.max_workers`.
 
 ### Full Schema
 
@@ -221,7 +219,7 @@ Sets the fallback provider for both master and worker pool when neither a sectio
 
 > The master defaults to `claude` (optimized for interactive conversation)
 > while workers default to `codex` (optimized for autonomous coding). Override
-> both via config file or environment variables.
+> both via project settings or environment variables.
 
 ### `default_execution_mode`
 
@@ -230,8 +228,8 @@ Sets the fallback execution mode for both master and worker pool when neither a 
 ### `target_repo` (retired)
 
 The sibling layout this key enabled is retired. A legacy config that still
-names a separate `target_repo` is refused by `orc start-session`, the
-coordinator and the MCP server, and reported by `orc doctor`/`orc preflight`;
+names a separate `target_repo` is refused by `orc init`, `orc start-session`,
+the coordinator and the MCP server, and fails `orc doctor`/`orc preflight`;
 migrate it with `orc project migrate <orchestration-home> --execute`, which
 registers the target repository as a project. See
 [Sibling Mode](./sibling-mode.md).
@@ -254,7 +252,7 @@ otherwise from `worker_pool.provider` (or `ORC_WORKER_PROVIDER`).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `max_workers` | integer | `0` | Concurrency limit — maximum number of task-scoped workers that may run simultaneously. Workers are spawned on demand up to this limit and removed after completion. Default: `0`. `orc init` generates a config with `max_workers: 1` for immediate usability. |
+| `max_workers` | integer | `0` | Concurrency limit — maximum number of task-scoped workers that may run simultaneously. Workers are spawned on demand up to this limit and removed after completion. Default: `0`. `orc init` sets `worker_pool.max_workers` to `1` when it is unset, for immediate usability. |
 | `provider` | string | `"codex"` | Default provider for task-scoped workers. Overridden per task by the task's `required_provider` field. |
 | `model` | string | `null` | Default model for all workers |
 | `execution_mode` | string | `"full-access"` | Execution mode for worker agents (`full-access` or `sandbox`) |
@@ -281,7 +279,7 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `run_inactive_nudge_interval_ms` | integer | `300000` | Interval between inactivity nudges (ms) |
 | `session_start_max_attempts` | integer | `3` | Max retry attempts for starting a worker session |
 | `session_start_retry_delay_ms` | integer | `30000` | Delay between session start retries (ms) |
-| `memory_prune_interval_ms` | integer | `3600000` | Interval between periodic memory pruning runs (ms). Set to `0` to disable periodic pruning (startup prune still runs). Note: `0` can only be set via config file — the CLI flag does not accept zero. |
+| `memory_prune_interval_ms` | integer | `3600000` | Interval between periodic memory pruning runs (ms). Set to `0` to disable periodic pruning (startup prune still runs). Note: `0` can only be set via project settings — the CLI flag does not accept zero. |
 | `worker_stale_soft_ms` | integer | `1800000` | Inactivity before soft alert — emits `worker_needs_attention` notification (30 min). |
 | `worker_stale_nudge_ms` | integer | `3600000` | Inactivity before PTY nudge message (60 min). |
 | `worker_stale_force_fail_ms` | integer | `7200000` | Inactivity before force-fail with `policy: requeue` (2 hours). |
@@ -290,7 +288,7 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `pr_push_remote` | string | `"origin"` | Git remote to push PR branches to. |
 | `pr_finalize_lease_ms` | integer | `86400000` | Claim lease duration for PR finalization (24h). |
 
-All `coordinator` fields can also be passed as CLI flags to `coordinator.ts` (e.g., `--tick-interval-ms=10000`). CLI flags override config file values.
+All `coordinator` fields can also be passed as CLI flags to `coordinator.ts` (e.g., `--tick-interval-ms=10000`). CLI flags override project settings.
 
 ### `leases`
 
@@ -391,7 +389,7 @@ Execution mode can be set at three levels of specificity (most-specific wins):
 | `ORC_MASTER_EXECUTION_MODE` | `master.execution_mode` | Execution mode for the master agent |
 | `ORC_WORKER_EXECUTION_MODE` | `worker_pool.execution_mode` | Execution mode for worker agents |
 
-Environment variables take precedence over all config file values (see [Resolution Order](#resolution-order)).
+Environment variables take precedence over all stored settings (see [Resolution Order](#resolution-order)).
 
 ### Per-Provider Behaviour
 
@@ -409,10 +407,10 @@ Task workers launch with their assigned worktree as the working directory (task 
 In `sandbox` mode, a Claude settings file is also written that sets `allowUnsandboxedCommands: false` and restricts filesystem writes to an explicit list (`allowWrite`):
 
 - `.` — the launch working directory, i.e. the assigned worktree.
-- in a legacy installation, the state directory (`.orc-state/`): its `orc` lifecycle commands (`run-start`, `progress`, `run-work-complete`, `review-submit`, `memory-record`, …) write the event log, claims, and memory store there from the worker's own session. A project worker gets the control socket instead, never its state directory: the coordinator applies its lifecycle commands (see **Global project registry**).
-- the `.git` subtrees a worktree commit/rebase/fetch writes — `objects/`, `refs/`, `logs/`, and `worktrees/` — of the repo that backs the worktree: the installation's own repository in a legacy attached installation, the registered target repository for a project. A linked worktree shares its main repo's object store, refs and per-worktree state, all of which lie outside the worktree directory.
+- the control socket, not the state directory: the coordinator applies a project worker's lifecycle commands (see **Global project registry**).
+- the `.git` subtrees a worktree commit/rebase/fetch writes — `objects/`, `refs/`, `logs/`, and `worktrees/` — of the registered target repository that backs the worktree. A linked worktree shares its main repo's object store, refs and per-worktree state, all of which lie outside the worktree directory.
 
-Any of these that already lies inside the launch directory is omitted. The `.git` grant is scoped to those subtrees rather than the whole `.git` directory on purpose: `.git/hooks` and `.git/config` are **excluded**, so a sandboxed worker cannot plant a hook script or rewrite git config that the unsandboxed coordinator would later execute during a merge, push, or worktree operation. The rest of the orchestration root (main checkout, `backlog/`, `plans/`) is not writable. Workers never edit a task spec's `status:`; task status is runtime-owned. In a legacy installation the sandbox does not isolate the worker from state it legitimately writes through the CLI; in a project its own session secret lets it change only its own run, through the coordinator; a Claude-sandboxed worker cannot read the operator token, while a Codex-sandboxed one can.
+Any of these that already lies inside the launch directory is omitted. The `.git` grant is scoped to those subtrees rather than the whole `.git` directory on purpose: `.git/hooks` and `.git/config` are **excluded**, so a sandboxed worker cannot plant a hook script or rewrite git config that the unsandboxed coordinator would later execute during a merge, push, or worktree operation. The project state directory and the target working tree are not writable. Workers never edit a task spec's `status:`; task status is runtime-owned. Its own session secret lets it change only its own run, through the coordinator; a Claude-sandboxed worker cannot read the operator token, while a Codex-sandboxed one can.
 
 A project session (worker or scout) also connects to its coordinator's control socket. That is a network permission in Claude's sandbox. The settings always name the socket's path (`network.allowUnixSockets`), which macOS honours. Linux ignores socket paths (its seccomp filter cannot match them), so there the socket is reachable only when `worker_pool.sandbox_network` is `open`, which sets `network.allowAllUnixSockets: true` for workers and scouts. That lets a sandboxed worker or scout connect to **every** Unix socket it can reach, for example the Docker daemon (`/var/run/docker.sock`, root-equivalent), an SSH agent, D-Bus, or orc's private tmux server, through which it could type into other sessions' panes. Enable it only where those sockets are absent or not reachable from the sandbox; otherwise run Linux workers with `full-access` and accept that they are not sandboxed. Without `open` a Claude scout on Linux cannot report for duty, and `request_scout` fails after its readiness timeout. These keys match the Claude Code CLI's settings schema; a live connection under the Linux sandbox was not exercised, because the build environment cannot create the namespaces `bwrap` needs.
 
@@ -423,11 +421,10 @@ A project session (worker or scout) also connects to its coordinator's control s
 | `full-access` | `--dangerously-bypass-approvals-and-sandbox` |
 | `sandbox` | `--sandbox workspace-write --ask-for-approval never` |
 
-`workspace-write` covers the launch directory (the assigned worktree). Codex sandbox mode additionally passes a config override granting the same extra roots as Claude — the state directory (the control socket for a project worker) and the backing repo's `.git` subtrees (`objects/`, `refs/`, `logs/`, `worktrees/`) — with the same `hooks/` + `config` exclusion. The value is JSON-encoded so paths with special characters stay well-formed:
+`workspace-write` covers the launch directory (the assigned worktree). Codex sandbox mode additionally passes a config override granting the same extra roots as Claude — the control socket and the target repository's `.git` subtrees (`objects/`, `refs/`, `logs/`, `worktrees/`) — with the same `hooks/` + `config` exclusion. The value is JSON-encoded so paths with special characters stay well-formed:
 
 ```
--c sandbox_workspace_write.writable_roots=["<state-dir>","<repo>/.git/objects","<repo>/.git/refs","<repo>/.git/logs","<repo>/.git/worktrees"]   # legacy installation
--c sandbox_workspace_write.writable_roots=["<control-socket>","<target>/.git/objects","<target>/.git/refs","<target>/.git/logs","<target>/.git/worktrees"]   # project worker
+-c sandbox_workspace_write.writable_roots=["<control-socket>","<target>/.git/objects","<target>/.git/refs","<target>/.git/logs","<target>/.git/worktrees"]
 ```
 
 A project worker reaches its coordinator only through the control socket, and `workspace-write` blocks network access, Unix sockets included; Codex's per-socket allowance (`network.allow_unix_sockets`) belongs to its permission-profile network proxy, not to the `workspace-write` mode orc uses. So a sandboxed Codex project worker can run its lifecycle commands only with `worker_pool.sandbox_network: open`, which adds `-c sandbox_workspace_write.network_access=true` (the app-server runtime sets the same key in its thread config). That keeps the filesystem confinement but gives every command the worker runs full network access. With the default `restricted`, its lifecycle commands fail with a refused connection, and `orc doctor` warns. A read-only Codex scout has no network setting, so in a project it cannot report for duty and `request_scout` fails after its readiness timeout; request a `claude` scout instead (`provider` argument), which reaches the socket on macOS, and on Linux with `open`.
@@ -507,22 +504,26 @@ For any setting that can be specified in multiple places, the precedence is:
 
 1. CLI flag (highest)
 2. Environment variable
-3. Config file section-specific value
-4. Config file `default_provider` / `default_execution_mode` (for provider and execution mode fields)
+3. Project setting, section-specific value (project over global)
+4. Project setting `default_provider` / `default_execution_mode` (for provider and execution mode fields)
 5. Built-in default (lowest)
 
 ## State Directory Layout
 
-The state directory (default `.orc-state/`) contains:
+The project state directory (`<data-home>/projects/<project_id>/`, see **Global project registry**) contains, among others:
 
 ```
-.orc-state/
-  backlog.json          # Task definitions and statuses
+<data-home>/projects/<project_id>/
+  project.json          # Project descriptor (id, name, target root)
+  runtime.db            # SQLite task store: revisions, status, transitions, runs, plans
+  backlog.json          # Read-only projection of the project's tasks
   agents.json           # Registered agent records
   claims.json           # Active and recent claim records
   events.db             # SQLite event store
+  memory.db             # SQLite memory store
   run-worktrees.json    # Mapping of run IDs to worktree paths
   pty-hook-events/      # Per-agent NDJSON hook event files
+  worktrees/            # Run worktrees (<run_id>)
 ```
 
 These files are managed exclusively by `orc` CLI commands and the coordinator. Do not edit them directly.
@@ -537,15 +538,12 @@ export ORC_WORKER_PROVIDER=claude
 orc start-session
 ```
 
-Or equivalently with a config file:
+Or equivalently with stored project settings:
 
-```json
-{
-  "default_provider": "claude",
-  "worker_pool": {
-    "max_workers": 2
-  }
-}
+```bash
+orc project config set default_provider claude
+orc project config set worker_pool.max_workers 2
+orc start-session
 ```
 
 ## See also

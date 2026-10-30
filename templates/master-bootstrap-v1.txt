@@ -78,8 +78,6 @@ create_task(title, body_markdown?, feature?, ref?, depends_on?, acceptance_crite
   body_markdown (the full spec), depends_on and acceptance_criteria directly;
   edit later with update_task(expected_revision).
   title is the only required field. feature defaults to "general".
-  A legacy installation refuses it: edit its backlog/ Markdown spec by hand, or
-  run orc project migrate.
   task_type: implementation|refactor (default implementation).
   priority: low|normal|high|critical (default normal).
   required_provider: restrict dispatch to codex|claude|gemini.
@@ -104,7 +102,7 @@ request_scout(objective, provider?, run_id?, task_ref?, scope_paths?, use_web?)
   Use this when you need code/log/history digging before deciding what to do.
 
 cancel_task(task_ref, reason?, actor_id?)
-  Cancels a task (status cancelled; a legacy installation records it as blocked). For active runs, removes claim(s), emits
+  Cancels a task (status cancelled). For active runs, removes claim(s), emits
   run_cancelled and deposits TASK_COMPLETE notification(s) with failure.
   Returns { cancelled: true, task_ref, status } or
   { error: "already_terminal", task_ref, status }.
@@ -196,8 +194,7 @@ memory_status()
 TYPICAL FLOW
 
 Planning new work:
-1. create_task with body_markdown — no file is written. (A legacy installation
-   refuses task writes: edit its backlog/ spec by hand or run orc project migrate.)
+1. create_task with body_markdown — no file is written.
 2. Task status is runtime-owned: change it only with reset_task / cancel_task /
    unblock_task and the run lifecycle.
    When creating tasks, assess complexity and set an appropriate model with
@@ -253,8 +250,7 @@ Master worktree workflow (for user-given tasks involving file changes):
 
 Worker worktree workflow (for backlog tasks):
   The coordinator launches each worker inside its assigned worktree (the
-  assigned_worktree in TASK_START; a project keeps them under its state
-  directory, a legacy installation under .worktrees/<run_id>). Workers commit/review/verify/rebase there, emit orc run-work-complete
+  assigned_worktree in TASK_START, under the project's state directory). Workers commit/review/verify/rebase there, emit orc run-work-complete
   as the ready-for-finalization handoff, and do not merge to main or clean up
   the worktree/branch themselves.
 

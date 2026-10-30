@@ -5,16 +5,19 @@ single-symptom fixes, see [Troubleshooting](./troubleshooting.md).
 
 ## Runtime Database Upgrade and Restore
 
-The operational schema shares `.orc-state/events.db` with the event log. Before
-starting a newer binary against an existing project, stop the coordinator and
-workers, then back up the database and JSON state together (the `sqlite3`
-command-line tool is required for this procedure):
+The operational schema shares `events.db` with the event log, in the project
+state directory (`stateDir` in `orc project show`; written `$STATE` below).
+Before starting a newer binary against an existing project, stop the
+coordinator and workers, then back up the databases and JSON state together
+(the `sqlite3` command-line tool is required for this procedure):
 
 ```bash
-sqlite3 .orc-state/events.db ".backup '.orc-state/events.db.pre-upgrade'"
-cp .orc-state/claims.json .orc-state/claims.json.pre-upgrade
-cp .orc-state/agents.json .orc-state/agents.json.pre-upgrade
-cp .orc-state/backlog.json .orc-state/backlog.json.pre-upgrade
+STATE='<project state directory>'
+sqlite3 "$STATE/runtime.db" ".backup '$STATE/runtime.db.pre-upgrade'"
+sqlite3 "$STATE/events.db" ".backup '$STATE/events.db.pre-upgrade'"
+cp "$STATE/claims.json" "$STATE/claims.json.pre-upgrade"
+cp "$STATE/agents.json" "$STATE/agents.json.pre-upgrade"
+cp "$STATE/backlog.json" "$STATE/backlog.json.pre-upgrade"
 ```
 
 The first open applies each versioned migration in its own transaction. `orc doctor`
@@ -27,8 +30,7 @@ are stored separately from agent and run IDs. A failed migration rolls back
 its tables and version record. A database from a newer binary is refused
 rather than downgraded.
 
-Version 7 adds per-session credentials (task 231). In a registered project,
-workers launched before it hold no session secret, so after the upgrade their
+Version 7 adds per-session credentials (task 231). Workers launched before it hold no session secret, so after the upgrade their
 lifecycle commands fail with `ORC_SESSION_SECRET is not set`. Drain running work
 before upgrading, or reset each in-flight task afterwards with
 `orc task-reset <ref>` so it is redispatched to a worker that has one. Restart
@@ -39,12 +41,13 @@ the database. Keep the failed database for diagnosis, then restore the backup
 and run the previous binary:
 
 ```bash
-mv .orc-state/events.db .orc-state/events.db.failed
-rm -f .orc-state/events.db-wal .orc-state/events.db-shm
-cp .orc-state/events.db.pre-upgrade .orc-state/events.db
-cp .orc-state/claims.json.pre-upgrade .orc-state/claims.json
-cp .orc-state/agents.json.pre-upgrade .orc-state/agents.json
-cp .orc-state/backlog.json.pre-upgrade .orc-state/backlog.json
+mv "$STATE/events.db" "$STATE/events.db.failed"
+rm -f "$STATE/events.db-wal" "$STATE/events.db-shm" "$STATE/runtime.db-wal" "$STATE/runtime.db-shm"
+cp "$STATE/events.db.pre-upgrade" "$STATE/events.db"
+cp "$STATE/runtime.db.pre-upgrade" "$STATE/runtime.db"
+cp "$STATE/claims.json.pre-upgrade" "$STATE/claims.json"
+cp "$STATE/agents.json.pre-upgrade" "$STATE/agents.json"
+cp "$STATE/backlog.json.pre-upgrade" "$STATE/backlog.json"
 orc doctor
 ```
 

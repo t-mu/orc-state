@@ -6,19 +6,20 @@ or debugging the system.
 
 The future global-project ownership contract is in
 [Global project and task ownership contract](./global-project-contract.md).
-The current file describes the active implementation: registered projects and legacy attached installations (the sibling layout is retired).
+The current file describes the active implementation: registered projects. Legacy `.orc-state` installations (attached or sibling) no longer run; `orc project migrate` moves one into a project.
 
 ---
 
 ## State Directory
 
-All runtime state lives under `ORC_STATE_DIR` (default: `<repo-root>/.orc-state/`).
+All runtime state lives in the project state directory (`<data-home>/projects/<project_id>/`; launched sessions also receive it as `ORC_STATE_DIR`).
 State files are never written directly by agents or external tools -- all mutations
 go through `orc` CLI commands or MCP tool handlers, which hold appropriate locks.
 
 | File | Format | Contents |
 |------|--------|----------|
-| `backlog.json` | JSON | Features and tasks (the full backlog) |
+| `runtime.db` | SQLite (WAL mode) | Project task store: revisions, status, transitions, runs, plans |
+| `backlog.json` | JSON | Features and tasks (the full backlog), a read-only projection of `runtime.db` |
 | `agents.json` | JSON | Registered agents and their session metadata |
 | `claims.json` | JSON | Active and historical run claims |
 | `events.db` | SQLite (WAL mode) | Append-only event log with FTS index |
@@ -528,9 +529,8 @@ search. Results are capped at 500 per query.
 
 ## Local Control API
 
-The coordinator serves a versioned control API while it runs. A legacy
-installation can disable it with `ORC_CONTROL_API=off`, and its CLI and MCP paths
-keep reading and writing state directly; a registered project requires it, because
+The coordinator serves a versioned control API while it runs. A project
+coordinator requires it (it refuses to start with `ORC_CONTROL_API=off`), because
 its workers' lifecycle commands go through `POST /v1/lifecycle`.
 
 **Transport.** HTTP/JSON over the Unix socket named in `control.json`. Host to
@@ -545,8 +545,7 @@ with `code` in `unsupported_protocol_version | unauthenticated | forbidden | not
 `unavailable` means the daemon is shutting down, stopped, or crashed (stale descriptor).
 
 **Mutations** also send `x-orc-session` with the caller's session credential
-(see **Session credentials** below; in a legacy installation, a session id
-recorded without a secret). Actor and recipient names in the request body are
+(see **Session credentials** below). Actor and recipient names in the request body are
 never trusted. Commands go through the durable command queue,
 which enforces run scope: a worker may only address its own run; the master may
 address any active run, but only that run's recipient session. Derived
@@ -555,8 +554,7 @@ address any active run, but only that run's recipient session. Derived
 **Session credentials (task 231).** `x-orc-session` carries the caller's
 session secret, which only that session's process holds (its environment);
 the state stores its SHA-256 hash, so a session id from `agents.json` or the
-`sessions` table authenticates nobody in a project. A legacy installation also
-accepts the id of a session recorded without a secret. An operator without a
+`sessions` table authenticates nobody. An operator without a
 session sends `x-orc-operator: <operator token>`, the value the coordinator
 writes to `operator.token` on every start. **Known limitation.** Any process
 running as the same OS user outside a sandbox can still read `control.token`,
@@ -627,8 +625,7 @@ with a new session on the same run and read or consume its queued mailbox items.
 their existing events while writing corresponding message records for active
 runs; legacy event readers remain supported. For a durable input request,
 `run-input-respond` requires the master's credential: its secret
-(`ORC_MASTER_SECRET`) in a project, its session id (`--session-id` or
-`ORC_SESSION_ID`) in a legacy installation. Review feedback is queued for the
+(`ORC_MASTER_SECRET`). Review feedback is queued for the
 worker's run mailbox.
 
 **Snapshot then subscribe.** Read `/v1/snapshot`, then stream from

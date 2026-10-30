@@ -53,8 +53,8 @@ READING STATE
 WORKTREE RULE
 
 The coordinator starts every worker session inside its assigned worktree — your shell's working directory already is `assigned_worktree`.
-Shared orchestrator state lives under the orchestration root, and the worker environment (ORC_HOME, ORC_STATE_DIR) is preconfigured so `orc` reaches it from any directory.
-The TASK_START payload contains the assigned worktree path in `assigned_worktree`, the pinned read-only Markdown revision in `task_spec_path`, and, when the spec also lives in the repository, its worktree copy in `task_spec_worktree_path` (for reference; never edit its `status:`). `task_spec_sha256` identifies the pinned bytes; `task_spec_revision_status` reports whether the source still matches at handoff.
+Shared orchestrator state lives in the project state directory, outside the repository, and the worker environment (ORC_PROJECT_ID, ORC_STATE_DIR, ORC_CONTROL_SOCKET) is preconfigured so `orc` reaches it from any directory.
+The TASK_START payload contains the assigned worktree path in `assigned_worktree` and the pinned read-only Markdown revision in `task_spec_path` (`task_spec_worktree_path` names the same file). `task_spec_sha256` identifies the pinned bytes; `task_spec_revision_status` reports whether a newer revision of the task exists.
 Do not create a second worktree for the same run unless the payload explicitly instructs you to recover a missing one.
 
 When a TASK_START block arrives:

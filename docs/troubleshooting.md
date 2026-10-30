@@ -65,7 +65,7 @@ git add -A
 git commit -m "initial commit"
 ```
 
-Then re-run `orc start-session`.
+Then register it (`orc project add <path>`), run `orc init`, and re-run `orc start-session`.
 
 ---
 
@@ -83,7 +83,7 @@ git worktree prune
 If a specific worktree directory still exists after pruning, remove it manually:
 
 ```bash
-rm -rf .worktrees/<run_id>
+rm -rf "<project state directory>/worktrees/<run_id>"   # see orc project show
 git worktree prune
 ```
 
@@ -176,7 +176,7 @@ orc worker-clearall
 
 ## `orc doctor` reports state errors
 
-**Cause:** One or more state files (`.orc-state/backlog.json`, `agents.json`, `claims.json`) failed schema validation, or were edited manually and are now malformed.
+**Cause:** One or more state files in the project state directory (`backlog.json`, `agents.json`, `claims.json`) failed schema validation, or were edited manually and are now malformed.
 
 **Fix:**
 
@@ -186,12 +186,23 @@ Run doctor with `--json` for the full error list:
 orc doctor --json
 ```
 
-Do not edit state files directly. Use `orc` CLI commands to mutate state. If a file is corrupted beyond recovery, stop all sessions and restore from the last good git commit:
+Do not edit state files directly. Use `orc` CLI commands to mutate state. If a file is corrupted beyond recovery, stop all sessions and restore the state directory from a backup (see [Recovery guide → Runtime Database Upgrade and Restore](./recovery.md#runtime-database-upgrade-and-restore)); the state lives outside the repository, so Git cannot restore it:
 
 ```bash
 orc kill-all
-git checkout HEAD -- .orc-state/
+# restore the backup into the project state directory (orc project show)
 orc start-session --provider=claude
+```
+
+## `orc doctor` or `orc preflight` fails with a legacy installation
+
+**Cause:** The directory holds a legacy `.orc-state` installation (state, `backlog/` and `orc-state.config.json` inside the repository, or a sibling orchestration home). Legacy installations no longer run: `orc init`, `orc start-session`, the coordinator and the MCP server refuse them.
+
+**Fix:** Migrate it into a registered project:
+
+```bash
+orc project migrate <root>            # dry run
+orc project migrate <root> --execute
 ```
 
 ## See also
