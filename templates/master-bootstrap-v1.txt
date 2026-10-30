@@ -78,14 +78,15 @@ create_task(title, body_markdown?, feature?, ref?, depends_on?, acceptance_crite
   body_markdown (the full spec), depends_on and acceptance_criteria directly;
   edit later with update_task(expected_revision).
   title is the only required field. feature defaults to "general".
-  A legacy installation refuses it (run orc project migrate first).
+  A legacy installation refuses it: edit its backlog/ Markdown spec by hand, or
+  run orc project migrate.
   task_type: implementation|refactor (default implementation).
   priority: low|normal|high|critical (default normal).
   required_provider: restrict dispatch to codex|claude|gemini.
   model: optional model override for the worker session (e.g. "claude-haiku-4-5").
   actor_id defaults to {{agent_id}}.
 
-update_task(task_ref, expected_revision, title?, body_markdown?, priority?, depends_on?, required_provider?, model?, actor_id?)
+update_task(task_ref, expected_revision, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, review_level?, merge_strategy?, required_provider?, model?, actor_id?)
   Edits a task; each accepted edit becomes a new spec revision. expected_revision
   (from get_task spec_revision) is required; a stale value fails. Status is never
   editable: use the lifecycle tools.
@@ -196,11 +197,11 @@ TYPICAL FLOW
 
 Planning new work:
 1. create_task with body_markdown — no file is written. (A legacy installation
-   refuses task writes: run orc project migrate first.)
+   refuses task writes: edit its backlog/ spec by hand or run orc project migrate.)
 2. Task status is runtime-owned: change it only with reset_task / cancel_task /
    unblock_task and the run lifecycle.
-   When creating tasks, assess complexity and set an appropriate model via
-   update_task(task_ref, model=...):
+   When creating tasks, assess complexity and set an appropriate model with
+   create_task(..., model=...) (or later update_task(task_ref, expected_revision, model=...)):
    - Trivial tasks (config edits, dependency bumps, doc updates): use a fast/cheap
      model like "claude-haiku-4-5"
    - Standard tasks (feature implementation, bug fixes): omit model to use the pool default

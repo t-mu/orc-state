@@ -265,7 +265,8 @@ files in the format below, and `orc project plan export` writes it. Tasks are au
 - `plan_id` numbering is an independent sequence from backlog task numbers.
   Collisions across the two sequences are expected and benign.
 
-The parser lives in `lib/planDocs.ts` (`parsePlan`).
+See `plans/TEMPLATE.md` for a skeleton that `orc project plan import` accepts. The parser
+lives in `lib/planDocs.ts` (`parsePlan`).
 
 ---
 

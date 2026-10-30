@@ -31,7 +31,7 @@ clears all agents.
 Normal workflow:
 
 1. `orc start-session`
-2. author the task with `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository; a legacy installation must run `orc project migrate` first)
+2. author the task with `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository). In a legacy installation, edit the `backlog/` Markdown spec (its coordinator registers it) or run `orc project migrate`; MCP task writes are refused there
 3. task status is runtime-owned: change it only through lifecycle commands
 4. `orc delegate`
 5. worker lifecycle via `run-start` -> `run-work-complete` -> `run-finish`

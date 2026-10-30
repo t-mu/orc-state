@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, utimesSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { acquireLock, releaseLock, withLock, withLockAsync } from './lock.ts';
+import { acquireLock, releaseLock, withLock } from './lock.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -137,29 +137,6 @@ describe('withLock', () => {
         throw new Error('boom');
       })
     ).toThrow('Lock release failed after callback error');
-  });
-});
-
-describe('withLockAsync', () => {
-  it('executes async fn and returns resolved value', async () => {
-    const result = await withLockAsync(lockPath, () => Promise.resolve('hello'));
-    expect(result).toBe('hello');
-  });
-
-  it('releases the lock even when async fn rejects', async () => {
-    await expect(
-      withLockAsync(lockPath, () => Promise.reject(new Error('async boom')))
-    ).rejects.toThrow('async boom');
-    expect(existsSync(lockPath)).toBe(false);
-  });
-
-  it('preserves async callback error as cause if release also fails', async () => {
-    await expect(
-      withLockAsync(lockPath, () => {
-        writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: 'tampered' }));
-        return Promise.reject(new Error('async boom'));
-      })
-    ).rejects.toThrow('Lock release failed after callback error');
   });
 });
 

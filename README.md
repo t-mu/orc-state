@@ -41,7 +41,8 @@ it reuses it. You pick the provider for your master session at init time
 
 You're now in a conversation with the master agent. Start planning the work
 — discuss scope, break it into units, and ask the master to create tasks.
-It writes task specs to `backlog/*.md`.
+It stores them in the project's task store (`create_task`); no file is written
+to your repository. A legacy installation must run `orc project migrate` first.
 
 Once tasks are in the backlog, the coordinator dispatches them to worker
 agents that execute each task in an isolated git worktree. You can monitor

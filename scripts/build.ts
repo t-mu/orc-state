@@ -68,10 +68,8 @@ console.log(`  rewrote .ts imports → .js in ${rewritten} files`);
 for (const dir of ['schemas', 'templates', 'skills', 'agents']) {
   cpSync(dir, `dist/${dir}`, { recursive: true });
 }
-// Strip package-irrelevant source metadata and scratch workspace content from
-// the published tarball.
+// Strip package-irrelevant source metadata from the published tarball.
 rmSync('dist/skills/.npmignore', { force: true });
-rmSync('dist/skills/plan-to-tasks-workspace', { recursive: true, force: true });
 console.log('  copied schemas/, templates/, skills/, and agents/ into dist/');
 
 console.log('tsc: emitting declarations to dist/');

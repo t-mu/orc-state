@@ -34,7 +34,7 @@ In project mode:
 
 ### Legacy attached installations
 
-An installation that keeps `.orc-state/`, `backlog/` and `orc-state.config.json` inside its repository still runs until it is migrated, and `orc doctor`/`orc preflight` remind you to migrate it. Its coordinator registers task **definitions** from `backlog/` specs (a new spec is added as `todo`; titles, dependencies, review level and merge strategy follow their specs). Status is never read from a spec and never written back: runtime commands own it (`run-fail`, `task-reset`, `task-unblock`, the coordinator's merge), workers do not edit `status:`, and a new spec whose `status:` is not `todo` is not registered (`orc backlog-sync-check` lists it as skipped; `orc project migrate` carries such tasks with their status). The sibling layout is retired: a config with a separate `target_repo` is refused until migrated.
+An installation that keeps `.orc-state/`, `backlog/` and `orc-state.config.json` inside its repository still runs until it is migrated, and `orc doctor`/`orc preflight` remind you to migrate it. Its coordinator registers task **definitions** from `backlog/` specs (a new spec is added as `todo`; titles, dependencies, review level and merge strategy follow their specs). Status is never read from a spec and never written back: runtime commands own it (`run-fail`, `task-reset`, `task-unblock`, the coordinator's merge), workers do not edit `status:`, and a new spec whose `status:` is not `todo` is not registered (the coordinator logs it as skipped; `orc project migrate` carries such tasks with their status). The sibling layout is retired: a config with a separate `target_repo` is refused until migrated.
 
 ### Selecting and switching projects
 

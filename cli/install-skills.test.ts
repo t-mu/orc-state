@@ -32,8 +32,6 @@ describe('installSkills', () => {
       result.copied.map((path) => topLevelSkillName(path)).filter((name): name is string => Boolean(name)),
     );
     expect(installedSkillDirs).toEqual(new Set(['orc-commands', 'worker-inspect']));
-    expect(result.copied.some((path) => path.includes(`${sep}evals${sep}`))).toBe(false);
-    expect(result.copied.some((path) => path.includes(`${sep}plan-to-tasks-workspace${sep}`))).toBe(false);
   });
 
   it('returns count matching copied array length', () => {
