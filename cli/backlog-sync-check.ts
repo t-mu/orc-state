@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverActiveTaskSpecs, type SpecEntry } from '../lib/backlogSync.ts';
 import { BACKLOG_DOCS_DIR, STATE_DIR } from '../lib/paths.ts';
-import { isProjectStateDir } from '../lib/projectTasks.ts';
+import { isProjectStateDir } from '../lib/projectContext.ts';
 import { formatErrorMessage } from './shared.ts';
 
 interface RegisteredTaskEntry {

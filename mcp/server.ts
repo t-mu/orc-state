@@ -33,7 +33,7 @@ const RESOURCES = [
   {
     uri: 'orchestrator://state/backlog',
     name: 'Backlog',
-    description: 'Full backlog.json with all features and tasks',
+    description: 'Full backlog.json with all features and tasks. In a registered project it is a read-only projection of the task store: change tasks with create_task/update_task and the lifecycle tools, never by editing it.',
     mimeType: 'application/json',
   },
   {
@@ -94,7 +94,7 @@ let warnedWithoutMasterSession = false;
 
 /** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */
 const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
-  cancel_task: 'cancel-task', reset_task: 'reset-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
+  cancel_task: 'cancel-task', reset_task: 'reset-task', unblock_task: 'unblock-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
 };
 
 /** With a session the server acts as that session (a named actor is ignored); without one, as the named actor or the master. */
@@ -127,6 +127,10 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
   if (name === 'request_scout' && project && credential) {
     // Only the master's session may launch scouts; it acts as itself.
     return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential) });
+  }
+  if ((name === 'get_scout_report' || name === 'remove_scout') && project && credential) {
+    // Scouts are the master's: a worker session cannot read or stop them.
+    masterForCredential(stateDir, credential);
   }
   if (project && projectTaskStoreFor(stateDir) && name === 'create_task') {
     const { actor_id, ...input } = args;
@@ -172,6 +176,10 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleCancelTask(stateDir, args);
     case 'request_scout':
       return handlers.handleRequestScout(stateDir, args);
+    case 'get_scout_report':
+      return handlers.handleGetScoutReport(stateDir, args);
+    case 'remove_scout':
+      return handlers.handleRemoveScout(stateDir, args);
     case 'respond_input':
       return handlers.handleRespondInput(stateDir, args);
     case 'get_run':
@@ -182,6 +190,8 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleQueryEvents(stateDir, args);
     case 'reset_task':
       return handlers.handleResetTask(stateDir, args);
+    case 'unblock_task':
+      return handlers.handleUnblockTask(stateDir, args);
     case 'list_worktrees':
       return handlers.handleListWorktrees(stateDir);
     case 'get_notifications':

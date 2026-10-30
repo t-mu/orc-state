@@ -14,7 +14,7 @@ import { readEventBatch } from './eventLog.ts';
 import { readControlSnapshot } from './statusProjection.ts';
 import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
-import { resolveControlPrincipal, requirePrincipal, requireProjectAuthor, requireProjectReader, type ControlPrincipal } from './controlPrincipal.ts';
+import { resolveControlPrincipal, requirePrincipal, requireProjectAuthor, requireProjectReader, type ControlPrincipal, type SessionPrincipal } from './controlPrincipal.ts';
 import { ConflictError, ForbiddenError, InputError, NotFoundError, UnauthenticatedError } from './domainErrors.ts';
 import { RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
@@ -185,7 +185,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
   }
 
   /** Messages, like commands, need a running session: the operator and a recoverable or unknown session are not authenticated for them. */
-  function messageSession(req: IncomingMessage): Extract<ControlPrincipal, { kind: 'worker' | 'master' }> {
+  function messageSession(req: IncomingMessage): SessionPrincipal {
     const caller = principal(req);
     if (!caller || caller.kind === 'operator' || !caller.running) throw new ControlError('unauthenticated', 'Messages require a running session', 401);
     return caller;
@@ -276,9 +276,9 @@ export async function startControlServer(stateDir: string, options: ControlServe
     const reviews = /^\/v1\/runs\/([^/]+)\/reviews$/.exec(url.pathname);
     if (req.method === 'GET' && reviews) {
       const runId = decodePathSegment(reviews[1]);
-      // A worker session reads only its own run's reviews; the operator and the master read any.
+      // A worker session reads only its own run's reviews; a scout none; the operator and the master any.
       const reader = requirePrincipal(principal(req));
-      if (reader.runId !== null && reader.runId !== runId) throw new ControlError('forbidden', `Session is not scoped to run ${runId}`, 403);
+      if ((reader.kind === 'worker' || reader.kind === 'scout') && reader.runId !== runId) throw new ControlError('forbidden', `Session is not scoped to run ${runId}`, 403);
       return ok({ reviews: readRunReviews(stateDir, runId) });
     }
     if (req.method === 'GET' && url.pathname === '/v1/memory/wake-up') {

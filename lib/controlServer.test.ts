@@ -32,6 +32,10 @@ function claim(runId: string, agentId: string, taskRef: string): Claim {
 beforeEach(async () => {
   dir = createTempStateDir('orch-control-');
   seedState(dir);
+  // Sessions resolve their kind from the registered agent; the master always is one.
+  writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+    { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+  ] }));
   initEventsDb(dir);
   commitClaims(dir, { version: '1', claims: [claim('run-a', 'worker-a', 'orch/task-a'), claim('run-b', 'worker-b', 'orch/task-b')] });
   withEventDbTransaction(dir, (db) => {
@@ -411,6 +415,15 @@ describe('local daemon control API', () => {
       { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
     ] }));
     await expect(new ControlClient(dir, { credential: 'session-master' }).reviews('run-b')).resolves.toEqual({ reviews: [] });
+    // A session without a run (a scout, or a worker recorded without one) reads no run's reviews.
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'scout-1', provider: 'claude', role: 'scout', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    withEventDbTransaction(dir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at)
+      VALUES ('session-scout', NULL, 'scout-1', 'claude', 'running', '2026-01-01', '2026-01-01'),
+        ('session-runless', NULL, 'worker-c', 'claude', 'running', '2026-01-01', '2026-01-01')`).run());
+    await expect(new ControlClient(dir, { credential: 'session-scout' }).reviews('run-a')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    await expect(new ControlClient(dir, { credential: 'session-runless' }).reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
     await expect(new ControlClient(dir, { credential: 'forged' }).reviews('run-a')).rejects.toMatchObject({ code: 'unauthenticated' });
     await expect(rawGet({ authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8').trim()}`, 'x-orc-protocol': '1' }, '/v1/runs/%E0/reviews'))
       .resolves.toMatchObject({ status: 400, body: { error: { code: 'bad_request' } } });

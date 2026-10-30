@@ -1,9 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { withEventDb } from './eventLog.ts';
-import { readProjectDescriptor } from './projectContext.ts';
+import { isProjectStateDir } from './projectContext.ts';
 
 /**
  * Per-session secrets (task 231). Each launched session — worker, scout,
@@ -63,16 +61,11 @@ export function sessionIdFromEnv(env: NodeJS.ProcessEnv = process.env): string |
 }
 
 /**
- * A project state directory accepts secrets only. It is recognised by its
- * project descriptor or its task store, so losing one of them does not make
- * it accept readable session ids.
+ * resolveSessionCredential against a state directory's event store. A project
+ * state directory (isProjectStateDir: descriptor or task store, so losing one
+ * does not downgrade it) accepts secrets only, never readable session ids.
  */
-function secretsOnly(stateDir: string): boolean {
-  return existsSync(join(stateDir, 'runtime.db')) || readProjectDescriptor(stateDir) !== null;
-}
-
-/** resolveSessionCredential against a state directory's event store. */
 export function sessionForCredential(stateDir: string, credential: string): CredentialSession | null {
-  const only = secretsOnly(stateDir);
+  const only = isProjectStateDir(stateDir);
   return withEventDb(stateDir, (db) => resolveSessionCredential(db, credential, { secretsOnly: only }));
 }

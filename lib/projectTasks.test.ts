@@ -9,8 +9,9 @@ import { closeAllDatabases, queryEvents } from './eventLog.ts';
 import { syncBacklogFromSpecs } from './backlogSync.ts';
 import { parseBodyAcceptanceCriteria, parseBodyTitle, RevisionConflictError } from './projectTaskStore.ts';
 import {
-  closeProjectTaskStores, createProjectTask, initProjectTaskStore, isProjectStateDir, reviseProjectTask,
+  closeProjectTaskStores, createProjectTask, initProjectTaskStore, reviseProjectTask,
 } from './projectTasks.ts';
+import { isProjectStateDir } from './projectContext.ts';
 import { ProjectRegistry } from './projectRegistry.ts';
 import { readBacklog, readClaims } from './stateReader.ts';
 import { handleCreateTask, handleGetTask, handleUpdateTask } from '../mcp/handlers.ts';
@@ -66,6 +67,17 @@ describe('storage-neutral task authoring', () => {
     expect(store.listRevisions('app/edit').map((revision) => revision.revision)).toEqual([1, 2]);
     expect(store.getRevision('app/edit', 1)?.bodyMarkdown).toBe('# Edit me\n\nv1\n');
     expect(store.getTask('app/edit')?.contentHash).not.toBe(store.getRevision('app/edit', 1)?.contentHash);
+  });
+
+  it('treats a state directory with only the project descriptor as a project too', () => {
+    const descriptorOnly = createTempStateDir('orc-descriptor-only-');
+    try {
+      expect(isProjectStateDir(descriptorOnly)).toBe(false);
+      writeFileSync(join(descriptorOnly, 'project.json'), JSON.stringify({ id: 'p1', name: 'p', target_repo_root: '/tmp/p' }));
+      expect(isProjectStateDir(descriptorOnly)).toBe(true);
+    } finally {
+      cleanupTempStateDir(descriptorOnly);
+    }
   });
 
   it('ignores Markdown backlog sync in a project state directory', () => {

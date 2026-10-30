@@ -30,7 +30,7 @@ import { stripAnsi } from '../lib/ansi.ts';
 import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import { controlSocketOf, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
+import { controlSocketOf, isolatedMcpArgs, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
 import type { SessionInspection } from './interface.ts';
 import {
   CapabilityRefusal,
@@ -326,7 +326,7 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
 
     const env = withoutApiBillingEnv({ ...stripNestedProviderEnv(process.env), ...(config.env as Record<string, string> | undefined ?? {}) });
     const binary = resolveBinary(process.env.ORC_CODEX_BINARY ?? 'codex', env);
-    const child = spawn(binary, ['app-server', '--listen', 'stdio://', '--enable', 'multi_agent'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(binary, ['app-server', '--listen', 'stdio://', '--enable', 'multi_agent', ...isolatedMcpArgs('codex')], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     const spawnError = new Promise<never>((_, reject) => child.once('error', reject));
     spawnError.catch(() => { /* surfaced through the handshake below */ });
     const session: CodexSession = {
@@ -449,12 +449,12 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     clearTimeout(timer);
   }
 
-  function getOutputTail(sessionHandle: string): string | null {
+  function getOutputTail(sessionHandle: string, maxBytes = OUTPUT_TAIL_BYTES): string | null {
     if (!isAppServerHandle(sessionHandle)) return null;
     const path = logPath(sessionHandle.slice(HANDLE_PREFIX.length));
     try {
       if (!existsSync(path)) return '';
-      return stripAnsi(readFileSync(path).subarray(-OUTPUT_TAIL_BYTES).toString('utf8')).trim();
+      return stripAnsi(readFileSync(path).subarray(-maxBytes).toString('utf8')).trim();
     } catch {
       return null;
     }

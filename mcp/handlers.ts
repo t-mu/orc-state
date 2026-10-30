@@ -23,8 +23,9 @@ import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from '../lib/constants.ts';
 import { previewSpec, publishSpec } from '../lib/planSpecTask.ts';
-import { createProjectTask, describeProjectTask, isProjectStateDir, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
-import { TERMINAL_STATUSES, backlogDocsDirForState, cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput } from '../lib/operatorMutations.ts';
+import { createProjectTask, describeProjectTask, PROJECT_ONLY_TASK_FIELDS, projectTaskStoreFor, reviseProjectTask } from '../lib/projectTasks.ts';
+import { isProjectStateDir } from '../lib/projectContext.ts';
+import { TERMINAL_STATUSES, backlogDocsDirForState, cancelTask, delegateTask, masterActorId, readBacklogFresh, resetTask, respondInput, unblockTask } from '../lib/operatorMutations.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -295,7 +296,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
       queued_tasks: [],
       blockers: [],
       recommended_action: 'poll_for_report',
-      note: `Poll output with: orc attach ${agent.agent_id} — wait until SCOUT_REPORT_END appears, then call: orc worker-remove ${agent.agent_id}`,
+      note: `Poll get_scout_report until its status is reported or ended, then call remove_scout for ${agent.agent_id}`,
     };
   }
 
@@ -375,6 +376,13 @@ export function handleReadAgents(stateDir: string) {
   return readFileSync(join(stateDir, 'agents.json'), 'utf8');
 }
 
+/** A project directory whose task database is missing must fail, never fall through to legacy backlog.json writes. */
+function assertLegacyTaskStore(stateDir: string): void {
+  if (isProjectStateDir(stateDir)) {
+    throw new Error(`Project task store is missing (${join(stateDir, 'runtime.db')}); restore it or re-run orc project migrate. Legacy task writes are refused in a project.`);
+  }
+}
+
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
   if (projectTaskStoreFor(stateDir)) {
     // Project tasks are database-only: no Markdown spec is required or written.
@@ -383,6 +391,7 @@ export function handleCreateTask(stateDir: string, args: Record<string, unknown>
     // Project refs carry no numeric sequence.
     return { ...describeProjectTask(createProjectTask(stateDir, input, actor_id as string)), next_task_seq: undefined };
   }
+  assertLegacyTaskStore(stateDir);
   assertNoProjectOnlyFields(args);
   const {
     feature,
@@ -490,6 +499,7 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const { task, changed } = reviseProjectTask(stateDir, task_ref, expected_revision, changes, actor_id as string);
     return { ...describeProjectTask(task), changed };
   }
+  assertLegacyTaskStore(stateDir);
   assertNoProjectOnlyFields(args);
   const {
     task_ref,
@@ -500,7 +510,6 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     depends_on,
     required_provider,
     model,
-    status,
     actor_id = defaultActorId(stateDir),
   } = args;
 
@@ -517,9 +526,6 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
   if (model !== undefined && model !== null && typeof model !== 'string') {
     throw new Error(`Invalid model: must be a string or null.`);
   }
-  if (status !== undefined && !['todo', 'in_progress', 'blocked', 'done', 'released', 'cancelled'].includes(status as string)) {
-    throw new Error(`Invalid status: ${typeof status === 'string' ? status : '(unknown)'}. Must be one of: todo, in_progress, blocked, done, released, cancelled.`);
-  }
 
   const now = new Date().toISOString();
   const changedFields: string[] = [];
@@ -528,12 +534,11 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
     const backlog = readBacklogFresh(stateDir, { lockAlreadyHeld: true });
     const task = findTask(backlog, task_ref as string);
     if (!task) throw new Error(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
-    const authoritativeUpdates: Partial<Pick<Task, 'title' | 'description' | 'acceptance_criteria' | 'depends_on' | 'status'>> = {};
+    const authoritativeUpdates: Partial<Pick<Task, 'title' | 'description' | 'acceptance_criteria' | 'depends_on'>> = {};
     if (title !== undefined) authoritativeUpdates.title = title as Task['title'];
     if (description !== undefined) authoritativeUpdates.description = description as Task['description'];
     if (acceptance_criteria !== undefined) authoritativeUpdates.acceptance_criteria = acceptance_criteria as Task['acceptance_criteria'];
     if (depends_on !== undefined) authoritativeUpdates.depends_on = depends_on as Task['depends_on'];
-    if (status !== undefined) authoritativeUpdates.status = status as Task['status'];
     assertTaskUpdateAllowed(task, authoritativeUpdates);
 
     if (title !== undefined) {
@@ -571,10 +576,6 @@ export function handleUpdateTask(stateDir: string, args: Record<string, unknown>
         task.model = model;
       }
       changedFields.push('model');
-    }
-    if (status !== undefined) {
-      task.status = status as Task['status'];
-      changedFields.push('status');
     }
 
     task.updated_at = now;
@@ -791,6 +792,87 @@ export async function handleRequestScout(stateDir: string, {
   };
 }
 
+/** A scout's report spans a few kilobytes of TUI output; read well past the default 8 KiB tail. */
+const SCOUT_OUTPUT_BYTES = 64 * 1024;
+const MARKER_PREFIX = String.raw`^[^\w\n]*`;
+const REPORT_START = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT[ \t]*$`);
+const REPORT_END = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT_END[ \t]*$`);
+const REPORT_HEADERS = ['findings', 'likely_cause', 'recommended_action'].map((header) => new RegExp(`${MARKER_PREFIX}${header}:`, 'm'));
+
+/**
+ * Find a scout's final SCOUT_REPORT block in its session output. Markers count
+ * only on their own line (a prompt glyph or indentation may precede them), and
+ * a block counts only with all three report headers and no `<placeholder>`
+ * from the echoed template, so quoted examples and the template are ignored.
+ * `truncated` means the last end marker is a real report's whose start fell
+ * outside the output read; the echoed template's own end marker (its
+ * `<placeholder>` lines just before it) never counts, so a scout whose tail
+ * begins inside the template is still `running`.
+ */
+export function extractScoutReport(output: string): { report: string | null; truncated: boolean } {
+  let start: number | null = null;
+  let report: string | null = null;
+  let truncated = false;
+  const lines = output.split(/\r?\n/);
+  lines.forEach((line, index) => {
+    if (REPORT_START.test(line)) { start = index; return; }
+    if (!REPORT_END.test(line)) return;
+    if (start === null) {
+      truncated = !lines.slice(Math.max(0, index - 3), index).join('\n').includes('<concrete next step');
+      return;
+    }
+    truncated = false;
+    const block = lines.slice(start + 1, index).join('\n').trim();
+    start = null;
+    if (!block.includes('<what you found') && REPORT_HEADERS.every((header) => header.test(block))) {
+      report = block;
+      truncated = false;
+    }
+  });
+  return { report, truncated: report === null && truncated };
+}
+
+function requireScout(stateDir: string, agentId: unknown) {
+  if (typeof agentId !== 'string' || !agentId) throw new Error('agent_id is required');
+  const agent = getAgent(stateDir, agentId);
+  if (!agent) throw new Error(`Scout not found: ${agentId}`);
+  if (agent.role !== 'scout') throw new Error(`${agentId} is not a scout (role: ${agent.role ?? 'unknown'})`);
+  return agent;
+}
+
+/**
+ * Read a scout's report from its session output: `reported` with the block,
+ * `truncated` (an end marker without its start, so the report is unreadable),
+ * `running`, or `ended` without one.
+ */
+export async function handleGetScoutReport(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
+  const scout = requireScout(stateDir, agent_id);
+  const launchedAt = scout.registered_at ?? null;
+  if (!scout.session_handle) return { agent_id: scout.agent_id, status: 'ended', report: null, launched_at: launchedAt };
+  const adapter = createAdapter(scout.provider);
+  const { report, truncated } = extractScoutReport(adapter.getOutputTail(scout.session_handle, SCOUT_OUTPUT_BYTES) ?? '');
+  const status = report ? 'reported' : truncated ? 'truncated'
+    : (await adapter.heartbeatProbe(scout.session_handle)) ? 'running' : 'ended';
+  return { agent_id: scout.agent_id, status, report, launched_at: launchedAt };
+}
+
+/** Stop a scout's session and remove its registration; only scouts, never workers or the master. */
+export async function handleRemoveScout(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
+  // Removing a scout that is already gone is a no-op, so cleanup can always be called.
+  if (typeof agent_id === 'string' && agent_id && !getAgent(stateDir, agent_id)) return { agent_id, removed: false, reason: 'not_found' };
+  const scout = requireScout(stateDir, agent_id);
+  let stopError: string | null = null;
+  if (scout.session_handle) {
+    try {
+      await createAdapter(scout.provider).stop(scout.session_handle);
+    } catch (error) {
+      stopError = (error as Error)?.message ?? String(error);
+    }
+  }
+  removeAgent(stateDir, scout.agent_id);
+  return { agent_id: scout.agent_id, removed: true, ...(stopError ? { stop_warning: stopError } : {}) };
+}
+
 export function handleListWaitingInput(stateDir: string) {
   const claims = readClaims(stateDir).claims;
   const waiting = claims.filter((c) => c.input_state === 'awaiting_input');
@@ -844,6 +926,10 @@ export function handleQueryEvents(
 
 export function handleResetTask(stateDir: string, args: Record<string, unknown> = {}) {
   return resetTask(stateDir, args);
+}
+
+export function handleUnblockTask(stateDir: string, args: Record<string, unknown> = {}) {
+  return unblockTask(stateDir, args);
 }
 
 export function handleListWorktrees(stateDir: string) {

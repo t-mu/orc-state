@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { withLock } from './lock.ts';
-import { isProjectStateDir } from './projectTasks.ts';
+import { isProjectStateDir } from './projectContext.ts';
 import type { Backlog, Feature, Task, TaskStatus } from '../types/backlog.ts';
 
 const SPEC_FILE_RE = /^\d+([-.].+)?\.md$/;

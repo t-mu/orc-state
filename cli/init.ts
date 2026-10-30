@@ -224,5 +224,5 @@ console.log('Setup complete!');
 console.log('');
 console.log('Next steps:');
 console.log('  orc start-session');
-console.log(`  orc task-create --feature=${featureRef} --title="First task" --ac="Done"`);
+console.log(`  save a task spec as backlog/1-first-task.md (feature: ${featureRef})`);
 console.log('  orc delegate');

@@ -285,6 +285,26 @@ function sandboxRootsOptions(config: Record<string, unknown>, cwd: string): Sand
   };
 }
 
+/**
+ * Workers and scouts never start the master's orchestrator MCP server: the
+ * repository's `.mcp.json`, `.codex/config.toml` or `.gemini/settings.json`
+ * would otherwise start it inside them, with tools that do not check who calls
+ * them. They reach the orchestrator through the `orc` CLI only. Claude and
+ * Gemini start no MCP servers at all; Codex disables the orchestrator server.
+ */
+/** The name `orc install` and the master's MCP config give the orchestrator server (lib/mcpConfig.ts). */
+const ORC_MCP_SERVER_NAME = 'orchestrator';
+
+export function isolatedMcpArgs(provider: string): string[] {
+  if (provider === 'claude') return ['--strict-mcp-config'];
+  // Codex merges `-c` tables into its config, so `mcp_servers={}` removes nothing; disable orc's own
+  // server by name instead (a full table, so it also parses where no such server is configured).
+  if (provider === 'codex') return ['-c', `mcp_servers.${ORC_MCP_SERVER_NAME}={command="true",enabled=false}`];
+  // Gemini starts only the named servers; no server has this name.
+  if (provider === 'gemini') return ['--allowed-mcp-server-names', 'orc-no-mcp-servers'];
+  return [];
+}
+
 function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: string, claudeSettingsPath?: string) {
   // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
   // 'full-access' for backward compatibility when field is absent.
@@ -306,7 +326,7 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
     // Enable multi-agent support so Codex workers can spawn sub-agent reviewers.
-    args.push('--enable', 'multi_agent');
+    args.push('--enable', 'multi_agent', ...isolatedMcpArgs('codex'));
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
@@ -322,13 +342,11 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
       args.push('--dangerously-skip-permissions');
     }
     if (claudeSettingsPath) args.push('--settings', claudeSettingsPath);
+    args.push(...isolatedMcpArgs('claude'));
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     return args;
   }
-  if (typeof config.model === 'string' && config.model) {
-    return ['--model', config.model];
-  }
-  return [];
+  return [...isolatedMcpArgs(provider), ...(typeof config.model === 'string' && config.model ? ['--model', config.model] : [])];
 }
 
 export interface ProviderLaunch {
@@ -499,11 +517,11 @@ function parseHandle(sessionHandle: unknown) {
   return s.slice(4); // agentId
 }
 
-function readLogTail(agentId: string) {
+function readLogTail(agentId: string, maxBytes = OUTPUT_TAIL_BYTES) {
   const path = logPath(agentId);
   if (!existsSync(path)) return '';
   const buf = readFileSync(path);
-  return buf.slice(-OUTPUT_TAIL_BYTES).toString('utf8');
+  return buf.slice(-maxBytes).toString('utf8');
 }
 
 export function resolveBinary(binary: string, env: Record<string, string>) {
@@ -754,10 +772,10 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       }
     },
 
-    getOutputTail(sessionHandle: string): string | null {
+    getOutputTail(sessionHandle: string, maxBytes?: number): string | null {
       try {
         const agentId = parseHandle(sessionHandle);
-        const raw = readLogTail(agentId);
+        const raw = readLogTail(agentId, maxBytes);
         return stripAnsi(raw).trim();
       } catch {
         return null;

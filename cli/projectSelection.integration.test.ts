@@ -69,7 +69,7 @@ describe('switching between registered projects', () => {
     const a = JSON.parse(orc(outside, ['project', 'add', alpha]).stdout) as { id: string };
     const b = JSON.parse(orc(outside, ['project', 'add', beta]).stdout) as { id: string };
     expect(orc(outside, ['--project', a.id, 'project', 'task', 'create', '--feature=app', '--title=Alpha work', `--project=${a.id}`]).status).toBe(0);
-    expect(orc(outside, ['task-create', '--feature=app', '--title=Beta work', `--project=${b.id}`]).status).toBe(0);
+    expect(orc(outside, ['project', 'task', 'create', '--feature=app', '--title=Beta work', `--project=${b.id}`]).status).toBe(0);
 
     const alphaStatus = JSON.parse(orc(outside, ['status', '--json', `--project=${a.id}`]).stdout) as { project: { id: string; name: string } };
     expect(alphaStatus.project).toMatchObject({ id: a.id, name: 'alpha', target_repo_root: alpha });
