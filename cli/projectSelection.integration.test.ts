@@ -88,7 +88,6 @@ describe('switching between registered projects', () => {
     const doctor = orc(outside, ['doctor', '--json', `--project=${a.id}`]);
     const report = JSON.parse(doctor.stdout) as { checks: { project: { ok: boolean; project: { id: string } }; backlogSync: { skipped?: string } } };
     expect(report.checks.project).toMatchObject({ ok: true, project: { id: a.id } });
-    expect(report.checks.backlogSync.skipped).toContain('SQLite');
     const preflight = JSON.parse(orc(outside, ['preflight', '--json', `--project=${b.id}`]).stdout) as { project: { id: string } };
     expect(preflight.project.id).toBe(b.id);
 

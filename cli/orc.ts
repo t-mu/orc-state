@@ -41,8 +41,6 @@ const COMMANDS: Record<string, string> = {
   'attach':             'attach.ts',
   'control-worker':     'control-worker.ts',
   'task-mark-done':     'task-mark-done.ts',
-  'feature-create': 'feature-create.ts',
-  'backlog-orient':     'backlog-orient.ts',
   'delegate':           'delegate-task.ts',
   'progress':           'progress.ts',
   'doctor':             'doctor.ts',
@@ -71,8 +69,6 @@ const COMMANDS: Record<string, string> = {
   'worker-clearall':    'clear-workers.ts',
   'kill-all':           'kill-all.ts',
   'mcp-server':         'mcp-server.ts',
-  'backlog-sync':       'backlog-sync.ts',
-  'backlog-sync-check': 'backlog-sync-check.ts',
   'install':            'install.ts',
   'install-agents':     'install-agents.ts',
   'install-skills':     'install-skills.ts',
@@ -145,14 +141,6 @@ const INSPECTION = [
   'events-filter',
   'memory-status',
   'memory-search',
-];
-
-/** Markdown backlog tools; a registered project authors tasks with `orc project task`. */
-const LEGACY_ONLY = [
-  'backlog-sync',
-  'backlog-sync-check',
-  'backlog-orient',
-  'feature-create',
 ];
 
 export function buildNodeArgs(subcommand: string, scriptPath: string, rest: string[]): string[] {
@@ -230,12 +218,8 @@ export function main(argv: string[]): number {
     for (const name of INSPECTION) {
       console.log(`  ${name}`);
     }
-    console.log('\nLegacy installations only:');
-    for (const name of LEGACY_ONLY) {
-      console.log(`  ${name}`);
-    }
     console.log('\nAdvanced / specialized commands:');
-    const grouped = [...BLESSED, ...RECOVERY_DEBUG, ...INSPECTION, ...LEGACY_ONLY];
+    const grouped = [...BLESSED, ...RECOVERY_DEBUG, ...INSPECTION];
     for (const name of Object.keys(COMMANDS).filter((name) => !grouped.includes(name))) {
       console.log(`  ${name}`);
     }

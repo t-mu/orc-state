@@ -28,7 +28,7 @@ Review against:
 ## What to check
 
 ### Workflow fit
-- The change respects worktree, backlog-sync, run-lifecycle, and review-round conventions.
+- The change respects worktree, run-lifecycle, and review-round conventions.
 - CLI behavior, templates, MCP handlers, and docs remain aligned.
 - New helper flows are consistent with existing blessed paths.
 

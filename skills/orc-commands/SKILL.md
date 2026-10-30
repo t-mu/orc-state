@@ -31,11 +31,11 @@ clears all agents.
 Normal workflow:
 
 1. `orc start-session`
-2. author the task: in a registered project, `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository); in a legacy installation, write/edit the backlog markdown spec
-3. a legacy coordinator registers new `todo` spec definitions on each tick; task status is runtime-owned and never read from or written to a spec
+2. author the task with `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository; a legacy installation must run `orc project migrate` first)
+3. task status is runtime-owned: change it only through lifecycle commands
 4. `orc delegate`
 5. worker lifecycle via `run-start` -> `run-work-complete` -> `run-finish`
-6. inspect with `orc status` / `orc doctor`; in a legacy installation `orc backlog-sync-check` is available ad-hoc if you want to double-check state (a registered project refuses it)
+6. inspect with `orc status` / `orc doctor`
 
 Outside the blessed workflow, use only:
 
@@ -89,8 +89,6 @@ These commands are for observability. They are supported, but they are not alter
 | `task-reset` | `orc task-reset <feature/task>` | Reset a task to `todo`, cancelling any active claim. Use when a blocked or stuck task needs another attempt. |
 | `task-unblock` | `orc task-unblock <feature/task>` | Transition a blocked task back to `todo`. |
 | `task-cancel` | `orc task-cancel <feature/task> [--reason=<text>]` | Cancel a task that is not yet terminal (the master's `cancel_task`). |
-| `backlog-sync` | `orc backlog-sync` | Legacy installations (refused in a project): register spec definitions (new `todo` specs, titles, dependencies) into runtime state. Never changes status; lists unregistered non-todo specs as skipped. |
-| `backlog-sync-check` | `orc backlog-sync-check` | Legacy installations (refused in a project): validate that todo specs are registered and titles/features match (status is not compared). Ad-hoc only — not part of the task-creation flow. |
 | `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
 
 ### Run Lifecycle (Worker Commands)
@@ -104,27 +102,6 @@ Workers emit these from inside their PTY session via Bash tool. In a registered 
 | `run-finish` | `orc run-finish --run-id=<id> --agent-id=<id>` | Terminal success. Emit only after `run-work-complete` handoff. |
 | `run-fail` | `orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--policy=requeue\|block]` | Terminal failure. Default policy is `requeue`. |
 | `progress` | `orc progress --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--policy=<requeue\|block>]` | Emit a named lifecycle event (e.g. `phase_started`, `phase_finished`). |
-
-### Lifecycle verbs (MCP tools + skills)
-
-Agent-agnostic workflows for authoring plans and backlog tasks. Any caller
-may invoke them from inside a fresh worktree — they have no master affinity.
-Legacy installations only: a registered project refuses these tools (use
-`create_task` with `body_markdown` or `orc project task import`).
-See the individual skills for the full flow.
-
-| MCP tool | Skill | Purpose |
-|----------|-------|---------|
-| `plan_write` | `/plan` (`skills/plan/SKILL.md`) | Persist a fully-specified plan artifact to `plans/<plan_id>-<slug>.md` within the current worktree. Allocates `plan_id` atomically, validates all required sections, writes `derived_task_refs: []`, rejects unresolved placeholders, and hard-fails on unrelated feature-slug collisions unless `acknowledge_feature_collision: true` is set. Does NOT touch `.orc-state/backlog.json`, git, or any file outside the worktree — commit and merge are the skill's responsibility. |
-| `spec_preview` | `/spec` (`skills/spec/SKILL.md`) | Preview the backlog task specs that would be generated from `plans/<plan_id>-*.md`. Pure read — no files written, no state mutated. Pair with `spec_publish`. |
-| `spec_publish` | `/spec` (`skills/spec/SKILL.md`) | Publish generated specs into the current worktree's `backlog/` and write `derived_task_refs` back into the plan file. Stages under `<state_dir>/plan-staging/<plan_id>/` as a concurrency lock. Hard-fails if `confirm !== true`, if the plan already has non-empty `derived_task_refs`, or if the staging directory already exists. Does NOT touch `.orc-state/backlog.json` or git — the caller commits and merges per AGENTS.md. |
-
-Both `spec_*` tools accept an optional `worktree_path` that targets a
-specific worktree. Recommended for worker-initiated calls — the MCP
-server's own cwd is the main checkout, not the worktree. `/spec plan <id>`
-uses a saved plan artifact directly; `/spec` (no args) takes the most
-recent printed plan from the conversation, persists it via `plan_write`,
-then continues through preview/publish.
 
 ### Input Request / Response
 

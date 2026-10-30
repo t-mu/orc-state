@@ -51,9 +51,6 @@ export function closeProjectTaskStores(): void {
   stores.clear();
 }
 
-/** Authoring fields accepted only for project tasks; legacy handlers reject them. */
-export const PROJECT_ONLY_TASK_FIELDS = ['body_markdown', 'expected_revision', 'review_level', 'merge_strategy'] as const;
-
 /** Definition fields kept in revision metadata, beyond the indexed priority/provider/dependencies. */
 const DEFINITION_FIELDS = ['feature', 'task_type', 'description', 'acceptance_criteria', 'review_level', 'merge_strategy', 'required_capabilities', 'model'] as const;
 

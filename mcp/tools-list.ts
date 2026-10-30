@@ -131,7 +131,7 @@ export const TOOLS = [
   },
   {
     name: 'create_task',
-    description: 'Register a task. In a project state directory the task is stored only in project SQLite (revision 1) and may carry body_markdown, description, acceptance_criteria and depends_on; no Markdown file is needed. In a legacy state directory it registers an existing markdown backlog spec and Markdown-owned fields must already live in the spec.',
+    description: 'Register a task. It is stored only in project SQLite (revision 1) and may carry body_markdown, description, acceptance_criteria and depends_on; no Markdown file is needed. A legacy installation refuses it: author backlog/ Markdown there, or run orc project migrate.',
     inputSchema: {
       type: 'object',
       required: ['title'],
@@ -140,14 +140,14 @@ export const TOOLS = [
           type: 'string',
           description: 'Feature ref. Defaults to "general" if omitted; the "general" feature is created automatically.',
         },
-        title: { type: 'string', description: 'Task title; must match the markdown spec (legacy). Project tasks default it to the body heading.' },
-        ref: { type: 'string', description: 'Explicit slug; must match the markdown spec if provided' },
-        body_markdown: { type: 'string', description: 'Project tasks only: full Markdown instructions delivered to the worker.' },
-        description: { type: 'string', description: 'Project tasks only.' },
-        acceptance_criteria: { type: 'array', items: { type: 'string' }, description: 'Project tasks only. Parsed from body_markdown when omitted.' },
-        depends_on: { type: 'array', items: { type: 'string' }, description: 'Project tasks only: refs that must be done or released first.' },
-        review_level: { type: 'string', enum: ['none', 'light', 'full'], description: 'Project tasks only.' },
-        merge_strategy: { type: 'string', enum: ['direct', 'pr'], description: 'Project tasks only.' },
+        title: { type: 'string', description: 'Task title; defaults to the body heading.' },
+        ref: { type: 'string', description: 'Explicit slug' },
+        body_markdown: { type: 'string', description: 'Full Markdown instructions delivered to the worker.' },
+        description: { type: 'string' },
+        acceptance_criteria: { type: 'array', items: { type: 'string' }, description: 'Parsed from body_markdown when omitted.' },
+        depends_on: { type: 'array', items: { type: 'string' }, description: 'Refs that must be done or released first.' },
+        review_level: { type: 'string', enum: ['none', 'light', 'full'] },
+        merge_strategy: { type: 'string', enum: ['direct', 'pr'] },
         task_type: {
           type: 'string',
           enum: ['implementation', 'refactor'],
@@ -180,10 +180,10 @@ export const TOOLS = [
   },
   {
     name: 'update_task',
-    description: 'Update an existing task. In a project state directory every accepted edit becomes a new immutable spec revision and expected_revision (from get_task spec_revision) is required; a stale value fails instead of overwriting. Legacy state directories reject Markdown-authoritative fields. Status is never editable.',
+    description: 'Update an existing task. Every accepted edit becomes a new immutable spec revision and expected_revision (from get_task spec_revision) is required; a stale value fails instead of overwriting. A legacy installation refuses it. Status is never editable.',
     inputSchema: {
       type: 'object',
-      required: ['task_ref'],
+      required: ['task_ref', 'expected_revision'],
       properties: {
         task_ref: {
           type: 'string',
@@ -203,14 +203,14 @@ export const TOOLS = [
           type: ['string', 'null'],
           description: 'Model override for the worker session. Pass null to clear.',
         },
-        expected_revision: { type: 'integer', minimum: 1, description: 'Project tasks only (required): the spec_revision this edit is based on.' },
-        title: { type: 'string', description: 'Project tasks only.' },
-        body_markdown: { type: 'string', description: 'Project tasks only: replacement Markdown instructions.' },
-        description: { type: ['string', 'null'], description: 'Project tasks only.' },
-        acceptance_criteria: { type: 'array', items: { type: 'string' }, description: 'Project tasks only.' },
-        depends_on: { type: ['array', 'null'], items: { type: 'string' }, description: 'Project tasks only.' },
-        review_level: { type: ['string', 'null'], enum: ['none', 'light', 'full', null], description: 'Project tasks only.' },
-        merge_strategy: { type: ['string', 'null'], enum: ['direct', 'pr', null], description: 'Project tasks only.' },
+        expected_revision: { type: 'integer', minimum: 1, description: 'Required: the spec_revision this edit is based on.' },
+        title: { type: 'string' },
+        body_markdown: { type: 'string', description: 'Replacement Markdown instructions.' },
+        description: { type: ['string', 'null'] },
+        acceptance_criteria: { type: 'array', items: { type: 'string' } },
+        depends_on: { type: ['array', 'null'], items: { type: 'string' } },
+        review_level: { type: ['string', 'null'], enum: ['none', 'light', 'full', null] },
+        merge_strategy: { type: ['string', 'null'], enum: ['direct', 'pr', null] },
         actor_id: { type: 'string', description: 'Without the master session only: recorded actor (human or a registered agent; defaults to master agent_id). With the master session the task is recorded as the master and this is ignored.' },
       },
       additionalProperties: false,
@@ -477,68 +477,6 @@ export const TOOLS = [
     },
   },
   {
-    name: 'plan_write',
-    description: 'Legacy installations only (refused in a registered project; use create_task there). Persist a fully-specified plan artifact to plans/<plan_id>-<slug>.md within the current worktree. Allocates the next plan_id atomically, validates all required sections, writes derived_task_refs: [] on fresh plans, and rejects unresolved placeholders. Does NOT touch .orc-state/backlog.json, git, or any file outside the worktree. If the derived name collides with an existing backlog feature ref, the call fails unless acknowledge_feature_collision is true — pass true only when the new plan genuinely belongs to the same feature, per the /plan skill disambiguation flow.',
-    inputSchema: {
-      type: 'object',
-      required: ['name', 'title', 'objective', 'scope', 'out_of_scope', 'constraints', 'affected_areas', 'steps'],
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Kebab-case feature slug; must match ^[a-z][a-z0-9-]*$. Becomes the filename slug and the feature ref on any tasks later derived from this plan.',
-        },
-        title: {
-          type: 'string',
-          description: 'Human-readable plan title.',
-        },
-        objective: {
-          type: 'string',
-          description: 'Concrete objective prose. Must contain no placeholders (TBD, TODO, ???, bare [fill-ins]).',
-        },
-        scope: {
-          type: 'string',
-          description: 'Scope body markdown. Bullets enumerating concrete outcomes.',
-        },
-        out_of_scope: {
-          type: 'string',
-          description: 'Out of Scope body markdown. Bullets enumerating explicit exclusions.',
-        },
-        constraints: {
-          type: 'string',
-          description: 'Constraints body markdown. Hard constraints that bound the implementation.',
-        },
-        affected_areas: {
-          type: 'string',
-          description: 'Affected Areas body markdown. Files, modules, or subsystems the plan touches.',
-        },
-        steps: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            type: 'object',
-            required: ['title', 'body'],
-            properties: {
-              title: { type: 'string' },
-              body: { type: 'string' },
-              depends_on: {
-                type: 'array',
-                items: { type: 'integer', minimum: 1 },
-                description: 'Optional list of earlier step numbers this step depends on.',
-              },
-            },
-            additionalProperties: false,
-          },
-          description: 'Ordered implementation steps. Step numbers are assigned by array order (1-based).',
-        },
-        acknowledge_feature_collision: {
-          type: 'boolean',
-          description: 'Set true when the derived name matches an existing backlog feature ref AND the new plan belongs to that same feature. Omit or pass false otherwise — unrelated collisions must be disambiguated by the /plan skill.',
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'memory_wake_up',
     description: 'Load essential memories for context. Returns formatted wake-up text grouped by wing/room.',
     inputSchema: {
@@ -651,51 +589,6 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'spec_preview',
-    description: 'Legacy installations only (refused in a registered project; use create_task there). Preview the backlog task specs that would be generated from a saved plan artifact. Pure read — no files are written and no state is mutated. Pairs with spec_publish. Pass worktree_path to target a specific worktree; otherwise plans/ and backlog/ resolve relative to the MCP server\'s current repo root.',
-    inputSchema: {
-      type: 'object',
-      required: ['plan_id'],
-      properties: {
-        plan_id: {
-          type: 'integer',
-          minimum: 0,
-          description: 'Numeric plan id resolving to plans/<plan_id>-*.md',
-        },
-        worktree_path: {
-          type: 'string',
-          description: 'Absolute path to the worktree whose plans/ and backlog/ directories should be used. Recommended for workers — the MCP server\'s own cwd is the main checkout, not the worktree.',
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'spec_publish',
-    description: 'Legacy installations only (refused in a registered project; use create_task there). Publish a saved plan into backlog task specs inside the invoking agent\'s worktree. Stages files under <state_dir>/plan-staging/<plan_id>/ as a concurrency lock, writes specs to <worktree>/backlog/, and updates the plan file with derived_task_refs. Does not touch .orc-state/backlog.json or git — the caller is responsible for commit + merge. Hard-fails if confirm !== true, if derived_task_refs is already non-empty, or if the staging directory already exists. Pass worktree_path to target a specific worktree.',
-    inputSchema: {
-      type: 'object',
-      required: ['plan_id', 'confirm'],
-      properties: {
-        plan_id: {
-          type: 'integer',
-          minimum: 0,
-          description: 'Numeric plan id resolving to plans/<plan_id>-*.md',
-        },
-        confirm: {
-          type: 'boolean',
-          enum: [true],
-          description: 'Must be the literal boolean true to proceed. Any other value hard-fails.',
-        },
-        worktree_path: {
-          type: 'string',
-          description: 'Absolute path to the worktree whose plans/ and backlog/ directories should be used. Required in practice for worker-initiated publishes — the MCP server\'s own cwd is the main checkout, not the worktree.',
-        },
-      },
       additionalProperties: false,
     },
   },

@@ -174,22 +174,6 @@ orc worker-clearall
 
 ---
 
-## Backlog sync mismatch
-
-**Cause:** The markdown spec in `backlog/` and the runtime state in `.orc-state/backlog.json` have diverged — a field was edited in one place but not the other.
-
-**Fix:**
-
-Run the sync check to see which tasks are mismatched:
-
-```bash
-orc backlog-sync-check
-```
-
-Then edit the spec frontmatter to match the runtime state, and re-run the sync check.
-
----
-
 ## `orc doctor` reports state errors
 
 **Cause:** One or more state files (`.orc-state/backlog.json`, `agents.json`, `claims.json`) failed schema validation, or were edited manually and are now malformed.

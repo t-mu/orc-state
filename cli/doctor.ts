@@ -14,7 +14,6 @@ import { validateStateDir, validateMemoryDb } from '../lib/stateValidation.ts';
 import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
 import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
-import { formatSkippedSpecs, validateBacklogSync } from './backlog-sync-check.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import type { Agent } from '../types/agents.ts';
@@ -29,13 +28,6 @@ const nowMs = Date.now();
 const gitRepo = isGitRepo(ACTIVE_PROJECT ? TARGET_REPO_ROOT : undefined);
 const stateErrors = validateStateDir(STATE_DIR);
 const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR, { worktreesDir: WORKTREES_DIR }) : null;
-// Project SQLite owns task definitions; there is no Markdown backlog to compare.
-const backlogSync = ACTIVE_PROJECT
-  ? { ok: true, skipped: 'project state directory: SQLite owns task definitions', spec_count: 0, filtered: false, missing: [], mismatches: [], skipped_specs: [] }
-  : safeRead(
-    () => validateBacklogSync(process.env.ORC_BACKLOG_DIR || `${process.env.ORC_REPO_ROOT || process.cwd()}/backlog`, `${STATE_DIR}/backlog.json`),
-    { ok: false, spec_count: 0, filtered: false, missing: [], mismatches: [], skipped_specs: [] },
-  );
 const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
 const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
 const providers = new Set(agents.map((a) => a.provider));
@@ -67,7 +59,6 @@ const checks: Record<string, unknown> = {
   staleActiveClaims: [] as unknown[],
   lifecycleIssues: [] as unknown[],
   stateErrors,
-  backlogSync,
   sandboxDependencies: sandboxDeps,
   sandboxControlSocket,
   memoryHealth,
@@ -127,7 +118,6 @@ const summary = {
   ok:
     gitRepo &&
     stateErrors.length === 0 &&
-    backlogSync.ok &&
     Object.values(checks.providerBinaries as Record<string, unknown>).every((c: unknown) => (c as Record<string, unknown>).ok) &&
     (checks.staleLinkedWorkers as unknown[]).length === 0 &&
     (checks.orphanedActiveClaims as unknown[]).length === 0 &&
@@ -198,16 +188,6 @@ console.log(`state errors: ${stateErrors.length}`);
 for (const error of stateErrors) {
   console.log(`  ${error}`);
 }
-
-console.log('');
-console.log(`backlog sync mismatches: ${backlogSync.missing.length + backlogSync.mismatches.length}`);
-for (const missing of backlogSync.missing) {
-  console.log(`  missing ${missing.ref} (${missing.file})`);
-}
-for (const mismatch of backlogSync.mismatches) {
-  console.log(`  mismatch ${mismatch.ref} ${mismatch.field}: expected "${mismatch.expected}" got "${mismatch.actual}"`);
-}
-for (const line of formatSkippedSpecs(backlogSync.skipped_specs)) console.log(`  ${line}`);
 
 console.log('');
 const lifecycleIssues = checks.lifecycleIssues as LifecycleIssue[];

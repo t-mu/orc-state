@@ -1,13 +1,10 @@
-import { mkdirSync, writeFileSync, writeSync, openSync, closeSync } from 'node:fs';
+import { writeFileSync, writeSync, openSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import {
   parsePlan,
-  findPlanById,
-  nextPlanId,
   PlanValidationError,
-  PlanLookupError,
 } from './planDocs.ts';
 
 let plansDir: string;
@@ -484,51 +481,5 @@ Depends on: 1, 2
     const path = join(plansDir, '15-bad-bytes.md');
     writeFileSync(path, Buffer.from([0xff, 0xfe, 0x00, 0x00]));
     expect(() => parsePlan(path)).toThrow(/not valid UTF-8/);
-  });
-});
-
-describe('findPlanById', () => {
-  it('resolves a single matching plan file', () => {
-    writePlan('3-only-one.md', plan({ planId: 3 }));
-    const resolved = findPlanById(3, plansDir);
-    expect(resolved).toBe(join(plansDir, '3-only-one.md'));
-  });
-
-  it('fails when lookup finds no matches', () => {
-    mkdirSync(plansDir, { recursive: true });
-    writePlan('1-other.md', plan({ planId: 1 }));
-    expect(() => findPlanById(42, plansDir)).toThrow(PlanLookupError);
-    expect(() => findPlanById(42, plansDir)).toThrow(/No plan found/);
-  });
-
-  it('fails when lookup finds multiple matches', () => {
-    writePlan('7-first.md', plan({ planId: 7 }));
-    writePlan('7-second.md', plan({ planId: 7, name: 'second' }));
-    expect(() => findPlanById(7, plansDir)).toThrow(/Duplicate plans/);
-  });
-});
-
-describe('nextPlanId', () => {
-  it('returns 1 when the directory is empty or missing', async () => {
-    const missing = join(plansDir, 'nested');
-    expect(await nextPlanId(missing)).toBe(1);
-  });
-
-  it('returns max+1 on a populated directory', async () => {
-    writePlan('5-foo.md', plan({ planId: 5 }));
-    writePlan('7-bar.md', plan({ planId: 7 }));
-    expect(await nextPlanId(plansDir)).toBe(8);
-  });
-
-  it('allocates the next plan id atomically under concurrent callers', async () => {
-    writePlan('4-foo.md', plan({ planId: 4 }));
-    const results = await Promise.all([
-      nextPlanId(plansDir),
-      nextPlanId(plansDir),
-      nextPlanId(plansDir),
-    ]);
-    const unique = new Set(results);
-    expect(unique.size).toBe(3);
-    for (const id of results) expect(id).toBeGreaterThan(4);
   });
 });

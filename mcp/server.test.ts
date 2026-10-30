@@ -134,12 +134,12 @@ describe('orchestrator mcp server foundation', () => {
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', description: 'Nope' }).ok).toBe(true);
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', acceptance_criteria: ['x'] }).ok).toBe(true);
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Valid title', depends_on: ['project/one'] }).ok).toBe(true);
-    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', priority: 'critical' }).ok).toBe(true);
-    // Definition fields are schema-valid for project tasks; legacy handlers reject them as Markdown-owned.
+    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', priority: 'critical', expected_revision: 1 }).ok).toBe(true);
+    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', priority: 'critical' }).ok).toBe(false);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', title: 'Updated title', expected_revision: 1 }).ok).toBe(true);
     expect(validateToolArguments('update_task', { task_ref: 'project/task-1', expected_revision: 0 }).ok).toBe(false);
-    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', status: 'done' }).ok).toBe(false);
-    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', owner: 'orc-1' }).ok).toBe(false);
+    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', expected_revision: 1, status: 'done' }).ok).toBe(false);
+    expect(validateToolArguments('update_task', { task_ref: 'project/task-1', expected_revision: 1, owner: 'orc-1' }).ok).toBe(false);
     expect(validateToolArguments('create_task', { feature: 'project', title: 'Bad', priority: 'urgent' }).ok).toBe(false);
     expect(validateToolArguments('list_agents', { include_dead: true }).ok).toBe(true);
     expect(validateToolArguments('list_agents', { role: 'scout' }).ok).toBe(true);
