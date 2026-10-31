@@ -1,3 +1,8 @@
+
+# orc-state runtime data
+.orc-state/
+.worktrees
+
 # provider tool directories — installed output, not source
 .claude/
 .codex/
