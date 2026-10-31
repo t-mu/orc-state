@@ -12,6 +12,8 @@ import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 import { computeWorkerCapacity } from './workerCapacity.ts';
 import { readProjectDescriptor } from './projectContext.ts';
 import { formatProjectIdentity } from './projectHealth.ts';
+import { readRunActivity } from './runActivityStore.ts';
+import { formatActivityLine, selectCurrentActivity, type CurrentActivity } from './currentActivity.ts';
 const STARTUP_FAILURE_LIMIT = 5;
 const LIFECYCLE_FAILURE_LIMIT = 5;
 
@@ -284,9 +286,13 @@ export function buildStatus(stateDir: string, { settings }: { settings?: OrcSett
   const runPhaseHistoryMap = runPhaseHistory(allEvents as Parameters<typeof runPhaseHistory>[0]);
   const nowMs = Date.now();
 
+  const activitySnapshots = readRunActivity(stateDir);
   const activeClaimsWithMetrics = buildActiveClaimMetrics(
     activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs, nonHeartbeatRunActivity, runPhaseHistoryMap,
-  );
+  ).map((claim) => ({
+    ...claim,
+    current_activity: selectCurrentActivity(activitySnapshots[claim.run_id], nowMs),
+  }));
 
   const activeClaimByAgentId = new Map(
     activeClaimsWithMetrics
@@ -444,6 +450,7 @@ export function formatStatus(status: Record<string, unknown>): string {
       age_seconds?: number | null;
       idle_seconds?: number | null;
       current_phase?: string | null;
+      current_activity?: CurrentActivity | null;
     }>;
   };
   const finalization = status['finalization'] as {
@@ -537,6 +544,7 @@ export function formatStatus(status: Record<string, unknown>): string {
       lines.push(
         `  ${c.run_id.padEnd(24)} ${(c.task_ref ?? '').padEnd(24)} ${(c.agent_id ?? '').padEnd(12)} ${c.state.padEnd(12)} ${exp} age=${c.age_seconds ?? '?'}s idle=${c.idle_seconds ?? '?'}s${phaseLabel}${finalizationLabel}${stalledLabel}`,
       );
+      if (c.current_activity) lines.push(`    ${formatActivityLine(c.current_activity, TEXT_ACTIVITY_WIDTH)}`);
     }
   }
 
@@ -597,6 +605,7 @@ export function formatAgentStatus(agentStatus: Record<string, unknown>, agentId:
     run_id: string;
     finalization_state?: string | null;
     finalization_retry_count?: number;
+    current_activity?: CurrentActivity | null;
   }>;
   const queuedTasks = agentStatus['queued_tasks'] as Array<{
     ref: string;
@@ -628,6 +637,7 @@ export function formatAgentStatus(agentStatus: Record<string, unknown>, agentId:
         ? ` finalize=${claim.finalization_state} retry=${claim.finalization_retry_count ?? 0}`
         : '';
       lines.push(`  ${claim.task_ref} ${claim.state} run=${claim.run_id}${finalization}`);
+      if (claim.current_activity) lines.push(`    ${formatActivityLine(claim.current_activity, TEXT_ACTIVITY_WIDTH)}`);
     }
   }
 
@@ -643,6 +653,9 @@ export function formatAgentStatus(agentStatus: Record<string, unknown>, agentId:
 
   return lines.join('\n');
 }
+
+/** Column budget for the `└ <activity> (age)` line in text-mode status. */
+const TEXT_ACTIVITY_WIDTH = 96;
 
 function msUntil(iso: string): string {
   const ms = new Date(iso).getTime() - Date.now();

@@ -198,6 +198,22 @@ describe('buildWorkerSlotViewModels — phases', () => {
     expect(vms[0].phases).toEqual([]);
   });
 
+  it('carries current_activity from the active claim', () => {
+    const activity = { text: 'Running npm test', source: 'tool' as const, ts: '2026-01-01T00:00:00Z' };
+    const vms = buildWorkerSlotViewModels({
+      ...baseStatus,
+      claims: {
+        ...baseStatus.claims,
+        active: [{
+          run_id: 'run-1', task_ref: 't/1', agent_id: 'orc-1', state: 'in_progress', age_seconds: 1, idle_seconds: 1,
+          activity_seconds: 1, heartbeat_seconds: 1, current_phase: 'implement', current_activity: activity,
+        }],
+      },
+    });
+    expect(vms[0].current_activity).toEqual(activity);
+    expect(buildWorkerSlotViewModels(baseStatus)[0].current_activity).toBeNull();
+  });
+
   it('builds phases from claim phase_history', () => {
     const status: TuiStatus = {
       ...baseStatus,

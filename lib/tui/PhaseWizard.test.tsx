@@ -1,6 +1,7 @@
 import React, { act } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { cleanup, render } from 'ink-testing-library';
+import chalk from 'chalk';
 import { formatDuration, PhaseWizard } from './PhaseWizard.tsx';
 import type { PhaseEntry } from './status.ts';
 
@@ -104,6 +105,64 @@ describe('PhaseWizard', () => {
       ];
       const { lastFrame } = render(<PhaseWizard phases={stalePhases} />);
       expect(lastFrame()).toContain('10m 0s');
+    });
+  });
+
+  describe('current-activity line', () => {
+    beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-01-01T00:05:00Z')); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    const withActive: PhaseEntry[] = [
+      { name: 'explore', state: 'done', duration_seconds: 72, started_at: null },
+      { name: 'implement', state: 'done', duration_seconds: 600, started_at: null },
+      { name: 'review', state: 'active', duration_seconds: null, started_at: '2026-01-01T00:03:23Z' },
+      { name: 'complete', state: 'pending', duration_seconds: null, started_at: null },
+    ];
+    const lines = (frame: string) => frame.split('\n').map((l) => l.replace(/\u001b\[[0-9;]*m/g, ''));
+
+    it('renders an indented line directly under the active phase', () => {
+      const activity = { text: 'Fixing findings from the critic', source: 'note' as const, ts: '2026-01-01T00:04:48Z' };
+      const { lastFrame } = render(<PhaseWizard phases={withActive} activity={activity} width={60} />);
+      const rows = lines(lastFrame() ?? '');
+      const reviewIdx = rows.findIndex((l) => l.includes('review'));
+      expect(rows[reviewIdx + 1]).toBe('  └ Fixing findings from the critic   (12s ago)');
+      expect(rows[reviewIdx + 2]).toContain('complete');
+    });
+
+    it('does not dim a fresh activity line', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 1;
+      onTestFinished(() => { chalk.level = previousLevel; });
+      const activity = { text: 'Running npm test', source: 'tool' as const, ts: '2026-01-01T00:04:48Z' };
+      const frame = render(<PhaseWizard phases={withActive} activity={activity} width={60} />).lastFrame() ?? '';
+      expect(frame).toContain('  └ Running npm test');
+      expect(frame).not.toContain('\u001b[2m  └');
+    });
+
+    it('truncates long text to the slot width', () => {
+      const activity = { text: 'Running npm test -- lib/statusView.test.ts lib/tui/PhaseWizard.test.tsx', source: 'tool' as const, ts: '2026-01-01T00:04:48Z' };
+      const { lastFrame } = render(<PhaseWizard phases={withActive} activity={activity} />);
+      const row = lines(lastFrame() ?? '').find((l) => l.includes('└')) ?? '';
+      expect(row).toBe('  └ Running npm tes…   (12s ago)');
+      expect(row.length).toBe(32);
+    });
+
+    it('dims the line when the activity is older than 2 minutes', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 1;
+      onTestFinished(() => { chalk.level = previousLevel; });
+      const activity = { text: 'Writing tests', source: 'todo' as const, ts: '2026-01-01T00:02:00Z' };
+      const { lastFrame } = render(<PhaseWizard phases={withActive} activity={activity} width={60} />);
+      const frame = lastFrame() ?? '';
+      expect(lines(frame)).toContain('  └ Writing tests   (3m ago)');
+      expect(frame).toContain('\u001b[2m  └ Writing tests');
+    });
+
+    it('renders nothing without activity or without an active phase', () => {
+      expect(render(<PhaseWizard phases={withActive} />).lastFrame()).not.toContain('└');
+      const activity = { text: 'x', source: 'tool' as const, ts: '2026-01-01T00:04:48Z' };
+      const noActive = withActive.map((p) => ({ ...p, state: p.state === 'active' ? 'error' as const : p.state }));
+      expect(render(<PhaseWizard phases={noActive} activity={activity} />).lastFrame()).not.toContain('└');
     });
   });
 });

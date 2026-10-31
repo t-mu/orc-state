@@ -13,6 +13,8 @@ import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
+import { readRunActivity } from '../lib/runActivityStore.ts';
+import { selectCurrentActivity, type CurrentActivity } from '../lib/currentActivity.ts';
 import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
 import { renderTemplate } from '../lib/templateRender.ts';
@@ -192,12 +194,17 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
   const agents = listAgents(stateDir).filter((agent) => agent.status !== 'dead');
 
   const activeClaimsByAgent = new Map<string, string | null>();
+  const activeRunIdByTask = new Map<string, string>();
   for (const claim of claims) {
     if (!['claimed', 'in_progress'].includes(claim.state)) continue;
     if (!activeClaimsByAgent.has(claim.agent_id)) {
       activeClaimsByAgent.set(claim.agent_id, claim.task_ref ?? null);
     }
+    if (claim.task_ref && !activeRunIdByTask.has(claim.task_ref)) activeRunIdByTask.set(claim.task_ref, claim.run_id);
   }
+
+  const activitySnapshots = activeRunIdByTask.size > 0 ? readRunActivity(stateDir) : {};
+  const nowMs = Date.now();
 
   const taskCounts: Record<string, number> = {
     todo: 0,
@@ -212,19 +219,22 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     taskCounts.cancelled = 0;
   }
 
-  const activeTasks: Array<{ ref: string; title: string; status: string; feature_ref: string; owner: string | null }> = [];
+  // current_activity is present only on tasks with an active run (keeps the response compact).
+  const activeTasks: Array<{ ref: string; title: string; status: string; feature_ref: string; owner: string | null; current_activity?: CurrentActivity | null }> = [];
   for (const feature of backlog.features) {
     for (const task of feature.tasks) {
       if (Object.hasOwn(taskCounts, task.status)) {
         taskCounts[task.status] += 1;
       }
       if (TERMINAL_STATUSES.has(task.status)) continue;
+      const runId = activeRunIdByTask.get(task.ref);
       activeTasks.push({
         ref: task.ref,
         title: task.title,
         status: task.status,
         feature_ref: feature.ref,
         owner: task.owner ?? null,
+        ...(runId ? { current_activity: selectCurrentActivity(activitySnapshots[runId], nowMs) } : {}),
       });
     }
   }
@@ -320,6 +330,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
           task_ref: activeRun.task_ref,
           state: activeRun.state,
           last_heartbeat_at: activeRun.last_heartbeat_at ?? null,
+          current_activity: selectCurrentActivity(readRunActivity(stateDir)[activeRun.run_id]),
         }
       : null,
     queued_tasks: queuedTasks,

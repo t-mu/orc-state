@@ -102,7 +102,7 @@ export const TOOLS = [
   },
   {
     name: 'get_status',
-    description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, project).',
+    description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, project). An active task with a running claim carries current_activity: {text, source: note|todo|tool, ts} or null.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -116,7 +116,7 @@ export const TOOLS = [
   },
   {
     name: 'get_agent_workview',
-    description: 'Return a compact actionable work summary for one agent. An unknown agent returns { error: "not_found", agent_id } and a scout { error: "scout", agent_id } (read it with get_scout_report) as a tool error.',
+    description: 'Return a compact actionable work summary for one agent; active_run.current_activity says what the worker is doing ({text, source: note|todo|tool, ts} or null). An unknown agent returns { error: "not_found", agent_id } and a scout { error: "scout", agent_id } (read it with get_scout_report) as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['agent_id'],

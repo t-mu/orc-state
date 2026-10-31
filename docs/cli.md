@@ -83,6 +83,12 @@ orc status --json         # machine-readable
 
 Live-updating TUI dashboard. Shows agents, active runs, task progress, and
 worker capacity in real time. Falls back to plain text refresh if no TTY.
+Under a worker's active phase an indented `└` line says what it is doing,
+with its age: an explicit note younger than 5 minutes, else the current
+to-do item, else the last tool call (`Editing lib/providers.ts`,
+`Running npm test`). The line is dimmed once it is older than 2 minutes.
+`orc status` prints the same line under each active run, and the MCP
+`get_status` / `get_agent_workview` tools return it as `current_activity`.
 
 ```bash
 orc watch

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
+import { writeRunActivity } from './runActivityStore.ts';
 import type { Agent, Task, Claim } from '../types/index.ts';
 
 type StatusResult = {
@@ -496,6 +497,48 @@ describe('buildStatus', () => {
     expect(s.finalization.blocked_finalize).toBe(1);
     expect(s.finalization.blocked_preserved[0].run_branch).toBe('task/run-finalize-1');
     expect(s.finalization.blocked_preserved[0].run_worktree_path).toBe('/tmp/orc-worktrees/run-finalize-1');
+  });
+});
+
+describe('current_activity', () => {
+  function seedActiveRun() {
+    writeState({
+      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:1' } as Agent],
+      claims: [{
+        run_id: 'run-act-1',
+        task_ref: 'orch/task-1',
+        agent_id: 'orc-1',
+        state: 'in_progress',
+        claimed_at: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      } as Claim],
+      tasks: [{ ref: 'orch/task-1', title: 'Task 1', status: 'in_progress', owner: 'orc-1', planning_state: 'ready_for_dispatch' } as Task],
+    });
+    writeEvents([]);
+  }
+
+  it('is null on an active run without an activity snapshot', () => {
+    seedActiveRun();
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
+    expect(s.claims.active[0].current_activity).toBeNull();
+    expect(formatStatus(s as unknown as Record<string, unknown>)).not.toContain('└');
+  });
+
+  it('carries the ranked activity and shows it in text-mode status', () => {
+    seedActiveRun();
+    const ts = new Date(Date.now() - 12_000).toISOString();
+    writeRunActivity(dir, {
+      'run-act-1': {
+        run_id: 'run-act-1', agent_id: 'orc-1', label: 'Fixing findings from the critic', source: 'note', label_ts: ts,
+        last_tool: 'Edit', last_tool_brief: 'lib/x.ts', last_tool_ts: ts,
+      },
+    });
+    const s = buildStatus(dir, { settings });
+    const claim = (s as unknown as StatusResult).claims.active[0];
+    expect(claim.current_activity).toEqual({ text: 'Fixing findings from the critic', source: 'note', ts });
+    expect(formatStatus(s)).toMatch(/\n {4}└ Fixing findings from the critic {3}\(1\ds ago\)/);
+    expect(formatAgentStatus(buildAgentStatus(dir, 'orc-1'), 'orc-1')).toContain('└ Fixing findings from the critic');
   });
 });
 

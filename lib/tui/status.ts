@@ -1,5 +1,6 @@
 import { buildStatus } from '../statusView.ts';
 import type { SpriteState } from './sprites.ts';
+import type { CurrentActivity } from '../currentActivity.ts';
 
 export interface TuiSlot {
   agent_id: string;
@@ -43,6 +44,7 @@ export interface TuiClaim {
   current_phase: string | null;
   phase_history?: { phase: string; started_at: string }[];
   finalization_state?: string | null;
+  current_activity?: CurrentActivity | null;
 }
 
 export interface TuiFailureEntry {
@@ -106,6 +108,7 @@ export interface WorkerSlotViewModel {
   run_state: string | null;
   current_phase: string | null;
   phases: PhaseEntry[];
+  current_activity: CurrentActivity | null;
   age_seconds: number | null;
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
@@ -216,6 +219,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       run_state: runState,
       current_phase: claim?.current_phase ?? null,
       phases: phaseHistory.length > 0 ? buildPhases(phaseHistory, heartbeat_seconds, runState) : [],
+      current_activity: claim?.current_activity ?? null,
       age_seconds: claim?.age_seconds ?? null,
       activity_seconds: claim?.activity_seconds ?? null,
       heartbeat_seconds,
