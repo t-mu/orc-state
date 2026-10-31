@@ -546,6 +546,12 @@ const REPORT_START = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT[ \t]*$`);
 const REPORT_END = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT_END[ \t]*$`);
 const REPORT_HEADERS = ['findings', 'likely_cause', 'recommended_action'].map((header) => new RegExp(`${MARKER_PREFIX}${header}:`, 'm'));
 
+/** Remove the indentation every non-blank line shares (a TUI indents its output). */
+function dedent(lines: string[]): string {
+  const indent = Math.min(...lines.filter((line) => line.trim()).map((line) => /^[ \t]*/.exec(line)![0].length));
+  return Number.isFinite(indent) ? lines.map((line) => line.slice(indent)).join('\n') : lines.join('\n');
+}
+
 /**
  * Find a scout's final SCOUT_REPORT block in its session output. Markers count
  * only on their own line (a prompt glyph or indentation may precede them), and
@@ -556,12 +562,6 @@ const REPORT_HEADERS = ['findings', 'likely_cause', 'recommended_action'].map((h
  * `<placeholder>` lines just before it) never counts, so a scout whose tail
  * begins inside the template is still `running`.
  */
-/** Remove the indentation every non-blank line shares (a TUI indents its output). */
-function dedent(lines: string[]): string {
-  const indent = Math.min(...lines.filter((line) => line.trim()).map((line) => /^[ \t]*/.exec(line)![0].length));
-  return Number.isFinite(indent) ? lines.map((line) => line.slice(indent)).join('\n') : lines.join('\n');
-}
-
 export function extractScoutReport(output: string): { report: string | null; truncated: boolean } {
   let start: number | null = null;
   let report: string | null = null;
