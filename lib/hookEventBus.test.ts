@@ -37,6 +37,14 @@ describe('dispatchHookEvents', () => {
     ]);
     expect(out).toEqual({ permission: [], activity: [] });
   });
+
+  it('keeps an empty todo label as a clear, but not an empty note', () => {
+    const out = dispatchHookEvents([
+      { type: 'activity', label: '', source: 'todo', ts: TS },
+      { type: 'activity', label: '', source: 'note', ts: TS },
+    ]);
+    expect(out.activity).toEqual([{ type: 'activity', label: '', source: 'todo', ts: TS }]);
+  });
 });
 
 describe('drainHookEvents', () => {

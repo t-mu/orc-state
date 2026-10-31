@@ -37,12 +37,24 @@ import { isPidAlive, isSameProcess, processIdentity } from '../lib/processIdenti
 import type { SessionInspection } from './interface.ts';
 import type { SandboxNetwork } from '../lib/providers.ts';
 import { OPERATOR_TOKEN_FILE } from '../lib/controlProtocol.ts';
+import { taskLabelsPath } from '../hooks/orc-hook.ts';
+import { fileURLToPath } from 'node:url';
 
 const PROVIDER_BINARIES: Record<string, string> = {
   claude: 'claude',
   codex:  'codex',
   gemini: 'gemini',
 };
+
+/** The shipped Claude hook script (compiled to dist/hooks/orc-hook.js by the build). */
+const CLAUDE_HOOK_SCRIPT = fileURLToPath(new URL('../hooks/orc-hook.ts', import.meta.url));
+/** PreToolUse matcher for the to-do tools whose current item labels a run. */
+export const CLAUDE_TODO_TOOL_MATCHER = 'TodoWrite|TaskCreate|TaskUpdate';
+
+/** Shell command for one Claude hook: `node <script> <kind> <events-file>`. */
+export function claudeHookCommand(kind: string, eventsFile: string): string {
+  return `node ${JSON.stringify(CLAUDE_HOOK_SCRIPT)} ${kind} ${JSON.stringify(eventsFile)}`;
+}
 
 const OUTPUT_TAIL_BYTES  = 8 * 1024; // 8 KB
 const RECENT_OUTPUT_BYTES = 16 * 1024;
@@ -358,20 +370,25 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
   // Workers start in their assigned worktree (task 204); ORC_PROJECT_ID and the
   // ORC_STATE_DIR bridge in the worker env keep `orc` state lookup on the project.
   const cwd = resolveLaunchCwd(config);
-  // For claude: write a settings file that installs a Notification hook so
-  // permission_prompt events are pushed to the hook-events file in real time.
-  // In sandbox mode, merge in a sandbox config block alongside the hook.
+  // For claude: write a settings file whose hooks push harness events to the
+  // agent's hook-events NDJSON file (drained by the coordinator):
+  //   Notification            → permission_prompt records (input-block detection)
+  //   PostToolUse  `*`        → `tool` records with a short brief
+  //   PreToolUse   to-do tools → `activity` records with the current to-do label
+  // In sandbox mode, merge in a sandbox config block alongside the hooks.
   let claudeSettingsFile: string | undefined;
   if (provider === 'claude') {
     claudeSettingsFile = settingsPath(agentId);
     const eventsFile = hookEventPath(agentId);
-    // Inline node one-liner: reads stdin JSON, filters to permission_prompt
-    // notifications, and appends a record to the hook-events NDJSON file.
-    const hookCmd = `node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const e=JSON.parse(d);if(e.notification_type!=='permission_prompt')return;require('fs').appendFileSync(${JSON.stringify(eventsFile)},JSON.stringify({type:'permission',message:e.message||'',ts:new Date().toISOString()})+'\\\\n')}catch(x){}})"`;
+    // Task labels remembered by the hook belong to one session; start clean.
+    try { unlinkSync(taskLabelsPath(eventsFile)); } catch { /* never created */ }
+    const hook = (kind: string) => ({ type: 'command', command: claudeHookCommand(kind, eventsFile) });
     const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
     const settings: Record<string, unknown> = {
       hooks: {
-        Notification: [{ hooks: [{ type: 'command', command: hookCmd }] }],
+        Notification: [{ hooks: [hook('permission')] }],
+        PostToolUse: [{ matcher: '*', hooks: [hook('tool')] }],
+        PreToolUse: [{ matcher: CLAUDE_TODO_TOOL_MATCHER, hooks: [hook('todo')] }],
       },
     };
     if (executionMode === 'sandbox') {
@@ -856,6 +873,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         try { unlinkSync(hookEventPath(agentId)); } catch { /* already gone or never created */ }
         try { unlinkSync(`${hookEventPath(agentId)}.processing`); } catch { /* already gone */ }
         try { unlinkSync(settingsPath(agentId)); } catch { /* already gone or never created */ }
+        try { unlinkSync(taskLabelsPath(hookEventPath(agentId))); } catch { /* already gone or never created */ }
       } catch {
         // No-op — malformed handle or session already cleaned up.
       }
