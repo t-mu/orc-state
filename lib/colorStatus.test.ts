@@ -35,9 +35,6 @@ beforeEach(() => {
     runs: [],
   }));
   writeFileSync(join(stateDir, 'events.jsonl'), '');
-  writeFileSync(join(root, 'orc-state.config.json'), JSON.stringify({
-    worker_pool: { max_workers: 1, provider: 'codex' },
-  }));
   originalLevel = chalk.level;
   chalk.level = 1;
 });
@@ -49,7 +46,7 @@ afterEach(() => {
 
 describe('colorFormatStatus', () => {
   it('returns ANSI-decorated status text without losing content', () => {
-    const status = buildStatus(stateDir);
+    const status = buildStatus(stateDir, { settings: { worker_pool: { max_workers: 1, provider: 'codex' } } });
     const plain = formatStatus(status);
     const colored = colorFormatStatus(status);
 

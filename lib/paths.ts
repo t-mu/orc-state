@@ -1,7 +1,7 @@
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
-import { resolveOrchestrationRoot, legacySiblingTarget } from './repoRoot.ts';
+import { resolveOrchestrationRoot } from './repoRoot.ts';
 import { logger } from './logger.ts';
 import { resolveActiveProject, type ActiveProject } from './projectContext.ts';
 
@@ -10,11 +10,10 @@ import { resolveActiveProject, type ActiveProject } from './projectContext.ts';
 // repository. Null in a legacy (unmigrated) attached installation.
 export const ACTIVE_PROJECT: ActiveProject | null = resolveActiveProject();
 
-// Orchestration root: owns the config, state dir, backlog, plans, and
-// worktrees. In a legacy attached installation this is the repo root.
-// With ORC_STATE_DIR set, the root is its parent — mirroring the
-// ORC_CONFIG_FILE convention below — so importing this module makes no git
-// calls when the ambient dir overrides are present (worker sessions, tests
+// Orchestration root: owns the state dir, backlog, plans, and worktrees.
+// In a legacy attached installation this is the repo root. With
+// ORC_STATE_DIR set, the root is its parent, so importing this module makes
+// no git calls when the ambient dir overrides are present (worker sessions, tests
 // that mock node:child_process). In project mode it is the project state dir.
 export const ORCHESTRATION_ROOT = ACTIVE_PROJECT
   ? ACTIVE_PROJECT.stateDir
@@ -33,12 +32,6 @@ export const EVENTS_FILE = resolve(STATE_DIR, 'events.db');
 // The orc installation itself (for locating its binary). In project mode the
 // coordinator has no orchestration repository to find it in.
 export const ORC_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-// Config lives at the orchestration root (parent of .orc-state/), not inside
-// the state dir. Use ORC_CONFIG_FILE to override the path explicitly. A
-// project has no config file; its settings come from the global registry.
-export const ORC_CONFIG_FILE = process.env.ORC_CONFIG_FILE
-  ? resolve(process.env.ORC_CONFIG_FILE)
-  : ACTIVE_PROJECT ? resolve(STATE_DIR, 'orc-state.config.json') : resolve(STATE_DIR, '..', 'orc-state.config.json');
 export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 
 // Target repo root: the repository whose product code runs operate on. In
@@ -48,16 +41,9 @@ export const TARGET_REPO_ROOT = ACTIVE_PROJECT
   ? ACTIVE_PROJECT.targetRepoRoot
   : process.env.ORC_REPO_ROOT ? resolve(process.env.ORC_REPO_ROOT) : ORCHESTRATION_ROOT;
 
-// A legacy orchestration home whose config names a separate `target_repo`
-// (the retired sibling layout). It must be migrated before it runs again.
-export const LEGACY_SIBLING_TARGET = ACTIVE_PROJECT ? null : legacySiblingTarget(ORC_CONFIG_FILE, ORCHESTRATION_ROOT);
-
 /** Only a registered project runs: a legacy (attached or sibling) installation must be migrated first. */
 export function assertProjectMode(): void {
   if (ACTIVE_PROJECT) return;
-  if (LEGACY_SIBLING_TARGET) {
-    throw new Error(`${ORCHESTRATION_ROOT} is a sibling orchestration home (target_repo: ${LEGACY_SIBLING_TARGET}). Sibling layouts are retired; migrate it into a project with: orc project migrate ${ORCHESTRATION_ROOT} --execute`);
-  }
   throw new Error(`No registered project here. Legacy .orc-state installations no longer run: migrate one with orc project migrate ${ORCHESTRATION_ROOT} --execute, or register a repository with orc project add <git-path> (or pass --project=<id>)`);
 }
 
@@ -68,9 +54,9 @@ export function assertProjectMode(): void {
 // root is the external project state directory and the target is the
 // registered repository.
 //
-// ORCHESTRATION-ROOT consumers — framework home (orc binary, config, state). These are correct as-is and were NOT changed by task 185:
+// ORCHESTRATION-ROOT consumers — framework home (orc binary, state). These are correct as-is and were NOT changed by task 185:
 //   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
-//                       WORKTREES_DIR, ORC_CONFIG_FILE
+//                       WORKTREES_DIR
 //   coordinator.ts      resolveOrcBinSh(ORC_PACKAGE_ROOT)    (orc binary lookup)
 //   coordinator.ts      repoRoot: ORC_PACKAGE_ROOT → worker env (orc bin/ctx for workers)
 //   mcp/handlers.ts     RUN_WORKTREES_FILE

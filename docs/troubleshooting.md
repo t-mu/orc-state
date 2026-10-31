@@ -207,6 +207,23 @@ orc project migrate <root>            # dry run
 orc project migrate <root> --execute
 ```
 
+---
+
+## `orc status` shows unexpected worker settings
+
+**Cause:** Settings are registry keys, not a file. `configured_slots` and `provider` come from `worker_pool.max_workers` and `worker_pool.provider` (falling back to `default_provider`), with the project's value over the global one, and an exported `ORC_MAX_WORKERS` or `ORC_WORKER_PROVIDER` overrides both. An `orc-state.config.json` file is ignored.
+
+**Fix:** Check what the project actually resolves, then set the key:
+
+```bash
+orc project config list                          # effective values for this project
+orc project config set worker_pool.max_workers 2
+orc project config set worker_pool.provider claude
+env | grep '^ORC_'                               # an exported override wins over both
+```
+
+---
+
 ## See also
 
 - [Recovery guide](./recovery.md)

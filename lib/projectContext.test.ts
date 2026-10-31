@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resolveActiveProject } from './projectContext.ts';
+import { projectConfigObject, resolveActiveProject } from './projectContext.ts';
 import { ProjectRegistry } from './projectRegistry.ts';
 
 let temp: string;
@@ -48,5 +48,21 @@ describe('resolveActiveProject', () => {
         else process.env[key] = value;
       }
     }
+  });
+});
+
+describe('projectConfigObject', () => {
+  it('nests project settings over global ones, and gives only the global ones without a project', () => {
+    const env = { ORC_DATA_HOME: join(temp, 'data') };
+    expect(projectConfigObject(null, env)).toEqual({});
+    const registry = new ProjectRegistry(join(temp, 'data'));
+    const project = registry.add(gitRepo('a'));
+    registry.setSetting('worker_pool.max_workers', 1);
+    registry.setSetting('worker_pool.provider', 'codex');
+    registry.setSetting('worker_pool.max_workers', 2, project.id);
+    registry.close();
+    const active = resolveActiveProject({ ...env, ORC_PROJECT_ID: project.id }, temp)!;
+    expect(projectConfigObject(active, env)).toEqual({ worker_pool: { max_workers: 2, provider: 'codex' } });
+    expect(projectConfigObject(null, env)).toEqual({ worker_pool: { max_workers: 1, provider: 'codex' } });
   });
 });

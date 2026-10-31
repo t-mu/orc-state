@@ -21,13 +21,13 @@ Project lookup uses `--project`, then `ORC_PROJECT_ID`, then the current reposit
 
 ### Running against a registered project
 
-An orc command runs in **project mode** when `ORC_PROJECT_ID` names a registered project. Otherwise, when no legacy override (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE`) is set, the current directory's canonical Git root selects its registered project (a root registered twice is an error), and outside every Git repository the project chosen with `orc project select` applies. A repository that still has a legacy `.orc-state/` or `orc-state.config.json` (between the current directory and its Git root) selects no project until it is migrated, and a legacy installation no longer runs (see **Legacy installations** below); once `orc project migrate` cuts it over, that layout, or a legacy override naming it, selects its project instead. `ORC_PROJECT_ID` overrides both. A project whose migration has not been cut over is not active yet, and naming the project explicitly is an error. Each project state directory holds a `project.json` descriptor (id, name, target root), so a worker given `ORC_PROJECT_ID` and its state directory resolves the project without opening the global registry.
+An orc command runs in **project mode** when `ORC_PROJECT_ID` names a registered project. Otherwise, when no legacy override (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`) is set, the current directory's canonical Git root selects its registered project (a root registered twice is an error), and outside every Git repository the project chosen with `orc project select` applies. A repository that still has a legacy `.orc-state/` or `orc-state.config.json` (between the current directory and its Git root) selects no project until it is migrated, and a legacy installation no longer runs (see **Legacy installations** below); once `orc project migrate` cuts it over, that layout, or a legacy override naming it, selects its project instead. `ORC_PROJECT_ID` overrides both. A project whose migration has not been cut over is not active yet, and naming the project explicitly is an error. Each project state directory holds a `project.json` descriptor (id, name, target root), so a worker given `ORC_PROJECT_ID` and its state directory resolves the project without opening the global registry.
 
 In project mode:
 
 - State, run worktrees (`<state>/worktrees/<run_id>`), PTY logs, provider settings, plans and exports live under the project's state directory in the data home. Git operations (worktrees, branches, merges) run against the registered target repository; only Git's own worktree metadata lands in the target's `.git`.
-- Settings come from the registry (`orc project config`), project over global, with environment and CLI overrides on top. No `orc-state.config.json` is read or needed.
-- Workers receive `ORC_PROJECT_ID`, their session id as `ORC_SESSION_ID` (it names the session, e.g. in `report-for-duty`; not a credential, and an inherited legacy `ORC_SESSION_TOKEN` is blanked), their session secret as `ORC_SESSION_SECRET` (their actor credential, task 231), and the control socket as `ORC_CONTROL_SOCKET`, which `orc control` and the worker lifecycle commands use in place of the recorded endpoint path; the daemon's bearer token is still read from `<state>/control.token`. `ORC_STATE_DIR` is still set as a temporary bridge, and `ORC_HOME`/`ORC_REPO_ROOT`/`ORC_CONFIG_FILE` are blanked (a blank value counts as unset) so an inherited legacy value cannot redirect them. A sandboxed worker that cannot open the registry runs on environment settings and defaults.
+- Settings come from the registry (`orc project config`), project over global, with environment and CLI overrides on top (see **Settings** below). Nothing reads a config file.
+- Workers receive `ORC_PROJECT_ID`, their session id as `ORC_SESSION_ID` (it names the session, e.g. in `report-for-duty`; not a credential, and an inherited legacy `ORC_SESSION_TOKEN` is blanked), their session secret as `ORC_SESSION_SECRET` (their actor credential, task 231), and the control socket as `ORC_CONTROL_SOCKET`, which `orc control` and the worker lifecycle commands use in place of the recorded endpoint path; the daemon's bearer token is still read from `<state>/control.token`. `ORC_STATE_DIR` is still set as a temporary bridge, and `ORC_HOME`/`ORC_REPO_ROOT` are blanked (a blank value counts as unset) so an inherited legacy value cannot redirect them. A sandboxed worker that cannot open the registry runs on environment settings and defaults.
 - Worker lifecycle commands — `run-start`, `progress`, `run-work-complete`, `run-fail`, `run-finish`, `run-input-request`, `review-submit`, `memory-record` and `report-for-duty` — do not write the state directory in a project. Each is sent to the coordinator over `ORC_CONTROL_SOCKET` with the session secret, and the coordinator applies it, so no worker process writes `runtime.db`, `events.db` or `claims.json`. The credential must be a session that is not `offline` (`running`, `recoverable` or `unknown` — after a coordinator restart the session secret, not the process identity, is what proves the caller) launched for the named run (and agent); an `offline` session may still poll its own input request and repeat `run-finish` on a run that is already `done`, everything else is refused with `401`; `--agent-id` alone is not trusted, and a request for another run is refused with `403 forbidden`. Each launched session — worker, scout and master — gets a random secret that only its own process holds: it is passed in the environment, never written to the state directory, PTY logs, the bootstrap or events, and the `sessions` table keeps only its SHA-256 hash. A session id read from the state directory therefore authenticates nobody. The secret is only as private as the sandbox: a `full-access` worker runs as the same user and can read other processes' environments (`/proc/<pid>/environ`), and so can a worker in a sandbox without its own process namespace, such as Codex's; `worker_pool.sandbox_network: open` also lets a sandboxed worker reach other local sockets. The guarantee assumes a sandboxed worker with the default `restricted` network. Upgrading a project with runs in flight: workers launched before session secrets hold none, so their lifecycle commands fail with `ORC_SESSION_SECRET is not set`; drain or reset those tasks (`orc task-reset <ref>`) when upgrading. Without `ORC_SESSION_SECRET` these commands fail, except `memory-record`, which an operator shell still writes directly. While the coordinator is stopped or restarting a command retries for up to two minutes (`ORC_CONTROL_RETRY_MS`), and only when the request never reached it. A project coordinator therefore requires the control API: it refuses to start with `ORC_CONTROL_API=off` or when the socket cannot be served.
 - Master and operator mutations — MCP `cancel_task`, `reset_task`, `unblock_task`, `delegate_task`, `respond_input`, and `orc task-cancel`, `task-reset`, `task-unblock`, `delegate`, `run-input-respond` — are applied by the coordinator too (`POST /v1/operator`), under their own rule: a session credential must be the master's (not `offline`), which `orc start-session` puts in the master provider's environment as `ORC_MASTER_SECRET` (its MCP config only references it: `${ORC_MASTER_SECRET}` for Claude and Gemini, `env_vars` for Codex), so the master's tools and the commands its shell runs act as the master. An MCP server without that secret (for example one a repository's `.mcp.json` starts for an editor session) refuses every write tool and points at the orc CLI; its read tools still work. A shell inside a worker session presents its own `ORC_SESSION_SECRET` and is refused with `403`; the master's MCP tools take no `actor_id` and always act as the master, and `respond_input` needs `ORC_MASTER_SECRET`. A shell without a session acts as the operator by presenting the operator token the coordinator writes to `<state>/operator.token` on every start (sandboxed Claude sessions are denied reading it, by the sandbox and by a permission rule for the Read tool; a Codex sandbox cannot deny reads, which matters only where a sandboxed Codex worker can reach the socket at all, i.e. with `sandbox_network: open`, or for `full-access` workers of any provider), and is recorded as `human` or a registered agent named with `--actor-id`. Answering an input request (`run-input-respond`) needs the master's credential in every case. With no coordinator running these commands — and the master's tools — write the state directly under the state lock, after the same authorization (a worker session is still refused), and print `coordinator is not running; applying <op> directly`; that is the documented recovery path. The master's session row is closed when `orc start-session`'s master exits or `start-session` receives SIGHUP or SIGTERM; only a SIGKILL leaves it open until the next `start-session`, and the secret it would need lives only in that master's process tree.
 - Sandboxed project workers may write their worktree, the target's `.git` object, ref and worktree-metadata subtrees, and the control socket — never the project state directory or the target working tree. Claude, Codex, and the Codex app-server runtime get the same writable roots. Reaching the socket is a network permission: only Claude's macOS sandbox allows that one path; Codex and Claude on Linux connect only with the opt-in `worker_pool.sandbox_network: open`, which widens the sandbox network (see **Execution Modes**), and `orc doctor` and the coordinator's startup log warn when the default worker provider could not connect. Read commands a worker runs ask the running coordinator: `review-read` and `memory-wake-up` use the control API (`GET /v1/runs/<run_id>/reviews`, `GET /v1/memory/wake-up`). When no coordinator answers they, like `status`, `runs-active` and `run-info`, read the state directory directly; a worker session (one with `ORC_SESSION_SECRET`) that cannot write it opens the databases read-only. That works while another process holds the database's WAL files open; with every process closed, a sandboxed read fails — `review-read` and `memory-wake-up` exit 1 asking to retry once the coordinator is running. Writer processes (the coordinator, the MCP server, operator shells) never fall back to read-only.
@@ -122,7 +122,7 @@ After the cutover, running orc in the legacy root (Git checkout or not), its lin
 | `ORC_DATA_HOME` | Directory of the global `registry.db` and the `projects/<id>` state directories | Platform data directory (see above) |
 | `ORC_PROJECT_ID` | Select a registered project (set by `--project` and for launched sessions) | — |
 | `ORC_STATE_DIR` | Set for launched sessions as a bridge to their project state directory. Otherwise a legacy path override: naming a migrated installation's state directory selects its project; naming an unmigrated one selects no project | The project state directory |
-| `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE` | Legacy path overrides (blanked for launched sessions). One naming a migrated installation selects its project; otherwise no project is selected, and a legacy installation no longer runs | — |
+| `ORC_HOME`, `ORC_REPO_ROOT` | Legacy path overrides (blanked for launched sessions). One naming a migrated installation selects its project; otherwise no project is selected, and a legacy installation no longer runs | — |
 | `ORC_WORKTREES_DIR` | Directory where run worktrees are created | `<state>/worktrees` |
 | `ORC_SESSION_TRANSPORT` | Transport for new worker sessions: `auto` (tmux if installed, else node-pty), `tmux` or `pty`. tmux sessions survive a coordinator restart | `auto` |
 | `ORC_TMUX_BIN` | tmux binary used by the tmux session transport | `tmux` |
@@ -133,8 +133,8 @@ After the cutover, running orc in the legacy root (Git checkout or not), its lin
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_MAX_WORKERS` | Concurrency limit — maximum number of simultaneously active task-scoped workers | `0` (set via config or CLI) |
-| `ORC_WORKER_PROVIDER` | Default provider for task-scoped workers (`claude`, `codex`, or `gemini`); overridden per task by `required_provider` | `codex` (or config `default_provider`) |
+| `ORC_MAX_WORKERS` | Concurrency limit — maximum number of simultaneously active task-scoped workers | `0` (or the `worker_pool.max_workers` setting) |
+| `ORC_WORKER_PROVIDER` | Default provider for task-scoped workers (`claude`, `codex`, or `gemini`); overridden per task by `required_provider` | `codex` (or the `default_provider` setting) |
 | `ORC_WORKER_MODEL` | Model identifier for worker agents | Provider default |
 | `ORC_WORKER_EXECUTION_MODE` | Execution mode for worker agents (`full-access` or `sandbox`) | `full-access` |
 | `ORC_WORKER_RUNTIME` | Worker runtime (`cli` or `structured`); see [Worker Runtimes](#worker-runtimes) | `cli` |
@@ -144,7 +144,7 @@ After the cutover, running orc in the legacy root (Git checkout or not), its lin
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_MASTER_PROVIDER` | Provider for the master agent | `claude` (or config `default_provider`) |
+| `ORC_MASTER_PROVIDER` | Provider for the master agent | `claude` (or the `default_provider` setting) |
 | `ORC_MASTER_MODEL` | Model identifier for the master agent | Provider default |
 | `ORC_MASTER_EXECUTION_MODE` | Execution mode for the master agent (`full-access` or `sandbox`) | `full-access` |
 
@@ -155,63 +155,22 @@ After the cutover, running orc in the legacy root (Git checkout or not), its lin
 | `ORC_STRICT_PTY_TESTS` | Set to `1` to fail tests when PTY support is unavailable |
 | `ORC_PTY_AVAILABLE` | Set to `1` to skip PTY probe and assume PTY is available |
 
-## Config File
+## Settings
 
-A project has no config file: its settings are stored in the registry, project over global, with dotted keys for nested fields (`orc project config set worker_pool.max_workers 2`). The schema below shows the settings as the nested object the loaders see; `orc init` records `default_provider`, `worker_pool.provider` and `worker_pool.max_workers`.
+Settings are registry keys, stored globally or per project with `orc project config`; a project setting wins over the global one, and the `ORC_*` environment variables above win over both (see **Resolution Order**). Nested fields use dotted keys:
 
-### Full Schema
-
-```json
-{
-  "default_provider": "claude",
-  "default_execution_mode": "full-access",
-  "master": {
-    "provider": "claude",
-    "model": "claude-sonnet-4-20250514",
-    "execution_mode": "full-access"
-  },
-  "worker_pool": {
-    "max_workers": 3,
-    "provider": "codex",
-    "model": "o4-mini",
-    "execution_mode": "full-access",
-    "runtime": "cli",
-    "provider_models": {
-      "claude": "claude-sonnet-4-20250514",
-      "codex": "o4-mini",
-      "gemini": "gemini-2.5-pro"
-    }
-  },
-  "coordinator": {
-    "mode": "autonomous",
-    "tick_interval_ms": 30000,
-    "concurrency_limit": 8,
-    "run_start_timeout_ms": 600000,
-    "session_ready_timeout_ms": 120000,
-    "session_ready_nudge_ms": 15000,
-    "session_ready_nudge_interval_ms": 30000,
-    "run_inactive_timeout_ms": 1800000,
-    "run_inactive_nudge_ms": 600000,
-    "run_inactive_escalate_ms": 900000,
-    "run_inactive_nudge_interval_ms": 300000,
-    "session_start_max_attempts": 3,
-    "session_start_retry_delay_ms": 30000,
-    "worker_stale_soft_ms": 1800000,
-    "worker_stale_nudge_ms": 3600000,
-    "worker_stale_force_fail_ms": 7200000
-  },
-  "leases": {
-    "default_ms": 1800000,
-    "finalize_ms": 3600000
-  }
-}
+```bash
+orc project config set default_provider claude                 # this project
+orc project config set worker_pool.max_workers 3
+orc project config set worker_pool.provider_models.claude sonnet
+orc project config set --global master.model opus              # every project
+orc project config list                                         # effective values
+orc project config unset worker_pool.max_workers
 ```
 
-All fields are optional. Omitted fields use their defaults.
+Every key is optional; an unset key uses its default. `orc init` records `default_provider`, `worker_pool.provider` and `worker_pool.max_workers`. The sections below list the keys by prefix (`master.*`, `worker_pool.*`, `coordinator.*`, `leases.*`).
 
-> **Note:** Model names in examples (e.g., `claude-sonnet-4-20250514`) reflect
-> models available at time of writing and may change. Check your provider's
-> documentation for current model identifiers.
+Model settings take whatever the provider's CLI accepts. For Claude, prefer the Claude Code aliases `sonnet`, `opus` and `haiku`: an alias always resolves to the latest model of that family, so the setting never goes stale. Pin a full model ID only when you need an exact version.
 
 ### `default_provider`
 
@@ -227,12 +186,10 @@ Sets the fallback execution mode for both master and worker pool when neither a 
 
 ### `target_repo` (retired)
 
-The sibling layout this key enabled is retired. A legacy config that still
-names a separate `target_repo` is refused by `orc init`, `orc start-session`,
-the coordinator and the MCP server, and fails `orc doctor`/`orc preflight`;
-migrate it with `orc project migrate <orchestration-home> --execute`, which
-registers the target repository as a project. See
-[Sibling Mode](./sibling-mode.md).
+The sibling layout that `target_repo` configured is retired, and it is not a
+registry setting. A sibling orchestration home is a legacy installation: it no
+longer runs, and `orc project migrate <orchestration-home> --execute` registers
+its target repository as a project. See [Sibling Mode](./sibling-mode.md).
 
 ### `master`
 
@@ -364,22 +321,16 @@ In every mode, workers and scouts never start the master's orchestrator MCP serv
 
 Execution mode can be set at three levels of specificity (most-specific wins):
 
-| Level | Config field / env var | Applies to |
+| Level | Setting | Applies to |
 |-------|------------------------|------------|
 | Top-level default | `default_execution_mode` | Both master and worker pool (fallback) |
 | Master section | `master.execution_mode` | Master agent only |
 | Worker pool section | `worker_pool.execution_mode` | Worker agents only |
 
-```json
-{
-  "default_execution_mode": "sandbox",
-  "master": {
-    "execution_mode": "full-access"
-  },
-  "worker_pool": {
-    "execution_mode": "sandbox"
-  }
-}
+```bash
+orc project config set default_execution_mode sandbox
+orc project config set master.execution_mode full-access
+orc project config set worker_pool.execution_mode sandbox
 ```
 
 ### Environment Variable Overrides
@@ -472,23 +423,15 @@ If the binaries are missing, `orc doctor` lists them and prints the install comm
 
 **All agents sandboxed (recommended for production):**
 
-```json
-{
-  "default_execution_mode": "sandbox"
-}
+```bash
+orc project config set default_execution_mode sandbox
 ```
 
 **Master full-access, workers sandboxed (mixed trust):**
 
-```json
-{
-  "master": {
-    "execution_mode": "full-access"
-  },
-  "worker_pool": {
-    "execution_mode": "sandbox"
-  }
-}
+```bash
+orc project config set master.execution_mode full-access
+orc project config set worker_pool.execution_mode sandbox
 ```
 
 **Override via environment variable (e.g. CI):**

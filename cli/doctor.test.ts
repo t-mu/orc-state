@@ -291,9 +291,8 @@ describe('doctor sandbox dependencies', () => {
 });
 
 describe('doctor sandbox control socket (task 230)', () => {
-  const missingConfig = '/nonexistent/orc-state.config.json';
   const check = (env: NodeJS.ProcessEnv, platform = 'linux', project = true) =>
-    checkSandboxControlSocket({ platform, env, configFile: missingConfig, project }).warning;
+    checkSandboxControlSocket({ platform, env, settings: {}, project }).warning;
 
   it('warns when sandboxed Codex or Linux Claude project workers cannot reach the socket', () => {
     expect(check({ ORC_WORKER_PROVIDER: 'codex', ORC_WORKER_EXECUTION_MODE: 'sandbox' })).toContain('worker_pool.sandbox_network');

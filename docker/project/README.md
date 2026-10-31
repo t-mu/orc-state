@@ -29,7 +29,8 @@ waits for that coordinator and starts the interactive master as another process
 via `docker compose exec`; `orc start-session` reuses the running coordinator.
 workers are separate processes inside the same container. The default worker
 capacity is two (`ORC_MAX_WORKERS=2`). Set `ORC_WORKER_PROVIDER` and
-`ORC_MASTER_PROVIDER` if they differ from `orc-state.config.json`. The project
+`ORC_MASTER_PROVIDER` to override the project's registry settings
+(`orc project config`). The project
 must have been initialized with `orc init` before starting a master session;
 the container initializes missing runtime state without replacing existing
 config or task specs.

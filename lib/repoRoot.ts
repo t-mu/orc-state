@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 const CONFIG_FILENAME = 'orc-state.config.json';
@@ -57,34 +57,4 @@ export function resolveOrchestrationRoot(cwd: string = process.cwd()): string {
     return configDir;
   }
   return resolveRepoRoot(cwd);
-}
-
-/**
- * Read target_repo from the config file without full config validation.
- * Tolerant by design: this runs at module load of paths.ts for every orc
- * command, so a malformed config must not crash here — loadWorkerPoolConfig
- * and doctor report parse errors with proper context.
- */
-function readTargetRepoFromConfig(configFile: string): string | null {
-  if (!existsSync(configFile)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(configFile, 'utf8')) as Record<string, unknown>;
-    const value = parsed.target_repo;
-    return typeof value === 'string' && value !== '' ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The separate target repository a retired sibling layout configures with
- * `target_repo`, or null for an attached layout. Sibling layouts no longer
- * run; they are detected only so they can be refused and pointed at
- * `orc project migrate` instead of silently operating on the wrong repository.
- */
-export function legacySiblingTarget(configFile: string, orchestrationRoot: string): string | null {
-  const targetRepo = readTargetRepoFromConfig(configFile);
-  if (!targetRepo) return null;
-  const target = resolve(dirname(configFile), targetRepo);
-  return target === resolve(orchestrationRoot) ? null : target;
 }

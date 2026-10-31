@@ -44,8 +44,16 @@ afterEach(() => {
   delete process.env.ORC_MAX_WORKERS;
   delete process.env.ORC_WORKER_PROVIDER;
   delete process.env.ORC_WORKER_MODEL;
-  delete process.env.ORC_CONFIG_FILE;
+  vi.doUnmock('./lib/projectContext.ts');
 });
+
+/** Stored registry settings the next coordinator import reads (there is no registry in tests). */
+function useSettings(settings: Record<string, unknown>): void {
+  vi.doMock('./lib/projectContext.ts', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('./lib/projectContext.ts')>()),
+    projectConfigObject: () => settings,
+  }));
+}
 
 function readEvents(stateDir: string): Array<Record<string, unknown>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -4061,8 +4069,7 @@ describe('PR finalization', () => {
     });
 
     // Config says direct, but task says pr — task override wins
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github', merge_strategy: 'direct' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github', merge_strategy: 'direct' } });
 
     const mockSend = vi.fn().mockResolvedValue('');
     const mockPushBranch = vi.fn();
@@ -4149,8 +4156,7 @@ describe('PR finalization', () => {
       claims: [PR_CLAIM],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github' } });
 
     const mockSend = vi.fn().mockResolvedValue('');
     const mockPushBranch = vi.fn();
@@ -4203,8 +4209,7 @@ describe('PR finalization', () => {
       claims: [claimForCriteria],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github' } });
 
     const mockSend = vi.fn().mockResolvedValue('');
     let capturedBody = '';
@@ -4243,8 +4248,7 @@ describe('PR finalization', () => {
       claims: [PR_CLAIM],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github' } });
 
     const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
@@ -4310,8 +4314,7 @@ describe('PR finalization', () => {
       }],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github' } });
 
     const mockMergePr = vi.fn();
     const mockSend = vi.fn().mockResolvedValue('');
@@ -4371,8 +4374,7 @@ describe('PR finalization', () => {
       }],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github' } });
 
     const mockSend = vi.fn().mockResolvedValue('');
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: mockSend, stop: vi.fn() }));
@@ -4426,8 +4428,7 @@ describe('PR finalization', () => {
       }],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github' } });
 
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ stop: vi.fn(), send: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({
@@ -4476,8 +4477,7 @@ describe('PR finalization', () => {
       }],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({ coordinator: { pr_provider: 'github' } }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    useSettings({ coordinator: { pr_provider: 'github' } });
 
     const mockStart = vi.fn();
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: vi.fn(), stop: vi.fn() }));
@@ -4528,10 +4528,9 @@ describe('PR finalization', () => {
       }],
     });
 
-    writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({
+    useSettings({
       coordinator: { pr_provider: 'github', pr_finalize_lease_ms: 24 * 60 * 60 * 1000 },
-    }));
-    process.env.ORC_CONFIG_FILE = join(dir, 'orc-state.config.json');
+    });
 
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn(), stop: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({

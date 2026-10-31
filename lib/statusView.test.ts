@@ -25,10 +25,12 @@ type StatusResult = {
 };
 
 // root = test-controlled repo root; dir = root/.orc-state (the stateDir).
-// This mirrors real layout so config at root/orc-state.config.json is found.
 let root: string;
 let dir: string;
+// Registry settings buildStatus reads (injected: tests have no registry).
+let settings: Record<string, unknown>;
 beforeEach(() => {
+  settings = {};
   root = createTempStateDir('orch-status-test-');
   dir = join(root, '.orc-state');
   mkdirSync(dir);
@@ -45,8 +47,8 @@ function writeState({ agents = [] as Agent[], claims = [] as Claim[], tasks = []
   }));
 }
 
-function writeConfig(config: unknown) {
-  writeFileSync(join(root, 'orc-state.config.json'), JSON.stringify(config));
+function writeConfig(config: Record<string, unknown>) {
+  settings = config;
 }
 
 function writeEvents(events: Record<string, unknown>[]) {
@@ -64,7 +66,7 @@ describe('buildStatus', () => {
   it('returns zeros/empty for empty base state', () => {
     writeState();
     writeEvents([]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.worker_capacity.configured_slots).toBe(0);
     expect(s.tasks.total).toBe(0);
     expect(s.claims.total).toBe(0);
@@ -79,7 +81,7 @@ describe('buildStatus', () => {
     });
     writeConfig({ worker_pool: { max_workers: 2, provider: 'codex' } });
     writeEvents([]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.master?.agent_id).toBe('master');
     expect(s.worker_capacity.configured_slots).toBe(2);
     // One live worker consumes a slot; available = max - live
@@ -100,7 +102,7 @@ describe('buildStatus', () => {
     writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
     writeEvents([]);
 
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['amber-anchor']);
     expect(s.scout_capacity).toBeUndefined();
     expect(s.scouts).toEqual([
@@ -119,7 +121,7 @@ describe('buildStatus', () => {
       ],
     });
     writeEvents([]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.tasks.total).toBe(4);
     expect(s.tasks.counts.todo).toBe(2);
     expect(s.tasks.counts.done).toBe(1);
@@ -149,7 +151,7 @@ describe('buildStatus', () => {
     });
     writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
     writeEvents([]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.claims.total).toBe(1);
     expect(s.claims.active[0].run_id).toBe('run-1');
     expect(s.claims.in_progress).toBe(1);
@@ -161,7 +163,7 @@ describe('buildStatus', () => {
     writeState();
     const events = Array.from({ length: 25 }, (_, i) => ({ seq: i + 1, event: 'heartbeat', agent_id: 'agent-01' }));
     writeEvents(events);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.recentEvents).toHaveLength(20);
     expect(s.recentEvents[0].seq).toBe(6);
   });
@@ -190,7 +192,7 @@ describe('buildStatus', () => {
         ts: new Date(now.getTime() - 30_000).toISOString(),
       },
     ]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.claims.active[0].age_seconds).not.toBeNull();
     expect(s.claims.active[0].idle_seconds).not.toBeNull();
     expect(s.claims.active[0].last_activity_event).toBe('phase_started');
@@ -210,7 +212,7 @@ describe('buildStatus', () => {
       }],
     });
     writeEvents([]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect((s.claims.active[0].age_seconds as number)).toBeLessThan(60);
     expect((s.claims.active[0].idle_seconds as number)).toBeLessThan(60);
   });
@@ -228,7 +230,7 @@ describe('buildStatus', () => {
       }],
     });
     writeEvents([]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.claims.active[0].age_seconds).toBeNull();
     expect(s.claims.active[0].idle_seconds).toBeNull();
     expect(s.claims.active[0].stalled).toBe(false);
@@ -252,7 +254,7 @@ describe('buildStatus', () => {
     });
     writeEvents([]);
 
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.claims.active[0].idle_seconds).toBeGreaterThan(0);
     expect(s.claims.active[0].stalled).toBe(false);
     expect(s.claims.stalled).toBe(0);
@@ -275,7 +277,7 @@ describe('buildStatus', () => {
       { run_id: 'run-act', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'phase_started', ts: new Date(now.getTime() - 60_000).toISOString() },
       { run_id: 'run-act', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'heartbeat', ts: new Date(now.getTime() - 10_000).toISOString() },
     ]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     const claim = s.claims.active[0];
     // activity_seconds reflects last non-heartbeat event (~60s ago), not the heartbeat
     expect((claim.activity_seconds as number)).toBeGreaterThanOrEqual(55);
@@ -301,7 +303,7 @@ describe('buildStatus', () => {
     writeEvents([
       { run_id: 'run-hb-only', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'heartbeat', ts: new Date(now.getTime() - 5_000).toISOString() },
     ]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     const claim = s.claims.active[0];
     // No non-heartbeat activity → activity_seconds is null
     expect(claim.activity_seconds).toBeNull();
@@ -326,7 +328,7 @@ describe('buildStatus', () => {
       { event_id: 'evt-p1', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'phase_started', phase: 'explore', ts: new Date(now.getTime() - 50_000).toISOString() },
       { event_id: 'evt-p2', run_id: 'run-phase', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', event: 'phase_started', phase: 'implement', ts: new Date(now.getTime() - 30_000).toISOString() },
     ]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.claims.active[0].current_phase).toBe('implement');
   });
 
@@ -343,7 +345,7 @@ describe('buildStatus', () => {
       }],
     });
     writeEvents([]);
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.claims.active[0].current_phase).toBeNull();
   });
 
@@ -359,7 +361,7 @@ describe('buildStatus', () => {
     writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
     writeEvents([]);
 
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.worker_capacity.dispatch_ready_count).toBe(2);
     // One live worker consumes the only slot; no additional capacity to spawn workers.
     expect(s.worker_capacity.available_slots).toBe(0);
@@ -373,7 +375,7 @@ describe('buildStatus', () => {
     writeConfig({ worker_pool: { max_workers: 2, provider: 'codex' } });
     writeEvents([]);
 
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     // One registered worker consumes 1 of 2 slots; 1 remains available.
     expect(s.worker_capacity.available_slots).toBe(1);
     expect(s.worker_capacity.warming_slots).toBe(0);
@@ -414,7 +416,7 @@ describe('buildStatus', () => {
       },
     ]);
 
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.claims.stalled).toBe(1);
     expect(s.failures.startup[0].reason).toBe('binary missing');
     expect(s.failures.lifecycle[0].event).toBe('blocked');
@@ -458,7 +460,7 @@ describe('buildStatus', () => {
       },
     ]);
 
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.failures.lifecycle).toHaveLength(1);
     expect(s.failures.lifecycle[0].reason).toBe('current failure');
   });
@@ -489,7 +491,7 @@ describe('buildStatus', () => {
     });
     writeEvents([]);
 
-    const s = buildStatus(dir) as unknown as StatusResult;
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
     expect(s.finalization.total).toBe(1);
     expect(s.finalization.blocked_finalize).toBe(1);
     expect(s.finalization.blocked_preserved[0].run_branch).toBe('task/run-finalize-1');
@@ -501,7 +503,7 @@ describe('formatStatus', () => {
   it('produces a non-empty string', () => {
     writeState();
     writeEvents([]);
-    const output = formatStatus(buildStatus(dir));
+    const output = formatStatus(buildStatus(dir, { settings }));
     expect(typeof output).toBe('string');
     expect(output.length).toBeGreaterThan(0);
   });
@@ -509,7 +511,7 @@ describe('formatStatus', () => {
   it('includes "Orchestrator Status" header', () => {
     writeState();
     writeEvents([]);
-    expect(formatStatus(buildStatus(dir))).toContain('Orchestrator Status');
+    expect(formatStatus(buildStatus(dir, { settings }))).toContain('Orchestrator Status');
   });
 
   it('renders master, worker capacity, and active runs sections', () => {
@@ -526,7 +528,7 @@ describe('formatStatus', () => {
     });
     writeConfig({ worker_pool: { max_workers: 1, provider: 'codex' } });
     writeEvents([]);
-    const output = formatStatus(buildStatus(dir));
+    const output = formatStatus(buildStatus(dir, { settings }));
     expect(output).toContain('Master:');
     expect(output).toContain('Worker Capacity:');
     expect(output).toContain('Active Runs (1):');
@@ -540,7 +542,7 @@ describe('formatStatus', () => {
     writeConfig({ worker_pool: { max_workers: 0, provider: 'codex' } });
     writeEvents([]);
 
-    const output = formatStatus(buildStatus(dir));
+    const output = formatStatus(buildStatus(dir, { settings }));
     expect(output).toContain('queue:               orch/task-queued');
   });
 
@@ -569,7 +571,7 @@ describe('formatStatus', () => {
     });
     writeEvents([]);
 
-    const output = formatStatus(buildStatus(dir));
+    const output = formatStatus(buildStatus(dir, { settings }));
     expect(output).toContain('Finalization (1):');
     expect(output).toContain('blocked_preserved:        1');
     expect(output).toContain('preserved_work');
@@ -586,7 +588,7 @@ describe('formatStatus', () => {
     });
     writeConfig({ worker_pool: { max_workers: 3, provider: 'claude' } });
     writeEvents([]);
-    const output = formatStatus(buildStatus(dir));
+    const output = formatStatus(buildStatus(dir, { settings }));
     // Live worker shown
     expect(output).toContain('amber-anchor');
     // Capacity shown separately from live worker list
@@ -609,7 +611,7 @@ describe('formatStatus', () => {
     });
     writeEvents([]);
 
-    const output = formatStatus(buildStatus(dir));
+    const output = formatStatus(buildStatus(dir, { settings }));
     expect(output).toContain('slots: (none spawned)');
     expect(output).toContain('Scouts (2):');
     expect(output).toMatch(/scout-1\s+running\s+attached/);

@@ -1,32 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadWorkerPoolConfig, loadMasterConfig, loadCoordinatorConfig, loadLeaseConfig, resolveWorkerModel, isSupportedExecutionMode } from './providers.ts';
 import type { WorkerPoolConfig } from './providers.ts';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
-let dir: string;
+let settings: Record<string, unknown>;
 
 beforeEach(() => {
-  dir = createTempStateDir('orch-providers-test-');
-});
-
-afterEach(() => {
-  cleanupTempStateDir(dir);
+  settings = {};
 });
 
 describe('loadWorkerPoolConfig', () => {
-  it('reads worker pool settings from orchestrator config file', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+  it('reads worker pool settings from orchestrator settings', () => {
+    settings = {
       worker_pool: {
         max_workers: 3,
         provider: 'gemini',
         model: 'gemini-2.5-pro',
       },
-    }));
+    };
 
-    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toEqual({
+    expect(loadWorkerPoolConfig({ env: {}, settings })).toEqual({
       max_workers: 3,
       provider: 'gemini',
       model: 'gemini-2.5-pro',
@@ -37,15 +29,14 @@ describe('loadWorkerPoolConfig', () => {
     });
   });
 
-  it('lets env overrides win over config file values', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+  it('lets env overrides win over settings values', () => {
+    settings = {
       worker_pool: {
         max_workers: 1,
         provider: 'claude',
         model: 'claude-sonnet-4-6',
       },
-    }));
+    };
 
     expect(loadWorkerPoolConfig({
       env: {
@@ -53,7 +44,7 @@ describe('loadWorkerPoolConfig', () => {
         ORC_WORKER_PROVIDER: 'codex',
         ORC_WORKER_MODEL: 'o4-mini',
       },
-      configFile: configPath,
+      settings,
     })).toEqual({
       max_workers: 2,
       provider: 'codex',
@@ -66,25 +57,23 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('reads execution_mode from worker_pool config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       worker_pool: { provider: 'codex', execution_mode: 'sandbox' },
-    }));
+    };
 
-    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toMatchObject({
+    expect(loadWorkerPoolConfig({ env: {}, settings })).toMatchObject({
       execution_mode: 'sandbox',
     });
   });
 
   it('ORC_WORKER_EXECUTION_MODE env var overrides config execution_mode', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       worker_pool: { provider: 'codex', execution_mode: 'sandbox' },
-    }));
+    };
 
     expect(loadWorkerPoolConfig({
       env: { ORC_WORKER_EXECUTION_MODE: 'full-access' },
-      configFile: configPath,
+      settings,
     })).toMatchObject({
       execution_mode: 'full-access',
       runtime: 'cli',
@@ -93,36 +82,32 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('reads runtime from worker_pool config; env wins; default is cli (task 203)', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', runtime: 'structured' } }));
-    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).runtime).toBe('structured');
-    expect(loadWorkerPoolConfig({ env: { ORC_WORKER_RUNTIME: 'cli' }, configFile: configPath }).runtime).toBe('cli');
-    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
-    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).runtime).toBe('cli');
+    settings = { worker_pool: { provider: 'codex', runtime: 'structured' } };
+    expect(loadWorkerPoolConfig({ env: {}, settings }).runtime).toBe('structured');
+    expect(loadWorkerPoolConfig({ env: { ORC_WORKER_RUNTIME: 'cli' }, settings }).runtime).toBe('cli');
+    settings = { worker_pool: { provider: 'codex' } };
+    expect(loadWorkerPoolConfig({ env: {}, settings }).runtime).toBe('cli');
   });
 
   it('rejects an unknown worker runtime instead of guessing', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', runtime: 'api' } }));
-    expect(() => loadWorkerPoolConfig({ env: {}, configFile: configPath })).toThrow('Invalid worker runtime "api"');
+    settings = { worker_pool: { provider: 'codex', runtime: 'api' } };
+    expect(() => loadWorkerPoolConfig({ env: {}, settings })).toThrow('Invalid worker runtime "api"');
   });
 
   it('reads the sandbox network opt-in; env wins; default is restricted; unknown values are refused (task 230)', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', sandbox_network: 'open' } }));
-    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).sandbox_network).toBe('open');
-    expect(loadWorkerPoolConfig({ env: { ORC_WORKER_SANDBOX_NETWORK: 'restricted' }, configFile: configPath }).sandbox_network).toBe('restricted');
-    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
-    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath }).sandbox_network).toBe('restricted');
-    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex', sandbox_network: 'wide' } }));
-    expect(() => loadWorkerPoolConfig({ env: {}, configFile: configPath })).toThrow('Invalid worker sandbox network "wide"');
+    settings = { worker_pool: { provider: 'codex', sandbox_network: 'open' } };
+    expect(loadWorkerPoolConfig({ env: {}, settings }).sandbox_network).toBe('open');
+    expect(loadWorkerPoolConfig({ env: { ORC_WORKER_SANDBOX_NETWORK: 'restricted' }, settings }).sandbox_network).toBe('restricted');
+    settings = { worker_pool: { provider: 'codex' } };
+    expect(loadWorkerPoolConfig({ env: {}, settings }).sandbox_network).toBe('restricted');
+    settings = { worker_pool: { provider: 'codex', sandbox_network: 'wide' } };
+    expect(() => loadWorkerPoolConfig({ env: {}, settings })).toThrow('Invalid worker sandbox network "wide"');
   });
 
   it('defaults execution_mode to full-access when absent from config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ worker_pool: { provider: 'codex' } }));
+    settings = { worker_pool: { provider: 'codex' } };
 
-    expect(loadWorkerPoolConfig({ env: {}, configFile: configPath })).toMatchObject({
+    expect(loadWorkerPoolConfig({ env: {}, settings })).toMatchObject({
       execution_mode: 'full-access',
       runtime: 'cli',
       sandbox_network: 'restricted',
@@ -130,43 +115,39 @@ describe('loadWorkerPoolConfig', () => {
   });
 
   it('falls back to default_provider when worker_pool.provider is absent', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_provider: 'claude',
       worker_pool: {
         max_workers: 2,
       },
-    }));
+    };
 
-    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    const result = loadWorkerPoolConfig({ env: {}, settings });
     expect(result.provider).toBe('claude');
   });
 
   it('throws on invalid default_provider', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_provider: 'notaprovider',
-    }));
+    };
 
-    expect(() => loadWorkerPoolConfig({ env: {}, configFile: configPath })).toThrow(/invalid default_provider/i);
+    expect(() => loadWorkerPoolConfig({ env: {}, settings })).toThrow(/invalid default_provider/i);
   });
 
   it('prefers worker_pool.provider over default_provider', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_provider: 'gemini',
       worker_pool: {
         provider: 'claude',
       },
-    }));
+    };
 
-    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    const result = loadWorkerPoolConfig({ env: {}, settings });
     expect(result.provider).toBe('claude');
   });
 
   it('parses provider_models from config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       worker_pool: {
         provider: 'claude',
         model: 'default-model',
@@ -175,9 +156,9 @@ describe('loadWorkerPoolConfig', () => {
           codex: 'gpt-5.4',
         },
       },
-    }));
+    };
 
-    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    const result = loadWorkerPoolConfig({ env: {}, settings });
     expect(result.provider_models).toEqual({ claude: 'claude-sonnet-4-6', codex: 'gpt-5.4' });
     expect(result.model).toBe('default-model');
   });
@@ -225,34 +206,31 @@ describe('resolveWorkerModel', () => {
 
 describe('loadMasterConfig', () => {
   it('reads master section from config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       master: { provider: 'claude', model: 'claude-opus-4-6' },
-    }));
+    };
 
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    const result = loadMasterConfig({ env: {}, settings });
     expect(result).toEqual({ provider: 'claude', model: 'claude-opus-4-6', execution_mode: 'full-access' });
   });
 
   it('falls back to default_provider when master.provider absent', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_provider: 'gemini',
-    }));
+    };
 
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    const result = loadMasterConfig({ env: {}, settings });
     expect(result.provider).toBe('gemini');
   });
 
-  it('env vars override config file', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+  it('env vars override settings', () => {
+    settings = {
       master: { provider: 'claude', model: 'claude-opus-4-6' },
-    }));
+    };
 
     const result = loadMasterConfig({
       env: { ORC_MASTER_PROVIDER: 'codex', ORC_MASTER_MODEL: 'o4-mini' },
-      configFile: configPath,
+      settings,
     });
     expect(result).toEqual({ provider: 'codex', model: 'o4-mini', execution_mode: 'full-access' });
   });
@@ -260,16 +238,15 @@ describe('loadMasterConfig', () => {
 
 describe('loadCoordinatorConfig', () => {
   it('reads coordinator section from config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       coordinator: {
         mode: 'monitor',
         tick_interval_ms: 10000,
         concurrency_limit: 4,
       },
-    }));
+    };
 
-    const result = loadCoordinatorConfig({ configFile: configPath });
+    const result = loadCoordinatorConfig({ settings });
     expect(result.mode).toBe('monitor');
     expect(result.tick_interval_ms).toBe(10000);
     expect(result.concurrency_limit).toBe(4);
@@ -278,67 +255,62 @@ describe('loadCoordinatorConfig', () => {
   });
 
   it('returns all defaults when config is absent', () => {
-    const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
+    const result = loadCoordinatorConfig({ settings: {} });
     expect(result.mode).toBe('autonomous');
     expect(result.tick_interval_ms).toBe(30000);
     expect(result.concurrency_limit).toBe(8);
   });
 
   it('parses memory_prune_interval_ms from config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ coordinator: { memory_prune_interval_ms: 7200000 } }));
-    const result = loadCoordinatorConfig({ configFile: configPath });
+    settings = { coordinator: { memory_prune_interval_ms: 7200000 } };
+    const result = loadCoordinatorConfig({ settings });
     expect(result.memory_prune_interval_ms).toBe(7200000);
   });
 
   it('parses memory_prune_interval_ms of 0 (disable periodic pruning)', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ coordinator: { memory_prune_interval_ms: 0 } }));
-    const result = loadCoordinatorConfig({ configFile: configPath });
+    settings = { coordinator: { memory_prune_interval_ms: 0 } };
+    const result = loadCoordinatorConfig({ settings });
     expect(result.memory_prune_interval_ms).toBe(0);
   });
 
   it('defaults memory_prune_interval_ms to 3600000', () => {
-    const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
+    const result = loadCoordinatorConfig({ settings: {} });
     expect(result.memory_prune_interval_ms).toBe(3600000);
   });
 
   it('defaults merge_strategy to direct', () => {
-    const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
+    const result = loadCoordinatorConfig({ settings: {} });
     expect(result.merge_strategy).toBe('direct');
   });
 
   it('parses merge_strategy from config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ coordinator: { merge_strategy: 'pr' } }));
-    const result = loadCoordinatorConfig({ configFile: configPath });
+    settings = { coordinator: { merge_strategy: 'pr' } };
+    const result = loadCoordinatorConfig({ settings });
     expect(result.merge_strategy).toBe('pr');
   });
 
   it('defaults merge_strategy to direct for unknown value', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ coordinator: { merge_strategy: 'squash' } }));
-    const result = loadCoordinatorConfig({ configFile: configPath });
+    settings = { coordinator: { merge_strategy: 'squash' } };
+    const result = loadCoordinatorConfig({ settings });
     expect(result.merge_strategy).toBe('direct');
   });
 
   it('parses pr_provider, pr_push_remote, pr_finalize_lease_ms', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       coordinator: {
         pr_provider: 'github',
         pr_push_remote: 'upstream',
         pr_finalize_lease_ms: 3600000,
       },
-    }));
-    const result = loadCoordinatorConfig({ configFile: configPath });
+    };
+    const result = loadCoordinatorConfig({ settings });
     expect(result.pr_provider).toBe('github');
     expect(result.pr_push_remote).toBe('upstream');
     expect(result.pr_finalize_lease_ms).toBe(3600000);
   });
 
   it('defaults pr_provider to null, pr_push_remote to origin, pr_finalize_lease_ms to 86400000', () => {
-    const result = loadCoordinatorConfig({ configFile: join(dir, 'nonexistent.json') });
+    const result = loadCoordinatorConfig({ settings: {} });
     expect(result.pr_provider).toBeNull();
     expect(result.pr_push_remote).toBe('origin');
     expect(result.pr_finalize_lease_ms).toBe(86400000);
@@ -347,17 +319,16 @@ describe('loadCoordinatorConfig', () => {
 
 describe('loadLeaseConfig', () => {
   it('reads lease section from config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       leases: { default_ms: 900000, finalize_ms: 1800000 },
-    }));
+    };
 
-    const result = loadLeaseConfig({ configFile: configPath });
+    const result = loadLeaseConfig({ settings });
     expect(result).toEqual({ default_ms: 900000, finalize_ms: 1800000 });
   });
 
   it('returns defaults when config is absent', () => {
-    const result = loadLeaseConfig({ configFile: join(dir, 'nonexistent.json') });
+    const result = loadLeaseConfig({ settings: {} });
     expect(result.default_ms).toBe(1800000);
     expect(result.finalize_ms).toBe(3600000);
   });
@@ -378,54 +349,49 @@ describe('execution mode', () => {
 
 describe('loadMasterConfig execution_mode', () => {
   it('defaults to full-access when absent', () => {
-    const result = loadMasterConfig({ env: {}, configFile: join(dir, 'nonexistent.json') });
+    const result = loadMasterConfig({ env: {}, settings: {} });
     expect(result.execution_mode).toBe('full-access');
   });
 
   it('reads from master.execution_mode in config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       master: { provider: 'claude', execution_mode: 'sandbox' },
-    }));
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    };
+    const result = loadMasterConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('sandbox');
   });
 
   it('falls back to default_execution_mode', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_execution_mode: 'sandbox',
-    }));
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    };
+    const result = loadMasterConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('sandbox');
   });
 
   it('master.execution_mode takes priority over default_execution_mode', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_execution_mode: 'sandbox',
       master: { execution_mode: 'full-access' },
-    }));
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    };
+    const result = loadMasterConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('full-access');
   });
 
   it('env var ORC_MASTER_EXECUTION_MODE overrides config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       master: { execution_mode: 'full-access' },
-    }));
-    const result = loadMasterConfig({ env: { ORC_MASTER_EXECUTION_MODE: 'sandbox' }, configFile: configPath });
+    };
+    const result = loadMasterConfig({ env: { ORC_MASTER_EXECUTION_MODE: 'sandbox' }, settings });
     expect(result.execution_mode).toBe('sandbox');
   });
 
   it('warns and defaults on invalid execution_mode', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       master: { execution_mode: 'invalid-mode' },
-    }));
+    };
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    const result = loadMasterConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('full-access');
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('invalid-mode'));
     warnSpy.mockRestore();
@@ -434,54 +400,49 @@ describe('loadMasterConfig execution_mode', () => {
 
 describe('loadWorkerPoolConfig execution_mode', () => {
   it('defaults to full-access when absent', () => {
-    const result = loadWorkerPoolConfig({ env: {}, configFile: join(dir, 'nonexistent.json') });
+    const result = loadWorkerPoolConfig({ env: {}, settings: {} });
     expect(result.execution_mode).toBe('full-access');
   });
 
   it('reads from worker_pool.execution_mode in config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       worker_pool: { execution_mode: 'sandbox' },
-    }));
-    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    };
+    const result = loadWorkerPoolConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('sandbox');
   });
 
   it('falls back to default_execution_mode', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_execution_mode: 'sandbox',
-    }));
-    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    };
+    const result = loadWorkerPoolConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('sandbox');
   });
 
   it('worker_pool.execution_mode takes priority over default_execution_mode', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       default_execution_mode: 'sandbox',
       worker_pool: { execution_mode: 'full-access' },
-    }));
-    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    };
+    const result = loadWorkerPoolConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('full-access');
   });
 
   it('env var ORC_WORKER_EXECUTION_MODE overrides config', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       worker_pool: { execution_mode: 'full-access' },
-    }));
-    const result = loadWorkerPoolConfig({ env: { ORC_WORKER_EXECUTION_MODE: 'sandbox' }, configFile: configPath });
+    };
+    const result = loadWorkerPoolConfig({ env: { ORC_WORKER_EXECUTION_MODE: 'sandbox' }, settings });
     expect(result.execution_mode).toBe('sandbox');
   });
 
   it('warns and defaults on invalid execution_mode', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+    settings = {
       worker_pool: { execution_mode: 'bad-value' },
-    }));
+    };
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = loadWorkerPoolConfig({ env: {}, configFile: configPath });
+    const result = loadWorkerPoolConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('full-access');
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('bad-value'));
     warnSpy.mockRestore();
@@ -489,44 +450,18 @@ describe('loadWorkerPoolConfig execution_mode', () => {
 });
 
 describe('parseRawConfigFile default_execution_mode', () => {
-  it('throws on invalid default_execution_mode in config file', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+  it('throws on invalid default_execution_mode in settings', () => {
+    settings = {
       default_execution_mode: 'not-a-mode',
-    }));
-    expect(() => loadMasterConfig({ env: {}, configFile: configPath })).toThrow(/invalid default_execution_mode/i);
+    };
+    expect(() => loadMasterConfig({ env: {}, settings })).toThrow(/invalid default_execution_mode/i);
   });
 
-  it('accepts valid default_execution_mode in config file', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
+  it('accepts valid default_execution_mode in settings', () => {
+    settings = {
       default_execution_mode: 'sandbox',
-    }));
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
+    };
+    const result = loadMasterConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('sandbox');
-  });
-});
-
-describe('parseRawConfigFile target_repo', () => {
-  it('accepts a config carrying a valid target_repo', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({
-      target_repo: '../product-repo',
-      default_execution_mode: 'sandbox',
-    }));
-    const result = loadMasterConfig({ env: {}, configFile: configPath });
-    expect(result.execution_mode).toBe('sandbox');
-  });
-
-  it('throws on a non-string target_repo', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ target_repo: 42 }));
-    expect(() => loadMasterConfig({ env: {}, configFile: configPath })).toThrow(/target_repo must be a non-empty string/i);
-  });
-
-  it('throws on an empty-string target_repo', () => {
-    const configPath = join(dir, 'orc-state.config.json');
-    writeFileSync(configPath, JSON.stringify({ target_repo: '' }));
-    expect(() => loadMasterConfig({ env: {}, configFile: configPath })).toThrow(/target_repo must be a non-empty string/i);
   });
 });

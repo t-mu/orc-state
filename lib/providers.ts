@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { ACTIVE_PROJECT, ORC_CONFIG_FILE } from './paths.ts';
+import { ACTIVE_PROJECT } from './paths.ts';
 import { projectConfigObject } from './projectContext.ts';
 import { logger } from './logger.ts';
 import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
@@ -146,78 +145,50 @@ function parsePositiveInteger(rawValue: unknown, fieldName: string): number | nu
   return value;
 }
 
-interface RawConfigFile {
+/**
+ * Settings shaped as nested objects (`worker_pool.max_workers` →
+ * `{ worker_pool: { max_workers } }`), as `projectConfigObject` builds them
+ * from the global registry. Loaders take it as a parameter so tests can inject
+ * settings; by default they read the registry.
+ */
+export type OrcSettings = Record<string, unknown>;
+
+interface RawSettings {
   default_provider?: string | null;
   default_execution_mode?: string | null;
-  target_repo?: string | null;
   master?: Record<string, unknown> | null;
   worker_pool?: Record<string, unknown> | null;
   coordinator?: Record<string, unknown> | null;
   leases?: Record<string, unknown> | null;
 }
 
-function parseRawConfigFile(configFile: string = ORC_CONFIG_FILE): RawConfigFile {
-  let parsed: unknown;
-  if (!existsSync(configFile)) {
-    // A project has no config file: its stored registry settings take the file's place.
-    if (!ACTIVE_PROJECT || configFile !== ORC_CONFIG_FILE) return {};
-    parsed = projectConfigObject(ACTIVE_PROJECT);
-  } else {
-    try {
-      parsed = JSON.parse(readFileSync(configFile, 'utf8'));
-    } catch (error) {
-      throw new Error(`Invalid orchestrator config at ${configFile}: ${(error as Error).message}`);
-    }
-  }
+/** Registry settings: the active project's over the global ones, or the global ones when no project is active. */
+export function storedSettings(): OrcSettings {
+  return projectConfigObject(ACTIVE_PROJECT);
+}
 
-  const topLevel = parsed as Record<string, unknown>;
-  const defaultProvider = typeof topLevel.default_provider === 'string' ? topLevel.default_provider : null;
+function parseSettings(settings: OrcSettings): RawSettings {
+  const defaultProvider = typeof settings.default_provider === 'string' ? settings.default_provider : null;
 
   if (defaultProvider != null && !isSupportedProvider(defaultProvider)) {
-    throw new Error(`Invalid default_provider in ${configFile}: ${defaultProvider}. Must be codex, claude, or gemini.`);
+    throw new Error(`Invalid default_provider setting: ${defaultProvider}. Must be codex, claude, or gemini.`);
   }
 
-  const defaultExecutionMode = typeof topLevel.default_execution_mode === 'string' ? topLevel.default_execution_mode : null;
+  const defaultExecutionMode = typeof settings.default_execution_mode === 'string' ? settings.default_execution_mode : null;
 
   if (defaultExecutionMode != null && !isSupportedExecutionMode(defaultExecutionMode)) {
-    throw new Error(`Invalid default_execution_mode in ${configFile}: ${defaultExecutionMode}. Must be full-access or sandbox.`);
+    throw new Error(`Invalid default_execution_mode setting: ${defaultExecutionMode}. Must be full-access or sandbox.`);
   }
 
-  const result: RawConfigFile = { default_provider: defaultProvider, default_execution_mode: defaultExecutionMode };
+  const result: RawSettings = { default_provider: defaultProvider, default_execution_mode: defaultExecutionMode };
 
-  if (topLevel.target_repo != null) {
-    if (typeof topLevel.target_repo !== 'string' || topLevel.target_repo === '') {
-      throw new Error(`Invalid orchestrator config at ${configFile}: target_repo must be a non-empty string path`);
+  for (const section of ['master', 'worker_pool', 'coordinator', 'leases'] as const) {
+    const value = settings[section];
+    if (value == null) continue;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Invalid orchestrator settings: ${section} must be an object`);
     }
-    result.target_repo = topLevel.target_repo;
-  }
-
-  if (topLevel.master != null) {
-    if (typeof topLevel.master !== 'object' || Array.isArray(topLevel.master)) {
-      throw new Error(`Invalid orchestrator config at ${configFile}: master must be an object`);
-    }
-    result.master = topLevel.master as Record<string, unknown>;
-  }
-
-  if (topLevel.worker_pool != null) {
-    if (typeof topLevel.worker_pool !== 'object' || Array.isArray(topLevel.worker_pool)) {
-      throw new Error(`Invalid orchestrator config at ${configFile}: worker_pool must be an object`);
-    }
-    result.worker_pool = topLevel.worker_pool as Record<string, unknown>;
-  }
-
-  if (topLevel.coordinator != null) {
-    if (typeof topLevel.coordinator !== 'object' || Array.isArray(topLevel.coordinator)) {
-      throw new Error(`Invalid orchestrator config at ${configFile}: coordinator must be an object`);
-    }
-    result.coordinator = topLevel.coordinator as Record<string, unknown>;
-  }
-
-  if (topLevel.leases != null) {
-    if (typeof topLevel.leases !== 'object' || Array.isArray(topLevel.leases)) {
-      throw new Error(`Invalid orchestrator config at ${configFile}: leases must be an object`);
-    }
-    result.leases = topLevel.leases as Record<string, unknown>;
+    result[section] = value as Record<string, unknown>;
   }
 
   return result;
@@ -256,12 +227,12 @@ export function resolveWorkerModel(config: WorkerPoolConfig, provider?: Provider
 
 export function loadWorkerPoolConfig({
   env = process.env,
-  configFile = ORC_CONFIG_FILE,
+  settings = storedSettings(),
 }: {
   env?: NodeJS.ProcessEnv;
-  configFile?: string;
+  settings?: OrcSettings | undefined;
 } = {}): WorkerPoolConfig {
-  const raw = parseRawConfigFile(configFile);
+  const raw = parseSettings(settings);
   const wp = raw.worker_pool ?? {};
   const maxWorkers = parseNonNegativeInteger(env.ORC_MAX_WORKERS, 'ORC_MAX_WORKERS');
   const provider = (env.ORC_WORKER_PROVIDER ?? (wp.provider as string | null) ?? raw.default_provider ?? DEFAULT_WORKER_POOL_CONFIG.provider);
@@ -304,12 +275,12 @@ export function loadWorkerPoolConfig({
 
 export function loadMasterConfig({
   env = process.env,
-  configFile = ORC_CONFIG_FILE,
+  settings = storedSettings(),
 }: {
   env?: NodeJS.ProcessEnv;
-  configFile?: string;
+  settings?: OrcSettings | undefined;
 } = {}): MasterConfig {
-  const raw = parseRawConfigFile(configFile);
+  const raw = parseSettings(settings);
   const mc = raw.master ?? {};
   const provider = env.ORC_MASTER_PROVIDER ?? (mc.provider as string | null) ?? raw.default_provider ?? DEFAULT_MASTER_CONFIG.provider;
   const model = env.ORC_MASTER_MODEL ?? (mc.model as string | null) ?? DEFAULT_MASTER_CONFIG.model;
@@ -332,11 +303,11 @@ export function loadMasterConfig({
 }
 
 export function loadCoordinatorConfig({
-  configFile = ORC_CONFIG_FILE,
+  settings = storedSettings(),
 }: {
-  configFile?: string;
+  settings?: OrcSettings | undefined;
 } = {}): CoordinatorConfig {
-  const raw = parseRawConfigFile(configFile);
+  const raw = parseSettings(settings);
   const cc = raw.coordinator ?? {};
 
   const mode = typeof cc.mode === 'string' ? cc.mode : DEFAULT_COORDINATOR_CONFIG.mode;
@@ -367,11 +338,11 @@ export function loadCoordinatorConfig({
 }
 
 export function loadLeaseConfig({
-  configFile = ORC_CONFIG_FILE,
+  settings = storedSettings(),
 }: {
-  configFile?: string;
+  settings?: OrcSettings | undefined;
 } = {}): LeaseConfig {
-  const raw = parseRawConfigFile(configFile);
+  const raw = parseSettings(settings);
   const lc = raw.leases ?? {};
 
   return {

@@ -409,7 +409,7 @@ them uses `review-read` to collect results. Not for human use.
 ## Pull Request
 
 Commands for interacting with pull requests. Used by PR reviewer workers —
-not for direct human use. Require `pr_provider` in config.
+not for direct human use. Require the `coordinator.pr_provider` setting (`orc project config set coordinator.pr_provider github`).
 
 | Command | Description |
 |---------|-------------|

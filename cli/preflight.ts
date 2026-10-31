@@ -5,7 +5,7 @@
  */
 import { execSync } from 'node:child_process';
 import { validateStateDir } from '../lib/stateValidation.ts';
-import { ACTIVE_PROJECT, LEGACY_SIBLING_TARGET, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag } from '../lib/args.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
@@ -24,7 +24,6 @@ const agents = agentsRaw;
 const claims = claimsRaw;
 
 // A legacy installation (attached or sibling) fails preflight; it must be migrated before it runs.
-const siblingRetired = LEGACY_SIBLING_TARGET !== null;
 const legacyInstallation = !ACTIVE_PROJECT;
 
 const checks = {
@@ -54,10 +53,7 @@ const result = {
     ...(!gitRepo
       ? ['Not inside a git repository — worktree isolation will not work']
       : []),
-    ...(siblingRetired
-      ? [`sibling layout error (fails preflight): target_repo ${LEGACY_SIBLING_TARGET} is retired; run orc project migrate ${ORCHESTRATION_ROOT} --execute`]
-      : []),
-    ...(legacyInstallation && !siblingRetired ? [`legacy installation error (fails preflight): ${ORCHESTRATION_ROOT} no longer runs; migrate it with orc project migrate ${ORCHESTRATION_ROOT} --execute`] : []),
+    ...(legacyInstallation ? [`legacy installation error (fails preflight): ${ORCHESTRATION_ROOT} no longer runs; migrate it with orc project migrate ${ORCHESTRATION_ROOT} --execute`] : []),
     ...(projectHealth?.errors ?? []).map((e) => `project error (fails preflight): ${e}`),
     ...(projectHealth?.warnings ?? []).map((w) => `project warning: ${w}`),
   ],
@@ -77,7 +73,6 @@ console.log('----------------------');
 console.log(formatProjectIdentity(projectHealth?.project ?? null));
 console.log(`state_valid:            ${checks.state_valid}`);
 console.log(`orphaned_active_claims: ${checks.orphaned_active_claims.length}`);
-if (siblingRetired) console.log('sibling_layout:         retired (run orc project migrate)');
 console.log('provider_binaries:');
 for (const [provider, available] of Object.entries(providerBinaries)) {
   const packageName = (PROVIDER_PACKAGES)[provider] ?? '';

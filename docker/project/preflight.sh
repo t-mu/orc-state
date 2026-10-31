@@ -29,8 +29,13 @@ if [[ "$(node --version)" != v24.* ]]; then
   echo 'Project runtime requires Node 24.' >&2
   exit 1
 fi
-configured_worker="$(jq -r '.worker_pool.provider // .default_provider // "claude"' "$project_dir/orc-state.config.json" 2>/dev/null || echo claude)"
-configured_master="$(jq -r '.master.provider // .default_provider // "claude"' "$project_dir/orc-state.config.json" 2>/dev/null || echo claude)"
+# Effective registry setting for the project (empty when unset or unavailable).
+setting() { (cd "$project_dir" && orc project config get "$1" 2>/dev/null) | jq -r '.value // empty' 2>/dev/null || true; }
+default_provider="$(setting default_provider)"
+configured_worker="$(setting worker_pool.provider)"
+configured_worker="${configured_worker:-${default_provider:-claude}}"
+configured_master="$(setting master.provider)"
+configured_master="${configured_master:-${default_provider:-claude}}"
 for provider in "${ORC_WORKER_PROVIDER:-$configured_worker}" "${ORC_MASTER_PROVIDER:-$configured_master}"; do
   if ! command -v "$provider" >/dev/null 2>&1; then
     echo "Provider binary is missing: $provider" >&2

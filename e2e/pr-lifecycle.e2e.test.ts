@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   createTempStateDir,
   cleanupTempStateDir,
@@ -26,7 +24,7 @@ afterEach(() => {
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_REPO_ROOT;
-  delete process.env.ORC_CONFIG_FILE;
+  vi.doUnmock('../lib/projectContext.ts');
 });
 
 const PR_TASK_BASE = {
@@ -40,17 +38,20 @@ const PR_TASK_BASE = {
   updated_at: new Date().toISOString(),
 };
 
-function writePrConfig(stateDir: string, extra: Record<string, unknown> = {}) {
-  const configPath = join(stateDir, 'orc-state.config.json');
-  writeFileSync(configPath, JSON.stringify({
+/** Stores the PR settings the coordinator reads from the registry (injected: tests have no registry). */
+function usePrSettings(extra: Record<string, unknown> = {}) {
+  const settings = {
     coordinator: {
       pr_provider: 'github',
       pr_push_remote: 'origin',
       pr_finalize_lease_ms: 3_600_000,
       ...extra,
     },
+  };
+  vi.doMock('../lib/projectContext.ts', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../lib/projectContext.ts')>()),
+    projectConfigObject: () => settings,
   }));
-  process.env.ORC_CONFIG_FILE = configPath;
 }
 
 describe('PR merge strategy e2e', () => {
@@ -79,7 +80,7 @@ describe('PR merge strategy e2e', () => {
       }],
     });
 
-    writePrConfig(dir);
+    usePrSettings();
 
     const mockPushBranch = vi.fn();
     const mockCreatePr = vi.fn().mockReturnValue('https://github.com/test/repo/pull/1');
@@ -187,7 +188,7 @@ describe('PR merge strategy e2e', () => {
       }],
     });
 
-    writePrConfig(dir);
+    usePrSettings();
     vi.doMock('../adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined), send: vi.fn() }));
     vi.doMock('../lib/runWorktree.ts', () => makeRunWorktreeMock());
 
@@ -238,7 +239,7 @@ describe('PR merge strategy e2e', () => {
       }],
     });
 
-    writePrConfig(dir);
+    usePrSettings();
     vi.doMock('../adapters/index.ts', () => makeAdapterMock({ stop: vi.fn().mockResolvedValue(undefined), send: vi.fn() }));
     vi.doMock('../lib/runWorktree.ts', () => makeRunWorktreeMock());
 
@@ -296,7 +297,7 @@ describe('PR merge strategy e2e', () => {
       }],
     });
 
-    // No ORC_CONFIG_FILE — coordinator defaults to direct merge strategy
+    // No PR settings — coordinator defaults to direct merge strategy
     const mockPushBranch = vi.fn();
     const mockCreatePr = vi.fn();
     vi.doMock('../lib/gitHosts/index.ts', () => ({

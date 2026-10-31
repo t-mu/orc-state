@@ -37,6 +37,8 @@ beforeEach(() => {
   try {
     project = registry.add(repo, 'product');
     registry.setSetting('worker_pool.max_workers', 3, project.id);
+    registry.setSetting('worker_pool.provider', 'claude', project.id);
+    registry.setSetting('worker_pool.model', 'opus');
   } finally {
     registry.close();
   }
@@ -49,12 +51,19 @@ afterEach(() => {
 });
 
 describe('project mode against a registered target repository', () => {
+  it('reports worker capacity from the registry settings, which ORC_* env vars override', () => {
+    // Regression: status once read a config file beside the state dir and showed 0 / codex.
+    // Project settings sit over the global ones (worker_pool.model is global).
+    expect(probe(repo, {}, 'status').workerCapacity).toEqual({ configured_slots: 3, provider: 'claude', model: 'opus' });
+    expect(probe(repo, { ORC_MAX_WORKERS: '1', ORC_WORKER_PROVIDER: 'gemini', ORC_WORKER_MODEL: 'gemini-2.5-pro' }, 'status').workerCapacity)
+      .toEqual({ configured_slots: 1, provider: 'gemini', model: 'gemini-2.5-pro' });
+  });
+
   it('selects the project from the current repository and keeps every harness path outside it', () => {
     const paths = probe(repo);
     expect(paths).toMatchObject({
       project: { id: project.id, source: 'cwd', targetRepoRoot: repo },
       stateDir: project.stateDir, targetRepoRoot: repo, worktreesDir: join(project.stateDir, 'worktrees'),
-      configFile: join(project.stateDir, 'orc-state.config.json'), sibling: false,
     });
     const elsewhere = join(temp, 'elsewhere');
     mkdirSync(elsewhere);
