@@ -52,10 +52,10 @@ describe('durable event offsets', () => {
     expect(queryEvents(dir, { fts_query: 'heartbeat' })).toHaveLength(3);
     const doctor = spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
       cwd: join(import.meta.dirname, '..'),
-      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+      env: { ...process.env, ORC_STATE_DIR: dir },
       encoding: 'utf8',
     });
-    // A legacy fixture fails doctor overall (legacy installations no longer run); its state checks still pass.
+    // Without a project doctor fails overall; the fixture's state checks still pass.
     expect(JSON.parse(doctor.stdout).checks.stateErrors, doctor.stderr || doctor.stdout).toEqual([]);
   });
 

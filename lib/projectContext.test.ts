@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -19,6 +19,30 @@ beforeEach(() => { temp = realpathSync(mkdtempSync(join(tmpdir(), 'orc-project-c
 afterEach(() => { rmSync(temp, { recursive: true, force: true }); });
 
 describe('resolveActiveProject', () => {
+  it('selects by ORC_PROJECT_ID, then the cwd Git root, then the selected project', () => {
+    const registry = new ProjectRegistry(join(temp, 'data'));
+    const a = registry.add(gitRepo('a'));
+    const b = registry.add(gitRepo('b'));
+    registry.select(b.id);
+    registry.close();
+    const env = { ORC_DATA_HOME: join(temp, 'data') };
+    expect(resolveActiveProject({ ...env, ORC_PROJECT_ID: b.id }, a.canonicalGitRoot)).toMatchObject({ id: b.id, source: 'environment' });
+    expect(resolveActiveProject(env, a.canonicalGitRoot)).toMatchObject({ id: a.id, source: 'cwd' });
+    expect(resolveActiveProject(env, temp)).toMatchObject({ id: b.id, source: 'selected' });
+    expect(() => resolveActiveProject({ ...env, ORC_PROJECT_ID: 'nope' }, temp)).toThrow('ORC_PROJECT_ID is not a registered project: nope');
+  });
+
+  it('ignores a leftover migration record and legacy files', () => {
+    const registry = new ProjectRegistry(join(temp, 'data'));
+    const project = registry.add(gitRepo('a'));
+    registry.close();
+    writeFileSync(join(project.stateDir, 'migration.json'), JSON.stringify({ status: 'importing' }));
+    mkdirSync(join(project.canonicalGitRoot, '.orc-state'));
+    const env = { ORC_DATA_HOME: join(temp, 'data') };
+    expect(resolveActiveProject(env, project.canonicalGitRoot)).toMatchObject({ id: project.id, source: 'cwd' });
+    expect(resolveActiveProject({ ...env, ORC_PROJECT_ID: project.id }, temp)).toMatchObject({ id: project.id, source: 'environment' });
+  });
+
   it('fails instead of falling back to the selected project when the cwd repository cannot be read', () => {
     const registry = new ProjectRegistry(join(temp, 'data'));
     const selected = registry.add(gitRepo('a'));

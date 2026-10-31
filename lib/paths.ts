@@ -1,86 +1,47 @@
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
-import { resolveOrchestrationRoot } from './repoRoot.ts';
 import { logger } from './logger.ts';
 import { resolveActiveProject, type ActiveProject } from './projectContext.ts';
+import { projectDataHome } from './projectRegistry.ts';
 
-// Project mode (plan 3): a registered project keeps every harness artifact in
-// its external state directory and runs Git against its registered target
-// repository. Null in a legacy (unmigrated) attached installation.
+// The registered project this process operates on: it keeps every harness
+// artifact in its external state directory and runs Git against its
+// registered target repository. Null when no project is selected.
 export const ACTIVE_PROJECT: ActiveProject | null = resolveActiveProject();
 
-// Orchestration root: owns the state dir, backlog, plans, and worktrees.
-// In a legacy attached installation this is the repo root. With
-// ORC_STATE_DIR set, the root is its parent, so importing this module makes
-// no git calls when the ambient dir overrides are present (worker sessions, tests
-// that mock node:child_process). In project mode it is the project state dir.
-export const ORCHESTRATION_ROOT = ACTIVE_PROJECT
-  ? ACTIVE_PROJECT.stateDir
-  : process.env.ORC_STATE_DIR
-    ? resolve(process.env.ORC_STATE_DIR, '..')
-    : resolveOrchestrationRoot();
-
-// A selected project always uses its own state directory; an ORC_STATE_DIR
-// bridge only counts when it is that directory (see resolveActiveProject).
+// The project's state directory. Without a project, ORC_STATE_DIR names the
+// state directory directly (tests); otherwise it is a placeholder under the
+// data home that no project owns, and every command that writes state refuses
+// to run (assertProjectMode). Importing this module makes no git calls when
+// ORC_STATE_DIR is set and no registry exists (tests that mock node:child_process).
 export const STATE_DIR = ACTIVE_PROJECT
   ? ACTIVE_PROJECT.stateDir
-  : process.env.ORC_STATE_DIR ? resolve(process.env.ORC_STATE_DIR) : resolve(ORCHESTRATION_ROOT, '.orc-state');
+  : process.env.ORC_STATE_DIR ? resolve(process.env.ORC_STATE_DIR) : join(projectDataHome(), 'no-project');
 
 export const EVENTS_FILE = resolve(STATE_DIR, 'events.db');
 
-// The orc installation itself (for locating its binary). In project mode the
-// coordinator has no orchestration repository to find it in.
+// The orc installation itself (for locating its binary).
 export const ORC_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 
-// Target repo root: the repository whose product code runs operate on. In
-// project mode it is the registered canonical Git root; a legacy attached
-// installation operates on its own root (ORC_REPO_ROOT forces it).
-export const TARGET_REPO_ROOT = ACTIVE_PROJECT
-  ? ACTIVE_PROJECT.targetRepoRoot
-  : process.env.ORC_REPO_ROOT ? resolve(process.env.ORC_REPO_ROOT) : ORCHESTRATION_ROOT;
+// Target repo root: the repository whose product code runs operate on — the
+// project's registered canonical Git root. Without a project nothing runs
+// against it; it is the current directory.
+export const TARGET_REPO_ROOT = ACTIVE_PROJECT ? ACTIVE_PROJECT.targetRepoRoot : process.cwd();
 
-/** Only a registered project runs: a legacy (attached or sibling) installation must be migrated first. */
+export const NO_PROJECT_MESSAGE = 'No registered project here. Register this repository with orc project add <git-path>, or pass --project=<id> (outside every Git repository, orc project select <id> chooses one)';
+
+/** Only a registered project runs. */
 export function assertProjectMode(): void {
   if (ACTIVE_PROJECT) return;
-  throw new Error(`No registered project here. Legacy .orc-state installations no longer run: migrate one with orc project migrate ${ORCHESTRATION_ROOT} --execute, or register a repository with orc project add <git-path> (or pass --project=<id>)`);
+  throw new Error(NO_PROJECT_MESSAGE);
 }
 
-// ─── Repo-root call-site classification (authoritative; task 185) ────────────
-// Every consumer of a "repo root" is one of two kinds. This table is the
-// authority tasks 186/188/191 rely on; it lives here, beside the two root
-// constants, because those are what each consumer imports. The orchestration
-// root is the external project state directory and the target is the
-// registered repository.
-//
-// ORCHESTRATION-ROOT consumers — framework home (orc binary, state). These are correct as-is and were NOT changed by task 185:
-//   lib/paths.ts        STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE,
-//                       WORKTREES_DIR
-//   coordinator.ts      resolveOrcBinSh(ORC_PACKAGE_ROOT)    (orc binary lookup)
-//   coordinator.ts      repoRoot: ORC_PACKAGE_ROOT → worker env (orc bin/ctx for workers)
-//   mcp/handlers.ts     RUN_WORKTREES_FILE
-//   mcp/handlers.ts     repoRoot = ORC_REPO_ROOT || TARGET_REPO_ROOT
-//                       (scout/agent working dir + orc bin; no git ops)
-//
-// TARGET-REPO consumers — git operations on product history/worktrees:
-//   coordinator.ts      branchContainsMain / pushMain / mergeTaskBranch
-//                       → MIGRATED to TARGET_REPO_ROOT in task 185.
-//                       mergeTaskBranch has NO coordinator-side conflict
-//                       recovery: on conflict it throws and the caller marks
-//                       the run finalize-blocked (manual recovery), so there is
-//                       no additional git op needing classification here.
-//   lib/runWorktree.ts  git worktree add/remove/branch (cwd)   → task 186
-//   lib/gitHosts/github.ts  gh/git via implicit process.cwd()  → task 186
-//   cli/doctor.ts, cli/preflight.ts, cli/init.ts  git-dir probes → task 191
-// Deferred consumers stay on resolveRepoRoot()/process.cwd() (== target root in
-// single-repo mode) and are handed to the tasks that own their test rewrites.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// In project mode these all live in the external project state directory.
+// Run worktrees live in the project state directory, outside the target working tree.
 export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)
-  : resolve(ORCHESTRATION_ROOT, ACTIVE_PROJECT ? 'worktrees' : '.worktrees');
+  : resolve(STATE_DIR, 'worktrees');
 
 /** Path to per-agent hook-events NDJSON file written by the Notification hook. */
 export function hookEventPath(agentId: string): string {

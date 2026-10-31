@@ -14,7 +14,7 @@ beforeEach(() => {
   const bin = join(project, 'bin');
   mkdirSync(bin);
   mkdirSync(join(project, 'home'));
-  mkdirSync(join(project, '.orc-state'));
+  mkdirSync(join(project, 'data'));
   writeFileSync(join(bin, 'orc'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(join(bin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -23,7 +23,7 @@ beforeEach(() => {
     PATH: `${bin}:${process.env.PATH ?? ''}`,
     HOME: join(project, 'home'),
     ORC_PROJECT_DIR: project,
-    ORC_STATE_DIR: join(project, '.orc-state'),
+    ORC_DATA_HOME: join(project, 'data'),
     ORC_WORKER_PROVIDER: 'claude',
     ORC_MASTER_PROVIDER: 'claude',
   };

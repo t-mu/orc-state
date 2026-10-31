@@ -4,7 +4,7 @@ This document defines the runtime and integration contracts for `orc-state`.
 
 ## Core State Files
 
-The orchestrator reads/writes JSON state under `ORC_STATE_DIR` (default `<repo-root>/.orc-state`):
+The orchestrator reads/writes JSON state in the project state directory (`<data-home>/projects/<project_id>/`; `orc project show` prints it):
 
 - `backlog.json`
 - `agents.json`

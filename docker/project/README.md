@@ -30,10 +30,10 @@ via `docker compose exec`; `orc start-session` reuses the running coordinator.
 workers are separate processes inside the same container. The default worker
 capacity is two (`ORC_MAX_WORKERS=2`). Set `ORC_WORKER_PROVIDER` and
 `ORC_MASTER_PROVIDER` to override the project's registry settings
-(`orc project config`). The project
-must have been initialized with `orc init` before starting a master session;
-the container initializes missing runtime state without replacing existing
-config or task specs.
+(`orc project config`). The checkout must be registered as a project
+(`orc project add /workspace/project` in `orc-project.sh shell`) and
+initialized with `orc init` before starting a master session; the container
+initializes missing runtime state without replacing existing settings or tasks.
 
 Useful commands:
 
@@ -46,9 +46,10 @@ Useful commands:
 
 `down` leaves the project, login and state volumes intact. Recreate with `up`.
 Do not use `docker compose down --volumes` unless you intend to remove login
-and SQLite state. Git worktrees remain under the project bind mount; SQLite and
-control credentials remain in the nested `project-state` volume. An existing
-host `.orc-state` directory is hidden while this container is running.
+and SQLite state. The `project-state` volume is the orc data home
+(`ORC_DATA_HOME=/var/lib/orc-state`): it holds the project registry and the
+project's state directory, including run worktrees, SQLite state and control
+credentials. Only Git's worktree metadata lands in the checkout's `.git`.
 
 ## Access and risk
 

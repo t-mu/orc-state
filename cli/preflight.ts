@@ -5,7 +5,7 @@
  */
 import { execSync } from 'node:child_process';
 import { validateStateDir } from '../lib/stateValidation.ts';
-import { ACTIVE_PROJECT, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, NO_PROJECT_MESSAGE, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag } from '../lib/args.ts';
 import { readAgents as readAgentsFromLib, readClaims as readClaimsFromLib } from '../lib/stateReader.ts';
@@ -23,13 +23,13 @@ const claimsRaw = readClaimsFromLib(STATE_DIR).claims ?? [];
 const agents = agentsRaw;
 const claims = claimsRaw;
 
-// A legacy installation (attached or sibling) fails preflight; it must be migrated before it runs.
-const legacyInstallation = !ACTIVE_PROJECT;
+// Only a registered project runs; without one preflight fails.
+const noProject = !ACTIVE_PROJECT;
 
 const checks = {
   state_valid: stateErrors.length === 0,
   orphaned_active_claims: getOrphanedClaims(agents, claims),
-  legacy_layout_supported: !legacyInstallation,
+  project_selected: !noProject,
   project_ok: projectHealth?.ok ?? true,
 };
 const providerBinaries = getProviderBinaries(agents);
@@ -38,7 +38,7 @@ const allBinariesPresent = Object.values(providerBinaries).every(Boolean);
 const ok = checks.state_valid
   && checks.orphaned_active_claims.length === 0
   && allBinariesPresent
-  && !legacyInstallation
+  && !noProject
   && checks.project_ok;
 
 const result = {
@@ -53,7 +53,7 @@ const result = {
     ...(!gitRepo
       ? ['Not inside a git repository — worktree isolation will not work']
       : []),
-    ...(legacyInstallation ? [`legacy installation error (fails preflight): ${ORCHESTRATION_ROOT} no longer runs; migrate it with orc project migrate ${ORCHESTRATION_ROOT} --execute`] : []),
+    ...(noProject ? [`project error (fails preflight): ${NO_PROJECT_MESSAGE}`] : []),
     ...(projectHealth?.errors ?? []).map((e) => `project error (fails preflight): ${e}`),
     ...(projectHealth?.warnings ?? []).map((w) => `project warning: ${w}`),
   ],

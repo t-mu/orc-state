@@ -216,7 +216,7 @@ export function importTaskMarkdownSources(stateDir: string, sources: TaskMarkdow
     refs.add(spec.ref);
     if (!store.getTask(spec.ref) && spec.legacyStatus && spec.legacyStatus !== 'todo') {
       throw new TaskInputError(`${spec.sourcePath}: new task ${spec.ref} has status ${spec.legacyStatus}; an ordinary import would start it as todo. `
-        + 'Remove the status field to import it as new work, or migrate the installation to carry its runtime status.');
+        + 'Remove the status field to import it as new work.');
     }
   }
 

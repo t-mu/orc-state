@@ -24,7 +24,7 @@ export interface ActiveRunRow {
 }
 
 export interface ControlSnapshot {
-  /** The project this daemon serves (null for a legacy layout). */
+  /** The project this daemon serves (null when its state directory has no project descriptor). */
   project: { id: string; name: string; target_repo_root: string } | null;
   /** Highest event seq visible to this snapshot; subscribe with `after=cursor`. */
   cursor: number;

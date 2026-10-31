@@ -7,8 +7,7 @@
  * Configure the registered project: provider selection is recorded in the
  * project registry and the external state directory is completed. Nothing is
  * written into the target repository. Register a repository first with
- * `orc project add <git-path>` (or migrate a legacy installation with
- * `orc project migrate`).
+ * `orc project add <git-path>`.
  *
  * In a TTY (without --provider) it prompts for the provider(s); elsewhere
  * --provider is required.
@@ -20,11 +19,6 @@ import { boolFlag, flag } from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { cliError } from './shared.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
-
-// The sibling layout is retired; a separate target repository is a registered project.
-if (flag('sibling') !== null) {
-  cliError('orc init --sibling is retired. Register the target repository as a project instead: orc project add <target-repo-path> (migrate an existing sibling home with orc project migrate).');
-}
 
 try {
   assertProjectMode();

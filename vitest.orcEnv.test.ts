@@ -38,7 +38,6 @@ describe('vitest configs strip inherited ORC_* variables', () => {
         XDG_DATA_HOME: home,
         ORC_STATE_DIR: `${SENTINEL}/state`,
         ORC_CONTROL_SOCKET: `${SENTINEL}/control.sock`,
-        ORC_REPO_ROOT: `${SENTINEL}/repo`,
         ORC_PROJECT_ID: 'live-project',
         ORC_SESSION_SECRET: 'live-secret',
         ORC_SOME_FUTURE_VARIABLE: SENTINEL,

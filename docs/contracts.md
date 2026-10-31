@@ -6,7 +6,7 @@ or debugging the system.
 
 The future global-project ownership contract is in
 [Global project and task ownership contract](./global-project-contract.md).
-The current file describes the active implementation: registered projects. Legacy `.orc-state` installations (attached or sibling) no longer run; `orc project migrate` moves one into a project.
+The current file describes the active implementation: registered projects.
 
 ---
 

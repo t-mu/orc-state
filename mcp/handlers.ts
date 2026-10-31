@@ -447,8 +447,8 @@ export async function handleRequestScout(stateDir: string, {
   }
   const resolvedProvider = (typeof provider === 'string' ? provider : actor?.provider ?? 'codex');
   const scoutId = nextAvailableScoutId(stateDir);
-  // Blank means unset (project workers blank it); scouts start in the target repository.
-  const repoRoot = process.env.ORC_REPO_ROOT || TARGET_REPO_ROOT;
+  // Scouts start in the target repository.
+  const repoRoot = TARGET_REPO_ROOT;
   const worktrees = readRunWorktreesState(stateDir);
   const recordedWorktree = typeof run_id === 'string'
     ? (worktrees.runs.find((entry) => entry.run_id === run_id)?.worktree_path ?? null)

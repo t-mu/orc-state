@@ -144,7 +144,7 @@ describe.skipIf(asRoot)('state stores without write access to the state director
     lockStateDir();
     const run = (...args: string[]) => spawnSync(process.execPath, ['cli/orc.ts', ...args], {
       cwd: repoRoot, encoding: 'utf8',
-      env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_SESSION_SECRET: 'session-a' },
+      env: { ...process.env, ORC_STATE_DIR: dir, ORC_SESSION_SECRET: 'session-a' },
     });
     try {
       const reviews = run('review-read', '--run-id=run-a', '--json');

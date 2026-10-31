@@ -16,14 +16,12 @@ beforeEach(() => {
   vi.resetModules();
   dir = createTempStateDir('orc-pr-e2e-');
   process.env.ORC_STATE_DIR = dir;
-  process.env.ORC_REPO_ROOT = dir;
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
-  delete process.env.ORC_REPO_ROOT;
   vi.doUnmock('../lib/projectContext.ts');
 });
 

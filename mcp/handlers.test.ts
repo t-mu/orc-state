@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, TEST_PROJECT_ID, type SeedTask } from '../test-fixtures/stateHelpers.ts';
 import { initProjectTaskStore, refreshBacklogProjection } from '../lib/projectTasks.ts';
@@ -62,27 +62,8 @@ function seedEventsLines(lines: string[]) {
   writeFileSync(join(dir, 'events.jsonl'), body);
 }
 
-function writeSpec(taskRef: string, feature: string, title: string, status = 'todo') {
-  const slug = taskRef.split('/')[1];
-  writeFileSync(
-    join(dir, 'backlog', `999-${slug}.md`),
-    [
-      '---',
-      `ref: ${taskRef}`,
-      `feature: ${feature}`,
-      `status: ${status}`,
-      '---',
-      '',
-      `# Task 999 — ${title}`,
-      '',
-    ].join('\n'),
-  );
-}
-
 beforeEach(() => {
   dir = createTempStateDir('orc-mcp-handlers-test-');
-  process.env.ORC_REPO_ROOT = dir;
-  mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedBacklog([
     {
       ref: 'project',
@@ -194,15 +175,11 @@ beforeEach(() => {
     JSON.stringify({ seq: 2, event: 'task_delegated', task_ref: 'project/todo-one' }),
     JSON.stringify({ seq: 3, event: 'run_started', task_ref: 'project/todo-one' }),
   ]);
-  writeSpec('project/todo-one', 'project', 'Todo one');
-  writeSpec('project/done-one', 'project', 'Done one', 'done');
-  writeSpec('infra/blocked-one', 'infra', 'Blocked one', 'blocked');
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   cleanupTempStateDir(dir);
-  delete process.env.ORC_REPO_ROOT;
 });
 
 describe('mcp read handlers', () => {
@@ -600,13 +577,13 @@ describe('mcp read handlers', () => {
   });
 
   it('handleCreateTask and handleUpdateTask refuse a state directory without a project task store', () => {
-    // A legacy state directory: no runtime.db.
-    const legacyDir = createTempStateDir('orc-mcp-handlers-legacy-');
+    // A state directory without runtime.db.
+    const storelessDir = createTempStateDir('orc-mcp-handlers-no-store-');
     try {
-      expect(() => handleCreateTask(legacyDir, { title: 'Anything' })).toThrow(/Project task store is missing.*orc project migrate/);
-      expect(() => handleUpdateTask(legacyDir, { task_ref: 'project/todo-one', priority: 'high' })).toThrow(/Project task store is missing/);
+      expect(() => handleCreateTask(storelessDir, { title: 'Anything' })).toThrow(/Project task store is missing.*restore it from a backup, or run orc init/);
+      expect(() => handleUpdateTask(storelessDir, { task_ref: 'project/todo-one', priority: 'high' })).toThrow(/Project task store is missing/);
     } finally {
-      cleanupTempStateDir(legacyDir);
+      cleanupTempStateDir(storelessDir);
     }
   });
 

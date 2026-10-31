@@ -208,7 +208,7 @@ export function assertRunMayFinish(stateDir: string, taskRef: string): void {
 /** The project's task store; a missing task database is an error, never a reason to fall back to JSON. */
 export function requireProjectTaskStore(stateDir: string): ProjectTaskStore {
   const store = projectTaskStoreFor(stateDir);
-  if (!store) throw new NotFoundError(`Project task store is missing: ${join(stateDir, 'runtime.db')}; restore it or re-run orc project migrate`);
+  if (!store) throw new NotFoundError(`Project task store is missing: ${join(stateDir, 'runtime.db')}; restore it from a backup, or run orc init`);
   return store;
 }
 

@@ -77,16 +77,16 @@ describe('cli/preflight.ts', () => {
     expect(json.details.state_errors.length).toBeGreaterThan(0);
   });
 
-  it('fails a legacy attached installation and points at the migration', () => {
+  it('fails without a registered project and says how to register or select one', () => {
     seedValidState({
       agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
     });
     createFakeBinary('codex');
-    const result = runPreflight(['--json'], { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` }, { legacy: true });
+    const result = runPreflight(['--json'], { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` }, { unregistered: true });
     expect(result.status).toBe(1);
     const json = JSON.parse(result.stdout);
-    expect(json.checks.legacy_layout_supported).toBe(false);
-    expect(json.warnings.some((w: string) => w.includes('no longer runs') && w.includes('orc project migrate'))).toBe(true);
+    expect(json.checks.project_selected).toBe(false);
+    expect(json.warnings.some((w: string) => w.includes('No registered project here') && w.includes('orc project add'))).toBe(true);
   });
 
   it('warns when not inside a git repository', () => {
@@ -113,11 +113,11 @@ describe('cli/preflight.ts', () => {
   });
 });
 
-/** Runs preflight against the temp state as a project's, or as a legacy installation's. */
-function runPreflight(args: string[], env = process.env, { legacy = false } = {}) {
+/** Runs preflight against the temp state as a project's, or with no project selected. */
+function runPreflight(args: string[], env = process.env, { unregistered = false } = {}) {
   return spawnSync(process.execPath, ['cli/preflight.ts', ...args], {
     cwd: repoRoot,
-    env: { ...env, ...(legacy ? { ORC_STATE_DIR: dir, ORC_PROJECT_ID: '' } : bridgeProjectEnv(dir, repoRoot)) },
+    env: { ...env, ...(unregistered ? { ORC_STATE_DIR: dir, ORC_PROJECT_ID: '' } : bridgeProjectEnv(dir, repoRoot)) },
     encoding: 'utf8',
   });
 }

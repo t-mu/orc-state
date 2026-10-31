@@ -190,14 +190,24 @@ describe('Markdown round trips', () => {
 
 describe('plan documents in project state', () => {
   it('imports a validated plan and exports it as readable Markdown', () => {
-    const plan = readFileSync(join(import.meta.dirname, '..', 'plans', '3-global-project-state.md'), 'utf8');
+    const plan = [
+      '---', 'plan_id: 3', 'name: global-project-state', 'title: Global project state',
+      'created_at: 2026-10-24T19:49:28Z', 'updated_at: 2026-10-24T19:49:28Z',
+      'derived_task_refs:', '  - global-project-state/1-registry', '  - global-project-state/2-task-store', '---', '',
+      '# Global project state', '', '## Objective', '', 'Keep orchestration state outside target repositories.', '',
+      '## Scope', '', '- A global project registry.', '- Project tasks in SQLite.', '',
+      '## Out of Scope', '', '- Replication.', '', '## Constraints', '', '- Nothing is written into the target working tree.', '',
+      '## Affected Areas', '', '- `lib/projectRegistry.ts` and `lib/projectTaskStore.ts`.', '',
+      '## Implementation Steps', '', '### Step 1 — Add a global project registry', '', 'Register projects by canonical Git root.', '',
+      '### Step 2 — Put tasks in project SQLite', '', 'Depends on: 1', '', 'Store task definitions and lifecycle state.', '',
+    ].join('\n');
     const source = join(outside, '3-global-project-state.md');
     writeFileSync(source, plan);
     expect(importPlanMarkdown(dir, source)).toEqual({ plan_id: 3, changed: true });
     expect(importPlanMarkdown(dir, source)).toEqual({ plan_id: 3, changed: false });
     const store = initProjectTaskStore(dir);
     expect(store.listPlans()).toMatchObject([{ planId: 3, name: 'global-project-state' }]);
-    expect(store.getPlan(3)?.metadata).toMatchObject({ steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] });
+    expect(store.getPlan(3)?.metadata).toMatchObject({ steps: [1, 2] });
     const exported = exportPlanMarkdown(dir, 3, join(outside, 'plans-out'));
     expect(exported).toBe(join(outside, 'plans-out', '3-global-project-state.md'));
     expect(readFileSync(exported, 'utf8')).toBe(plan);

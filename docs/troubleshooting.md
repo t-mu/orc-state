@@ -196,22 +196,23 @@ orc kill-all
 orc start-session --provider=claude
 ```
 
-## `orc doctor` or `orc preflight` fails with a legacy installation
+## `orc doctor` or `orc preflight` fails with "No registered project here"
 
-**Cause:** The directory holds a legacy `.orc-state` installation (state, `backlog/` and `orc-state.config.json` inside the repository, or a sibling orchestration home). Legacy installations no longer run: `orc init`, `orc start-session`, the coordinator and the MCP server refuse them.
+**Cause:** No registered project applies: `ORC_PROJECT_ID` is unset, the current Git repository is not registered, and (outside every repository) no project is selected. `orc init`, `orc start-session`, the coordinator and the MCP server refuse to start too. State, `backlog/` or config files an older orc left inside the repository are not read and cannot be imported.
 
-**Fix:** Migrate it into a registered project:
+**Fix:** Register the repository, or choose a project:
 
 ```bash
-orc project migrate <root>            # dry run
-orc project migrate <root> --execute
+orc project add <git-path>
+orc project select <id>      # used outside every Git repository
+orc --project=<id> doctor    # one command
 ```
 
 ---
 
 ## `orc status` shows unexpected worker settings
 
-**Cause:** Settings are registry keys, not a file. `configured_slots` and `provider` come from `worker_pool.max_workers` and `worker_pool.provider` (falling back to `default_provider`), with the project's value over the global one, and an exported `ORC_MAX_WORKERS` or `ORC_WORKER_PROVIDER` overrides both. An `orc-state.config.json` file is ignored.
+**Cause:** Settings are registry keys, not a file. `configured_slots` and `provider` come from `worker_pool.max_workers` and `worker_pool.provider` (falling back to `default_provider`), with the project's value over the global one, and an exported `ORC_MAX_WORKERS` or `ORC_WORKER_PROVIDER` overrides both. No config file is read.
 
 **Fix:** Check what the project actually resolves, then set the key:
 

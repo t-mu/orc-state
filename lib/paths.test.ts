@@ -3,92 +3,46 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
-function mockRepoRoot(root: string) {
-  vi.doMock('./repoRoot.ts', () => ({
-    resolveRepoRoot: vi.fn().mockReturnValue(root),
-    resolveOrchestrationRoot: vi.fn().mockReturnValue(root),
-  }));
-}
-
 describe('paths', () => {
   beforeEach(() => {
     vi.resetModules();
-    // paths.ts short-circuits on these env vars before resolveRepoRoot runs —
-    // clear them so the mock under test is actually exercised. An ambient
-    // ORC_STATE_DIR is present inside orc worker sessions.
+    // An ambient ORC_STATE_DIR is present inside orc worker sessions; clear it.
     vi.stubEnv('ORC_STATE_DIR', undefined as unknown as string);
     vi.stubEnv('ORC_WORKTREES_DIR', undefined as unknown as string);
-    vi.stubEnv('ORC_HOME', undefined as unknown as string);
-    vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
+    vi.stubEnv('ORC_DATA_HOME', '/tmp/orc-paths-test-data-home');
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
-    vi.doUnmock('./repoRoot.ts');
   });
 
-  it('defaults STATE_DIR to the orchestration root instead of the ambient cwd', async () => {
-    mockRepoRoot('/tmp/repo-root');
-
-    const { STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE } = await import('./paths.ts');
-    expect(STATE_DIR).toBe('/tmp/repo-root/.orc-state');
-    expect(EVENTS_FILE).toBe('/tmp/repo-root/.orc-state/events.db');
-    expect(RUN_WORKTREES_FILE).toBe('/tmp/repo-root/.orc-state/run-worktrees.json');
+  it('without a project, points STATE_DIR at an unowned placeholder in the data home, never the cwd repository', async () => {
+    const { ACTIVE_PROJECT, STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE, WORKTREES_DIR, TARGET_REPO_ROOT } = await import('./paths.ts');
+    expect(ACTIVE_PROJECT).toBeNull();
+    expect(STATE_DIR).toBe('/tmp/orc-paths-test-data-home/no-project');
+    expect(EVENTS_FILE).toBe('/tmp/orc-paths-test-data-home/no-project/events.db');
+    expect(RUN_WORKTREES_FILE).toBe('/tmp/orc-paths-test-data-home/no-project/run-worktrees.json');
+    expect(WORKTREES_DIR).toBe('/tmp/orc-paths-test-data-home/no-project/worktrees');
+    expect(TARGET_REPO_ROOT).toBe(process.cwd());
   });
 
-  it('keys artifact directories off the orchestration root', async () => {
-    mockRepoRoot('/tmp/repo-root');
-
-    const { ORCHESTRATION_ROOT, WORKTREES_DIR } = await import('./paths.ts');
-    expect(ORCHESTRATION_ROOT).toBe('/tmp/repo-root');
-    expect(WORKTREES_DIR).toBe('/tmp/repo-root/.worktrees');
+  it('refuses to run without a registered project', async () => {
+    const { assertProjectMode } = await import('./paths.ts');
+    expect(() => assertProjectMode()).toThrow(/No registered project here.*orc project add.*--project.*orc project select/);
   });
 
-  it('TARGET_REPO_ROOT defaults to the orchestration root in the single-repo layout', async () => {
-    mockRepoRoot('/tmp/repo-root');
-
-    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT } = await import('./paths.ts');
-    expect(TARGET_REPO_ROOT).toBe(ORCHESTRATION_ROOT);
-  });
-
-  it('refuses to run a legacy attached installation', async () => {
-    mockRepoRoot('/tmp/orch-root');
-    vi.stubEnv('ORC_REPO_ROOT', '/tmp/forced');
-
-    const { TARGET_REPO_ROOT, assertProjectMode } = await import('./paths.ts');
-    expect(TARGET_REPO_ROOT).toBe('/tmp/forced');
-    expect(() => assertProjectMode()).toThrow(/Legacy \.orc-state installations no longer run.*orc project add/);
-  });
-
-  it('still honors ORC_STATE_DIR overrides explicitly', async () => {
+  it('honors an explicit ORC_STATE_DIR and keeps run worktrees inside it', async () => {
     vi.stubEnv('ORC_STATE_DIR', '/tmp/override-state');
-    const { STATE_DIR } = await import('./paths.ts');
+    const { STATE_DIR, WORKTREES_DIR } = await import('./paths.ts');
     expect(STATE_DIR).toBe('/tmp/override-state');
-  });
-
-  it('anchors the orchestration root to ORC_STATE_DIR without consulting git', async () => {
-    // Worker sessions and tests that mock node:child_process rely on paths.ts
-    // making no git calls at import when the ambient dir overrides are set.
-    const resolveOrchestrationRoot = vi.fn().mockReturnValue('/tmp/should-not-be-used');
-    vi.doMock('./repoRoot.ts', () => ({
-      resolveRepoRoot: vi.fn().mockReturnValue('/tmp/should-not-be-used'),
-      resolveOrchestrationRoot,
-    }));
-    vi.stubEnv('ORC_STATE_DIR', '/tmp/orch-home/.orc-state');
-
-    const { ORCHESTRATION_ROOT, TARGET_REPO_ROOT, WORKTREES_DIR } = await import('./paths.ts');
-    expect(ORCHESTRATION_ROOT).toBe('/tmp/orch-home');
-    expect(TARGET_REPO_ROOT).toBe('/tmp/orch-home');
-    expect(WORKTREES_DIR).toBe('/tmp/orch-home/.worktrees');
-    expect(resolveOrchestrationRoot).not.toHaveBeenCalled();
+    expect(WORKTREES_DIR).toBe('/tmp/override-state/worktrees');
   });
 
   it('hookEventPath returns per-agent ndjson file under pty-hook-events', async () => {
-    mockRepoRoot('/tmp/repo-root');
-
+    vi.stubEnv('ORC_STATE_DIR', '/tmp/state');
     const { hookEventPath } = await import('./paths.ts');
-    expect(hookEventPath('agent-1')).toBe('/tmp/repo-root/.orc-state/pty-hook-events/agent-1.ndjson');
-    expect(hookEventPath('scout-3')).toBe('/tmp/repo-root/.orc-state/pty-hook-events/scout-3.ndjson');
+    expect(hookEventPath('agent-1')).toBe('/tmp/state/pty-hook-events/agent-1.ndjson');
+    expect(hookEventPath('scout-3')).toBe('/tmp/state/pty-hook-events/scout-3.ndjson');
   });
 });
 

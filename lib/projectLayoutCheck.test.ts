@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkProjectLayout } from './projectLayoutCheck.ts';
@@ -55,12 +55,12 @@ describe('checkProjectLayout', () => {
 
   it('warns (non-fatal) when framework artifacts leak into the target repo', () => {
     mkdirSync(join(target, '.orc-state'), { recursive: true });
-    writeFileSync(join(target, 'orc-state.config.json'), '{}');
+    mkdirSync(join(target, '.worktrees'), { recursive: true });
     const result = checkProjectLayout({ targetRepoRoot: target, stateDir });
     // Warnings do not fail the check.
     expect(result.ok).toBe(true);
     expect(result.warnings.some((w) => w.includes('.orc-state'))).toBe(true);
-    expect(result.warnings.some((w) => w.includes('orc-state.config.json'))).toBe(true);
+    expect(result.warnings.some((w) => w.includes('.worktrees'))).toBe(true);
   });
 
   it('errors when run worktrees would land inside the target working tree', () => {

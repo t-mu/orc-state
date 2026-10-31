@@ -163,11 +163,11 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     }
   }, 20_000);
 
-  it('starts the provider in the assigned worktree, not ORC_REPO_ROOT (task 204)', async () => {
+  it('starts the provider in the assigned worktree (task 204)', async () => {
     const worktree = join(dir, 'worktrees', 'run-1');
     mkdirSync(worktree, { recursive: true });
     const { adapter } = await loadAdapter();
-    const started = await adapter.start('worker-1', { working_directory: worktree, env: { ORC_REPO_ROOT: dir } });
+    const started = await adapter.start('worker-1', { working_directory: worktree });
     // Reported by the provider itself on startup, before any instruction is sent.
     await waitFor(() => (adapter.getOutputTail(started.session_handle) ?? '').includes('FIXTURE_CWD'));
     expect(adapter.getOutputTail(started.session_handle)).toContain(`FIXTURE_CWD ${realpathSync(worktree)}`);

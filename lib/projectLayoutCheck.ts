@@ -13,10 +13,10 @@ import { isAbsolute, join, relative } from 'node:path';
 
 // Unambiguous orchestration-framework artifacts. If any of these appear inside
 // the target repo's working tree, framework files are leaking into the product
-// repo (or a legacy layout was never cleaned up after migration). Kept to
-// orc-specific names (not generic `backlog`/`plans`, which a product repo might
-// legitimately own) to avoid false positives.
-const ORC_ARTIFACTS = ['.orc-state', '.worktrees', 'orc-state.config.json'];
+// repo (or an older orc's state was left behind). Kept to orc-specific names
+// (not generic `backlog`/`plans`, which a product repo might legitimately own)
+// to avoid false positives.
+const ORC_ARTIFACTS = ['.orc-state', '.worktrees'];
 
 export interface ProjectLayoutCheck {
   ok: boolean;
@@ -71,7 +71,7 @@ export function checkProjectLayout({
   if (existsSync(targetRepoRoot)) {
     for (const artifact of ORC_ARTIFACTS) {
       if (existsSync(join(targetRepoRoot, artifact))) {
-        warnings.push(`orc framework artifact present in the target repo working tree: ${artifact} (see orc project migrate --cleanup-report)`);
+        warnings.push(`orc framework artifact present in the target repo working tree: ${artifact} (orc no longer reads it; remove it)`);
       }
     }
   }

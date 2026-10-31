@@ -2,11 +2,10 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { discoverActiveTaskSpecs, syncBacklogFromSpecsLoaded, type SyncResult } from '../lib/migration/backlogSync.ts';
 import { closeProjectTaskStores, initProjectTaskStore, prepareProjectTask, refreshBacklogProjection } from '../lib/projectTasks.ts';
 import type { TaskDispatchState } from '../lib/projectTaskStore.ts';
 import { readBacklog as readProjectStateBacklog } from '../lib/stateReader.ts';
-import type { Backlog, TaskStatus } from '../types/backlog.ts';
+import type { TaskStatus } from '../types/backlog.ts';
 
 export function createTempStateDir(prefix = 'orch-test-'): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -178,13 +177,4 @@ export function makeRunWorktreeMock(overrides: Record<string, unknown> = {}): Re
     getRunWorktree: vi.fn().mockReturnValue(null),
     ...overrides,
   };
-}
-
-/** Registers backlog/ Markdown specs into a legacy fixture's backlog.json, as migration reads them. */
-export function seedBacklogFromSpecs(stateDir: string, docsDir: string): SyncResult {
-  const backlogPath = join(stateDir, 'backlog.json');
-  const backlog = JSON.parse(readFileSync(backlogPath, 'utf8')) as Backlog;
-  const result = syncBacklogFromSpecsLoaded(backlog, discoverActiveTaskSpecs(docsDir));
-  if (result.updated) writeFileSync(backlogPath, JSON.stringify(backlog));
-  return result;
 }

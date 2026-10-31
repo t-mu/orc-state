@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, openSync, ftruncateSync, closeSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, openSync, ftruncateSync, closeSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
@@ -16,13 +16,10 @@ let dir: string;
 
 beforeEach(() => {
   dir = createTempStateDir('orch-doctor-cli-test-');
-  process.env.ORC_REPO_ROOT = dir;
-  mkdirSync(join(dir, 'backlog'), { recursive: true });
 });
 
 afterEach(() => {
   cleanupTempStateDir(dir);
-  delete process.env.ORC_REPO_ROOT;
 });
 
 describe('cli/doctor.ts', () => {
@@ -155,7 +152,7 @@ describe('cli/doctor.ts', () => {
         [join(repoRoot, 'cli/doctor.ts'), '--json'],
         {
           cwd: tmpCwd,
-          env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+          env: { ...process.env, ORC_STATE_DIR: dir },
           encoding: 'utf8',
         },
       );
@@ -184,23 +181,41 @@ describe('doctor on a registered project', () => {
       const json = JSON.parse(result.stdout);
       expect(result.status, result.stdout).toBe(0);
       expect(json.ok).toBe(true);
-      expect(json.checks.legacyLayout).toBeNull();
+      expect(json.checks.projectSelection).toBeNull();
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores a leftover migration record from an earlier migration', () => {
+    const target = mkdtempSync(join(tmpdir(), 'orc-doctor-target-'));
+    try {
+      spawnSync('git', ['init', '-q'], { cwd: target });
+      ensureStateInitialized(dir);
+      initProjectTaskStore(dir);
+      closeProjectTaskStores();
+      writeFileSync(join(dir, 'migration.json'), JSON.stringify({ status: 'importing', source_root: '/old/install' }));
+      const result = spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
+        cwd: repoRoot,
+        env: { ...process.env, ...bridgeProjectEnv(dir, target) },
+        encoding: 'utf8',
+      });
+      expect(result.status, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout).ok).toBe(true);
     } finally {
       rmSync(target, { recursive: true, force: true });
     }
   });
 });
 
-describe('doctor on a legacy installation', () => {
-  it('fails and points at the migration', () => {
-    // A legacy state directory: no project task store, selected without a project.
-    writeLegacyStateFiles();
+describe('doctor without a registered project', () => {
+  it('fails and says how to register or select one', () => {
+    writeStateFiles();
     const result = runCli(['--json']);
     const json = JSON.parse(result.stdout);
     expect(result.status).toBe(1);
-    expect(json.checks.legacyLayout.ok).toBe(false);
-    expect(json.checks.legacyLayout.message).toContain('no longer runs');
-    expect(json.checks.legacyLayout.message).toContain('orc project migrate');
+    expect(json.checks.projectSelection.ok).toBe(false);
+    expect(json.checks.projectSelection.message).toMatch(/No registered project here.*orc project add.*orc project select/);
   });
 });
 
@@ -320,7 +335,7 @@ function seedCleanState() {
   seedProjectState(dir);
 }
 
-function writeLegacyStateFiles() {
+function writeStateFiles() {
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
   writeFileSync(join(dir, 'events.jsonl'), '');

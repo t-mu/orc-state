@@ -12,7 +12,6 @@ if [[ "$(id -u)" == 0 ]]; then
   exit 1
 fi
 command -v docker >/dev/null || { echo 'Docker is required.' >&2; exit 1; }
-mkdir -p "$project_dir/.orc-state"
 project_slug="$(basename "$project_dir" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | cut -c1-24)"
 project_hash="$(printf '%s' "$project_dir" | cksum | awk '{print $1}')"
 project_name="orc-${project_slug}-${project_hash}"
@@ -39,9 +38,10 @@ case "${1:-}" in
   master)
     provider="${2:-claude}"
     "${compose[@]}" exec -T project bash -c '
+      state_dir="$(orc project show 2>/dev/null | jq -r ".stateDir // empty" 2>/dev/null || true)"
       for attempt in {1..30}; do
-        if [[ -f "$ORC_STATE_DIR/coordinator.pid" ]]; then
-          pid="$(jq -r ".pid // empty" "$ORC_STATE_DIR/coordinator.pid" 2>/dev/null || true)"
+        if [[ -n "$state_dir" && -f "$state_dir/coordinator.pid" ]]; then
+          pid="$(jq -r ".pid // empty" "$state_dir/coordinator.pid" 2>/dev/null || true)"
           if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then exit 0; fi
         fi
         sleep 1

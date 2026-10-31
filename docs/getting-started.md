@@ -27,14 +27,6 @@ master itself, and skills and agents are installed for your user with:
 orc install --global --provider=claude,codex
 ```
 
-Already have an old `.orc-state` installation (state and `backlog/` inside
-the repository)? It no longer runs. Migrate it instead of `orc project add`:
-
-```bash
-orc project migrate <root>            # dry run
-orc project migrate <root> --execute  # import and cut over
-```
-
 Verify:
 
 ```bash
