@@ -3,7 +3,7 @@ import { listCoordinatorAgents } from './agentRegistry.ts';
 import { readEvents, readRecentEvents } from './eventLog.ts';
 import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap, runPhaseHistory } from './runActivity.ts';
 import type { RunPhaseEntry } from './runActivity.ts';
-import { loadWorkerPoolConfig } from './providers.ts';
+import { loadWorkerPoolConfig, type OrcSettings } from './providers.ts';
 import { readJson } from './stateReader.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
@@ -239,14 +239,12 @@ export function buildScoutList(scoutAgents: Agent[]) {
 /**
  * Build a structured status object from base state files + recent events.
  * All fields are plain data — formatting is the CLI's responsibility.
+ * Worker pool settings come from the registry (`settings` injects them in tests).
  */
-export function buildStatus(stateDir: string): Record<string, unknown> {
+export function buildStatus(stateDir: string, { settings }: { settings?: OrcSettings } = {}): Record<string, unknown> {
   const claimsFile = readJson(stateDir, 'claims.json') as { claims?: Claim[] };
   const backlogFile = readJson(stateDir, 'backlog.json') as Backlog;
-  const workerPoolConfig = loadWorkerPoolConfig({
-    env: process.env,
-    configFile: join(stateDir, '..', 'orc-state.config.json'),
-  });
+  const workerPoolConfig = loadWorkerPoolConfig({ env: process.env, settings });
   const agents = listCoordinatorAgents(stateDir, workerPoolConfig);
   const master = agents.find((agent) => agent.role === 'master') ?? null;
 

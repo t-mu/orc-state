@@ -147,8 +147,8 @@ like an HTTP API or remote SSH session._
 
 ### Orchestration root vs target repo
 
-The **orchestration root** is orc's home: it holds state, worktrees and
-settings. The **target repo** is the repository whose product code the runs
+The **orchestration root** is orc's home: it holds state and worktrees
+(settings are registry keys, see `orc project config`). The **target repo** is the repository whose product code the runs
 operate on.
 
 For a registered project (`orc project add`) the orchestration root is an

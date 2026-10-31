@@ -103,7 +103,7 @@ describe('consumer lifecycle e2e', () => {
       ],
     }));
 
-    // Phase 4: configure managed worker pool (simulates orc-state.config.json from `orc init`)
+    // Phase 4: configure managed worker pool (env overrides take the place of registry settings)
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'claude';
 

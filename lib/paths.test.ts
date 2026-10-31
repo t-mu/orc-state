@@ -3,11 +3,10 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
-function mockRepoRoot(root: string, { targetRepoRoot }: { targetRepoRoot?: string } = {}) {
+function mockRepoRoot(root: string) {
   vi.doMock('./repoRoot.ts', () => ({
     resolveRepoRoot: vi.fn().mockReturnValue(root),
     resolveOrchestrationRoot: vi.fn().mockReturnValue(root),
-    legacySiblingTarget: vi.fn().mockReturnValue(targetRepoRoot ?? null),
   }));
 }
 
@@ -18,7 +17,6 @@ describe('paths', () => {
     // clear them so the mock under test is actually exercised. An ambient
     // ORC_STATE_DIR is present inside orc worker sessions.
     vi.stubEnv('ORC_STATE_DIR', undefined as unknown as string);
-    vi.stubEnv('ORC_CONFIG_FILE', undefined as unknown as string);
     vi.stubEnv('ORC_WORKTREES_DIR', undefined as unknown as string);
     vi.stubEnv('ORC_HOME', undefined as unknown as string);
     vi.stubEnv('ORC_REPO_ROOT', undefined as unknown as string);
@@ -32,10 +30,9 @@ describe('paths', () => {
   it('defaults STATE_DIR to the orchestration root instead of the ambient cwd', async () => {
     mockRepoRoot('/tmp/repo-root');
 
-    const { STATE_DIR, EVENTS_FILE, ORC_CONFIG_FILE, RUN_WORKTREES_FILE } = await import('./paths.ts');
+    const { STATE_DIR, EVENTS_FILE, RUN_WORKTREES_FILE } = await import('./paths.ts');
     expect(STATE_DIR).toBe('/tmp/repo-root/.orc-state');
     expect(EVENTS_FILE).toBe('/tmp/repo-root/.orc-state/events.db');
-    expect(ORC_CONFIG_FILE).toBe('/tmp/repo-root/orc-state.config.json');
     expect(RUN_WORKTREES_FILE).toBe('/tmp/repo-root/.orc-state/run-worktrees.json');
   });
 
@@ -52,16 +49,6 @@ describe('paths', () => {
 
     const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT } = await import('./paths.ts');
     expect(TARGET_REPO_ROOT).toBe(ORCHESTRATION_ROOT);
-  });
-
-  it('never targets a configured sibling target_repo; it is detected and refused instead', async () => {
-    mockRepoRoot('/tmp/orch-root', { targetRepoRoot: '/tmp/product-repo' });
-
-    const { TARGET_REPO_ROOT, ORCHESTRATION_ROOT, LEGACY_SIBLING_TARGET, assertProjectMode } = await import('./paths.ts');
-    expect(TARGET_REPO_ROOT).toBe(ORCHESTRATION_ROOT);
-    expect(LEGACY_SIBLING_TARGET).toBe('/tmp/product-repo');
-    expect(() => assertProjectMode()).toThrow('sibling orchestration home');
-    expect(() => assertProjectMode()).toThrow('orc project migrate /tmp/orch-root --execute');
   });
 
   it('refuses to run a legacy attached installation', async () => {
@@ -86,7 +73,6 @@ describe('paths', () => {
     vi.doMock('./repoRoot.ts', () => ({
       resolveRepoRoot: vi.fn().mockReturnValue('/tmp/should-not-be-used'),
       resolveOrchestrationRoot,
-      legacySiblingTarget: vi.fn().mockReturnValue(null),
     }));
     vi.stubEnv('ORC_STATE_DIR', '/tmp/orch-home/.orc-state');
 

@@ -7,7 +7,7 @@ Run `orc --help` for the full list.
 
 ## Global options
 
-`--project=<id>` (or `--project <id>`) selects a registered project for any subcommand. It may appear before or after the subcommand (not after a `--` separator), takes precedence over `ORC_PROJECT_ID`, the current repository and `orc project select`, and an unknown id is an error rather than a fallback. Inherited legacy path variables (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`, `ORC_CONFIG_FILE`) are ignored for that command. Commands that show state print the project they act on. See `docs/configuration.md` → Selecting and switching projects.
+`--project=<id>` (or `--project <id>`) selects a registered project for any subcommand. It may appear before or after the subcommand (not after a `--` separator), takes precedence over `ORC_PROJECT_ID`, the current repository and `orc project select`, and an unknown id is an error rather than a fallback. Inherited legacy path variables (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`) are ignored for that command. Commands that show state print the project they act on. See `docs/configuration.md` → Selecting and switching projects.
 
 ## Session management
 
@@ -409,7 +409,7 @@ them uses `review-read` to collect results. Not for human use.
 ## Pull Request
 
 Commands for interacting with pull requests. Used by PR reviewer workers —
-not for direct human use. Require `pr_provider` in config.
+not for direct human use. Require the `coordinator.pr_provider` setting (`orc project config set coordinator.pr_provider github`).
 
 | Command | Description |
 |---------|-------------|

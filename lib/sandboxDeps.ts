@@ -7,7 +7,7 @@
  * Codex sandbox does not use bwrap/socat, so the check is also skipped for Codex.
  */
 import { isBinaryAvailable } from './binaryCheck.ts';
-import { loadMasterConfig, loadWorkerPoolConfig } from './providers.ts';
+import { loadMasterConfig, loadWorkerPoolConfig, type OrcSettings } from './providers.ts';
 
 function safeLoad<T>(load: () => T): T | null {
   try {
@@ -20,16 +20,14 @@ function safeLoad<T>(load: () => T): T | null {
 export function checkSandboxDependencies({
   platform = process.platform,
   env = process.env,
-  configFile,
+  settings,
 }: {
   platform?: string;
   env?: NodeJS.ProcessEnv;
-  configFile?: string;
+  settings?: OrcSettings;
 } = {}): { ok: boolean; skipped: boolean; reason: string; missing: string[] } {
-  const masterOpts = configFile !== undefined ? { env, configFile } : { env };
-  const workerOpts = configFile !== undefined ? { env, configFile } : { env };
-  const masterConfig = safeLoad(() => loadMasterConfig(masterOpts));
-  const workerConfig = safeLoad(() => loadWorkerPoolConfig(workerOpts));
+  const masterConfig = safeLoad(() => loadMasterConfig({ env, settings }));
+  const workerConfig = safeLoad(() => loadWorkerPoolConfig({ env, settings }));
 
   const claudeMasterSandbox = masterConfig?.provider === 'claude' && masterConfig.execution_mode === 'sandbox';
   const claudeWorkerSandbox = workerConfig?.provider === 'claude' && workerConfig.execution_mode === 'sandbox';
@@ -59,16 +57,16 @@ export function checkSandboxDependencies({
 export function checkSandboxControlSocket({
   platform = process.platform,
   env = process.env,
-  configFile,
+  settings,
   project,
 }: {
   platform?: string;
   env?: NodeJS.ProcessEnv;
-  configFile?: string;
+  settings?: OrcSettings;
   project: boolean;
 }): { warning: string | null } {
   if (!project) return { warning: null };
-  const workerConfig = safeLoad(() => loadWorkerPoolConfig(configFile !== undefined ? { env, configFile } : { env }));
+  const workerConfig = safeLoad(() => loadWorkerPoolConfig({ env, settings }));
   if (workerConfig?.execution_mode !== 'sandbox' || workerConfig.sandbox_network === 'open') return { warning: null };
   if (workerConfig.provider !== 'codex' && !(workerConfig.provider === 'claude' && platform === 'linux')) return { warning: null };
   const sandbox = workerConfig.provider === 'codex' ? 'the Codex sandbox' : "Claude's Linux sandbox";

@@ -98,15 +98,12 @@ function seedValidState({ agents = [] as unknown[], claims = [] as unknown[], ru
     claims,
   });
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({ version: '1', runs: runWorktrees }));
-  writeFileSync(join(dir, 'orc-state.config.json'), JSON.stringify({
-    worker_pool: { max_workers: 2, provider: 'codex' },
-  }));
 }
 
 function runCli(args: string[]) {
   return spawnSync('node', ['cli/watch.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir, ORC_MAX_WORKERS: '2', ORC_WORKER_PROVIDER: 'codex' },
     encoding: 'utf8',
   });
 }

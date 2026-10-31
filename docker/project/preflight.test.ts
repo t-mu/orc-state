@@ -44,4 +44,20 @@ describe('project runtime preflight', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Provider login is missing for claude');
   });
+
+  it('checks the providers named in the project registry settings', () => {
+    // A fake orc answering `project config get`; no ORC_*_PROVIDER override.
+    writeFileSync(join(project, 'bin', 'orc'), [
+      '#!/bin/sh',
+      'case "$4" in',
+      '  worker_pool.provider) echo \'{"key":"worker_pool.provider","value":"gemini"}\' ;;',
+      '  *) exit 1 ;;',
+      'esac',
+    ].join('\n') + '\n', { mode: 0o755 });
+    delete env.ORC_WORKER_PROVIDER;
+    delete env.ORC_MASTER_PROVIDER;
+    const result = spawnSync('bash', [script], { env, encoding: 'utf8' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Provider binary is missing: gemini');
+  });
 });

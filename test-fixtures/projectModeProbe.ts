@@ -10,9 +10,13 @@ const result: Record<string, unknown> = {
   stateDir: paths.STATE_DIR,
   targetRepoRoot: paths.TARGET_REPO_ROOT,
   worktreesDir: paths.WORKTREES_DIR,
-  configFile: paths.ORC_CONFIG_FILE,
-  sibling: paths.LEGACY_SIBLING_TARGET !== null,
 };
+if (action === 'status') {
+  const { buildStatus } = await import('../lib/statusView.ts');
+  const status = buildStatus(paths.STATE_DIR) as { worker_capacity: { configured_slots: number; provider: string; model: string | null } };
+  const { configured_slots, provider, model } = status.worker_capacity;
+  result.workerCapacity = { configured_slots, provider, model };
+}
 if (action === 'launch') {
   const { ensureRunWorktree } = await import('../lib/runWorktree.ts');
   const { normalizeWorkerEnv } = await import('../lib/workerRuntime.ts');

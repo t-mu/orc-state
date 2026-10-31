@@ -226,7 +226,7 @@ export function main(argv: string[]): number {
   // `--project` is the highest-precedence selector: it becomes the child's ORC_PROJECT_ID.
   // Inherited legacy paths (a worker's ORC_STATE_DIR bridge, an operator's ORC_HOME) must not redirect it.
   const env = selector.projectId
-    ? { ...process.env, ORC_PROJECT_ID: selector.projectId, ORC_STATE_DIR: '', ORC_HOME: '', ORC_REPO_ROOT: '', ORC_CONFIG_FILE: '' }
+    ? { ...process.env, ORC_PROJECT_ID: selector.projectId, ORC_STATE_DIR: '', ORC_HOME: '', ORC_REPO_ROOT: '' }
     : process.env;
   const result = spawnSync(process.execPath, buildNodeArgs(subcommand, scriptPath, rest), { stdio: 'inherit', env });
   return result.status ?? 1;

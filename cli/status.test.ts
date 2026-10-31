@@ -227,7 +227,7 @@ describe('cli/status.ts', () => {
 function runStatus(args: string[]) {
   return spawnSync('node', ['cli/status.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir, ORC_MAX_WORKERS: '2', ORC_WORKER_PROVIDER: 'codex' },
     encoding: 'utf8',
   });
 }
@@ -240,7 +240,4 @@ function seedValidState({
 } = {}) {
   seedState(dir, { tasks, agents, claims });
   writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({ version: '1', runs: runWorktrees }));
-  writeFileSync(join(root, 'orc-state.config.json'), JSON.stringify({
-    worker_pool: { max_workers: 2, provider: 'codex' },
-  }));
 }

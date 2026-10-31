@@ -83,7 +83,8 @@ create_task(title, body_markdown?, feature?, ref?, depends_on?, acceptance_crite
   task_type: implementation|refactor (default implementation).
   priority: low|normal|high|critical (default normal).
   required_provider: restrict dispatch to codex|claude|gemini.
-  model: optional model override for the worker session (e.g. "claude-haiku-4-5").
+  model: optional model override for the worker session (e.g. "haiku"; Claude aliases
+    haiku/sonnet/opus always resolve to the latest model).
 
 update_task(task_ref, expected_revision, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, review_level?, merge_strategy?, required_provider?, model?)
   Edits a task; each accepted edit becomes a new spec revision. expected_revision
@@ -198,10 +199,13 @@ Planning new work:
    When creating tasks, assess complexity and set an appropriate model with
    create_task(..., model=...) (or later update_task(task_ref, expected_revision, model=...)):
    - Trivial tasks (config edits, dependency bumps, doc updates): use a fast/cheap
-     model like "claude-haiku-4-5"
-   - Standard tasks (feature implementation, bug fixes): omit model to use the pool default
+     model like "haiku"
+   - Standard tasks (feature implementation, bug fixes): omit model to use the pool
+     default, or "sonnet"
    - Complex tasks (architectural changes, multi-system rewrites): consider a stronger
-     model like "claude-sonnet-4-6"
+     model like "opus"
+   For Claude workers use the aliases haiku / sonnet / opus, not pinned model IDs:
+   an alias always resolves to the latest model of that family.
    If unsure, omit the model field and let the pool default apply.
    Note: in autonomous mode (the default), the coordinator auto-dispatches
    eligible tasks to available workers on each tick. You do not need to call

@@ -106,7 +106,6 @@ function migratedProject(registry: ProjectRegistry, legacyRoot: string): Project
 function legacyOverrideStateDir(env: NodeJS.ProcessEnv): string {
   if (env.ORC_STATE_DIR) return resolve(env.ORC_STATE_DIR);
   if (env.ORC_HOME) return join(resolve(env.ORC_HOME), '.orc-state');
-  if (env.ORC_CONFIG_FILE) return join(dirname(resolve(env.ORC_CONFIG_FILE)), '.orc-state');
   return join(resolve(env.ORC_REPO_ROOT!), '.orc-state');
 }
 
@@ -127,8 +126,7 @@ function withRegistry<T>(env: NodeJS.ProcessEnv, operation: (registry: ProjectRe
  * Select the active project, following docs/global-project-contract.md:
  * an explicit `ORC_PROJECT_ID` (set by `--project`, by an operator, or by the
  * coordinator for its workers) wins and must be registered; explicit legacy
- * path overrides (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`,
- * `ORC_CONFIG_FILE`) keep legacy mode unless they name a migrated legacy
+ * path overrides (`ORC_STATE_DIR`, `ORC_HOME`, `ORC_REPO_ROOT`) keep legacy mode unless they name a migrated legacy
  * state directory, which selects its project; inside a Git repository its canonical
  * root selects the registered project (an ambiguous match is an error), unless
  * the repository still carries a legacy orc layout (which selects its project
@@ -150,7 +148,7 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
     if (!isActivatable(record)) throw new Error(`Project ${explicitId} is still being migrated; rerun orc project migrate --execute to finish`);
     return toActive(record, 'environment');
   }
-  if (env.ORC_STATE_DIR || env.ORC_HOME || env.ORC_REPO_ROOT || env.ORC_CONFIG_FILE) {
+  if (env.ORC_STATE_DIR || env.ORC_HOME || env.ORC_REPO_ROOT) {
     // An override naming a migrated legacy state directory (a stale MCP config, an old shell) reaches its project instead.
     const legacyState = legacyOverrideStateDir(env);
     const marker = readMigrationMarker(legacyState);
@@ -195,15 +193,18 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
 }
 
 /**
- * Stored registry settings for the project (project over global), shaped like
- * the legacy config file so the existing loaders apply CLI and environment
- * overrides on top. A process that cannot open the registry (a sandboxed
- * worker) gets no stored settings and runs on environment and defaults.
+ * Stored registry settings as nested objects (`worker_pool.max_workers` →
+ * `{ worker_pool: { max_workers } }`): the project's over the global ones, or
+ * only the global ones when no project is active. The loaders in
+ * lib/providers.ts apply environment overrides on top. A process that cannot
+ * open the registry (a sandboxed worker), or a machine without one, gets no
+ * stored settings and runs on environment and defaults.
  */
-export function projectConfigObject(project: ActiveProject, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+export function projectConfigObject(project: ActiveProject | null, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+  if (!project && !existsSync(join(projectDataHome(env), 'registry.db'))) return {};
   let settings: Record<string, unknown>;
   try {
-    settings = withRegistry(env, (registry) => ({ ...registry.settings(), ...registry.settings(project.id) }));
+    settings = withRegistry(env, (registry) => ({ ...registry.settings(), ...(project ? registry.settings(project.id) : {}) }));
   } catch {
     return {};
   }

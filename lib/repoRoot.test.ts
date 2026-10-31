@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { legacySiblingTarget, resolveOrchestrationRoot, resolveRepoRoot } from './repoRoot.ts';
+import { resolveOrchestrationRoot, resolveRepoRoot } from './repoRoot.ts';
 
 const CONFIG = 'orc-state.config.json';
 
@@ -121,38 +121,6 @@ describe('repoRoot', () => {
 
       expect(resolveOrchestrationRoot(nested)).toBe(resolveRepoRoot(nested));
       expect(resolveOrchestrationRoot(nested)).toBe(repo);
-    });
-  });
-
-  describe('legacySiblingTarget', () => {
-    it('is null when no config file exists or target_repo is absent', () => {
-      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ default_provider: 'claude' }));
-      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
-    });
-
-    it('names a target_repo that resolves to a different directory, relative to the config file', () => {
-      const orch = join(tmp, 'orch');
-      mkdirSync(orch, { recursive: true });
-      writeFileSync(join(orch, CONFIG), JSON.stringify({ target_repo: '../product' }));
-      expect(legacySiblingTarget(join(orch, CONFIG), orch)).toBe(join(tmp, 'product'));
-    });
-
-    it('is null when target_repo is the orchestration root itself, malformed, or not a string', () => {
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: '.' }));
-      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
-      writeFileSync(join(tmp, CONFIG), 'NOT-JSON');
-      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
-      writeFileSync(join(tmp, CONFIG), JSON.stringify({ target_repo: 42 }));
-      expect(legacySiblingTarget(join(tmp, CONFIG), tmp)).toBeNull();
-    });
-
-    it('depends only on config, never on ORC_REPO_ROOT', () => {
-      const orch = join(tmp, 'orch');
-      mkdirSync(orch, { recursive: true });
-      writeFileSync(join(orch, CONFIG), JSON.stringify({ target_repo: '../product' }));
-      vi.stubEnv('ORC_REPO_ROOT', join(tmp, 'forced'));
-      expect(legacySiblingTarget(join(orch, CONFIG), orch)).toBe(join(tmp, 'product'));
     });
   });
 });

@@ -365,7 +365,6 @@ describe('buildRuntimeEnv', () => {
       expect(env.ORC_PROJECT_ID).toBe(repo.projectId);
       expect(env.ORC_STATE_DIR).toBeUndefined();
       expect(env.ORC_REPO_ROOT).toBeUndefined();
-      expect(env.ORC_CONFIG_FILE).toBeUndefined();
       expect(cwd).toBe(repo.repoRoot);
 
       assertPathsInside(repo.root, { ORC_DATA_HOME: env.ORC_DATA_HOME as string });

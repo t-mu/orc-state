@@ -4,7 +4,7 @@
  * Usage: node cli/doctor.ts [--json]
  */
 import { execSync } from 'node:child_process';
-import { ACTIVE_PROJECT, LEGACY_SIBLING_TARGET, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
 import { readMigrationMarker } from '../lib/projectContext.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
@@ -40,10 +40,7 @@ const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
 const legacyLayout = ACTIVE_PROJECT ? null : {
   ok: false,
   root: ORCHESTRATION_ROOT,
-  sibling_target: LEGACY_SIBLING_TARGET,
-  message: LEGACY_SIBLING_TARGET
-    ? `sibling layout (target_repo: ${LEGACY_SIBLING_TARGET}) is retired; run orc project migrate ${ORCHESTRATION_ROOT} --execute`
-    : `legacy installation at ${ORCHESTRATION_ROOT} no longer runs; migrate it into a project with orc project migrate ${ORCHESTRATION_ROOT} --execute`,
+  message: `legacy installation at ${ORCHESTRATION_ROOT} no longer runs; migrate it into a project with orc project migrate ${ORCHESTRATION_ROOT} --execute`,
 };
 
 // A legacy state directory that was migrated must not be run again; the project owns its state now.

@@ -59,7 +59,6 @@ export function normalizeWorkerEnv(
     env.ORC_MASTER_SECRET = '';
     env.ORC_HOME = '';
     env.ORC_REPO_ROOT = '';
-    env.ORC_CONFIG_FILE = '';
   }
   // Prevent interactive editors, pagers, and merge-tool prompts from blocking
   // headless PTY sessions. Workers never need an interactive editor.

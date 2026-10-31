@@ -5,14 +5,13 @@
  *
  * Prints PR status. With --wait, blocks until CI resolves and prints "passing" or "failing".
  */
-import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { ORC_CONFIG_FILE } from '../lib/paths.ts';
+import { storedSettings, type OrcSettings } from '../lib/providers.ts';
 import { getGitHostAdapter } from '../lib/gitHosts/index.ts';
 import { boolFlag } from '../lib/args.ts';
 
-export function run(argv: string[] = process.argv.slice(2), configFile: string = ORC_CONFIG_FILE): void {
+export function run(argv: string[] = process.argv.slice(2), settings: OrcSettings = storedSettings()): void {
   const prRef = argv.find((a) => !a.startsWith('--'));
   if (!prRef) {
     console.error('Usage: orc pr-status <pr_ref> [--wait]');
@@ -21,8 +20,7 @@ export function run(argv: string[] = process.argv.slice(2), configFile: string =
 
   const wait = boolFlag('wait', argv);
 
-  const rawConfig = existsSync(configFile) ? JSON.parse(readFileSync(configFile, 'utf8')) as Record<string, unknown> : {};
-  const coordinator = (rawConfig.coordinator ?? {}) as Record<string, unknown>;
+  const coordinator = (settings.coordinator ?? {}) as Record<string, unknown>;
   const prProvider = typeof coordinator.pr_provider === 'string' ? coordinator.pr_provider : null;
   if (!prProvider) {
     console.error('pr_provider not configured');

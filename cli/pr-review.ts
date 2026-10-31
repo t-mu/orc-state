@@ -5,14 +5,13 @@
  *
  * Submits a review on a PR using the configured git host adapter.
  */
-import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { ORC_CONFIG_FILE } from '../lib/paths.ts';
+import { storedSettings, type OrcSettings } from '../lib/providers.ts';
 import { getGitHostAdapter } from '../lib/gitHosts/index.ts';
 import { boolFlag, flag } from '../lib/args.ts';
 
-export function run(argv: string[] = process.argv.slice(2), configFile: string = ORC_CONFIG_FILE): void {
+export function run(argv: string[] = process.argv.slice(2), settings: OrcSettings = storedSettings()): void {
   const prRef = argv.find((a) => !a.startsWith('--'));
   if (!prRef) {
     console.error('Usage: orc pr-review <pr_ref> --approve|--request-changes --body="..."');
@@ -28,8 +27,7 @@ export function run(argv: string[] = process.argv.slice(2), configFile: string =
     process.exit(1);
   }
 
-  const rawConfig = existsSync(configFile) ? JSON.parse(readFileSync(configFile, 'utf8')) as Record<string, unknown> : {};
-  const coordinator = (rawConfig.coordinator ?? {}) as Record<string, unknown>;
+  const coordinator = (settings.coordinator ?? {}) as Record<string, unknown>;
   const prProvider = typeof coordinator.pr_provider === 'string' ? coordinator.pr_provider : null;
   if (!prProvider) {
     console.error('pr_provider not configured');
