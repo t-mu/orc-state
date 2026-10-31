@@ -15,6 +15,7 @@ export default tseslint.config(
       'vitest.integration.config.mjs',
       'vitest.real-providers.config.mjs',
       'vitest.orcEnv.mjs',
+      'vitest.tmuxTmpdir.mjs',
     ],
   },
   ...tseslint.configs.recommendedTypeChecked,

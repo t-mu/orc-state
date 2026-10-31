@@ -13,7 +13,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
@@ -41,6 +41,45 @@ function tmuxBinary(): string { return process.env.ORC_TMUX_BIN ?? 'tmux'; }
 /** One private tmux server per state dir; tmux keeps its sockets in a per-user 0700 directory. */
 export function tmuxSocketName(stateDir = STATE_DIR): string {
   return `orc-${createHash('sha256').update(stateDir).digest('hex').slice(0, 12)}`;
+}
+
+/**
+ * Where tmux keeps the socket for `-L name`: `${TMUX_TMPDIR:-/tmp}/tmux-<uid>/name`.
+ * tmux 3.3a leaves this file behind when its server exits, so orc removes it itself.
+ */
+export function tmuxSocketPath(name = tmuxSocketName()): string {
+  const uid = process.getuid?.() ?? 0;
+  return join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${uid}`, name);
+}
+
+/**
+ * Removes the socket file of orc's private tmux server when no server answers
+ * on it. A live server's socket is never touched. Returns whether a file was removed.
+ */
+export function removeDeadTmuxSocket(name = tmuxSocketName()): boolean {
+  const path = tmuxSocketPath(name);
+  try {
+    if (!lstatSync(path).isSocket()) return false;
+  } catch {
+    return false;
+  }
+  const probe = spawnSync(tmuxBinary(), ['-L', name, 'list-sessions'], { encoding: 'utf8', timeout: 5_000 });
+  // Only tmux's own "no server running" answer proves the socket is dead; a
+  // timeout or any other failure may mean a live server we must not orphan.
+  if (probe.error || probe.status === 0 || !/no server running/.test(probe.stderr ?? '')) return false;
+  try {
+    unlinkSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Kills orc's private tmux server for `stateDir` and removes its socket file. */
+export function killTmuxServer(stateDir = STATE_DIR): void {
+  const name = tmuxSocketName(stateDir);
+  spawnSync(tmuxBinary(), ['-L', name, 'kill-server'], { encoding: 'utf8', timeout: 10_000 });
+  removeDeadTmuxSocket(name);
 }
 
 /** Readable and injective: the hash keeps `a.b` and `a_b` from sharing a session. */
@@ -295,6 +334,8 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       try {
         const agentId = parseHandle(sessionHandle);
         tmux(['kill-session', '-t', target(agentId)]);
+        // The server exits with its last session; its socket file would stay behind.
+        removeDeadTmuxSocket();
         for (const path of [hookEventPath(agentId), `${hookEventPath(agentId)}.processing`, settingsPath(agentId)]) {
           try { unlinkSync(path); } catch { /* already gone or never created */ }
         }
