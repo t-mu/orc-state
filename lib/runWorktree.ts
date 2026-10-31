@@ -62,6 +62,32 @@ export function deleteRunWorktree(stateDir: string, runId: string): boolean {
   });
 }
 
+function gitInTarget(args: string[]) {
+  return spawnSync('git', [...HERMETIC_GIT_CONFIG_ARGS, ...args], { cwd: TARGET_REPO_ROOT, encoding: 'utf8' });
+}
+
+/**
+ * Whether a run branch was merged into `main` as its own line of work: its tip
+ * is an ancestor of `main` but not on `main`'s first-parent history. That
+ * excludes a run branch with no commits of its own (its tip is a `main`
+ * commit, so it is trivially an ancestor) and a fast-forward merge; a missing
+ * branch is not merged.
+ */
+export function runBranchMergedIntoMain(branch: string): boolean {
+  const tip = gitInTarget(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`]);
+  if (tip.error) throw tip.error;
+  const sha = tip.status === 0 ? tip.stdout.trim() : '';
+  if (!sha) return false;
+  const ancestor = gitInTarget(['merge-base', '--is-ancestor', sha, 'main']);
+  if (ancestor.error) throw ancestor.error;
+  if (ancestor.status === 1) return false;
+  if (ancestor.status !== 0) throw new Error(`git merge-base failed for ${branch}: ${(ancestor.stderr || ancestor.stdout || 'unknown error').trim()}`);
+  const firstParents = gitInTarget(['rev-list', '--first-parent', 'main']);
+  if (firstParents.error) throw firstParents.error;
+  if (firstParents.status !== 0) throw new Error(`git rev-list failed for main: ${(firstParents.stderr || 'unknown error').trim()}`);
+  return !firstParents.stdout.split('\n').includes(sha);
+}
+
 export function cleanupRunWorktree(stateDir: string, runId: string): boolean {
   if (!runId) throw new Error('runId is required');
 

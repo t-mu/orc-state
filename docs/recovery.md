@@ -75,16 +75,30 @@ preserved in the run worktree and branch metadata tracked by the coordinator.
 3. Prefer the normal coordinator-owned path first.
    - If the worker is still active, use the documented finalize-rebase handoff flow.
    - If the live worker/coordinator handoff is no longer recoverable, move to manual recovery.
-4. Manual recovery is recovery-only, not the normal workflow.
+4. Manual recovery is recovery-only, not the normal workflow. Run it in the
+   preserved run worktree (`orc run-info <run_id>` prints its path; it lives
+   under `<state>/worktrees/<run_id>` on branch `task/<run_id>`), commit any
+   leftover change there, then merge from the main checkout:
 
 ```bash
-cd .worktrees/<run_id>
+cd <state>/worktrees/<run_id>
 git rebase main
-# resolve conflicts
-git rebase --continue
+# resolve conflicts, then: git add <file> && git rebase --continue
+npm test
+git -C <main-repo> merge task/<run_id> --no-ff -m "task(<task_ref>): merge worktree"
+orc task-mark-done <task_ref>
+orc run-close <run_id> --reason="merged manually after blocked_finalize"
 ```
 
-5. After manual recovery, reconcile the run/task through the operator or coordinator path that applies at that moment.
+5. `orc task-mark-done` records the task done; `orc run-close` (the master's
+   `close_run`) then closes the claim, which nothing else does once its task is
+   done: it records the claim `done`, emits `run_finished` with
+   `{closed_by, reason, manual: true}`, and removes the run worktree, its branch
+   and its `run-worktrees.json` entry the way the coordinator does after a merge.
+   Run it from the main checkout, not from inside the worktree it removes.
+   It refuses a run whose task is not `done`/`released` and whose branch is not
+   merged into `main`; for such a run, `orc run-expire <run_id>` or
+   `orc task-reset <task_ref>` requeue the task instead.
 6. Do not treat `orc run-finish` as the default manual recovery step after preserved finalization failure. That command is only valid if the live handoff path still supports it.
 
 ## Hung Input Request

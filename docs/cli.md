@@ -213,7 +213,7 @@ Without `--actor-id` the coordinator records the caller (the master session as t
 master, an operator as `human`); with the master's session, `--actor-id` is ignored and
 the master is recorded. As the operator, `--actor-id` must be `human` or a registered
 agent; any other id (such as `coordinator`) is refused. The same rule applies to
-`run-expire`, `task-mark-done` and project task authoring. An answer from `run-input-respond` is recorded with
+`run-expire`, `run-close`, `task-mark-done` and project task authoring. An answer from `run-input-respond` is recorded with
 `actor_type: agent` for an agent actor such as `master` (it used to be `human`).
 
 | Command | Description |
@@ -225,7 +225,7 @@ agent; any other id (such as `coordinator`) is refused. The same rule applies to
 | `delegate` | Dispatch a task to an available worker agent. |
 | `project task <list\|show\|revisions\|create\|edit\|import\|export>` | Author tasks in a registered project's SQLite store: `create [--feature=] [--title=] [--body-file=] [--depends-on=a,b] [--ac=..]`, `edit <ref> --expected-revision=<n> [fields]`, `show <ref> [--revision=<n>]`, `import <file-or-dir> [--strict]`, `export <dir-or-file.md> [--ref=a,b]`; `project plan <list\|show\|import\|export>` stores and renders plans. All accept `--project=<id>`; `create`, `edit` and `import` also accept `--actor-id=<id>`. See configuration.md → Project tasks. |
 
-`orc project task create|edit|import`, MCP task authoring, `run-expire` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
+`orc project task create|edit|import`, MCP task authoring, `run-expire`, `run-close` and `task-mark-done` are applied by the running coordinator. `import` reads the files in the caller's process and sends their contents, so the coordinator never opens the caller's path. If no coordinator holds the project, they apply directly and print a warning. A live coordinator whose API is unavailable returns a retryable error.
 
 **Flags:**
 
@@ -277,6 +277,7 @@ Commands for digging into active runs and the event stream.
 | `sessions` | List supervised provider sessions with state (`running`, `recoverable`, `unknown`, `offline`), transport, PID, owner and reason. |
 | `run-info <run_id>` | Show claim state, task, worktree path, and idle time for a run. |
 | `run-expire <run_id>` | Force-expire a claim and requeue the task. |
+| `run-close <run_id> [--reason=<text>]` | Close a run whose work was merged by hand: the claim must be non-terminal and its task `done`/`released` or its branch merged into `main` (an ancestor of `main` that is not on its first-parent history). Records the claim `done`, emits `run_finished` `{closed_by, reason, manual: true}` and removes the run worktree and branch as the coordinator does after a merge. An unmerged run is refused; requeue it with `run-expire` or `task-reset`. Master MCP tool: `close_run`. |
 | `waiting-input` | List runs blocked waiting for master input. |
 | `events-tail` | Print the last N events. |
 | `events-filter` | Query events by run, agent, or event type. |

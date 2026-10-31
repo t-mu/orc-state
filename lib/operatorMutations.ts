@@ -10,6 +10,7 @@ import { ControlError } from './controlProtocol.ts';
 import { bridgeInputResponse } from './messageBridge.ts';
 import { commitBacklog } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
+import { cleanupRunWorktree, getRunWorktree, runBranchMergedIntoMain } from './runWorktree.ts';
 import { resolveControlPrincipal, requireProjectAuthor, type ControlPrincipal } from './controlPrincipal.ts';
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
 import { markTaskDoneRuntimeOnly } from './taskCompletion.ts';
@@ -397,7 +398,7 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
   };
 }
 
-export type OperatorOp = 'cancel-task' | 'reset-task' | 'unblock-task' | 'delegate-task' | 'respond-input' | 'run-expire' | 'task-mark-done';
+export type OperatorOp = 'cancel-task' | 'reset-task' | 'unblock-task' | 'delegate-task' | 'respond-input' | 'run-expire' | 'run-close' | 'task-mark-done';
 
 /** A master or operator mutation sent to the coordinator: `op` plus the same arguments as the MCP tool. */
 export type OperatorRequest = { op: OperatorOp; actor_id?: string } & Record<string, unknown>;
@@ -409,6 +410,7 @@ const OPERATOR_OPS: Readonly<Record<OperatorOp, readonly string[]>> = {
   'delegate-task': ['task_ref', 'target_agent_id', 'task_type', 'note'],
   'respond-input': ['run_id', 'agent_id', 'response', 'request_id', 'record_memory'],
   'run-expire': ['run_id'],
+  'run-close': ['run_id', 'reason'],
   'task-mark-done': ['task_ref'],
 };
 
@@ -457,6 +459,7 @@ export function applyOperatorMutation(stateDir: string, request: OperatorRequest
     case 'delegate-task': return delegateTask(stateDir, args) as Record<string, unknown>;
     case 'respond-input': return respondInput(stateDir, args);
     case 'run-expire': return expireRun(stateDir, args.run_id, args.actor_id as string);
+    case 'run-close': return closeRun(stateDir, args);
     case 'task-mark-done': {
       const result = markTaskDoneRuntimeOnly(args.task_ref as string, args.actor_id as string, stateDir);
       return { task_ref: args.task_ref, done: true, previous_status: result.previousStatus };
@@ -490,4 +493,59 @@ export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): 
     commitBacklog(stateDir, backlog, { [claim.task_ref]: { cause: 'failure_requeue', runId, actorId, reason: 'manual_expire' } });
     return { run_id: runId, task_ref: claim.task_ref, expired: true };
   });
+}
+
+/**
+ * Close a run whose work already reached `main` by hand (docs/recovery.md,
+ * Finalization Failure): the claim is non-terminal while its task is
+ * done/released or its branch is merged into main. Records the claim as done,
+ * emits `run_finished` and cleans the run worktree and branch the way the
+ * coordinator does after a merge. An unmerged run is refused: requeue it with
+ * run-expire or task-reset instead.
+ */
+export function closeRun(stateDir: string, { run_id, reason = null, actor_id = 'human' }: Record<string, unknown> = {}): Record<string, unknown> {
+  if (typeof run_id !== 'string' || !run_id) throw new InputError('run_id is required');
+  if (reason != null && typeof reason !== 'string') throw new InputError('reason must be a string');
+  if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) throw new InputError(`Invalid actor_id: ${String(actor_id)}`);
+
+  if (!readClaims(stateDir).claims.some((entry) => entry.run_id === run_id)) throw new NotFoundError(`run not found: ${run_id}`);
+  // Git runs outside the state lock; the claim is re-checked under it.
+  const branch = getRunWorktree(stateDir, run_id)?.branch ?? `task/${run_id}`;
+  const branchMerged = runBranchMergedIntoMain(branch);
+
+  const closed = withLock(join(stateDir, '.lock'), () => {
+    const now = new Date().toISOString();
+    const claimsState = readClaims(stateDir);
+    const claim = claimsState.claims.find((entry) => entry.run_id === run_id);
+    if (!claim) throw new NotFoundError(`run not found: ${run_id}`);
+    if (claim.state === 'done' || claim.state === 'failed') throw new ConflictError(`run is already terminal (state: ${claim.state}): ${run_id}`);
+    const taskStatus = findTask(readBacklog(stateDir), claim.task_ref)?.status ?? null;
+    const taskDone = taskStatus === 'done' || taskStatus === 'released';
+    if (!taskDone && !branchMerged) {
+      throw new ConflictError(`run ${run_id} is not merged: task ${claim.task_ref} is ${taskStatus ?? 'missing'} and branch ${branch} is not merged into main. `
+        + `To requeue the task use orc run-expire ${run_id} or orc task-reset ${claim.task_ref}`);
+    }
+    claim.state = 'done';
+    claim.finished_at = now;
+    claim.input_state = null;
+    claim.input_requested_at = null;
+    claim.finalization_state = null;
+    claim.finalization_retry_count = 0;
+    claim.finalization_blocked_reason = null;
+    commitClaims(stateDir, claimsState, [{
+      ts: now, event: 'run_finished', actor_type: actor_id === 'human' ? 'human' : 'agent', actor_id,
+      run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
+      payload: { closed_by: actor_id, reason: (reason as string | null) ?? null, manual: true },
+    }]);
+    return { task_ref: claim.task_ref, task_status: taskStatus };
+  });
+
+  // The coordinator's post-merge cleanup: remove the worktree, delete the branch, drop the entry.
+  let worktreeCleaned = false;
+  try {
+    worktreeCleaned = cleanupRunWorktree(stateDir, run_id);
+  } catch {
+    worktreeCleaned = false;
+  }
+  return { run_id, closed: true, ...closed, branch, branch_merged: branchMerged, worktree_cleaned: worktreeCleaned };
 }

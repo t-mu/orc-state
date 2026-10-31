@@ -1702,6 +1702,38 @@ describe('hook event bus', () => {
     });
   });
 
+  it('treats recent tool hook activity as progress during a finalize rebase', async () => {
+    const finalizing = (runId: string, agentId: string, taskRef: string) => ({
+      ...inProgressClaim(runId, agentId, taskRef, 40 * 60 * 1000),
+      finalization_state: 'finalize_rebase_in_progress',
+      finalization_retry_count: 2,
+    });
+    seedState(dir, {
+      agents: [
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+      ],
+      tasks: [
+        { ...DISPATCHABLE_TASK, ref: 'proj/busy', status: 'in_progress' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/quiet', status: 'in_progress' },
+      ],
+      claims: [finalizing('run-busy', 'worker-01', 'proj/busy'), finalizing('run-quiet', 'worker-02', 'proj/quiet')],
+    });
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Bash', brief: 'npm test', ts: new Date(Date.now() - 60 * 1000).toISOString() }]);
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    // Finalization retry fires after 10 minutes without progress; both runs are 40 minutes past their last phase event.
+    await runTicks(['--run-inactive-nudge-ms=600000', '--run-inactive-nudge-interval-ms=1']);
+
+    const claims = readClaims(dir);
+    expect(claims.find((c) => c.run_id === 'run-quiet')!.finalization_state).toBe('blocked_finalize');
+    const busy = claims.find((c) => c.run_id === 'run-busy')!;
+    expect(busy.finalization_state).toBe('finalize_rebase_in_progress');
+    expect(busy.finalization_blocked_reason ?? null).toBeNull();
+    expect(send.mock.calls.some((call) => call[0] === 'pty:worker-01')).toBe(false);
+  });
+
   it('hands permission hook events to input-block detection and skips malformed lines', async () => {
     seedState(dir, {
       agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
