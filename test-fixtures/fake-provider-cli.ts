@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
+import { TUI_REPORT_LINES, tuiScoutReportBytes } from './tuiScoutReport.ts';
 
 const provider = process.argv[2] ?? 'unknown';
 const crashOnStart = process.env.FAKE_PROVIDER_CRASH_ON_START === '1';
@@ -31,6 +32,11 @@ rl.on('line', (line) => {
   const command = line.trim();
   if (command === 'PING') {
     console.log('FIXTURE_PONG');
+    return;
+  }
+  if (command === 'TUI_REPORT') {
+    // Reserve the rows with newlines, move back up, then redraw them TUI-style.
+    process.stdout.write(`${'\n'.repeat(TUI_REPORT_LINES.length)}\x1b[${TUI_REPORT_LINES.length}A${tuiScoutReportBytes()}\r\n`);
     return;
   }
   if (command === 'EXIT') {

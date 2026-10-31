@@ -69,11 +69,19 @@ interface AdapterInterface {
 
 - No-op if the session is not found (do not throw).
 
-**`getOutputTail(sessionHandle)`** -- Return the last ~8 KB of session output.
+**`getOutputTail(sessionHandle, maxBytes?)`** -- Return the last ~8 KB (or `maxBytes`) of session output.
 
 - Strip ANSI escape codes and trim leading/trailing blank lines.
 - Return `''` if no output log exists.
 - Return `null` on any other error (e.g. invalid handle).
+- tmux sessions read the rendered pane (`capture-pane -J`, with enough history
+  for `maxBytes`; panes keep 10,000 lines of scrollback) while the session
+  lives, and fall back to the raw log only once the pane is gone. A TUI such
+  as Claude Code redraws with cursor moves instead of newlines, so its stripped
+  raw log loses line breaks; `get_scout_report` relies on the rendered text.
+- pty sessions have no rendered screen and return the stripped raw log, so a
+  scout running under the pty transport with a TUI provider can stay
+  `running` after printing its report. Prefer the tmux transport for scouts.
 
 ## Optional capabilities
 

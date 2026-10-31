@@ -556,6 +556,12 @@ const REPORT_HEADERS = ['findings', 'likely_cause', 'recommended_action'].map((h
  * `<placeholder>` lines just before it) never counts, so a scout whose tail
  * begins inside the template is still `running`.
  */
+/** Remove the indentation every non-blank line shares (a TUI indents its output). */
+function dedent(lines: string[]): string {
+  const indent = Math.min(...lines.filter((line) => line.trim()).map((line) => /^[ \t]*/.exec(line)![0].length));
+  return Number.isFinite(indent) ? lines.map((line) => line.slice(indent)).join('\n') : lines.join('\n');
+}
+
 export function extractScoutReport(output: string): { report: string | null; truncated: boolean } {
   let start: number | null = null;
   let report: string | null = null;
@@ -569,7 +575,7 @@ export function extractScoutReport(output: string): { report: string | null; tru
       return;
     }
     truncated = false;
-    const block = lines.slice(start + 1, index).join('\n').trim();
+    const block = dedent(lines.slice(start + 1, index)).trim();
     start = null;
     if (!block.includes('<what you found') && REPORT_HEADERS.every((header) => header.test(block))) {
       report = block;

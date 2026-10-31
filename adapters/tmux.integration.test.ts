@@ -8,6 +8,7 @@ import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateH
 import { classifySession, type SupervisedSession } from '../lib/sessionSupervisor.ts';
 import { closeAllDatabases, initEventsDb, withEventDbTransaction } from '../lib/eventLog.ts';
 import { TerminalBroker } from '../lib/terminalBroker.ts';
+import { extractScoutReport } from '../mcp/handlers.ts';
 
 const exec = promisify(execFile);
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
@@ -88,6 +89,21 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     await adapter.send(launched.session_handle, 'PING');
     await waitFor(() => (adapter.getOutputTail(launched.session_handle) ?? '').includes('FIXTURE_PONG'));
     await expect(adapter.heartbeatProbe(launched.session_handle)).resolves.toBe(true);
+  }, 20_000);
+
+  it('reads a long tail from the pane, so a TUI-drawn scout report is found (fix-scout-report-detection)', async () => {
+    const { adapter, module } = await loadAdapter();
+    const started = await adapter.start('scout-1', { working_directory: dir });
+    // Scrollback is raised so a long report survives in the pane history.
+    expect(spawnSync('tmux', ['-L', module.tmuxSocketName(dir), 'display-message', '-p', '-t', `=${module.tmuxSessionName('scout-1')}:`, '#{history_limit}'],
+      { encoding: 'utf8' }).stdout.trim()).toBe('10000');
+    await adapter.send(started.session_handle, 'TUI_REPORT');
+    await waitFor(() => (adapter.getOutputTail(started.session_handle) ?? '').includes('SCOUT_REPORT_END'));
+    const tail = adapter.getOutputTail(started.session_handle, 64 * 1024) ?? '';
+    expect(extractScoutReport(tail).report).toContain('clock skew between coordinator and worker');
+    // The raw log of the same session does not yield the report once stripped.
+    const log = readFileSync(join(dir, 'pty-logs', 'scout-1.log'), 'utf8').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+    expect(extractScoutReport(log).report).toBeNull();
   }, 20_000);
 
   it('shares the provider writer lease with the coordinator send path', async () => {
