@@ -75,7 +75,8 @@
         "coordinator_stopped",
         "worker_needs_attention",
         "remediation_applied",
-        "activity_note"
+        "activity_note",
+        "stop_blocked"
       ],
       "description": "Event type discriminator."
     },

@@ -86,6 +86,8 @@ describe('pty adapter start()', () => {
       Notification: [{ hooks: [cmd('permission')] }],
       PostToolUse: [{ matcher: '*', hooks: [cmd('tool')] }],
       PreToolUse: [{ matcher: 'TodoWrite|TaskCreate|TaskUpdate', hooks: [cmd('todo')] }],
+      // A task worker also gets the stop-hook run guard (asserted in detail below).
+      Stop: [{ hooks: [{ type: 'command', command: expect.stringMatching(/ stop-check$/), timeout: 15 }] }],
     });
     expect(settings.hooks.Notification[0].hooks[0].command).toContain(JSON.stringify(events));
   });
@@ -107,6 +109,23 @@ describe('pty adapter start()', () => {
       { type: 'tool', tool: 'Bash', brief: 'npm test', ts: expect.any(String) },
       { type: 'activity', label: 'Doing X', source: 'todo', ts: expect.any(String) },
     ]);
+  });
+
+  it('gives a claude task worker a Stop hook that runs `orc stop-check` from its ORC_BIN', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', { env: { ORC_BIN: "/opt/it's/orc" } });
+
+    const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'bob.json'), 'utf8'));
+    expect(settings.hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: "'/opt/it'\\''s/orc' stop-check", timeout: 15 }] }]);
+  });
+
+  it('gives a read-only scout no Stop hook', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('scout-1', { execution_mode: 'sandbox', read_only: true });
+
+    const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'scout-1.json'), 'utf8'));
+    expect(settings.hooks.Notification).toBeDefined();
+    expect(settings.hooks.Stop).toBeUndefined();
   });
 
   it('launches the provider inside the requested working directory when provided', async () => {

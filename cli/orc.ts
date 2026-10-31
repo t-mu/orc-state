@@ -83,6 +83,7 @@ const COMMANDS: Record<string, string> = {
   'pr-review':          'pr-review.ts',
   'pr-merge':           'pr-merge.ts',
   'pr-status':          'pr-status.ts',
+  'stop-check':         'stop-check.ts',
 };
 
 const BLESSED = [
