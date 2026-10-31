@@ -291,6 +291,8 @@ describe('launchWorkerSession execution mode', () => {
     vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
     const buildSessionBootstrapSpy = vi.fn(() => 'BOOTSTRAP');
     vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
+    // Re-evaluate workerRuntime against this test's sessionBootstrap mock, not beforeEach's.
+    vi.resetModules();
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ provider: 'codex' });
     await launchWorkerSession(stateDir, agent, {
