@@ -523,6 +523,18 @@ describe('mcp read handlers', () => {
     expect(workview.active_run?.current_activity).toEqual(expected);
   });
 
+  it('handleGetStatus stays <= 2KB with long activity text on active runs', () => {
+    const long = (runId: string, agentId: string) => ({
+      run_id: runId, agent_id: agentId, label: 'n'.repeat(1000), source: 'note' as const, label_ts: new Date().toISOString(),
+      last_tool: 'Bash', last_tool_brief: 'b'.repeat(1000), last_tool_ts: new Date().toISOString(),
+    });
+    writeRunActivity(dir, { 'run-1': long('run-1', 'orc-1'), 'run-2': long('run-2', 'orc-2') });
+    const status = handleGetStatus(dir);
+    const withActivity = (status.active_tasks as Array<Record<string, unknown>>).filter((t) => t.current_activity);
+    expect(withActivity.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(status), 'utf8')).toBeLessThanOrEqual(2048);
+  });
+
   it('get_agent_workview returns current_activity null when the run has no snapshot', () => {
     const workview = handleGetAgentWorkview(dir, { agent_id: 'orc-1' });
     expect(workview.active_run?.current_activity).toBeNull();

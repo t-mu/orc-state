@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  describeToolAction, formatActivityAge, formatActivityLine, isActivityStale, selectCurrentActivity,
+  ACTIVITY_TEXT_MAX, describeToolAction, formatActivityAge, formatActivityLine, isActivityStale, selectCurrentActivity,
 } from './currentActivity.ts';
 import type { RunActivitySnapshot } from './runActivityStore.ts';
 
@@ -39,6 +39,12 @@ describe('selectCurrentActivity ranking', () => {
   it('ignores an empty to-do label', () => {
     const s = snapshot({ label: '', source: 'todo', label_ts: ago(1) });
     expect(selectCurrentActivity(s, NOW)?.source).toBe('tool');
+  });
+
+  it('caps the text at ACTIVITY_TEXT_MAX characters', () => {
+    const text = selectCurrentActivity(snapshot({ label: 'y'.repeat(500), source: 'todo', label_ts: ago(1) }), NOW)?.text ?? '';
+    expect(text).toHaveLength(ACTIVITY_TEXT_MAX);
+    expect(text.endsWith('…')).toBe(true);
   });
 
   it('ranks note > todo > tool', () => {

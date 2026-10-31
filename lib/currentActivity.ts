@@ -4,6 +4,13 @@ import type { RunActivitySnapshot } from './runActivityStore.ts';
 export const ACTIVITY_NOTE_FRESH_MS = 5 * 60_000;
 /** An activity line older than this is shown dimmed. */
 export const ACTIVITY_STALE_MS = 2 * 60_000;
+/** Longest activity text carried in status payloads (MCP responses stay compact). */
+export const ACTIVITY_TEXT_MAX = 120;
+
+function capText(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= ACTIVITY_TEXT_MAX ? flat : `${flat.slice(0, ACTIVITY_TEXT_MAX - 1)}…`;
+}
 
 export interface CurrentActivity {
   text: string;
@@ -48,13 +55,13 @@ export function selectCurrentActivity(
   if (!snapshot) return null;
   const { label, source, label_ts: labelTs } = snapshot;
   if (label && labelTs && source === 'note' && nowMs - Date.parse(labelTs) < ACTIVITY_NOTE_FRESH_MS) {
-    return { text: label, source: 'note', ts: labelTs };
+    return { text: capText(label), source: 'note', ts: labelTs };
   }
   if (label && labelTs && source === 'todo') {
-    return { text: label, source: 'todo', ts: labelTs };
+    return { text: capText(label), source: 'todo', ts: labelTs };
   }
   if (snapshot.last_tool && snapshot.last_tool_ts) {
-    return { text: describeToolAction(snapshot.last_tool, snapshot.last_tool_brief), source: 'tool', ts: snapshot.last_tool_ts };
+    return { text: capText(describeToolAction(snapshot.last_tool, snapshot.last_tool_brief)), source: 'tool', ts: snapshot.last_tool_ts };
   }
   return null;
 }
