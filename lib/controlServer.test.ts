@@ -482,6 +482,31 @@ describe('local daemon control API', () => {
     await expect(reader.memoryWakeUp()).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
   });
 
+  it('answers a worker\'s stop check for its own run and refuses other callers (stop-hook run guard)', async () => {
+    appendSequencedEvent(dir, {
+      ts: new Date().toISOString(), event: 'phase_started', actor_type: 'agent', actor_id: 'worker-a',
+      run_id: 'run-a', task_ref: 'orch/task-a', agent_id: 'worker-a', phase: 'implement',
+    }, { lockStrategy: 'none' });
+    const blocked = await new ControlClient(dir, { credential: 'session-a' }).stopCheck(false);
+    expect(blocked).toEqual({ allow: false, reason: expect.stringContaining('Run run-a (phase implement) is not finished.') });
+    const recorded = readEventBatch(join(dir, 'events.db'), 0, 100).map((row) => row.event as { event: string; run_id?: string; payload?: unknown })
+      .filter((event) => event.event === 'stop_blocked');
+    expect(recorded).toEqual([expect.objectContaining({ run_id: 'run-a', payload: { phase: 'implement', count: 1, stop_hook_active: false } })]);
+
+    await expect(new ControlClient(dir, { credential: 'session-master' }).stopCheck(false)).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    // A client without a session acts as the operator, which owns no run.
+    await expect(new ControlClient(dir).stopCheck(false)).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+
+    // The hook itself, as Claude runs it: block output on stdout, exit 0.
+    const child = exec(process.execPath, ['cli/orc.ts', 'stop-check'], {
+      cwd: repoRoot, encoding: 'utf8',
+      env: { ...process.env, ORC_STATE_DIR: dir, ORC_SESSION_SECRET: 'session-b', ORC_MASTER_SECRET: '', ORC_CONTROL_SOCKET: server.endpoint.path },
+    });
+    child.child.stdin!.end('{"stop_hook_active":true}');
+    const { stdout } = await child;
+    expect(JSON.parse(stdout)).toEqual({ decision: 'block', reason: expect.stringContaining('Run run-b (phase unknown) is not finished.') });
+  });
+
   it('keeps whole-project reads and terminals to the master and the operator', async () => {
     writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
       { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },

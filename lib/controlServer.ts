@@ -21,6 +21,7 @@ import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProj
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
 import { importTaskMarkdownSources, type TaskMarkdownSource } from './taskMarkdown.ts';
+import { applyStopCheck } from './stopCheck.ts';
 import { DEFAULT_WAKE_UP_BUDGET, isWakeUpBudget, readMemoryWakeUp, readRunReviews } from './projectReads.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -278,6 +279,17 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const reader = requirePrincipal(principal(req));
       if ((reader.kind === 'worker' || reader.kind === 'scout') && reader.runId !== runId) throw new ControlError('forbidden', `Session is not scoped to run ${runId}`, 403);
       return ok({ reviews: readRunReviews(stateDir, runId) });
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/stop-check') {
+      // A worker's Stop hook asks whether its session may end its turn; the run is the session's own.
+      const caller = requirePrincipal(principal(req));
+      if (caller.kind !== 'worker') throw new ControlError('forbidden', 'Only a worker session may check its run before stopping', 403);
+      const body = await readBody(req);
+      if (body.stop_hook_active !== undefined && typeof body.stop_hook_active !== 'boolean') {
+        throw new ControlError('bad_request', 'stop_hook_active must be a boolean', 400);
+      }
+      assertOpen();
+      return ok(applyStopCheck(stateDir, { runId: caller.runId, agentId: caller.agentId, stopHookActive: body.stop_hook_active === true }));
     }
     if (req.method === 'GET' && url.pathname === '/v1/memory/wake-up') {
       // Memories belong to the project: any authenticated session or the operator reads them.

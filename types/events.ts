@@ -345,6 +345,17 @@ export interface ActivityNoteEvent extends BaseEvent {
   payload: { label: string; source: 'todo' | 'note' | 'tool' };
 }
 
+// ── Stop-hook events ─────────────────────────────────────────────────────────
+
+/** The coordinator blocked a worker's attempt to end its turn on an unfinished run (stop-hook run guard). */
+export interface StopBlockedEvent extends BaseEvent {
+  event: 'stop_blocked';
+  run_id: string;
+  agent_id: string;
+  task_ref: string;
+  payload: { phase: string | null; count: number; stop_hook_active: boolean };
+}
+
 // ── Coordinator events ────────────────────────────────────────────────────────
 
 export interface CoordinatorStartedEvent extends BaseEvent {
@@ -401,7 +412,8 @@ export type OrcEvent =
   | ReviewSubmittedEvent
   | WorkerNeedsAttentionEvent
   | RemediationAppliedEvent
-  | ActivityNoteEvent;
+  | ActivityNoteEvent
+  | StopBlockedEvent;
 
 // ── Type guards ───────────────────────────────────────────────────────────────
 

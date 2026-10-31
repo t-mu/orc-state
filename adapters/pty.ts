@@ -31,6 +31,7 @@ import {
 import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
+import { resolveOrcBin, shellEscape } from '../lib/orcBin.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { isPidAlive, isSameProcess, processIdentity } from '../lib/processIdentity.ts';
@@ -109,6 +110,9 @@ function sanitizePtyChunk(raw: string): string {
     })
     .join('\n');
 }
+
+/** Claude's limit for the Stop hook; `orc stop-check` gives up on the coordinator well before it. */
+const STOP_HOOK_TIMEOUT_S = 15;
 
 function settingsPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.json`); }
 
@@ -375,6 +379,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
   //   Notification            → permission_prompt records (input-block detection)
   //   PostToolUse  `*`        → `tool` records with a short brief
   //   PreToolUse   to-do tools → `activity` records with the current to-do label
+  //   Stop (task workers only) → `orc stop-check` asks the coordinator (not the events file)
   // In sandbox mode, merge in a sandbox config block alongside the hooks.
   let claudeSettingsFile: string | undefined;
   if (provider === 'claude') {
@@ -384,13 +389,18 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
     try { unlinkSync(taskLabelsPath(eventsFile)); } catch { /* never created */ }
     const hook = (kind: string) => ({ type: 'command', command: claudeHookCommand(kind, eventsFile) });
     const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
-    const settings: Record<string, unknown> = {
-      hooks: {
-        Notification: [{ hooks: [hook('permission')] }],
-        PostToolUse: [{ matcher: '*', hooks: [hook('tool')] }],
-        PreToolUse: [{ matcher: CLAUDE_TODO_TOOL_MATCHER, hooks: [hook('todo')] }],
-      },
+    const hooks: Record<string, unknown> = {
+      Notification: [{ hooks: [hook('permission')] }],
+      PostToolUse: [{ matcher: '*', hooks: [hook('tool')] }],
+      PreToolUse: [{ matcher: CLAUDE_TODO_TOOL_MATCHER, hooks: [hook('todo')] }],
     };
+    // Task workers only (a scout ends after its report; the master is not launched here): a Stop
+    // hook asks the coordinator whether the run lets the session end its turn (lib/stopCheck.ts).
+    if (config.read_only !== true) {
+      const orcBin = resolveOrcBin(null, { ...process.env, ...(config.env as Record<string, string> | undefined ?? {}) });
+      hooks.Stop = [{ hooks: [{ type: 'command', command: `${shellEscape(orcBin)} stop-check`, timeout: STOP_HOOK_TIMEOUT_S }] }];
+    }
+    const settings: Record<string, unknown> = { hooks };
     if (executionMode === 'sandbox') {
       const sandboxConfig: Record<string, unknown> = {
         enabled: true,

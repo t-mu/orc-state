@@ -403,6 +403,15 @@ them uses `review-read` to collect results. Not for human use.
 | `review-submit` | `--run-id=<id>` `--agent-id=<id>` `--outcome=approved\|findings` `--reason=<text>` |
 | `review-read` | `--run-id=<id>` `[--json]` |
 
+### Stop hook
+
+`stop-check` is installed as the `Stop` hook of every Claude task worker (not
+scouts or the master). Not for human use.
+
+| Command | Description |
+|---------|-------------|
+| `stop-check` | Reads Claude's Stop hook input on stdin and asks the coordinator (`POST /v1/stop-check`) whether this session's run lets it end its turn. While the run is unfinished (no `run-work-complete`, no pending input request, not finalizing) it prints `{"decision":"block","reason":...}` and Claude continues; at most 3 blocks per run in 10 minutes, each recorded as `stop_blocked`. Always exits 0 and fails open: no session secret, unreadable input or an unreachable coordinator allows the stop. |
+
 ---
 
 ## Pull Request

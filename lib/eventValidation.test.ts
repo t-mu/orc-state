@@ -266,4 +266,18 @@ describe('validateEventObject', () => {
     expect(bad).toContain('payload.label must be a non-empty string');
     expect(bad).toContain('payload.source must be one of: todo, note, tool');
   });
+
+  it('accepts a valid stop_blocked event and validates its payload', () => {
+    const fields = { actor_type: 'coordinator', actor_id: 'coordinator', run_id: 'run-1', task_ref: 'docs/task-1', agent_id: 'worker-01' };
+    expect(validateEventObject(base('stop_blocked', { ...fields, payload: { phase: 'implement', count: 1, stop_hook_active: false } }))).toEqual([]);
+    expect(validateEventObject(base('stop_blocked', { ...fields, payload: { phase: null, count: 3, stop_hook_active: true } }))).toEqual([]);
+
+    const bad = validateEventObject(base('stop_blocked', { ...fields, payload: { phase: '', count: 0, stop_hook_active: 'yes' } }));
+    expect(bad).toContain('payload.phase must be a non-empty string or null');
+    expect(bad).toContain('payload.count must be a positive integer');
+    expect(bad).toContain('payload.stop_hook_active must be a boolean');
+
+    const unscoped = validateEventObject(base('stop_blocked', { actor_type: 'coordinator', actor_id: 'coordinator', payload: { phase: null, count: 1, stop_hook_active: false } }));
+    expect(unscoped.length).toBeGreaterThan(0);
+  });
 });

@@ -153,6 +153,11 @@ export class ControlClient {
     return this.call('GET', `/v1/runs/${encodeURIComponent(runId)}/reviews`);
   }
 
+  /** A worker's Stop hook: may this session end its turn? The coordinator resolves the session's run. */
+  stopCheck(stopHookActive: boolean): Promise<{ allow: boolean; reason?: string }> {
+    return this.call('POST', '/v1/stop-check', { stop_hook_active: stopHookActive });
+  }
+
   /** `initialized` is false when the project has no memory store yet. */
   memoryWakeUp(opts: { wing?: string | null; budget?: number } = {}): Promise<{ initialized: boolean; text: string }> {
     const query = new URLSearchParams();
