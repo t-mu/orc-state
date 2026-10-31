@@ -123,6 +123,16 @@ describe('cli/attach.ts', () => {
     expect(stderr).toContain('Attaching to bob (run-7) read-only');
   });
 
+  it.each(['done', 'failed'])('refuses a %s run instead of attaching to a reused agent name', async (state) => {
+    writeAgents([tmuxAgent]);
+    const { code, stderr, spawnSync } = await runAttach(['run-old'], {
+      claims: [{ run_id: 'run-old', agent_id: 'bob', state }],
+    });
+    expect(code).toBe(1);
+    expect(stderr).toContain(`Run run-old is not active (state: ${state})`);
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
   it('strips TMUX from the child environment so attaching works inside tmux', async () => {
     writeAgents([tmuxAgent]);
     const oldTmux = process.env.TMUX;

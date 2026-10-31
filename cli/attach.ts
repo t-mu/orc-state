@@ -27,14 +27,20 @@ if (!id) {
 
 let claims: Claim[] = [];
 try { claims = readClaims(STATE_DIR).claims; } catch { /* no run store: agent ids still resolve */ }
+// Worker names are unique only among active workers, so only an active claim names the run's current agent.
+const isActive = (claim: Claim) => claim.state === 'claimed' || claim.state === 'in_progress';
 
 // An agent id wins; otherwise the argument is a run id and resolves to the claim's agent.
 let agent = getAgent(STATE_DIR, id);
 let runId: string | null = null;
 if (agent) {
-  runId = claims.find((claim) => claim.agent_id === id && (claim.state === 'claimed' || claim.state === 'in_progress'))?.run_id ?? null;
+  runId = claims.find((claim) => claim.agent_id === id && isActive(claim))?.run_id ?? null;
 } else {
   const claim = claims.find((entry) => entry.run_id === id);
+  if (claim && !isActive(claim)) {
+    console.error(`Run ${id} is not active (state: ${claim.state}).`);
+    process.exit(1);
+  }
   if (claim) {
     runId = claim.run_id;
     agent = getAgent(STATE_DIR, claim.agent_id);
