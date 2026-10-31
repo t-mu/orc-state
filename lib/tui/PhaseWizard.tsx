@@ -1,6 +1,7 @@
 import { Text, Box } from 'ink';
 import { useEffect, useState } from 'react';
 import type { PhaseEntry } from './status.ts';
+import { formatActivityLine, isActivityStale, type CurrentActivity } from '../currentActivity.ts';
 
 const INDICATOR: Record<PhaseEntry['state'], { symbol: string; color?: string; dimColor?: boolean }> = {
   done:    { symbol: '●', color: 'green' },
@@ -51,11 +52,31 @@ function PhaseRow({ phase }: { phase: PhaseEntry }) {
   );
 }
 
-export function PhaseWizard({ phases }: { phases: PhaseEntry[] }) {
+/** Phases whose row carries the ◐ indicator: the activity line goes under it. */
+const HALF_STATES = new Set<PhaseEntry['state']>(['active', 'stale']);
+
+/** Default column budget inside a worker slot (36 wide, minus border and padding). */
+export const ACTIVITY_LINE_WIDTH = 32;
+
+function ActivityLine({ activity, width }: { activity: CurrentActivity; width: number }) {
+  const nowMs = Date.now();
+  const line = formatActivityLine(activity, width, nowMs, '  └ ');
+  return isActivityStale(activity.ts, nowMs) ? <Text dimColor>{line}</Text> : <Text>{line}</Text>;
+}
+
+export function PhaseWizard({ phases, activity = null, width = ACTIVITY_LINE_WIDTH }: {
+  phases: PhaseEntry[];
+  activity?: CurrentActivity | null;
+  width?: number;
+}) {
+  const activeName = activity ? phases.find((p) => HALF_STATES.has(p.state))?.name ?? null : null;
   return (
     <Box flexDirection="column">
       {phases.map((p) => (
-        <PhaseRow key={p.name} phase={p} />
+        <Box key={p.name} flexDirection="column">
+          <PhaseRow phase={p} />
+          {activity && p.name === activeName && <ActivityLine activity={activity} width={width} />}
+        </Box>
       ))}
     </Box>
   );

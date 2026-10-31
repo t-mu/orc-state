@@ -31,6 +31,7 @@ import {
   closeMemoryDb,
 } from './handlers.ts';
 import { cancelTask, delegateTask, resetTask, respondInput } from '../lib/operatorMutations.ts';
+import { writeRunActivity } from '../lib/runActivityStore.ts';
 
 let dir: string;
 
@@ -500,6 +501,43 @@ describe('mcp read handlers', () => {
     const workview = handleGetAgentWorkview(dir, { agent_id: 'orc-1' });
     expect(workview.active_run?.state).toBe('in_progress');
     expect(workview.recommended_action).toBe('heartbeat');
+  });
+
+  it('get_status and get_agent_workview return current_activity for the active run', () => {
+    writeRunActivity(dir, {
+      'run-1': {
+        run_id: 'run-1', agent_id: 'orc-1', label: 'Writing tests', source: 'todo', label_ts: '2026-01-01T00:00:30.000Z',
+        last_tool: 'Bash', last_tool_brief: 'npm test', last_tool_ts: '2026-01-01T00:00:40.000Z',
+      },
+    });
+    const expected = { text: 'Writing tests', source: 'todo', ts: '2026-01-01T00:00:30.000Z' };
+
+    const status = handleGetStatus(dir);
+    const task = (status.active_tasks as Array<Record<string, unknown>>).find((t) => t.ref === 'project/todo-one');
+    expect(task?.current_activity).toEqual(expected);
+    // A task without an active run carries no current_activity field.
+    const idle = (status.active_tasks as Array<Record<string, unknown>>).find((t) => t.ref !== 'project/todo-one' && t.ref !== 'project/done-one');
+    expect(idle && Object.hasOwn(idle, 'current_activity')).toBe(false);
+
+    const workview = handleGetAgentWorkview(dir, { agent_id: 'orc-1' });
+    expect(workview.active_run?.current_activity).toEqual(expected);
+  });
+
+  it('handleGetStatus stays <= 2KB with long activity text on active runs', () => {
+    const long = (runId: string, agentId: string) => ({
+      run_id: runId, agent_id: agentId, label: 'n'.repeat(1000), source: 'note' as const, label_ts: new Date().toISOString(),
+      last_tool: 'Bash', last_tool_brief: 'b'.repeat(1000), last_tool_ts: new Date().toISOString(),
+    });
+    writeRunActivity(dir, { 'run-1': long('run-1', 'orc-1'), 'run-2': long('run-2', 'orc-2') });
+    const status = handleGetStatus(dir);
+    const withActivity = (status.active_tasks as Array<Record<string, unknown>>).filter((t) => t.current_activity);
+    expect(withActivity.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(status), 'utf8')).toBeLessThanOrEqual(2048);
+  });
+
+  it('get_agent_workview returns current_activity null when the run has no snapshot', () => {
+    const workview = handleGetAgentWorkview(dir, { agent_id: 'orc-1' });
+    expect(workview.active_run?.current_activity).toBeNull();
   });
 
   it('handleGetAgentWorkview includes blockers for owned tasks that are not actionable', () => {
