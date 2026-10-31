@@ -1702,6 +1702,171 @@ describe('hook event bus', () => {
     });
   });
 
+  it('infers explore, implement, review, complete and finalize from gate commands and hook events alone', async () => {
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        ...inProgressClaim('run-phases', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000),
+        task_envelope_sent_at: ago(30),
+      }],
+    });
+    writeHookEvents('worker-01', [
+      { type: 'tool', tool: 'Read', brief: 'lib/a.ts', ts: ago(25) },
+      { type: 'tool', tool: 'Edit', brief: 'lib/a.ts', ts: ago(20) },
+      { type: 'tool', tool: 'Bash', brief: 'git commit -m "feat(a): b"', ts: ago(19) },
+      { type: 'tool', tool: 'Agent', brief: 'Check the diff', subagent_type: 'critic', ts: ago(15) },
+      { type: 'tool', tool: 'Bash', brief: 'orc review-read --run-id=run-phases', ts: ago(10) },
+      { type: 'tool', tool: 'Bash', brief: 'git rebase main', ts: ago(9) },
+    ]);
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2)];
+    try {
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      appendSequencedEvent(dir, {
+        ts: ago(5), event: 'work_complete', actor_type: 'agent', actor_id: 'worker-01',
+        run_id: 'run-phases', task_ref: 'proj/fix-bug', agent_id: 'worker-01', payload: { status: 'awaiting_finalize' },
+      } as Parameters<typeof appendSequencedEvent>[1]);
+      await tick();
+      await tick();
+    } finally {
+      process.argv = originalArgv;
+    }
+
+    const started = readEvents(dir).filter((e) => e.event === 'phase_started' && e.run_id === 'run-phases');
+    const { runPhaseHistory } = await import('./lib/runActivity.ts');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(runPhaseHistory(started as any).get('run-phases')!.map((entry) => entry.phase))
+      .toEqual(['explore', 'implement', 'review', 'complete', 'finalize']);
+    expect(started.map((e) => e.payload)).toEqual([
+      { phase: 'explore', inferred: true, evidence: 'event: task_envelope_sent' },
+      { phase: 'implement', inferred: true, evidence: 'event: run_started' },
+      { phase: 'review', inferred: true, evidence: 'tool: Agent critic' },
+      { phase: 'complete', inferred: true, evidence: 'cmd: git rebase main' },
+      { phase: 'finalize', inferred: true, evidence: 'event: work_complete' },
+    ]);
+    expect(started.every((e) => e.actor_type === 'coordinator')).toBe(true);
+  });
+
+  it('infers complete then finalize from run-work-complete for a reviewed run without a rebase (PR mode)', async () => {
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-pr', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000)],
+    });
+    for (const [event, minutes, payload] of [
+      ['review_submitted', 10, { outcome: 'approved', findings: '' }],
+      ['work_complete', 5, { status: 'awaiting_finalize' }],
+    ] as const) {
+      appendSequencedEvent(dir, {
+        ts: ago(minutes), event, actor_type: 'agent', actor_id: 'worker-01',
+        run_id: 'run-pr', task_ref: 'proj/fix-bug', agent_id: 'worker-01', payload,
+      } as Parameters<typeof appendSequencedEvent>[1]);
+    }
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn().mockResolvedValue('') }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+    await runTicks([], 1);
+
+    const started = readEvents(dir).filter((e) => e.event === 'phase_started' && e.run_id === 'run-pr');
+    expect(started.map((e) => [e.phase, (e.payload as Record<string, unknown>).evidence])).toEqual([
+      ['implement', 'event: run_started'],
+      ['review', 'event: review_submitted'],
+      ['complete', 'event: work_complete'],
+      ['finalize', 'event: work_complete'],
+    ]);
+  });
+
+  it('keeps a run in implement across a commit, and never moves an explicit review back', async () => {
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    seedState(dir, {
+      agents: [
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+      ],
+      tasks: [
+        { ...DISPATCHABLE_TASK, ref: 'proj/commit', status: 'in_progress' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/fixes', status: 'in_progress' },
+      ],
+      claims: [
+        inProgressClaim('run-commit', 'worker-01', 'proj/commit', 29 * 60 * 1000),
+        inProgressClaim('run-fixes', 'worker-02', 'proj/fixes', 29 * 60 * 1000),
+      ],
+    });
+    appendSequencedEvent(dir, {
+      ts: ago(12), event: 'phase_started', actor_type: 'agent', actor_id: 'worker-02',
+      run_id: 'run-fixes', task_ref: 'proj/fixes', agent_id: 'worker-02', phase: 'review',
+    } as Parameters<typeof appendSequencedEvent>[1]);
+    writeHookEvents('worker-01', [
+      { type: 'tool', tool: 'Edit', brief: 'lib/a.ts', ts: ago(20) },
+      { type: 'tool', tool: 'Bash', brief: 'git commit -m "feat(a): b"', ts: ago(19) },
+      { type: 'tool', tool: 'Bash', brief: 'npm test', ts: ago(18) },
+    ]);
+    // Review fixes: edits after an explicit review phase.
+    writeHookEvents('worker-02', [{ type: 'tool', tool: 'Edit', brief: 'lib/b.ts', ts: ago(5) }]);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn().mockResolvedValue('') }));
+    await runTicks([], 2);
+
+    const phasesOf = (runId: string) => readEvents(dir)
+      .filter((e) => e.event === 'phase_started' && e.run_id === runId)
+      .map((e) => e.phase);
+    expect(phasesOf('run-commit')).toEqual(['implement']);
+    expect(phasesOf('run-fixes')).toEqual(['review']);
+  });
+
+  it('nudges and escalates a hook-reporting run after the shorter hook idle thresholds', async () => {
+    seedState(dir, {
+      agents: [
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+      ],
+      tasks: [
+        { ...DISPATCHABLE_TASK, ref: 'proj/hooked', status: 'in_progress' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/plain', status: 'in_progress' },
+      ],
+      claims: [
+        inProgressClaim('run-hooked', 'worker-01', 'proj/hooked', 40 * 60 * 1000),
+        inProgressClaim('run-plain', 'worker-02', 'proj/plain', 12 * 60 * 1000),
+      ],
+    });
+    // Last tool call 12 minutes ago: past the hook nudge (5 min) and escalation (10 min) defaults.
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Bash', brief: 'npm test', ts: new Date(Date.now() - 12 * 60 * 1000).toISOString() }]);
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    await runTicks([], 1);
+
+    const events = readEvents(dir);
+    // The hook-less run, equally idle, keeps the longer worker_stale_* thresholds (30/60 min).
+    expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-hooked')).toBe(true);
+    expect(events.some((e) => e.event === 'need_input' && e.run_id === 'run-hooked')).toBe(true);
+    expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-plain')).toBe(false);
+    expect(events.some((e) => e.event === 'need_input' && e.run_id === 'run-plain')).toBe(false);
+    expect(send.mock.calls.map((call) => call[0])).toEqual(['pty:worker-01']);
+  });
+
+  it('reads the hook idle thresholds from coordinator settings', async () => {
+    useSettings({ coordinator: { hook_idle_nudge_ms: 3_600_000, hook_idle_escalate_ms: 3_600_000 } });
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-hooked', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
+    });
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Bash', brief: 'npm test', ts: new Date(Date.now() - 12 * 60 * 1000).toISOString() }]);
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    await runTicks([], 1);
+
+    const events = readEvents(dir);
+    expect(events.some((e) => e.event === 'worker_needs_attention' || e.event === 'need_input')).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('treats recent tool hook activity as progress during a finalize rebase', async () => {
     const finalizing = (runId: string, agentId: string, taskRef: string) => ({
       ...inProgressClaim(runId, agentId, taskRef, 40 * 60 * 1000),
@@ -2807,10 +2972,14 @@ describe('processTerminalRunEvents', () => {
     expect(readEventOffset(dir)).toBe(3);
     expect(readClaims(dir).find((claim) => claim.run_id === 'run-cursor-gap')?.input_state).toBe('awaiting_input');
 
+    // The first tick also inferred the run's implement phase (seq 4); the restarted
+    // coordinator consumes only that new event and replays nothing before it.
+    expect(queryEvents(dir, { after_seq: 3 }).map((event) => event.event)).toEqual(['phase_started']);
     vi.resetModules();
     coordinator = await import('./coordinator.ts');
     await coordinator.tick();
-    expect(readEventOffset(dir)).toBe(3);
+    expect(readEventOffset(dir)).toBe(4);
+    expect(queryEvents(dir, { after_seq: 4 })).toHaveLength(0);
     expect(readClaims(dir).find((claim) => claim.run_id === 'run-cursor-gap')?.input_state).toBe('awaiting_input');
   });
 

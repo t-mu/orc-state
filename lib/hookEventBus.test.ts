@@ -22,6 +22,17 @@ describe('dispatchHookEvents', () => {
     ]);
   });
 
+  it('passes a tool event\'s sub-agent type through and drops an empty one', () => {
+    const out = dispatchHookEvents([
+      { type: 'tool', tool: 'Agent', brief: 'Check diff', subagent_type: 'critic', ts: TS },
+      { type: 'tool', tool: 'Agent', brief: 'Explore', subagent_type: '', ts: TS },
+    ]);
+    expect(out.activity).toEqual([
+      { type: 'tool', tool: 'Agent', brief: 'Check diff', subagent_type: 'critic', ts: TS },
+      { type: 'tool', tool: 'Agent', brief: 'Explore', ts: TS },
+    ]);
+  });
+
   it('keeps permission events lenient, as the Notification hook has always been read', () => {
     expect(dispatchHookEvents([{ type: 'permission' }]).permission).toEqual([{ type: 'permission', message: '', ts: '' }]);
   });

@@ -469,10 +469,31 @@ before upgrading an existing project.
 
 | Event | Emitted by | When |
 |-------|-----------|------|
-| `phase_started` | Worker | Entering a new phase (explore, implement, review, complete, finalize) |
+| `phase_started` | Worker/Coordinator | Entering a new phase (explore, implement, review, complete, finalize). The coordinator emits it with `payload.inferred: true` and `payload.evidence` when it infers the phase (see below) |
 | `phase_finished` | Worker | Phase completed |
 | `finalize_rebase_started` | Worker | Finalize rebase underway |
 | `ready_to_merge` | Worker/Coordinator | Rebase done, ready for merge |
+
+**Phase inference.** Workers often skip `orc progress --event=phase_started`,
+so the coordinator also derives the phase (`lib/phaseInference.ts`) from gate
+commands and Claude tool hook events:
+
+| Phase | Inferred when (first of) |
+|-------|--------------------------|
+| `explore` | the TASK_START envelope is delivered |
+| `implement` | `run-start` is accepted, or a file edit (`Edit`/`MultiEdit`/`Write`/`NotebookEdit`) after an explicit `explore` |
+| `review` | a reviewer sub-agent is spawned (an `Agent`/`Task` call whose `subagent_type` is a reviewer such as `critic` or `integrator`, or a generic sub-agent whose description mentions `review`), or the run's first `review_submitted` |
+| `complete` | after review, a `git rebase main` (or `origin/main`) that follows an `orc review-read`, or else `run-work-complete` (PR-mode runs skip the rebase) |
+| `finalize` | `run-work-complete` is accepted (right after `complete` when that has the same evidence) |
+
+A commit is not evidence: implement commits happen too. Inference only moves a
+run forward (review fixes stay in review), and an explicit `phase_started`
+newer than the evidence wins. Each inferred event carries `inferred: true` and
+`evidence` (e.g. `tool: Agent critic`, `cmd: git rebase main`,
+`event: work_complete`), so `phase_history` and `orc watch` stay consistent.
+The `review-read` marker lives in coordinator memory; after a coordinator
+restart, `complete` is inferred again only from a new `review-read`, and
+`run-work-complete` still moves the run to `finalize`.
 
 #### Agent events
 

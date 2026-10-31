@@ -13,6 +13,8 @@ export interface ToolHookEvent {
   type: 'tool';
   tool: string;
   brief: string;
+  /** The sub-agent type of an `Agent`/`Task` call, when the harness reported one. */
+  subagent_type?: string;
   ts: string;
 }
 
@@ -63,6 +65,8 @@ export function dispatchHookEvents(records: Array<Record<string, unknown>>, agen
           type: 'tool',
           tool: record.tool,
           brief: typeof record.brief === 'string' ? record.brief : '',
+          ...(typeof record.subagent_type === 'string' && record.subagent_type.length > 0
+            ? { subagent_type: record.subagent_type } : {}),
           ts: record.ts,
         });
         break;

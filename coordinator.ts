@@ -34,7 +34,8 @@ import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type Runtime
 import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
-import { drainHookEvents, type PermissionHookEvent } from './lib/hookEventBus.ts';
+import { drainHookEvents, type PermissionHookEvent, type ToolHookEvent } from './lib/hookEventBus.ts';
+import { inferPhaseTransitions, toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './lib/phaseInference.ts';
 import {
   applyHookActivity, latestHookActivityTs, readRunActivity, shouldEmitActivityNote, writeRunActivity,
   type ActivityNoteState, type RunActivityMap,
@@ -233,6 +234,9 @@ const MEMORY_PRUNE_INTERVAL_MS = intFlag('memory-prune-interval-ms', COORD_CONFI
 const WORKER_STALE_SOFT_MS = intFlag('worker-stale-soft-ms', COORD_CONFIG.worker_stale_soft_ms);
 const WORKER_STALE_NUDGE_MS = intFlag('worker-stale-nudge-ms', COORD_CONFIG.worker_stale_nudge_ms);
 const WORKER_STALE_FORCE_FAIL_MS = intFlag('worker-stale-force-fail-ms', COORD_CONFIG.worker_stale_force_fail_ms);
+// Runs whose harness reports tool hooks: silence means a real stall, so they get shorter thresholds.
+const HOOK_IDLE_NUDGE_MS = intFlag('hook-idle-nudge-ms', COORD_CONFIG.hook_idle_nudge_ms);
+const HOOK_IDLE_ESCALATE_MS = intFlag('hook-idle-escalate-ms', COORD_CONFIG.hook_idle_escalate_ms);
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 
@@ -259,6 +263,10 @@ const runLastPhase = new Map<string, string>();
 const pendingPermissionByRun = new Map<string, PermissionHookEvent[]>();
 let runActivity: RunActivityMap | null = null;
 const activityNoteByRun = new Map<string, ActivityNoteState>();
+// Phase inference evidence (lib/phaseInference.ts), per run.
+const reviewSubmittedAtByRun = new Map<string, string>();
+const workCompleteAtByRun = new Map<string, string>();
+const toolPhaseStateByRun = new Map<string, ToolPhaseState>();
 let lastMemoryPruneAt = Date.now(); // startup prune counts as first
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -291,6 +299,14 @@ function observeRunActivity(events: OrcEvent[]): void {
     if (!existing || Date.parse(timestamp) > Date.parse(existing)) latestActivityByRun.set(runId, timestamp);
   }
   for (const event of events) {
+    if (event.event === 'review_submitted' && event.run_id) {
+      const first = reviewSubmittedAtByRun.get(event.run_id);
+      if (!first || Date.parse(event.ts) < Date.parse(first)) reviewSubmittedAtByRun.set(event.run_id, event.ts);
+    }
+    if (event.event === 'work_complete' && event.run_id) {
+      const last = workCompleteAtByRun.get(event.run_id);
+      if (!last || Date.parse(event.ts) > Date.parse(last)) workCompleteAtByRun.set(event.run_id, event.ts);
+    }
     if (event.event !== 'phase_started' || !event.run_id) continue;
     const phase = event.phase ?? (event.payload as { phase?: unknown } | undefined)?.phase;
     if (typeof phase !== 'string' || phase.length === 0) continue;
@@ -995,10 +1011,11 @@ function loadRunActivity(): RunActivityMap {
  * restart in between drops them; the check then falls back to scanning the
  * session output, as it does for providers without hooks.
  */
-function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): void {
+function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): Map<string, ToolHookEvent[]> {
   const runs = loadRunActivity();
   let changed = false;
   const activeRuns = new Set<string>();
+  const toolEventsByRun = new Map<string, ToolHookEvent[]>();
 
   for (const claim of claims ?? []) {
     if (claim.state !== 'claimed' && claim.state !== 'in_progress') continue;
@@ -1007,6 +1024,8 @@ function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): void {
     if (permission.length > 0) {
       pendingPermissionByRun.set(claim.run_id, [...(pendingPermissionByRun.get(claim.run_id) ?? []), ...permission]);
     }
+    const tools = activity.filter((event): event is ToolHookEvent => event.type === 'tool');
+    if (tools.length > 0) toolEventsByRun.set(claim.run_id, tools);
     if (activity.length > 0) {
       const previousTs = latestHookActivityTs(runs[claim.run_id]);
       const snapshot = applyHookActivity(runs[claim.run_id], claim.run_id, claim.agent_id, activity, nowMs);
@@ -1045,6 +1064,74 @@ function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): void {
       log(`warning: failed to write run activity: ${(error as Error).message}`);
     }
   }
+  return toolEventsByRun;
+}
+
+/**
+ * Infer each active run's phase from gate commands and this tick's tool hook
+ * events (lib/phaseInference.ts) and emit `phase_started {inferred: true}` for
+ * every forward transition. Explicit phase events newer than the evidence win.
+ */
+function inferRunPhases(claims: Claim[], toolEventsByRun: Map<string, ToolHookEvent[]>, nowMs: number = Date.now()): void {
+  const activeRuns = new Set<string>();
+  const clamp = (ts: string) => new Date(Math.min(Date.parse(ts), nowMs)).toISOString();
+  for (const claim of claims ?? []) {
+    if (claim.state !== 'claimed' && claim.state !== 'in_progress') continue;
+    activeRuns.add(claim.run_id);
+    const candidates: PhaseCandidate[] = [];
+    if (claim.task_envelope_sent_at) candidates.push({ phase: 'explore', ts: claim.task_envelope_sent_at, evidence: 'event: task_envelope_sent' });
+    if (claim.started_at) candidates.push({ phase: 'implement', ts: claim.started_at, evidence: 'event: run_started' });
+    const reviewAt = reviewSubmittedAtByRun.get(claim.run_id);
+    if (reviewAt) candidates.push({ phase: 'review', ts: reviewAt, evidence: 'event: review_submitted' });
+    const workCompleteAt = workCompleteAtByRun.get(claim.run_id);
+    if (workCompleteAt) {
+      // A reviewed run that never showed a detectable rebase (PR mode skips it) still passes through complete.
+      candidates.push({ phase: 'complete', ts: workCompleteAt, evidence: 'event: work_complete', requires: 'review' });
+      candidates.push({ phase: 'finalize', ts: workCompleteAt, evidence: 'event: work_complete' });
+    }
+    const tools = toolEventsByRun.get(claim.run_id) ?? [];
+    if (tools.length > 0) {
+      const result = toolPhaseCandidates(tools, toolPhaseStateByRun.get(claim.run_id) ?? { review_read_at: null });
+      toolPhaseStateByRun.set(claim.run_id, result.state);
+      candidates.push(...result.candidates);
+    }
+
+    const current = { phase: latestPhaseByRun.get(claim.run_id) ?? null, ts: latestPhaseAtByRun.get(claim.run_id) ?? null };
+    for (const transition of inferPhaseTransitions(current, candidates.map((c) => ({ ...c, ts: clamp(c.ts) })))) {
+      emit({
+        ts: transition.ts,
+        event: 'phase_started',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claim.run_id,
+        task_ref: claim.task_ref,
+        agent_id: claim.agent_id,
+        phase: transition.phase,
+        payload: { phase: transition.phase, inferred: true, evidence: transition.evidence },
+      });
+      latestPhaseByRun.set(claim.run_id, transition.phase);
+      latestPhaseAtByRun.set(claim.run_id, transition.ts);
+      log(`inferred phase ${transition.phase} for run ${claim.run_id} (${transition.evidence})`);
+    }
+  }
+  for (const map of [reviewSubmittedAtByRun, workCompleteAtByRun, toolPhaseStateByRun]) {
+    for (const runId of [...map.keys()]) {
+      if (!activeRuns.has(runId)) map.delete(runId);
+    }
+  }
+}
+
+/** Idle thresholds for a run: shorter once its harness has delivered tool hook events. */
+function staleThresholds(runId: string): { soft: number; nudge: number; finalizeRetry: number } {
+  if (runActivity?.[runId]?.last_tool_ts) {
+    // Hooks only ever shorten a threshold: an operator's lower setting still applies.
+    return {
+      soft: Math.min(HOOK_IDLE_ESCALATE_MS, WORKER_STALE_SOFT_MS),
+      nudge: Math.min(HOOK_IDLE_NUDGE_MS, WORKER_STALE_NUDGE_MS),
+      finalizeRetry: Math.min(HOOK_IDLE_NUDGE_MS, RUN_INACTIVE_NUDGE_MS),
+    };
+  }
+  return { soft: WORKER_STALE_SOFT_MS, nudge: WORKER_STALE_NUDGE_MS, finalizeRetry: RUN_INACTIVE_NUDGE_MS };
 }
 
 function maybeEmitActivityNote(claim: Claim, nowMs: number): void {
@@ -1205,7 +1292,7 @@ async function handleFinalizationRetry(
   byAgent: Map<string, Agent>,
   workerPoolConfig: WorkerPoolConfig,
 ): Promise<void> {
-  if (idleMs < RUN_INACTIVE_NUDGE_MS) return;
+  if (idleMs < staleThresholds(claim.run_id).finalizeRetry) return;
   const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
   if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) return;
 
@@ -1346,8 +1433,9 @@ async function enforceInProgressLifecycle(
       continue;
     }
 
-    // Tier 1: Soft alert at WORKER_STALE_SOFT_MS (30min default)
-    if (!claim.escalation_notified_at && idleMs >= WORKER_STALE_SOFT_MS) {
+    // Tier 1: Soft alert at WORKER_STALE_SOFT_MS (30min default; HOOK_IDLE_ESCALATE_MS, 10min, with hooks)
+    const thresholds = staleThresholds(claim.run_id);
+    if (!claim.escalation_notified_at && idleMs >= thresholds.soft) {
       emit({
         event: 'worker_needs_attention',
         actor_type: 'coordinator',
@@ -1361,8 +1449,8 @@ async function enforceInProgressLifecycle(
       log(`escalated stale worker ${claim.agent_id} for run ${claim.run_id}`);
     }
 
-    // Tier 2: Nudge at WORKER_STALE_NUDGE_MS (60min default)
-    if (idleMs < WORKER_STALE_NUDGE_MS) continue;
+    // Tier 2: Nudge at WORKER_STALE_NUDGE_MS (60min default; HOOK_IDLE_NUDGE_MS, 5min, with hooks)
+    if (idleMs < thresholds.nudge) continue;
     const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id);
     if (lastNudgeAt == null) {
       if (!agent?.session_handle || agent.status === 'offline') continue;
@@ -1451,7 +1539,15 @@ async function tick() {
     ({ agents, claims } = reloadTickState(workerPoolConfig));
   }
 
+  // Drain hook events before lifecycle events and infer phases against the
+  // claims as they were before this batch, so a run that work_complete merged
+  // this tick still gets its complete/finalize phases.
+  const toolEventsByRun = ingestHookEvents(claims);
+  const claimsBeforeEvents = claims;
   ({ agents, claims } = await processEventCheckpoint(agents, claims, workerPoolConfig));
+  // A run that failed in this batch gets no phases after its terminal event.
+  const failedRuns = new Set(claims.filter((claim) => claim.state === 'failed').map((claim) => claim.run_id));
+  inferRunPhases(claimsBeforeEvents.filter((claim) => !failedRuns.has(claim.run_id)), toolEventsByRun);
   ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
   ({ agents, claims } = await probeActiveWorkerSessions(agents, claims, workerPoolConfig));
 
@@ -1460,7 +1556,6 @@ async function tick() {
 
   const attemptsByTask = buildAttemptCountLookup();
 
-  ingestHookEvents(claims);
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
   const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun, attemptsByTask);
   ({ agents, claims } = reloadTickState(workerPoolConfig));
@@ -2226,7 +2321,7 @@ export async function main() {
     } catch { /* best-effort */ }
     doShutdown().catch(() => { /* already shutting down */ });
   });
-  log(`starting — mode=${MODE} interval=${INTERVAL_MS}ms run_start_timeout=${RUN_START_TIMEOUT_MS}ms worker_stale_soft=${WORKER_STALE_SOFT_MS}ms worker_stale_nudge=${WORKER_STALE_NUDGE_MS}ms worker_stale_force_fail=${WORKER_STALE_FORCE_FAIL_MS}ms run_inactive_nudge=${RUN_INACTIVE_NUDGE_MS}ms run_inactive_nudge_interval=${RUN_INACTIVE_NUDGE_INTERVAL_MS}ms`);
+  log(`starting — mode=${MODE} interval=${INTERVAL_MS}ms run_start_timeout=${RUN_START_TIMEOUT_MS}ms worker_stale_soft=${WORKER_STALE_SOFT_MS}ms worker_stale_nudge=${WORKER_STALE_NUDGE_MS}ms worker_stale_force_fail=${WORKER_STALE_FORCE_FAIL_MS}ms hook_idle_nudge=${HOOK_IDLE_NUDGE_MS}ms hook_idle_escalate=${HOOK_IDLE_ESCALATE_MS}ms run_inactive_nudge=${RUN_INACTIVE_NUDGE_MS}ms run_inactive_nudge_interval=${RUN_INACTIVE_NUDGE_INTERVAL_MS}ms`);
   for (const file of ['backlog.json', 'agents.json', 'claims.json', 'events.db']) {
     if (!existsSync(join(STATE_DIR, file))) {
       console.error(`[coordinator] ERROR: required state file missing: ${file}`);
