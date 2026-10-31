@@ -3537,6 +3537,24 @@ describe('global error handlers', () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
+  it('removes a dead private tmux server socket after stopping sessions (tmux-socket-leak)', async () => {
+    seedState(dir);
+    const removeDeadTmuxSocket = vi.fn(() => true);
+    vi.doMock('./adapters/tmux.ts', async (importOriginal) => ({
+      ...await importOriginal<typeof import('./adapters/tmux.ts')>(), removeDeadTmuxSocket,
+    }));
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    await coordinator.doShutdown();
+
+    // Called with no arguments: it probes this state dir's server and unlinks only a dead socket.
+    expect(removeDeadTmuxSocket).toHaveBeenCalledTimes(1);
+    expect(removeDeadTmuxSocket).toHaveBeenCalledWith();
+    vi.doUnmock('./adapters/tmux.ts');
+  });
+
   it('double doShutdown() is safe — shutdownStarted guard prevents re-entrance', async () => {
     seedState(dir);
 
