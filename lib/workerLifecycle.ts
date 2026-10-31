@@ -1,7 +1,7 @@
 import { resolveControlPrincipal } from './controlPrincipal.ts';
 import { ConflictError, NotFoundError } from './domainErrors.ts';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { appendSequencedEvent, readEventsSince, withEventDb } from './eventLog.ts';
@@ -24,7 +24,7 @@ import type { EventFinalizationStatus, OrcEvent, OrcEventInput } from '../types/
 export type LifecycleRequest =
   | { op: 'run-start' | 'run-finish' | 'run-work-complete' | 'input-timeout'; run_id: string; agent_id: string }
   | { op: 'run-fail'; run_id: string; agent_id: string; reason: string; code: string; policy: string }
-  | { op: 'progress'; run_id: string; agent_id: string; event: string; phase?: string | null; reason?: string | null; policy?: string | null }
+  | { op: 'progress'; run_id: string; agent_id: string; event: string; phase?: string | null; reason?: string | null; note?: string | null; policy?: string | null }
   | { op: 'review-submit'; run_id: string; agent_id: string; outcome: 'approved' | 'findings'; reason: string }
   | { op: 'input-request'; run_id: string; agent_id: string; question: string }
   | { op: 'input-poll'; run_id: string; agent_id: string; request_id: string; request_seq: number; heartbeat?: boolean }
@@ -76,6 +76,20 @@ function finalizationPayload(eventName: string): { status: EventFinalizationStat
   if (eventName === 'finalize_rebase_started') return { status: 'finalize_rebase_in_progress' };
   if (eventName === 'ready_to_merge') return { status: 'ready_to_merge' };
   return null;
+}
+
+/**
+ * Hand a worker note to the coordinator's single hook-event consumer, which
+ * folds it into the run activity snapshot as `source: 'note'`.
+ */
+function queueActivityNote(stateDir: string, agentId: string, note: string, ts: string): void {
+  try {
+    const dir = join(stateDir, 'pty-hook-events');
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, `${agentId}.ndjson`), `${JSON.stringify({ type: 'activity', source: 'note', label: note, ts })}\n`);
+  } catch {
+    // The note is already on the progress event; the activity line is best-effort.
+  }
 }
 
 function nextFinalizationTransition(claim: Claim | null) {
@@ -152,6 +166,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
     }
     case 'progress': {
       const { event, run_id: runId, agent_id: agentId, phase = null, reason = null } = request;
+      const note = request.note?.replace(/\s+/g, ' ').trim() || null;
       const policy = request.policy ?? 'requeue';
       const claim = loadClaim(stateDir, runId);
       const { claim: validatedClaim } = validated({ event, runId, agentId, phase, reason, policy }, claim, event === 'heartbeat');
@@ -166,7 +181,8 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       } else if (event === 'heartbeat') {
         heartbeat(stateDir, runId, agentId);
       } else {
-        const payload = finalizationPayload(event) ?? (reason ? { reason } : undefined);
+        const extra = { ...(reason ? { reason } : {}), ...(note ? { note } : {}) };
+        const payload = finalizationPayload(event) ?? (Object.keys(extra).length > 0 ? extra : undefined);
         appendSequencedEvent(stateDir, {
           ts: at, event: event as OrcEvent['event'],
           actor_type: 'agent', actor_id: agentId, run_id: runId, task_ref: validatedClaim.task_ref, agent_id: agentId,
@@ -174,6 +190,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
           ...(payload ? { payload } : {}),
         } as OrcEvent, { lockStrategy: 'none' });
       }
+      if (note) queueActivityNote(stateDir, agentId, note, at);
       return { message: `progress event accepted: ${event} run=${runId} agent=${agentId}` };
     }
     case 'review-submit': {
@@ -268,7 +285,7 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
   for (const field of required) {
     if (typeof body[field] !== 'string' || !body[field]) throw new ControlError('bad_request', `${field} is required`, 400);
   }
-  for (const field of ['phase', 'reason', 'policy', 'wing', 'hall', 'room']) optionalString(body, field);
+  for (const field of ['phase', 'reason', 'note', 'policy', 'wing', 'hall', 'room']) optionalString(body, field);
   if (op === 'input-poll' && !Number.isSafeInteger(body.request_seq)) throw new ControlError('bad_request', 'request_seq must be an integer', 400);
   if (op === 'review-submit' && !['approved', 'findings'].includes(body.outcome as string)) {
     throw new ControlError('bad_request', "outcome must be 'approved' or 'findings'", 400);
