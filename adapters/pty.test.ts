@@ -427,7 +427,7 @@ describe('buildStartArgs execution mode', () => {
 // ─── sandbox scoping (task 190) ─────────────────────────────────────────────
 
 describe('sandboxExtraWritableRoots', () => {
-  const opts = { readOnly: false, cwd: '/orch/.worktrees/run-1', stateDir: '/orch/.orc-state', gitRepoRoot: '/orch' };
+  const opts = { readOnly: false, cwd: '/data/projects/p1/worktrees/run-1', stateDir: '/data/projects/p1', gitRepoRoot: '/orch' };
 
   it('worktree cwd: grants the backing repo .git write subtrees, never the state dir', async () => {
     const { sandboxExtraWritableRoots } = await import('./pty.ts');
@@ -451,10 +451,10 @@ describe('sandboxExtraWritableRoots', () => {
 
   it('project worker (task 229): grants the control socket, never the state dir', async () => {
     const { sandboxExtraWritableRoots } = await import('./pty.ts');
-    const socket = '/orch/.orc-state/control.sock';
+    const socket = '/data/projects/p1/control.sock';
     const roots = sandboxExtraWritableRoots({ ...opts, gitRepoRoot: '/target', controlSocket: socket });
     expect(roots).toEqual([socket, '/target/.git/objects', '/target/.git/refs', '/target/.git/logs', '/target/.git/worktrees']);
-    expect(roots).not.toContain('/orch/.orc-state');
+    expect(roots).not.toContain('/data/projects/p1');
   });
 
   it('never grants the escalation-sensitive .git, .git/hooks or .git/config paths', async () => {
@@ -478,7 +478,7 @@ describe('sandboxExtraWritableRoots', () => {
 });
 
 describe('claudeSandboxFilesystem', () => {
-  const opts = { readOnly: false, cwd: '/orch/.worktrees/run-1', stateDir: '/orch/.orc-state', gitRepoRoot: '/target' };
+  const opts = { readOnly: false, cwd: '/data/projects/p1/worktrees/run-1', stateDir: '/data/projects/p1', gitRepoRoot: '/target' };
 
   it('writable: grants the cwd plus the extra roots', async () => {
     const { claudeSandboxFilesystem } = await import('./pty.ts');
@@ -500,7 +500,7 @@ describe('claudeSandboxFilesystem', () => {
 });
 
 describe('codexSandboxWritableRootArgs', () => {
-  const opts = { readOnly: false, cwd: '/orch/.worktrees/run-1', stateDir: '/orch/.orc-state', gitRepoRoot: '/target' };
+  const opts = { readOnly: false, cwd: '/data/projects/p1/worktrees/run-1', stateDir: '/data/projects/p1', gitRepoRoot: '/target' };
 
   it('writable: grants the extra roots via the writable_roots override', async () => {
     const { codexSandboxWritableRootArgs } = await import('./pty.ts');

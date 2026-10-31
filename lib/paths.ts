@@ -30,7 +30,7 @@ export const RUN_WORKTREES_FILE = resolve(STATE_DIR, 'run-worktrees.json');
 // against it; it is the current directory.
 export const TARGET_REPO_ROOT = ACTIVE_PROJECT ? ACTIVE_PROJECT.targetRepoRoot : process.cwd();
 
-export const NO_PROJECT_MESSAGE = 'No registered project here. Register a repository with orc project add <git-path>, select one with orc project select <id>, or pass --project=<id>';
+export const NO_PROJECT_MESSAGE = 'No registered project here. Register this repository with orc project add <git-path>, or pass --project=<id> (outside every Git repository, orc project select <id> chooses one)';
 
 /** Only a registered project runs. */
 export function assertProjectMode(): void {

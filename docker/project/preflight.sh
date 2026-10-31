@@ -10,8 +10,8 @@ if [[ ! -d "$project_dir" ]] || ! git -C "$project_dir" rev-parse --show-topleve
   echo "Project mount is missing or is not a Git checkout: $project_dir" >&2
   exit 1
 fi
-if [[ ! -w "$project_dir" || ! -w "$HOME" || ! -w "$ORC_STATE_DIR" ]]; then
-  echo 'Project, project home and state volume must be writable by the container UID/GID.' >&2
+if [[ ! -w "$project_dir" || ! -w "$HOME" || ! -w "$ORC_DATA_HOME" ]]; then
+  echo 'Project, project home and data home (state volume) must be writable by the container UID/GID.' >&2
   exit 1
 fi
 git_dir="$(git -C "$project_dir" rev-parse --path-format=absolute --git-common-dir)"

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -26,16 +26,15 @@ describe.runIf(enabled)('project container Docker smoke', () => {
       '-f', composeFile, '-f', override, ...args]);
     try {
       run('git', ['init', project]);
-      mkdirSync(join(project, '.orc-state'));
       writeFileSync(override, 'services:\n  project:\n    entrypoint: ["sleep", "600"]\n');
       compose('build');
       compose('up', '-d', '--no-build');
-      const write = `test "$(id -u)" = '${env.ORC_UID}' && test -w /workspace/project && test ! -e /var/run/docker.sock && test ! -e /root/.ssh && printf login > /home/node/login-marker && sqlite3 /workspace/project/.orc-state/persist.db 'CREATE TABLE smoke (value INTEGER); INSERT INTO smoke VALUES (42);' && printf worktree > /workspace/project/worktree-marker`;
+      const write = `test "$(id -u)" = '${env.ORC_UID}' && test -w /workspace/project && test ! -e /var/run/docker.sock && test ! -e /root/.ssh && printf login > /home/node/login-marker && sqlite3 /var/lib/orc-state/persist.db 'CREATE TABLE smoke (value INTEGER); INSERT INTO smoke VALUES (42);' && printf worktree > /workspace/project/worktree-marker`;
       compose('exec', '-T', 'project', 'bash', '-lc', write);
       compose('down');
       compose('up', '-d', '--no-build');
       compose('exec', '-T', 'project', 'bash', '-lc',
-        'test "$(cat /home/node/login-marker)" = login && test "$(sqlite3 /workspace/project/.orc-state/persist.db "SELECT value FROM smoke;")" = 42 && test "$(cat /workspace/project/worktree-marker)" = worktree');
+        'test "$(cat /home/node/login-marker)" = login && test "$(sqlite3 /var/lib/orc-state/persist.db "SELECT value FROM smoke;")" = 42 && test "$(cat /workspace/project/worktree-marker)" = worktree');
 
       const containerId = compose('ps', '-q', 'project');
       const inspect = JSON.parse(run('docker', ['inspect', containerId]))[0] as {
@@ -46,7 +45,7 @@ describe.runIf(enabled)('project container Docker smoke', () => {
       expect(inspect.HostConfig.Privileged).toBe(false);
       expect(Object.values(inspect.NetworkSettings.Ports ?? {}).every((port) => port == null)).toBe(true);
       expect(inspect.Mounts.map((mount) => mount.Destination).sort()).toEqual([
-        '/home/node', '/workspace/project', '/workspace/project/.orc-state',
+        '/home/node', '/var/lib/orc-state', '/workspace/project',
       ]);
       expect(JSON.stringify(inspect.Mounts)).not.toContain('docker.sock');
       const workers = compose('exec', '-T', 'project', 'node', '/opt/orc-state/docker/project/smoke-workers.ts');

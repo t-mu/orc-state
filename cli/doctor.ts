@@ -130,6 +130,7 @@ console.log('Orchestrator Doctor');
 console.log('-------------------');
 console.log(formatProjectIdentity(projectHealth?.project ?? null));
 for (const error of projectHealth?.errors ?? []) console.log(`  error: ${error}`);
+for (const warning of projectHealth?.warnings ?? []) console.log(`  warning: ${warning}`);
 console.log(`registered_workers: ${summary.registered_workers}`);
 console.log(`active_claims: ${summary.active_claims}`);
 console.log(`git_repo: ${String(gitRepo)}`);

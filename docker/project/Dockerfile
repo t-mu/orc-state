@@ -5,7 +5,7 @@ ARG ORC_GID=1000
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/node
 ENV ORC_PROJECT_DIR=/workspace/project
-ENV ORC_STATE_DIR=/workspace/project/.orc-state
+ENV ORC_DATA_HOME=/var/lib/orc-state
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git gh jq openssh-client procps python3 ripgrep sqlite3 tmux \
@@ -26,8 +26,8 @@ RUN npm ci && npm run build && npm prune --omit=dev \
   && install -m 0755 docker/project/entrypoint.sh /usr/local/bin/orc-project-entrypoint \
   && install -m 0755 docker/project/preflight.sh /usr/local/bin/orc-project-preflight
 
-RUN mkdir -p /workspace/project/.orc-state /home/node \
-  && chown -R node:node /workspace /home/node /opt/orc-state
+RUN mkdir -p /workspace/project /var/lib/orc-state /home/node \
+  && chown -R node:node /workspace /var/lib/orc-state /home/node /opt/orc-state
 
 USER node
 WORKDIR /workspace/project

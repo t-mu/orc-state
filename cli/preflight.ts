@@ -55,6 +55,7 @@ const result = {
       : []),
     ...(noProject ? [`project error (fails preflight): ${NO_PROJECT_MESSAGE}`] : []),
     ...(projectHealth?.errors ?? []).map((e) => `project error (fails preflight): ${e}`),
+    ...(projectHealth?.warnings ?? []).map((w) => `project warning: ${w}`),
   ],
   details: {
     state_errors: stateErrors,

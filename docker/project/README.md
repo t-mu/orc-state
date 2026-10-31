@@ -46,8 +46,10 @@ Useful commands:
 
 `down` leaves the project, login and state volumes intact. Recreate with `up`.
 Do not use `docker compose down --volumes` unless you intend to remove login
-and SQLite state. Git worktrees remain under the project bind mount; SQLite and
-control credentials remain in the nested `project-state` volume.
+and SQLite state. The `project-state` volume is the orc data home
+(`ORC_DATA_HOME=/var/lib/orc-state`): it holds the project registry and the
+project's state directory, including run worktrees, SQLite state and control
+credentials. Only Git's worktree metadata lands in the checkout's `.git`.
 
 ## Access and risk
 

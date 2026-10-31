@@ -9,11 +9,19 @@
  */
 import { accessSync, constants, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { isAbsolute, relative } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
+
+// Unambiguous orchestration-framework artifacts. If any of these appear inside
+// the target repo's working tree, framework files are leaking into the product
+// repo (or an older orc's state was left behind). Kept to orc-specific names
+// (not generic `backlog`/`plans`, which a product repo might legitimately own)
+// to avoid false positives.
+const ORC_ARTIFACTS = ['.orc-state', '.worktrees'];
 
 export interface ProjectLayoutCheck {
   ok: boolean;
   errors: string[];
+  warnings: string[];
 }
 
 function within(root: string, path: string): boolean {
@@ -33,6 +41,7 @@ export function checkProjectLayout({
   worktreesDir?: string | undefined;
 }): ProjectLayoutCheck {
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   // 1. The target is an existing Git repository whose metadata runs can write (worktrees, branches, merges).
   if (!existsSync(targetRepoRoot)) {
@@ -58,7 +67,16 @@ export function checkProjectLayout({
     errors.push(`run worktrees directory is inside the target working tree: ${worktreesDir}`);
   }
 
-  return { ok: errors.length === 0, errors };
+  // 4. Warn (non-fatal) if framework artifacts sit in the target repo.
+  if (existsSync(targetRepoRoot)) {
+    for (const artifact of ORC_ARTIFACTS) {
+      if (existsSync(join(targetRepoRoot, artifact))) {
+        warnings.push(`orc framework artifact present in the target repo working tree: ${artifact} (orc no longer reads it; remove it)`);
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
 }
 
 function gitCommonDir(dir: string): string | null {

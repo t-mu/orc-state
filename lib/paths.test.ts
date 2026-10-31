@@ -28,7 +28,7 @@ describe('paths', () => {
 
   it('refuses to run without a registered project', async () => {
     const { assertProjectMode } = await import('./paths.ts');
-    expect(() => assertProjectMode()).toThrow(/No registered project here.*orc project add.*orc project select.*--project/);
+    expect(() => assertProjectMode()).toThrow(/No registered project here.*orc project add.*--project.*orc project select/);
   });
 
   it('honors an explicit ORC_STATE_DIR and keeps run worktrees inside it', async () => {
