@@ -465,7 +465,8 @@ The project state directory (`<data-home>/projects/<project_id>/`, see **Global 
   events.db             # SQLite event store
   memory.db             # SQLite memory store
   run-worktrees.json    # Mapping of run IDs to worktree paths
-  pty-hook-events/      # Per-agent NDJSON hook event files
+  pty-hook-events/      # Per-agent NDJSON hook event files (drained by the coordinator)
+  run-activity.json     # Coordinator-owned per-run activity snapshot from hook events
   worktrees/            # Run worktrees (<run_id>)
 ```
 

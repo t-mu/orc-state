@@ -16,7 +16,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { STATE_DIR, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
+import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
@@ -249,11 +249,11 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
       return inspect(parseHandle(sessionHandle));
     },
 
-    detectInputBlock(sessionHandle: string) {
+    detectInputBlock(sessionHandle: string, hookEvents: Array<{ message?: string }> = []) {
       try {
         const agentId = parseHandle(sessionHandle);
-        const events = consumeHookEvents(agentId);
-        if (events.length > 0) return events[0].message || 'permission prompt detected';
+        // Permission hook events come from the coordinator tick, the hook file's only reader.
+        if (hookEvents.length > 0) return hookEvents[0].message || 'permission prompt detected';
         return detectBlockingPromptFromText(capture(agentId) ?? stripAnsi(readLogTail(agentId)));
       } catch {
         return null;

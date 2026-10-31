@@ -33,8 +33,13 @@ import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type Runtime
 import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
+import { drainHookEvents, type PermissionHookEvent } from './lib/hookEventBus.ts';
+import {
+  applyHookActivity, latestHookActivityTs, readRunActivity, shouldEmitActivityNote, writeRunActivity,
+  type ActivityNoteState, type RunActivityMap,
+} from './lib/runActivityStore.ts';
 import { renderTemplate } from './lib/templateRender.ts';
-import { ACTIVE_PROJECT, assertProjectMode, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, TARGET_REPO_ROOT, consumeHookEvents } from './lib/paths.ts';
+import { ACTIVE_PROJECT, assertProjectMode, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, TARGET_REPO_ROOT } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
 import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
@@ -247,6 +252,12 @@ const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
 const runNudgeCount = new Map<string, number>();
 const runLastPhase = new Map<string, string>();
+// Hook-event bus state (lib/hookEventBus.ts). Permission events wait here until
+// the lifecycle check that consumes them; run activity is projected to
+// run-activity.json for other processes.
+const pendingPermissionByRun = new Map<string, PermissionHookEvent[]>();
+let runActivity: RunActivityMap | null = null;
+const activityNoteByRun = new Map<string, ActivityNoteState>();
 let lastMemoryPruneAt = Date.now(); // startup prune counts as first
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -477,8 +488,12 @@ function claimAwaitingInput(claim: Claim) {
   return claim?.input_state === 'awaiting_input';
 }
 
-function detectBlockingPromptQuestion(adapter: ReturnType<typeof createAdapter>, sessionHandle: string) {
-  const prompt = adapterDetectInputBlock(adapter, sessionHandle);
+function detectBlockingPromptQuestion(
+  adapter: ReturnType<typeof createAdapter>,
+  sessionHandle: string,
+  hookEvents: PermissionHookEvent[] = [],
+) {
+  const prompt = adapterDetectInputBlock(adapter, sessionHandle, hookEvents);
   if (typeof prompt !== 'string') return null;
   const trimmed = prompt.trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -934,6 +949,104 @@ async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date
   return removed;
 }
 
+// ── Hook-event bus ─────────────────────────────────────────────────────────
+
+function takePendingPermission(runId: string): PermissionHookEvent[] {
+  const events = pendingPermissionByRun.get(runId) ?? [];
+  pendingPermissionByRun.delete(runId);
+  return events;
+}
+
+function latestTimestamp(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+function hookActivityTs(runId: string): string | null {
+  return latestHookActivityTs(runActivity?.[runId]);
+}
+
+function loadRunActivity(): RunActivityMap {
+  if (runActivity === null) runActivity = readRunActivity(STATE_DIR);
+  return runActivity;
+}
+
+/**
+ * The single consumer of `pty-hook-events/*.ndjson`. Drains each active run's
+ * hook file once per tick and dispatches by type: permission events wait for
+ * the run's input-block check; tool/activity events update the run's activity
+ * snapshot, renew its lease like a phase event, and may emit `activity_note`.
+ * Runs that are no longer active lose their snapshot.
+ */
+function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): void {
+  const runs = loadRunActivity();
+  let changed = false;
+  const activeRuns = new Set<string>();
+
+  for (const claim of claims ?? []) {
+    if (claim.state !== 'claimed' && claim.state !== 'in_progress') continue;
+    activeRuns.add(claim.run_id);
+    const { permission, activity } = drainHookEvents(claim.agent_id);
+    if (permission.length > 0) {
+      pendingPermissionByRun.set(claim.run_id, [...(pendingPermissionByRun.get(claim.run_id) ?? []), ...permission]);
+    }
+    if (activity.length > 0) {
+      const previousTs = latestHookActivityTs(runs[claim.run_id]);
+      const snapshot = applyHookActivity(runs[claim.run_id], claim.run_id, claim.agent_id, activity, nowMs);
+      runs[claim.run_id] = snapshot;
+      changed = true;
+      const ts = latestHookActivityTs(snapshot);
+      if (claim.state === 'in_progress' && ts && ts !== previousTs
+        && (!claim.last_heartbeat_at || Date.parse(claim.last_heartbeat_at) < Date.parse(ts))) {
+        try {
+          heartbeat(STATE_DIR, claim.run_id, claim.agent_id, { emitEvent: false, at: ts });
+          recordAgentActivity(STATE_DIR, claim.agent_id, { at: ts });
+        } catch {
+          // Ignore races with terminal events or expired leases.
+        }
+      }
+    }
+    maybeEmitActivityNote(claim, nowMs);
+  }
+
+  for (const runId of Object.keys(runs)) {
+    if (activeRuns.has(runId)) continue;
+    delete runs[runId];
+    changed = true;
+  }
+  for (const runId of [...pendingPermissionByRun.keys()]) {
+    if (!activeRuns.has(runId)) pendingPermissionByRun.delete(runId);
+  }
+  for (const runId of [...activityNoteByRun.keys()]) {
+    if (!activeRuns.has(runId)) activityNoteByRun.delete(runId);
+  }
+
+  if (changed) {
+    try {
+      writeRunActivity(STATE_DIR, runs);
+    } catch (error) {
+      log(`warning: failed to write run activity: ${(error as Error).message}`);
+    }
+  }
+}
+
+function maybeEmitActivityNote(claim: Claim, nowMs: number): void {
+  const snapshot = runActivity?.[claim.run_id];
+  if (!snapshot?.label || !snapshot.source) return;
+  if (!shouldEmitActivityNote(activityNoteByRun.get(claim.run_id), snapshot.label, nowMs)) return;
+  emit({
+    event: 'activity_note',
+    actor_type: 'coordinator',
+    actor_id: 'coordinator',
+    run_id: claim.run_id,
+    task_ref: claim.task_ref,
+    agent_id: claim.agent_id,
+    payload: { label: snapshot.label, source: snapshot.source },
+  });
+  activityNoteByRun.set(claim.run_id, { label: snapshot.label, emitted_at_ms: nowMs });
+}
+
 async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
   const nowMs = Date.now();
   const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
@@ -978,7 +1091,7 @@ async function enforceRunStartLifecycle(agents: Agent[], claims: Claim[]) {
     const agent = byAgent.get(claim.agent_id);
     if (!agent?.session_handle || agent.status === 'offline') continue;
     const adapter = getAdapter(agent.provider);
-    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
+    const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle, takePendingPermission(claim.run_id));
     if (blockingQuestion) {
       recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
       runStartNudgeAtMs.delete(claim.run_id);
@@ -1075,6 +1188,7 @@ async function handleFinalizationRetry(
   nowMs: number,
   byAgent: Map<string, Agent>,
   workerPoolConfig: WorkerPoolConfig,
+  hookEvents: PermissionHookEvent[] = [],
 ): Promise<void> {
   if (idleMs < RUN_INACTIVE_NUDGE_MS) return;
   const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
@@ -1087,7 +1201,7 @@ async function handleFinalizationRetry(
     return;
   }
   const adapter = getAdapter(agent.provider);
-  const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
+  const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle, hookEvents);
   if (blockingQuestion) {
     recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
     runInactiveNudgeAtMs.delete(claim.run_id);
@@ -1118,11 +1232,12 @@ async function enforceInProgressLifecycle(
       continue;
     }
 
-    // Consume hook events for all in_progress claims to prevent disk
-    // accumulation, regardless of finalization or awaiting-input state.
-    const hookEvents = consumeHookEvents(claim.agent_id);
+    // Permission hook events drained this tick (ingestHookEvents) are taken for
+    // every in_progress claim, regardless of finalization or awaiting-input state.
+    const hookEvents = takePendingPermission(claim.run_id);
 
-    const idleMs = runIdleMs(claim, activityByRun.get(claim.run_id), nowMs);
+    // Liveness: the newest of durable activity events and hook-observed activity.
+    const idleMs = runIdleMs(claim, latestTimestamp(activityByRun.get(claim.run_id), hookActivityTs(claim.run_id)), nowMs);
     if (idleMs == null) continue;
     if (claimAwaitingInput(claim)) {
       runInactiveNudgeAtMs.delete(claim.run_id);
@@ -1146,7 +1261,7 @@ async function enforceInProgressLifecycle(
       continue;
     }
     if (claim.finalization_state === 'finalize_rebase_requested' || claim.finalization_state === 'finalize_rebase_in_progress') {
-      await handleFinalizationRetry(claim, idleMs, nowMs, byAgent, workerPoolConfig);
+      await handleFinalizationRetry(claim, idleMs, nowMs, byAgent, workerPoolConfig, hookEvents);
       continue;
     }
 
@@ -1328,6 +1443,7 @@ async function tick() {
 
   const attemptsByTask = buildAttemptCountLookup();
 
+  ingestHookEvents(claims);
   const nudgedByRunStart = await enforceRunStartLifecycle(agents, claims);
   const nudgedByInProgress = await enforceInProgressLifecycle(agents, claims, latestActivityByRun, latestPhaseByRun, attemptsByTask);
   ({ agents, claims } = reloadTickState(workerPoolConfig));

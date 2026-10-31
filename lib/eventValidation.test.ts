@@ -243,4 +243,27 @@ describe('validateEventObject', () => {
     }));
     expect(bad).toContain('payload.response must be a non-empty string');
   });
+
+  it('accepts a valid activity_note event and validates its payload', () => {
+    const ok = validateEventObject(base('activity_note', {
+      actor_type: 'coordinator',
+      actor_id: 'coordinator',
+      run_id: 'run-1',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+      payload: { label: 'Write tests', source: 'todo' },
+    }));
+    expect(ok).toEqual([]);
+
+    const bad = validateEventObject(base('activity_note', {
+      actor_type: 'coordinator',
+      actor_id: 'coordinator',
+      run_id: 'run-1',
+      task_ref: 'docs/task-1',
+      agent_id: 'worker-01',
+      payload: { label: '', source: 'other' },
+    }));
+    expect(bad).toContain('payload.label must be a non-empty string');
+    expect(bad).toContain('payload.source must be one of: todo, note, tool');
+  });
 });

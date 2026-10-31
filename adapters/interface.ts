@@ -104,10 +104,12 @@ export function adapterGetOutputTail(adapter: unknown, sessionHandle: string) {
 /**
  * Optional capability helper for adapters that can inspect recent session
  * output and surface a provider-level blocking prompt to the coordinator.
+ * `hookEvents` are the permission hook events the coordinator tick drained
+ * for this session; adapters never read the hook-events file themselves.
  */
-export function adapterDetectInputBlock(adapter: unknown, sessionHandle: string) {
+export function adapterDetectInputBlock(adapter: unknown, sessionHandle: string, hookEvents: Array<{ message?: string }> = []) {
   if (typeof (adapter as Record<string, (...args: unknown[]) => unknown>)?.detectInputBlock !== 'function') return null;
-  return (adapter as Record<string, (...args: unknown[]) => unknown>).detectInputBlock(sessionHandle);
+  return (adapter as Record<string, (...args: unknown[]) => unknown>).detectInputBlock(sessionHandle, hookEvents);
 }
 
 /**

@@ -30,6 +30,8 @@ Auxiliary runtime files (not orchestrator state):
 |------|---------|
 | `pty-pids/<agent_id>.pid` | Cross-process heartbeat probing for PTY sessions |
 | `pty-logs/<agent_id>.log` | Raw PTY/tmux pane output capture (output tails) |
+| `pty-hook-events/<agent_id>.ndjson` | Provider hook events (`permission`, `tool`, `activity`); drained only by the coordinator tick (`lib/hookEventBus.ts`) |
+| `run-activity.json` | Coordinator-owned per-run activity snapshot (label, source, last tool) built from hook events; entries are removed when a run ends. Read it with `readRunActivity(stateDir)` (`lib/runActivityStore.ts`) |
 | `control.json` | Control API endpoint descriptor (protocol version, transport, socket path, daemon PID) |
 | `control.token` | Control API bearer token, mode `0600`, rotated on each daemon start |
 | `control.sock` | Control API Unix socket, mode `0600` (under the OS temp dir when the state path is too long) |
@@ -503,6 +505,7 @@ before upgrading an existing project.
 | `coordinator_stopped` | Coordinator | Coordinator process stopped |
 | `worker_needs_attention` | Coordinator | Escalation: worker stalled or errored |
 | `remediation_applied` | Coordinator | Automatic remediation action taken |
+| `activity_note` | Coordinator | A run's hook-derived activity label changed (`payload.label`, `payload.source`: `todo`/`note`/`tool`); at most once per 30 s per run |
 
 ### Notification events
 

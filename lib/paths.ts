@@ -88,15 +88,19 @@ export function hookEventPath(agentId: string): string {
 }
 
 /**
- * Atomically consume hook events for an agent.
+ * Atomically consume the raw hook-event records for an agent.
  *
  * Protocol: rename → read → delete. The rename is atomic on POSIX and moves
  * the file out of the hook writer's append path, so no events are lost even
  * if the hook fires while the coordinator is reading.
  *
- * Returns parsed event objects, or an empty array if no file exists.
+ * The read is destructive, so this has exactly one caller:
+ * `drainHookEvents` (lib/hookEventBus.ts), driven by the coordinator tick.
+ * It returns every line that parses to a JSON object, in file order;
+ * malformed lines are skipped with a debug log. Typing and dispatch by
+ * `type` happen in the bus.
  */
-export function consumeHookEvents(agentId: string): Array<{ type: string; message: string; ts: string }> {
+export function consumeHookEvents(agentId: string): Array<Record<string, unknown>> {
   const src = hookEventPath(agentId);
   if (!existsSync(src)) return [];
   const processing = `${src}.processing`;
@@ -119,16 +123,20 @@ export function consumeHookEvents(agentId: string): Array<{ type: string; messag
     /* read failed — file was removed externally */
   }
   try { unlinkSync(processing); } catch { /* already gone */ }
-  const events: Array<{ type: string; message: string; ts: string }> = [];
+  const records: Array<Record<string, unknown>> = [];
   for (const line of lines) {
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(line) as { type?: string; message?: string; ts?: string };
-      events.push({
-        type: typeof parsed.type === 'string' ? parsed.type : 'unknown',
-        message: typeof parsed.message === 'string' ? parsed.message : '',
-        ts: typeof parsed.ts === 'string' ? parsed.ts : '',
-      });
-    } catch { /* skip malformed line */ }
+      parsed = JSON.parse(line);
+    } catch {
+      logger.debug(`[paths] skipping malformed hook event line for ${agentId}: ${line.slice(0, 200)}`);
+      continue;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      logger.debug(`[paths] skipping non-object hook event line for ${agentId}: ${line.slice(0, 200)}`);
+      continue;
+    }
+    records.push(parsed as Record<string, unknown>);
   }
-  return events;
+  return records;
 }
