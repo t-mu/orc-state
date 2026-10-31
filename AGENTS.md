@@ -241,7 +241,7 @@ orc task-cancel <task-ref>                        # cancel a task that is not ye
 orc delegate                                      # assign/dispatch a task to an agent
 
 # Worker management — recovery/debug only
-orc attach <id>                                   # print tail of worker PTY output log (read-only)
+orc attach <agent_id|run_id> [--write]            # open a tmux worker's real session: observe (read-only) by default, --write to control
 orc terminal <provider|shell> <run_id> [--write]   # observe a run's tmux provider terminal or open a worktree shell
 orc worker-remove <id>                            # stop a worker's session and remove it (refused while it holds a claim)
 orc worker-gc                                     # remove offline and dead workers that hold no claim when no coordinator runs (not master/scouts)

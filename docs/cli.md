@@ -152,7 +152,7 @@ commands are for when you need to intervene manually.
 
 | Command | Description |
 |---------|-------------|
-| `attach <id>` | Print the tail of a worker's PTY output log (read-only). |
+| `attach <agent_id\|run_id>` | Open the worker's real tmux session. Read-only by default (observe): keystrokes do not reach the worker, scrolling works, and Ctrl-b d detaches. `--write` attaches with input enabled (control). Needs a TTY; works from inside another tmux session. |
 | `worker-remove <id>` | Stop a worker's session and remove it. Refused while the worker holds an active claim, and for the master or a scout. |
 | `worker-gc` | Remove offline and dead workers unless they hold an active claim. A running coordinator already removes these, and workers whose session exited, itself; use this when no coordinator runs. The master and scouts are left alone. |
 | `worker-status [agent_id]` | Show worker state, active task, and session info. |
@@ -166,13 +166,20 @@ the current output and exits. The shell survives detach and daemon restart;
 its output is retained in `terminal-logs/` in the project state directory.
 Terminals require the local control daemon and tmux, and are for the master
 and the operator: run them from the master's shell or an operator shell, never
-from inside a worker session. A legacy `pty:` provider
-has only its log tail through `orc attach`.
+from inside a worker session.
+
+`orc attach` is the direct alternative for tmux workers: it runs a real
+`tmux -L <socket> attach-session` against orc's private tmux server, without
+the control daemon. It refuses `pty:` and `app:` sessions, which have no tmux
+terminal, and points at `orc terminal provider <run_id> [--write]` instead.
+Without a TTY it exits 1; use `orc terminal provider <run_id> --once` for a
+snapshot.
 
 **Flags:**
 
 | Command | Flags |
 |---------|-------|
+| `attach` | `<agent_id\|run_id>` `[--write]` |
 | `worker-remove` | `<id>` `[--keep-session]` |
 | `worker-status` | `[<agent_id>]` `[--json]` |
 

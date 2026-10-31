@@ -65,7 +65,7 @@ These commands are recovery/debug only. Do not choose them when the blessed work
 
 | Command | Usage | Notes |
 |---------|-------|-------|
-| `attach` | `orc attach <id>` | Print tail of a worker's PTY output log. Read-only. |
+| `attach` | `orc attach <agent_id\|run_id> [--write]` | Open a tmux worker's real session in a TTY. Read-only (observe) by default; `--write` enables input (control). Ctrl-b d detaches. `pty:`/`app:` sessions: use `orc terminal provider <run_id>`. |
 | `worker-remove` | `orc worker-remove <id> [--keep-session]` | Stop a worker's session and remove it. Refused while it holds an active claim, and for the master or a scout. |
 | `worker-gc` | `orc worker-gc` | Remove offline and dead workers that hold no active claim when no coordinator runs (the coordinator does this itself; never the master or scouts). |
 

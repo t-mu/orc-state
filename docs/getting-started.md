@@ -150,7 +150,8 @@ Tail the event stream:
 orc events-tail
 ```
 
-View a specific worker's output:
+Watch a specific worker's live tmux terminal (read-only; Ctrl-b d detaches,
+`--write` enables input):
 
 ```bash
 orc attach <agent-id>
