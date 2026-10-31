@@ -16,7 +16,7 @@ export interface ToolHookEvent {
   ts: string;
 }
 
-/** A higher-level activity label (current todo item or a free-form note). */
+/** A higher-level activity label (current todo item or a free-form note). An empty `todo` label clears it. */
 export interface ActivityHookEvent {
   type: 'activity';
   label: string;
@@ -67,7 +67,8 @@ export function dispatchHookEvents(records: Array<Record<string, unknown>>, agen
         });
         break;
       case 'activity':
-        if (typeof record.label !== 'string' || record.label.trim().length === 0 || !validTs(record.ts)) {
+        // An empty `todo` label is a clear (the to-do item finished); an empty note is malformed.
+        if (typeof record.label !== 'string' || (record.label.trim().length === 0 && record.source !== 'todo') || !validTs(record.ts)) {
           logger.debug(`[hook-events] skipping malformed activity event for ${agentId}: ${JSON.stringify(record).slice(0, 200)}`);
           break;
         }

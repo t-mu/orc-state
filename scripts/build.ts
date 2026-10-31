@@ -20,6 +20,7 @@ const allFiles = globSync([
   'lib/**/*.tsx',
   'mcp/**/*.ts',
   'adapters/**/*.ts',
+  'hooks/**/*.ts',
   'types/**/*.ts',
 ]);
 

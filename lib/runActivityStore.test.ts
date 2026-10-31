@@ -33,6 +33,23 @@ describe('applyHookActivity', () => {
     expect(latestHookActivityTs(snap)).toBe(at(1000));
   });
 
+  it('an empty todo label clears back to the last tool call, or to no label', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'activity', label: 'Write tests', source: 'todo', ts: at(0) },
+      { type: 'tool', tool: 'Edit', brief: 'a.ts', ts: at(1000) },
+      { type: 'activity', label: '', source: 'todo', ts: at(2000) },
+    ], T0 + 5000);
+    expect(snap).toMatchObject({ label: 'Edit: a.ts', source: 'tool', label_ts: at(1000) });
+    const next = applyHookActivity(snap, 'run-1', 'w1', [{ type: 'tool', tool: 'Bash', brief: 'ls', ts: at(3000) }], T0 + 5000);
+    expect(next).toMatchObject({ label: 'Bash: ls', source: 'tool' });
+
+    const bare = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'activity', label: 'Plan', source: 'todo', ts: at(0) },
+      { type: 'activity', label: '', source: 'todo', ts: at(1000) },
+    ], T0 + 5000);
+    expect(bare).toMatchObject({ label: null, source: null, label_ts: null });
+  });
+
   it('ignores out-of-order older events and clamps future timestamps to now', () => {
     const first = applyHookActivity(undefined, 'run-1', 'w1', [
       { type: 'activity', label: 'Newer', source: 'note', ts: at(2000) },

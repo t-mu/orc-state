@@ -65,7 +65,8 @@ function isNewer(ts: string, current: string | null): boolean {
 /**
  * Fold hook events into a run's snapshot (pure). Timestamps in the future are
  * clamped to `nowMs`. A todo or note label is the run's label; a tool call
- * labels the run only while it has no todo/note label.
+ * labels the run only while it has no todo/note label. An empty todo label
+ * clears the label back to the last tool call.
  */
 export function applyHookActivity(
   previous: RunActivitySnapshot | undefined,
@@ -94,6 +95,14 @@ export function applyHookActivity(
       }
     } else {
       if (next.source !== 'tool' && !isNewer(ts, next.label_ts)) continue;
+      if (event.label === '') {
+        // A cleared to-do label: fall back to the last tool call, as if no label had been set.
+        if (next.source === 'tool') continue;
+        next.label = next.last_tool == null ? null : toolLabel(next.last_tool, next.last_tool_brief ?? '');
+        next.source = next.last_tool == null ? null : 'tool';
+        next.label_ts = next.last_tool == null ? null : next.last_tool_ts;
+        continue;
+      }
       next.label = event.label;
       next.source = event.source;
       next.label_ts = ts;

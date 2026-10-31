@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -79,9 +80,33 @@ describe('pty adapter start()', () => {
     const settingsFile = join(dir, 'pty-settings', 'bob.json');
     expect(existsSync(settingsFile)).toBe(true);
     const settings = JSON.parse(readFileSync(settingsFile, 'utf8'));
-    expect(settings).toMatchObject({
-      hooks: { Notification: [{ hooks: [{ type: 'command', command: expect.stringContaining('permission_prompt') }] }] },
+    const events = join(dir, 'pty-hook-events', 'bob.ndjson');
+    const cmd = (kind: string) => ({ type: 'command', command: expect.stringMatching(new RegExp(`orc-hook\\.ts" ${kind} ".*bob\\.ndjson"$`)) });
+    expect(settings.hooks).toEqual({
+      Notification: [{ hooks: [cmd('permission')] }],
+      PostToolUse: [{ matcher: '*', hooks: [cmd('tool')] }],
+      PreToolUse: [{ matcher: 'TodoWrite|TaskCreate|TaskUpdate', hooks: [cmd('todo')] }],
     });
+    expect(settings.hooks.Notification[0].hooks[0].command).toContain(JSON.stringify(events));
+  });
+
+  it('the generated hook commands run and append permission/tool/activity records', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+    const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'bob.json'), 'utf8'));
+    const run = (command: string, payload: unknown) => {
+      const result = spawnSync('sh', ['-c', command], { input: JSON.stringify(payload), encoding: 'utf8' });
+      expect(result.status).toBe(0);
+    };
+    run(settings.hooks.Notification[0].hooks[0].command, { notification_type: 'permission_prompt', message: 'Allow Bash?' });
+    run(settings.hooks.PostToolUse[0].hooks[0].command, { tool_name: 'Bash', tool_input: { command: 'npm test' } });
+    run(settings.hooks.PreToolUse[0].hooks[0].command, { tool_name: 'TodoWrite', tool_input: { todos: [{ content: 'X', status: 'in_progress', activeForm: 'Doing X' }] } });
+    const records = readFileSync(join(dir, 'pty-hook-events', 'bob.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as unknown);
+    expect(records).toEqual([
+      { type: 'permission', message: 'Allow Bash?', ts: expect.any(String) },
+      { type: 'tool', tool: 'Bash', brief: 'npm test', ts: expect.any(String) },
+      { type: 'activity', label: 'Doing X', source: 'todo', ts: expect.any(String) },
+    ]);
   });
 
   it('launches the provider inside the requested working directory when provided', async () => {

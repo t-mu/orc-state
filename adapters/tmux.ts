@@ -17,6 +17,7 @@ import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, un
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
+import { taskLabelsPath } from '../hooks/orc-hook.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
@@ -352,7 +353,7 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
         tmux(['kill-session', '-t', target(agentId)]);
         // The server exits with its last session; its socket file would stay behind.
         removeDeadTmuxSocket(tmuxSocketName(), { waitMs: SERVER_EXIT_WAIT_MS });
-        for (const path of [hookEventPath(agentId), `${hookEventPath(agentId)}.processing`, settingsPath(agentId)]) {
+        for (const path of [hookEventPath(agentId), `${hookEventPath(agentId)}.processing`, taskLabelsPath(hookEventPath(agentId)), settingsPath(agentId)]) {
           try { unlinkSync(path); } catch { /* already gone or never created */ }
         }
       } catch {
