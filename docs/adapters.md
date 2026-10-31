@@ -99,6 +99,17 @@ return the first one's message. Otherwise scan recent output. Return the
 blocking line as a string, or `null` if none detected. Adapters never read the
 `pty-hook-events` files themselves: the coordinator tick is their only consumer.
 
+For Claude, the PTY and tmux adapters write a settings file whose hooks all run
+the shipped script `hooks/orc-hook.ts` (built to `dist/hooks/orc-hook.js`) as
+`node <script> <kind> <events-file>`. Each call appends at most one record and
+always exits 0:
+
+| Hook | Kind | Record |
+|------|------|--------|
+| `Notification` | `permission` | `{type:'permission', message, ts}` for `permission_prompt` notifications |
+| `PostToolUse` (`*`) | `tool` | `{type:'tool', tool, brief, ts}`; `brief` is a short summary (≤ 80 chars), never the full input or output |
+| `PreToolUse` (`TodoWrite\|TaskCreate\|TaskUpdate`) | `todo` | `{type:'activity', label, source:'todo', ts}` with the in-progress item's label; an empty label clears it when that item finishes |
+
 ## Creating an adapter
 
 Use the `createAdapter` factory for built-in providers:

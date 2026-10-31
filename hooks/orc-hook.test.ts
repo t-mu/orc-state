@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BRIEF_MAX, handleHook, runHook, taskLabelsPath, toolBrief } from './orc-hook.ts';
+import type { TaskState } from './orc-hook.ts';
+
+const st = (labels: Record<string, string> = {}, active = ''): TaskState => ({ labels, active });
 
 const TS = '2026-10-31T12:00:00.000Z';
 const NOW = new Date(TS);
@@ -40,29 +43,33 @@ describe('toolBrief', () => {
 
 describe('handleHook', () => {
   it('permission: records only permission_prompt notifications', () => {
-    expect(handleHook('permission', { notification_type: 'permission_prompt', message: 'Allow?' }, {}, TS).record)
+    expect(handleHook('permission', { notification_type: 'permission_prompt', message: 'Allow?' }, st(), TS).record)
       .toEqual({ type: 'permission', message: 'Allow?', ts: TS });
-    expect(handleHook('permission', { notification_type: 'idle_prompt', message: 'x' }, {}, TS).record).toBeNull();
+    expect(handleHook('permission', { notification_type: 'idle_prompt', message: 'x' }, st(), TS).record).toBeNull();
   });
 
   it('tool: emits tool + brief, never the full input or response', () => {
     const { record } = handleHook('tool', {
       tool_name: 'Bash', cwd: '/w', tool_input: { command: 'echo hi' }, tool_response: { stdout: 'SECRET' },
-    }, {}, TS);
+    }, st(), TS);
     expect(record).toEqual({ type: 'tool', tool: 'Bash', brief: 'echo hi', ts: TS });
-    expect(handleHook('tool', { tool_input: {} }, {}, TS).record).toBeNull();
+    expect(handleHook('tool', { tool_input: {} }, st(), TS).record).toBeNull();
   });
 
   it('tool: remembers the label of a created task by the id in its response', () => {
-    const { labels } = handleHook('tool', {
+    const { state } = handleHook('tool', {
       tool_name: 'TaskCreate', tool_input: { subject: 'Write tests', activeForm: 'Writing tests' },
       tool_response: { task: { id: '7', subject: 'Write tests' } },
-    }, { 1: 'Old' }, TS);
-    expect(labels).toEqual({ 1: 'Old', 7: 'Writing tests' });
+    }, st({ 1: 'Old' }), TS);
+    expect(state).toEqual(st({ 1: 'Old', 7: 'Writing tests' }));
+    const started = handleHook('tool', {
+      tool_name: 'TaskCreate', tool_input: { subject: 'Go', status: 'in_progress' }, tool_response: { taskId: 8 },
+    }, st(), TS);
+    expect(started.state).toEqual(st({ 8: 'Go' }, '8'));
   });
 
   describe('todo: TodoWrite', () => {
-    const write = (todos: unknown) => handleHook('todo', { tool_name: 'TodoWrite', tool_input: { todos } }, {}, TS).record;
+    const write = (todos: unknown) => handleHook('todo', { tool_name: 'TodoWrite', tool_input: { todos } }, st(), TS).record;
 
     it('labels with the in_progress item activeForm', () => {
       expect(write([
@@ -83,8 +90,8 @@ describe('handleHook', () => {
   });
 
   describe('todo: TaskCreate / TaskUpdate', () => {
-    const task = (tool: string, input: Record<string, unknown>, labels: Record<string, string> = {}) =>
-      handleHook('todo', { tool_name: tool, tool_input: input }, labels, TS);
+    const task = (tool: string, input: Record<string, unknown>, state: TaskState = st()) =>
+      handleHook('todo', { tool_name: tool, tool_input: input }, state, TS);
 
     it('labels an in_progress task with activeForm, falling back to subject', () => {
       expect(task('TaskCreate', { subject: 'Fix bug', activeForm: 'Fixing bug', status: 'in_progress' }).record)
@@ -93,30 +100,39 @@ describe('handleHook', () => {
         .toMatchObject({ label: 'Fix bug' });
     });
 
-    it('resolves a status-only update from the remembered label', () => {
-      const result = task('TaskUpdate', { taskId: '3', status: 'in_progress' }, { 3: 'Fixing bug' });
+    it('resolves a status-only update from the remembered label and marks the task active', () => {
+      const result = task('TaskUpdate', { taskId: '3', status: 'in_progress' }, st({ 3: 'Fixing bug' }));
       expect(result.record).toMatchObject({ label: 'Fixing bug' });
-      expect(result.labels).toBeUndefined();
+      expect(result.state).toEqual(st({ 3: 'Fixing bug' }, '3'));
     });
 
     it('remembers labels given on an update and emits nothing without in_progress', () => {
       const result = task('TaskUpdate', { taskId: '4', activeForm: 'Reviewing' });
       expect(result.record).toBeNull();
-      expect(result.labels).toEqual({ 4: 'Reviewing' });
+      expect(result.state).toEqual(st({ 4: 'Reviewing' }));
     });
 
     it('emits nothing for an in_progress update with no known label', () => {
       expect(task('TaskUpdate', { taskId: '9', status: 'in_progress' }).record).toBeNull();
     });
 
-    it('clears the label when the item completes', () => {
-      expect(task('TaskUpdate', { taskId: '3', status: 'completed' }, { 3: 'Fixing bug' }).record)
-        .toEqual({ type: 'activity', label: '', source: 'todo', ts: TS });
+    it('clears the label when the active item completes or is deleted', () => {
+      const done = task('TaskUpdate', { taskId: '3', status: 'completed' }, st({ 3: 'Fixing bug' }, '3'));
+      expect(done.record).toEqual({ type: 'activity', label: '', source: 'todo', ts: TS });
+      expect(done.state).toEqual(st({ 3: 'Fixing bug' }, ''));
+      expect(task('TaskUpdate', { taskId: 3, status: 'deleted' }, st({}, '3')).record).toMatchObject({ label: '' });
+    });
+
+    it('keeps the label when a task other than the active one completes or is deleted', () => {
+      const state = st({ 3: 'Fixing bug', 5: 'Later' }, '3');
+      expect(task('TaskUpdate', { taskId: '5', status: 'completed' }, state).record).toBeNull();
+      expect(task('TaskUpdate', { taskId: '5', status: 'deleted' }, state).record).toBeNull();
+      expect(task('TaskUpdate', { taskId: '5', status: 'completed' }, st()).record).toBeNull();
     });
   });
 
   it('ignores unknown kinds', () => {
-    expect(handleHook('bogus', { tool_name: 'Bash' }, {}, TS).record).toBeNull();
+    expect(handleHook('bogus', { tool_name: 'Bash' }, st(), TS).record).toBeNull();
   });
 });
 
@@ -136,13 +152,21 @@ describe('runHook / script', () => {
       tool_name: 'TaskCreate', tool_input: { subject: 'Ship it' }, tool_response: { task: { id: '1' } },
     }), NOW);
     runHook('todo', events, JSON.stringify({ tool_name: 'TaskUpdate', tool_input: { taskId: '1', status: 'in_progress' } }), NOW);
+    expect(JSON.parse(readFileSync(taskLabelsPath(events), 'utf8'))).toEqual(st({ 1: 'Ship it' }, '1'));
     runHook('todo', events, JSON.stringify({ tool_name: 'TaskUpdate', tool_input: { taskId: '1', status: 'completed' } }), NOW);
-    expect(JSON.parse(readFileSync(taskLabelsPath(events), 'utf8'))).toEqual({ 1: 'Ship it' });
+    expect(JSON.parse(readFileSync(taskLabelsPath(events), 'utf8'))).toEqual(st({ 1: 'Ship it' }));
     expect(lines()).toEqual([
       { type: 'tool', tool: 'TaskCreate', brief: '', ts: TS },
       { type: 'activity', label: 'Ship it', source: 'todo', ts: TS },
       { type: 'activity', label: '', source: 'todo', ts: TS },
     ]);
+  });
+
+  it('keeps labels already in the sidecar when it adds one, leaving no temp file', () => {
+    writeFileSync(taskLabelsPath(events), JSON.stringify(st({ 1: 'First' }, '1')));
+    runHook('todo', events, JSON.stringify({ tool_name: 'TaskUpdate', tool_input: { taskId: '2', subject: 'Second' } }), NOW);
+    expect(JSON.parse(readFileSync(taskLabelsPath(events), 'utf8'))).toEqual(st({ 1: 'First', 2: 'Second' }, '1'));
+    expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   it('drops malformed stdin and an unwritable events file without throwing', () => {

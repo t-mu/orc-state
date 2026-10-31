@@ -7,13 +7,14 @@
  * most one NDJSON record to <events-file> (drained by the coordinator, see
  * lib/hookEventBus.ts) and always exits 0, even on bad input: command hooks
  * are synchronous, so a failure or a slow path here stalls the worker's tool
- * call. It imports nothing but node:fs and node:path to keep startup small.
+ * call. It imports only node: built-ins to keep startup small.
  *
  * Records never carry full tool inputs or outputs: `tool` records hold a
  * short `brief` (≤ 80 chars), `activity` records the current to-do label.
  */
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const BRIEF_MAX = 80;
 const BASH_BRIEF_MAX = 60;
@@ -95,24 +96,36 @@ function taskLabelOf(input: Payload): string {
   return str(input.activeForm) || str(input.subject);
 }
 
-function remember(labels: TaskLabels, id: string, label: string): TaskLabels {
-  const next = { ...labels, [id]: label };
-  const keys = Object.keys(next);
-  for (const key of keys.slice(0, Math.max(0, keys.length - MAX_REMEMBERED_TASKS))) delete next[key];
-  return next;
+/** Hook state kept in the sidecar file: task labels by id and the id of the in_progress task. */
+export interface TaskState {
+  labels: TaskLabels;
+  /** The task whose label is showing; only its completion clears the label. */
+  active: string;
+}
+
+function remember(state: TaskState, id: string, label: string): TaskState {
+  const labels = { ...state.labels, [id]: label };
+  const keys = Object.keys(labels);
+  for (const key of keys.slice(0, Math.max(0, keys.length - MAX_REMEMBERED_TASKS))) delete labels[key];
+  return { ...state, labels };
+}
+
+function idOf(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return typeof value === 'number' ? String(value) : '';
 }
 
 export interface HookResult {
   record: HookRecord | null;
-  /** The updated task-label map, when it changed. */
-  labels?: TaskLabels | undefined;
+  /** The updated sidecar state, when it changed. */
+  state?: TaskState | undefined;
 }
 
 /**
  * Pure core: map one hook payload to the record to append (or none).
  * `kind` is the hook the script was installed as.
  */
-export function handleHook(kind: string, payload: Payload, labels: TaskLabels, ts: string): HookResult {
+export function handleHook(kind: string, payload: Payload, state: TaskState, ts: string): HookResult {
   const tool = str(payload.tool_name);
   const input = obj(payload.tool_input);
 
@@ -128,7 +141,11 @@ export function handleHook(kind: string, payload: Payload, labels: TaskLabels, t
     if (tool === 'TaskCreate') {
       const id = createdTaskId(payload.tool_response);
       const label = taskLabelOf(input);
-      if (id && label) return { record, labels: remember(labels, id, label) };
+      if (id) {
+        let next = label ? remember(state, id, label) : state;
+        if (input.status === 'in_progress') next = { ...next, active: id };
+        if (next !== state) return { record, state: next };
+      }
     }
     return { record };
   }
@@ -141,20 +158,20 @@ export function handleHook(kind: string, payload: Payload, labels: TaskLabels, t
       return { record: { type: 'activity', label: clip(label, LABEL_MAX), source: 'todo', ts } };
     }
     if (tool === 'TaskCreate' || tool === 'TaskUpdate') {
-      const id = str(input.taskId) || (typeof input.taskId === 'number' ? String(input.taskId) : '');
+      const id = idOf(input.taskId);
       const own = taskLabelOf(input);
-      let nextLabels: TaskLabels | undefined;
-      if (id && own) nextLabels = remember(labels, id, own);
+      let next: TaskState | undefined = id && own ? remember(state, id, own) : undefined;
       if (input.status === 'in_progress') {
-        const label = own || (id ? labels[id] ?? '' : '');
-        if (!label) return { record: null, labels: nextLabels };
-        return { record: { type: 'activity', label: clip(label, LABEL_MAX), source: 'todo', ts }, labels: nextLabels };
+        const label = own || (id ? state.labels[id] ?? '' : '');
+        if (id) next = { ...(next ?? state), active: id };
+        if (!label) return { record: null, state: next };
+        return { record: { type: 'activity', label: clip(label, LABEL_MAX), source: 'todo', ts }, state: next };
       }
-      if (input.status === 'completed' || input.status === 'deleted') {
-        // An empty label clears the run's to-do label so a finished item stops showing.
-        return { record: { type: 'activity', label: '', source: 'todo', ts }, labels: nextLabels };
+      if ((input.status === 'completed' || input.status === 'deleted') && id && id === state.active) {
+        // An empty label clears the run's to-do label so the finished in_progress item stops showing.
+        return { record: { type: 'activity', label: '', source: 'todo', ts }, state: { ...(next ?? state), active: '' } };
       }
-      return { record: null, labels: nextLabels };
+      return { record: null, state: next };
     }
   }
   return { record: null };
@@ -164,14 +181,14 @@ export function taskLabelsPath(eventsFile: string): string {
   return `${eventsFile}.tasks.json`;
 }
 
-function readLabels(path: string): TaskLabels {
+function readState(path: string): TaskState {
   try {
     const parsed = obj(JSON.parse(readFileSync(path, 'utf8')));
-    const out: TaskLabels = {};
-    for (const [key, value] of Object.entries(parsed)) if (typeof value === 'string') out[key] = value;
-    return out;
+    const labels: TaskLabels = {};
+    for (const [key, value] of Object.entries(obj(parsed.labels))) if (typeof value === 'string') labels[key] = value;
+    return { labels, active: str(parsed.active) };
   } catch {
-    return {};
+    return { labels: {}, active: '' };
   }
 }
 
@@ -180,17 +197,32 @@ export function runHook(kind: string, eventsFile: string, stdin: string, now: Da
   try {
     if (!eventsFile) return;
     const payload = obj(JSON.parse(stdin));
-    const needsLabels = kind === 'todo' || payload.tool_name === 'TaskCreate';
+    const needsState = kind === 'todo' || payload.tool_name === 'TaskCreate';
     const sidecar = taskLabelsPath(eventsFile);
-    const { record, labels } = handleHook(kind, payload, needsLabels ? readLabels(sidecar) : {}, now.toISOString());
-    if (labels) writeFileSync(sidecar, JSON.stringify(labels));
+    const empty: TaskState = { labels: {}, active: '' };
+    const { record, state } = handleHook(kind, payload, needsState ? readState(sidecar) : empty, now.toISOString());
+    if (state) {
+      // Parallel tool calls run hooks concurrently: write-then-rename so a reader never sees a truncated map.
+      const tmp = `${sidecar}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify(state));
+      renameSync(tmp, sidecar);
+    }
     if (record) appendFileSync(eventsFile, `${JSON.stringify(record)}\n`);
   } catch {
     // Bad input or an unwritable file: drop the event, never fail the tool call.
   }
 }
 
-if (import.meta.main) {
+/** True when run as `node orc-hook.(ts|js)`, not imported (import.meta.main needs Node ≥ 24.2). */
+function isEntry(): boolean {
+  try {
+    return !!process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isEntry()) {
   const [kind = '', eventsFile = ''] = process.argv.slice(2);
   let data = '';
   process.stdin.setEncoding('utf8');

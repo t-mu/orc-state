@@ -31,6 +31,7 @@ Auxiliary runtime files (not orchestrator state):
 | `pty-pids/<agent_id>.pid` | Cross-process heartbeat probing for PTY sessions |
 | `pty-logs/<agent_id>.log` | Raw PTY/tmux pane output capture (output tails) |
 | `pty-hook-events/<agent_id>.ndjson` | Provider hook events (`permission`, `tool`, `activity`); drained only by the coordinator tick (`lib/hookEventBus.ts`) |
+| `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do task labels by id and the active task id, so a status-only `TaskUpdate` resolves its label; written only by `hooks/orc-hook.ts`, deleted when the session stops |
 | `run-activity.json` | Coordinator-owned per-run activity snapshot (label, source, last tool) built from hook events; entries are removed when a run ends. Read it with `readRunActivity(stateDir)` (`lib/runActivityStore.ts`) |
 | `control.json` | Control API endpoint descriptor (protocol version, transport, socket path, daemon PID) |
 | `control.token` | Control API bearer token, mode `0600`, rotated on each daemon start |
