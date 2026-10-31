@@ -27,6 +27,13 @@ import type { SessionInspection } from './interface.ts';
 
 const OUTPUT_TAIL_BYTES = 8 * 1024;
 const CAPTURE_LINES = 200;
+/**
+ * Scrollback kept per pane. A caller asking for a long tail (a scout's report)
+ * reads it from the pane history, so the default 2000 lines are not enough.
+ */
+const HISTORY_LIMIT = 10_000;
+/** Lines of pane history read per requested byte budget; TUI lines average well over 16 bytes. */
+const BYTES_PER_CAPTURE_LINE = 16;
 const SUBMIT_DELAY_MS = 200;
 
 function tmuxBinary(): string { return process.env.ORC_TMUX_BIN ?? 'tmux'; }
@@ -69,6 +76,7 @@ function tmux(args: string[], options: { input?: string; env?: Record<string, st
   return spawnSync(tmuxBinary(), ['-L', tmuxSocketName(), ...args], {
     encoding: 'utf8',
     timeout: 10_000,
+    maxBuffer: 16 * 1024 * 1024,
     ...(options.input !== undefined ? { input: options.input } : {}),
     ...(options.env ? { env: options.env } : {}),
   });
@@ -117,8 +125,8 @@ function inspect(agentId: string): SessionInspection {
   };
 }
 
-function capture(agentId: string): string | null {
-  const result = tmux(['capture-pane', '-p', '-J', '-S', `-${CAPTURE_LINES}`, '-t', target(agentId)]);
+function capture(agentId: string, lines = CAPTURE_LINES): string | null {
+  const result = tmux(['capture-pane', '-p', '-J', '-S', `-${lines}`, '-t', target(agentId)]);
   return result.status === 0 ? result.stdout : null;
 }
 
@@ -186,7 +194,8 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
         `exec ${[launch.binary, ...launch.args].map(shellQuote).join(' ')}`, ''].join('\n'), { mode: 0o700 });
       chmodSync(launcher, 0o700);
       try {
-        tmuxOrThrow(['new-session', '-d', '-s', tmuxSessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher)],
+        // history-limit applies to panes created after it is set, so it precedes new-session in one command list.
+        tmuxOrThrow(['set-option', '-g', 'history-limit', String(HISTORY_LIMIT), ';', 'new-session', '-d', '-s', tmuxSessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher)],
           { env: stripNestedProviderEnv(process.env) as Record<string, string> });
       } catch (error) {
         rmSync(dirname(launcher), { recursive: true, force: true });
@@ -254,8 +263,12 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
     getOutputTail(sessionHandle: string, maxBytes?: number): string | null {
       try {
         const agentId = parseHandle(sessionHandle);
-        // A caller asking for more than the visible pane reads the full output log.
-        const text = (maxBytes === undefined ? capture(agentId) : null) ?? stripAnsi(readLogTail(agentId, maxBytes));
+        // The pane, not the raw log, is the source while the session lives: a TUI
+        // redraws with cursor moves, so the stripped log loses its line breaks.
+        // A caller asking for a long tail reads that much pane history; the log
+        // is only the fallback once the pane is gone.
+        const lines = maxBytes === undefined ? CAPTURE_LINES : Math.max(CAPTURE_LINES, Math.ceil(maxBytes / BYTES_PER_CAPTURE_LINE));
+        const text = capture(agentId, lines) ?? stripAnsi(readLogTail(agentId, maxBytes));
         return text.slice(-(maxBytes ?? OUTPUT_TAIL_BYTES)).trim();
       } catch {
         return null;

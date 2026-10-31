@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { capturedScoutReport, tuiScoutReportBytes } from '../test-fixtures/tuiScoutReport.ts';
+import { stripAnsi } from '../lib/ansi.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tail = vi.fn<() => string | null>();
@@ -48,6 +50,17 @@ describe('extractScoutReport', () => {
     expect(extractScoutReport(`${cut}\nstill investigating...`)).toEqual({ report: null, truncated: false });
     // A later, complete report still wins.
     expect(extractScoutReport(`${cut}\n${report}`).report).toContain('clock skew');
+  });
+
+  it('reads a TUI-drawn report from pane capture text, but not from the stripped raw log', () => {
+    const tuiBody = 'findings:\nthe lease expired before the worker renewed it\n\nlikely_cause:\nclock skew between coordinator and worker\n\nrecommended_action:\nreset the task and requeue it';
+    // capture-pane -J: each marker on its own line, indented by 2 spaces.
+    expect(extractScoutReport(`${template}\n${capturedScoutReport()}\n`)).toEqual({ report: tuiBody, truncated: false });
+    // The raw pty log of the same screen has no newlines between the report's
+    // lines once ANSI is stripped, so the markers never stand on their own line.
+    const strippedLog = stripAnsi(`${template}\n${tuiScoutReportBytes()}`);
+    expect(strippedLog).toContain('SCOUT_REPORT_END');
+    expect(extractScoutReport(strippedLog).report).toBeNull();
   });
 
   it('reports truncation when the end marker survives but the start fell outside the output read', () => {
