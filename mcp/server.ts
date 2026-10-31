@@ -93,6 +93,7 @@ export function validateToolArguments(name: string, args: Record<string, unknown
 /** Master tools that mutate a project's runtime state; the coordinator applies them (task 232). */
 const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
   cancel_task: 'cancel-task', reset_task: 'reset-task', unblock_task: 'unblock-task', delegate_task: 'delegate-task', respond_input: 'respond-input',
+  close_run: 'run-close',
 };
 
 /**
@@ -102,6 +103,7 @@ const OPERATOR_TOOLS: Readonly<Record<string, OperatorOp>> = {
 const MASTER_WRITE_TOOLS: Readonly<Record<string, string>> = {
   create_task: 'orc project task create', update_task: 'orc project task edit',
   cancel_task: 'orc task-cancel', reset_task: 'orc task-reset', unblock_task: 'orc task-unblock', delegate_task: 'orc delegate',
+  close_run: 'orc run-close',
   memory_store: 'orc memory-record',
 };
 const MASTER_ONLY_TOOLS: ReadonlySet<string> = new Set(['respond_input', 'request_scout', 'remove_scout']);

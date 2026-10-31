@@ -110,7 +110,7 @@ cancel_task(task_ref, reason?)
 respond_input(run_id, agent_id, response)
   Responds to a worker's input_request. Call after the user provides an answer.
   Every write tool (create_task, update_task, delegate_task, cancel_task,
-  respond_input, reset_task, unblock_task, request_scout, remove_scout, memory_store) needs the
+  respond_input, reset_task, unblock_task, close_run, request_scout, remove_scout, memory_store) needs the
   master session secret that orc start-session sets (ORC_MASTER_SECRET) and acts
   as you; if one reports that secret missing, ask the user to restart orc start-session.
 
@@ -120,6 +120,17 @@ reset_task(task_ref)
 unblock_task(task_ref, reason?)
   Move a blocked task back to todo so it can be dispatched again. Same as
   orc task-unblock. A task that is not blocked is a tool error.
+
+close_run(run_id, reason?)
+  Close a run whose work was merged by hand (its task is done/released or its
+  branch is merged into main), e.g. a blocked_finalize run after manual
+  recovery: records the claim done, emits run_finished and, when the branch is
+  merged, removes the run worktree and branch. Same as orc run-close.
+  worktree_cleaned: false means the claim is closed but the worktree and branch
+  remain (check list_worktrees). A run whose task is not done and whose branch is
+  not merged (squash, rebase and fast-forward merges do not count) is a tool
+  error: if its work reached main, have the operator run orc task-mark-done
+  first; otherwise requeue it with reset_task.
 
 get_scout_report(agent_id)
   Read a scout's report: status reported (report holds the SCOUT_REPORT block),

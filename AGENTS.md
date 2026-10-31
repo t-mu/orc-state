@@ -234,6 +234,7 @@ orc kill-all                                      # ⚠️ stop coordinator + cl
 
 # Task management
 orc task-mark-done <task-ref>                     # operator recovery: mark runtime state done (the coordinator does this itself after merge)
+orc run-close <run_id> [--reason=<text>]          # operator recovery: close a manually merged run (task done or branch merged), clean its worktree and branch (MCP: close_run)
 orc task-reset <task-ref>                         # reset a task to todo, cancelling any active claims
 orc task-unblock <task-ref>                       # transition a blocked task back to todo
 orc task-cancel <task-ref>                        # cancel a task that is not yet terminal (operator; the master uses cancel_task)

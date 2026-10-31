@@ -72,6 +72,7 @@ const COMMANDS: Record<string, string> = {
   'task-unblock':       'task-unblock.ts',
   'task-cancel':        'task-cancel.ts',
   'run-expire':         'run-expire.ts',
+  'run-close':          'run-close.ts',
   'events-filter':      'events-filter.ts',
   'worker-status':      'worker-status.ts',
   'memory-status':      'memory-status.ts',
@@ -115,6 +116,7 @@ const RECOVERY_DEBUG = [
   'task-cancel',
   'task-mark-done',
   'run-expire',
+  'run-close',
   'event-cursor',
 ];
 

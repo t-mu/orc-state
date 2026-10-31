@@ -426,6 +426,19 @@ export const TOOLS = [
     },
   },
   {
+    name: 'close_run',
+    description: 'Close a run whose work was merged by hand (docs/recovery.md, Finalization Failure): its task is done/released or its branch is merged into main. Records the claim done, emits run_finished { closed_by, reason, manual: true } and, when the branch is merged, removes the run worktree and branch. Same logic as orc run-close. worktree_cleaned: false means the claim is closed but the worktree and branch remain (check list_worktrees). A run whose task is not done and whose branch is not merged (a squash, rebase or fast-forward merge does not count) is a tool error: if its work reached main, have the operator run orc task-mark-done, then close_run; otherwise requeue it with reset_task.',
+    inputSchema: {
+      type: 'object',
+      required: ['run_id'],
+      properties: {
+        run_id: { type: 'string', description: 'Run id of the claim to close' },
+        reason: { type: 'string', description: 'Optional reason, recorded on the run_finished event' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'list_worktrees',
     description: 'List all registered run worktrees with agent, task, and path information.',
     inputSchema: {
