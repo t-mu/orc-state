@@ -258,9 +258,13 @@ orc run-finish --run-id=<id> --agent-id=<id>                       # terminal su
 orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
   [--policy=requeue|block]                                          # terminal failure; default policy=requeue
 
-# Generic lifecycle event (phase tracking, optional / secondary path)
+# Lifecycle event: phase signals are part of the phased workflow (phase_started per phase)
 orc progress --event=<type> --run-id=<id> --agent-id=<id> \
-  [--phase=<name>] [--reason=<text>] [--policy=<requeue|block>]    # emit phase_started, phase_finished, etc.
+  [--phase=<name>] [--reason=<text>] [--note=<text>] \
+  [--policy=<requeue|block>]                                        # --reason: failure/block reason; --note: short "what I'm doing now" shown by orc watch
+
+# Workers also keep a to-do list for the run (TaskCreate/TaskUpdate or TodoWrite): one item per
+# meaningful step, a present-tense `activeForm`, exactly one item `in_progress`; `orc watch` shows it.
 
 # Input request (worker → master)
 orc run-input-request --run-id=<id> --agent-id=<id> \

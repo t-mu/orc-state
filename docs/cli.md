@@ -386,7 +386,7 @@ coordinator is stopped or restarting they retry for up to
 | `run-work-complete` | `--run-id=<id>` `--agent-id=<id>` |
 | `run-finish` | `--run-id=<id>` `--agent-id=<id>` |
 | `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=requeue\|block]` |
-| `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` |
+| `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` `[--note=<text>]` |
 | `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` |
 | `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` (as the master session: its `ORC_MASTER_SECRET`) |
 

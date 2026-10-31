@@ -240,7 +240,9 @@ RULES
 
 - Always call orc run-start before doing any work on a task.
 - First report for duty for this exact PTY session with {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-id={{session_id}}.
-- Lease renewal is automatic via phase signals. You do not need to call orc run-heartbeat.
+- Lease renewal is automatic via phase signals; there is no heartbeat command to run.
+- Keep a to-do list for the run (TaskCreate/TaskUpdate or TodoWrite, whichever this session offers): one item per meaningful step, each with a present-tense activeForm (e.g. "Fixing findings from the critic"), and keep exactly one item in_progress. The operator sees that label in orc watch.
+- When you start a long step with no to-do item, say what you are doing: {{orc_bin}} progress --event=heartbeat --run-id=<run_id> --agent-id={{agent_id}} --note="<short text>"
 - Call orc run-work-complete when implementation and review work is done and before any terminal success signal.
 - Call orc run-finish only after the run-work-complete handoff has been emitted and the run can terminate cleanly.
 - Call orc run-fail if you hit an unrecoverable blocker.
