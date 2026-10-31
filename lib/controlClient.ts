@@ -19,7 +19,7 @@ import type { ReviewSubmittedEvent } from '../types/events.ts';
 export interface EventRow { seq: number; event: unknown }
 
 export interface ControlClientOptions {
-  /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET); a legacy installation also accepts a session id. */
+  /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET). */
   credential?: string | null;
   timeoutMs?: number;
 }

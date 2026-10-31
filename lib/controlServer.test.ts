@@ -59,7 +59,7 @@ afterEach(async () => {
 function cli(...args: string[]) {
   return exec(process.execPath, args, {
     cwd: repoRoot, encoding: 'utf8',
-    env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir, ORC_SESSION_ID: '', ORC_SESSION_TOKEN: '' },
+    env: { ...process.env, ORC_STATE_DIR: dir, ORC_SESSION_ID: '', ORC_SESSION_TOKEN: '' },
   }).then(
     ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
     (error: { code?: number; stdout?: string; stderr?: string }) => ({ code: error.code ?? 1, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }),

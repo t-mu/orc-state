@@ -30,7 +30,6 @@ beforeEach(() => {
   dir = createTempStateDir('orc-coord-test-');
   // The coordinator runs only for a registered project.
   Object.assign(process.env, bridgeProjectEnv(dir));
-  process.env.ORC_REPO_ROOT = dir;
 });
 
 afterEach(() => {
@@ -40,7 +39,6 @@ afterEach(() => {
   cleanupTempStateDir(dir);
   delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_PROJECT_ID;
-  delete process.env.ORC_REPO_ROOT;
   delete process.env.ORC_MAX_WORKERS;
   delete process.env.ORC_WORKER_PROVIDER;
   delete process.env.ORC_WORKER_MODEL;
@@ -3750,7 +3748,7 @@ describe('lifecycle reducer integration', () => {
 });
 
 describe('main startup validation', () => {
-  it('refuses to start a legacy installation', () => {
+  it('refuses to start without a registered project', () => {
     const stateDir = createTempStateDir('orc-coord-startup-test-');
     writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({ version: '1', agents: [] }));
     writeFileSync(join(stateDir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }));
@@ -3761,7 +3759,7 @@ describe('main startup validation', () => {
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Legacy .orc-state installations no longer run');
+    expect(result.stderr).toContain('No registered project here');
 
     cleanupTempStateDir(stateDir);
   });

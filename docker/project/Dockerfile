@@ -6,8 +6,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/node
 ENV ORC_PROJECT_DIR=/workspace/project
 ENV ORC_STATE_DIR=/workspace/project/.orc-state
-ENV ORC_HOME=/workspace/project
-ENV ORC_REPO_ROOT=/workspace/project
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git gh jq openssh-client procps python3 ripgrep sqlite3 tmux \

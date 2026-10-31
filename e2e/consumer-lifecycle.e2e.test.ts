@@ -36,7 +36,6 @@ describe('consumer lifecycle e2e', () => {
     vi.clearAllMocks();
     dir = createTempStateDir('consumer-lifecycle-e2e-');
     process.env.ORC_STATE_DIR = dir;
-    process.env.ORC_REPO_ROOT = dir;
     vi.doMock('../lib/runWorktree.ts', () => ({
       ensureRunWorktree: vi.fn((_stateDir: string, { runId }: { runId: string }) => ({
         run_id: runId,
@@ -55,7 +54,6 @@ describe('consumer lifecycle e2e', () => {
   afterEach(() => {
     cleanupTempStateDir(dir);
     delete process.env.ORC_STATE_DIR;
-    delete process.env.ORC_REPO_ROOT;
     delete process.env.ORC_MAX_WORKERS;
     delete process.env.ORC_WORKER_PROVIDER;
     vi.unmock('../adapters/index.ts');

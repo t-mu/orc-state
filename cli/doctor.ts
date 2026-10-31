@@ -4,8 +4,7 @@
  * Usage: node cli/doctor.ts [--json]
  */
 import { execSync } from 'node:child_process';
-import { ACTIVE_PROJECT, ORCHESTRATION_ROOT, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
-import { readMigrationMarker } from '../lib/projectContext.ts';
+import { ACTIVE_PROJECT, NO_PROJECT_MESSAGE, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
@@ -36,19 +35,12 @@ const sandboxDeps = checkSandboxDependencies();
 const sandboxControlSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE_PROJECT) });
 const memoryHealth = validateMemoryDb(STATE_DIR);
 const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
-// Neither a legacy attached installation nor a sibling layout runs any more; both must be migrated.
-const legacyLayout = ACTIVE_PROJECT ? null : {
-  ok: false,
-  root: ORCHESTRATION_ROOT,
-  message: `legacy installation at ${ORCHESTRATION_ROOT} no longer runs; migrate it into a project with orc project migrate ${ORCHESTRATION_ROOT} --execute`,
-};
-
-// A legacy state directory that was migrated must not be run again; the project owns its state now.
-const migratedTo = ACTIVE_PROJECT ? null : readMigrationMarker(STATE_DIR);
+// Only a registered project runs.
+const projectSelection = ACTIVE_PROJECT ? null : { ok: false, message: NO_PROJECT_MESSAGE };
 
 const checks: Record<string, unknown> = {
   project: projectHealth,
-  migratedTo,
+  projectSelection,
   gitRepo,
   providerBinaries: {} as Record<string, unknown>,
   staleLinkedWorkers: [] as unknown[],
@@ -60,7 +52,6 @@ const checks: Record<string, unknown> = {
   sandboxControlSocket,
   memoryHealth,
   runtimeSchema,
-  legacyLayout,
 };
 
 for (const provider of providers) {
@@ -123,9 +114,8 @@ const summary = {
     sandboxDeps.ok &&
     memoryHealth.ok &&
     runtimeSchema.ok &&
-    (legacyLayout?.ok ?? true) &&
-    (projectHealth?.ok ?? true) &&
-    migratedTo === null,
+    projectSelection === null &&
+    (projectHealth?.ok ?? true),
   registered_workers: agents.length,
   active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
   checks,
@@ -140,8 +130,6 @@ console.log('Orchestrator Doctor');
 console.log('-------------------');
 console.log(formatProjectIdentity(projectHealth?.project ?? null));
 for (const error of projectHealth?.errors ?? []) console.log(`  error: ${error}`);
-for (const warning of projectHealth?.warnings ?? []) console.log(`  warning: ${warning}`);
-if (migratedTo) console.log(`  error: this legacy state was migrated to project ${migratedTo.project_name} (${migratedTo.project_id}); use --project=${migratedTo.project_id}`);
 console.log(`registered_workers: ${summary.registered_workers}`);
 console.log(`active_claims: ${summary.active_claims}`);
 console.log(`git_repo: ${String(gitRepo)}`);
@@ -219,9 +207,9 @@ console.log('');
 console.log(`runtime schema: ok=${String(runtimeSchema.ok)} version=${String(runtimeSchema.version)}`);
 for (const message of runtimeSchema.messages) console.log(`  ${message}`);
 
-if (legacyLayout) {
+if (projectSelection) {
   console.log('');
-  console.log(`error: ${legacyLayout.message}`);
+  console.log(`error: ${projectSelection.message}`);
 }
 
 if (!summary.ok) {
@@ -267,4 +255,3 @@ function safeRead<T>(read: () => T, fallback: T): T {
     return fallback;
   }
 }
-

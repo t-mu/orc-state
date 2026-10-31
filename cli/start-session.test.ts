@@ -23,7 +23,6 @@ beforeEach(() => {
   vi.doUnmock('node:child_process');
   vi.doUnmock('node-pty');
   dir = createTempStateDir('orch-start-session-test-');
-  process.env.ORC_REPO_ROOT = dir;
 });
 
 afterEach(() => {
@@ -40,7 +39,6 @@ afterEach(() => {
   }
   delete process.env.ORC_STATE_DIR;
   delete process.env.ORC_PROJECT_ID;
-  delete process.env.ORC_REPO_ROOT;
   cleanupTempStateDir(dir);
 });
 
@@ -89,7 +87,6 @@ function seedActiveRuntimeState() {
 
 function setEnv(stateDir: string) {
   Object.assign(process.env, bridgeProjectEnv(stateDir));
-  process.env.ORC_REPO_ROOT = stateDir;
 }
 
 function mockBinaryCheck(ok = true, authOk = true) {

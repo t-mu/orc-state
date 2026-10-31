@@ -2,15 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, cleanupTempStateDir, createTempStateDir, seedState, TEST_PROJECT_ID } from '../test-fixtures/stateHelpers.ts';
 import { normalizeWorkerEnv } from './workerRuntime.ts';
 
 // Task 204: workers start inside their assigned worktree. From that cwd the
-// `orc` CLI must still resolve the orchestration state, and a worker's git
+// `orc` CLI must still resolve the project state, and a worker's git
 // commit/rebase must write only inside the `.git` subtrees the sandbox grants
-// (adapters/pty.ts TARGET_GIT_WRITABLE_SUBPATHS). In the attached layout the
-// worktree belongs to the orchestration repo; in the sibling layout to the
-// target repo.
+// (adapters/pty.ts TARGET_GIT_WRITABLE_SUBPATHS). The worktree belongs to the
+// project's target repo and lives in its external state directory.
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const GRANTED_GIT_SUBPATHS = ['objects', 'refs', 'logs', 'worktrees'];
@@ -49,19 +48,13 @@ function gitWritesOutsideGrant(repo: string, operation: () => void): { written: 
   return { written, outsideGrant: written.filter((path) => !GRANTED_GIT_SUBPATHS.includes(path.split(/[\\/]/)[0])) };
 }
 
-/**
- * Build an orchestration root with seeded state and a run worktree. Attached:
- * the orchestration root is itself the repo. Sibling: a separate target repo
- * owns the worktree.
- */
-function setupLayout(layout: 'attached' | 'sibling') {
-  const orch = join(base, 'orch');
-  const stateDir = join(orch, '.orc-state');
-  const repo = layout === 'attached' ? orch : join(base, 'target');
-  const worktree = join(orch, '.worktrees', 'run-1');
+/** Build a project: seeded external state, a target repo, and a run worktree in the state directory. */
+function setupProject() {
+  const stateDir = join(base, 'state');
+  const repo = join(base, 'target');
+  const worktree = join(stateDir, 'worktrees', 'run-1');
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(repo, { recursive: true });
-  if (layout === 'sibling') writeFileSync(join(orch, 'orc-state.config.json'), JSON.stringify({ target_repo: repo }));
   seedState(stateDir, {
     tasks: [{ ref: 'orch/task-1', title: 'Task 1', status: 'in_progress' }],
     agents: [{ agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],
@@ -70,14 +63,14 @@ function setupLayout(layout: 'attached' | 'sibling') {
       claimed_at: '2026-01-01T00:00:00Z', started_at: '2026-01-01T00:01:00Z', lease_expires_at: '2099-01-01T00:00:00Z',
     }],
   });
+  bridgeProjectEnv(stateDir, repo);
 
   git(repo, 'init', '-q', '-b', 'main');
-  writeFileSync(join(repo, '.gitignore'), '.orc-state/\n.worktrees/\n');
   writeFileSync(join(repo, 'README.md'), 'repo\n');
   git(repo, 'add', '.');
   git(repo, 'commit', '-q', '-m', 'init');
   git(repo, 'worktree', 'add', '-q', '-b', 'task/run-1', worktree);
-  return { orch, stateDir, repo, worktree };
+  return { stateDir, repo, worktree };
 }
 
 beforeEach(() => {
@@ -88,10 +81,10 @@ afterEach(() => {
   cleanupTempStateDir(base);
 });
 
-describe.each(['attached', 'sibling'] as const)('worker launched in its worktree (%s layout)', (layout) => {
-  it('orc CLI resolves the orchestration state from the worktree cwd', () => {
-    const { orch, stateDir, worktree } = setupLayout(layout);
-    const env = normalizeWorkerEnv({ ...process.env, ORC_STATE_DIR: stateDir }, orch);
+describe('worker launched in its worktree', () => {
+  it('orc CLI resolves the project state from the worktree cwd', () => {
+    const { stateDir, worktree } = setupProject();
+    const env = normalizeWorkerEnv({ ...process.env }, repoRoot, { id: TEST_PROJECT_ID, stateDir });
     const result = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'runs-active', '--json'], {
       cwd: worktree,
       env,
@@ -103,7 +96,7 @@ describe.each(['attached', 'sibling'] as const)('worker launched in its worktree
   });
 
   it('commit and rebase in the worktree write only the granted .git subtrees', () => {
-    const { repo, worktree } = setupLayout(layout);
+    const { repo, worktree } = setupProject();
 
     const commit = gitWritesOutsideGrant(repo, () => {
       writeFileSync(join(worktree, 'change.txt'), 'change\n');

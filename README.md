@@ -23,7 +23,7 @@ or [Gemini](https://github.com/google/gemini-cli)).
 
 ```bash
 npm install -g orc-state
-orc project add ~/code/my-project   # register the repository (or: orc project migrate <old-root> --execute)
+orc project add ~/code/my-project   # register the repository
 cd ~/code/my-project
 orc init                            # pick providers; stored in the project registry
 orc install --global --provider=claude   # optional: skills and agents for your user
@@ -35,9 +35,6 @@ project registry; it writes nothing into your repository. All orc state lives
 outside the repository, in the project's state directory. After init,
 `orc start-session` reads the project settings — no flags required. It wires
 the orchestrator MCP server into the master session itself.
-
-Legacy `.orc-state` installations (state and `backlog/` inside the repository)
-no longer run; migrate one with `orc project migrate <root> --execute`.
 
 `orc start-session` starts the coordinator in the background and opens a
 master agent session in your terminal. If a coordinator is already running,
@@ -68,7 +65,6 @@ For deeper work, you can also author tasks yourself with
 - [Concepts & terminology](./docs/concepts.md)
 - [Architecture overview](./docs/architecture.md)
 - [Configuration](./docs/configuration.md)
-- [Sibling mode (retired)](./docs/sibling-mode.md) — migrating an old sibling orchestration home
 - [CLI reference](./docs/cli.md)
 - [Memory system](./docs/memory.md)
 - [Writing custom adapters](./docs/adapters.md)

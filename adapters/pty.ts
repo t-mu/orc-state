@@ -245,18 +245,17 @@ export function claudeSandboxNetwork(controlSocket: string, network: SandboxNetw
  * workers) it must also be a git checkout, so a half-removed worktree fails at
  * launch instead of at the worker's first commit, and it must be present.
  * Otherwise (scouts, tests) a missing working_directory falls back to the
- * orchestration root.
+ * target repository.
  */
 export function resolveLaunchCwd(config: Record<string, unknown>): string {
   const workingDirectory = typeof config.working_directory === 'string' && config.working_directory
     ? config.working_directory
     : null;
   if (workingDirectory == null) {
-    // A task worker must never fall back to the orchestration root: it would
+    // A task worker must never fall back to the target repository: it would
     // run against the main checkout with a whole-root sandbox grant.
     if (config.require_git_checkout === true) throw new Error('worker launch requires an assigned worktree; none recorded');
-    // A blank ORC_REPO_ROOT (project-mode workers) means "not set".
-    return (config.env as Record<string, string> | undefined)?.ORC_REPO_ROOT || process.cwd();
+    return TARGET_REPO_ROOT;
   }
   let isDirectory = false;
   try {
@@ -356,8 +355,8 @@ export interface ProviderLaunch {
 export function prepareProviderLaunch(provider: string, agentId: string, config: Record<string, unknown>): ProviderLaunch {
   ensureDirs();
   const binary = PROVIDER_BINARIES[provider] ?? provider;
-  // Workers start in their assigned worktree (task 204); ORC_HOME/ORC_STATE_DIR
-  // in the worker env keep `orc` state lookup pinned to the orchestration root.
+  // Workers start in their assigned worktree (task 204); ORC_PROJECT_ID and the
+  // ORC_STATE_DIR bridge in the worker env keep `orc` state lookup on the project.
   const cwd = resolveLaunchCwd(config);
   // For claude: write a settings file that installs a Notification hook so
   // permission_prompt events are pushed to the hook-events file in real time.

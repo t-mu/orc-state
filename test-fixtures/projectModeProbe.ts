@@ -33,7 +33,7 @@ if (action === 'launch') {
   const settingsArg = claude.args[claude.args.indexOf('--settings') + 1];
   Object.assign(result, {
     worktree,
-    env: { ORC_PROJECT_ID: env.ORC_PROJECT_ID, ORC_HOME: env.ORC_HOME, ORC_REPO_ROOT: env.ORC_REPO_ROOT, ORC_STATE_DIR: env.ORC_STATE_DIR, ORC_SESSION_ID: env.ORC_SESSION_ID, ORC_SESSION_TOKEN: env.ORC_SESSION_TOKEN,
+    env: { ORC_PROJECT_ID: env.ORC_PROJECT_ID, ORC_STATE_DIR: env.ORC_STATE_DIR, ORC_SESSION_ID: env.ORC_SESSION_ID, ORC_SESSION_TOKEN: env.ORC_SESSION_TOKEN,
       ORC_SESSION_SECRET: env.ORC_SESSION_SECRET, ORC_MASTER_SECRET: env.ORC_MASTER_SECRET, ORC_CONTROL_SOCKET: env.ORC_CONTROL_SOCKET },
     claudeCwd: claude.cwd,
     claudeSettingsPath: settingsArg,

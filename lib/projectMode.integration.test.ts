@@ -71,10 +71,13 @@ describe('project mode against a registered target repository', () => {
     expect(probe(elsewhere)).toMatchObject({ project: null });
   });
 
-  it('leaves a repository with a legacy orc layout in legacy mode until it is migrated', () => {
+  it('selects the project despite a leftover .orc-state directory or migration record', () => {
     mkdirSync(join(repo, '.orc-state'));
-    expect(probe(repo)).toMatchObject({ project: null, stateDir: join(repo, '.orc-state') });
-    expect(probe(repo, { ORC_PROJECT_ID: project.id })).toMatchObject({ project: { id: project.id } });
+    // An earlier migration's record, even one that never finished, no longer gates the project.
+    writeFileSync(join(project.stateDir, 'migration.json'), JSON.stringify({ status: 'importing', source_root: repo }));
+    expect(probe(repo)).toMatchObject({ project: { id: project.id, source: 'cwd' }, stateDir: project.stateDir });
+    expect(probe(repo, { ORC_PROJECT_ID: project.id })).toMatchObject({ project: { id: project.id, source: 'environment' } });
+    expect(probe(repo, {}, 'status').workerCapacity).toMatchObject({ configured_slots: 3 });
   });
 
   it('resolves a worker from its state-dir descriptor without opening the registry', () => {
@@ -113,13 +116,13 @@ describe('project mode against a registered target repository', () => {
     expect(() => probe(repo, { ORC_PROJECT_ID: 'missing' })).toThrow('not a registered project');
   });
 
-  it('launches CLI and structured-runtime workers from external worktrees without ORC_HOME or repo-local files', () => {
+  it('launches CLI and structured-runtime workers from external worktrees without repo-local files', () => {
     const launch = probe(repo, {}, 'launch');
     const worktreePath = join(project.stateDir, 'worktrees', 'run-probe');
     expect(launch.worktree).toMatchObject({ worktree_path: worktreePath, branch: 'task/run-probe' });
     expect(git(repo, 'branch', '--list', 'task/run-probe').trim()).toContain('task/run-probe');
     expect(launch.env).toMatchObject({
-      ORC_PROJECT_ID: project.id, ORC_HOME: '', ORC_REPO_ROOT: '', ORC_STATE_DIR: project.stateDir, ORC_SESSION_ID: 'session-probe', ORC_SESSION_TOKEN: '',
+      ORC_PROJECT_ID: project.id, ORC_STATE_DIR: project.stateDir, ORC_SESSION_ID: 'session-probe', ORC_SESSION_TOKEN: '',
       // The secret is the credential; a master secret inherited from the coordinator is blanked (task 231).
       ORC_SESSION_SECRET: 'secret-probe', ORC_MASTER_SECRET: '',
     });

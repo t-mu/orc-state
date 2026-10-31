@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
-import { createTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { buildNodeArgs, isMainModule, readVersion } from './orc.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -35,7 +35,6 @@ describe('cli/orc.ts', () => {
     expect(section('Blessed workflow commands:')).toEqual(expect.arrayContaining(['project', 'progress', 'review-submit', 'review-read', 'run-input-request']));
     expect(section('Blessed workflow commands:')).not.toContain('task-mark-done');
     expect(section('Recovery / debug commands:')).toContain('task-mark-done');
-    expect(result.stdout).not.toContain('Legacy installations only:');
     expect(result.stdout).not.toMatch(/backlog-sync|backlog-orient|feature-create/);
   });
 
@@ -58,10 +57,13 @@ describe('cli/orc.ts', () => {
   });
 
   it('dispatches documented inspection commands', () => {
+    const stateDir = createTempStateDir('orc-dispatch-');
     const result = spawnSync('node', ['cli/orc.ts', 'events-tail'], {
       cwd: repoRoot,
       encoding: 'utf8',
+      env: { ...process.env, ...bridgeProjectEnv(stateDir) },
     });
+    cleanupTempStateDir(stateDir);
 
     expect(result.status).toBe(0);
   });

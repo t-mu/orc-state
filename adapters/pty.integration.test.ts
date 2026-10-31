@@ -82,7 +82,7 @@ describe.runIf(PTY_SUPPORTED)('adapters/pty.ts integration', () => {
     expect(existsSync(pidFile)).toBe(false);
   });
 
-  it('starts the provider in the assigned worktree with state pinned to the orchestration root (task 204)', async () => {
+  it('starts the provider in the assigned worktree with state pinned to the project state dir (task 204)', async () => {
     const worktree = join(stateDir, 'worktrees', 'run-1');
     mkdirSync(worktree, { recursive: true });
     const { createPtyAdapter } = await import('./pty.ts');
@@ -90,7 +90,7 @@ describe.runIf(PTY_SUPPORTED)('adapters/pty.ts integration', () => {
 
     await withFixturePath(() => adapter.start('worker-02', {
       working_directory: worktree,
-      env: { ORC_STATE_DIR: stateDir, ORC_REPO_ROOT: resolve(stateDir, '..') },
+      env: { ORC_STATE_DIR: stateDir },
     }));
     const logFile = join(stateDir, 'pty-logs', 'worker-02.log');
     try {

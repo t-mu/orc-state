@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionHandle } from '../adapters/pty.ts';
+import { TARGET_REPO_ROOT } from '../lib/paths.ts';
 
 const sendMock = vi.fn();
 const launchWorkerSessionMock = vi.fn();
@@ -27,9 +28,7 @@ let dir: string;
 beforeEach(() => {
   vi.clearAllMocks();
   dir = createTempStateDir('orc-mcp-scout-test-');
-  process.env.ORC_REPO_ROOT = dir;
   process.env.ORC_SCOUT_READY_TIMEOUT_MS = '25';
-  mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedProjectTasks(dir, []);
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }, null, 2));
   writeFileSync(join(dir, 'events.jsonl'), '');
@@ -98,7 +97,7 @@ describe('handleRequestScout', () => {
     });
   });
 
-  it('defaults the working directory to the repo root when no run worktree is linked', async () => {
+  it('defaults the working directory to the target repository when no run worktree is linked', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
       agent.session_handle = createSessionHandle(agent.agent_id);
@@ -117,12 +116,12 @@ describe('handleRequestScout', () => {
     expect(launchWorkerSessionMock).toHaveBeenCalledWith(
       dir,
       expect.objectContaining({ agent_id: 'scout-1' }),
-      expect.objectContaining({ workingDirectory: dir }),
+      expect.objectContaining({ workingDirectory: TARGET_REPO_ROOT }),
     );
-    expect(result.working_directory).toBe(dir);
+    expect(result.working_directory).toBe(TARGET_REPO_ROOT);
   });
 
-  it('falls back to the repo root when the linked run worktree no longer exists (task 204)', async () => {
+  it('falls back to the target repository when the linked run worktree no longer exists (task 204)', async () => {
     rmSync(runWorktree(), { recursive: true });
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
@@ -143,9 +142,9 @@ describe('handleRequestScout', () => {
     expect(launchWorkerSessionMock).toHaveBeenCalledWith(
       dir,
       expect.objectContaining({ agent_id: 'scout-1' }),
-      expect.objectContaining({ workingDirectory: dir }),
+      expect.objectContaining({ workingDirectory: TARGET_REPO_ROOT }),
     );
-    expect(result).toMatchObject({ run_id: 'run-1', working_directory: dir });
+    expect(result).toMatchObject({ run_id: 'run-1', working_directory: TARGET_REPO_ROOT });
   });
 
   it('removes the scout agent when launch fails', async () => {

@@ -33,7 +33,7 @@ describe('SQLite run authority', () => {
       encoding: 'utf8',
     });
     const report = JSON.parse(result.stdout) as { checks: { runtimeSchema: { ok: boolean } }; active_claims: number };
-    // A legacy fixture fails doctor overall (legacy installations no longer run); its state checks still pass.
+    // Without a project doctor fails overall; the fixture's state checks still pass.
     expect((report.checks as Record<string, unknown>).stateErrors, result.stdout).toEqual([]);
     expect(report.checks.runtimeSchema.ok).toBe(true);
     expect(report.active_claims).toBe(0);

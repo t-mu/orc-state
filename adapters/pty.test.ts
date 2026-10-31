@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
 
@@ -95,11 +95,11 @@ describe('pty adapter start()', () => {
     }));
   });
 
-  it('prefers the working directory over ORC_REPO_ROOT in the env (task 204)', async () => {
+  it('launches in the working directory (task 204)', async () => {
     const worktree = join(dir, 'worktree');
     mkdirSync(worktree);
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
-    await adapter.start('bob', { working_directory: worktree, execution_mode: 'full-access', env: { ORC_REPO_ROOT: dir } });
+    await adapter.start('bob', { working_directory: worktree, execution_mode: 'full-access' });
 
     expect(spawnSpy.mock.calls[0][2]).toMatchObject({ cwd: worktree });
   });
@@ -126,7 +126,7 @@ describe('pty adapter start()', () => {
 
   it('fails clearly when a worker has no assigned worktree at all', async () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'claude' });
-    await expect(adapter.start('bob', { require_git_checkout: true, env: { ORC_REPO_ROOT: dir } }))
+    await expect(adapter.start('bob', { require_git_checkout: true }))
       .rejects.toThrow('worker launch requires an assigned worktree');
     expect(spawnSpy).not.toHaveBeenCalled();
   });
@@ -145,14 +145,14 @@ describe('pty adapter start()', () => {
       execution_mode: 'full-access',
       env: {
         ORC_STATE_DIR: '/tmp/shared-state',
-        ORC_REPO_ROOT: '/tmp/repo-root',
+        ORC_PROJECT_ID: 'p1',
       },
     });
 
     expect(spawnSpy).toHaveBeenCalledWith(binaryMatcher('claude'), expect.arrayContaining(['--dangerously-skip-permissions']), expect.objectContaining({
       env: expect.objectContaining({
         ORC_STATE_DIR: '/tmp/shared-state',
-        ORC_REPO_ROOT: '/tmp/repo-root',
+        ORC_PROJECT_ID: 'p1',
       }),
     }));
   });
@@ -165,7 +165,7 @@ describe('pty adapter start()', () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
     await adapter.start('codex-worker', {
       execution_mode: 'full-access',
-      env: { ORC_REPO_ROOT: '/tmp/repo-root' },
+      env: { ORC_PROJECT_ID: 'p1' },
     });
 
     expect(spawnSpy).toHaveBeenCalledWith(
@@ -424,7 +424,7 @@ describe('buildStartArgs execution mode', () => {
   });
 });
 
-// ─── sibling-layout sandbox scoping (task 190) ──────────────────────────────
+// ─── sandbox scoping (task 190) ─────────────────────────────────────────────
 
 describe('sandboxExtraWritableRoots', () => {
   const opts = { readOnly: false, cwd: '/orch/.worktrees/run-1', stateDir: '/orch/.orc-state', gitRepoRoot: '/orch' };
@@ -530,30 +530,22 @@ describe('codexSandboxWritableRootArgs', () => {
 });
 
 describe('sandbox roots end-to-end via start() (task 204)', () => {
-  // State and product repository in different roots (as in project mode), forced with ORC_REPO_ROOT.
+  // A project: its state directory (holding the run worktrees) and its target repository are different roots.
   function twoRootLayout() {
-    const orch = join(dir, 'orch');
+    const stateDir = join(dir, 'state');
     const target = join(dir, 'target');
-    const worktree = join(orch, '.worktrees', 'run-1');
-    mkdirSync(join(orch, '.orc-state'), { recursive: true });
+    const worktree = join(stateDir, 'worktrees', 'run-1');
     mkdirSync(worktree, { recursive: true });
-    process.env.ORC_STATE_DIR = join(orch, '.orc-state'); // → ORCHESTRATION_ROOT = orch
-    process.env.ORC_REPO_ROOT = target; // → TARGET_REPO_ROOT = target
-    return { orch, target, worktree, stateDir: join(orch, '.orc-state') };
+    Object.assign(process.env, bridgeProjectEnv(stateDir, target));
+    return { target, worktree, stateDir };
   }
 
   function gitRoots(repo: string) {
     return ['objects', 'refs', 'logs', 'worktrees'].map((sub) => join(repo, '.git', sub));
   }
 
-  let savedRepoRoot: string | undefined;
-  beforeEach(() => {
-    savedRepoRoot = process.env.ORC_REPO_ROOT;
-    delete process.env.ORC_REPO_ROOT;
-  });
   afterEach(() => {
-    if (savedRepoRoot !== undefined) process.env.ORC_REPO_ROOT = savedRepoRoot;
-    else delete process.env.ORC_REPO_ROOT;
+    delete process.env.ORC_PROJECT_ID;
   });
 
   it('claude, two roots: launches in the worktree and grants the target .git only', async () => {
@@ -598,18 +590,6 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     const { codexSandboxNetworkArgs } = await import('./pty.ts');
     expect(codexSandboxNetworkArgs({ readOnly: true, cwd: worktree, stateDir, gitRepoRoot: target, controlSocket: socket }, 'open')).toEqual([]);
     expect(codexSandboxNetworkArgs({ readOnly: false, cwd: worktree, stateDir, gitRepoRoot: target }, 'open')).toEqual([]);
-  });
-
-  it('claude, state dir inside the repo: grants its .git subtrees, not the whole root', async () => {
-    const orch = join(dir, 'orch');
-    const worktree = join(orch, '.worktrees', 'run-1');
-    mkdirSync(join(orch, '.orc-state'), { recursive: true });
-    mkdirSync(worktree, { recursive: true });
-    process.env.ORC_STATE_DIR = join(orch, '.orc-state');
-    const { adapter } = await makeAdapter({ provider: 'claude' });
-    await adapter.start('bob', { execution_mode: 'sandbox', working_directory: worktree });
-    const settings = JSON.parse(readFileSync(join(orch, '.orc-state', 'pty-settings', 'bob.json'), 'utf8'));
-    expect(settings.sandbox.filesystem.allowWrite).toEqual(['.', ...gitRoots(orch)]);
   });
 
   it('codex grants the same roots, and gemini gets no sandbox flags, with two roots', async () => {

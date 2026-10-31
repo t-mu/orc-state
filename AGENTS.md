@@ -157,8 +157,7 @@ Signal phase: `orc progress --event=phase_started --phase=complete --run-id=<run
 Do NOT call `orc task-mark-done` from the worker session; the coordinator marks shared runtime state done after merge.
 
 There is no task spec file in the repository: the spec is a project task
-revision. Legacy `.orc-state` installations (attached or sibling) no longer
-run; `orc project migrate` moves one into a registered project.
+revision.
 
 ### Phase 5 — Finalize
 

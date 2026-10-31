@@ -20,14 +20,14 @@ failures were observed.
 
 | Requirement | Current implementation | Disposition and target |
 |---|---|---|
-| Markdown task and plan authority | _Historical:_ `lib/backlogSync.ts`, `lib/taskSpecReader.ts`, `lib/planDocs.ts` synced `backlog/*.md` into `backlog.json`. | **Done.** Markdown sync, `taskSpecReader`, the spec generator and the attached/sibling layouts are retired; tasks and plans live in project SQLite and Markdown enters only through `orc project task\|plan import`. Claims pin the task revision. |
+| Markdown task and plan authority | _Historical:_ `lib/backlogSync.ts`, `lib/taskSpecReader.ts`, `lib/planDocs.ts` synced `backlog/*.md` into `backlog.json`. | **Done.** Markdown sync, `taskSpecReader`, the spec generator and the in-repository layouts are retired; tasks and plans live in project SQLite and Markdown enters only through `orc project task\|plan import`. Claims pin the task revision. |
 | Dependency routing and Git lifecycle | `lib/taskRouting.ts`, `lib/dispatchPlanner.ts`, `lib/claimManager.ts`, `lib/runWorktree.ts`, coordinator finalization. | **Reuse/adapt.** Keep dispatch, review, rebase/merge semantics. Move operational run truth to SQLite incrementally; retain compatibility readers until cutover. |
 | Event history | `lib/eventLog.ts` provides SQLite WAL, FTS, `readEventsSince`, and filtered queries. `appendSequencedEvent` separately reads `MAX(seq)+1`. | **Adapt first.** Allocate sequence inside the insert transaction; keep payload `seq` equal to row `seq`, and test concurrent processes. |
 | Operational state | `backlog.json`, `agents.json`, `claims.json`, `run-worktrees.json`, and `event-checkpoint.json` use locks/atomic file replacement. A claim writes multiple files and then an event. | **Build/adapt.** Versioned SQLite operational tables and transition functions append events in the same transaction. One authoritative writer per field during cutover; JSON compatibility is read-only or derived after its cutover. |
 | Event consumption | `coordinator.ts` reads the full event history each tick, prunes a JSON checkpoint, and rebuilds activity maps. | **Adapt.** Durable `consumer_offsets`, bounded `seq > cursor` reads, replay on restart, and transactionally applied projections. Preserve searchable history. |
 | Input and review messages | `lib/runCommands.ts`, CLI/MCP input request and response, review events, and PTY sends. | **Build.** Durable commands/messages with run scope, idempotency, semantic ACK, timeout, `outcome_unknown`, and bounded retries. PTY write means only `sent`. |
 | Provider integration | `adapters/interface.ts` and `adapters/pty.ts` expose `start/send/attach/probe/stop`; Codex, Claude, Gemini are CLI modes. | **Adapt/build.** Keep PTY as fallback; add capability-based structured runtimes only after subscription and protocol smoke tests. Fake runtimes verify deterministic behavior. |
-| Worker workspace | `lib/workerRuntime.ts` passes `working_directory`; `adapters/pty.ts` currently prefers `ORC_REPO_ROOT` as process cwd. | **Adapt.** Spawn in the assigned worktree and repair provider sandbox/Git metadata paths; keep `ORC_HOME` for orchestration state resolution. |
+| Worker workspace | `lib/workerRuntime.ts` passes `working_directory`; `adapters/pty.ts` spawned in the repository root. | **Done.** Workers spawn in the assigned worktree with provider sandbox/Git metadata paths repaired; `ORC_PROJECT_ID` (with the `ORC_STATE_DIR` bridge) resolves orchestration state. |
 | Process recovery | `coordinator.ts` probes a PID file and marks stale agents; PTY handles live in coordinator memory. | **Build.** Stable provider session identity, supervisor ownership or explicit resume, process reconciliation, and recoverable/unknown status. Do not kill a healthy worker solely on daemon restart. |
 | Terminal access | `cli/attach.ts` and `cli/control-worker.ts` print a log tail; `node-pty` handle is process-local. Docker image has tmux installed. | **Build.** Terminal broker and independent worktree shell; attach/detach, resize, scrollback, read-only default, exclusive input lease. |
 | Local control API | Task 201: the coordinator serves protocol v1 (HTTP/JSON over an owner-only Unix socket plus a token): snapshot, cursor event stream, scoped command enqueue/ACK. `runs-active --via-control` and `orc control` use it; other CLI and MCP paths still call libraries directly. | **Adapt.** Add the loopback TCP listener for the host (chosen in Task 195; packaged in Task 206), add per-session secrets, wire command delivery, then move the remaining CLI/MCP paths and the desktop onto shared services. |
@@ -80,8 +80,8 @@ controls Docker directly.
    an active provider turn.
 5. **Existing two-root layout:** The brief depicts one project repo. A
    registered project keeps its state outside the target repo, whose
-   worktrees it creates; legacy attached and sibling installations no longer
-   run and must be migrated with `orc project migrate` (plan 3).
+   worktrees it creates (plan 3). Older in-repository layouts are not
+   supported and cannot be imported.
 6. **Existing finalization:** The brief says the daemon resolves conflicts;
    current direct mode can ask a worker for a finalize rebase. Preserve this
    behavior initially and model it explicitly in the run state. A separate

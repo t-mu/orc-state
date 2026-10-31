@@ -297,7 +297,6 @@ describe('createRuntimeRepo', () => {
     // No legacy layout in the target repo: it is a clean registered project.
     expect(existsSync(join(repo.repoRoot, '.orc-state'))).toBe(false);
     expect(existsSync(join(repo.repoRoot, 'backlog'))).toBe(false);
-    expect(existsSync(join(repo.repoRoot, 'orc-state.config.json'))).toBe(false);
 
     // Git repo is initialized and on the `main` branch.
     const result = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
@@ -351,9 +350,8 @@ describe('createRuntimeRepo', () => {
 // ── buildRuntimeEnv ─────────────────────────────────────────────────────────
 
 describe('buildRuntimeEnv', () => {
-  it('selects the temp project and drops legacy path overrides', () => {
+  it('selects the temp project and drops an inherited state-dir bridge', () => {
     vi.stubEnv('ORC_STATE_DIR', '/tmp/inherited-state');
-    vi.stubEnv('ORC_REPO_ROOT', '/tmp/inherited-repo');
 
     try {
       const repo = createRuntimeRepo();
@@ -364,7 +362,6 @@ describe('buildRuntimeEnv', () => {
       expect(env.ORC_DATA_HOME).toBe(repo.dataHome);
       expect(env.ORC_PROJECT_ID).toBe(repo.projectId);
       expect(env.ORC_STATE_DIR).toBeUndefined();
-      expect(env.ORC_REPO_ROOT).toBeUndefined();
       expect(cwd).toBe(repo.repoRoot);
 
       assertPathsInside(repo.root, { ORC_DATA_HOME: env.ORC_DATA_HOME as string });
@@ -381,7 +378,7 @@ describe('buildRuntimeEnv', () => {
 
     expect(JSON.parse(repo.orc(['project', 'config', 'get', 'worker_pool.max_workers'])).value).toBe(1);
     expect(JSON.parse(repo.orc(['project', 'config', 'get', 'worker_pool.provider'])).value).toBe('codex');
-    expect(existsSync(join(repo.repoRoot, 'orc-state.config.json'))).toBe(false);
+    expect(existsSync(join(repo.repoRoot, '.orc-state'))).toBe(false);
   });
 
   it('strips nested provider env vars from the coordinator runtime env', () => {

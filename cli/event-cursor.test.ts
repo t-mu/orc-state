@@ -13,7 +13,7 @@ afterEach(() => { closeAllDatabases(); cleanupTempStateDir(dir); });
 function run(...args: string[]) {
   return spawnSync(process.execPath, ['cli/event-cursor.ts', ...args], {
     cwd: join(import.meta.dirname, '..'),
-    env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir },
+    env: { ...process.env, ORC_STATE_DIR: dir },
     encoding: 'utf8',
   });
 }

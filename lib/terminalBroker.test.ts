@@ -81,7 +81,7 @@ describe('terminal broker', () => {
     const terminal = (await observer.openTerminal('provider', 'run-a')).terminal;
     expect((await observer.observeTerminal(terminal.terminal_id)).screen).toContain('screen:tmux:worker-a');
     const child = await exec(process.execPath, ['cli/terminal.ts', 'provider', 'run-a', '--once'], {
-      cwd: repoRoot, env: { ...process.env, ORC_STATE_DIR: dir, ORC_REPO_ROOT: dir }, encoding: 'utf8',
+      cwd: repoRoot, env: { ...process.env, ORC_STATE_DIR: dir }, encoding: 'utf8',
     });
     expect(child.stdout).toContain('screen:tmux:worker-a');
     expect(driver.live.has('tmux:worker-a')).toBe(true);

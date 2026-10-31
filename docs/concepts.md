@@ -153,13 +153,9 @@ operate on.
 
 For a registered project (`orc project add`) the orchestration root is an
 external state directory, so the target repo stays free of framework files and
-receives only product-code commits. A legacy installation that kept both in
-the same directory (`.orc-state/`, `backlog/`, `plans/`,
-`orc-state.config.json` inside the repository) no longer runs;
-`orc project migrate` moves it into a project.
+receives only product-code commits.
 
-_You'll encounter this when registering a project or migrating an older
-installation._
+_You'll encounter this when registering a project._
 
 ---
 
@@ -167,5 +163,4 @@ installation._
 
 - [Getting started](./getting-started.md)
 - [Architecture overview](./architecture.md)
-- [Sibling mode (retired)](./sibling-mode.md)
 - [Contracts & invariants](./contracts.md)

@@ -319,7 +319,7 @@ export function buildStatus(stateDir: string, { settings }: { settings?: OrcSett
 
   const descriptor = readProjectDescriptor(stateDir);
   return {
-    // The project this state directory belongs to (null for a legacy layout).
+    // The project this state directory belongs to (null when it has no project descriptor).
     project: descriptor ? { id: descriptor.id, name: descriptor.name, target_repo_root: descriptor.target_repo_root } : null,
     agents: {
       total: agents.length,

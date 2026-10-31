@@ -81,7 +81,6 @@ function writeSpec(taskRef: string, feature: string, title: string, status = 'to
 
 beforeEach(() => {
   dir = createTempStateDir('orc-mcp-handlers-test-');
-  process.env.ORC_REPO_ROOT = dir;
   mkdirSync(join(dir, 'backlog'), { recursive: true });
   seedBacklog([
     {
@@ -202,7 +201,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanupTempStateDir(dir);
-  delete process.env.ORC_REPO_ROOT;
 });
 
 describe('mcp read handlers', () => {
@@ -603,7 +601,7 @@ describe('mcp read handlers', () => {
     // A legacy state directory: no runtime.db.
     const legacyDir = createTempStateDir('orc-mcp-handlers-legacy-');
     try {
-      expect(() => handleCreateTask(legacyDir, { title: 'Anything' })).toThrow(/Project task store is missing.*orc project migrate/);
+      expect(() => handleCreateTask(legacyDir, { title: 'Anything' })).toThrow(/Project task store is missing.*restore it from a backup, or run orc init/);
       expect(() => handleUpdateTask(legacyDir, { task_ref: 'project/todo-one', priority: 'high' })).toThrow(/Project task store is missing/);
     } finally {
       cleanupTempStateDir(legacyDir);

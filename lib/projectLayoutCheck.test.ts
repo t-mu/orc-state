@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkProjectLayout } from './projectLayoutCheck.ts';
@@ -30,7 +30,7 @@ afterEach(() => {
 describe('checkProjectLayout', () => {
   it('passes when target is a git repo and the state dir is writable', () => {
     const result = checkProjectLayout({ targetRepoRoot: target, stateDir });
-    expect(result).toEqual({ ok: true, errors: [], warnings: [] });
+    expect(result).toEqual({ ok: true, errors: [] });
   });
 
   it('errors when target_repo does not exist', () => {
@@ -51,16 +51,6 @@ describe('checkProjectLayout', () => {
     const result = checkProjectLayout({ targetRepoRoot: target, stateDir: join(tmp, 'missing-state') });
     expect(result.ok).toBe(false);
     expect(result.errors.some((e) => e.includes('state dir does not exist'))).toBe(true);
-  });
-
-  it('warns (non-fatal) when framework artifacts leak into the target repo', () => {
-    mkdirSync(join(target, '.orc-state'), { recursive: true });
-    writeFileSync(join(target, 'orc-state.config.json'), '{}');
-    const result = checkProjectLayout({ targetRepoRoot: target, stateDir });
-    // Warnings do not fail the check.
-    expect(result.ok).toBe(true);
-    expect(result.warnings.some((w) => w.includes('.orc-state'))).toBe(true);
-    expect(result.warnings.some((w) => w.includes('orc-state.config.json'))).toBe(true);
   });
 
   it('errors when run worktrees would land inside the target working tree', () => {

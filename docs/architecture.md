@@ -135,10 +135,7 @@ orc resolves two roots:
 The roots differ: the orchestration root is the project's external state
 directory in the data home, and the target is the registered Git repository. Worktrees are placed under the state directory but
 are git worktrees **of the target repo**, which receives only product-code
-commits. Legacy installations that kept both roots in the repository
-(attached) or in a separate orchestration repository with `target_repo`
-(sibling) no longer run; `orc project migrate` moves one into a project (see
-[Sibling Mode](./sibling-mode.md)).
+commits.
 
 ---
 

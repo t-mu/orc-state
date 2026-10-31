@@ -43,11 +43,10 @@ export function normalizeWorkerEnv(
   }
   if (project) {
     // The worker finds its state through the project identity and talks to
-    // the coordinator over the local control endpoint. Legacy discovery
-    // variables are blanked so a value inherited from the
-    // coordinator's environment cannot redirect it.
+    // the coordinator over the local control endpoint.
     env.ORC_PROJECT_ID = project.id;
-    env.ORC_STATE_DIR = project.stateDir; // temporary bridge for readers that predate project identity
+    // The state-dir bridge: a sandboxed worker resolves its project from this directory's descriptor without opening the registry.
+    env.ORC_STATE_DIR = project.stateDir;
     env.ORC_CONTROL_SOCKET = defaultSocketPath(project.stateDir);
     // The session id names the session (report-for-duty); its secret, held only in this
     // environment, is the credential every control call presents (task 231). A master
@@ -57,8 +56,6 @@ export function normalizeWorkerEnv(
     env.ORC_SESSION_TOKEN = '';
     if (project.sessionSecret) env.ORC_SESSION_SECRET = project.sessionSecret;
     env.ORC_MASTER_SECRET = '';
-    env.ORC_HOME = '';
-    env.ORC_REPO_ROOT = '';
   }
   // Prevent interactive editors, pagers, and merge-tool prompts from blocking
   // headless PTY sessions. Workers never need an interactive editor.

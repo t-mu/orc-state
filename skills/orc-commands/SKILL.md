@@ -20,8 +20,7 @@ its project; elsewhere pass `--project=<id>` (or set `ORC_PROJECT_ID`):
 orc --project=<project-id> <cmd>
 ```
 
-Legacy `.orc-state` installations no longer run; migrate one with
-`orc project migrate <root> --execute`. The `kill-all`
+The `kill-all`
 command is especially dangerous to run accidentally — it stops the coordinator and
 clears all agents.
 

@@ -16,7 +16,7 @@ afterEach(() => { closeAllDatabases(); cleanupTempStateDir(dir); });
 function doctor(stateDir: string) {
   return spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
     cwd: join(import.meta.dirname, '..'),
-    env: { ...process.env, ORC_STATE_DIR: stateDir, ORC_REPO_ROOT: stateDir },
+    env: { ...process.env, ORC_STATE_DIR: stateDir },
     encoding: 'utf8',
   });
 }
@@ -53,7 +53,7 @@ describe('runtime schema migration', () => {
       repeated.close();
     }
     const result = doctor(dir);
-    // A legacy fixture fails doctor overall (legacy installations no longer run); its state checks still pass.
+    // Without a project doctor fails overall; the fixture's state checks still pass.
     expect(JSON.parse(result.stdout).checks.stateErrors, result.stderr || result.stdout).toEqual([]);
     expect((JSON.parse(result.stdout) as { checks: { runtimeSchema: { ok: boolean } } }).checks.runtimeSchema.ok).toBe(true);
   });
