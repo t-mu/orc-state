@@ -29,7 +29,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
-import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath, consumeHookEvents } from '../lib/paths.ts';
+import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
@@ -748,15 +748,14 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       };
     },
 
-    detectInputBlock(sessionHandle: string) {
+    detectInputBlock(sessionHandle: string, hookEvents: Array<{ message?: string }> = []) {
       try {
         const agentId = parseHandle(sessionHandle);
-        // Fast path: check push-based hook events (atomic consume via rename).
-        // Hook events are high-confidence — written by the provider's own
-        // notification system, not heuristic text matching.
-        const events = consumeHookEvents(agentId);
-        if (events.length > 0) {
-          return events[0].message || 'permission prompt detected';
+        // Fast path: permission hook events drained by the coordinator tick
+        // (the only reader of the hook-events file). They are high-confidence —
+        // written by the provider's own notification system, not text matching.
+        if (hookEvents.length > 0) {
+          return hookEvents[0].message || 'permission prompt detected';
         }
         // Universal fallback: scan recent PTY output for blocking prompt patterns.
         const text = getRecentOutput(agentId);

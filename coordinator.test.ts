@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
@@ -1612,6 +1612,205 @@ describe('in-progress stale escalation', () => {
     expect(events.some((event) => event.event === 'worker_needs_attention' && event.run_id === 'run-stale-not-yet')).toBe(false);
     const claim = readClaims(dir).find((entry) => entry.run_id === 'run-stale-not-yet')!;
     expect(claim.state).toBe('in_progress');
+  });
+});
+
+describe('hook event bus', () => {
+  const WORKER = {
+    provider: 'claude',
+    role: 'worker',
+    status: 'running',
+    provider_ref: null,
+    registered_at: new Date().toISOString(),
+  };
+
+  function inProgressClaim(runId: string, agentId: string, taskRef: string, idleMs: number) {
+    const at = new Date(Date.now() - idleMs).toISOString();
+    return {
+      run_id: runId,
+      task_ref: taskRef,
+      agent_id: agentId,
+      state: 'in_progress',
+      claimed_at: at,
+      started_at: at,
+      lease_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      last_heartbeat_at: at,
+      finalization_state: null,
+      finalization_retry_count: 0,
+      finalization_blocked_reason: null,
+      input_state: null,
+      input_requested_at: null,
+      escalation_notified_at: null,
+    };
+  }
+
+  function writeHookEvents(agentId: string, records: unknown[]) {
+    mkdirSync(join(dir, 'pty-hook-events'), { recursive: true });
+    appendFileSync(join(dir, 'pty-hook-events', `${agentId}.ndjson`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  }
+
+  async function runTicks(argv: string[], count = 1) {
+    const originalArgv = process.argv;
+    process.argv = [...process.argv.slice(0, 2), ...argv];
+    try {
+      const { tick } = await import('./coordinator.ts');
+      for (let i = 0; i < count; i++) await tick();
+    } finally {
+      process.argv = originalArgv;
+    }
+  }
+
+  it('does not nudge or escalate a run whose tool hook events are recent, even without phase events', async () => {
+    seedState(dir, {
+      agents: [
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+      ],
+      tasks: [
+        { ...DISPATCHABLE_TASK, ref: 'proj/busy', status: 'in_progress' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/quiet', status: 'in_progress' },
+      ],
+      claims: [
+        inProgressClaim('run-busy', 'worker-01', 'proj/busy', 40 * 60 * 1000),
+        inProgressClaim('run-quiet', 'worker-02', 'proj/quiet', 40 * 60 * 1000),
+      ],
+    });
+    const toolTs = new Date(Date.now() - 60 * 1000).toISOString();
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Bash', brief: 'npm test', ts: toolTs }]);
+
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    // Stale after 10 minutes: the quiet run (40 min idle) escalates, the busy run must not.
+    await runTicks(['--worker-stale-soft-ms=600000', '--worker-stale-nudge-ms=600000', '--run-inactive-nudge-interval-ms=600000'], 2);
+
+    const sentTo = send.mock.calls.map((call) => call[0]);
+    expect(sentTo).toContain('pty:worker-02');
+    expect(sentTo).not.toContain('pty:worker-01');
+    const events = readEvents(dir);
+    expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-quiet')).toBe(true);
+    expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-busy')).toBe(false);
+    expect(events.some((e) => e.event === 'need_input' && e.run_id === 'run-busy')).toBe(false);
+
+    // Lease renewed the way phase events renew it, and the hook file was consumed.
+    const busy = readClaims(dir).find((c) => c.run_id === 'run-busy')!;
+    expect(busy.last_heartbeat_at).toBe(toolTs);
+    expect(Date.parse(busy.lease_expires_at as string)).toBeGreaterThanOrEqual(Date.parse(toolTs) + DEFAULT_LEASE_MS);
+    expect(existsSync(join(dir, 'pty-hook-events', 'worker-01.ndjson'))).toBe(false);
+
+    const { readRunActivity } = await import('./lib/runActivityStore.ts');
+    expect(readRunActivity(dir)['run-busy']).toMatchObject({
+      run_id: 'run-busy', agent_id: 'worker-01', label: 'Bash: npm test', source: 'tool',
+      last_tool: 'Bash', last_tool_brief: 'npm test', last_tool_ts: toolTs,
+    });
+  });
+
+  it('hands permission hook events to input-block detection and skips malformed lines', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'claimed' }],
+      claims: [{
+        run_id: 'run-permission',
+        task_ref: 'proj/fix-bug',
+        agent_id: 'worker-01',
+        state: 'claimed',
+        claimed_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        task_envelope_sent_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        lease_expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        last_heartbeat_at: null,
+        started_at: null,
+        finalization_state: null,
+        finalization_retry_count: 0,
+        finalization_blocked_reason: null,
+        input_state: null,
+        input_requested_at: null,
+        session_start_retry_count: 0,
+        session_start_retry_next_at: null,
+        session_start_last_error: null,
+      }],
+    });
+    mkdirSync(join(dir, 'pty-hook-events'), { recursive: true });
+    writeFileSync(join(dir, 'pty-hook-events', 'worker-01.ndjson'),
+      'NOT-JSON\n' + JSON.stringify({ type: 'permission', message: 'Allow Bash(rm -rf build)?', ts: new Date().toISOString() }) + '\n');
+
+    const detectInputBlock = vi.fn((_handle: string, hookEvents: Array<{ message?: string }> = []) => hookEvents[0]?.message ?? null);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock }));
+    await runTicks(['--run-start-timeout-ms=600000']);
+
+    expect(detectInputBlock).toHaveBeenCalledWith('pty:worker-01', [
+      expect.objectContaining({ type: 'permission', message: 'Allow Bash(rm -rf build)?' }),
+    ]);
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-permission')!;
+    expect(claim.input_state).toBe('awaiting_input');
+    const requested = readEvents(dir).find((e) => e.event === 'input_requested' && e.run_id === 'run-permission');
+    expect((requested?.payload as Record<string, unknown>)?.question).toContain('Allow Bash(rm -rf build)?');
+  });
+
+  it('removes a run activity snapshot once the run is no longer active', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-live', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    const { writeRunActivity, readRunActivity } = await import('./lib/runActivityStore.ts');
+    const entry = (runId: string) => ({
+      run_id: runId, agent_id: 'worker-01', label: 'x', source: 'note' as const, label_ts: new Date().toISOString(),
+      last_tool: null, last_tool_brief: null, last_tool_ts: null,
+    });
+    writeRunActivity(dir, { 'run-live': entry('run-live'), 'run-ended': entry('run-ended') });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    await runTicks([]);
+
+    expect(Object.keys(readRunActivity(dir))).toEqual(['run-live']);
+  });
+
+  it('does not re-emit activity_note for an unchanged label after a coordinator restart', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-restarted', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    // The snapshot a previous coordinator persisted before it stopped.
+    const { writeRunActivity } = await import('./lib/runActivityStore.ts');
+    writeRunActivity(dir, { 'run-restarted': {
+      run_id: 'run-restarted', agent_id: 'worker-01', label: 'Write tests', source: 'todo',
+      label_ts: new Date(Date.now() - 5000).toISOString(), last_tool: null, last_tool_brief: null, last_tool_ts: null,
+    } });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    await runTicks([]);
+    writeHookEvents('worker-01', [{ type: 'activity', label: 'Write tests', source: 'todo', ts: new Date().toISOString() }]);
+    await runTicks([]);
+
+    expect(readEvents(dir).some((e) => e.event === 'activity_note' && e.run_id === 'run-restarted')).toBe(false);
+  });
+
+  it('emits activity_note when the label changes, not again for the same label, and throttles changes', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-notes', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    const originalArgv = process.argv;
+    process.argv = process.argv.slice(0, 2);
+    try {
+      const { tick } = await import('./coordinator.ts');
+      writeHookEvents('worker-01', [{ type: 'activity', label: 'Write tests', source: 'todo', ts: new Date().toISOString() }]);
+      await tick();
+      writeHookEvents('worker-01', [{ type: 'activity', label: 'Write tests', source: 'todo', ts: new Date().toISOString() }]);
+      await tick();
+      writeHookEvents('worker-01', [{ type: 'activity', label: 'Fix review findings', source: 'todo', ts: new Date().toISOString() }]);
+      await tick();
+    } finally {
+      process.argv = originalArgv;
+    }
+
+    const notes = readEvents(dir).filter((e) => e.event === 'activity_note' && e.run_id === 'run-notes');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({ agent_id: 'worker-01', task_ref: 'proj/fix-bug', payload: { label: 'Write tests', source: 'todo' } });
+    const { readRunActivity } = await import('./lib/runActivityStore.ts');
+    expect(readRunActivity(dir)['run-notes']).toMatchObject({ label: 'Fix review findings', source: 'todo' });
   });
 });
 

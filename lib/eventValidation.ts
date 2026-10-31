@@ -84,6 +84,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'input_response',
     'worker_needs_attention',
     'remediation_applied',
+    'activity_note',
     ...COMMAND_EVENTS,
   ]);
   const agentEvents = new Set([
@@ -122,6 +123,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'input_provided',
     'worker_needs_attention',
     'remediation_applied',
+    'activity_note',
     ...COMMAND_EVENTS,
   ]).has(eventName)) {
     requireTaskRef(event, errors);
@@ -289,6 +291,17 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
       'idle_ms',
       (v) => Number.isInteger(v) && (v as number) >= 0,
       'must be a non-negative integer',
+      errors,
+    );
+  }
+
+  if (eventName === 'activity_note') {
+    requirePayloadField(event, 'label', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+    requirePayloadField(
+      event,
+      'source',
+      (v) => v === 'todo' || v === 'note' || v === 'tool',
+      'must be one of: todo, note, tool',
       errors,
     );
   }

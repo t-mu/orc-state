@@ -762,18 +762,24 @@ describe('pty adapter send()', () => {
     expect(adapter.detectInputBlock('pty:bob')).toBeNull();
   });
 
-  it('returns hook events file message as fast-path over PTY scan', async () => {
+  it('returns the coordinator-supplied permission hook message as fast-path over PTY scan', async () => {
     const { adapter } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', {});
 
-    // Write a fake hook event directly to the hook events file
+    expect(adapter.detectInputBlock('pty:bob', [{ message: 'Approve bash command?' }]))
+      .toBe('Approve bash command?');
+    expect(adapter.detectInputBlock('pty:bob', [{ message: '' }])).toBe('permission prompt detected');
+  });
+
+  it('never reads the hook events file itself (the coordinator is its only consumer)', async () => {
+    const { adapter } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+
     const hookFile = join(dir, 'pty-hook-events', 'bob.ndjson');
     writeFileSync(hookFile, JSON.stringify({ type: 'permission', message: 'Approve bash command?', ts: new Date().toISOString() }) + '\n');
 
-    expect(adapter.detectInputBlock('pty:bob')).toBe('Approve bash command?');
-    // After atomic consume, the file and .processing file should both be gone
-    expect(existsSync(hookFile)).toBe(false);
-    expect(existsSync(`${hookFile}.processing`)).toBe(false);
+    expect(adapter.detectInputBlock('pty:bob')).toBeNull();
+    expect(existsSync(hookFile)).toBe(true);
   });
   it('throws on malformed session handles', async () => {
     const { adapter } = await makeAdapter();

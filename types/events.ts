@@ -334,6 +334,17 @@ export interface RemediationAppliedEvent extends BaseEvent {
   payload: { policy_id: string; action: string; message: string };
 }
 
+// ── Activity events ──────────────────────────────────────────────────────────
+
+/** A run's hook-derived activity label changed (throttled per run). */
+export interface ActivityNoteEvent extends BaseEvent {
+  event: 'activity_note';
+  run_id: string;
+  agent_id: string;
+  task_ref: string;
+  payload: { label: string; source: 'todo' | 'note' | 'tool' };
+}
+
 // ── Coordinator events ────────────────────────────────────────────────────────
 
 export interface CoordinatorStartedEvent extends BaseEvent {
@@ -389,7 +400,8 @@ export type OrcEvent =
   | CoordinatorStoppedEvent
   | ReviewSubmittedEvent
   | WorkerNeedsAttentionEvent
-  | RemediationAppliedEvent;
+  | RemediationAppliedEvent
+  | ActivityNoteEvent;
 
 // ── Type guards ───────────────────────────────────────────────────────────────
 
