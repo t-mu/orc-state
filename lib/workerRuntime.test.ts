@@ -162,6 +162,7 @@ describe('launchWorkerSession execution mode', () => {
   });
 
   let adapterStartSpy: ReturnType<typeof vi.fn>;
+  let buildSessionBootstrapSpy: ReturnType<typeof vi.fn>;
   let adapter: TestAdapter;
   let stateDir: string;
 
@@ -173,7 +174,9 @@ describe('launchWorkerSession execution mode', () => {
     adapter = { start: adapterStartSpy as unknown as TestAdapter['start'] };
     vi.doMock('./agentRegistry.ts', () => ({ updateAgentRuntime: vi.fn() }));
     vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
-    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: vi.fn(() => 'BOOTSTRAP') }));
+    // One registration per test: re-mocking the module inside a test can leave workerRuntime bound to this one.
+    buildSessionBootstrapSpy = vi.fn(() => 'BOOTSTRAP');
+    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
     vi.doMock('node:fs', async () => {
       const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
       return { ...actual, existsSync: vi.fn(() => false) };
@@ -288,11 +291,6 @@ describe('launchWorkerSession execution mode', () => {
   });
 
   it('defaults worker startup/bootstrap profiles to default', async () => {
-    vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
-    const buildSessionBootstrapSpy = vi.fn(() => 'BOOTSTRAP');
-    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
-    // Re-evaluate workerRuntime against this test's sessionBootstrap mock, not beforeEach's.
-    vi.resetModules();
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ provider: 'codex' });
     await launchWorkerSession(stateDir, agent, {
@@ -318,10 +316,6 @@ describe('launchWorkerSession execution mode', () => {
   it('passes smoke worker startup/bootstrap profiles explicitly from coordinator env', async () => {
     vi.stubEnv('ORC_WORKER_BOOTSTRAP_PROFILE', 'smoke');
     vi.stubEnv('ORC_WORKER_STARTUP_PROFILE', 'real-provider-smoke');
-    vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
-    const buildSessionBootstrapSpy = vi.fn(() => 'BOOTSTRAP');
-    vi.doMock('./sessionBootstrap.ts', () => ({ buildSessionBootstrap: buildSessionBootstrapSpy }));
-    vi.resetModules();
     const { launchWorkerSession } = await import('./workerRuntime.ts');
     const agent = makeAgent({ provider: 'codex' });
     await launchWorkerSession(stateDir, agent, {
