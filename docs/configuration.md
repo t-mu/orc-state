@@ -210,8 +210,8 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `worker_stale_soft_ms` | integer | `1800000` | Inactivity before soft alert — emits `worker_needs_attention` notification (30 min). |
 | `worker_stale_nudge_ms` | integer | `3600000` | Inactivity before PTY nudge message (60 min). |
 | `worker_stale_force_fail_ms` | integer | `7200000` | Inactivity before force-fail with `policy: requeue` (2 hours). |
-| `hook_idle_nudge_ms` | integer | `300000` | For a run whose harness has delivered tool hook events (Claude workers): inactivity before the PTY nudge, and before a finalize-rebase retry, in place of `worker_stale_nudge_ms` / `run_inactive_nudge_ms` (5 min). Measured from the last tool/hook activity. |
-| `hook_idle_escalate_ms` | integer | `600000` | For a run with tool hook events: inactivity before the `worker_needs_attention` alert, in place of `worker_stale_soft_ms` (10 min). Runs without hooks (Codex, Gemini) keep the `worker_stale_*` thresholds. |
+| `hook_idle_nudge_ms` | integer | `300000` | For a run whose harness has delivered tool hook events (Claude workers): inactivity before the PTY nudge, and before a finalize-rebase retry, when shorter than `worker_stale_nudge_ms` / `run_inactive_nudge_ms` (5 min). Measured from the last tool/hook activity. |
+| `hook_idle_escalate_ms` | integer | `600000` | For a run with tool hook events: inactivity before the `worker_needs_attention` alert, when shorter than `worker_stale_soft_ms` (10 min). Runs without hooks (Codex, Gemini) keep the `worker_stale_*` thresholds. A tool hook fires when the call ends, so one call running longer than these thresholds (a slow `npm test`, a long sub-agent) can draw a nudge or alert while the worker is busy; runs in PR review or awaiting finalization are never nudged. |
 | `merge_strategy` | string | `"direct"` | `"direct"` for worktree merge, `"pr"` for pull request. |
 | `pr_provider` | string\|null | `null` | Git host provider (`"github"`). Required when `merge_strategy` is `"pr"`. |
 | `pr_push_remote` | string | `"origin"` | Git remote to push PR branches to. |

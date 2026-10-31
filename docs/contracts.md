@@ -482,9 +482,9 @@ commands and Claude tool hook events:
 |-------|--------------------------|
 | `explore` | the TASK_START envelope is delivered |
 | `implement` | `run-start` is accepted, or a file edit (`Edit`/`MultiEdit`/`Write`/`NotebookEdit`) after an explicit `explore` |
-| `review` | a reviewer sub-agent is spawned (an `Agent`/`Task` call whose `subagent_type` or description matches `critic`, `integrator` or `review`), or the run's first `review_submitted` |
-| `complete` | after review, a `git rebase main` (or `origin/main`) that follows an `orc review-read` |
-| `finalize` | `run-work-complete` is accepted |
+| `review` | a reviewer sub-agent is spawned (an `Agent`/`Task` call whose `subagent_type` is a reviewer such as `critic` or `integrator`, or a generic sub-agent whose description mentions `review`), or the run's first `review_submitted` |
+| `complete` | after review, a `git rebase main` (or `origin/main`) that follows an `orc review-read`, or else `run-work-complete` (PR-mode runs skip the rebase) |
+| `finalize` | `run-work-complete` is accepted (right after `complete` when that has the same evidence) |
 
 A commit is not evidence: implement commits happen too. Inference only moves a
 run forward (review fixes stay in review), and an explicit `phase_started`

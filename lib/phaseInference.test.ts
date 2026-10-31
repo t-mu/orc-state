@@ -24,6 +24,9 @@ describe('isReviewerSpawn', () => {
     expect(isReviewerSpawn(tool('Agent', 'Reviewer 2 of the diff', 0))).toBe(true);
     expect(isReviewerSpawn(tool('Agent', 'Find config loaders', 0, { subagent_type: 'Explore' }))).toBe(false);
     expect(isReviewerSpawn(tool('Bash', 'critic', 0))).toBe(false);
+    expect(isReviewerSpawn(tool('Agent', 'Review existing config loaders', 0, { subagent_type: 'Explore' }))).toBe(false);
+    expect(isReviewerSpawn(tool('Agent', 'Preview the release notes', 0))).toBe(false);
+    expect(isReviewerSpawn(tool('Agent', 'Code review of the diff', 0, { subagent_type: 'general-purpose' }))).toBe(true);
   });
 });
 
@@ -89,6 +92,15 @@ describe('inferPhaseTransitions', () => {
     expect(inferPhaseTransitions({ phase: 'implement', ts: at(1) }, [
       { phase: 'complete', ts: at(20), evidence: 'cmd: git rebase main', requires: 'review' },
     ])).toEqual([]);
+  });
+
+  it('passes through complete and finalize on the same work_complete evidence, but only after review', () => {
+    const workComplete: PhaseCandidate[] = [
+      { phase: 'complete', ts: at(20), evidence: 'event: work_complete', requires: 'review' },
+      { phase: 'finalize', ts: at(20), evidence: 'event: work_complete' },
+    ];
+    expect(phases(inferPhaseTransitions({ phase: 'review', ts: at(10) }, workComplete))).toEqual(['complete', 'finalize']);
+    expect(phases(inferPhaseTransitions({ phase: 'implement', ts: at(1) }, workComplete))).toEqual(['finalize']);
   });
 
   it('is idempotent once the run has reached the inferred phase', () => {

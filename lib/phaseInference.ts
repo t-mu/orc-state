@@ -28,15 +28,23 @@ export function phaseRank(phase: string | null | undefined): number {
   return phase ? PHASE_ORDER.indexOf(phase as InferablePhase) : -1;
 }
 
-const REVIEWER_PATTERN = /critic|integrator|review/i;
+const REVIEWER_PATTERN = /\b(?:critic|integrator|review(?:er|ers|ing)?)\b/i;
+/** Sub-agent types that say nothing about the job: only for these is the description consulted. */
+const GENERIC_AGENT_TYPES = new Set(['', 'general-purpose', 'claude', 'fork']);
 const REVIEW_READ_PATTERN = /\breview-read\b/;
 const REBASE_MAIN_PATTERN = /\bgit\b[^;&|]*\brebase\s+(?:origin\/)?main\b/;
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
-/** True when an `Agent`/`Task` tool call spawned a reviewer sub-agent. */
+/**
+ * True when an `Agent`/`Task` tool call spawned a reviewer sub-agent: a reviewer
+ * sub-agent type, or a review description on a generic sub-agent (so an
+ * `Explore` agent asked to "review the config loaders" does not count).
+ */
 export function isReviewerSpawn(event: ToolHookEvent): boolean {
   if (event.tool !== 'Agent' && event.tool !== 'Task') return false;
-  return REVIEWER_PATTERN.test(event.subagent_type ?? '') || REVIEWER_PATTERN.test(event.brief);
+  const type = event.subagent_type ?? '';
+  if (REVIEWER_PATTERN.test(type)) return true;
+  return GENERIC_AGENT_TYPES.has(type) && REVIEWER_PATTERN.test(event.brief);
 }
 
 /** Per-run memory the tool classifier needs across ticks. */

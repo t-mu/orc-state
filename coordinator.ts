@@ -1084,7 +1084,11 @@ function inferRunPhases(claims: Claim[], toolEventsByRun: Map<string, ToolHookEv
     const reviewAt = reviewSubmittedAtByRun.get(claim.run_id);
     if (reviewAt) candidates.push({ phase: 'review', ts: reviewAt, evidence: 'event: review_submitted' });
     const workCompleteAt = workCompleteAtByRun.get(claim.run_id);
-    if (workCompleteAt) candidates.push({ phase: 'finalize', ts: workCompleteAt, evidence: 'event: work_complete' });
+    if (workCompleteAt) {
+      // A reviewed run that never showed a detectable rebase (PR mode skips it) still passes through complete.
+      candidates.push({ phase: 'complete', ts: workCompleteAt, evidence: 'event: work_complete', requires: 'review' });
+      candidates.push({ phase: 'finalize', ts: workCompleteAt, evidence: 'event: work_complete' });
+    }
     const tools = toolEventsByRun.get(claim.run_id) ?? [];
     if (tools.length > 0) {
       const result = toolPhaseCandidates(tools, toolPhaseStateByRun.get(claim.run_id) ?? { review_read_at: null });
@@ -1120,7 +1124,12 @@ function inferRunPhases(claims: Claim[], toolEventsByRun: Map<string, ToolHookEv
 /** Idle thresholds for a run: shorter once its harness has delivered tool hook events. */
 function staleThresholds(runId: string): { soft: number; nudge: number; finalizeRetry: number } {
   if (runActivity?.[runId]?.last_tool_ts) {
-    return { soft: HOOK_IDLE_ESCALATE_MS, nudge: HOOK_IDLE_NUDGE_MS, finalizeRetry: HOOK_IDLE_NUDGE_MS };
+    // Hooks only ever shorten a threshold: an operator's lower setting still applies.
+    return {
+      soft: Math.min(HOOK_IDLE_ESCALATE_MS, WORKER_STALE_SOFT_MS),
+      nudge: Math.min(HOOK_IDLE_NUDGE_MS, WORKER_STALE_NUDGE_MS),
+      finalizeRetry: Math.min(HOOK_IDLE_NUDGE_MS, RUN_INACTIVE_NUDGE_MS),
+    };
   }
   return { soft: WORKER_STALE_SOFT_MS, nudge: WORKER_STALE_NUDGE_MS, finalizeRetry: RUN_INACTIVE_NUDGE_MS };
 }
@@ -1536,7 +1545,9 @@ async function tick() {
   const toolEventsByRun = ingestHookEvents(claims);
   const claimsBeforeEvents = claims;
   ({ agents, claims } = await processEventCheckpoint(agents, claims, workerPoolConfig));
-  inferRunPhases(claimsBeforeEvents, toolEventsByRun);
+  // A run that failed in this batch gets no phases after its terminal event.
+  const failedRuns = new Set(claims.filter((claim) => claim.state === 'failed').map((claim) => claim.run_id));
+  inferRunPhases(claimsBeforeEvents.filter((claim) => !failedRuns.has(claim.run_id)), toolEventsByRun);
   ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
   ({ agents, claims } = await probeActiveWorkerSessions(agents, claims, workerPoolConfig));
 

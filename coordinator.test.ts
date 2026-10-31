@@ -1754,6 +1754,35 @@ describe('hook event bus', () => {
     expect(started.every((e) => e.actor_type === 'coordinator')).toBe(true);
   });
 
+  it('infers complete then finalize from run-work-complete for a reviewed run without a rebase (PR mode)', async () => {
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-pr', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000)],
+    });
+    for (const [event, minutes, payload] of [
+      ['review_submitted', 10, { outcome: 'approved', findings: '' }],
+      ['work_complete', 5, { status: 'awaiting_finalize' }],
+    ] as const) {
+      appendSequencedEvent(dir, {
+        ts: ago(minutes), event, actor_type: 'agent', actor_id: 'worker-01',
+        run_id: 'run-pr', task_ref: 'proj/fix-bug', agent_id: 'worker-01', payload,
+      } as Parameters<typeof appendSequencedEvent>[1]);
+    }
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn().mockResolvedValue('') }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+    await runTicks([], 1);
+
+    const started = readEvents(dir).filter((e) => e.event === 'phase_started' && e.run_id === 'run-pr');
+    expect(started.map((e) => [e.phase, (e.payload as Record<string, unknown>).evidence])).toEqual([
+      ['implement', 'event: run_started'],
+      ['review', 'event: review_submitted'],
+      ['complete', 'event: work_complete'],
+      ['finalize', 'event: work_complete'],
+    ]);
+  });
+
   it('keeps a run in implement across a commit, and never moves an explicit review back', async () => {
     const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
     seedState(dir, {
