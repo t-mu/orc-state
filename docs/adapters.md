@@ -56,7 +56,8 @@ interface AdapterInterface {
 
 **`attach(sessionHandle)`** -- Print recent session output to stdout (synchronous).
 
-- Used for debugging and log inspection (`orc attach <id>`).
+- Used for non-interactive debugging. `orc attach <id>` does not call it: for
+  tmux sessions it opens a real tmux client instead.
 - Must not throw if there are no messages yet -- print `"(no messages yet)"`.
 
 **`heartbeatProbe(sessionHandle)`** -- Check whether a session is alive.

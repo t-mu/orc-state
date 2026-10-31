@@ -29,7 +29,7 @@ Auxiliary runtime files (not orchestrator state):
 | Path | Purpose |
 |------|---------|
 | `pty-pids/<agent_id>.pid` | Cross-process heartbeat probing for PTY sessions |
-| `pty-logs/<agent_id>.log` | PTY output capture for `orc attach` |
+| `pty-logs/<agent_id>.log` | Raw PTY/tmux pane output capture (output tails) |
 | `control.json` | Control API endpoint descriptor (protocol version, transport, socket path, daemon PID) |
 | `control.token` | Control API bearer token, mode `0600`, rotated on each daemon start |
 | `control.sock` | Control API Unix socket, mode `0600` (under the OS temp dir when the state path is too long) |

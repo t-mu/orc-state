@@ -42,6 +42,20 @@ export function tmuxSessionName(agentId: string): string {
   return `orc-${readable}-${createHash('sha256').update(agentId).digest('hex').slice(0, 8)}`;
 }
 
+/**
+ * The command that opens a real tmux client on the worker's session in orc's
+ * private server. Read-only (`-r`) unless `write`: the operator can scroll and
+ * detach but keystrokes do not reach the worker. The socket and session names
+ * recorded in the session's provider_ref win over the computed ones.
+ */
+export function tmuxAttachCommand(agentId: string, options: { write?: boolean; providerRef?: unknown } = {}): { command: string; args: string[] } {
+  const ref = (options.providerRef ?? {}) as { tmux_socket?: unknown; tmux_session?: unknown };
+  const socket = typeof ref.tmux_socket === 'string' && ref.tmux_socket ? ref.tmux_socket : tmuxSocketName();
+  const session = typeof ref.tmux_session === 'string' && ref.tmux_session ? ref.tmux_session : tmuxSessionName(agentId);
+  // `=name` matches the session name exactly rather than by prefix.
+  return { command: tmuxBinary(), args: ['-L', socket, 'attach-session', ...(options.write ? [] : ['-r']), '-t', `=${session}`] };
+}
+
 function logPath(agentId: string) { return join(STATE_DIR, 'pty-logs', `${agentId}.log`); }
 function settingsPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.json`); }
 /**

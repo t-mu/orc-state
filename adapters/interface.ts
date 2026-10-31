@@ -24,10 +24,11 @@
  *   Throws if sessionHandle is unknown or if delivery fails.
  *
  * attach(sessionHandle) → void  (synchronous)
- *   Print the most recent assistant response for this session to stdout.
- *   Used for debugging and log inspection. Must not throw if there are no
- *   messages yet — print "(no messages yet)" instead.
- *   Adapters that cannot retrieve history should print a descriptive notice.
+ *   Print a one-shot snapshot of the session's recent output to stdout, for
+ *   non-interactive debugging. Must not throw if there are no messages yet —
+ *   print "(no messages yet)" instead. Adapters that cannot retrieve history
+ *   should print a descriptive notice. `orc attach` does not use this: it opens
+ *   a real tmux client (see tmuxAttachCommand in adapters/tmux.ts).
  *
  * heartbeatProbe(sessionHandle) → Promise<boolean>
  *   Return true if the session is alive and reachable.

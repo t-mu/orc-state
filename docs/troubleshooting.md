@@ -153,10 +153,12 @@ orc worker-gc
 
 **Fix:**
 
-1. Inspect the worker's output log:
+1. Watch the worker's live terminal (read-only; Ctrl-b d detaches):
    ```bash
    orc attach <agent-id>
    ```
+   Add `--write` to type into it. For a `pty:` session, or without a TTY, use
+   `orc terminal provider <run_id> --once`.
 2. Check for stale claims and lifecycle issues:
    ```bash
    orc doctor
