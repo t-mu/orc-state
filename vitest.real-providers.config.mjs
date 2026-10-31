@@ -7,6 +7,8 @@ stripInheritedOrcEnv();
 export default defineConfig({
   test: {
     environment: 'node',
+    // Tests get a private TMUX_TMPDIR so they never leak sockets into /tmp/tmux-<uid>.
+    globalSetup: [resolve(import.meta.dirname, 'vitest.tmuxTmpdir.mjs')],
     // The e2e-real harness gives each test its own temp ORC_DATA_HOME; the test
     // process itself must not resolve the developer's real registry.
     env: { ORC_DATA_HOME: TEST_DATA_HOME },

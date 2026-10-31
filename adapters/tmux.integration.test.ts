@@ -66,7 +66,7 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
 
   afterEach(async () => {
     const { module } = await loadAdapter();
-    spawnSync('tmux', ['-L', module.tmuxSocketName(dir), 'kill-server']);
+    module.killTmuxServer(dir);
     closeAllDatabases();
     process.env.PATH = originalPath;
     if (originalStateDir === undefined) delete process.env.ORC_STATE_DIR;
@@ -184,5 +184,39 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     await waitFor(() => spawnSync('kill', ['-0', String(pid)]).status !== 0);
     expect(adapter.inspectSession(started.session_handle).alive).toBe(false);
     expect(join(dir, 'pty-logs', 'worker-1.log')).toBeTruthy();
+  }, 20_000);
+
+  it('stop() of the last session removes the server socket tmux leaves behind (tmux-socket-leak)', async () => {
+    const { adapter, module } = await loadAdapter();
+    const socket = module.tmuxSocketPath(module.tmuxSocketName(dir));
+    expect(socket.startsWith(process.env.TMUX_TMPDIR!)).toBe(true);
+    const first = await adapter.start('worker-1', { working_directory: dir });
+    const second = await adapter.start('worker-2', { working_directory: dir });
+    expect(existsSync(socket)).toBe(true);
+    // Another session still lives on the server: its socket must stay.
+    await adapter.stop(first.session_handle);
+    expect(existsSync(socket)).toBe(true);
+    expect(adapter.inspectSession(second.session_handle).alive).toBe(true);
+    await adapter.stop(second.session_handle);
+    expect(existsSync(socket)).toBe(false);
+  }, 20_000);
+
+  it('killTmuxServer() and removeDeadTmuxSocket() remove only a dead server\'s socket', async () => {
+    const { adapter, module } = await loadAdapter();
+    const name = module.tmuxSocketName(dir);
+    const socket = module.tmuxSocketPath(name);
+    const started = await adapter.start('worker-1', { working_directory: dir });
+    expect(module.removeDeadTmuxSocket(name)).toBe(false);
+    expect(existsSync(socket)).toBe(true);
+    expect(adapter.inspectSession(started.session_handle).alive).toBe(true);
+    // A plain kill-server leaves the file behind (tmux 3.3a); the dead socket is then removable.
+    spawnSync('tmux', ['-L', name, 'kill-server']);
+    expect(existsSync(socket)).toBe(true);
+    expect(module.removeDeadTmuxSocket(name, { waitMs: 2_000 })).toBe(true);
+    expect(existsSync(socket)).toBe(false);
+    await adapter.start('worker-2', { working_directory: dir });
+    expect(existsSync(socket)).toBe(true);
+    module.killTmuxServer(dir);
+    expect(existsSync(socket)).toBe(false);
   }, 20_000);
 });

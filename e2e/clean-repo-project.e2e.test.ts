@@ -41,7 +41,7 @@ let temp: string;
 let target: string;
 let dataHome: string;
 let savedEnv: NodeJS.ProcessEnv;
-let tmuxSocket: string | null = null;
+let killTmux: (() => void) | null = null;
 
 /** The ambient environment without any orc selection, plus this test's data home and stand-in provider. */
 function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -232,8 +232,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (tmuxSocket) spawnSync('tmux', ['-L', tmuxSocket, 'kill-server']);
-  tmuxSocket = null;
+  killTmux?.();
+  killTmux = null;
   process.env = savedEnv;
   vi.doUnmock('../adapters/index.ts');
   vi.doUnmock('../lib/sessionSupervisor.ts');
@@ -277,7 +277,7 @@ describe('clean-repository project workflow', () => {
     const listeners = Object.fromEntries(PROCESS_EVENTS.map((name) => [name, process.listeners(name)]));
     const { STATE_DIR, ACTIVE_PROJECT } = await import('../lib/paths.ts');
     const tmux = await import('../adapters/tmux.ts');
-    tmuxSocket = tmux.tmuxSocketName(STATE_DIR);
+    killTmux = () => tmux.killTmuxServer(STATE_DIR);
     let coordinator = await import('../coordinator.ts');
     try {
       expect(ACTIVE_PROJECT?.id).toBe(project.id);
@@ -350,7 +350,7 @@ describe('clean-repository project workflow', () => {
       await expect(workers.workerOrc(started[1].agentId, ['review-read', `--run-id=${started[1].runId}`], started[1].worktree))
         .rejects.toThrow(/retry once the coordinator is running/);
       for (const item of started) {
-        expect(spawnSync('tmux', ['-L', tmuxSocket, 'has-session', '-t', `=${tmux.tmuxSessionName(item.agentId)}`]).status).toBe(0);
+        expect(spawnSync('tmux', ['-L', tmux.tmuxSocketName(STATE_DIR), 'has-session', '-t', `=${tmux.tmuxSessionName(item.agentId)}`]).status).toBe(0);
       }
       vi.resetModules();
       // A new coordinator process has its own owner identity (here the same test process stands in for it).

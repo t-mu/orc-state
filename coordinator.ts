@@ -29,6 +29,7 @@ import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter, resolveSessionTransport } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
+import { removeDeadTmuxSocket } from './adapters/tmux.ts';
 import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
 import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
@@ -2335,6 +2336,8 @@ export async function doShutdown() {
   } catch (err) {
     log(`warning: session cleanup failed: ${(err as Error).message}`);
   }
+  // With no orc tmux session left, the private server is gone but its socket file is not.
+  try { removeDeadTmuxSocket(); } catch { /* best-effort */ }
 
   emit({ event: 'coordinator_stopped', actor_type: 'coordinator', actor_id: 'coordinator', payload: {} });
   try { closeAllDatabases(); } catch { /* best-effort */ }
