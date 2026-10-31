@@ -10,7 +10,8 @@
  * call. It imports only node: built-ins to keep startup small.
  *
  * Records never carry full tool inputs or outputs: `tool` records hold a
- * short `brief` (≤ 80 chars), `activity` records the current to-do label.
+ * short `brief` (≤ 80 chars) plus, for `Agent`/`Task`, the `subagent_type`;
+ * `activity` records the current to-do label.
  */
 import { appendFileSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
@@ -136,7 +137,10 @@ export function handleHook(kind: string, payload: Payload, state: TaskState, ts:
 
   if (kind === 'tool') {
     if (!tool) return { record: null };
-    const record = { type: 'tool', tool, brief: toolBrief(tool, input, str(payload.cwd)), ts };
+    const record: HookRecord = { type: 'tool', tool, brief: toolBrief(tool, input, str(payload.cwd)), ts };
+    // Sub-agent spawns also carry their agent type: phase inference recognises reviewers by it.
+    const subagent = tool === 'Agent' || tool === 'Task' ? clip(str(input.subagent_type), BRIEF_MAX) : '';
+    if (subagent) record.subagent_type = subagent;
     // TaskCreate learns its id only from the response: remember the label for later status-only updates.
     if (tool === 'TaskCreate') {
       const id = createdTaskId(payload.tool_response);

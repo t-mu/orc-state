@@ -56,6 +56,14 @@ describe('handleHook', () => {
     expect(handleHook('tool', { tool_input: {} }, st(), TS).record).toBeNull();
   });
 
+  it('tool: an Agent/Task record carries the sub-agent type alongside the brief', () => {
+    expect(handleHook('tool', {
+      tool_name: 'Agent', tool_input: { description: 'Check the diff', subagent_type: 'critic', prompt: 'long' },
+    }, st(), TS).record).toEqual({ type: 'tool', tool: 'Agent', brief: 'Check the diff', subagent_type: 'critic', ts: TS });
+    expect(handleHook('tool', { tool_name: 'Agent', tool_input: { description: 'Explore' } }, st(), TS).record)
+      .toEqual({ type: 'tool', tool: 'Agent', brief: 'Explore', ts: TS });
+  });
+
   it('tool: remembers the label of a created task by the id in its response', () => {
     const { state } = handleHook('tool', {
       tool_name: 'TaskCreate', tool_input: { subject: 'Write tests', activeForm: 'Writing tests' },
