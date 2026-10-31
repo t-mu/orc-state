@@ -121,12 +121,25 @@ describe('closeRun (orc run-close / close_run)', () => {
     expect(runClaim().state).toBe('done');
   });
 
+  it('closes the claim of a done task whose branch is not merged but keeps its worktree and branch', async () => {
+    seed('done');
+    const entry = await runWithCommit();
+    writeFileSync(join(entry.worktree_path, 'uncommitted.txt'), 'keep me\n');
+    const { closeRun } = await load();
+
+    expect(closeRun(stateDir, { run_id: 'run-1' })).toMatchObject({ closed: true, task_status: 'done', branch_merged: false, worktree_cleaned: false });
+    expect(runClaim().state).toBe('done');
+    expect(existsSync(join(entry.worktree_path, 'uncommitted.txt'))).toBe(true);
+    expect(git(target, 'branch', '--list', entry.branch)).toContain(entry.branch);
+    expect(runWorktreeEntries().some((run) => run.run_id === 'run-1')).toBe(true);
+  });
+
   it('refuses an unmerged branch of a task that is not done, pointing at run-expire and task-reset', async () => {
     seed('in_progress');
     const entry = await runWithCommit();
     const { closeRun } = await load();
 
-    expect(() => closeRun(stateDir, { run_id: 'run-1' })).toThrow(/not merged.*orc run-expire run-1.*orc task-reset app\/task-1/);
+    expect(() => closeRun(stateDir, { run_id: 'run-1' })).toThrow(/not merged.*orc task-mark-done app\/task-1.*orc run-expire run-1.*orc task-reset app\/task-1/);
     expect(runClaim().state).toBe('in_progress');
     expect(runClaim().finalization_state).toBe('blocked_finalize');
     expect(existsSync(entry.worktree_path)).toBe(true);

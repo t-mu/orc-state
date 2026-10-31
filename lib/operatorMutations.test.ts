@@ -182,7 +182,7 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     const before = status('orch/todo');
     for (const [tool, args] of [
       ['cancel_task', { task_ref: 'orch/todo' }], ['reset_task', { task_ref: 'orch/todo' }], ['unblock_task', { task_ref: 'orch/todo' }],
-      ['delegate_task', { task_ref: 'orch/todo' }], ['memory_store', { content: 'note' }],
+      ['delegate_task', { task_ref: 'orch/todo' }], ['memory_store', { content: 'note' }], ['close_run', { run_id: 'run-a' }],
       ['create_task', { title: 'New' }], ['update_task', { task_ref: 'orch/todo', expected_revision: 1 }],
     ] as const) {
       expect(() => invokeTool(dir, tool, args, { requireProject: inProject, credential: null }))
@@ -207,6 +207,20 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     expect(status('orch/todo')).toBe(before);
     expect(() => invokeTool(dir, 'request_scout', { objective: 'look around' }, { requireProject: inProject, credential: 'session-a' }))
       .toThrow(expect.objectContaining({ code: 'forbidden' }));
+  });
+
+  it('close_run is the run-close op: refused for an unmerged run, and closes a done task\'s run as the master', async () => {
+    // orch/active is in progress and run-a has no merged branch.
+    await expect(invokeTool(dir, 'close_run', { run_id: 'run-a' }, { requireProject: inProject, credential: 'session-master' }))
+      .rejects.toThrow(/not merged/);
+    expect(readClaims(dir).claims.find((entry) => entry.run_id === 'run-a')?.state).toBe('in_progress');
+
+    applyOperatorMutation(dir, { op: 'task-mark-done', task_ref: 'orch/active', actor_id: 'human' });
+    await expect(invokeTool(dir, 'close_run', { run_id: 'run-a', reason: 'merged by hand' }, { requireProject: inProject, credential: 'session-master' }))
+      .resolves.toMatchObject({ run_id: 'run-a', closed: true, task_status: 'done' });
+    expect(readClaims(dir).claims.find((entry) => entry.run_id === 'run-a')?.state).toBe('done');
+    expect(queryEvents(dir, { event_type: 'run_finished', run_id: 'run-a' }).at(-1))
+      .toMatchObject({ actor_id: 'master', payload: { closed_by: 'master', reason: 'merged by hand', manual: true } });
   });
 
   it('the master MCP tools are routed to the coordinator in a project', async () => {

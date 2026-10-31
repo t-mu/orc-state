@@ -24,7 +24,11 @@ if (!runId) {
 try {
   const result = await submitOperatorMutation({ op: 'run-close', run_id: runId, ...(actorId ? { actor_id: actorId } : {}), ...(reason ? { reason } : {}) });
   console.log(`run closed: ${runId} (task ${String(result.task_ref)})`);
-  if (!result.worktree_cleaned) console.log(`warning: worktree/branch cleanup for ${runId} did not complete; see run-worktrees.json`);
+  if (!result.worktree_cleaned) {
+    console.log(result.branch_merged
+      ? `warning: worktree/branch cleanup for ${runId} did not complete; see run-worktrees.json (orc run-info ${runId})`
+      : `note: branch ${String(result.branch)} is not merged into main, so its worktree was kept; remove it by hand once nothing in it is needed (orc run-info ${runId})`);
+  }
   if (result.task_status !== 'done' && result.task_status !== 'released') {
     console.log(`note: task ${String(result.task_ref)} is ${String(result.task_status)}; mark it done with orc task-mark-done ${String(result.task_ref)}`);
   }

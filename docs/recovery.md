@@ -95,10 +95,15 @@ orc run-close <run_id> --reason="merged manually after blocked_finalize"
    done: it records the claim `done`, emits `run_finished` with
    `{closed_by, reason, manual: true}`, and removes the run worktree, its branch
    and its `run-worktrees.json` entry the way the coordinator does after a merge.
-   Run it from the main checkout, not from inside the worktree it removes.
+   Commit and merge everything you need first: that removal is forced. Run it
+   from the main checkout, not from inside the worktree it removes. A branch that
+   is not merged into `main` (squash, rebase or fast-forward merges do not count)
+   keeps its worktree; remove it by hand once nothing in it is needed.
    It refuses a run whose task is not `done`/`released` and whose branch is not
-   merged into `main`; for such a run, `orc run-expire <run_id>` or
-   `orc task-reset <task_ref>` requeue the task instead.
+   merged; for work merged another way run `orc task-mark-done` first, otherwise
+   `orc run-expire <run_id>` or `orc task-reset <task_ref>` requeue the task.
+   `run-close` does not stop a worker session: if `orc status` still lists the
+   run's worker, remove it with `orc worker-remove <agent_id>`.
 6. Do not treat `orc run-finish` as the default manual recovery step after preserved finalization failure. That command is only valid if the live handoff path still supports it.
 
 ## Hung Input Request

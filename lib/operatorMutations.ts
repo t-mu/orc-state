@@ -499,19 +499,27 @@ export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): 
  * Close a run whose work already reached `main` by hand (docs/recovery.md,
  * Finalization Failure): the claim is non-terminal while its task is
  * done/released or its branch is merged into main. Records the claim as done,
- * emits `run_finished` and cleans the run worktree and branch the way the
- * coordinator does after a merge. An unmerged run is refused: requeue it with
- * run-expire or task-reset instead.
+ * emits `run_finished` and, when the branch is merged, cleans the run worktree
+ * and branch the way the coordinator does after a merge; an unmerged branch's
+ * worktree is kept, since that cleanup force-removes it. A run that is neither
+ * is refused: mark work merged another way done first, or requeue the task.
  */
 export function closeRun(stateDir: string, { run_id, reason = null, actor_id = 'human' }: Record<string, unknown> = {}): Record<string, unknown> {
   if (typeof run_id !== 'string' || !run_id) throw new InputError('run_id is required');
   if (reason != null && typeof reason !== 'string') throw new InputError('reason must be a string');
   if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) throw new InputError(`Invalid actor_id: ${String(actor_id)}`);
 
-  if (!readClaims(stateDir).claims.some((entry) => entry.run_id === run_id)) throw new NotFoundError(`run not found: ${run_id}`);
-  // Git runs outside the state lock; the claim is re-checked under it.
+  const initial = readClaims(stateDir).claims.find((entry) => entry.run_id === run_id);
+  if (!initial) throw new NotFoundError(`run not found: ${run_id}`);
+  // Git runs outside the state lock; the claim and task are re-checked under it.
   const branch = getRunWorktree(stateDir, run_id)?.branch ?? `task/${run_id}`;
-  const branchMerged = runBranchMergedIntoMain(branch);
+  let branchMerged = false;
+  try {
+    branchMerged = runBranchMergedIntoMain(branch);
+  } catch {
+    // A git failure proves nothing merged; a done task closes regardless.
+    branchMerged = false;
+  }
 
   const closed = withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
@@ -523,7 +531,8 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
     const taskDone = taskStatus === 'done' || taskStatus === 'released';
     if (!taskDone && !branchMerged) {
       throw new ConflictError(`run ${run_id} is not merged: task ${claim.task_ref} is ${taskStatus ?? 'missing'} and branch ${branch} is not merged into main. `
-        + `To requeue the task use orc run-expire ${run_id} or orc task-reset ${claim.task_ref}`);
+        + `If its work reached main another way (squash, rebase or fast-forward), run orc task-mark-done ${claim.task_ref} and then orc run-close ${run_id}; `
+        + `to requeue the task use orc run-expire ${run_id} or orc task-reset ${claim.task_ref}`);
     }
     claim.state = 'done';
     claim.finished_at = now;
@@ -541,11 +550,14 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
   });
 
   // The coordinator's post-merge cleanup: remove the worktree, delete the branch, drop the entry.
+  // It force-removes the worktree, so an unmerged branch's worktree is left for the operator.
   let worktreeCleaned = false;
-  try {
-    worktreeCleaned = cleanupRunWorktree(stateDir, run_id);
-  } catch {
-    worktreeCleaned = false;
+  if (branchMerged) {
+    try {
+      worktreeCleaned = cleanupRunWorktree(stateDir, run_id);
+    } catch {
+      worktreeCleaned = false;
+    }
   }
   return { run_id, closed: true, ...closed, branch, branch_merged: branchMerged, worktree_cleaned: worktreeCleaned };
 }
