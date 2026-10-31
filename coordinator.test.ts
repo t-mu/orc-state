@@ -1764,6 +1764,27 @@ describe('hook event bus', () => {
     expect(Object.keys(readRunActivity(dir))).toEqual(['run-live']);
   });
 
+  it('does not re-emit activity_note for an unchanged label after a coordinator restart', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-restarted', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    // The snapshot a previous coordinator persisted before it stopped.
+    const { writeRunActivity } = await import('./lib/runActivityStore.ts');
+    writeRunActivity(dir, { 'run-restarted': {
+      run_id: 'run-restarted', agent_id: 'worker-01', label: 'Write tests', source: 'todo',
+      label_ts: new Date(Date.now() - 5000).toISOString(), last_tool: null, last_tool_brief: null, last_tool_ts: null,
+    } });
+
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    await runTicks([]);
+    writeHookEvents('worker-01', [{ type: 'activity', label: 'Write tests', source: 'todo', ts: new Date().toISOString() }]);
+    await runTicks([]);
+
+    expect(readEvents(dir).some((e) => e.event === 'activity_note' && e.run_id === 'run-restarted')).toBe(false);
+  });
+
   it('emits activity_note when the label changes, not again for the same label, and throttles changes', async () => {
     seedState(dir, {
       agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],

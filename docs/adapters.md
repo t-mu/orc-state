@@ -92,9 +92,12 @@ orchestrator when present:
 session (useful for PTY adapters that distinguish "process is alive" from "I
 can write to it"). If absent, the orchestrator assumes ownership.
 
-**`detectInputBlock(sessionHandle)`** -- Scan recent output for provider-level
-blocking prompts (permission dialogs, quota errors). Return the blocking line
-as a string, or `null` if none detected.
+**`detectInputBlock(sessionHandle, hookEvents)`** -- Detect a provider-level
+blocking prompt (permission dialog, quota error). `hookEvents` are the
+permission hook events the coordinator drained for this session; when present,
+return the first one's message. Otherwise scan recent output. Return the
+blocking line as a string, or `null` if none detected. Adapters never read the
+`pty-hook-events` files themselves: the coordinator tick is their only consumer.
 
 ## Creating an adapter
 

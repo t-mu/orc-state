@@ -968,7 +968,17 @@ function hookActivityTs(runId: string): string | null {
 }
 
 function loadRunActivity(): RunActivityMap {
-  if (runActivity === null) runActivity = readRunActivity(STATE_DIR);
+  if (runActivity === null) {
+    runActivity = readRunActivity(STATE_DIR);
+    // A restarted coordinator must not re-announce labels it already saw:
+    // treat each persisted label as emitted at its label time.
+    for (const snapshot of Object.values(runActivity)) {
+      if (snapshot.label && !activityNoteByRun.has(snapshot.run_id)) {
+        const labelMs = Date.parse(snapshot.label_ts ?? '');
+        activityNoteByRun.set(snapshot.run_id, { label: snapshot.label, emitted_at_ms: Number.isFinite(labelMs) ? labelMs : Date.now() });
+      }
+    }
+  }
   return runActivity;
 }
 
@@ -978,6 +988,11 @@ function loadRunActivity(): RunActivityMap {
  * the run's input-block check; tool/activity events update the run's activity
  * snapshot, renew its lease like a phase event, and may emit `activity_note`.
  * Runs that are no longer active lose their snapshot.
+ *
+ * Permission events are held in memory until the run's input-block check
+ * consumes them (for a claimed run, the run-start nudge check). A coordinator
+ * restart in between drops them; the check then falls back to scanning the
+ * session output, as it does for providers without hooks.
  */
 function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): void {
   const runs = loadRunActivity();
@@ -1188,7 +1203,6 @@ async function handleFinalizationRetry(
   nowMs: number,
   byAgent: Map<string, Agent>,
   workerPoolConfig: WorkerPoolConfig,
-  hookEvents: PermissionHookEvent[] = [],
 ): Promise<void> {
   if (idleMs < RUN_INACTIVE_NUDGE_MS) return;
   const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
@@ -1201,7 +1215,9 @@ async function handleFinalizationRetry(
     return;
   }
   const adapter = getAdapter(agent.provider);
-  const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle, hookEvents);
+  // Text scan only, as before the hook bus: this run's permission hook events
+  // were already taken by enforceInProgressLifecycle this tick.
+  const blockingQuestion = detectBlockingPromptQuestion(adapter, agent.session_handle);
   if (blockingQuestion) {
     recordCoordinatorInputRequest(claim, blockingQuestion, 'provider_interactive_prompt');
     runInactiveNudgeAtMs.delete(claim.run_id);
@@ -1261,7 +1277,7 @@ async function enforceInProgressLifecycle(
       continue;
     }
     if (claim.finalization_state === 'finalize_rebase_requested' || claim.finalization_state === 'finalize_rebase_in_progress') {
-      await handleFinalizationRetry(claim, idleMs, nowMs, byAgent, workerPoolConfig, hookEvents);
+      await handleFinalizationRetry(claim, idleMs, nowMs, byAgent, workerPoolConfig);
       continue;
     }
 
