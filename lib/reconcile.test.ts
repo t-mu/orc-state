@@ -3,6 +3,7 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { reconcileState } from './reconcile.ts';
 import { queryEvents } from './eventLog.ts';
+import { detectLifecycleIssues } from './lifecycleDiagnostics.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState, seedProjectTasks, readStateFile, readBacklog } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -148,6 +149,40 @@ describe('reconcileState', () => {
     expect(readBacklog(dir).features[0].tasks[0].status).toBe('done');
     expect(readStateFile<{ claims: Array<{ state: string }> }>(dir, 'claims.json').claims[0].state).toBe('in_progress');
     expect(queryEvents(dir, { event_type: 'run_failed' })).toEqual([]);
+  });
+
+  it.each(['failed', 'done'])('clears stale finalization fields on a %s claim without other changes', (state) => {
+    const claim = {
+      run_id: 'run-1',
+      task_ref: 'docs/task-1',
+      agent_id: 'a1',
+      state,
+      claimed_at: '2026-01-01T00:00:00.000Z',
+      lease_expires_at: '2026-01-01T01:00:00.000Z',
+      finished_at: '2026-01-01T00:30:00.000Z',
+    };
+    writeState({
+      tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }],
+      claims: [{
+        ...claim,
+        finalization_state: 'blocked_finalize',
+        finalization_retry_count: 2,
+        finalization_blocked_reason: 'merge conflict',
+      }],
+    });
+    expect(detectLifecycleIssues(dir).map((issue) => issue.code)).toContain('invalid_finalization_state');
+
+    reconcileState(dir);
+
+    expect(readStateFile<{ claims: unknown[] }>(dir, 'claims.json').claims).toEqual([{
+      ...claim,
+      finalization_state: null,
+      finalization_retry_count: 0,
+      finalization_blocked_reason: null,
+    }]);
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+    expect(queryEvents(dir, {})).toEqual([]);
+    expect(detectLifecycleIssues(dir)).toEqual([]);
   });
 
   it('is idempotent', () => {

@@ -33,7 +33,17 @@ export function reconcileState(stateDir: string): void {
     // SQLite allows one active run per task (runs_one_active_task_idx), so a task has at most one.
     const activeClaimByTaskRef = new Map<string, Claim>();
     for (const claim of claims.claims ?? []) {
-      if (!ACTIVE_CLAIM_STATES.has(claim.state)) continue;
+      if (!ACTIVE_CLAIM_STATES.has(claim.state)) {
+        // Claims failed before c9dca0e kept their finalization fields; clear them without a terminal event.
+        if (claim.finalization_state != null || (claim.finalization_retry_count ?? 0) > 0 || claim.finalization_blocked_reason != null) {
+          logger.info(`[reconcile] cleared stale finalization fields on ${claim.state} claim ${claim.run_id}`);
+          claim.finalization_state = null;
+          claim.finalization_retry_count = 0;
+          claim.finalization_blocked_reason = null;
+          claimsModified = true;
+        }
+        continue;
+      }
 
       if (!knownTaskRefs.has(claim.task_ref)) {
         logger.info(`[reconcile] orphan claim ${claim.run_id} for unknown task_ref ${claim.task_ref} -> failed`);
