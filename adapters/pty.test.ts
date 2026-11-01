@@ -122,13 +122,12 @@ describe('pty adapter start()', () => {
     expect(settings.hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: "'/opt/it'\\''s/orc' stop-check", timeout: 15 }] }]);
   });
 
-  it('gives a read-only scout no Stop hook', async () => {
+  it('gives a read-only scout no tool hooks and no Stop hook', async () => {
     const { adapter } = await makeAdapter({ provider: 'claude' });
     await adapter.start('scout-1', { execution_mode: 'sandbox', read_only: true });
 
     const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'scout-1.json'), 'utf8'));
-    expect(settings.hooks.Notification).toBeDefined();
-    expect(settings.hooks.Stop).toBeUndefined();
+    expect(Object.keys(settings.hooks)).toEqual(['Notification']);
   });
 
   it('launches the provider inside the requested working directory when provided', async () => {

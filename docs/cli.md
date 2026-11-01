@@ -159,7 +159,7 @@ commands are for when you need to intervene manually.
 |---------|-------------|
 | `attach <agent_id\|run_id>` | Open the worker's real tmux session. Read-only by default (observe): keystrokes do not reach the worker, scrolling works, and Ctrl-b d detaches. `--write` attaches with input enabled (control). Needs a TTY; works from inside another tmux session. |
 | `worker-remove <id>` | Stop a worker's session and remove it. Refused while the worker holds an active claim, and for the master or a scout. |
-| `worker-gc` | Remove offline and dead workers unless they hold an active claim. A running coordinator already removes these, and workers whose session exited, itself; use this when no coordinator runs. The master and scouts are left alone. |
+| `worker-gc` | Remove offline and dead workers unless they hold an active claim. A running coordinator already removes these, and workers whose session exited, itself; use this when no coordinator runs. The master and scouts are left alone. Also removes `pty-hook-events/` files whose agent is no longer registered (left by a session that crashed before it was stopped). |
 | `worker-status [agent_id]` | Show worker state, active task, and session info. |
 
 For a live run, `orc terminal provider <run_id>` observes its tmux provider

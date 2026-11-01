@@ -8,8 +8,10 @@
  * where no coordinator is running.
  * A worker that holds an active claim is kept: the coordinator recovers its run.
  * The master and scouts are never touched (scouts are removed with remove_scout).
+ * It also removes pty-hook-events/ files whose agent is no longer registered.
  */
 import { listAgents, removeAgent } from '../lib/agentRegistry.ts';
+import { gcOrphanedHookFiles } from '../lib/hookFiles.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { cliError } from './shared.ts';
@@ -34,4 +36,6 @@ for (const worker of workers) {
   }
 }
 
-console.log(`Worker GC complete. Removed ${removed} worker(s).`);
+const hookFiles = gcOrphanedHookFiles(STATE_DIR, listAgents(STATE_DIR).map((agent) => agent.agent_id));
+
+console.log(`Worker GC complete. Removed ${removed} worker(s) and ${hookFiles.length} orphaned hook-event file(s).`);

@@ -111,6 +111,12 @@ always exits 0:
 | `PostToolUse` / `PostToolUseFailure` (`*`) | `tool` | `{type:'tool', tool, brief, id?, ts}`, for a finished or a failed call; `brief` is a short summary (≤ 80 chars), never the full input or output. `Agent`/`Task` records also carry `subagent_type` (used to infer the review phase) |
 | `PreToolUse` (`TodoWrite\|TaskCreate\|TaskUpdate`) | `todo` | `{type:'activity', label, source:'todo', ts}` with the in-progress item's label; an empty label clears it when that item finishes |
 
+A read-only scout gets only the `Notification` hook: the coordinator drains
+hook files only for runs with an active claim, so tool and to-do records from
+a scout would never be read. Hook files of a session that crashed before its
+adapter's `stop()` ran are removed at coordinator start and by `orc worker-gc`
+once the agent is no longer registered (`lib/hookFiles.ts`).
+
 Codex and Gemini workers get no hooks: their liveness and phase come only from
 lifecycle and phase events, so their runs keep the longer `worker_stale_*`
 idle thresholds rather than the `hook_idle_*` ones (see

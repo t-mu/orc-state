@@ -34,6 +34,7 @@ import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type Runtime
 import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, newestTimestamp, runIdleMs, shouldRenewFromHookActivity } from './lib/runActivity.ts';
+import { gcOrphanedHookFiles } from './lib/hookFiles.ts';
 import { drainHookEvents, type PermissionHookEvent, type ToolHookEvent } from './lib/hookEventBus.ts';
 import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressAlertProgressAt, noProgressEscalationMs } from './lib/runProgress.ts';
 import { inferPhaseTransitions, toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './lib/phaseInference.ts';
@@ -2441,6 +2442,9 @@ export async function main() {
       catch { /* already gone — fine */ }
     }
   } catch { /* STATE_DIR not readable — file-existence check above would have caught this */ }
+  // Hook-event files of sessions that crashed before their adapter's stop() ran.
+  const orphanedHookFiles = gcOrphanedHookFiles(STATE_DIR, listCoordinatorAgents(STATE_DIR).map((agent) => agent.agent_id));
+  if (orphanedHookFiles.length > 0) log(`removed ${orphanedHookFiles.length} orphaned hook-event file(s)`);
 
   try {
     const expired = pruneExpiredMemories(STATE_DIR);

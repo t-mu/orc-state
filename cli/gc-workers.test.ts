@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 
@@ -57,6 +57,29 @@ describe('cli/gc-workers.ts', () => {
 
     const ids = readAgents().map((a: Record<string, unknown>) => a.agent_id);
     expect(ids).toEqual(['running', 'master', 'scout-1']);
+  });
+
+  it('removes hook-event files of agents that are no longer registered', async () => {
+    writeAgents([
+      { agent_id: 'offline', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'running', provider: 'claude', status: 'running', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+    ]);
+    const events = join(dir, 'pty-hook-events');
+    mkdirSync(events, { recursive: true });
+    for (const name of ['offline.ndjson', 'offline.ndjson.tasks.json', 'crashed.ndjson', 'running.ndjson']) writeFileSync(join(events, name), '');
+
+    const oldArgv = process.argv;
+    const oldStateDir = process.env.ORC_STATE_DIR;
+    process.argv = ['node', 'cli/gc-workers.ts'];
+    setStateDirEnv(dir);
+    try {
+      await import('./gc-workers.ts');
+    } finally {
+      process.argv = oldArgv;
+      setStateDirEnv(oldStateDir);
+    }
+
+    expect(readdirSync(events)).toEqual(['running.ndjson']);
   });
 
   it('leaves running workers with a session handle to the coordinator', async () => {
