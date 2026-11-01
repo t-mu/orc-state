@@ -377,10 +377,11 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
   // For claude: write a settings file whose hooks push harness events to the
   // agent's hook-events NDJSON file (drained by the coordinator):
   //   Notification            → permission_prompt records (input-block detection)
-  //   PostToolUse  `*`        → `tool` records with a short brief (task workers only)
+  //   PostToolUse  `*`        → `tool` records with a short brief
   //   PostToolUseFailure `*`  → the same `tool` record for a failed call (closes its tool_start)
   //   PreToolUse   `*`        → `tool_start` records (a tool call in flight is not idleness)
   //   PreToolUse   to-do tools → `activity` records with the current to-do label
+  //   (the four tool hooks above: task workers only; a read-only scout gets just Notification)
   //   Stop (task workers only) → `orc stop-check` asks the coordinator (not the events file)
   // In sandbox mode, merge in a sandbox config block alongside the hooks.
   let claudeSettingsFile: string | undefined;
