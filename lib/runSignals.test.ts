@@ -134,6 +134,35 @@ describe('RunSignals', () => {
     expect(signals.currentPhase('other')).toEqual({ phase: null, ts: null });
   });
 
+  it('tracks progress apart from liveness: lifecycle events, phase changes and commits, not heartbeats', () => {
+    const signals = new RunSignals(CONFIG);
+    signals.ingest([event('heartbeat', { ts: at(-MIN) })], undefined, T0);
+    expect(signals.progressAt('run-1')).toBeNull();
+    signals.ingest([event('run_started', { ts: at(-50 * MIN) }), event('phase_started', { ts: at(-40 * MIN), phase: 'implement' })], undefined, T0);
+    expect(signals.progressAt('run-1')).toBe(at(-40 * MIN));
+    expect(signals.explicitPhase('run-1')).toBe('implement');
+    // The same phase again is not progress; an inferred phase is progress but not an explicit phase.
+    signals.ingest([event('phase_started', { ts: at(-30 * MIN), phase: 'implement' })], undefined, T0);
+    expect(signals.progressAt('run-1')).toBe(at(-40 * MIN));
+    signals.recordPhase('run-1', 'review', at(-20 * MIN), T0);
+    expect(signals.progressAt('run-1')).toBe(at(-20 * MIN));
+    expect(signals.explicitPhase('run-1')).toBe('implement');
+    // A git commit hook record is progress; future timestamps are clamped to now.
+    signals.ingest([], hooks('run-1', [{ type: 'tool', tool: 'Bash', brief: 'git commit -m x', ts: at(5 * MIN) }]), T0);
+    expect(signals.progressAt('run-1')).toBe(at(0));
+  });
+
+  it('replays the progress point a no-progress alert was sent for', () => {
+    const signals = new RunSignals(CONFIG);
+    expect(signals.noProgressNotifiedFor('run-1')).toBeNull();
+    signals.hydrate({}, [event('worker_needs_attention', { ts: at(-MIN), actor_type: 'coordinator', payload: { reason: 'no_progress', progress_at: at(-70 * MIN) } })], T0);
+    expect(signals.noProgressNotifiedFor('run-1')).toBe(at(-70 * MIN));
+    signals.markNoProgressNotified('run-1', at(-5 * MIN));
+    expect(signals.noProgressNotifiedFor('run-1')).toBe(at(-5 * MIN));
+    signals.forget('run-1');
+    expect(signals.noProgressNotifiedFor('run-1')).toBeNull();
+  });
+
   it('hands out pending permission events once', () => {
     const signals = new RunSignals(CONFIG);
     signals.ingest([], hooks('run-1', [], [{ type: 'permission', message: 'Allow?', ts: at(0) }]), T0);
