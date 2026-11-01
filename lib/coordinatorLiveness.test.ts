@@ -62,6 +62,16 @@ describe('coordinator discovery', () => {
     expect(coordinatorPidFileProblem(dir)).toMatch(/coordinator\.pid is missing/);
   });
 
+  it('finds the coordinator again once its process has exited', async () => {
+    const pid = fake.pid!;
+    writeEndpoint(pid);
+    expect(findLiveCoordinator(dir)).toEqual({ pid, source: 'control_json' });
+    const exited = new Promise((resolve) => fake.once('exit', resolve));
+    fake.kill('SIGKILL');
+    await exited;
+    expect(findLiveCoordinator(dir)).toBeNull();
+  });
+
   it('accepts an endpoint written before process_start was recorded', () => {
     writeEndpoint(fake.pid!, { process_start: undefined });
     expect(controlEndpointCoordinatorPid(dir)).toBe(fake.pid);
@@ -75,8 +85,6 @@ describe('coordinator discovery', () => {
     writeEndpoint(process.pid);
     expect(findLiveCoordinator(dir)).toBeNull();
     // Dead PID.
-    writeEndpoint(fake.pid!);
-    fake.kill('SIGKILL');
     writeFileSync(join(dir, 'control.json'), JSON.stringify({ pid: 999999999, started_at: 'x', process_start: 'proc:1' }));
     expect(findLiveCoordinator(dir)).toBeNull();
     expect(coordinatorPidFileProblem(dir)).toBeNull();

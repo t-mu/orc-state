@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { projectCliEnv } from '../test-fixtures/projectCli.ts';
 import { spawn, spawnSync } from 'node:child_process';
 import { readProcessStart } from '../lib/processIdentity.ts';
+import { startFakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 
@@ -139,13 +140,10 @@ describe('cli/kill-all.ts', () => {
 
     it('stops a live coordinator recorded only in control.json', async () => {
       seedState();
-      const script = join(dir, 'coordinator.js');
-      writeFileSync(script, 'setInterval(() => {}, 1000);\n');
-      const coordinator = spawn(process.execPath, [script], { stdio: 'ignore' });
+      const coordinator = await startFakeCoordinator();
       try {
-        await new Promise<void>((resolve, reject) => { coordinator.once('spawn', resolve); coordinator.once('error', reject); });
-        const exited = new Promise<NodeJS.Signals | null>((resolve) => coordinator.once('exit', (_code, signal) => resolve(signal)));
-        writeEndpoint(coordinator.pid!, readProcessStart(coordinator.pid!));
+        const exited = new Promise<NodeJS.Signals | null>((resolve) => coordinator.child.once('exit', (_code, signal) => resolve(signal)));
+        writeEndpoint(coordinator.pid, readProcessStart(coordinator.pid));
 
         const result = await spawnKillAllAsync(dir);
 
@@ -153,7 +151,7 @@ describe('cli/kill-all.ts', () => {
         expect(result.stdout).toContain(`Coordinator stopped  (PID ${coordinator.pid}, found via control.json`);
         expect(await exited).toBe('SIGTERM');
       } finally {
-        coordinator.kill('SIGKILL');
+        await coordinator.stop();
       }
     });
 
@@ -271,7 +269,9 @@ describe('cli/kill-all.ts', () => {
   describe('coordinator SIGTERM', () => {
     it('sends SIGTERM to the coordinator PID when alive', async () => {
       seedState();
-      const livePid = process.pid; // current process is guaranteed alive
+      const coordinator = await startFakeCoordinator();
+      onTestFinished(() => coordinator.stop());
+      const livePid = coordinator.pid;
       writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: livePid }));
 
       const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, _sig) => {

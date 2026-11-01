@@ -16,6 +16,7 @@ import { invokeTool } from '../mcp/server.ts';
 import { credentialHash } from './sessionCredentials.ts';
 import { PROJECT_DESCRIPTOR } from './projectRegistry.ts';
 import type { Claim } from '../types/claims.ts';
+import { startFakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
 
 let dir: string;
 /** A test state directory stands in for the registered project the CLI would refuse to run without. */
@@ -289,10 +290,15 @@ describe('submitOperatorMutation without a coordinator (task 232)', () => {
   });
 
   it('leaves the write to a live coordinator whose control API is not answering', async () => {
-    writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
+    const coordinator = await startFakeCoordinator();
     const warn = vi.fn();
-    await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, requireProject: inProject, stateDir: dir, warn }))
-      .rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(`coordinator (pid ${process.pid}) is running`) });
+    try {
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: coordinator.pid, started_at: new Date().toISOString() }));
+      await expect(submitOperatorMutation({ op: 'unblock-task', task_ref: 'orch/blocked' }, { env: {}, requireProject: inProject, stateDir: dir, warn }))
+        .rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining(`coordinator (pid ${coordinator.pid}) is running`) });
+    } finally {
+      await coordinator.stop();
+    }
     expect(warn).not.toHaveBeenCalled();
     expect(status('orch/blocked')).toBe('blocked');
     // A lock whose PID now belongs to another process (a reused PID) holds nothing.
@@ -318,10 +324,15 @@ describe('project authoring dispatch (task 234)', () => {
     await expect(submitProjectWrite(dir, 'task create', undefined, () => Promise.resolve({ source: 'daemon' }), direct, { credential: null, warn }))
       .resolves.toEqual({ source: 'daemon' });
     expect(direct).not.toHaveBeenCalled();
-    writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
-    await expect(submitProjectWrite(dir, 'task create', undefined,
-      () => Promise.reject(new ControlError('unavailable', 'offline', 503)), direct, { credential: null, warn }))
-      .rejects.toMatchObject({ code: 'unavailable', status: 503 });
+    const coordinator = await startFakeCoordinator();
+    try {
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: coordinator.pid, started_at: new Date().toISOString() }));
+      await expect(submitProjectWrite(dir, 'task create', undefined,
+        () => Promise.reject(new ControlError('unavailable', 'offline', 503)), direct, { credential: null, warn }))
+        .rejects.toMatchObject({ code: 'unavailable', status: 503 });
+    } finally {
+      await coordinator.stop();
+    }
     expect(direct).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });

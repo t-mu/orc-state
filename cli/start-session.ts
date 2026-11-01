@@ -18,7 +18,7 @@
  *   3. Start the master provider CLI in this terminal
  */
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pty from 'node-pty';
@@ -48,7 +48,7 @@ import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
-import { controlEndpointCoordinatorPid, isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
+import { findLiveCoordinator } from '../lib/coordinatorLiveness.ts';
 import {
   appendSessionStartedEvent,
   prepareSessionReuse,
@@ -90,14 +90,6 @@ function readCoordinatorPidRecord() {
   }
 }
 
-function readCoordinatorLock(): CoordinatorLock | null {
-  try {
-    return JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')) as CoordinatorLock;
-  } catch {
-    return null;
-  }
-}
-
 function readCoordinatorPidFromFile() {
   return readCoordinatorPidRecord()?.pid ?? null;
 }
@@ -112,34 +104,10 @@ function removeCoordinatorPidFileIfMatches(pid: number) {
   }
 }
 
-function isCoordinatorCommandPid(pid: number) {
-  const result = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) return false;
-  const command = String(result.stdout ?? '').trim();
-  return command.includes(COORDINATOR_SCRIPT_PATH);
-}
-
+/** The live coordinator, found through coordinator.pid or, with that file missing or stale, control.json. */
 function coordinatorStatus() {
-  const pid = readCoordinatorPidFromFile();
-  if (pid && pidFileCoordinatorRunning(pid)) return { running: true, pid };
-  // A coordinator whose pid lock went missing is still recorded in control.json.
-  const endpointPid = controlEndpointCoordinatorPid(STATE_DIR);
-  if (endpointPid !== null) return { running: true, pid: endpointPid };
-  return { running: false, pid };
-}
-
-function pidFileCoordinatorRunning(pid: number) {
-  // A lock whose recorded process start no longer matches names a reused PID, not the coordinator.
-  if (!isCoordinatorLockHeld(readCoordinatorLock())) return false;
-  try {
-    process.kill(pid, 0);           // no-op signal: throws if process is dead
-    return isCoordinatorCommandPid(pid);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return false;
-    return isCoordinatorCommandPid(pid);
-  }
+  const live = findLiveCoordinator(STATE_DIR);
+  return live ? { running: true, pid: live.pid } : { running: false, pid: readCoordinatorPidFromFile() };
 }
 
 async function spawnCoordinator() {
@@ -161,10 +129,11 @@ async function spawnCoordinator() {
 
 async function stopCoordinator(pid: number) {
   if (!isValidPid(pid)) return false;
-  const record = readCoordinatorPidRecord();
-  const inPidFile = record?.pid === pid && Boolean(record.started_at) && isCoordinatorCommandPid(pid);
-  // control.json is only trusted once its process is verified as a live coordinator.
-  if (!inPidFile && controlEndpointCoordinatorPid(STATE_DIR) !== pid) return false;
+  // Only a PID verified as this state's live coordinator is ever signalled,
+  // and a pid lock without started_at is not trusted for a terminate.
+  const live = findLiveCoordinator(STATE_DIR);
+  if (live?.pid !== pid) return false;
+  if (live.source === 'pid_file' && !readCoordinatorPidRecord()?.started_at) return false;
 
   try {
     process.kill(pid, 0);

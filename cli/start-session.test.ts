@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, seedState as seedProjectState,
 } from '../test-fixtures/stateHelpers.ts';
-import { spawn as spawnReal, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readProcessStart } from '../lib/processIdentity.ts';
+import { startFakeCoordinator, type FakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
 import { queryEvents } from '../lib/eventLog.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -163,9 +164,14 @@ function mockSpawn(spawnMock = makeSpawnMock(), spawnSyncMock: ReturnType<typeof
   return spawnMock;
 }
 
-// Writes a coordinator.pid whose stored PID is the current process — guaranteed alive.
+// A live process running a coordinator script, shared by the tests that need a running coordinator.
+let fakeCoordinator: FakeCoordinator;
+beforeAll(async () => { fakeCoordinator = await startFakeCoordinator(); });
+afterAll(async () => { await fakeCoordinator.stop(); });
+
+// Writes a coordinator.pid naming the live fake coordinator.
 function seedCoordinatorRunning() {
-  writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: '2026-01-01T00:00:00.000Z' }));
+  writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: fakeCoordinator.pid, started_at: '2026-01-01T00:00:00.000Z' }));
 }
 
 function writeEndpoint(pid: number, processStart: string | null) {
@@ -495,7 +501,7 @@ describe('cli/start-session.ts', () => {
       mockBinaryCheck(true);
 
       setEnv(dir);
-      seedCoordinatorRunning(); // PID is current process → alive
+      seedCoordinatorRunning(); // a live fake coordinator
       process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
       await import('./start-session.ts');
 
@@ -505,26 +511,18 @@ describe('cli/start-session.ts', () => {
 
     it('reports a live coordinator recorded only in control.json as running and does not spawn another', async () => {
       seedState();
-      const script = join(dir, 'coordinator.js');
-      writeFileSync(script, 'setInterval(() => {}, 1000);\n');
-      const coordinator = spawnReal(process.execPath, [script], { stdio: 'ignore' });
-      try {
-        await new Promise<void>((resolve, reject) => { coordinator.once('spawn', resolve); coordinator.once('error', reject); });
-        writeEndpoint(coordinator.pid!, readProcessStart(coordinator.pid!));
-        const spawnMock = makeSpawnMock();
-        mockSpawn(spawnMock);
-        mockBinaryCheck(true);
-        const logSpy = vi.spyOn(console, 'log');
+      writeEndpoint(fakeCoordinator.pid, readProcessStart(fakeCoordinator.pid));
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+      const logSpy = vi.spyOn(console, 'log');
 
-        setEnv(dir);
-        process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
-        await import('./start-session.ts');
+      setEnv(dir);
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
 
-        expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(false);
-        expect(logSpy.mock.calls.some(([line]) => String(line).includes(`Coordinator already running  (PID ${coordinator.pid})`))).toBe(true);
-      } finally {
-        coordinator.kill('SIGKILL');
-      }
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(false);
+      expect(logSpy.mock.calls.some(([line]) => String(line).includes(`Coordinator already running  (PID ${fakeCoordinator.pid})`))).toBe(true);
     });
 
     it('spawns a coordinator when control.json names a PID reused by a non-coordinator', async () => {
