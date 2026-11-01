@@ -38,6 +38,9 @@ export function reconcileState(stateDir: string): void {
       if (!knownTaskRefs.has(claim.task_ref)) {
         logger.info(`[reconcile] orphan claim ${claim.run_id} for unknown task_ref ${claim.task_ref} -> failed`);
         claim.state = 'failed';
+        claim.finalization_state = null;
+        claim.finalization_retry_count = 0;
+        claim.finalization_blocked_reason = null;
         failedClaims.push({ claim, reason: 'reconcile_orphan_claim' });
         claimsModified = true;
         continue;

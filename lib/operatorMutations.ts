@@ -13,7 +13,7 @@ import { commitClaims } from './runStore.ts';
 import { cleanupRunWorktree, getRunWorktree, runBranchMergedIntoMain } from './runWorktree.ts';
 import { resolveControlPrincipal, requireProjectAuthor, type ControlPrincipal } from './controlPrincipal.ts';
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
-import { markTaskDoneRuntimeOnly } from './taskCompletion.ts';
+import { markTaskDoneLocked, markTaskDoneRuntimeOnly } from './taskCompletion.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from './taskRouting.ts';
 import type { Claim } from '../types/claims.ts';
@@ -268,6 +268,10 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
       c.state = 'failed';
       c.failure_reason = 'manual_reset';
       c.finished_at = now;
+      // Finalization state is only valid on an in_progress run (lib/lifecycleDiagnostics.ts).
+      c.finalization_state = null;
+      c.finalization_retry_count = 0;
+      c.finalization_blocked_reason = null;
     }
 
     commitClaims(stateDir, claimsState, [{
@@ -499,7 +503,8 @@ export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): 
  * Close a run whose work already reached `main` by hand (docs/recovery.md,
  * Finalization Failure): the claim is non-terminal while its task is
  * done/released or its branch is merged into main. Records the claim as done,
- * emits `run_finished` and, when the branch is merged, cleans the run worktree
+ * emits `run_finished` and, when the branch is merged, marks its task done and
+ * cleans the run worktree
  * and branch the way the coordinator does after a merge; an unmerged branch's
  * worktree is kept, since that cleanup force-removes it. A run that is neither
  * is refused: mark work merged another way done first, or requeue the task.
@@ -534,6 +539,10 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
         + `If its work reached main another way (squash, rebase or fast-forward), run orc task-mark-done ${claim.task_ref} and then orc run-close ${run_id}; `
         + `to requeue the task use orc run-expire ${run_id} or orc task-reset ${claim.task_ref}`);
     }
+    // A merged branch is the coordinator's merge done by hand: record the task done the way the
+    // coordinator does after a merge, under the same lock and while the run is still active, or
+    // reconcile would requeue a task left claimed/in_progress without an active run.
+    if (!taskDone && branchMerged) markTaskDoneLocked(stateDir, claim.task_ref, actor_id);
     claim.state = 'done';
     claim.finished_at = now;
     claim.input_state = null;
@@ -546,7 +555,7 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
       run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
       payload: { closed_by: actor_id, reason: (reason as string | null) ?? null, manual: true },
     }]);
-    return { task_ref: claim.task_ref, task_status: taskStatus };
+    return { task_ref: claim.task_ref, task_status: !taskDone && branchMerged ? 'done' : taskStatus };
   });
 
   // The coordinator's post-merge cleanup: remove the worktree, delete the branch, drop the entry.

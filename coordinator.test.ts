@@ -1850,6 +1850,26 @@ describe('hook event bus', () => {
     expect(send.mock.calls.map((call) => call[0])).toEqual(['pty:worker-01']);
   });
 
+  it('keeps the longer thresholds while a tool call is still running (PreToolUse without PostToolUse)', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-testing', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
+    });
+    // A full npm test started 11 minutes ago and has not finished: past both hook thresholds, but not idle.
+    writeHookEvents('worker-01', [
+      { type: 'tool', tool: 'Edit', brief: 'a.ts', id: 'toolu_1', ts: new Date(Date.now() - 12 * 60 * 1000).toISOString() },
+      { type: 'tool_start', tool: 'Bash', id: 'toolu_2', ts: new Date(Date.now() - 11 * 60 * 1000).toISOString() },
+    ]);
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    await runTicks([], 1);
+
+    const events = readEvents(dir);
+    expect(events.some((e) => (e.event === 'worker_needs_attention' || e.event === 'need_input') && e.run_id === 'run-testing')).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('reads the hook idle thresholds from coordinator settings', async () => {
     useSettings({ coordinator: { hook_idle_nudge_ms: 3_600_000, hook_idle_escalate_ms: 3_600_000 } });
     seedState(dir, {
@@ -2006,6 +2026,24 @@ describe('hook event bus', () => {
     expect(notes[0]).toMatchObject({ agent_id: 'worker-01', task_ref: 'proj/fix-bug', payload: { label: 'Write tests', source: 'todo' } });
     const { readRunActivity } = await import('./lib/runActivityStore.ts');
     expect(readRunActivity(dir)['run-notes']).toMatchObject({ label: 'Fix review findings', source: 'todo' });
+  });
+
+  it('keeps tool-call labels out of events.db: no activity_note for a run labelled only by tool calls', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-tools', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    writeHookEvents('worker-01', [
+      { type: 'tool', tool: 'Bash', brief: 'npm test', ts: new Date(Date.now() - 2000).toISOString() },
+      { type: 'tool', tool: 'Edit', brief: 'a.ts', ts: new Date(Date.now() - 1000).toISOString() },
+    ]);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    await runTicks([], 1);
+
+    expect(readEvents(dir).filter((e) => e.event === 'activity_note' && e.run_id === 'run-tools')).toEqual([]);
+    const { readRunActivity } = await import('./lib/runActivityStore.ts');
+    expect(readRunActivity(dir)['run-tools']).toMatchObject({ label: 'Edit: a.ts', source: 'tool' });
   });
 });
 

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readEvents } from '../lib/eventLog.ts';
 import { latestRunActivityDetailMap } from '../lib/runActivity.ts';
+import { readRunActivity as readRunActivitySnapshots } from '../lib/runActivityStore.ts';
 import { boolFlag } from '../lib/args.ts';
 import { cliError, formatErrorMessage } from './shared.ts';
 import { readClaims } from '../lib/stateReader.ts';
@@ -33,7 +34,7 @@ if (boolFlag('via-control')) {
   const activity = readRunActivity();
   eventReadError = activity.eventReadError;
   // Same overlay as the control snapshot, so both paths return the same row shape.
-  rows = withProjectTaskState(STATE_DIR, { cursor: 0, generated_at: new Date().toISOString(), runs: projectActiveRuns(readClaims(STATE_DIR).claims, activity.runActivity), sessions: [] }).runs;
+  rows = withProjectTaskState(STATE_DIR, { cursor: 0, generated_at: new Date().toISOString(), runs: projectActiveRuns(readClaims(STATE_DIR).claims, activity.runActivity, Date.now(), readRunActivitySnapshots(STATE_DIR)), sessions: [] }).runs;
 }
 const project = readProjectDescriptor(STATE_DIR);
 

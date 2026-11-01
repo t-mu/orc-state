@@ -540,6 +540,40 @@ describe('current_activity', () => {
     expect(formatStatus(s)).toMatch(/\n {4}└ Fixing findings from the critic {3}\(1\ds ago\)/);
     expect(formatAgentStatus(buildAgentStatus(dir, 'orc-1'), 'orc-1')).toContain('└ Fixing findings from the critic');
   });
+
+  it('measures idle time from hook activity too, as the coordinator does, and never stalls a running tool call', () => {
+    const old = new Date(Date.now() - 40 * 60_000).toISOString();
+    writeState({
+      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:1' } as Agent],
+      claims: ['run-hook', 'run-tool'].map((run_id, index) => ({
+        run_id, task_ref: `orch/task-${index + 1}`, agent_id: 'orc-1', state: 'in_progress',
+        claimed_at: old, started_at: old, last_heartbeat_at: old,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      } as Claim)),
+      tasks: [1, 2].map((n) => ({ ref: `orch/task-${n}`, title: `Task ${n}`, status: 'in_progress', owner: 'orc-1', planning_state: 'ready_for_dispatch' } as Task)),
+    });
+    writeEvents([]);
+    const recent = new Date(Date.now() - 30_000).toISOString();
+    const started = new Date(Date.now() - 20 * 60_000).toISOString();
+    writeRunActivity(dir, {
+      'run-hook': {
+        run_id: 'run-hook', agent_id: 'orc-1', label: 'Edit: a.ts', source: 'tool', label_ts: recent,
+        last_tool: 'Edit', last_tool_brief: 'a.ts', last_tool_ts: recent,
+      },
+      'run-tool': {
+        run_id: 'run-tool', agent_id: 'orc-1', label: null, source: null, label_ts: null,
+        last_tool: null, last_tool_brief: null, last_tool_ts: null, open_tools: { toolu_1: started },
+      },
+    });
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult;
+    const byRun = new Map(s.claims.active.map((claim) => [claim.run_id, claim]));
+    expect(byRun.get('run-hook')?.idle_seconds).toBeLessThan(60);
+    expect(byRun.get('run-hook')?.stalled).toBe(false);
+    // Twenty minutes into one tool call: idle by the clock, but not stalled.
+    expect(byRun.get('run-tool')?.idle_seconds).toBeGreaterThanOrEqual(20 * 60);
+    expect(byRun.get('run-tool')?.stalled).toBe(false);
+    expect(s.claims.stalled).toBe(0);
+  });
 });
 
 describe('formatStatus', () => {

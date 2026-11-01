@@ -283,7 +283,7 @@ Commands for digging into active runs and the event stream.
 | `sessions` | List supervised provider sessions with state (`running`, `recoverable`, `unknown`, `offline`), transport, PID, owner and reason. |
 | `run-info <run_id>` | Show claim state, task, worktree path, and idle time for a run. |
 | `run-expire <run_id>` | Force-expire a claim and requeue the task. |
-| `run-close <run_id> [--reason=<text>]` | Close a run whose work was merged by hand: the claim must be non-terminal and its task `done`/`released` or its branch merged into `main` (an ancestor of `main` that is not on its first-parent history). Records the claim `done`, emits `run_finished` `{closed_by, reason, manual: true}` and, when the branch is merged, removes the run worktree and branch as the coordinator does after a merge (that removal is forced, so an unmerged branch's worktree is kept). Any other run is refused: for work merged by squash, rebase or fast-forward run `task-mark-done` first; otherwise requeue it with `run-expire` or `task-reset`. Master MCP tool: `close_run`. |
+| `run-close <run_id> [--reason=<text>]` | Close a run whose work was merged by hand: the claim must be non-terminal and its task `done`/`released` or its branch merged into `main` (an ancestor of `main` that is not on its first-parent history). Records the claim `done`, emits `run_finished` `{closed_by, reason, manual: true}` and, when the branch is merged, marks the task `done` (if it is not already) and removes the run worktree and branch as the coordinator does after a merge (that removal is forced, so an unmerged branch's worktree is kept). Any other run is refused: for work merged by squash, rebase or fast-forward run `task-mark-done` first; otherwise requeue it with `run-expire` or `task-reset`. Master MCP tool: `close_run`. |
 | `waiting-input` | List runs blocked waiting for master input. |
 | `events-tail` | Print the last N events. |
 | `events-filter` | Query events by run, agent, or event type. |
@@ -416,7 +416,7 @@ scouts or the master). Not for human use.
 
 | Command | Description |
 |---------|-------------|
-| `stop-check` | Reads Claude's Stop hook input on stdin and asks the coordinator (`POST /v1/stop-check`) whether this session's run lets it end its turn. While the run is unfinished (no `run-work-complete`, no pending input request, not finalizing) it prints `{"decision":"block","reason":...}` and Claude continues; at most 3 blocks per run in 10 minutes, each recorded as `stop_blocked`. Always exits 0 and fails open: no session secret, unreadable input or an unreachable coordinator allows the stop. |
+| `stop-check` | Reads Claude's Stop hook input on stdin and asks the coordinator (`POST /v1/stop-check`) whether this session's run lets it end its turn. While the run is unfinished (no `run-work-complete`, no pending input request, not finalizing) it prints `{"decision":"block","reason":...}` and Claude continues; at most 3 blocks per run in 10 minutes and 9 over the whole run, each recorded as `stop_blocked`; after that the stop is allowed and the normal nudge/escalation applies. Always exits 0 and fails open: no session secret, unreadable input or an unreachable coordinator allows the stop. |
 
 ---
 

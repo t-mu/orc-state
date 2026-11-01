@@ -1,7 +1,7 @@
 /**
  * Claude Code command hook for orc workers.
  *
- * Usage: node orc-hook.(ts|js) <permission|tool|todo> <events-file>
+ * Usage: node orc-hook.(ts|js) <permission|tool|tool_start|todo> <events-file>
  *
  * Claude Code passes the hook payload as JSON on stdin. The script appends at
  * most one NDJSON record to <events-file> (drained by the coordinator, see
@@ -11,6 +11,8 @@
  *
  * Records never carry full tool inputs or outputs: `tool` records hold a
  * short `brief` (≤ 80 chars) plus, for `Agent`/`Task`, the `subagent_type`;
+ * `tool_start` records only the tool name and its `tool_use_id`, so the
+ * coordinator can tell a long-running tool call from an idle worker;
  * `activity` records the current to-do label.
  */
 import { appendFileSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
@@ -135,9 +137,17 @@ export function handleHook(kind: string, payload: Payload, state: TaskState, ts:
     return { record: { type: 'permission', message: str(payload.message), ts } };
   }
 
+  const toolUseId = clip(str(payload.tool_use_id), BRIEF_MAX);
+
+  if (kind === 'tool_start') {
+    if (!tool) return { record: null };
+    return { record: { type: 'tool_start', tool, ...(toolUseId ? { id: toolUseId } : {}), ts } };
+  }
+
   if (kind === 'tool') {
     if (!tool) return { record: null };
     const record: HookRecord = { type: 'tool', tool, brief: toolBrief(tool, input, str(payload.cwd)), ts };
+    if (toolUseId) record.id = toolUseId;
     // Sub-agent spawns also carry their agent type: phase inference recognises reviewers by it.
     const subagent = tool === 'Agent' || tool === 'Task' ? clip(str(input.subagent_type), BRIEF_MAX) : '';
     if (subagent) record.subagent_type = subagent;

@@ -342,6 +342,7 @@ export interface ActivityNoteEvent extends BaseEvent {
   run_id: string;
   agent_id: string;
   task_ref: string;
+  /** Emitted for `todo`/`note` labels only; `tool` survives in events recorded before tool labels left events.db. */
   payload: { label: string; source: 'todo' | 'note' | 'tool' };
 }
 

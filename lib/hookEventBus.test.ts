@@ -33,6 +33,20 @@ describe('dispatchHookEvents', () => {
     ]);
   });
 
+  it('routes tool_start events to activity and carries tool ids, skipping a tool_start without a tool', () => {
+    const out = dispatchHookEvents([
+      { type: 'tool_start', tool: 'Bash', id: 'toolu_1', ts: TS },
+      { type: 'tool_start', tool: 'Read', id: '', ts: TS },
+      { type: 'tool_start', ts: TS },
+      { type: 'tool', tool: 'Bash', brief: 'npm test', id: 'toolu_1', ts: TS },
+    ]);
+    expect(out.activity).toEqual([
+      { type: 'tool_start', tool: 'Bash', id: 'toolu_1', ts: TS },
+      { type: 'tool_start', tool: 'Read', ts: TS },
+      { type: 'tool', tool: 'Bash', brief: 'npm test', id: 'toolu_1', ts: TS },
+    ]);
+  });
+
   it('keeps permission events lenient, as the Notification hook has always been read', () => {
     expect(dispatchHookEvents([{ type: 'permission' }]).permission).toEqual([{ type: 'permission', message: '', ts: '' }]);
   });

@@ -125,7 +125,8 @@ close_run(run_id, reason?)
   Close a run whose work was merged by hand (its task is done/released or its
   branch is merged into main), e.g. a blocked_finalize run after manual
   recovery: records the claim done, emits run_finished and, when the branch is
-  merged, removes the run worktree and branch. Same as orc run-close.
+  merged, marks the task done and removes the run worktree and branch. Same as
+  orc run-close.
   worktree_cleaned: false means the claim is closed but the worktree and branch
   remain (check list_worktrees). A run whose task is not done and whose branch is
   not merged (squash, rebase and fast-forward merges do not count) is a tool

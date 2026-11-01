@@ -13,41 +13,44 @@ export function markTaskDoneRuntimeOnly(
   actorId = 'human',
   stateDir = STATE_DIR,
 ): { previousStatus: string } {
-  return withLock(join(stateDir, '.lock'), () => {
-    const now = new Date().toISOString();
+  return withLock(join(stateDir, '.lock'), () => markTaskDoneLocked(stateDir, taskRef, actorId));
+}
 
-    const backlog = readBacklog(stateDir);
-    const task = findTask(backlog, taskRef);
-    const previousStatus = task?.status ?? 'unregistered';
-    if (!task) {
-      throw new NotFoundError(`task not found: ${taskRef}`);
-    }
-    if (NON_COMPLETABLE_STATUSES.has(task.status)) {
-      throw new ConflictError(`task ${taskRef} cannot transition to done from status ${task.status}`);
-    }
+/** markTaskDoneRuntimeOnly for a caller that already holds the state lock. */
+export function markTaskDoneLocked(stateDir: string, taskRef: string, actorId = 'human'): { previousStatus: string } {
+  const now = new Date().toISOString();
 
-    if (task.status !== 'done') {
-      task.status = 'done';
-      task.updated_at = now;
-      delete task.blocked_reason;
-      // Recorded once per completion: the status guard above makes a repeated confirmation a no-op.
-      const runId = requireProjectTaskStore(stateDir).activeRunId(taskRef);
-      commitBacklog(stateDir, backlog, { [taskRef]: { cause: 'merge_succeeded', actorId, runId } });
-    }
+  const backlog = readBacklog(stateDir);
+  const task = findTask(backlog, taskRef);
+  const previousStatus = task?.status ?? 'unregistered';
+  if (!task) {
+    throw new NotFoundError(`task not found: ${taskRef}`);
+  }
+  if (NON_COMPLETABLE_STATUSES.has(task.status)) {
+    throw new ConflictError(`task ${taskRef} cannot transition to done from status ${task.status}`);
+  }
 
-    appendSequencedEvent(
-      stateDir,
-      {
-        ts: now,
-        event: 'task_updated',
-        actor_type: actorId === 'human' ? 'human' : 'agent',
-        actor_id: actorId,
-        task_ref: taskRef,
-        payload: { status: 'done', previous_status: previousStatus, fields: ['status'] },
-      },
-      { lockAlreadyHeld: true },
-    );
+  if (task.status !== 'done') {
+    task.status = 'done';
+    task.updated_at = now;
+    delete task.blocked_reason;
+    // Recorded once per completion: the status guard above makes a repeated confirmation a no-op.
+    const runId = requireProjectTaskStore(stateDir).activeRunId(taskRef);
+    commitBacklog(stateDir, backlog, { [taskRef]: { cause: 'merge_succeeded', actorId, runId } });
+  }
 
-    return { previousStatus };
-  });
+  appendSequencedEvent(
+    stateDir,
+    {
+      ts: now,
+      event: 'task_updated',
+      actor_type: actorId === 'human' ? 'human' : 'agent',
+      actor_id: actorId,
+      task_ref: taskRef,
+      payload: { status: 'done', previous_status: previousStatus, fields: ['status'] },
+    },
+    { lockAlreadyHeld: true },
+  );
+
+  return { previousStatus };
 }

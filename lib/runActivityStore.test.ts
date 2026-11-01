@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import {
-  ACTIVITY_NOTE_THROTTLE_MS, RUN_ACTIVITY_FILE, applyHookActivity, latestHookActivityTs,
-  readRunActivity, shouldEmitActivityNote, writeRunActivity,
+  ACTIVITY_NOTE_THROTTLE_MS, RUN_ACTIVITY_FILE, TOOL_IN_FLIGHT_MAX_MS, applyHookActivity, latestHookActivityTs,
+  readRunActivity, shouldEmitActivityNote, toolInFlight, writeRunActivity,
 } from './runActivityStore.ts';
 
 const T0 = Date.parse('2026-10-31T12:00:00.000Z');
@@ -61,6 +61,73 @@ describe('applyHookActivity', () => {
     expect(second.label).toBe('Newer');
     expect(second.last_tool_ts).toBe(at(5000));
     expect(first.label).toBe('Newer'); // pure: previous snapshot untouched
+  });
+
+  it('tracks a started tool call as in flight until its tool record closes it by id', () => {
+    const started = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'a', ts: at(0) },
+      { type: 'tool_start', tool: 'Agent', id: 'b', ts: at(1000) },
+    ], T0 + 2000);
+    expect(started.open_tools).toEqual({ a: at(0), b: at(1000) });
+    expect(toolInFlight(started, T0 + 2000)).toBe(true);
+    expect(latestHookActivityTs(started)).toBe(at(1000));
+
+    const oneDone = applyHookActivity(started, 'run-1', 'w1', [{ type: 'tool', tool: 'Agent', brief: '', id: 'b', ts: at(3000) }], T0 + 4000);
+    expect(oneDone.open_tools).toEqual({ a: at(0) });
+    expect(toolInFlight(oneDone, T0 + 4000)).toBe(true);
+
+    const allDone = applyHookActivity(oneDone, 'run-1', 'w1', [{ type: 'tool', tool: 'Bash', brief: 'npm test', id: 'a', ts: at(5000) }], T0 + 6000);
+    expect(allDone.open_tools).toBeUndefined();
+    expect(toolInFlight(allDone, T0 + 6000)).toBe(false);
+    expect(started.open_tools).toEqual({ a: at(0), b: at(1000) }); // pure
+  });
+
+  it('a failed call (PostToolUseFailure writes the same tool record) closes its start', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'a', ts: at(0) },
+      { type: 'tool', tool: 'Bash', brief: 'grep -q missing x', id: 'a', ts: at(1000) },
+    ], T0 + 2000);
+    expect(toolInFlight(snap, T0 + 2000)).toBe(false);
+  });
+
+  it('a new tool_start closes an anonymous start older than the newest finished call (no record can name it)', () => {
+    const lost = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', ts: at(0) },
+      { type: 'tool_start', tool: 'Read', id: 'b', ts: at(100) },
+      { type: 'tool', tool: 'Read', brief: 'a.ts', id: 'b', ts: at(1000) },
+    ], T0 + 2000);
+    expect(lost.open_tools).toEqual({ _: at(0) });
+    const next = applyHookActivity(lost, 'run-1', 'w1', [{ type: 'tool_start', tool: 'Edit', id: 'c', ts: at(3000) }], T0 + 4000);
+    expect(next.open_tools).toEqual({ c: at(3000) });
+  });
+
+  it('keeps an id-keyed call open while parallel sub-agents finish and start other calls', () => {
+    // Reviewer 1 runs npm test; reviewer 2 reads, finishes, and starts another call meanwhile.
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'r1-test', ts: at(0) },
+      { type: 'tool_start', tool: 'Read', id: 'r2-read', ts: at(100) },
+      { type: 'tool', tool: 'Read', brief: 'a.ts', id: 'r2-read', ts: at(1000) },
+      { type: 'tool_start', tool: 'Grep', id: 'r2-grep', ts: at(2000) },
+      { type: 'tool', tool: 'Grep', brief: 'x', id: 'r2-grep', ts: at(3000) },
+    ], T0 + 4000);
+    expect(snap.open_tools).toEqual({ 'r1-test': at(0) });
+    expect(toolInFlight(snap, T0 + 10 * 60_000)).toBe(true);
+  });
+
+  it('pairs tool calls without a tool_use_id one at a time', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', ts: at(0) },
+      { type: 'tool', tool: 'Bash', brief: '', ts: at(1000) },
+    ], T0 + 2000);
+    expect(toolInFlight(snap, T0 + 2000)).toBe(false);
+  });
+
+  it('stops counting a tool call that never finished after TOOL_IN_FLIGHT_MAX_MS and prunes it', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [{ type: 'tool_start', tool: 'Bash', id: 'a', ts: at(0) }], T0 + 1000);
+    expect(toolInFlight(snap, T0 + TOOL_IN_FLIGHT_MAX_MS - 1)).toBe(true);
+    expect(toolInFlight(snap, T0 + TOOL_IN_FLIGHT_MAX_MS)).toBe(false);
+    const later = applyHookActivity(snap, 'run-1', 'w1', [], T0 + TOOL_IN_FLIGHT_MAX_MS);
+    expect(later.open_tools).toBeUndefined();
   });
 
   it('latestHookActivityTs is null without a snapshot or timestamps', () => {

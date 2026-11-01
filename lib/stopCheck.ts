@@ -9,10 +9,19 @@ import type { OrcEvent } from '../types/events.ts';
  * its turn. The decision lives here, in the coordinator: a run that is still
  * being worked on, with no work-complete handoff and no pending input
  * request, blocks the stop — at most STOP_BLOCK_CAP times per run within
- * STOP_BLOCK_WINDOW_MS, after which the normal nudge/escalation takes over.
+ * STOP_BLOCK_WINDOW_MS, and at most STOP_BLOCK_RUN_CAP times over the whole
+ * run, after which the normal nudge/escalation takes over. The caps are the
+ * only loop breakers: Claude's `stop_hook_active` is recorded on each
+ * `stop_blocked` event for diagnosis but does not change the decision.
  */
 export const STOP_BLOCK_CAP = 3;
 export const STOP_BLOCK_WINDOW_MS = 10 * 60 * 1000;
+/**
+ * Lifetime cap: blocked turns keep a run's hook activity fresh, so without it a
+ * worker that keeps trying to stop would cycle block → stop → nudge → block
+ * forever without ever looking idle.
+ */
+export const STOP_BLOCK_RUN_CAP = 9;
 /** The newest events of a run the decision reads; a run's recent history is all it needs. */
 const RUN_EVENT_LIMIT = 500;
 
@@ -77,10 +86,11 @@ export function decideStopCheck(input: StopDecisionInput): StopDecision {
   if (requested && (!answered || requested.seq > answered.seq)) return { allow: true };
 
   const windowStart = nowMs - STOP_BLOCK_WINDOW_MS;
-  const recentBlocks = events.filter((event) => event.event === 'stop_blocked' && Date.parse(event.ts) >= windowStart).length;
-  // The cap ends a block loop. It applies to every stop, whether Claude reports `stop_hook_active`
+  const blocks = events.filter((event) => event.event === 'stop_blocked');
+  const recentBlocks = blocks.filter((event) => Date.parse(event.ts) >= windowStart).length;
+  // The caps end a block loop. They apply to every stop, whether Claude reports `stop_hook_active`
   // (continuing after an earlier block) or not, so a nudge-then-stop cycle cannot loop either.
-  if (recentBlocks >= STOP_BLOCK_CAP) return { allow: true };
+  if (recentBlocks >= STOP_BLOCK_CAP || blocks.length >= STOP_BLOCK_RUN_CAP) return { allow: true };
 
   const phase = currentPhase(events);
   return {
@@ -101,7 +111,12 @@ export function applyStopCheck(
   { runId, agentId, stopHookActive, nowMs = Date.now() }: { runId: string; agentId: string; stopHookActive: boolean; nowMs?: number },
 ): StopCheckResult {
   const claim = readClaims(stateDir).claims.find((entry) => entry.run_id === runId) ?? null;
-  const events = queryEvents(stateDir, { run_id: runId, limit: RUN_EVENT_LIMIT, order: 'desc' });
+  const recent = queryEvents(stateDir, { run_id: runId, limit: RUN_EVENT_LIMIT, order: 'desc' });
+  // The lifetime cap counts every block of the run, even those older than the recent-event window.
+  const seen = new Set(recent.map((event) => event.seq));
+  const blocks = queryEvents(stateDir, { run_id: runId, event_type: 'stop_blocked', limit: STOP_BLOCK_RUN_CAP, order: 'desc' })
+    .filter((event) => !seen.has(event.seq));
+  const events = [...recent, ...blocks];
   const decision = decideStopCheck({ runId, agentId, claim, events, nowMs });
   if (decision.allow) return { allow: true };
   appendSequencedEvent(stateDir, {

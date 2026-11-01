@@ -176,7 +176,11 @@ export function heartbeat(
     if (claim.lease_expires_at && new Date(claim.lease_expires_at) < now) {
       throw new ConflictError(`Lease has already expired for run ${runId} (expired at ${claim.lease_expires_at})`);
     }
-    const lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
+    // `at` may be in the past (a hook event drained late): it dates the heartbeat,
+    // but the lease renews from the current time and is never shortened.
+    const renewedMs = Math.max(Date.now(), now.getTime()) + leaseDurationMs;
+    const currentLeaseMs = claim.lease_expires_at ? Date.parse(claim.lease_expires_at) : NaN;
+    const lease_expires_at = new Date(Number.isFinite(currentLeaseMs) ? Math.max(currentLeaseMs, renewedMs) : renewedMs).toISOString();
     claim.last_heartbeat_at = at;
     claim.lease_expires_at  = lease_expires_at;
     commitClaims(stateDir, claims, emitEvent ? [{

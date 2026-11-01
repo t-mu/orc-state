@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { readEventsForRuns, withEventDb } from './eventLog.ts';
-import { claimedRunStartupAnchor, latestRunActivityDetailMap } from './runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityDetailMap, newestTimestamp } from './runActivity.ts';
+import { latestHookActivityTs, readRunActivity, type RunActivityMap } from './runActivityStore.ts';
 import { readClaims } from './stateReader.ts';
 import type { RunActivityDetail } from './runActivity.ts';
 import type { Claim } from '../types/claims.ts';
@@ -43,12 +44,18 @@ function elapsedSeconds(anchor: string | null, now: number): number | null {
 }
 
 /** Shared by the legacy `runs-active` path and the control API snapshot. */
-export function projectActiveRuns(claims: Claim[], runActivity: Map<string, RunActivityDetail>, now = Date.now()): ActiveRunRow[] {
+export function projectActiveRuns(
+  claims: Claim[],
+  runActivity: Map<string, RunActivityDetail>,
+  now = Date.now(),
+  hookActivity: RunActivityMap = {},
+): ActiveRunRow[] {
   return claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).map((c) => {
     const startupAnchor = claimedRunStartupAnchor(c);
     const ageAnchor = c.state === 'claimed' ? startupAnchor : (c.started_at ?? c.task_envelope_sent_at ?? c.claimed_at ?? null);
     const activity = runActivity.get(c.run_id) ?? null;
-    const idleAnchor = activity?.ts
+    // Same liveness as the coordinator: durable activity events or hook activity, whichever is newer.
+    const idleAnchor = newestTimestamp(activity?.ts, latestHookActivityTs(hookActivity[c.run_id]))
       ?? c.last_heartbeat_at
       ?? c.started_at
       ?? (c.state === 'claimed' ? startupAnchor : (c.task_envelope_sent_at ?? c.claimed_at ?? null));
@@ -82,7 +89,7 @@ export function readControlSnapshot(stateDir: string, now = Date.now()): Control
     const sessions = db.prepare(`SELECT session_id, agent_id, run_id, state, transport, state_reason FROM sessions
       WHERE state IN ('running', 'recoverable', 'unknown') ORDER BY rowid`)
       .all() as ControlSnapshot['sessions'];
-    return { cursor, generated_at: new Date(now).toISOString(), runs: projectActiveRuns(claims, activity, now), sessions };
+    return { cursor, generated_at: new Date(now).toISOString(), runs: projectActiveRuns(claims, activity, now, readRunActivity(stateDir)), sessions };
   })());
   return withProjectTaskState(stateDir, snapshot);
 }

@@ -85,7 +85,8 @@ describe('pty adapter start()', () => {
     expect(settings.hooks).toEqual({
       Notification: [{ hooks: [cmd('permission')] }],
       PostToolUse: [{ matcher: '*', hooks: [cmd('tool')] }],
-      PreToolUse: [{ matcher: 'TodoWrite|TaskCreate|TaskUpdate', hooks: [cmd('todo')] }],
+      PostToolUseFailure: [{ matcher: '*', hooks: [cmd('tool')] }],
+      PreToolUse: [{ matcher: '*', hooks: [cmd('tool_start')] }, { matcher: 'TodoWrite|TaskCreate|TaskUpdate', hooks: [cmd('todo')] }],
       // A task worker also gets the stop-hook run guard (asserted in detail below).
       Stop: [{ hooks: [{ type: 'command', command: expect.stringMatching(/ stop-check$/), timeout: 15 }] }],
     });
@@ -101,12 +102,14 @@ describe('pty adapter start()', () => {
       expect(result.status).toBe(0);
     };
     run(settings.hooks.Notification[0].hooks[0].command, { notification_type: 'permission_prompt', message: 'Allow Bash?' });
-    run(settings.hooks.PostToolUse[0].hooks[0].command, { tool_name: 'Bash', tool_input: { command: 'npm test' } });
-    run(settings.hooks.PreToolUse[0].hooks[0].command, { tool_name: 'TodoWrite', tool_input: { todos: [{ content: 'X', status: 'in_progress', activeForm: 'Doing X' }] } });
+    run(settings.hooks.PreToolUse[0].hooks[0].command, { tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: 'npm test' } });
+    run(settings.hooks.PostToolUse[0].hooks[0].command, { tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: 'npm test' } });
+    run(settings.hooks.PreToolUse[1].hooks[0].command, { tool_name: 'TodoWrite', tool_input: { todos: [{ content: 'X', status: 'in_progress', activeForm: 'Doing X' }] } });
     const records = readFileSync(join(dir, 'pty-hook-events', 'bob.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as unknown);
     expect(records).toEqual([
       { type: 'permission', message: 'Allow Bash?', ts: expect.any(String) },
-      { type: 'tool', tool: 'Bash', brief: 'npm test', ts: expect.any(String) },
+      { type: 'tool_start', tool: 'Bash', id: 'toolu_1', ts: expect.any(String) },
+      { type: 'tool', tool: 'Bash', brief: 'npm test', id: 'toolu_1', ts: expect.any(String) },
       { type: 'activity', label: 'Doing X', source: 'todo', ts: expect.any(String) },
     ]);
   });

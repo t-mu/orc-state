@@ -308,6 +308,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     requirePayloadField(
       event,
       'source',
+      // `tool` is no longer emitted (tool labels stay in run-activity.json) but stays valid for older events.
       (v) => v === 'todo' || v === 'note' || v === 'tool',
       'must be one of: todo, note, tool',
       errors,

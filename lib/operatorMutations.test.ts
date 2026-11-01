@@ -99,6 +99,21 @@ describe('authorizeOperator (task 232)', () => {
 });
 
 describe('applyOperatorMutation (task 232)', () => {
+  it('reset clears a blocked_finalize run\'s finalization fields, leaving no lifecycle invariant violation', async () => {
+    commitClaims(dir, { version: '1', claims: [{
+      ...claim('run-a', 'orch/active'),
+      finalization_state: 'blocked_finalize', finalization_retry_count: 2,
+      finalization_blocked_reason: 'finalization retry timed out waiting for worker progress',
+    }] });
+    applyOperatorMutation(dir, { op: 'reset-task', task_ref: 'orch/active', actor_id: 'human' });
+    expect(readClaims(dir).claims[0]).toMatchObject({
+      state: 'failed', failure_reason: 'manual_reset',
+      finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
+    });
+    const { detectLifecycleIssues } = await import('./lifecycleDiagnostics.ts');
+    expect(detectLifecycleIssues(dir).filter((issue) => issue.code === 'invalid_finalization_state')).toEqual([]);
+  });
+
   it('resets, unblocks, delegates and cancels as the CLI and the MCP tools did', () => {
     expect(applyOperatorMutation(dir, { op: 'reset-task', task_ref: 'orch/active', actor_id: 'human' }))
       .toMatchObject({ reset: true, previous_status: 'in_progress', cancelled_claims: 1 });

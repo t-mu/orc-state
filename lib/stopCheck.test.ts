@@ -3,7 +3,7 @@ import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixt
 import { appendSequencedEvent, closeAllDatabases, initEventsDb, queryEvents } from './eventLog.ts';
 import { validateEventObject } from './eventValidation.ts';
 import { commitClaims } from './runStore.ts';
-import { STOP_BLOCK_CAP, STOP_BLOCK_WINDOW_MS, applyStopCheck, decideStopCheck } from './stopCheck.ts';
+import { STOP_BLOCK_CAP, STOP_BLOCK_RUN_CAP, STOP_BLOCK_WINDOW_MS, applyStopCheck, decideStopCheck } from './stopCheck.ts';
 import type { Claim } from '../types/claims.ts';
 import type { OrcEvent } from '../types/events.ts';
 
@@ -88,6 +88,13 @@ describe('decideStopCheck', () => {
     expect(decision.allow).toBe(false);
     expect(decision.count).toBe(STOP_BLOCK_CAP);
   });
+
+  it('allows every stop once the run has been blocked STOP_BLOCK_RUN_CAP times, however old the blocks', () => {
+    const old = new Date(NOW - 5 * STOP_BLOCK_WINDOW_MS).toISOString();
+    const lifetime = Array.from({ length: STOP_BLOCK_RUN_CAP }, () => event('stop_blocked', { payload: { phase: null, count: 1, stop_hook_active: false } }, old));
+    expect(decide(claim(), lifetime)).toEqual({ allow: true });
+    expect(decide(claim(), lifetime.slice(1)).allow).toBe(false);
+  });
 });
 
 describe('applyStopCheck', () => {
@@ -130,6 +137,17 @@ describe('applyStopCheck', () => {
     for (let index = 0; index < STOP_BLOCK_CAP; index += 1) applyStopCheck(dir, { runId: 'run-a', agentId: 'worker-a', stopHookActive: true, nowMs: NOW });
     expect(applyStopCheck(dir, { runId: 'run-a', agentId: 'worker-a', stopHookActive: true, nowMs: NOW }).allow).toBe(true);
     expect(applyStopCheck(dir, { runId: 'run-a', agentId: 'worker-a', stopHookActive: false, nowMs: NOW + STOP_BLOCK_WINDOW_MS + 1 }).allow).toBe(false);
+  });
+
+  it('stops blocking for good after STOP_BLOCK_RUN_CAP blocks spread over several windows', () => {
+    const results: boolean[] = [];
+    for (let window = 0; window < 4; window += 1) {
+      for (let index = 0; index < STOP_BLOCK_CAP; index += 1) {
+        results.push(applyStopCheck(dir, { runId: 'run-a', agentId: 'worker-a', stopHookActive: index > 0, nowMs: NOW + window * (STOP_BLOCK_WINDOW_MS + 1) + index }).allow);
+      }
+    }
+    expect(results.filter((allowed) => !allowed)).toHaveLength(STOP_BLOCK_RUN_CAP);
+    expect(results.slice(STOP_BLOCK_RUN_CAP).every(Boolean)).toBe(true);
   });
 
   it('allows without recording an event once the run handed off', () => {
