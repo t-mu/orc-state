@@ -1703,6 +1703,45 @@ describe('hook event bus', () => {
     });
   });
 
+  function seedBusyRun(heartbeatAgoMs: number) {
+    const heartbeatAt = new Date(Date.now() - heartbeatAgoMs).toISOString();
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01', last_heartbeat_at: heartbeatAt }],
+      tasks: [{ ...DISPATCHABLE_TASK, ref: 'proj/busy', status: 'in_progress' }],
+      claims: [{
+        ...inProgressClaim('run-busy', 'worker-01', 'proj/busy', heartbeatAgoMs),
+        lease_expires_at: new Date(Date.now() + DEFAULT_LEASE_MS - 60 * 1000).toISOString(),
+      }],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn().mockResolvedValue('') }));
+    return heartbeatAt;
+  }
+
+  it('does not rewrite the heartbeat on every tick of hook activity while the lease is fresh', async () => {
+    const heartbeatAt = seedBusyRun(60 * 1000);
+    const { readRunActivity } = await import('./lib/runActivityStore.ts');
+    for (const [tool, agoMs] of [['Bash', 5000], ['Read', 1000]] as const) {
+      const ts = new Date(Date.now() - agoMs).toISOString();
+      writeHookEvents('worker-01', [{ type: 'tool', tool, brief: 'x', ts }]);
+      await runTicks([]);
+      // Hook activity still lands in run-activity.json, which drives idle detection.
+      expect(readRunActivity(dir)['run-busy']).toMatchObject({ last_tool: tool, last_tool_ts: ts });
+      expect(readClaims(dir).find((c) => c.run_id === 'run-busy')!.last_heartbeat_at).toBe(heartbeatAt);
+      expect(readAgents(dir).find((a) => a.agent_id === 'worker-01')!.last_heartbeat_at).toBe(heartbeatAt);
+    }
+  });
+
+  it('renews heartbeat and lease from hook activity once the heartbeat is half a lease old', async () => {
+    seedBusyRun(DEFAULT_LEASE_MS / 2 + 60 * 1000);
+    const ts = new Date(Date.now() - 1000).toISOString();
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Read', brief: 'lib/a.ts', ts }]);
+    await runTicks([]);
+    const busy = readClaims(dir).find((c) => c.run_id === 'run-busy')!;
+    expect(busy.last_heartbeat_at).toBe(ts);
+    expect(Date.parse(busy.lease_expires_at as string)).toBeGreaterThanOrEqual(Date.parse(ts) + DEFAULT_LEASE_MS);
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-01')!.last_heartbeat_at).toBe(ts);
+  });
+
   it('infers explore, implement, review, complete and finalize from gate commands and hook events alone', async () => {
     const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
     seedState(dir, {
