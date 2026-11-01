@@ -160,7 +160,10 @@ For each event in the returned notifications list:
     If option 2: use get_task(task_ref) to review, then propose follow-up.
 
   worker_needs_attention:
-    Surface: agent_id, task_ref, idle_ms.
+    Surface: agent_id, task_ref, payload.reason, idle_ms (and no_progress_ms for reason no_progress).
+    reason stale: the worker went quiet. reason no_progress: the worker is active but has not
+    changed phase, committed, or reported a lifecycle event for a long time. A long implement
+    phase looks the same as a loop, so check its recent activity before acting.
     Offer: wait / requeue (reset_task, which cancels its run) / cancel (cancel_task) / intervene.
     When the cause is unclear, request_scout(...) with the linked run/task first.
 

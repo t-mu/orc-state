@@ -35,6 +35,7 @@ import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, t
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, newestTimestamp, runIdleMs, shouldRenewFromHookActivity } from './lib/runActivity.ts';
 import { drainHookEvents, type PermissionHookEvent, type ToolHookEvent } from './lib/hookEventBus.ts';
+import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressAlertProgressAt, noProgressEscalationMs } from './lib/runProgress.ts';
 import { inferPhaseTransitions, toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './lib/phaseInference.ts';
 import {
   applyHookActivity, latestHookActivityTs, readRunActivity, shouldEmitActivityNote, toolInFlight, writeRunActivity,
@@ -238,6 +239,8 @@ const WORKER_STALE_FORCE_FAIL_MS = intFlag('worker-stale-force-fail-ms', COORD_C
 // Runs whose harness reports tool hooks: silence means a real stall, so they get shorter thresholds.
 const HOOK_IDLE_NUDGE_MS = intFlag('hook-idle-nudge-ms', COORD_CONFIG.hook_idle_nudge_ms);
 const HOOK_IDLE_ESCALATE_MS = intFlag('hook-idle-escalate-ms', COORD_CONFIG.hook_idle_escalate_ms);
+// A live run without progress (phase change, commit, lifecycle event) for this long gets worker_needs_attention.
+const RUN_NO_PROGRESS_ESCALATE_MS = intFlag('run-no-progress-escalate-ms', COORD_CONFIG.run_no_progress_escalate_ms);
 const REMEDIATION_CONFIG = loadRemediationConfig();
 const REMEDIATION_POLICIES = builtinPolicies(REMEDIATION_CONFIG);
 
@@ -260,6 +263,13 @@ const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
 const runNudgeCount = new Map<string, number>();
 const runLastPhase = new Map<string, string>();
+// Progress, tracked apart from liveness (lib/runProgress.ts): the newest phase
+// change, commit, or lifecycle event per run, and the progress timestamp a
+// no-progress alert was already sent for.
+const lastProgressAtByRun = new Map<string, string>();
+const noProgressNotifiedForByRun = new Map<string, string>();
+// The newest worker-reported (not inferred) phase per run: only its changes reset runNudgeCount.
+const explicitPhaseByRun = new Map<string, { phase: string; ts: string }>();
 // Hook-event bus state (lib/hookEventBus.ts). Permission events wait here until
 // the lifecycle check that consumes them; run activity is projected to
 // run-activity.json for other processes.
@@ -302,6 +312,11 @@ function observeRunActivity(events: OrcEvent[]): void {
     if (!existing || Date.parse(timestamp) > Date.parse(existing)) latestActivityByRun.set(runId, timestamp);
   }
   for (const event of events) {
+    const progressRunId = (event as { run_id?: string }).run_id;
+    if (progressRunId && isProgressLifecycleEvent(event)) noteRunProgress(progressRunId, event.ts);
+    // Replayed after a restart: the progress point an alert was already sent for.
+    const alertedFor = noProgressAlertProgressAt(event);
+    if (progressRunId && alertedFor) noProgressNotifiedForByRun.set(progressRunId, alertedFor);
     if (event.event === 'review_submitted' && event.run_id) {
       const first = reviewSubmittedAtByRun.get(event.run_id);
       if (!first || Date.parse(event.ts) < Date.parse(first)) reviewSubmittedAtByRun.set(event.run_id, event.ts);
@@ -313,12 +328,26 @@ function observeRunActivity(events: OrcEvent[]): void {
     if (event.event !== 'phase_started' || !event.run_id) continue;
     const phase = event.phase ?? (event.payload as { phase?: unknown } | undefined)?.phase;
     if (typeof phase !== 'string' || phase.length === 0) continue;
+    if (isExplicitPhaseEvent(event)) {
+      const explicit = explicitPhaseByRun.get(event.run_id);
+      if (!explicit || Date.parse(event.ts) > Date.parse(explicit.ts)) explicitPhaseByRun.set(event.run_id, { phase, ts: event.ts });
+    }
     const previous = latestPhaseAtByRun.get(event.run_id);
     if (!previous || Date.parse(event.ts) > Date.parse(previous)) {
+      if (latestPhaseByRun.get(event.run_id) !== phase) noteRunProgress(event.run_id, event.ts);
       latestPhaseAtByRun.set(event.run_id, event.ts);
       latestPhaseByRun.set(event.run_id, phase);
     }
   }
+}
+
+/** Record progress for a run at `ts` (clamped to now: worker timestamps are not trusted to be in the past). */
+function noteRunProgress(runId: string, ts: string): void {
+  const tsMs = Date.parse(ts);
+  if (!Number.isFinite(tsMs)) return;
+  const at = new Date(Math.min(tsMs, Date.now())).toISOString();
+  const previous = lastProgressAtByRun.get(runId);
+  if (!previous || Date.parse(at) > Date.parse(previous)) lastProgressAtByRun.set(runId, at);
 }
 
 function emit(event: Omit<OrcEventInput, 'ts'> | Record<string, unknown>) {
@@ -1089,6 +1118,9 @@ function inferRunPhases(claims: Claim[], toolEventsByRun: Map<string, ToolHookEv
       candidates.push({ phase: 'finalize', ts: workCompleteAt, evidence: 'event: work_complete' });
     }
     const tools = toolEventsByRun.get(claim.run_id) ?? [];
+    for (const tool of tools) {
+      if (isCommitToolEvent(tool)) noteRunProgress(claim.run_id, tool.ts);
+    }
     if (tools.length > 0) {
       const result = toolPhaseCandidates(tools, toolPhaseStateByRun.get(claim.run_id) ?? { review_read_at: null });
       toolPhaseStateByRun.set(claim.run_id, result.state);
@@ -1110,10 +1142,11 @@ function inferRunPhases(claims: Claim[], toolEventsByRun: Map<string, ToolHookEv
       });
       latestPhaseByRun.set(claim.run_id, transition.phase);
       latestPhaseAtByRun.set(claim.run_id, transition.ts);
+      noteRunProgress(claim.run_id, transition.ts);
       log(`inferred phase ${transition.phase} for run ${claim.run_id} (${transition.evidence})`);
     }
   }
-  for (const map of [reviewSubmittedAtByRun, workCompleteAtByRun, toolPhaseStateByRun]) {
+  for (const map of [reviewSubmittedAtByRun, workCompleteAtByRun, toolPhaseStateByRun, lastProgressAtByRun, noProgressNotifiedForByRun, explicitPhaseByRun]) {
     for (const runId of [...map.keys()]) {
       if (!activeRuns.has(runId)) map.delete(runId);
     }
@@ -1381,10 +1414,13 @@ async function enforceInProgressLifecycle(
     const agent = byAgent.get(claim.agent_id);
     const currentPhase = phaseByRun.get(claim.run_id) ?? null;
 
-    // Track phase changes across ticks
+    // Track worker-reported phase changes across ticks. Inferred transitions
+    // (inferRunPhases) count as progress but do not reset the nudge count: a
+    // worker cycling tool calls must not escape nudge-count remediation.
+    const explicitPhase = explicitPhaseByRun.get(claim.run_id)?.phase ?? null;
     const prevPhase = runLastPhase.get(claim.run_id);
-    const phaseChanged = currentPhase != null && prevPhase != null && currentPhase !== prevPhase;
-    if (currentPhase != null) runLastPhase.set(claim.run_id, currentPhase);
+    const phaseChanged = explicitPhase != null && prevPhase != null && explicitPhase !== prevPhase;
+    if (explicitPhase != null) runLastPhase.set(claim.run_id, explicitPhase);
     if (phaseChanged) runNudgeCount.set(claim.run_id, 0);
 
     // Remediation requires agent record for signal collection (heartbeat
@@ -1452,6 +1488,31 @@ async function enforceInProgressLifecycle(
       });
       setEscalationNotified(STATE_DIR, claim.run_id);
       log(`escalated stale worker ${claim.agent_id} for run ${claim.run_id}`);
+    }
+
+    // Alive but not progressing: hook activity keeps idleMs low while the run
+    // never changes phase, commits, or reports a lifecycle event.
+    const progressAt = newestTimestamp(lastProgressAtByRun.get(claim.run_id), claim.started_at);
+    const noProgressMs = noProgressEscalationMs({
+      progressAt,
+      idleMs,
+      staleSoftMs: thresholds.soft,
+      thresholdMs: RUN_NO_PROGRESS_ESCALATE_MS,
+      notifiedFor: noProgressNotifiedForByRun.get(claim.run_id) ?? null,
+      nowMs,
+    });
+    if (noProgressMs != null && progressAt) {
+      emit({
+        event: 'worker_needs_attention',
+        actor_type: 'coordinator',
+        actor_id: 'coordinator',
+        run_id: claim.run_id,
+        task_ref: claim.task_ref,
+        agent_id: claim.agent_id,
+        payload: { reason: 'no_progress', idle_ms: idleMs, no_progress_ms: noProgressMs, phase: currentPhase, progress_at: progressAt },
+      });
+      noProgressNotifiedForByRun.set(claim.run_id, progressAt);
+      log(`escalated run ${claim.run_id} (${claim.agent_id}): alive but no progress for ${Math.round(noProgressMs / 60000)}min`);
     }
 
     // Tier 2: Nudge at WORKER_STALE_NUDGE_MS (60min default; HOOK_IDLE_NUDGE_MS, 5min, with hooks)

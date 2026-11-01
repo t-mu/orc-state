@@ -280,4 +280,17 @@ describe('validateEventObject', () => {
     const unscoped = validateEventObject(base('stop_blocked', { actor_type: 'coordinator', actor_id: 'coordinator', payload: { phase: null, count: 1, stop_hook_active: false } }));
     expect(unscoped.length).toBeGreaterThan(0);
   });
+
+  it('accepts stale and no_progress worker_needs_attention events', () => {
+    const fields = { actor_type: 'coordinator', actor_id: 'coordinator', run_id: 'run-1', task_ref: 'docs/task-1', agent_id: 'worker-01' };
+    expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'stale', idle_ms: 1000 } }))).toEqual([]);
+    expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'no_progress', idle_ms: 1000, no_progress_ms: 1_800_000, phase: 'implement', progress_at: '2026-11-01T11:00:00.000Z' } }))).toEqual([]);
+
+    expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'no_progress', idle_ms: 1000 } })))
+      .toContain('payload.no_progress_ms must be a non-negative integer');
+    expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'no_progress', idle_ms: 1000, no_progress_ms: 1 } })))
+      .toContain('payload.progress_at must be an ISO timestamp');
+    expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'bored', idle_ms: 1000 } })))
+      .toContain('payload.reason must be "stale" or "no_progress"');
+  });
 });

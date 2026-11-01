@@ -499,6 +499,28 @@ The `review-read` marker lives in coordinator memory; after a coordinator
 restart, `complete` is inferred again only from a new `review-read`, and
 `run-work-complete` still moves the run to `finalize`.
 
+An inferred transition is progress (see below) but does not reset the run's
+nudge count: only a worker-reported `phase_started` does, so a worker cycling
+tool calls cannot escape the nudge-count remediation policies.
+
+#### Progress versus liveness
+
+Activity (lifecycle events, heartbeats, tool hook events) proves a run is
+alive. Progress is tracked separately: a phase change (reported or inferred), a
+`git commit` seen in a tool hook event, or a lifecycle event (`run_started`,
+`review_submitted`, `work_complete`, `finalize_rebase_started`,
+`ready_to_merge`, `input_requested`, `input_provided`, `input_response`). File
+edits and test runs are not progress. A run that is alive (not yet stale) but
+has made no progress for `run_no_progress_escalate_ms` (60 min, counted from
+its start when it has none) gets one `worker_needs_attention` with
+`payload.reason: "no_progress"`, `idle_ms`, `no_progress_ms`, `phase` and
+`progress_at` (the progress point it was measured from). New progress re-arms
+the alert; after a coordinator restart the replayed alerts' `progress_at` keeps
+it from repeating. Runs awaiting input or in finalization are not checked.
+Tool hook events carry no exit status, so a failed `git commit` also counts as
+progress. Commits seen before a coordinator restart are not replayed, so the
+progress timestamp falls back to the newest progress event.
+
 #### Agent events
 
 | Event | Emitted by | When |
@@ -529,7 +551,7 @@ restart, `complete` is inferred again only from a new `review-read`, and
 |-------|-----------|------|
 | `coordinator_started` | Coordinator | Coordinator process started |
 | `coordinator_stopped` | Coordinator | Coordinator process stopped |
-| `worker_needs_attention` | Coordinator | Escalation: worker stalled or errored |
+| `worker_needs_attention` | Coordinator | Escalation: `payload.reason` is `stale` (no activity for the soft threshold) or `no_progress` (alive, but no progress for `run_no_progress_escalate_ms`; see **Progress versus liveness**) |
 | `remediation_applied` | Coordinator | Automatic remediation action taken |
 | `activity_note` | Coordinator | A run's to-do or note label changed (`payload.label`, `payload.source`: `todo`/`note`); at most once per 30 s per run. Tool-call labels stay in `run-activity.json` and are not recorded as events (events recorded before this change may carry `source: tool`, which stays valid) |
 | `stop_blocked` | Coordinator | A Claude worker's `Stop` hook (`orc stop-check`) was refused because its run is unfinished (`payload.phase`, the run's current phase or null; `payload.count`, this block's number in the 10-minute window; `payload.stop_hook_active`, recorded for diagnosis only); at most 3 per run per 10 minutes and 9 per run in total |
