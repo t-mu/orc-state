@@ -82,6 +82,22 @@ describe('applyHookActivity', () => {
     expect(started.open_tools).toEqual({ a: at(0), b: at(1000) }); // pure
   });
 
+  it('a turn_end closes every call started at or before it, not a later one', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'refused', ts: at(0) },
+      { type: 'tool_start', tool: 'Read', ts: at(500) },
+      { type: 'turn_end', ts: at(1000) },
+      { type: 'tool_start', tool: 'Bash', id: 'next', ts: at(2000) },
+    ], T0 + 3000);
+    expect(snap.open_tools).toEqual({ next: at(2000) });
+    const ended = applyHookActivity(snap, 'run-1', 'w1', [{ type: 'turn_end', ts: at(4000) }], T0 + 5000);
+    expect(ended.open_tools).toBeUndefined();
+    expect(toolInFlight(ended, T0 + 5000)).toBe(false);
+    // The run was live until its turn ended, so a closed call's start is not lost as activity.
+    expect(ended.last_turn_end_ts).toBe(at(4000));
+    expect(latestHookActivityTs(ended)).toBe(at(4000));
+  });
+
   it('a failed call (PostToolUseFailure writes the same tool record) closes its start', () => {
     const snap = applyHookActivity(undefined, 'run-1', 'w1', [
       { type: 'tool_start', tool: 'Bash', id: 'a', ts: at(0) },

@@ -1,7 +1,9 @@
 import { join } from 'node:path';
 import { readEventsForRuns, withEventDb } from './eventLog.ts';
-import { claimedRunStartupAnchor, latestRunActivityDetailMap, newestTimestamp } from './runActivity.ts';
-import { latestHookActivityTs, readRunActivity, type RunActivityMap } from './runActivityStore.ts';
+import { claimedRunStartupAnchor, latestRunActivityDetailMap } from './runActivity.ts';
+import { readRunActivity, type RunActivityMap } from './runActivityStore.ts';
+import { isStalled, runIdleAnchor } from './runSignals.ts';
+import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 import { readClaims } from './stateReader.ts';
 import type { RunActivityDetail } from './runActivity.ts';
 import type { Claim } from '../types/claims.ts';
@@ -18,6 +20,8 @@ export interface ActiveRunRow {
   idle_seconds: number | null;
   last_activity_at: string | null;
   last_activity_source: string | null;
+  /** Idle for STALLED_RUN_IDLE_SECONDS with no input wait and no tool call running (lib/runSignals.ts isStalled). */
+  stalled: boolean;
   lease_expires_at: string | null;
   /** Project state directories only: the task's SQLite status and the revision this run is pinned to. */
   task_status?: string;
@@ -55,10 +59,8 @@ export function projectActiveRuns(
     const ageAnchor = c.state === 'claimed' ? startupAnchor : (c.started_at ?? c.task_envelope_sent_at ?? c.claimed_at ?? null);
     const activity = runActivity.get(c.run_id) ?? null;
     // Same liveness as the coordinator: durable activity events or hook activity, whichever is newer.
-    const idleAnchor = newestTimestamp(activity?.ts, latestHookActivityTs(hookActivity[c.run_id]))
-      ?? c.last_heartbeat_at
-      ?? c.started_at
-      ?? (c.state === 'claimed' ? startupAnchor : (c.task_envelope_sent_at ?? c.claimed_at ?? null));
+    const idleAnchor = runIdleAnchor(c, activity?.ts, hookActivity[c.run_id]);
+    const idleSeconds = elapsedSeconds(idleAnchor, now);
     return {
       run_id: c.run_id,
       task_ref: c.task_ref,
@@ -66,9 +68,10 @@ export function projectActiveRuns(
       state: c.state,
       awaiting_run_started: c.state === 'claimed',
       age_seconds: elapsedSeconds(ageAnchor, now),
-      idle_seconds: elapsedSeconds(idleAnchor, now),
+      idle_seconds: idleSeconds,
       last_activity_at: activity?.ts ?? null,
       last_activity_source: activity?.source ?? null,
+      stalled: isStalled(c, idleSeconds == null ? null : idleSeconds * 1000, hookActivity[c.run_id], STALLED_RUN_IDLE_SECONDS * 1000, now),
       lease_expires_at: c.lease_expires_at ?? null,
     };
   });

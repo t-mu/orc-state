@@ -22,7 +22,8 @@ export type RunActivitySource = 'todo' | 'note' | 'tool';
  * How long an unfinished tool call keeps a run out of the shortened hook idle
  * thresholds. A tool call that never reports back (it failed, or the session
  * was interrupted) stops counting after this, so the run falls back to the
- * thresholds of a run without hooks rather than staying live forever.
+ * thresholds of a run without hooks rather than staying live forever. The end
+ * of the worker's turn (a `turn_end` record) closes every open call sooner.
  */
 export const TOOL_IN_FLIGHT_MAX_MS = 60 * 60_000;
 /** Cap on remembered open tool calls per run. */
@@ -39,8 +40,10 @@ export interface RunActivitySnapshot {
   last_tool: string | null;
   last_tool_brief: string | null;
   last_tool_ts: string | null;
-  /** Tool calls started (PreToolUse) and not yet finished (PostToolUse): tool_use_id → start time. */
+  /** Tool calls started (PreToolUse) and not yet finished (PostToolUse, or the turn's end): tool_use_id → start time. */
   open_tools?: Record<string, string>;
+  /** When the worker's turn last ended (a `turn_end` record): the run was live until then. */
+  last_turn_end_ts?: string;
 }
 
 export type RunActivityMap = Record<string, RunActivitySnapshot>;
@@ -119,6 +122,12 @@ export function applyHookActivity(
       open[event.id ?? ANONYMOUS_TOOL] = ts;
       continue;
     }
+    if (event.type === 'turn_end') {
+      // The turn is over, so no call started before it is still running.
+      open = Object.fromEntries(Object.entries(open).filter(([, started]) => Date.parse(started) > Date.parse(ts)));
+      if (!next.last_turn_end_ts || isNewer(ts, next.last_turn_end_ts)) next.last_turn_end_ts = ts;
+      continue;
+    }
     if (event.type === 'tool') {
       // A finished call closes its start, even when an older record arrives late.
       const key = event.id ?? ANONYMOUS_TOOL;
@@ -161,10 +170,10 @@ export function toolInFlight(snapshot: RunActivitySnapshot | null | undefined, n
   return Object.values(snapshot?.open_tools ?? {}).some((ts) => nowMs - Date.parse(ts) < TOOL_IN_FLIGHT_MAX_MS);
 }
 
-/** Latest hook-observed activity time for a run (label or tool call), or null. */
+/** Latest hook-observed activity time for a run (label, tool call or the end of a turn), or null. */
 export function latestHookActivityTs(snapshot: RunActivitySnapshot | null | undefined): string | null {
   if (!snapshot) return null;
-  const candidates = [snapshot.label_ts, snapshot.last_tool_ts, ...Object.values(snapshot.open_tools ?? {})]
+  const candidates = [snapshot.label_ts, snapshot.last_tool_ts, snapshot.last_turn_end_ts, ...Object.values(snapshot.open_tools ?? {})]
     .filter((ts): ts is string => typeof ts === 'string');
   if (candidates.length === 0) return null;
   return candidates.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a));

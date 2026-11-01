@@ -358,8 +358,12 @@ lease is half used or the last heartbeat is half a lease old (so a busy run does
 not rewrite `claims.json`/`agents.json` every tick; idle detection reads hook
 activity from `run-activity.json` instead).
 Runs that deliver tool hook events use shorter idle thresholds (`hook_idle_nudge_ms`,
-`hook_idle_escalate_ms`, see `docs/configuration.md`), except while a tool call is
-still running. The coordinator also infers `phase_started {inferred: true}` from
+`hook_idle_escalate_ms`, see `docs/configuration.md`). A run with a tool call still
+running is not stalled: the coordinator does not alert or nudge it, and `orc status`,
+runs-active and MCP `list_stalled_runs` do not flag it (one `isStalled` in
+`lib/runSignals.ts`, which also owns the coordinator's per-run signal state). The end
+of a worker's turn (its `Stop` hook) closes any tool call that never reported back.
+The coordinator also infers `phase_started {inferred: true}` from
 gate commands and hook events, so a worker that forgets a phase signal still shows
 the right phase. Inferred transitions count as progress but, unlike a worker's own
 phase signal, do not reset the run's nudge count. Liveness is not progress: a run

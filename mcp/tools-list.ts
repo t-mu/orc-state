@@ -48,7 +48,7 @@ export const TOOLS = [
   },
   {
     name: 'list_stalled_runs',
-    description: 'List active claims with no recent heartbeat.',
+    description: 'List active claims with no recent heartbeat or hook activity, excluding runs awaiting input or with a tool call still running.',
     inputSchema: {
       type: 'object',
       properties: {

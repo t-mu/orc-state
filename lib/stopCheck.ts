@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { appendSequencedEvent, queryEvents } from './eventLog.ts';
 import { readClaims } from './stateReader.ts';
 import type { Claim } from '../types/claims.ts';
@@ -102,6 +104,24 @@ export function decideStopCheck(input: StopDecisionInput): StopDecision {
 }
 
 /**
+ * A Stop hook runs only once the turn is over, so no tool call is still
+ * running. Append a `turn_end` record to the agent's hook-events file (the
+ * file the session's own hooks append to and the coordinator tick drains), so
+ * it is folded in order with the run's tool records and closes any call that
+ * never reported back (lib/runActivityStore.ts). Best effort: a failed write
+ * only leaves such a call open until TOOL_IN_FLIGHT_MAX_MS.
+ */
+export function recordTurnEnd(stateDir: string, agentId: string, nowMs: number): void {
+  try {
+    const dir = join(stateDir, 'pty-hook-events');
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, `${agentId}.ndjson`), `${JSON.stringify({ type: 'turn_end', ts: new Date(nowMs).toISOString() })}\n`);
+  } catch {
+    // Best effort; see above.
+  }
+}
+
+/**
  * Decide for the calling worker session's run and record a block as a
  * durable `stop_blocked` event. Synchronous, so two concurrent checks in the
  * coordinator cannot both read the same block count.
@@ -111,6 +131,9 @@ export function applyStopCheck(
   { runId, agentId, stopHookActive, nowMs = Date.now() }: { runId: string; agentId: string; stopHookActive: boolean; nowMs?: number },
 ): StopCheckResult {
   const claim = readClaims(stateDir).claims.find((entry) => entry.run_id === runId) ?? null;
+  if (claim?.agent_id === agentId && (claim.state === 'claimed' || claim.state === 'in_progress')) {
+    recordTurnEnd(stateDir, agentId, nowMs);
+  }
   const recent = queryEvents(stateDir, { run_id: runId, limit: RUN_EVENT_LIMIT, order: 'desc' });
   // The lifetime cap counts every block of the run, even those older than the recent-event window.
   const seen = new Set(recent.map((event) => event.seq));

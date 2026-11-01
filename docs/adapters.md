@@ -107,9 +107,10 @@ always exits 0:
 | Hook | Kind | Record |
 |------|------|--------|
 | `Notification` | `permission` | `{type:'permission', message, ts}` for `permission_prompt` notifications |
-| `PreToolUse` (`*`) | `tool_start` | `{type:'tool_start', tool, id?, ts}`; `id` is the harness's `tool_use_id`. Until the matching `tool` record arrives (for up to an hour) the call is in flight, and the run keeps the longer idle thresholds. `PostToolUseFailure` also reports interrupts. A start without a `tool_use_id` is closed by the next `tool_start` once a later call has finished |
+| `PreToolUse` (`*`) | `tool_start` | `{type:'tool_start', tool, id?, ts}`; `id` is the harness's `tool_use_id`. Until the matching `tool` record or a `turn_end` arrives (for up to an hour) the call is in flight, and the run is not stalled. `PostToolUseFailure` also reports interrupts. A start without a `tool_use_id` is closed by the next `tool_start` once a later call has finished |
 | `PostToolUse` / `PostToolUseFailure` (`*`) | `tool` | `{type:'tool', tool, brief, id?, ts}`, for a finished or a failed call; `brief` is a short summary (≤ 80 chars), never the full input or output. `Agent`/`Task` records also carry `subagent_type` (used to infer the review phase) |
 | `PreToolUse` (`TodoWrite\|TaskCreate\|TaskUpdate`) | `todo` | `{type:'activity', label, source:'todo', ts}` with the in-progress item's label; an empty label clears it when that item finishes |
+| `Stop` (task workers) | — | Runs `orc stop-check`, not the hook script. The coordinator appends `{type:'turn_end', ts}` to the worker's events file for its active run: no tool call runs once the turn is over, so it closes every call started before it, including one refused at the permission step that never got a `PostToolUse`/`PostToolUseFailure` record. The run counts as live until that time |
 
 A read-only scout gets only the `Notification` hook: the coordinator drains
 hook files only for runs with an active claim, so tool and to-do records from
