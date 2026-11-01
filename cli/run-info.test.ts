@@ -48,6 +48,26 @@ describe('cli/run-info.ts', () => {
     expect(result.stderr).toContain('run not found');
   });
 
+  it('measures idle from hook activity in run-activity.json when it is newer than the heartbeat', () => {
+    const before = runCli(['run-1']);
+    const staleIdle = Number(/idle:\s+(\d+)s/.exec(before.stdout)?.[1]);
+    expect(staleIdle).toBeGreaterThan(3600);
+
+    const toolTs = new Date(Date.now() - 30_000).toISOString();
+    writeFileSync(join(dir, 'run-activity.json'), JSON.stringify({
+      version: 1,
+      runs: { 'run-1': {
+        run_id: 'run-1', agent_id: 'worker-1', label: 'Bash: npm test', source: 'tool', label_ts: toolTs,
+        last_tool: 'Bash', last_tool_brief: 'npm test', last_tool_ts: toolTs,
+      } },
+    }));
+    const result = runCli(['run-1']);
+    expect(result.status).toBe(0);
+    const idle = Number(/idle:\s+(\d+)s/.exec(result.stdout)?.[1]);
+    expect(idle).toBeGreaterThanOrEqual(30);
+    expect(idle).toBeLessThan(300);
+  });
+
   it('includes task title in json output when task exists in backlog', () => {
     const result = runCli(['run-1', '--json']);
     expect(result.status).toBe(0);

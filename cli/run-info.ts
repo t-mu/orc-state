@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims, readBacklog, findTask } from '../lib/stateReader.ts';
-import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
+import { claimedRunStartupAnchor, newestTimestamp } from '../lib/runActivity.ts';
+import { latestHookActivityTs, readRunActivity } from '../lib/runActivityStore.ts';
 import { boolFlag } from '../lib/args.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
@@ -49,9 +50,10 @@ if (existsSync(runWorktreesPath)) {
   }
 }
 
-// Compute idle
+// Compute idle. Hook activity renews last_heartbeat_at only every half lease,
+// so read it from run-activity.json as orc status and the coordinator do.
 const now = Date.now();
-const idleAnchor = claim.last_heartbeat_at
+const idleAnchor = newestTimestamp(latestHookActivityTs(readRunActivity(STATE_DIR)[claim.run_id]), claim.last_heartbeat_at)
   ?? claim.started_at
   ?? (claim.state === 'claimed' ? claimedRunStartupAnchor(claim) : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null));
 const idleSec = idleAnchor ? Math.round((now - new Date(idleAnchor).getTime()) / 1000) : null;
