@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
@@ -3791,6 +3791,57 @@ describe('global error handlers', () => {
     expect(removeDeadTmuxSocket).toHaveBeenCalledTimes(1);
     expect(removeDeadTmuxSocket).toHaveBeenCalledWith();
     vi.doUnmock('./adapters/tmux.ts');
+  });
+
+  // coordinator-pid-file-protection: on 2026-10-30 a test coordinator that had
+  // resolved the live state dir deleted the live coordinator.pid on doShutdown.
+  it('never deletes a coordinator.pid it did not acquire', async () => {
+    seedState(dir);
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const live = JSON.stringify({ pid: process.pid, started_at: 'live', process_start: null });
+    writeFileSync(join(dir, 'coordinator.pid'), live);
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.doShutdown();
+
+    expect(readFileSync(join(dir, 'coordinator.pid'), 'utf8')).toBe(live);
+  });
+
+  it('removes its own coordinator.pid on shutdown but keeps one another process wrote', async () => {
+    seedState(dir);
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const pidFile = join(dir, 'coordinator.pid');
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    expect(JSON.parse(readFileSync(pidFile, 'utf8')).pid).toBe(process.pid);
+    const foreign = JSON.stringify({ pid: process.pid + 100_000, started_at: 'other', process_start: null });
+    writeFileSync(pidFile, foreign);
+    await coordinator.doShutdown();
+    expect(readFileSync(pidFile, 'utf8')).toBe(foreign);
+
+    rmSync(pidFile);
+    vi.resetModules();
+    const second = await import('./coordinator.ts');
+    await second.main();
+    expect(existsSync(pidFile)).toBe(true);
+    await second.doShutdown();
+    expect(existsSync(pidFile)).toBe(false);
+  });
+
+  it('restores a deleted coordinator.pid within one tick', async () => {
+    seedState(dir);
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const pidFile = join(dir, 'coordinator.pid');
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    const original = readFileSync(pidFile, 'utf8');
+    rmSync(pidFile);
+    await coordinator.tick();
+    expect(readFileSync(pidFile, 'utf8')).toBe(original);
+    await coordinator.doShutdown();
+    expect(existsSync(pidFile)).toBe(false);
   });
 
   it('double doShutdown() is safe — shutdownStarted guard prevents re-entrance', async () => {
