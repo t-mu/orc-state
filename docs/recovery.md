@@ -310,6 +310,13 @@ Stop all agents and clear all session state:
 orc kill-all
 ```
 
+`kill-all` finds the coordinator through `coordinator.pid`, or through
+`control.json` when that file is missing or stale; it signals a PID only after
+checking it is alive, matches the recorded start time and runs a coordinator
+script. `orc doctor` reports a live coordinator whose `coordinator.pid` is
+missing or names another PID, and a second coordinator refuses to start
+while one is recorded in `control.json`.
+
 **Warning:** This stops all work in progress. Active runs will be interrupted. Unmerged
 worktrees remain on disk and must be cleaned up manually if needed (see
 [Stuck/Orphaned Worktrees](#stuckorphaned-worktrees) above).

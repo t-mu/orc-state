@@ -4,7 +4,8 @@ import { join, resolve } from 'node:path';
 import {
   bridgeProjectEnv, createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, seedState as seedProjectState,
 } from '../test-fixtures/stateHelpers.ts';
-import { spawnSync }     from 'node:child_process';
+import { spawn as spawnReal, spawnSync } from 'node:child_process';
+import { readProcessStart } from '../lib/processIdentity.ts';
 import { queryEvents } from '../lib/eventLog.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -165,6 +166,13 @@ function mockSpawn(spawnMock = makeSpawnMock(), spawnSyncMock: ReturnType<typeof
 // Writes a coordinator.pid whose stored PID is the current process — guaranteed alive.
 function seedCoordinatorRunning() {
   writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: '2026-01-01T00:00:00.000Z' }));
+}
+
+function writeEndpoint(pid: number, processStart: string | null) {
+  writeFileSync(join(dir, 'control.json'), JSON.stringify({
+    protocol_version: 1, transport: 'unix', path: join(dir, 'control.sock'),
+    pid, started_at: '2026-11-01T00:00:00.000Z', process_start: processStart,
+  }));
 }
 
 // ── spawnSync tests (no adapter needed) ────────────────────────────────────
@@ -493,6 +501,45 @@ describe('cli/start-session.ts', () => {
 
       // Coordinator path should not spawn when already running; master foreground spawn still happens.
       expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(false);
+    });
+
+    it('reports a live coordinator recorded only in control.json as running and does not spawn another', async () => {
+      seedState();
+      const script = join(dir, 'coordinator.js');
+      writeFileSync(script, 'setInterval(() => {}, 1000);\n');
+      const coordinator = spawnReal(process.execPath, [script], { stdio: 'ignore' });
+      try {
+        await new Promise<void>((resolve, reject) => { coordinator.once('spawn', resolve); coordinator.once('error', reject); });
+        writeEndpoint(coordinator.pid!, readProcessStart(coordinator.pid!));
+        const spawnMock = makeSpawnMock();
+        mockSpawn(spawnMock);
+        mockBinaryCheck(true);
+        const logSpy = vi.spyOn(console, 'log');
+
+        setEnv(dir);
+        process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+        await import('./start-session.ts');
+
+        expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(false);
+        expect(logSpy.mock.calls.some(([line]) => String(line).includes(`Coordinator already running  (PID ${coordinator.pid})`))).toBe(true);
+      } finally {
+        coordinator.kill('SIGKILL');
+      }
+    });
+
+    it('spawns a coordinator when control.json names a PID reused by a non-coordinator', async () => {
+      seedState();
+      // This test's own (live) process is not a coordinator.
+      writeEndpoint(process.pid, readProcessStart(process.pid));
+      const spawnMock = makeSpawnMock({ writeCoordinatorPid: true });
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+
+      setEnv(dir);
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(true);
     });
 
     it('treats invalid pid-file pid as not running and spawns coordinator', async () => {

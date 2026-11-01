@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { appendSequencedEvent, initEventsDb, queryEvents } from './lib/eventLog.ts';
 import { initializeEventOffset, readEventOffset, resetEventOffset } from './lib/eventOffsets.ts';
 import { DEFAULT_LEASE_MS } from './lib/constants.ts';
+import { readProcessStart } from './lib/processIdentity.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { initMemoryDb, listDrawers, closeMemoryDb } from './lib/memoryStore.ts';
 import {
@@ -4019,6 +4020,31 @@ describe('main startup validation', () => {
     expect(result.stderr).toContain('No registered project here');
 
     cleanupTempStateDir(stateDir);
+  });
+
+  it('refuses to start while a live coordinator is recorded only in control.json', async () => {
+    seedState(dir);
+    // A live process running a script named coordinator.js stands in for the other coordinator.
+    const script = join(dir, 'coordinator.js');
+    writeFileSync(script, 'setInterval(() => {}, 1000);\n');
+    const other = spawn(process.execPath, [script], { stdio: 'ignore' });
+    try {
+      await new Promise<void>((resolve, reject) => { other.once('spawn', resolve); other.once('error', reject); });
+      writeFileSync(join(dir, 'control.json'), JSON.stringify({
+        protocol_version: 1, transport: 'unix', path: join(dir, 'control.sock'),
+        pid: other.pid, started_at: new Date().toISOString(), process_start: readProcessStart(other.pid!),
+      }));
+      vi.spyOn(process, 'exit').mockImplementation((code) => { throw new Error(`exit:${String(code)}`); });
+      const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const coordinator = await import('./coordinator.ts');
+      await expect(coordinator.main()).rejects.toThrow('exit:1');
+
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining(`another coordinator is already running (PID ${String(other.pid)}, recorded in control.json`));
+      expect(existsSync(join(dir, 'coordinator.pid'))).toBe(false);
+    } finally {
+      other.kill('SIGKILL');
+    }
   });
 });
 

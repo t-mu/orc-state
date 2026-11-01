@@ -3,7 +3,8 @@ import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { bridgeProjectEnv, createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import { projectCliEnv } from '../test-fixtures/projectCli.ts';
-import { spawnSync }     from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { readProcessStart } from '../lib/processIdentity.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 
@@ -57,6 +58,24 @@ function spawnKillAll(stateDir: string, extraArgs: string[] = []) {
     env:      projectCliEnv(stateDir),
     encoding: 'utf8',
   });
+}
+
+/** spawnSync would block this process, so a child it spawned could not report its exit. */
+function spawnKillAllAsync(stateDir: string): Promise<{ status: number | null; stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('node', ['cli/kill-all.ts'], { cwd: repoRoot, env: projectCliEnv(stateDir) });
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.once('error', reject);
+    child.once('close', (status) => resolve({ status, stdout }));
+  });
+}
+
+function writeEndpoint(pid: number, processStart: string | null) {
+  writeFileSync(join(dir, 'control.json'), JSON.stringify({
+    protocol_version: 1, transport: 'unix', path: join(dir, 'control.sock'),
+    pid, started_at: '2026-11-01T00:00:00.000Z', process_start: processStart,
+  }));
 }
 
 // ── spawnSync tests (no adapter needed) ────────────────────────────────────
@@ -116,6 +135,35 @@ describe('cli/kill-all.ts', () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('already stopped');
       expect(existsSync(pidFile)).toBe(false);
+    });
+
+    it('stops a live coordinator recorded only in control.json', async () => {
+      seedState();
+      const script = join(dir, 'coordinator.js');
+      writeFileSync(script, 'setInterval(() => {}, 1000);\n');
+      const coordinator = spawn(process.execPath, [script], { stdio: 'ignore' });
+      try {
+        await new Promise<void>((resolve, reject) => { coordinator.once('spawn', resolve); coordinator.once('error', reject); });
+        const exited = new Promise<NodeJS.Signals | null>((resolve) => coordinator.once('exit', (_code, signal) => resolve(signal)));
+        writeEndpoint(coordinator.pid!, readProcessStart(coordinator.pid!));
+
+        const result = await spawnKillAllAsync(dir);
+
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain(`Coordinator stopped  (PID ${coordinator.pid}, found via control.json`);
+        expect(await exited).toBe('SIGTERM');
+      } finally {
+        coordinator.kill('SIGKILL');
+      }
+    });
+
+    it('never signals a control.json PID that is dead or reused by a non-coordinator', () => {
+      seedState();
+      // This test's own (live) process is not a coordinator.
+      writeEndpoint(process.pid, readProcessStart(process.pid));
+      expect(spawnKillAll(dir).stdout).toContain('Coordinator not running');
+      writeEndpoint(999999999, 'proc:1');
+      expect(spawnKillAll(dir).stdout).toContain('Coordinator not running');
     });
 
     it('prints "not running" when pid file exists but contains no pid', () => {

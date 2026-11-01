@@ -48,7 +48,7 @@ import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
-import { isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
+import { controlEndpointCoordinatorPid, isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
 import {
   appendSessionStartedEvent,
   prepareSessionReuse,
@@ -123,15 +123,22 @@ function isCoordinatorCommandPid(pid: number) {
 
 function coordinatorStatus() {
   const pid = readCoordinatorPidFromFile();
-  if (!pid) return { running: false, pid: null };
+  if (pid && pidFileCoordinatorRunning(pid)) return { running: true, pid };
+  // A coordinator whose pid lock went missing is still recorded in control.json.
+  const endpointPid = controlEndpointCoordinatorPid(STATE_DIR);
+  if (endpointPid !== null) return { running: true, pid: endpointPid };
+  return { running: false, pid };
+}
+
+function pidFileCoordinatorRunning(pid: number) {
   // A lock whose recorded process start no longer matches names a reused PID, not the coordinator.
-  if (!isCoordinatorLockHeld(readCoordinatorLock())) return { running: false, pid };
+  if (!isCoordinatorLockHeld(readCoordinatorLock())) return false;
   try {
     process.kill(pid, 0);           // no-op signal: throws if process is dead
-    return { running: isCoordinatorCommandPid(pid), pid };
+    return isCoordinatorCommandPid(pid);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return { running: false, pid };
-    return { running: isCoordinatorCommandPid(pid), pid };
+    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    return isCoordinatorCommandPid(pid);
   }
 }
 
@@ -155,8 +162,9 @@ async function spawnCoordinator() {
 async function stopCoordinator(pid: number) {
   if (!isValidPid(pid)) return false;
   const record = readCoordinatorPidRecord();
-  if (!record || record.pid !== pid || !record.started_at) return false;
-  if (!isCoordinatorCommandPid(pid)) return false;
+  const inPidFile = record?.pid === pid && Boolean(record.started_at) && isCoordinatorCommandPid(pid);
+  // control.json is only trusted once its process is verified as a live coordinator.
+  if (!inPidFile && controlEndpointCoordinatorPid(STATE_DIR) !== pid) return false;
 
   try {
     process.kill(pid, 0);

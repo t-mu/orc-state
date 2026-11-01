@@ -11,6 +11,7 @@ import {
   type AckState, type ControlEndpoint, type StreamFrame, type SubmitCommandRequest,
 } from './controlProtocol.ts';
 import { readEventBatch } from './eventLog.ts';
+import { readProcessStart } from './processIdentity.ts';
 import { readControlSnapshot } from './statusProjection.ts';
 import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
@@ -450,7 +451,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
   chmodSync(operatorTokenPath, 0o600);
   const endpoint: ControlEndpoint = {
     protocol_version: CONTROL_PROTOCOL_VERSION, transport: 'unix', path: socketPath,
-    pid: process.pid, started_at: new Date().toISOString(),
+    pid: process.pid, started_at: new Date().toISOString(), process_start: readProcessStart(process.pid),
   };
   const endpointPath = join(stateDir, CONTROL_ENDPOINT_FILE);
   atomicWriteJson(endpointPath, endpoint);

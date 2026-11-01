@@ -26,7 +26,7 @@ import { closeProviderSessionsForAgent, commitClaims } from '../lib/runStore.ts'
 import { boolFlag }                 from '../lib/args.ts';
 import { cliError, formatErrorMessage } from './shared.ts';
 import { commitBacklog } from '../lib/projectTasks.ts';
-import { isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
+import { findLiveCoordinator, isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
 
 const keepSessions = boolFlag('keep-sessions');
 
@@ -39,36 +39,41 @@ try {
 // ── Step 1: Kill coordinator ────────────────────────────────────────────────
 
 const pidFile = join(STATE_DIR, 'coordinator.pid');
+let lock: CoordinatorLock | null = null;
 if (existsSync(pidFile)) {
-  let lock: CoordinatorLock | null = null;
   try {
     lock = JSON.parse(readFileSync(pidFile, 'utf8')) as CoordinatorLock | null;
   } catch { /* stale */ }
-  const pid = typeof lock?.pid === 'number' ? lock.pid : undefined;
-  if (pid && !isCoordinatorLockHeld(lock)) {
-    // The PID is dead, or now belongs to another process: never signal it.
-    try { unlinkSync(pidFile); } catch { /* already gone */ }
-    console.log('  Coordinator already stopped');
-  } else if (pid) {
-    try {
-      process.kill(pid, 'SIGTERM');
-      // Poll up to 2 s (10 × 200 ms) for the process to exit
-      for (let i = 0; i < 10; i++) {
-        await new Promise((r) => setTimeout(r, 200));
-        try { process.kill(pid, 0); } catch { break; } // ESRCH = dead, stop polling
-      }
-      console.log(`✓ Coordinator stopped  (PID ${pid})`);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ESRCH') {
-        try { unlinkSync(pidFile); } catch { /* already gone */ }
-        console.log('  Coordinator already stopped');
-      } else {
-        console.error(`  Warning: could not signal coordinator: ${formatErrorMessage(e)}`);
-      }
+}
+const lockPid = typeof lock?.pid === 'number' ? lock.pid : undefined;
+const staleLock = Boolean(lockPid) && !isCoordinatorLockHeld(lock);
+if (staleLock) {
+  // The PID is dead, or now belongs to another process: never signal it.
+  try { unlinkSync(pidFile); } catch { /* already gone */ }
+}
+// A coordinator whose pid lock went missing is still found through control.json.
+const coordinator = findLiveCoordinator(STATE_DIR);
+if (coordinator) {
+  const { pid, source } = coordinator;
+  const via = source === 'control_json' ? ', found via control.json; coordinator.pid was missing or stale' : '';
+  try {
+    process.kill(pid, 'SIGTERM');
+    // Poll up to 2 s (10 × 200 ms) for the process to exit
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      try { process.kill(pid, 0); } catch { break; } // ESRCH = dead, stop polling
     }
-  } else {
-    console.log('  Coordinator not running');
+    console.log(`✓ Coordinator stopped  (PID ${pid}${via})`);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ESRCH') {
+      if (source === 'pid_file') { try { unlinkSync(pidFile); } catch { /* already gone */ } }
+      console.log('  Coordinator already stopped');
+    } else {
+      console.error(`  Warning: could not signal coordinator: ${formatErrorMessage(e)}`);
+    }
   }
+} else if (staleLock) {
+  console.log('  Coordinator already stopped');
 } else {
   console.log('  Coordinator not running');
 }

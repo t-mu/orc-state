@@ -28,6 +28,8 @@ export interface ControlEndpoint {
   path: string;
   pid: number;
   started_at: string;
+  /** The coordinator's start fingerprint (`lib/processIdentity.ts`), so a reused PID is not mistaken for it. */
+  process_start?: string | null;
 }
 
 export type ControlErrorCode =

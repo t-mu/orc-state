@@ -15,6 +15,7 @@ import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
 import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
+import { coordinatorPidFileProblem } from '../lib/coordinatorLiveness.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -35,6 +36,7 @@ const sandboxDeps = checkSandboxDependencies();
 const sandboxControlSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE_PROJECT) });
 const memoryHealth = validateMemoryDb(STATE_DIR);
 const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
+const coordinatorLock = { problem: coordinatorPidFileProblem(STATE_DIR) };
 // Only a registered project runs.
 const projectSelection = ACTIVE_PROJECT ? null : { ok: false, message: NO_PROJECT_MESSAGE };
 
@@ -52,6 +54,7 @@ const checks: Record<string, unknown> = {
   sandboxControlSocket,
   memoryHealth,
   runtimeSchema,
+  coordinatorLock,
 };
 
 for (const provider of providers) {
@@ -114,6 +117,7 @@ const summary = {
     sandboxDeps.ok &&
     memoryHealth.ok &&
     runtimeSchema.ok &&
+    coordinatorLock.problem === null &&
     projectSelection === null &&
     (projectHealth?.ok ?? true),
   registered_workers: agents.length,
@@ -207,6 +211,10 @@ for (const msg of mh.messages) {
 console.log('');
 console.log(`runtime schema: ok=${String(runtimeSchema.ok)} version=${String(runtimeSchema.version)}`);
 for (const message of runtimeSchema.messages) console.log(`  ${message}`);
+
+console.log('');
+console.log(`coordinator lock: ok=${String(coordinatorLock.problem === null)}`);
+if (coordinatorLock.problem) console.log(`  ${coordinatorLock.problem}`);
 
 if (projectSelection) {
   console.log('');
