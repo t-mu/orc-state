@@ -33,11 +33,11 @@ import { removeDeadTmuxSocket } from './adapters/tmux.ts';
 import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
 import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
-import { latestRunActivityMap, runIdleMs } from './lib/runActivity.ts';
+import { latestRunActivityMap, newestTimestamp, runIdleMs } from './lib/runActivity.ts';
 import { drainHookEvents, type PermissionHookEvent, type ToolHookEvent } from './lib/hookEventBus.ts';
 import { inferPhaseTransitions, toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './lib/phaseInference.ts';
 import {
-  applyHookActivity, latestHookActivityTs, readRunActivity, shouldEmitActivityNote, writeRunActivity,
+  applyHookActivity, latestHookActivityTs, readRunActivity, shouldEmitActivityNote, toolInFlight, writeRunActivity,
   type ActivityNoteState, type RunActivityMap,
 } from './lib/runActivityStore.ts';
 import { renderTemplate } from './lib/templateRender.ts';
@@ -974,12 +974,6 @@ function takePendingPermission(runId: string): PermissionHookEvent[] {
   return events;
 }
 
-function latestTimestamp(a: string | null | undefined, b: string | null | undefined): string | null {
-  if (!a) return b ?? null;
-  if (!b) return a;
-  return Date.parse(b) > Date.parse(a) ? b : a;
-}
-
 function hookActivityTs(runId: string): string | null {
   return latestHookActivityTs(runActivity?.[runId]);
 }
@@ -1121,9 +1115,14 @@ function inferRunPhases(claims: Claim[], toolEventsByRun: Map<string, ToolHookEv
   }
 }
 
-/** Idle thresholds for a run: shorter once its harness has delivered tool hook events. */
-function staleThresholds(runId: string): { soft: number; nudge: number; finalizeRetry: number } {
-  if (runActivity?.[runId]?.last_tool_ts) {
+/**
+ * Idle thresholds for a run: shorter once its harness has delivered tool hook
+ * events, except while a tool call is still running (PreToolUse without its
+ * PostToolUse yet): a long `npm test` or sub-agent review is not idleness.
+ */
+function staleThresholds(runId: string, nowMs: number = Date.now()): { soft: number; nudge: number; finalizeRetry: number } {
+  const snapshot = runActivity?.[runId];
+  if (snapshot?.last_tool_ts && !toolInFlight(snapshot, nowMs)) {
     // Hooks only ever shorten a threshold: an operator's lower setting still applies.
     return {
       soft: Math.min(HOOK_IDLE_ESCALATE_MS, WORKER_STALE_SOFT_MS),
@@ -1136,7 +1135,8 @@ function staleThresholds(runId: string): { soft: number; nudge: number; finalize
 
 function maybeEmitActivityNote(claim: Claim, nowMs: number): void {
   const snapshot = runActivity?.[claim.run_id];
-  if (!snapshot?.label || !snapshot.source) return;
+  // Tool labels change on nearly every call; they stay in run-activity.json, out of events.db.
+  if (!snapshot?.label || !snapshot.source || snapshot.source === 'tool') return;
   if (!shouldEmitActivityNote(activityNoteByRun.get(claim.run_id), snapshot.label, nowMs)) return;
   emit({
     event: 'activity_note',
@@ -1292,7 +1292,7 @@ async function handleFinalizationRetry(
   byAgent: Map<string, Agent>,
   workerPoolConfig: WorkerPoolConfig,
 ): Promise<void> {
-  if (idleMs < staleThresholds(claim.run_id).finalizeRetry) return;
+  if (idleMs < staleThresholds(claim.run_id, nowMs).finalizeRetry) return;
   const lastNudgeAt = runInactiveNudgeAtMs.get(claim.run_id) ?? 0;
   if (nowMs - lastNudgeAt < RUN_INACTIVE_NUDGE_INTERVAL_MS) return;
 
@@ -1341,7 +1341,7 @@ async function enforceInProgressLifecycle(
     const hookEvents = takePendingPermission(claim.run_id);
 
     // Liveness: the newest of durable activity events and hook-observed activity.
-    const idleMs = runIdleMs(claim, latestTimestamp(activityByRun.get(claim.run_id), hookActivityTs(claim.run_id)), nowMs);
+    const idleMs = runIdleMs(claim, newestTimestamp(activityByRun.get(claim.run_id), hookActivityTs(claim.run_id)), nowMs);
     if (idleMs == null) continue;
     if (claimAwaitingInput(claim)) {
       runInactiveNudgeAtMs.delete(claim.run_id);
@@ -1434,7 +1434,7 @@ async function enforceInProgressLifecycle(
     }
 
     // Tier 1: Soft alert at WORKER_STALE_SOFT_MS (30min default; HOOK_IDLE_ESCALATE_MS, 10min, with hooks)
-    const thresholds = staleThresholds(claim.run_id);
+    const thresholds = staleThresholds(claim.run_id, nowMs);
     if (!claim.escalation_notified_at && idleMs >= thresholds.soft) {
       emit({
         event: 'worker_needs_attention',

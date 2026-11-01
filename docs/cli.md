@@ -416,7 +416,7 @@ scouts or the master). Not for human use.
 
 | Command | Description |
 |---------|-------------|
-| `stop-check` | Reads Claude's Stop hook input on stdin and asks the coordinator (`POST /v1/stop-check`) whether this session's run lets it end its turn. While the run is unfinished (no `run-work-complete`, no pending input request, not finalizing) it prints `{"decision":"block","reason":...}` and Claude continues; at most 3 blocks per run in 10 minutes, each recorded as `stop_blocked`. Always exits 0 and fails open: no session secret, unreadable input or an unreachable coordinator allows the stop. |
+| `stop-check` | Reads Claude's Stop hook input on stdin and asks the coordinator (`POST /v1/stop-check`) whether this session's run lets it end its turn. While the run is unfinished (no `run-work-complete`, no pending input request, not finalizing) it prints `{"decision":"block","reason":...}` and Claude continues; at most 3 blocks per run in 10 minutes and 9 over the whole run, each recorded as `stop_blocked`; after that the stop is allowed and the normal nudge/escalation applies. Always exits 0 and fails open: no session secret, unreadable input or an unreachable coordinator allows the stop. |
 
 ---
 

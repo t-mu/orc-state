@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { listCoordinatorAgents } from './agentRegistry.ts';
 import { readEvents, readRecentEvents } from './eventLog.ts';
-import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap, runPhaseHistory } from './runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap, newestTimestamp, runPhaseHistory } from './runActivity.ts';
 import type { RunPhaseEntry } from './runActivity.ts';
 import { loadWorkerPoolConfig, type OrcSettings } from './providers.ts';
 import { readJson } from './stateReader.ts';
@@ -12,7 +12,7 @@ import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 import { computeWorkerCapacity } from './workerCapacity.ts';
 import { readProjectDescriptor } from './projectContext.ts';
 import { formatProjectIdentity } from './projectHealth.ts';
-import { readRunActivity } from './runActivityStore.ts';
+import { latestHookActivityTs, readRunActivity, toolInFlight, type RunActivityMap } from './runActivityStore.ts';
 import { formatActivityLine, selectCurrentActivity, type CurrentActivity } from './currentActivity.ts';
 const STARTUP_FAILURE_LIMIT = 5;
 const LIFECYCLE_FAILURE_LIMIT = 5;
@@ -161,6 +161,7 @@ export function buildActiveClaimMetrics(
   nowMs: number,
   nonHeartbeatRunActivity?: ReturnType<typeof latestRunActivityDetailMap>,
   phaseHistory?: Map<string, RunPhaseEntry[]>,
+  hookActivity: RunActivityMap = {},
 ) {
   return activeClaims.map((claim) => {
     const startupAnchor = claimedRunStartupAnchor(claim);
@@ -169,7 +170,9 @@ export function buildActiveClaimMetrics(
       : (claim.started_at ?? claim.task_envelope_sent_at ?? claim.claimed_at ?? null);
     const ageMs = ageAnchor ? new Date(ageAnchor).getTime() : NaN;
     const activity = runActivity.get(claim.run_id) ?? null;
-    const idleAnchor = activity?.ts
+    // Same liveness as the coordinator: durable activity events or hook activity, whichever is newer.
+    const hookSnapshot = hookActivity[claim.run_id];
+    const idleAnchor = newestTimestamp(activity?.ts, latestHookActivityTs(hookSnapshot))
       ?? claim.last_heartbeat_at
       ?? claim.started_at
       ?? (claim.state === 'claimed' ? startupAnchor : (claim.task_envelope_sent_at ?? claim.claimed_at ?? null))
@@ -193,6 +196,7 @@ export function buildActiveClaimMetrics(
       last_activity_event: activity?.event ?? null,
       last_activity_source: activity?.source ?? null,
       stalled: claim.input_state !== 'awaiting_input'
+        && !toolInFlight(hookSnapshot, nowMs)
         && !Number.isNaN(idleMs)
         && idleMs >= (STALLED_RUN_IDLE_SECONDS * 1000),
       current_phase: runPhase.get(claim.run_id) ?? null,
@@ -288,7 +292,7 @@ export function buildStatus(stateDir: string, { settings }: { settings?: OrcSett
 
   const activitySnapshots = readRunActivity(stateDir);
   const activeClaimsWithMetrics = buildActiveClaimMetrics(
-    activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs, nonHeartbeatRunActivity, runPhaseHistoryMap,
+    activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs, nonHeartbeatRunActivity, runPhaseHistoryMap, activitySnapshots,
   ).map((claim) => ({
     ...claim,
     current_activity: selectCurrentActivity(activitySnapshots[claim.run_id], nowMs),

@@ -261,7 +261,7 @@ orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] \
 # Lifecycle event: phase signals are part of the phased workflow (phase_started per phase)
 orc progress --event=<type> --run-id=<id> --agent-id=<id> \
   [--phase=<name>] [--reason=<text>] [--note=<text>] \
-  [--policy=<requeue|block>]                                        # --reason: failure/block reason; --note: short "what I'm doing now" shown by orc watch
+  [--policy=<requeue|block>]                                        # --reason: failure/block reason; --note: short "what I'm doing now" shown by orc watch (send it on --event=heartbeat)
 
 # Workers also keep a to-do list for the run (TaskCreate/TaskUpdate or TodoWrite): one item per
 # meaningful step, a present-tense `activeForm`, exactly one item `in_progress`; `orc watch` shows it.
@@ -353,7 +353,14 @@ Liveness is determined by the coordinator probing the worker's session: for
 reused PID is not mistaken for the worker). If the process is dead, the
 coordinator clears the agent session, expires the claim, and requeues the task.
 Lease renewal is automatic — the coordinator extends the lease whenever phase
-events are processed. A coordinator restart does not kill workers: tmux
+events are processed, and for Claude workers whenever tool hook events arrive.
+Runs that deliver tool hook events use shorter idle thresholds (`hook_idle_nudge_ms`,
+`hook_idle_escalate_ms`, see `docs/configuration.md`), except while a tool call is
+still running. The coordinator also infers `phase_started {inferred: true}` from
+gate commands and hook events, so a worker that forgets a phase signal still shows
+the right phase. A Claude worker's `Stop` hook blocks it from ending its turn while
+its run is unfinished (`stop_blocked` events; capped per window and per run).
+A coordinator restart does not kill workers: tmux
 sessions are adopted, and sessions it cannot write to are marked
 `recoverable` (see `orc sessions` and `docs/recovery.md`). Structured-runtime
 (`app:`) sessions are the exception: their stdio belongs to the coordinator

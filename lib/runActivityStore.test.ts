@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
 import {
-  ACTIVITY_NOTE_THROTTLE_MS, RUN_ACTIVITY_FILE, applyHookActivity, latestHookActivityTs,
-  readRunActivity, shouldEmitActivityNote, writeRunActivity,
+  ACTIVITY_NOTE_THROTTLE_MS, RUN_ACTIVITY_FILE, TOOL_IN_FLIGHT_MAX_MS, applyHookActivity, latestHookActivityTs,
+  readRunActivity, shouldEmitActivityNote, toolInFlight, writeRunActivity,
 } from './runActivityStore.ts';
 
 const T0 = Date.parse('2026-10-31T12:00:00.000Z');
@@ -61,6 +61,41 @@ describe('applyHookActivity', () => {
     expect(second.label).toBe('Newer');
     expect(second.last_tool_ts).toBe(at(5000));
     expect(first.label).toBe('Newer'); // pure: previous snapshot untouched
+  });
+
+  it('tracks a started tool call as in flight until its tool record closes it by id', () => {
+    const started = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'a', ts: at(0) },
+      { type: 'tool_start', tool: 'Agent', id: 'b', ts: at(1000) },
+    ], T0 + 2000);
+    expect(started.open_tools).toEqual({ a: at(0), b: at(1000) });
+    expect(toolInFlight(started, T0 + 2000)).toBe(true);
+    expect(latestHookActivityTs(started)).toBe(at(1000));
+
+    const oneDone = applyHookActivity(started, 'run-1', 'w1', [{ type: 'tool', tool: 'Agent', brief: '', id: 'b', ts: at(3000) }], T0 + 4000);
+    expect(oneDone.open_tools).toEqual({ a: at(0) });
+    expect(toolInFlight(oneDone, T0 + 4000)).toBe(true);
+
+    const allDone = applyHookActivity(oneDone, 'run-1', 'w1', [{ type: 'tool', tool: 'Bash', brief: 'npm test', id: 'a', ts: at(5000) }], T0 + 6000);
+    expect(allDone.open_tools).toBeUndefined();
+    expect(toolInFlight(allDone, T0 + 6000)).toBe(false);
+    expect(started.open_tools).toEqual({ a: at(0), b: at(1000) }); // pure
+  });
+
+  it('pairs tool calls without a tool_use_id one at a time', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', ts: at(0) },
+      { type: 'tool', tool: 'Bash', brief: '', ts: at(1000) },
+    ], T0 + 2000);
+    expect(toolInFlight(snap, T0 + 2000)).toBe(false);
+  });
+
+  it('stops counting a tool call that never finished after TOOL_IN_FLIGHT_MAX_MS and prunes it', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [{ type: 'tool_start', tool: 'Bash', id: 'a', ts: at(0) }], T0 + 1000);
+    expect(toolInFlight(snap, T0 + TOOL_IN_FLIGHT_MAX_MS - 1)).toBe(true);
+    expect(toolInFlight(snap, T0 + TOOL_IN_FLIGHT_MAX_MS)).toBe(false);
+    const later = applyHookActivity(snap, 'run-1', 'w1', [], T0 + TOOL_IN_FLIGHT_MAX_MS);
+    expect(later.open_tools).toBeUndefined();
   });
 
   it('latestHookActivityTs is null without a snapshot or timestamps', () => {

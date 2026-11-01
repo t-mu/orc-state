@@ -15,6 +15,17 @@ export interface ToolHookEvent {
   brief: string;
   /** The sub-agent type of an `Agent`/`Task` call, when the harness reported one. */
   subagent_type?: string;
+  /** The harness's tool_use_id, when reported: closes the matching `tool_start`. */
+  id?: string;
+  ts: string;
+}
+
+/** A tool call the harness is about to run (Claude `PreToolUse *`); its `tool` record closes it. */
+export interface ToolStartHookEvent {
+  type: 'tool_start';
+  tool: string;
+  /** The harness's tool_use_id, when reported. */
+  id?: string;
   ts: string;
 }
 
@@ -26,7 +37,7 @@ export interface ActivityHookEvent {
   ts: string;
 }
 
-export type RunActivityHookEvent = ToolHookEvent | ActivityHookEvent;
+export type RunActivityHookEvent = ToolHookEvent | ToolStartHookEvent | ActivityHookEvent;
 
 export interface DispatchedHookEvents {
   /** Drives input-block detection, exactly as the Notification hook always has. */
@@ -67,6 +78,19 @@ export function dispatchHookEvents(records: Array<Record<string, unknown>>, agen
           brief: typeof record.brief === 'string' ? record.brief : '',
           ...(typeof record.subagent_type === 'string' && record.subagent_type.length > 0
             ? { subagent_type: record.subagent_type } : {}),
+          ...(typeof record.id === 'string' && record.id.length > 0 ? { id: record.id } : {}),
+          ts: record.ts,
+        });
+        break;
+      case 'tool_start':
+        if (typeof record.tool !== 'string' || record.tool.length === 0 || !validTs(record.ts)) {
+          logger.debug(`[hook-events] skipping malformed tool_start event for ${agentId}: ${JSON.stringify(record).slice(0, 200)}`);
+          break;
+        }
+        out.activity.push({
+          type: 'tool_start',
+          tool: record.tool,
+          ...(typeof record.id === 'string' && record.id.length > 0 ? { id: record.id } : {}),
           ts: record.ts,
         });
         break;

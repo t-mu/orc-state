@@ -14,12 +14,16 @@ export function requeueBackoffMs(attemptCount: number): number {
   return Math.min(BACKOFF_BASE_MS * Math.pow(2, attemptCount - 1), BACKOFF_MAX_MS);
 }
 
+/** Fields that only mean something while a run is active; a failed claim drops them. */
 function resetClaimVolatileFields(claim: Claim): void {
   claim.input_state = null;
   claim.input_requested_at = null;
   claim.session_start_retry_count = 0;
   claim.session_start_retry_next_at = null;
   claim.session_start_last_error = null;
+  claim.finalization_state = null;
+  claim.finalization_retry_count = 0;
+  claim.finalization_blocked_reason = null;
 }
 
 function _expireLeasesCore(

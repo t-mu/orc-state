@@ -107,7 +107,8 @@ always exits 0:
 | Hook | Kind | Record |
 |------|------|--------|
 | `Notification` | `permission` | `{type:'permission', message, ts}` for `permission_prompt` notifications |
-| `PostToolUse` (`*`) | `tool` | `{type:'tool', tool, brief, ts}`; `brief` is a short summary (≤ 80 chars), never the full input or output. `Agent`/`Task` records also carry `subagent_type` (used to infer the review phase) |
+| `PreToolUse` (`*`) | `tool_start` | `{type:'tool_start', tool, id?, ts}`; `id` is the harness's `tool_use_id`. Until the matching `tool` record arrives (for up to an hour) the call is in flight, and the run keeps the longer idle thresholds |
+| `PostToolUse` (`*`) | `tool` | `{type:'tool', tool, brief, id?, ts}`; `brief` is a short summary (≤ 80 chars), never the full input or output. `Agent`/`Task` records also carry `subagent_type` (used to infer the review phase) |
 | `PreToolUse` (`TodoWrite\|TaskCreate\|TaskUpdate`) | `todo` | `{type:'activity', label, source:'todo', ts}` with the in-progress item's label; an empty label clears it when that item finishes |
 
 Codex and Gemini workers get no hooks: their liveness and phase come only from

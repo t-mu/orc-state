@@ -56,6 +56,15 @@ describe('handleHook', () => {
     expect(handleHook('tool', { tool_input: {} }, st(), TS).record).toBeNull();
   });
 
+  it('tool_start: records only the tool name and its tool_use_id; tool records carry the id too', () => {
+    expect(handleHook('tool_start', { tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: 'rm -rf x' } }, st(), TS).record)
+      .toEqual({ type: 'tool_start', tool: 'Bash', id: 'toolu_1', ts: TS });
+    expect(handleHook('tool_start', { tool_name: 'Read' }, st(), TS).record).toEqual({ type: 'tool_start', tool: 'Read', ts: TS });
+    expect(handleHook('tool_start', { tool_input: {} }, st(), TS).record).toBeNull();
+    expect(handleHook('tool', { tool_name: 'Read', tool_use_id: 'toolu_2', tool_input: { file_path: 'a.ts' } }, st(), TS).record)
+      .toEqual({ type: 'tool', tool: 'Read', brief: 'a.ts', id: 'toolu_2', ts: TS });
+  });
+
   it('tool: an Agent/Task record carries the sub-agent type alongside the brief', () => {
     expect(handleHook('tool', {
       tool_name: 'Agent', tool_input: { description: 'Check the diff', subagent_type: 'critic', prompt: 'long' },

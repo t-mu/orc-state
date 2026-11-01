@@ -268,6 +268,10 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
       c.state = 'failed';
       c.failure_reason = 'manual_reset';
       c.finished_at = now;
+      // Finalization state is only valid on an in_progress run (lib/lifecycleDiagnostics.ts).
+      c.finalization_state = null;
+      c.finalization_retry_count = 0;
+      c.finalization_blocked_reason = null;
     }
 
     commitClaims(stateDir, claimsState, [{

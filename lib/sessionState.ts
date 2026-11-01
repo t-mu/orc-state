@@ -38,6 +38,9 @@ function resetClaim(claim: Claim, now: string): boolean {
   claim.state = 'failed';
   claim.failure_reason = 'session_reset';
   claim.finished_at = now;
+  claim.finalization_state = null;
+  claim.finalization_retry_count = 0;
+  claim.finalization_blocked_reason = null;
   return true;
 }
 

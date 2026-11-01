@@ -278,6 +278,23 @@ describe('mcp read handlers', () => {
     expect(run2?.stale_for_ms).toBe(1_200_000);
   });
 
+  it('handleListStalledRuns counts hook activity and skips a run with a tool call still running', () => {
+    const now = new Date('2026-01-01T00:20:00.000Z').getTime();
+    writeRunActivity(dir, {
+      'run-1': {
+        run_id: 'run-1', agent_id: 'orc-1', label: 'Bash: npm test', source: 'tool', label_ts: '2026-01-01T00:19:30.000Z',
+        last_tool: 'Bash', last_tool_brief: 'npm test', last_tool_ts: '2026-01-01T00:19:30.000Z',
+      },
+      'run-2': {
+        run_id: 'run-2', agent_id: 'orc-2', label: null, source: null, label_ts: null,
+        last_tool: null, last_tool_brief: null, last_tool_ts: null, open_tools: { toolu_1: '2026-01-01T00:05:00.000Z' },
+      },
+    });
+    expect(handleListStalledRuns(dir, { stale_after_ms: 60_000, now_ms: now })).toEqual([]);
+    const later = handleListStalledRuns(dir, { stale_after_ms: 20_000, now_ms: now }) as Array<Record<string, unknown>>;
+    expect(later.map((claim) => [claim.run_id, claim.stale_for_ms])).toEqual([['run-1', 30_000]]);
+  });
+
   it('handleGetTask returns task or not_found error', () => {
     const task = handleGetTask(dir, { task_ref: 'project/todo-one' }) as Record<string, unknown>;
     expect(task.ref).toBe('project/todo-one');

@@ -13,7 +13,8 @@ import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
-import { readRunActivity } from '../lib/runActivityStore.ts';
+import { latestHookActivityTs, readRunActivity, toolInFlight } from '../lib/runActivityStore.ts';
+import { newestTimestamp } from '../lib/runActivity.ts';
 import { selectCurrentActivity, type CurrentActivity } from '../lib/currentActivity.ts';
 import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
@@ -135,16 +136,17 @@ export function handleListStalledRuns(stateDir: string, { stale_after_ms = 600_0
     throw new Error('stale_after_ms must be a non-negative integer');
   }
   const now = (now_ms as number) ?? Date.now();
+  const hookActivity = readRunActivity(stateDir);
+  // Same liveness as the coordinator: a hook-observed tool call or label counts, and a tool call still running is not stale.
   return readClaims(stateDir).claims
     .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
-    .filter((claim) => {
-      const timestamp = claim.last_heartbeat_at ?? claim.claimed_at;
-      return (now - new Date(timestamp).getTime()) > (stale_after_ms as number);
+    .filter((claim) => !toolInFlight(hookActivity[claim.run_id], now))
+    .map((claim) => {
+      const anchor = newestTimestamp(claim.last_heartbeat_at ?? claim.claimed_at, latestHookActivityTs(hookActivity[claim.run_id]));
+      return { claim, stale_for_ms: now - new Date(anchor ?? claim.claimed_at).getTime() };
     })
-    .map((claim) => ({
-      ...claim,
-      stale_for_ms: now - new Date((claim.last_heartbeat_at ?? claim.claimed_at)).getTime(),
-    }));
+    .filter(({ stale_for_ms }) => stale_for_ms > (stale_after_ms as number))
+    .map(({ claim, stale_for_ms }) => ({ ...claim, stale_for_ms }));
 }
 
 export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unknown } = {}) {
