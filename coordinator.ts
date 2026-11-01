@@ -951,9 +951,14 @@ async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date
  */
 function hydrateRunSignals(claims: Claim[]): void {
   if (signalsHydrated) return;
-  const activeRunIds = activeRunIdsOf(claims);
-  runSignals.hydrate(readRunActivity(STATE_DIR), readEventsForRuns(EVENTS_FILE, activeRunIds));
-  signalsHydrated = true;
+  try {
+    const activeRunIds = activeRunIdsOf(claims);
+    runSignals.hydrate(readRunActivity(STATE_DIR), readEventsForRuns(EVENTS_FILE, activeRunIds));
+    signalsHydrated = true;
+  } catch (error) {
+    // Retried on the next tick; until then the run signals start from this tick's events.
+    log(`warning: failed to hydrate run signals: ${(error as Error).message}`);
+  }
 }
 
 function activeRunIdsOf(claims: Claim[]): string[] {

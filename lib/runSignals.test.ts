@@ -130,7 +130,7 @@ describe('RunSignals', () => {
     signals.ingest([event('phase_started', { ts: at(-5 * MIN), phase: 'implement' }), event('phase_started', { ts: at(-6 * MIN), payload: { phase: 'explore' } })]);
     expect(signals.currentPhase('run-1')).toEqual({ phase: 'implement', ts: at(-5 * MIN) });
     signals.recordPhase('run-1', 'review', at(-MIN));
-    expect(signals.phaseMap().get('run-1')).toBe('review');
+    expect(signals.currentPhase('run-1')).toEqual({ phase: 'review', ts: at(-MIN) });
     expect(signals.currentPhase('other')).toEqual({ phase: null, ts: null });
   });
 

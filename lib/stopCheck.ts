@@ -1,6 +1,8 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
 import { appendSequencedEvent, queryEvents } from './eventLog.ts';
+import type { TurnEndHookEvent } from './hookEventBus.ts';
+import { hookEventPathIn } from './paths.ts';
 import { readClaims } from './stateReader.ts';
 import type { Claim } from '../types/claims.ts';
 import type { OrcEvent } from '../types/events.ts';
@@ -113,9 +115,10 @@ export function decideStopCheck(input: StopDecisionInput): StopDecision {
  */
 export function recordTurnEnd(stateDir: string, agentId: string, nowMs: number): void {
   try {
-    const dir = join(stateDir, 'pty-hook-events');
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, `${agentId}.ndjson`), `${JSON.stringify({ type: 'turn_end', ts: new Date(nowMs).toISOString() })}\n`);
+    const file = hookEventPathIn(stateDir, agentId);
+    mkdirSync(dirname(file), { recursive: true });
+    const record: TurnEndHookEvent = { type: 'turn_end', ts: new Date(nowMs).toISOString() };
+    appendFileSync(file, `${JSON.stringify(record)}\n`);
   } catch {
     // Best effort; see above.
   }

@@ -43,9 +43,18 @@ export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)
   : resolve(STATE_DIR, 'worktrees');
 
-/** Path to per-agent hook-events NDJSON file written by the Notification hook. */
+/**
+ * Path to an agent's hook-events NDJSON file in `stateDir`: written by the
+ * provider hooks (hooks/orc-hook.ts) and by stop-check (`turn_end`), drained
+ * only by the coordinator tick.
+ */
+export function hookEventPathIn(stateDir: string, agentId: string): string {
+  return join(stateDir, 'pty-hook-events', `${agentId}.ndjson`);
+}
+
+/** Path to per-agent hook-events NDJSON file in this process's state directory. */
 export function hookEventPath(agentId: string): string {
-  return join(STATE_DIR, 'pty-hook-events', `${agentId}.ndjson`);
+  return hookEventPathIn(STATE_DIR, agentId);
 }
 
 /**

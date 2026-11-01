@@ -2176,6 +2176,29 @@ describe('hook event bus', () => {
     expect(Object.keys(readRunActivity(dir))).toEqual(['run-live']);
   });
 
+  it('survives a failed hydration read and hydrates on a later tick', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-hydrate', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    let calls = 0;
+    vi.doMock('./lib/eventLog.ts', async () => {
+      const actual = await vi.importActual<typeof import('./lib/eventLog.ts')>('./lib/eventLog.ts');
+      return {
+        ...actual,
+        readEventsForRuns: (...args: Parameters<typeof actual.readEventsForRuns>) => {
+          calls += 1;
+          if (calls === 1) throw new Error('database is locked');
+          return actual.readEventsForRuns(...args);
+        },
+      };
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    await expect(runTicks([], 2)).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+  });
+
   it('does not re-emit activity_note for an unchanged label after a coordinator restart', async () => {
     seedState(dir, {
       agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],

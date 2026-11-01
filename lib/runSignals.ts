@@ -279,16 +279,6 @@ export class RunSignals {
     return { phase: current?.phase ?? null, ts: current?.ts ?? null };
   }
 
-  /** Newest durable activity event time for each run (for callers that take a map). */
-  durableActivityMap(): Map<string, string> {
-    return this.durableActivity;
-  }
-
-  /** Newest phase per run (for callers that take a map). */
-  phaseMap(): Map<string, string> {
-    return new Map([...this.phases].map(([runId, { phase }]) => [runId, phase]));
-  }
-
   /** The run's hook activity snapshot. */
   hookSnapshot(runId: string): RunActivitySnapshot | undefined {
     return this.hookActivity[runId];
