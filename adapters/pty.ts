@@ -377,7 +377,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
   // For claude: write a settings file whose hooks push harness events to the
   // agent's hook-events NDJSON file (drained by the coordinator):
   //   Notification            → permission_prompt records (input-block detection)
-  //   PostToolUse  `*`        → `tool` records with a short brief
+  //   PostToolUse  `*`        → `tool` records with a short brief (task workers only)
   //   PostToolUseFailure `*`  → the same `tool` record for a failed call (closes its tool_start)
   //   PreToolUse   `*`        → `tool_start` records (a tool call in flight is not idleness)
   //   PreToolUse   to-do tools → `activity` records with the current to-do label
@@ -391,15 +391,15 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
     try { unlinkSync(taskLabelsPath(eventsFile)); } catch { /* never created */ }
     const hook = (kind: string) => ({ type: 'command', command: claudeHookCommand(kind, eventsFile) });
     const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
-    const hooks: Record<string, unknown> = {
-      Notification: [{ hooks: [hook('permission')] }],
-      PostToolUse: [{ matcher: '*', hooks: [hook('tool')] }],
-      PostToolUseFailure: [{ matcher: '*', hooks: [hook('tool')] }],
-      PreToolUse: [{ matcher: '*', hooks: [hook('tool_start')] }, { matcher: CLAUDE_TODO_TOOL_MATCHER, hooks: [hook('todo')] }],
-    };
-    // Task workers only (a scout ends after its report; the master is not launched here): a Stop
-    // hook asks the coordinator whether the run lets the session end its turn (lib/stopCheck.ts).
+    const hooks: Record<string, unknown> = { Notification: [{ hooks: [hook('permission')] }] };
+    // Task workers only (a scout ends after its report; the master is not launched here). Tool
+    // hooks feed run activity, which the coordinator drains only for a claimed run, so a read-only
+    // scout gets none. The Stop hook asks the coordinator whether the run lets the session end its
+    // turn (lib/stopCheck.ts).
     if (config.read_only !== true) {
+      hooks.PostToolUse = [{ matcher: '*', hooks: [hook('tool')] }];
+      hooks.PostToolUseFailure = [{ matcher: '*', hooks: [hook('tool')] }];
+      hooks.PreToolUse = [{ matcher: '*', hooks: [hook('tool_start')] }, { matcher: CLAUDE_TODO_TOOL_MATCHER, hooks: [hook('todo')] }];
       const orcBin = resolveOrcBin(null, { ...process.env, ...(config.env as Record<string, string> | undefined ?? {}) });
       hooks.Stop = [{ hooks: [{ type: 'command', command: `${shellEscape(orcBin)} stop-check`, timeout: STOP_HOOK_TIMEOUT_S }] }];
     }
