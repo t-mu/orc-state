@@ -50,7 +50,8 @@ function getDb(stateDir: string): Database.Database {
     CREATE INDEX IF NOT EXISTS events_run_seq_idx ON events(run_id, seq);
     CREATE INDEX IF NOT EXISTS events_run_event_ts_idx ON events(run_id, event, ts DESC, seq DESC)
       WHERE json_valid(payload) AND COALESCE(json_extract(payload, '$.actor_type'), '') NOT IN ('coordinator', 'human');
-    CREATE INDEX IF NOT EXISTS events_run_phase_ts_idx ON events(run_id, ts DESC, seq DESC)
+    DROP INDEX IF EXISTS events_run_phase_ts_idx;
+    CREATE INDEX IF NOT EXISTS events_run_phase_seq_idx ON events(run_id, seq DESC)
       WHERE event = 'phase_started' AND json_valid(payload);
     `);
 
@@ -400,9 +401,10 @@ export function readEventsForRuns(logPath: string, runIds: string[]): OrcEvent[]
       AND json_valid(payload)
       AND COALESCE(json_extract(payload, '$.actor_type'), '') NOT IN ('coordinator', 'human')
     ORDER BY ts DESC, seq DESC LIMIT 1`);
+  // Phases are ordered by seq: an inferred phase is appended after its evidence.
   const selectPhase = db.prepare(`SELECT seq, payload FROM events
     WHERE run_id = ? AND event = 'phase_started' AND json_valid(payload)
-    ORDER BY ts DESC, seq DESC LIMIT 1`);
+    ORDER BY seq DESC LIMIT 1`);
   const events: OrcEvent[] = [];
   for (const runId of new Set(runIds)) {
     for (const type of activityTypes) {

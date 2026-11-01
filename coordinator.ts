@@ -37,7 +37,7 @@ import { newestTimestamp, shouldRenewFromHookActivity } from './lib/runActivity.
 import { gcOrphanedHookFiles } from './lib/hookFiles.ts';
 import { noProgressEscalationMs } from './lib/runProgress.ts';
 import { drainHookEvents, type PermissionHookEvent } from './lib/hookEventBus.ts';
-import { inferPhaseTransitions } from './lib/phaseInference.ts';
+import { inferPhaseTransitions, phaseInferenceClaims } from './lib/phaseInference.ts';
 import { readRunActivity, writeRunActivity } from './lib/runActivityStore.ts';
 import { RunSignals, type RunHookEvents } from './lib/runSignals.ts';
 import { renderTemplate } from './lib/templateRender.ts';
@@ -295,8 +295,9 @@ function advanceCursor(seq: number): void {
   if (seq > current) advanceEventOffset(STATE_DIR, current, seq);
 }
 
-function emit(event: Omit<OrcEventInput, 'ts'> | Record<string, unknown>) {
-  appendSequencedEvent(STATE_DIR, { ts: new Date().toISOString(), ...event } as OrcEventInput);
+/** Append a coordinator event stamped now (unless it carries a `ts`); returns its seq. */
+function emit(event: Omit<OrcEventInput, 'ts'> | Record<string, unknown>): number {
+  return appendSequencedEvent(STATE_DIR, { ts: new Date().toISOString(), ...event } as OrcEventInput);
 }
 
 /** Coerce an agent-provided timestamp to a valid ISO string, or fall back to now. */
@@ -1029,14 +1030,16 @@ function retainActiveRunSignals(claims: Claim[], hookActivityChanged: boolean): 
  * Infer each active run's phase from gate commands and this tick's tool hook
  * events (lib/phaseInference.ts) and emit `phase_started {inferred: true}` for
  * every forward transition. Explicit phase events newer than the evidence win.
+ * The event is stamped with the emit time, after every event already in the
+ * log, and keeps the evidence time in `payload.evidence_ts`: phases are ordered
+ * by seq everywhere (isLaterPhaseEvent).
  */
 function inferRunPhases(claims: Claim[], nowMs: number = Date.now()): void {
   for (const claim of claims ?? []) {
     if (claim.state !== 'claimed' && claim.state !== 'in_progress') continue;
     const current = runSignals.currentPhase(claim.run_id);
     for (const transition of inferPhaseTransitions(current, runSignals.phaseCandidates(claim, nowMs))) {
-      emit({
-        ts: transition.ts,
+      const seq = emit({
         event: 'phase_started',
         actor_type: 'coordinator',
         actor_id: 'coordinator',
@@ -1044,9 +1047,9 @@ function inferRunPhases(claims: Claim[], nowMs: number = Date.now()): void {
         task_ref: claim.task_ref,
         agent_id: claim.agent_id,
         phase: transition.phase,
-        payload: { phase: transition.phase, inferred: true, evidence: transition.evidence },
+        payload: { phase: transition.phase, inferred: true, evidence: transition.evidence, evidence_ts: transition.ts },
       });
-      runSignals.recordPhase(claim.run_id, transition.phase, transition.ts);
+      runSignals.recordPhase(claim.run_id, transition.phase, transition.ts, nowMs, seq);
       log(`inferred phase ${transition.phase} for run ${claim.run_id} (${transition.evidence})`);
     }
   }
@@ -1485,18 +1488,15 @@ async function tick() {
     ({ agents, claims } = reloadTickState(workerPoolConfig));
   }
 
-  // Drain hook events before lifecycle events and infer phases against the
-  // claims as they were before this batch, so a run that work_complete merged
-  // this tick still gets its complete/finalize phases.
+  // Drain hook events before lifecycle events; phases are inferred against the
+  // claims as they were before this batch, for runs still active after it.
   const hydratedActivityChanged = hydrateRunSignals(claims);
   const hookActivityChanged = ingestHookEvents(claims);
   const claimsBeforeEvents = claims;
   const checkpoint = await processEventCheckpoint(agents, claims, workerPoolConfig);
   ({ agents, claims } = checkpoint);
   const eventActivityChanged = checkpoint.activityChanged;
-  // A run that failed in this batch gets no phases after its terminal event.
-  const failedRuns = new Set(claims.filter((claim) => claim.state === 'failed').map((claim) => claim.run_id));
-  inferRunPhases(claimsBeforeEvents.filter((claim) => !failedRuns.has(claim.run_id)));
+  inferRunPhases(phaseInferenceClaims(claimsBeforeEvents, claims));
   retainActiveRunSignals([...claimsBeforeEvents, ...claims], hydratedActivityChanged || hookActivityChanged || eventActivityChanged);
   ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
   ({ agents, claims } = await probeActiveWorkerSessions(agents, claims, workerPoolConfig));

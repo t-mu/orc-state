@@ -3,7 +3,7 @@ import type { OrcEvent } from '../types/events.ts';
 import type { DispatchedHookEvents, PermissionHookEvent, RunActivityHookEvent, ToolHookEvent } from './hookEventBus.ts';
 import { toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './phaseInference.ts';
 import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressAlertProgressAt } from './runProgress.ts';
-import { claimedRunStartupAnchor, latestRunActivityMap, newestTimestamp, runIdleMs } from './runActivity.ts';
+import { claimedRunStartupAnchor, isLaterPhaseEvent, latestRunActivityMap, newestTimestamp, runIdleMs } from './runActivity.ts';
 import {
   applyHookActivity, latestHookActivityTs, shouldEmitActivityNote, toolInFlight,
   type ActivityNoteState, type RunActivityMap, type RunActivitySnapshot, type RunActivitySource,
@@ -142,6 +142,12 @@ function workerNotes(events: OrcEvent[]): Map<string, { agentId: string; notes: 
   return byRun;
 }
 
+/** An inferred phase's evidence time (`payload.evidence_ts`), else the event's own `ts`. */
+function phaseEvidenceTs(event: OrcEvent): string {
+  const evidenceTs = (event as { payload?: { evidence_ts?: unknown } }).payload?.evidence_ts;
+  return typeof evidenceTs === 'string' && Number.isFinite(Date.parse(evidenceTs)) ? evidenceTs : event.ts;
+}
+
 function earlier(a: string | undefined, b: string): boolean {
   return !a || Date.parse(b) < Date.parse(a);
 }
@@ -154,8 +160,11 @@ export class RunSignals {
   private readonly config: StaleThresholdConfig;
   /** Newest durable (non-coordinator) activity event per run. */
   private readonly durableActivity = new Map<string, string>();
-  /** Newest phase_started per run (explicit or inferred). */
-  private readonly phases = new Map<string, { phase: string; ts: string }>();
+  /**
+   * Newest phase_started per run (explicit or inferred), by seq. `ts` is the
+   * phase's evidence time: an inferred event's `payload.evidence_ts`, else its `ts`.
+   */
+  private readonly phases = new Map<string, { phase: string; ts: string; seq: number | undefined }>();
   /** Hook activity snapshots, projected to run-activity.json. */
   private readonly hookActivity: RunActivityMap = {};
   /** Permission hook events waiting for the run's input-block check. */
@@ -169,7 +178,7 @@ export class RunSignals {
   /** Tool-derived phase candidates from the newest hook batch. */
   private readonly toolCandidates = new Map<string, PhaseCandidate[]>();
   /** Newest worker-reported (not inferred) phase per run: only its changes reset the nudge count. */
-  private readonly explicitPhases = new Map<string, { phase: string; ts: string }>();
+  private readonly explicitPhases = new Map<string, { phase: string; ts: string; seq: number | undefined }>();
   /** Newest progress point per run, and the progress point a no-progress alert was sent for. */
   private readonly lastProgressAt = new Map<string, string>();
   private readonly noProgressNotified = new Map<string, string>();
@@ -224,10 +233,10 @@ export class RunSignals {
       if (event.event === 'phase_started') {
         const phase = (event as { phase?: unknown }).phase ?? (event as { payload?: { phase?: unknown } }).payload?.phase;
         if (typeof phase === 'string' && phase.length > 0) {
-          if (isExplicitPhaseEvent(event) && later(this.explicitPhases.get(runId)?.ts, event.ts)) {
-            this.explicitPhases.set(runId, { phase, ts: event.ts });
+          if (isExplicitPhaseEvent(event) && isLaterPhaseEvent(this.explicitPhases.get(runId), event)) {
+            this.explicitPhases.set(runId, { phase, ts: event.ts, seq: event.seq });
           }
-          this.recordPhase(runId, phase, event.ts, nowMs);
+          this.recordPhase(runId, phase, phaseEvidenceTs(event), nowMs, event.seq);
         }
       }
     }
@@ -272,13 +281,14 @@ export class RunSignals {
 
   /**
    * Record a phase the coordinator inferred (or any phase_started) if it is the
-   * run's newest. A change of phase is progress.
+   * run's newest by `seq` (isLaterPhaseEvent). `ts` is the phase's evidence
+   * time. A change of phase is progress.
    */
-  recordPhase(runId: string, phase: string, ts: string, nowMs: number = Date.now()): void {
+  recordPhase(runId: string, phase: string, ts: string, nowMs: number = Date.now(), seq?: number): void {
     const current = this.phases.get(runId);
-    if (!later(current?.ts, ts)) return;
+    if (!isLaterPhaseEvent(current, { seq, ts })) return;
     if (current?.phase !== phase) this.noteProgress(runId, ts, nowMs);
-    this.phases.set(runId, { phase, ts });
+    this.phases.set(runId, { phase, ts, seq });
   }
 
   /** Record progress at `ts`, clamped to now: worker timestamps are not trusted to be in the past. */

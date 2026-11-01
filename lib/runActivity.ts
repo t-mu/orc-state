@@ -93,24 +93,47 @@ export function latestRunActivityDetailMap(events: OrcEvent[] | null | undefined
   );
 }
 
+/** Position of a `phase_started` event: its `seq` and its own `ts`. */
+export interface PhaseEventOrder {
+  seq?: number | null | undefined;
+  ts?: string | null | undefined;
+}
+
 /**
- * Build a map of run_id -> latest phase name from phase_started events.
- * Returns null for runs with no phase events.
+ * True when phase event `next` comes after `prev`. Phases are ordered by `seq`,
+ * the append order: a coordinator-inferred phase is appended after the evidence
+ * it was inferred from (the evidence time is kept in `payload.evidence_ts`), so
+ * its `ts` says nothing about its place among the run's phases. Only when either
+ * side has no `seq` (an event not yet read back from the log) is `ts` compared.
+ */
+export function isLaterPhaseEvent(prev: PhaseEventOrder | null | undefined, next: PhaseEventOrder): boolean {
+  if (!prev) return true;
+  if (Number.isFinite(prev.seq) && Number.isFinite(next.seq)) return (next.seq as number) > (prev.seq as number);
+  return Date.parse(next.ts ?? '') > Date.parse(prev.ts ?? '');
+}
+
+type PhaseEventLike = { run_id?: string; seq?: number; ts?: string; event?: string; phase?: string; payload?: { phase?: string } };
+
+/** The phase name of a `phase_started` event, or null for any other event. */
+function startedPhase(e: PhaseEventLike): string | null {
+  if (e?.event !== 'phase_started') return null;
+  const phase = e.phase ?? e.payload?.phase;
+  return typeof phase === 'string' && phase.length > 0 ? phase : null;
+}
+
+/**
+ * Build a map of run_id -> latest phase name from phase_started events, ordered
+ * by seq (isLaterPhaseEvent). Runs with no phase events are absent.
  */
 export function latestRunPhaseMap(events: OrcEvent[] | null | undefined): Map<string, string> {
-  type E = { run_id?: string; ts?: string; event?: string; phase?: string; payload?: { phase?: string } };
-  return buildRunMap<string>(
-    events,
-    (ev) => {
-      const e = ev as E;
-      const phase = e.phase ?? e.payload?.phase;
-      return e.event === 'phase_started' && typeof phase === 'string' && phase.length > 0;
-    },
-    (ev) => {
-      const e = ev as E;
-      return (e.phase ?? e.payload?.phase) as string;
-    },
-  );
+  const latest = new Map<string, { phase: string; seq: number | undefined; ts: string }>();
+  for (const ev of events ?? []) {
+    const e = ev as PhaseEventLike;
+    const phase = startedPhase(e);
+    if (!e?.run_id || !e.ts || !phase) continue;
+    if (isLaterPhaseEvent(latest.get(e.run_id), e)) latest.set(e.run_id, { phase, seq: e.seq, ts: e.ts });
+  }
+  return new Map([...latest].map(([runId, { phase }]) => [runId, phase]));
 }
 
 export interface RunPhaseEntry {
@@ -119,23 +142,25 @@ export interface RunPhaseEntry {
 }
 
 /**
- * Build a map of run_id -> all phase_started events, sorted by timestamp.
+ * Build a map of run_id -> all phase_started events, in seq order (timestamp
+ * order for events without a seq).
  */
 export function runPhaseHistory(events: OrcEvent[] | null | undefined): Map<string, RunPhaseEntry[]> {
-  const result = new Map<string, RunPhaseEntry[]>();
+  const result = new Map<string, Array<RunPhaseEntry & { order: PhaseEventOrder }>>();
   for (const ev of events ?? []) {
-    const e = ev as { run_id?: string; ts?: string; event?: string; phase?: string; payload?: { phase?: string } };
-    if (!e?.run_id || !e.ts) continue;
-    const phase = e.phase ?? e.payload?.phase;
-    if (e.event !== 'phase_started' || typeof phase !== 'string' || phase.length === 0) continue;
+    const e = ev as PhaseEventLike;
+    const phase = startedPhase(e);
+    if (!e?.run_id || !e.ts || !phase) continue;
     let list = result.get(e.run_id);
     if (!list) { list = []; result.set(e.run_id, list); }
-    list.push({ phase, started_at: e.ts });
+    list.push({ phase, started_at: e.ts, order: { seq: e.seq, ts: e.ts } });
   }
-  for (const list of result.values()) {
-    list.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
-  }
-  return result;
+  return new Map([...result].map(([runId, list]) => [
+    runId,
+    list
+      .sort((a, b) => (isLaterPhaseEvent(b.order, a.order) ? 1 : isLaterPhaseEvent(a.order, b.order) ? -1 : 0))
+      .map(({ phase, started_at }) => ({ phase, started_at })),
+  ]));
 }
 
 /**

@@ -365,7 +365,10 @@ runs-active and MCP `list_stalled_runs` do not flag it (one `isStalled` in
 of a worker's turn (its `Stop` hook) closes any tool call that never reported back.
 The coordinator also infers `phase_started {inferred: true}` from
 gate commands and hook events, so a worker that forgets a phase signal still shows
-the right phase. Inferred transitions count as progress but, unlike a worker's own
+the right phase. An inferred event is stamped when it is emitted and keeps the
+evidence time in `payload.evidence_ts`; a run's phases are ordered by event `seq`
+everywhere, and a run that ended in the event batch gets no inferred phases.
+Inferred transitions count as progress but, unlike a worker's own
 phase signal, do not reset the run's nudge count. Liveness is not progress: a run
 that stays alive without a phase change, commit, or lifecycle event for
 `run_no_progress_escalate_ms` (60 min) gets `worker_needs_attention

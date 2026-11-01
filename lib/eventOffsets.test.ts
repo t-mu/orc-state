@@ -98,4 +98,20 @@ describe('durable event offsets', () => {
     expect(hydrated.some((event) => event.event === 'heartbeat' && event.seq === 400)).toBe(true);
     expect(hydrated.some((event) => event.seq === 399)).toBe(false);
   });
+
+  it('hydrates the phase with the highest seq, not the latest ts', () => {
+    insertEvents(10);
+    const db = new Database(join(dir, 'events.db'));
+    try {
+      const setPhase = db.prepare(`UPDATE events SET event = 'phase_started', task_ref = 'proj/task', ts = ?,
+        payload = json_set(payload, '$.event', 'phase_started', '$.phase', ?, '$.task_ref', 'proj/task', '$.ts', ?) WHERE seq = ?`);
+      setPhase.run('2026-01-01T00:10:00Z', 'review', '2026-01-01T00:10:00Z', 5);
+      // Appended later, for evidence older than the review event.
+      setPhase.run('2026-01-01T00:05:00Z', 'complete', '2026-01-01T00:05:00Z', 6);
+    } finally { db.close(); }
+    // The activity lookup also returns the newest-ts phase event; RunSignals orders the two by seq.
+    const phases = readEventsForRuns(join(dir, 'events.db'), ['run-1']).filter((event) => event.event === 'phase_started');
+    expect(phases.map((event) => [event.seq, event.phase])).toContainEqual([6, 'complete']);
+    expect(Math.max(...phases.map((event) => event.seq))).toBe(6);
+  });
 });

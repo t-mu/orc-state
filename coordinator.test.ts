@@ -1748,14 +1748,13 @@ describe('hook event bus', () => {
   });
 
   it('infers explore, implement, review, complete and finalize from gate commands and hook events alone', async () => {
-    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const now = Date.now();
+    const ago = (minutes: number) => new Date(now - minutes * 60 * 1000).toISOString();
+    const claim = inProgressClaim('run-phases', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000);
     seedState(dir, {
       agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
-      claims: [{
-        ...inProgressClaim('run-phases', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000),
-        task_envelope_sent_at: ago(30),
-      }],
+      claims: [{ ...claim, task_envelope_sent_at: ago(30) }],
     });
     writeHookEvents('worker-01', [
       { type: 'tool', tool: 'Read', brief: 'lib/a.ts', ts: ago(25) },
@@ -1790,13 +1789,22 @@ describe('hook event bus', () => {
     expect(runPhaseHistory(started as any).get('run-phases')!.map((entry) => entry.phase))
       .toEqual(['explore', 'implement', 'review', 'complete', 'finalize']);
     expect(started.map((e) => e.payload)).toEqual([
-      { phase: 'explore', inferred: true, evidence: 'event: task_envelope_sent' },
-      { phase: 'implement', inferred: true, evidence: 'event: run_started' },
-      { phase: 'review', inferred: true, evidence: 'tool: Agent critic' },
-      { phase: 'complete', inferred: true, evidence: 'cmd: git rebase main' },
-      { phase: 'finalize', inferred: true, evidence: 'event: work_complete' },
+      { phase: 'explore', inferred: true, evidence: 'event: task_envelope_sent', evidence_ts: ago(30) },
+      { phase: 'implement', inferred: true, evidence: 'event: run_started', evidence_ts: claim.started_at },
+      { phase: 'review', inferred: true, evidence: 'tool: Agent critic', evidence_ts: ago(15) },
+      { phase: 'complete', inferred: true, evidence: 'cmd: git rebase main', evidence_ts: ago(9) },
+      { phase: 'finalize', inferred: true, evidence: 'event: work_complete', evidence_ts: ago(5) },
     ]);
     expect(started.every((e) => e.actor_type === 'coordinator')).toBe(true);
+    // Stamped when emitted, after the evidence: the work_complete appended at ago(5) precedes finalize.
+    type Row = { seq: number; ts: string; payload: { evidence_ts: string } };
+    for (const e of started as unknown as Row[]) {
+      expect(Date.parse(e.ts)).toBeGreaterThanOrEqual(Date.parse(e.payload.evidence_ts));
+    }
+    const workComplete = readEvents(dir).find((e) => e.event === 'work_complete' && e.run_id === 'run-phases') as unknown as Row;
+    const finalize = started.at(-1) as unknown as Row;
+    expect(finalize.seq).toBeGreaterThan(workComplete.seq);
+    expect(Date.parse(finalize.ts)).toBeGreaterThanOrEqual(Date.parse(workComplete.ts));
   });
 
   it('infers complete then finalize from run-work-complete for a reviewed run without a rebase (PR mode)', async () => {
@@ -1826,6 +1834,31 @@ describe('hook event bus', () => {
       ['complete', 'event: work_complete'],
       ['finalize', 'event: work_complete'],
     ]);
+  });
+
+  it('infers no phases for a run that finished in the same event batch', async () => {
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-ended', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000)],
+    });
+    for (const [event, minutes, payload] of [
+      ['review_submitted', 10, { outcome: 'approved', findings: '' }],
+      ['work_complete', 5, { status: 'awaiting_finalize' }],
+      ['run_finished', 1, {}],
+    ] as const) {
+      appendSequencedEvent(dir, {
+        ts: ago(minutes), event, actor_type: 'agent', actor_id: 'worker-01',
+        run_id: 'run-ended', task_ref: 'proj/fix-bug', agent_id: 'worker-01', payload,
+      } as Parameters<typeof appendSequencedEvent>[1]);
+    }
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn().mockResolvedValue('') }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
+    await runTicks([], 1);
+
+    expect(readClaims(dir).find((c) => c.run_id === 'run-ended')?.state).toBe('done');
+    expect(readEvents(dir).filter((e) => e.event === 'phase_started' && e.run_id === 'run-ended')).toEqual([]);
   });
 
   it('keeps a run in implement across a commit, and never moves an explicit review back', async () => {

@@ -1,3 +1,4 @@
+import type { Claim } from '../types/claims.ts';
 import type { ToolHookEvent } from './hookEventBus.ts';
 
 /**
@@ -104,4 +105,18 @@ export function inferPhaseTransitions(current: CurrentPhase, candidates: PhaseCa
     ts = candidate.ts;
   }
   return accepted;
+}
+
+/**
+ * The claims whose phases a tick infers: the claims as they were before the
+ * tick's event batch (so a run that work_complete moved into finalization still
+ * gets its complete/finalize phases), limited to runs still active after it. A
+ * run that finished (done), failed, or was cancelled (its claim removed) in the
+ * batch gets no phase events after its terminal event.
+ */
+export function phaseInferenceClaims(beforeBatch: Claim[], afterBatch: Claim[]): Claim[] {
+  const active = new Set((afterBatch ?? [])
+    .filter((claim) => claim.state === 'claimed' || claim.state === 'in_progress')
+    .map((claim) => claim.run_id));
+  return (beforeBatch ?? []).filter((claim) => active.has(claim.run_id));
 }

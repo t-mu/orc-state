@@ -473,7 +473,7 @@ before upgrading an existing project.
 
 | Event | Emitted by | When |
 |-------|-----------|------|
-| `phase_started` | Worker/Coordinator | Entering a new phase (explore, implement, review, complete, finalize). The coordinator emits it with `payload.inferred: true` and `payload.evidence` when it infers the phase (see below) |
+| `phase_started` | Worker/Coordinator | Entering a new phase (explore, implement, review, complete, finalize). The coordinator emits it with `payload.inferred: true`, `payload.evidence` and `payload.evidence_ts` when it infers the phase (see below). A run's current phase is its `phase_started` with the highest `seq` |
 | `phase_finished` | Worker | Phase completed |
 | `finalize_rebase_started` | Worker | Finalize rebase underway |
 | `ready_to_merge` | Worker/Coordinator | Rebase done, ready for merge |
@@ -492,9 +492,16 @@ commands and Claude tool hook events:
 
 A commit is not evidence: implement commits happen too. Inference only moves a
 run forward (review fixes stay in review), and an explicit `phase_started`
-newer than the evidence wins. Each inferred event carries `inferred: true` and
+newer than the evidence wins. Each inferred event carries `inferred: true`,
 `evidence` (e.g. `tool: Agent critic`, `cmd: git rebase main`,
-`event: work_complete`), so `phase_history` and `orc watch` stay consistent.
+`event: work_complete`) and `evidence_ts`, the evidence time. The event itself
+is stamped when the coordinator emits it, so it never sorts before events
+already in the log; phases are ordered by `seq` everywhere (the coordinator's
+`RunSignals`, `orc status`/`phase_history`, `orc watch`, the Stop hook's phase
+and the restart hydrate), and lease renewal and inference read `evidence_ts`.
+Inference runs only for runs still active after the tick's event batch: a run
+that finished, failed or was cancelled in the batch gets no phase events after
+its terminal event.
 The `review-read` marker is kept in the run's `run-activity.json` entry
 (`review_read_at`), so a restarted coordinator still infers `complete` from a
 `git rebase main` that follows a `review-read` it saw before the restart.
