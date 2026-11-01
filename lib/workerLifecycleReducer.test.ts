@@ -177,6 +177,15 @@ describe('applies lifecycle transitions through the reducer boundary', () => {
     }
   });
 
+  it('renews from an inferred phase event at its evidence time, not its emit time', () => {
+    const claim = makeClaim({ state: 'in_progress', last_heartbeat_at: null, started_at: '2026-03-11T07:00:00.000Z' });
+    const action = reduceLifecycleEvent(makeEvent({
+      event: 'phase_started', ts: NOW, actor_type: 'coordinator',
+      payload: { phase: 'review', inferred: true, evidence_ts: '2026-03-11T07:30:00.000Z' },
+    }), claim, NOW);
+    expect(action).toMatchObject({ type: 'heartbeat', at: '2026-03-11T07:30:00.000Z' });
+  });
+
   it('returns noop for phase events when claim is not in_progress', () => {
     const claim = makeClaim({ state: 'claimed' });
     const action = reduceLifecycleEvent(makeEvent({ event: 'phase_started' }), claim, NOW);

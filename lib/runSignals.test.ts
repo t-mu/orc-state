@@ -134,6 +134,36 @@ describe('RunSignals', () => {
     expect(signals.currentPhase('other')).toEqual({ phase: null, ts: null });
   });
 
+  it('orders phases by seq and keeps an inferred phase at its evidence time', () => {
+    const signals = new RunSignals(CONFIG);
+    // The worker's explore carries a later ts than the inferred implement's
+    // evidence, but implement was appended after it.
+    signals.ingest([
+      event('phase_started', { seq: 4, ts: at(-5 * MIN), phase: 'explore' }),
+      event('phase_started', {
+        seq: 5, ts: at(-MIN), actor_type: 'coordinator', actor_id: 'coordinator', phase: 'implement',
+        payload: { phase: 'implement', inferred: true, evidence: 'event: run_started', evidence_ts: at(-10 * MIN) },
+      }),
+    ]);
+    expect(signals.currentPhase('run-1')).toEqual({ phase: 'implement', ts: at(-10 * MIN) });
+    expect(signals.explicitPhase('run-1')).toBe('explore');
+    // An older seq read back late does not win, whatever its ts.
+    signals.ingest([event('phase_started', { seq: 3, ts: at(0), phase: 'review' })]);
+    expect(signals.currentPhase('run-1').phase).toBe('implement');
+    expect(signals.explicitPhase('run-1')).toBe('explore');
+  });
+
+  it('ignores the read-back of a phase it recorded when emitting it', () => {
+    const signals = new RunSignals(CONFIG);
+    signals.recordPhase('run-1', 'review', at(-10 * MIN), T0, 7);
+    signals.ingest([event('phase_started', { seq: 8, ts: at(-2 * MIN), phase: 'complete' })], undefined, T0);
+    signals.ingest([event('phase_started', {
+      seq: 7, ts: at(-3 * MIN), actor_type: 'coordinator', actor_id: 'coordinator', phase: 'review',
+      payload: { phase: 'review', inferred: true, evidence: 'tool: Agent critic', evidence_ts: at(-10 * MIN) },
+    })], undefined, T0);
+    expect(signals.currentPhase('run-1')).toEqual({ phase: 'complete', ts: at(-2 * MIN) });
+  });
+
   it('tracks progress apart from liveness: lifecycle events, phase changes and commits, not heartbeats', () => {
     const signals = new RunSignals(CONFIG);
     signals.ingest([event('heartbeat', { ts: at(-MIN) })], undefined, T0);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { claimedRunStartupAnchor, latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs, runPhaseHistory, shouldRenewFromHookActivity } from './runActivity.ts';
+import { claimedRunStartupAnchor, isLaterPhaseEvent, latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs, runPhaseHistory, shouldRenewFromHookActivity } from './runActivity.ts';
 import type { OrcEvent } from '../types/index.ts';
 
 describe('latestRunActivityMap', () => {
@@ -118,6 +118,35 @@ describe('runIdleMs', () => {
     const claim = { started_at: '2026-01-01T00:06:00Z', claimed_at: '2026-01-01T00:05:00Z' };
     const idle = runIdleMs(claim, null, now);
     expect(idle).toBe(4 * 60 * 1000);
+  });
+});
+
+describe('phase event ordering', () => {
+  // An inferred phase is appended after its evidence; seq orders it, not ts.
+  const events = [
+    { seq: 1, run_id: 'run-1', event: 'phase_started', phase: 'explore', ts: '2026-01-01T00:00:00Z' },
+    { seq: 2, run_id: 'run-1', event: 'phase_started', phase: 'review', ts: '2026-01-01T00:10:00Z' },
+    { seq: 3, run_id: 'run-1', event: 'phase_started', phase: 'complete', ts: '2026-01-01T00:08:00Z',
+      actor_type: 'coordinator', payload: { phase: 'complete', inferred: true, evidence_ts: '2026-01-01T00:07:00Z' } },
+  ];
+
+  it('picks the latest phase by seq', () => {
+    expect(latestRunPhaseMap(events as unknown as OrcEvent[]).get('run-1')).toBe('complete');
+    expect(latestRunPhaseMap([...events].reverse() as unknown as OrcEvent[]).get('run-1')).toBe('complete');
+  });
+
+  it('lists phase history in seq order', () => {
+    expect(runPhaseHistory([...events].reverse() as unknown as OrcEvent[]).get('run-1')!.map((e) => e.phase))
+      .toEqual(['explore', 'review', 'complete']);
+  });
+
+  it('compares seq when both sides have one, else ts', () => {
+    expect(isLaterPhaseEvent(null, { seq: 1, ts: '2026-01-01T00:00:00Z' })).toBe(true);
+    expect(isLaterPhaseEvent({ seq: 2, ts: '2026-01-01T00:10:00Z' }, { seq: 3, ts: '2026-01-01T00:00:00Z' })).toBe(true);
+    expect(isLaterPhaseEvent({ seq: 3, ts: '2026-01-01T00:00:00Z' }, { seq: 2, ts: '2026-01-01T00:10:00Z' })).toBe(false);
+    expect(isLaterPhaseEvent({ seq: 3, ts: '2026-01-01T00:00:00Z' }, { seq: 3, ts: '2026-01-01T00:10:00Z' })).toBe(false);
+    expect(isLaterPhaseEvent({ ts: '2026-01-01T00:00:00Z' }, { seq: 1, ts: '2026-01-01T00:10:00Z' })).toBe(true);
+    expect(isLaterPhaseEvent({ seq: 9, ts: '2026-01-01T00:10:00Z' }, { ts: '2026-01-01T00:00:00Z' })).toBe(false);
   });
 });
 

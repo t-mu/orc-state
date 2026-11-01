@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ToolHookEvent } from './hookEventBus.ts';
-import { inferPhaseTransitions, isReviewerSpawn, phaseRank, toolPhaseCandidates, type PhaseCandidate } from './phaseInference.ts';
+import { inferPhaseTransitions, isReviewerSpawn, phaseInferenceClaims, phaseRank, toolPhaseCandidates, type PhaseCandidate } from './phaseInference.ts';
+import type { Claim } from '../types/claims.ts';
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 31, 12, minute)).toISOString();
 const tool = (name: string, brief: string, minute: number, extra: Partial<ToolHookEvent> = {}): ToolHookEvent =>
@@ -107,5 +108,25 @@ describe('inferPhaseTransitions', () => {
     const first = inferPhaseTransitions({ phase: null, ts: null }, runFlow);
     const last = first[first.length - 1];
     expect(inferPhaseTransitions({ phase: last.phase, ts: last.ts }, runFlow)).toEqual([]);
+  });
+});
+
+describe('phaseInferenceClaims', () => {
+  const claim = (run_id: string, state: Claim['state']) => ({ run_id, state } as Claim);
+
+  it('keeps the pre-batch claims of runs still active after the batch', () => {
+    const before = [claim('run-active', 'in_progress'), claim('run-claimed', 'claimed')];
+    const after = [claim('run-active', 'in_progress'), claim('run-claimed', 'in_progress')];
+    expect(phaseInferenceClaims(before, after)).toEqual(before);
+  });
+
+  it('skips runs that finished, failed or were cancelled in the batch', () => {
+    const before = [
+      claim('run-done', 'in_progress'), claim('run-failed', 'in_progress'),
+      claim('run-cancelled', 'in_progress'), claim('run-active', 'in_progress'),
+    ];
+    // A cancelled run's claim is removed from claims.json.
+    const after = [claim('run-done', 'done'), claim('run-failed', 'failed'), claim('run-active', 'in_progress')];
+    expect(phaseInferenceClaims(before, after).map((c) => c.run_id)).toEqual(['run-active']);
   });
 });

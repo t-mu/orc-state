@@ -150,9 +150,13 @@ export function reduceLifecycleEvent(
       return { type: 'noop', reason: claim ? `wrong_state:${claim.state}` : 'no_claim' };
     }
     const floorTs = claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at;
+    // An inferred phase is stamped when the coordinator emits it: the worker was
+    // last seen at the evidence time, not then.
+    const evidenceTs = event.event === 'phase_started' ? event.payload?.evidence_ts : undefined;
+    const activityTs = typeof evidenceTs === 'string' ? coerceEventTs(evidenceTs, eventTs) : eventTs;
     return {
       type: 'heartbeat',
-      at: authoritativeTs(eventTs, floorTs, nowIso),
+      at: authoritativeTs(activityTs, floorTs, nowIso),
       leaseDurationMs: DEFAULT_LEASE_MS,
     };
   }
