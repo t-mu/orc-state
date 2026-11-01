@@ -2248,6 +2248,35 @@ describe('hook event bus', () => {
     expect(readRunActivity(dir)['run-notes']).toMatchObject({ label: 'Fix review findings', source: 'todo' });
   });
 
+  it('folds a worker note from its heartbeat event into run-activity.json and announces it', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-noted', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    const originalArgv = process.argv;
+    process.argv = process.argv.slice(0, 2);
+    try {
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      appendSequencedEvent(dir, {
+        ts: new Date().toISOString(), event: 'heartbeat', actor_type: 'agent', actor_id: 'worker-01',
+        run_id: 'run-noted', task_ref: 'proj/fix-bug', agent_id: 'worker-01', payload: { note: 'Running the suite' },
+      } as Parameters<typeof appendSequencedEvent>[1]);
+      await tick();
+      const { readRunActivity } = await import('./lib/runActivityStore.ts');
+      expect(readRunActivity(dir)['run-noted']).toMatchObject({ label: 'Running the suite', source: 'note' });
+      await tick();
+    } finally {
+      process.argv = originalArgv;
+    }
+
+    const notes = readEvents(dir).filter((e) => e.event === 'activity_note' && e.run_id === 'run-noted');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({ payload: { label: 'Running the suite', source: 'note' } });
+  });
+
   it('keeps tool-call labels out of events.db: no activity_note for a run labelled only by tool calls', async () => {
     seedState(dir, {
       agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],

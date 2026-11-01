@@ -117,22 +117,18 @@ describe('authorizeLifecycle', () => {
 });
 
 describe('progress --note', () => {
-  it('persists the note on the event and feeds the activity snapshot as a note', async () => {
-    const { readFileSync, rmSync } = await import('node:fs');
+  it('persists the note on the progress or heartbeat event and writes no hook-file record', async () => {
+    const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const { dispatchHookEvents } = await import('./hookEventBus.ts');
-    const { applyHookActivity } = await import('./runActivityStore.ts');
-    const { selectCurrentActivity } = await import('./currentActivity.ts');
     const { readEventsSince } = await import('./eventLog.ts');
     commitClaims(dir, { version: '1', claims: [claim('in_progress')] });
     applyLifecycle(dir, { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'phase_started', phase: 'implement', note: '  Fixing findings from the critic ' });
-    const file = join(dir, 'pty-hook-events', 'worker-a.ndjson');
-    const records = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-    rmSync(file);
-    const { activity } = dispatchHookEvents(records, 'worker-a');
-    const snapshot = applyHookActivity(undefined, 'run-a', 'worker-a', activity);
-    expect(selectCurrentActivity(snapshot)).toMatchObject({ text: 'Fixing findings from the critic', source: 'note' });
-    const events = readEventsSince(join(dir, 'events.db'), 0).filter((e) => e.event === 'phase_started');
-    expect(events.at(-1)?.payload).toMatchObject({ note: 'Fixing findings from the critic' });
+    applyLifecycle(dir, { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'heartbeat', note: 'Running  npm test' });
+    applyLifecycle(dir, { op: 'progress', run_id: 'run-a', agent_id: 'worker-a', event: 'heartbeat' });
+    expect(existsSync(join(dir, 'pty-hook-events', 'worker-a.ndjson'))).toBe(false);
+    const events = readEventsSince(join(dir, 'events.db'), 0);
+    expect(events.filter((e) => e.event === 'phase_started').at(-1)?.payload).toMatchObject({ note: 'Fixing findings from the critic' });
+    const heartbeats = events.filter((e) => e.event === 'heartbeat');
+    expect(heartbeats.map((e) => (e.payload as { note?: string }).note)).toEqual(['Running npm test', undefined]);
   });
 });

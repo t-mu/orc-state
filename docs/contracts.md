@@ -32,7 +32,7 @@ Auxiliary runtime files (not orchestrator state):
 | `pty-logs/<agent_id>.log` | Raw PTY/tmux pane output capture (output tails) |
 | `pty-hook-events/<agent_id>.ndjson` | Provider hook events (`permission`, `tool_start`, `tool`, `activity`), appended by the session's hooks, and `turn_end`, appended by the coordinator on `POST /v1/stop-check`; drained only by the coordinator tick (`lib/hookEventBus.ts`) for an agent with an active claim, by renaming it to `<agent_id>.ndjson.processing`, reading and deleting it (a `.processing` file left by a crash is drained first on the next tick); deleted when the session stops, and at coordinator start or by `orc worker-gc` once its agent is no longer registered |
 | `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do task labels by id and the active task id, so a status-only `TaskUpdate` resolves its label; written only by `hooks/orc-hook.ts`, deleted when the session stops (or, after a crash, with the events file) |
-| `run-activity.json` | Coordinator-owned per-run activity snapshot (label, source, last tool, tool calls in flight, last turn end, and `review_read_at`, the last `orc review-read`, which phase inference needs after a coordinator restart) built from hook events by `RunSignals` (`lib/runSignals.ts`); entries are removed when a run ends. Read it with `readRunActivity(stateDir)` (`lib/runActivityStore.ts`) |
+| `run-activity.json` | Coordinator-owned per-run activity snapshot (label, source, last tool, tool calls in flight, last turn end, and `review_read_at`, the last `orc review-read`, which phase inference needs after a coordinator restart) built by `RunSignals` (`lib/runSignals.ts`) from hook events and from worker notes (`payload.note` on the worker's own heartbeat and progress events, from `orc progress --note`); entries are removed when a run ends. Read it with `readRunActivity(stateDir)` (`lib/runActivityStore.ts`) |
 | `control.json` | Control API endpoint descriptor (protocol version, transport, socket path, daemon PID) |
 | `control.token` | Control API bearer token, mode `0600`, rotated on each daemon start |
 | `control.sock` | Control API Unix socket, mode `0600` (under the OS temp dir when the state path is too long) |
@@ -442,7 +442,7 @@ before upgrading an existing project.
 | Event | Emitted by | When |
 |-------|-----------|------|
 | `run_started` | Worker | `orc run-start` acknowledged |
-| `heartbeat` | Worker/Coordinator | Phase event processed (lease renewal) |
+| `heartbeat` | Worker/Coordinator | Phase event processed (lease renewal); `orc progress --event=heartbeat --note=<text>` carries the worker's note as `payload.note` |
 | `work_complete` | Worker | `orc run-work-complete` |
 | `run_finished` | Worker | `orc run-finish` (terminal success) |
 | `run_failed` | Worker | `orc run-fail` (terminal failure) |
