@@ -99,6 +99,8 @@ orc run-close <run_id> --reason="merged manually after blocked_finalize"
    from the main checkout, not from inside the worktree it removes. A branch that
    is not merged into `main` (squash, rebase or fast-forward merges do not count)
    keeps its worktree; remove it by hand once nothing in it is needed.
+   When the branch is merged, `run-close` also marks a task that is not yet
+   `done` done, so the merged work is not requeued.
    It refuses a run whose task is not `done`/`released` and whose branch is not
    merged; for work merged another way run `orc task-mark-done` first, otherwise
    `orc run-expire <run_id>` or `orc task-reset <task_ref>` requeue the task.

@@ -499,7 +499,8 @@ export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): 
  * Close a run whose work already reached `main` by hand (docs/recovery.md,
  * Finalization Failure): the claim is non-terminal while its task is
  * done/released or its branch is merged into main. Records the claim as done,
- * emits `run_finished` and, when the branch is merged, cleans the run worktree
+ * emits `run_finished` and, when the branch is merged, marks its task done and
+ * cleans the run worktree
  * and branch the way the coordinator does after a merge; an unmerged branch's
  * worktree is kept, since that cleanup force-removes it. A run that is neither
  * is refused: mark work merged another way done first, or requeue the task.
@@ -519,6 +520,14 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
   } catch {
     // A git failure proves nothing merged; a done task closes regardless.
     branchMerged = false;
+  }
+
+  // A merged branch is the coordinator's merge done by hand: record the task done
+  // the way the coordinator does after a merge, before the claim closes, or
+  // reconcile would requeue a task left claimed/in_progress without an active run.
+  if (branchMerged) {
+    const status = findTask(readBacklog(stateDir), initial.task_ref)?.status;
+    if (status !== 'done' && status !== 'released') markTaskDoneRuntimeOnly(initial.task_ref, actor_id, stateDir);
   }
 
   const closed = withLock(join(stateDir, '.lock'), () => {
