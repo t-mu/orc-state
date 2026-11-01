@@ -74,6 +74,7 @@ import type { Backlog } from './types/backlog.ts';
 import { writeProjectDescriptor } from './lib/projectContext.ts';
 import { readProcessStart } from './lib/processIdentity.ts';
 import { controlEndpointCoordinatorPid, isCoordinatorLockHeld, type CoordinatorLock } from './lib/coordinatorLiveness.ts';
+import { ensureCoordinatorPidFile, releaseCoordinatorPidFile, type CoordinatorPidRecord, type PidFileCheck } from './lib/coordinatorPidFile.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -247,7 +248,9 @@ let tickCount = 0;
 let ticking = false;
 let timerHandle: ReturnType<typeof setInterval> | null = null;
 let shutdownStarted = false;
-let coordinatorLockReleased = false;
+// The pid lock this process acquired; null before acquisition and after release.
+let coordinatorLock: CoordinatorPidRecord | null = null;
+let lastPidFileCheck: PidFileCheck = 'present';
 let controlServer: ControlServer | null = null;
 const latestActivityByRun: Map<string, string> = new Map();
 const latestPhaseByRun: Map<string, string> = new Map();
@@ -1519,6 +1522,7 @@ function reloadTickState(workerPoolConfig: WorkerPoolConfig): { agents: Agent[];
 async function tick() {
   tickCount++;
   log(`tick ${tickCount}`);
+  checkCoordinatorPidFile();
   try {
     renewSessionOwnership(STATE_DIR, currentSessionOwnerId(), sessionOwnerTtlMs());
   } catch (error) {
@@ -2203,7 +2207,8 @@ const COORDINATOR_PID_FILE = join(STATE_DIR, 'coordinator.pid');
 
 function acquireCoordinatorLock() {
   const lockFlags = constants.O_EXCL | constants.O_CREAT | constants.O_WRONLY;
-  const payload = JSON.stringify({ pid: process.pid, started_at: new Date().toISOString(), process_start: readProcessStart(process.pid) });
+  const record: CoordinatorPidRecord = { pid: process.pid, started_at: new Date().toISOString(), process_start: readProcessStart(process.pid) };
+  const payload = JSON.stringify(record);
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -2213,7 +2218,8 @@ function acquireCoordinatorLock() {
       } finally {
         closeSync(fd);
       }
-      coordinatorLockReleased = false;
+      coordinatorLock = record;
+      lastPidFileCheck = 'present';
       // A live coordinator whose pid lock went missing is still recorded in control.json.
       const endpointPid = controlEndpointCoordinatorPid(STATE_DIR);
       if (endpointPid !== null && endpointPid !== process.pid) {
@@ -2248,10 +2254,39 @@ function acquireCoordinatorLock() {
   throw new Error(`[coordinator] ERROR: failed to acquire coordinator pid lock: ${COORDINATOR_PID_FILE}`);
 }
 
+// Only a lock this process acquired, and that still names it, is removed: a
+// coordinator module that never acquired the lock (a test calling doShutdown)
+// must not delete the pid file of the coordinator that did.
 function releaseCoordinatorLock() {
-  if (coordinatorLockReleased) return;
-  coordinatorLockReleased = true;
-  try { unlinkSync(COORDINATOR_PID_FILE); } catch { /* already gone */ }
+  const own = coordinatorLock;
+  if (!own) return;
+  coordinatorLock = null;
+  try {
+    if (releaseCoordinatorPidFile(COORDINATOR_PID_FILE, own) === 'foreign') {
+      log('coordinator.pid names another process; left in place');
+    }
+  } catch (error) {
+    log(`warning: could not release coordinator.pid: ${(error as Error).message}`);
+  }
+}
+
+/** Restores this coordinator's pid lock when it has disappeared; leaves another process's lock alone. */
+function checkCoordinatorPidFile() {
+  if (!coordinatorLock) return;
+  let check: PidFileCheck;
+  try {
+    check = ensureCoordinatorPidFile(COORDINATOR_PID_FILE, coordinatorLock);
+  } catch (error) {
+    log(`warning: coordinator.pid check failed: ${(error as Error).message}`);
+    return;
+  }
+  if (check === 'recreated') {
+    log(`coordinator.pid was missing; re-created it (PID ${coordinatorLock.pid})`);
+  } else if (check !== lastPidFileCheck) {
+    if (check === 'foreign_live') console.error(`[coordinator] ERROR: ${COORDINATOR_PID_FILE} names another running coordinator; left in place`);
+    else if (check === 'foreign_stale') log(`warning: ${COORDINATOR_PID_FILE} names another process that is not running; left in place`);
+  }
+  lastPidFileCheck = check === 'recreated' ? 'present' : check;
 }
 
 // ── Session supervision ────────────────────────────────────────────────────
