@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { claimedRunStartupAnchor, latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs, runPhaseHistory } from './runActivity.ts';
+import { claimedRunStartupAnchor, latestRunActivityMap, latestRunActivityDetailMap, latestRunPhaseMap, runIdleMs, runPhaseHistory, shouldRenewFromHookActivity } from './runActivity.ts';
 import type { OrcEvent } from '../types/index.ts';
 
 describe('latestRunActivityMap', () => {
@@ -185,5 +185,41 @@ describe('claimedRunStartupAnchor', () => {
       task_envelope_sent_at: null,
       claimed_at: '2026-01-01T00:01:00Z',
     })).toBeNull();
+  });
+});
+
+describe('shouldRenewFromHookActivity', () => {
+  const LEASE = 30 * 60 * 1000;
+  const NOW = Date.parse('2026-01-01T12:00:00.000Z');
+  const iso = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
+  const MIN = 60 * 1000;
+
+  it('does not renew a fresh lease on every new hook event', () => {
+    const claim = { last_heartbeat_at: iso(-1 * MIN), lease_expires_at: iso(29 * MIN) };
+    expect(shouldRenewFromHookActivity(claim, iso(-5000), NOW, LEASE)).toBe(false);
+  });
+
+  it('renews once the lease is half used', () => {
+    const claim = { last_heartbeat_at: iso(-1 * MIN), lease_expires_at: iso(15 * MIN) };
+    expect(shouldRenewFromHookActivity(claim, iso(-5000), NOW, LEASE)).toBe(true);
+  });
+
+  it('renews when the last heartbeat is half a lease old, even if the lease was extended elsewhere', () => {
+    const claim = { last_heartbeat_at: iso(-15 * MIN), lease_expires_at: iso(60 * MIN) };
+    expect(shouldRenewFromHookActivity(claim, iso(-5000), NOW, LEASE)).toBe(true);
+  });
+
+  it('never renews from activity that is not newer than the last heartbeat', () => {
+    const claim = { last_heartbeat_at: iso(-1 * MIN), lease_expires_at: iso(1 * MIN) };
+    expect(shouldRenewFromHookActivity(claim, iso(-2 * MIN), NOW, LEASE)).toBe(false);
+    expect(shouldRenewFromHookActivity(claim, iso(-1 * MIN), NOW, LEASE)).toBe(false);
+  });
+
+  it('renews a claim with no heartbeat or no lease, and ignores missing or invalid activity', () => {
+    expect(shouldRenewFromHookActivity({ last_heartbeat_at: null, lease_expires_at: iso(29 * MIN) }, iso(0), NOW, LEASE)).toBe(true);
+    expect(shouldRenewFromHookActivity({ last_heartbeat_at: iso(-MIN), lease_expires_at: null }, iso(0), NOW, LEASE)).toBe(true);
+    expect(shouldRenewFromHookActivity({ last_heartbeat_at: null }, null, NOW, LEASE)).toBe(false);
+    expect(shouldRenewFromHookActivity({ last_heartbeat_at: null }, 'garbage', NOW, LEASE)).toBe(false);
+    expect(shouldRenewFromHookActivity(null, iso(0), NOW, LEASE)).toBe(false);
   });
 });

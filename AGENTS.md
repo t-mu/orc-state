@@ -353,7 +353,10 @@ Liveness is determined by the coordinator probing the worker's session: for
 reused PID is not mistaken for the worker). If the process is dead, the
 coordinator clears the agent session, expires the claim, and requeues the task.
 Lease renewal is automatic — the coordinator extends the lease whenever phase
-events are processed, and for Claude workers whenever tool hook events arrive.
+events are processed, and for Claude workers when tool hook events arrive once the
+lease is half used or the last heartbeat is half a lease old (so a busy run does
+not rewrite `claims.json`/`agents.json` every tick; idle detection reads hook
+activity from `run-activity.json` instead).
 Runs that deliver tool hook events use shorter idle thresholds (`hook_idle_nudge_ms`,
 `hook_idle_escalate_ms`, see `docs/configuration.md`), except while a tool call is
 still running. The coordinator also infers `phase_started {inferred: true}` from

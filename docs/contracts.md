@@ -286,7 +286,11 @@ PTY PID via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears
 the agent session, expires the claim, and requeues the task.
 
 Lease renewal is automatic — the coordinator extends the lease whenever phase events
-are processed. Workers do not need to emit periodic heartbeats.
+are processed. Claude tool hook events renew the heartbeat and lease too, but only when
+the activity is newer than `last_heartbeat_at` and the lease is at least half used or
+`last_heartbeat_at` is at least half a lease old (`shouldRenewFromHookActivity` in
+`lib/runActivity.ts`); otherwise they only update `run-activity.json`, which is what idle
+detection reads. Workers do not need to emit periodic heartbeats.
 
 ### Invariants
 

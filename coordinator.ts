@@ -33,7 +33,7 @@ import { removeDeadTmuxSocket } from './adapters/tmux.ts';
 import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
 import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
-import { latestRunActivityMap, newestTimestamp, runIdleMs } from './lib/runActivity.ts';
+import { latestRunActivityMap, newestTimestamp, runIdleMs, shouldRenewFromHookActivity } from './lib/runActivity.ts';
 import { drainHookEvents, type PermissionHookEvent, type ToolHookEvent } from './lib/hookEventBus.ts';
 import { inferPhaseTransitions, toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './lib/phaseInference.ts';
 import {
@@ -69,7 +69,7 @@ import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
-import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
+import { AGENT_DEAD_TTL_MS, DEFAULT_LEASE_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
 import type { Backlog } from './types/backlog.ts';
 import { writeProjectDescriptor } from './lib/projectContext.ts';
 import { readProcessStart } from './lib/processIdentity.ts';
@@ -1000,7 +1000,9 @@ function loadRunActivity(): RunActivityMap {
  * The single consumer of `pty-hook-events/*.ndjson`. Drains each active run's
  * hook file once per tick and dispatches by type: permission events wait for
  * the run's input-block check; tool/activity events update the run's activity
- * snapshot, renew its lease like a phase event, and may emit `activity_note`.
+ * snapshot, renew its heartbeat and lease like a phase event once the lease is
+ * half used or the last heartbeat is half a lease old (shouldRenewFromHookActivity),
+ * and may emit `activity_note`.
  * Runs that are no longer active lose their snapshot.
  *
  * Permission events are held in memory until the run's input-block check
@@ -1030,7 +1032,7 @@ function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): Map<stri
       changed = true;
       const ts = latestHookActivityTs(snapshot);
       if (claim.state === 'in_progress' && ts && ts !== previousTs
-        && (!claim.last_heartbeat_at || Date.parse(claim.last_heartbeat_at) < Date.parse(ts))) {
+        && shouldRenewFromHookActivity(claim, ts, nowMs, DEFAULT_LEASE_MS)) {
         try {
           heartbeat(STATE_DIR, claim.run_id, claim.agent_id, { emitEvent: false, at: ts });
           recordAgentActivity(STATE_DIR, claim.agent_id, { at: ts });

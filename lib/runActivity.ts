@@ -173,3 +173,30 @@ export function runIdleMs(
   if (Number.isNaN(ts)) return null;
   return Math.max(0, nowMs - ts);
 }
+
+/**
+ * Whether hook activity at `activityTs` should renew a run's heartbeat and
+ * lease. Hook events arrive on almost every tick of a busy run, and each
+ * renewal rewrites claims.json and agents.json, so a renewal happens only
+ * when the activity is newer than the last heartbeat AND either the lease is
+ * at least half used or the last heartbeat is at least half a lease old.
+ * Idle detection does not depend on this: it reads hook activity from
+ * run-activity.json.
+ */
+export function shouldRenewFromHookActivity(
+  claim: { last_heartbeat_at?: string | null; lease_expires_at?: string | null } | null | undefined,
+  activityTs: string | null | undefined,
+  nowMs: number,
+  leaseDurationMs: number,
+): boolean {
+  if (!claim || !activityTs) return false;
+  const activityMs = Date.parse(activityTs);
+  if (!Number.isFinite(activityMs)) return false;
+  const heartbeatMs = Date.parse(claim.last_heartbeat_at ?? '');
+  if (!Number.isFinite(heartbeatMs)) return true;
+  if (heartbeatMs >= activityMs) return false;
+  const halfLeaseMs = leaseDurationMs / 2;
+  const leaseMs = Date.parse(claim.lease_expires_at ?? '');
+  if (!Number.isFinite(leaseMs) || leaseMs - nowMs <= halfLeaseMs) return true;
+  return nowMs - heartbeatMs >= halfLeaseMs;
+}
