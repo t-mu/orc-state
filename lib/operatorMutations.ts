@@ -13,7 +13,7 @@ import { commitClaims } from './runStore.ts';
 import { cleanupRunWorktree, getRunWorktree, runBranchMergedIntoMain } from './runWorktree.ts';
 import { resolveControlPrincipal, requireProjectAuthor, type ControlPrincipal } from './controlPrincipal.ts';
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
-import { markTaskDoneRuntimeOnly } from './taskCompletion.ts';
+import { markTaskDoneLocked, markTaskDoneRuntimeOnly } from './taskCompletion.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from './taskRouting.ts';
 import type { Claim } from '../types/claims.ts';
@@ -526,14 +526,6 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
     branchMerged = false;
   }
 
-  // A merged branch is the coordinator's merge done by hand: record the task done
-  // the way the coordinator does after a merge, before the claim closes, or
-  // reconcile would requeue a task left claimed/in_progress without an active run.
-  if (branchMerged) {
-    const status = findTask(readBacklog(stateDir), initial.task_ref)?.status;
-    if (status !== 'done' && status !== 'released') markTaskDoneRuntimeOnly(initial.task_ref, actor_id, stateDir);
-  }
-
   const closed = withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
     const claimsState = readClaims(stateDir);
@@ -547,6 +539,10 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
         + `If its work reached main another way (squash, rebase or fast-forward), run orc task-mark-done ${claim.task_ref} and then orc run-close ${run_id}; `
         + `to requeue the task use orc run-expire ${run_id} or orc task-reset ${claim.task_ref}`);
     }
+    // A merged branch is the coordinator's merge done by hand: record the task done the way the
+    // coordinator does after a merge, under the same lock and while the run is still active, or
+    // reconcile would requeue a task left claimed/in_progress without an active run.
+    if (!taskDone && branchMerged) markTaskDoneLocked(stateDir, claim.task_ref, actor_id);
     claim.state = 'done';
     claim.finished_at = now;
     claim.input_state = null;
@@ -559,7 +555,7 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
       run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
       payload: { closed_by: actor_id, reason: (reason as string | null) ?? null, manual: true },
     }]);
-    return { task_ref: claim.task_ref, task_status: taskStatus };
+    return { task_ref: claim.task_ref, task_status: !taskDone && branchMerged ? 'done' : taskStatus };
   });
 
   // The coordinator's post-merge cleanup: remove the worktree, delete the branch, drop the entry.

@@ -162,6 +162,17 @@ describe('closeRun (orc run-close / close_run)', () => {
     expect(() => closeRun(stateDir, { run_id: 'run-1' })).toThrow(/not merged/);
   });
 
+  it('leaves the task alone when it refuses a terminal run whose branch is merged', async () => {
+    seed('todo', { state: 'failed', finished_at: '2026-01-01T01:00:00.000Z', finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null });
+    const entry = await runWithCommit();
+    git(target, 'merge', entry.branch, '--no-ff', '-m', 'task(app/task-1): merge worktree');
+    const { closeRun } = await load();
+    const { findTask, readBacklog } = await import('./stateReader.ts');
+
+    expect(() => closeRun(stateDir, { run_id: 'run-1' })).toThrow(/already terminal/);
+    expect(findTask(readBacklog(stateDir), 'app/task-1')?.status).toBe('todo');
+  });
+
   it('refuses a run that is already terminal or unknown', async () => {
     seed('done', { state: 'done', finished_at: '2026-01-01T01:00:00.000Z' });
     const { closeRun } = await load();

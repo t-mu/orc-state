@@ -108,6 +108,14 @@ export function applyHookActivity(
   for (const event of events) {
     const ts = new Date(Math.min(Date.parse(event.ts), nowMs)).toISOString();
     if (event.type === 'tool_start') {
+      // Backstop for a call that ended without a PostToolUse/PostToolUseFailure record (an
+      // interrupt): Claude starts a new call only after a call of the previous batch finished,
+      // so a start older than the newest finished call belongs to a batch that is over.
+      // A sub-agent's own tool calls may close its Agent call this way; their records keep the run live.
+      if (next.last_tool_ts) {
+        const finishedMs = Date.parse(next.last_tool_ts);
+        open = Object.fromEntries(Object.entries(open).filter(([, started]) => Date.parse(started) >= finishedMs));
+      }
       open[event.id ?? ANONYMOUS_TOOL] = ts;
       continue;
     }

@@ -85,6 +85,7 @@ describe('pty adapter start()', () => {
     expect(settings.hooks).toEqual({
       Notification: [{ hooks: [cmd('permission')] }],
       PostToolUse: [{ matcher: '*', hooks: [cmd('tool')] }],
+      PostToolUseFailure: [{ matcher: '*', hooks: [cmd('tool')] }],
       PreToolUse: [{ matcher: '*', hooks: [cmd('tool_start')] }, { matcher: 'TodoWrite|TaskCreate|TaskUpdate', hooks: [cmd('todo')] }],
       // A task worker also gets the stop-hook run guard (asserted in detail below).
       Stop: [{ hooks: [{ type: 'command', command: expect.stringMatching(/ stop-check$/), timeout: 15 }] }],

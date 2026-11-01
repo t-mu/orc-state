@@ -527,7 +527,7 @@ restart, `complete` is inferred again only from a new `review-read`, and
 | `coordinator_stopped` | Coordinator | Coordinator process stopped |
 | `worker_needs_attention` | Coordinator | Escalation: worker stalled or errored |
 | `remediation_applied` | Coordinator | Automatic remediation action taken |
-| `activity_note` | Coordinator | A run's to-do or note label changed (`payload.label`, `payload.source`: `todo`/`note`); at most once per 30 s per run. Tool-call labels stay in `run-activity.json` and are not recorded as events |
+| `activity_note` | Coordinator | A run's to-do or note label changed (`payload.label`, `payload.source`: `todo`/`note`); at most once per 30 s per run. Tool-call labels stay in `run-activity.json` and are not recorded as events (events recorded before this change may carry `source: tool`, which stays valid) |
 | `stop_blocked` | Coordinator | A Claude worker's `Stop` hook (`orc stop-check`) was refused because its run is unfinished (`payload.phase`, the run's current phase or null; `payload.count`, this block's number in the 10-minute window; `payload.stop_hook_active`, recorded for diagnosis only); at most 3 per run per 10 minutes and 9 per run in total |
 
 ### Notification events

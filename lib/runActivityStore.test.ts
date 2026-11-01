@@ -82,6 +82,27 @@ describe('applyHookActivity', () => {
     expect(started.open_tools).toEqual({ a: at(0), b: at(1000) }); // pure
   });
 
+  it('a failed call (PostToolUseFailure writes the same tool record) closes its start', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'a', ts: at(0) },
+      { type: 'tool', tool: 'Bash', brief: 'grep -q missing x', id: 'a', ts: at(1000) },
+    ], T0 + 2000);
+    expect(toolInFlight(snap, T0 + 2000)).toBe(false);
+  });
+
+  it('a new tool_start closes starts older than the newest finished call (a call that ended with no record)', () => {
+    const interrupted = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'lost', ts: at(0) },
+      { type: 'tool_start', tool: 'Read', id: 'b', ts: at(100) },
+      { type: 'tool', tool: 'Read', brief: 'a.ts', id: 'b', ts: at(1000) },
+    ], T0 + 2000);
+    expect(interrupted.open_tools).toEqual({ lost: at(0) });
+    const next = applyHookActivity(interrupted, 'run-1', 'w1', [{ type: 'tool_start', tool: 'Edit', id: 'c', ts: at(3000) }], T0 + 4000);
+    expect(next.open_tools).toEqual({ c: at(3000) });
+    const done = applyHookActivity(next, 'run-1', 'w1', [{ type: 'tool', tool: 'Edit', brief: 'a.ts', id: 'c', ts: at(5000) }], T0 + 6000);
+    expect(toolInFlight(done, T0 + 6000)).toBe(false);
+  });
+
   it('pairs tool calls without a tool_use_id one at a time', () => {
     const snap = applyHookActivity(undefined, 'run-1', 'w1', [
       { type: 'tool_start', tool: 'Bash', ts: at(0) },
