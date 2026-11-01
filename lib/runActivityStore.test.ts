@@ -90,17 +90,28 @@ describe('applyHookActivity', () => {
     expect(toolInFlight(snap, T0 + 2000)).toBe(false);
   });
 
-  it('a new tool_start closes starts older than the newest finished call (a call that ended with no record)', () => {
-    const interrupted = applyHookActivity(undefined, 'run-1', 'w1', [
-      { type: 'tool_start', tool: 'Bash', id: 'lost', ts: at(0) },
+  it('a new tool_start closes an anonymous start older than the newest finished call (no record can name it)', () => {
+    const lost = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', ts: at(0) },
       { type: 'tool_start', tool: 'Read', id: 'b', ts: at(100) },
       { type: 'tool', tool: 'Read', brief: 'a.ts', id: 'b', ts: at(1000) },
     ], T0 + 2000);
-    expect(interrupted.open_tools).toEqual({ lost: at(0) });
-    const next = applyHookActivity(interrupted, 'run-1', 'w1', [{ type: 'tool_start', tool: 'Edit', id: 'c', ts: at(3000) }], T0 + 4000);
+    expect(lost.open_tools).toEqual({ _: at(0) });
+    const next = applyHookActivity(lost, 'run-1', 'w1', [{ type: 'tool_start', tool: 'Edit', id: 'c', ts: at(3000) }], T0 + 4000);
     expect(next.open_tools).toEqual({ c: at(3000) });
-    const done = applyHookActivity(next, 'run-1', 'w1', [{ type: 'tool', tool: 'Edit', brief: 'a.ts', id: 'c', ts: at(5000) }], T0 + 6000);
-    expect(toolInFlight(done, T0 + 6000)).toBe(false);
+  });
+
+  it('keeps an id-keyed call open while parallel sub-agents finish and start other calls', () => {
+    // Reviewer 1 runs npm test; reviewer 2 reads, finishes, and starts another call meanwhile.
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool_start', tool: 'Bash', id: 'r1-test', ts: at(0) },
+      { type: 'tool_start', tool: 'Read', id: 'r2-read', ts: at(100) },
+      { type: 'tool', tool: 'Read', brief: 'a.ts', id: 'r2-read', ts: at(1000) },
+      { type: 'tool_start', tool: 'Grep', id: 'r2-grep', ts: at(2000) },
+      { type: 'tool', tool: 'Grep', brief: 'x', id: 'r2-grep', ts: at(3000) },
+    ], T0 + 4000);
+    expect(snap.open_tools).toEqual({ 'r1-test': at(0) });
+    expect(toolInFlight(snap, T0 + 10 * 60_000)).toBe(true);
   });
 
   it('pairs tool calls without a tool_use_id one at a time', () => {
