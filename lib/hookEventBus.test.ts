@@ -47,6 +47,11 @@ describe('dispatchHookEvents', () => {
     ]);
   });
 
+  it('routes turn_end records to activity and skips one without a valid ts', () => {
+    const out = dispatchHookEvents([{ type: 'turn_end', ts: TS }, { type: 'turn_end', ts: 'nope' }, { type: 'turn_end' }]);
+    expect(out.activity).toEqual([{ type: 'turn_end', ts: TS }]);
+  });
+
   it('keeps permission events lenient, as the Notification hook has always been read', () => {
     expect(dispatchHookEvents([{ type: 'permission' }]).permission).toEqual([{ type: 'permission', message: '', ts: '' }]);
   });

@@ -295,6 +295,18 @@ describe('mcp read handlers', () => {
     expect(later.map((claim) => [claim.run_id, claim.stale_for_ms])).toEqual([['run-1', 30_000]]);
   });
 
+  it('handleListStalledRuns skips a run waiting for an input response (shared isStalled)', () => {
+    const now = new Date('2026-01-01T00:20:00.000Z').getTime();
+    seedClaims([
+      { run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', state: 'in_progress', claimed_at: '2026-01-01T00:00:00.000Z',
+        last_heartbeat_at: '2026-01-01T00:00:06.000Z', lease_expires_at: '2026-01-01T00:30:00.000Z', input_state: 'awaiting_input' },
+      { run_id: 'run-2', task_ref: 'project/done-one', agent_id: 'orc-2', state: 'in_progress', claimed_at: '2026-01-01T00:00:00.000Z',
+        last_heartbeat_at: '2026-01-01T00:00:06.000Z', lease_expires_at: '2026-01-01T00:30:00.000Z' },
+    ]);
+    const stale = handleListStalledRuns(dir, { stale_after_ms: 60_000, now_ms: now }) as Array<Record<string, unknown>>;
+    expect(stale.map((claim) => claim.run_id)).toEqual(['run-2']);
+  });
+
   it('handleGetTask returns task or not_found error', () => {
     const task = handleGetTask(dir, { task_ref: 'project/todo-one' }) as Record<string, unknown>;
     expect(task.ref).toBe('project/todo-one');

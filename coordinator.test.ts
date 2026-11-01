@@ -2026,6 +2026,47 @@ describe('hook event bus', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('does not escalate at the long thresholds while a tool call is still running (same isStalled as orc status)', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-long-tool', 'worker-01', 'proj/fix-bug', 90 * 60 * 1000)],
+    });
+    // A sub-agent review started 45 minutes ago: past worker_stale_soft_ms (30 min), within TOOL_IN_FLIGHT_MAX_MS.
+    writeHookEvents('worker-01', [
+      { type: 'tool', tool: 'Edit', brief: 'a.ts', id: 'toolu_1', ts: new Date(Date.now() - 46 * 60 * 1000).toISOString() },
+      { type: 'tool_start', tool: 'Agent', id: 'toolu_2', ts: new Date(Date.now() - 45 * 60 * 1000).toISOString() },
+    ]);
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    await runTicks([], 1);
+
+    const events = readEvents(dir);
+    expect(events.some((e) => (e.event === 'worker_needs_attention' || e.event === 'need_input') && e.run_id === 'run-long-tool')).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('a turn_end record closes a tool call that never reported back, so the hook thresholds apply', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-refused', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
+    });
+    // A call refused at the permission step: PreToolUse, no PostToolUse; then the turn ended.
+    writeHookEvents('worker-01', [
+      { type: 'tool', tool: 'Edit', brief: 'a.ts', id: 'toolu_1', ts: new Date(Date.now() - 12 * 60 * 1000).toISOString() },
+      { type: 'tool_start', tool: 'Bash', id: 'toolu_2', ts: new Date(Date.now() - 11 * 60 * 1000).toISOString() },
+      { type: 'turn_end', ts: new Date(Date.now() - 11 * 60 * 1000 + 1000).toISOString() },
+    ]);
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    await runTicks([], 1);
+
+    const events = readEvents(dir);
+    expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-refused')).toBe(true);
+    expect(events.some((e) => e.event === 'need_input' && e.run_id === 'run-refused')).toBe(true);
+  });
+
   it('reads the hook idle thresholds from coordinator settings', async () => {
     useSettings({ coordinator: { hook_idle_nudge_ms: 3_600_000, hook_idle_escalate_ms: 3_600_000 } });
     seedState(dir, {
@@ -2133,6 +2174,29 @@ describe('hook event bus', () => {
     await runTicks([]);
 
     expect(Object.keys(readRunActivity(dir))).toEqual(['run-live']);
+  });
+
+  it('survives a failed hydration read and hydrates on a later tick', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-hydrate', 'worker-01', 'proj/fix-bug', 60 * 1000)],
+    });
+    let calls = 0;
+    vi.doMock('./lib/eventLog.ts', async () => {
+      const actual = await vi.importActual<typeof import('./lib/eventLog.ts')>('./lib/eventLog.ts');
+      return {
+        ...actual,
+        readEventsForRuns: (...args: Parameters<typeof actual.readEventsForRuns>) => {
+          calls += 1;
+          if (calls === 1) throw new Error('database is locked');
+          return actual.readEventsForRuns(...args);
+        },
+      };
+    });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock());
+    await expect(runTicks([], 2)).resolves.toBeUndefined();
+    expect(calls).toBe(2);
   });
 
   it('does not re-emit activity_note for an unchanged label after a coordinator restart', async () => {

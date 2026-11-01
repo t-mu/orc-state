@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { appendSequencedEvent, closeAllDatabases, initEventsDb, queryEvents } from './eventLog.ts';
 import { validateEventObject } from './eventValidation.ts';
@@ -148,6 +150,23 @@ describe('applyStopCheck', () => {
     }
     expect(results.filter((allowed) => !allowed)).toHaveLength(STOP_BLOCK_RUN_CAP);
     expect(results.slice(STOP_BLOCK_RUN_CAP).every(Boolean)).toBe(true);
+  });
+
+  it('appends a turn_end hook record for the run owner, whether the stop is blocked or allowed', () => {
+    const hookFile = join(dir, 'pty-hook-events', 'worker-a.ndjson');
+    applyStopCheck(dir, { runId: 'run-a', agentId: 'worker-a', stopHookActive: false, nowMs: NOW });
+    commitClaims(dir, { version: '1', claims: [claim({ finalization_state: 'awaiting_finalize' })] });
+    expect(applyStopCheck(dir, { runId: 'run-a', agentId: 'worker-a', stopHookActive: false, nowMs: NOW + 1000 }).allow).toBe(true);
+    const records = readFileSync(hookFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(records).toEqual([
+      { type: 'turn_end', ts: new Date(NOW).toISOString() },
+      { type: 'turn_end', ts: new Date(NOW + 1000).toISOString() },
+    ]);
+  });
+
+  it('records no turn_end for a session that does not own an active run', () => {
+    applyStopCheck(dir, { runId: 'run-a', agentId: 'worker-b', stopHookActive: false, nowMs: NOW });
+    expect(existsSync(join(dir, 'pty-hook-events', 'worker-b.ndjson'))).toBe(false);
   });
 
   it('allows without recording an event once the run handed off', () => {

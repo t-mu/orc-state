@@ -37,7 +37,18 @@ export interface ActivityHookEvent {
   ts: string;
 }
 
-export type RunActivityHookEvent = ToolHookEvent | ToolStartHookEvent | ActivityHookEvent;
+/**
+ * The worker's turn ended (its Stop hook ran `orc stop-check`; the coordinator
+ * appends this record). No tool call runs once the turn is over, so it closes
+ * every tool call started at or before `ts`, including one that never got a
+ * PostToolUse/PostToolUseFailure record (refused at the permission step).
+ */
+export interface TurnEndHookEvent {
+  type: 'turn_end';
+  ts: string;
+}
+
+export type RunActivityHookEvent = ToolHookEvent | ToolStartHookEvent | ActivityHookEvent | TurnEndHookEvent;
 
 export interface DispatchedHookEvents {
   /** Drives input-block detection, exactly as the Notification hook always has. */
@@ -93,6 +104,13 @@ export function dispatchHookEvents(records: Array<Record<string, unknown>>, agen
           ...(typeof record.id === 'string' && record.id.length > 0 ? { id: record.id } : {}),
           ts: record.ts,
         });
+        break;
+      case 'turn_end':
+        if (!validTs(record.ts)) {
+          logger.debug(`[hook-events] skipping malformed turn_end event for ${agentId}: ${JSON.stringify(record).slice(0, 200)}`);
+          break;
+        }
+        out.activity.push({ type: 'turn_end', ts: record.ts });
         break;
       case 'activity':
         // An empty `todo` label is a clear (the to-do item finished); an empty note is malformed.

@@ -280,7 +280,7 @@ Commands for digging into active runs and the event stream.
 
 | Command | Description |
 |---------|-------------|
-| `runs-active` | List in-progress and claimed runs with idle/age metrics. |
+| `runs-active` | List in-progress and claimed runs with idle/age metrics; `--json` rows carry `stalled` (the same test as `orc status`). |
 | `sessions` | List supervised provider sessions with state (`running`, `recoverable`, `unknown`, `offline`), transport, PID, owner and reason. |
 | `run-info <run_id>` | Show claim state, task, worktree path, and idle time for a run. |
 | `run-expire <run_id>` | Force-expire a claim and requeue the task. |
@@ -417,7 +417,7 @@ scouts or the master). Not for human use.
 
 | Command | Description |
 |---------|-------------|
-| `stop-check` | Reads Claude's Stop hook input on stdin and asks the coordinator (`POST /v1/stop-check`) whether this session's run lets it end its turn. While the run is unfinished (no `run-work-complete`, no pending input request, not finalizing) it prints `{"decision":"block","reason":...}` and Claude continues; at most 3 blocks per run in 10 minutes and 9 over the whole run, each recorded as `stop_blocked`; after that the stop is allowed and the normal nudge/escalation applies. Always exits 0 and fails open: no session secret, unreadable input or an unreachable coordinator allows the stop. |
+| `stop-check` | Reads Claude's Stop hook input on stdin and asks the coordinator (`POST /v1/stop-check`) whether this session's run lets it end its turn. While the run is unfinished (no `run-work-complete`, no pending input request, not finalizing) it prints `{"decision":"block","reason":...}` and Claude continues; at most 3 blocks per run in 10 minutes and 9 over the whole run, each recorded as `stop_blocked`; after that the stop is allowed and the normal nudge/escalation applies. Each check also records the end of the turn, which closes any tool call that never reported back (`docs/adapters.md`). Always exits 0 and fails open: no session secret, unreadable input or an unreachable coordinator allows the stop. |
 
 ---
 

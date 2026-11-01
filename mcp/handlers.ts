@@ -13,8 +13,8 @@ import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
-import { latestHookActivityTs, readRunActivity, toolInFlight } from '../lib/runActivityStore.ts';
-import { newestTimestamp } from '../lib/runActivity.ts';
+import { readRunActivity } from '../lib/runActivityStore.ts';
+import { isStalled, runIdleAnchor } from '../lib/runSignals.ts';
 import { selectCurrentActivity, type CurrentActivity } from '../lib/currentActivity.ts';
 import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { launchWorkerSession } from '../lib/workerRuntime.ts';
@@ -137,15 +137,16 @@ export function handleListStalledRuns(stateDir: string, { stale_after_ms = 600_0
   }
   const now = (now_ms as number) ?? Date.now();
   const hookActivity = readRunActivity(stateDir);
-  // Same liveness as the coordinator: a hook-observed tool call or label counts, and a tool call still running is not stale.
+  // Same liveness as the coordinator: a hook-observed tool call or label counts, and the
+  // shared isStalled (lib/runSignals.ts) excludes a run waiting for input or running a tool call.
   return readClaims(stateDir).claims
     .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
-    .filter((claim) => !toolInFlight(hookActivity[claim.run_id], now))
     .map((claim) => {
-      const anchor = newestTimestamp(claim.last_heartbeat_at ?? claim.claimed_at, latestHookActivityTs(hookActivity[claim.run_id]));
-      return { claim, stale_for_ms: now - new Date(anchor ?? claim.claimed_at).getTime() };
+      // Durable activity events are not read here; the heartbeat they renew stands in for them.
+      const anchor = runIdleAnchor(claim, null, hookActivity[claim.run_id]) ?? claim.claimed_at;
+      return { claim, stale_for_ms: now - new Date(anchor).getTime() };
     })
-    .filter(({ stale_for_ms }) => stale_for_ms > (stale_after_ms as number))
+    .filter(({ claim, stale_for_ms }) => isStalled(claim, stale_for_ms, hookActivity[claim.run_id], stale_after_ms as number, now))
     .map(({ claim, stale_for_ms }) => ({ ...claim, stale_for_ms }));
 }
 
