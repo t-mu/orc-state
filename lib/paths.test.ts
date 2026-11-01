@@ -100,6 +100,29 @@ describe('consumeHookEvents', () => {
     expect(eventsB[0].message).toBe('event-B');
   });
 
+  it('drains a .processing file left by a crash before renaming the new file over it', async () => {
+    // A coordinator crashed after the rename and before the delete; the hook has since appended more.
+    const { consumeHookEvents, hookEventPath } = await import('./paths.ts');
+    const file = hookEventPath('agent-1');
+    writeFileSync(`${file}.processing`, JSON.stringify({ type: 'permission', message: 'leftover', ts: '' }) + '\n');
+    writeFileSync(file, JSON.stringify({ type: 'permission', message: 'fresh', ts: '' }) + '\n');
+
+    const events = consumeHookEvents('agent-1');
+    expect(events.map((event) => event.message)).toEqual(['leftover', 'fresh']);
+    expect(existsSync(file)).toBe(false);
+    expect(existsSync(`${file}.processing`)).toBe(false);
+  });
+
+  it('drains a leftover .processing file when no new hook events file exists', async () => {
+    const { consumeHookEvents, hookEventPath } = await import('./paths.ts');
+    const file = hookEventPath('agent-1');
+    writeFileSync(`${file}.processing`, JSON.stringify({ type: 'permission', message: 'leftover', ts: '' }) + '\n');
+
+    expect(consumeHookEvents('agent-1').map((event) => event.message)).toEqual(['leftover']);
+    expect(existsSync(`${file}.processing`)).toBe(false);
+    expect(consumeHookEvents('agent-1')).toEqual([]);
+  });
+
   it('skips malformed NDJSON lines without losing valid ones', async () => {
     const { consumeHookEvents, hookEventPath } = await import('./paths.ts');
     const file = hookEventPath('agent-1');

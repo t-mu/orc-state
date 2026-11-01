@@ -57,32 +57,8 @@ export function hookEventPath(agentId: string): string {
   return hookEventPathIn(STATE_DIR, agentId);
 }
 
-/**
- * Atomically consume the raw hook-event records for an agent.
- *
- * Protocol: rename → read → delete. The rename is atomic on POSIX and moves
- * the file out of the hook writer's append path, so no events are lost even
- * if the hook fires while the coordinator is reading.
- *
- * The read is destructive, so this has exactly one caller:
- * `drainHookEvents` (lib/hookEventBus.ts), driven by the coordinator tick.
- * It returns every line that parses to a JSON object, in file order;
- * malformed lines are skipped with a debug log. Typing and dispatch by
- * `type` happen in the bus.
- */
-export function consumeHookEvents(agentId: string): Array<Record<string, unknown>> {
-  const src = hookEventPath(agentId);
-  if (!existsSync(src)) return [];
-  const processing = `${src}.processing`;
-  try {
-    renameSync(src, processing);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      logger.error('[paths] unexpected error renaming hook events file:', err);
-    }
-    // File disappeared between existsSync and rename (consumed by another tick or stop()).
-    return [];
-  }
+/** Read and delete a hook-events `.processing` file; [] when it is absent or unreadable. */
+function drainProcessingFile(processing: string): string[] {
   let lines: string[] = [];
   try {
     lines = readFileSync(processing, 'utf8').split('\n').filter(Boolean);
@@ -93,6 +69,41 @@ export function consumeHookEvents(agentId: string): Array<Record<string, unknown
     /* read failed — file was removed externally */
   }
   try { unlinkSync(processing); } catch { /* already gone */ }
+  return lines;
+}
+
+/**
+ * Atomically consume the raw hook-event records for an agent.
+ *
+ * Protocol: rename → read → delete. The rename is atomic on POSIX and moves
+ * the file out of the hook writer's append path, so no events are lost even
+ * if the hook fires while the coordinator is reading. A `.processing` file
+ * left by a coordinator that crashed between the rename and the delete is
+ * drained first (its records are older), so the next rename cannot overwrite it.
+ *
+ * The read is destructive, so this has exactly one caller:
+ * `drainHookEvents` (lib/hookEventBus.ts), driven by the coordinator tick.
+ * It returns every line that parses to a JSON object, in file order;
+ * malformed lines are skipped with a debug log. Typing and dispatch by
+ * `type` happen in the bus.
+ */
+export function consumeHookEvents(agentId: string): Array<Record<string, unknown>> {
+  const src = hookEventPath(agentId);
+  const processing = `${src}.processing`;
+  const lines = existsSync(processing) ? drainProcessingFile(processing) : [];
+  if (existsSync(src)) {
+    let renamed = true;
+    try {
+      renameSync(src, processing);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.error('[paths] unexpected error renaming hook events file:', err);
+      }
+      // File disappeared between existsSync and rename (consumed by another tick or stop()).
+      renamed = false;
+    }
+    if (renamed) lines.push(...drainProcessingFile(processing));
+  }
   const records: Array<Record<string, unknown>> = [];
   for (const line of lines) {
     let parsed: unknown;

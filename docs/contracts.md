@@ -30,9 +30,9 @@ Auxiliary runtime files (not orchestrator state):
 |------|---------|
 | `pty-pids/<agent_id>.pid` | Cross-process heartbeat probing for PTY sessions |
 | `pty-logs/<agent_id>.log` | Raw PTY/tmux pane output capture (output tails) |
-| `pty-hook-events/<agent_id>.ndjson` | Provider hook events (`permission`, `tool_start`, `tool`, `activity`), appended by the session's hooks, and `turn_end`, appended by the coordinator on `POST /v1/stop-check`; drained only by the coordinator tick (`lib/hookEventBus.ts`) for an agent with an active claim; deleted when the session stops, and at coordinator start or by `orc worker-gc` once its agent is no longer registered |
+| `pty-hook-events/<agent_id>.ndjson` | Provider hook events (`permission`, `tool_start`, `tool`, `activity`), appended by the session's hooks, and `turn_end`, appended by the coordinator on `POST /v1/stop-check`; drained only by the coordinator tick (`lib/hookEventBus.ts`) for an agent with an active claim, by renaming it to `<agent_id>.ndjson.processing`, reading and deleting it (a `.processing` file left by a crash is drained first on the next tick); deleted when the session stops, and at coordinator start or by `orc worker-gc` once its agent is no longer registered |
 | `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do task labels by id and the active task id, so a status-only `TaskUpdate` resolves its label; written only by `hooks/orc-hook.ts`, deleted when the session stops (or, after a crash, with the events file) |
-| `run-activity.json` | Coordinator-owned per-run activity snapshot (label, source, last tool, tool calls in flight, last turn end) built from hook events by `RunSignals` (`lib/runSignals.ts`); entries are removed when a run ends. Read it with `readRunActivity(stateDir)` (`lib/runActivityStore.ts`) |
+| `run-activity.json` | Coordinator-owned per-run activity snapshot (label, source, last tool, tool calls in flight, last turn end, and `review_read_at`, the last `orc review-read`, which phase inference needs after a coordinator restart) built from hook events by `RunSignals` (`lib/runSignals.ts`); entries are removed when a run ends. Read it with `readRunActivity(stateDir)` (`lib/runActivityStore.ts`) |
 | `control.json` | Control API endpoint descriptor (protocol version, transport, socket path, daemon PID) |
 | `control.token` | Control API bearer token, mode `0600`, rotated on each daemon start |
 | `control.sock` | Control API Unix socket, mode `0600` (under the OS temp dir when the state path is too long) |
@@ -495,9 +495,9 @@ run forward (review fixes stay in review), and an explicit `phase_started`
 newer than the evidence wins. Each inferred event carries `inferred: true` and
 `evidence` (e.g. `tool: Agent critic`, `cmd: git rebase main`,
 `event: work_complete`), so `phase_history` and `orc watch` stay consistent.
-The `review-read` marker lives in coordinator memory; after a coordinator
-restart, `complete` is inferred again only from a new `review-read`, and
-`run-work-complete` still moves the run to `finalize`.
+The `review-read` marker is kept in the run's `run-activity.json` entry
+(`review_read_at`), so a restarted coordinator still infers `complete` from a
+`git rebase main` that follows a `review-read` it saw before the restart.
 
 An inferred transition is progress (see below) but does not reset the run's
 nudge count: only a worker-reported `phase_started` does, so a worker cycling
