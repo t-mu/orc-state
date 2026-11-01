@@ -73,7 +73,7 @@ import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constant
 import type { Backlog } from './types/backlog.ts';
 import { writeProjectDescriptor } from './lib/projectContext.ts';
 import { readProcessStart } from './lib/processIdentity.ts';
-import { isCoordinatorLockHeld, type CoordinatorLock } from './lib/coordinatorLiveness.ts';
+import { controlEndpointCoordinatorPid, isCoordinatorLockHeld, type CoordinatorLock } from './lib/coordinatorLiveness.ts';
 
 // ── Adapter singleton cache ────────────────────────────────────────────────
 // One adapter instance per provider — preserves in-memory session state across
@@ -2214,6 +2214,13 @@ function acquireCoordinatorLock() {
         closeSync(fd);
       }
       coordinatorLockReleased = false;
+      // A live coordinator whose pid lock went missing is still recorded in control.json.
+      const endpointPid = controlEndpointCoordinatorPid(STATE_DIR);
+      if (endpointPid !== null && endpointPid !== process.pid) {
+        releaseCoordinatorLock();
+        console.error(`[coordinator] ERROR: another coordinator is already running (PID ${endpointPid}, recorded in control.json; coordinator.pid was missing). Stop it with orc kill-all. Aborting.`);
+        process.exit(1);
+      }
       return;
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;

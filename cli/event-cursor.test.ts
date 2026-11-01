@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb } from '../lib/eventLog.ts';
 import { advanceEventOffset, initializeEventOffset } from '../lib/eventOffsets.ts';
+import { startFakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
 
 let dir: string;
 beforeEach(() => { dir = createTempStateDir('orch-cursor-cli-'); seedState(dir); initEventsDb(dir); });
@@ -28,11 +29,16 @@ describe('event-cursor recovery CLI', () => {
     expect(run('--reset-to=13').status).toBe(1);
   });
 
-  it('rejects invalid offsets and a reset while the coordinator is alive', () => {
+  it('rejects invalid offsets and a reset while the coordinator is alive', async () => {
     expect(run('--reset-to=-1').status).toBe(1);
-    writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
-    const result = run('--reset-to=1');
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Stop the coordinator');
+    const coordinator = await startFakeCoordinator();
+    try {
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: coordinator.pid, started_at: new Date().toISOString() }));
+      const result = run('--reset-to=1');
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Stop the coordinator');
+    } finally {
+      await coordinator.stop();
+    }
   });
 });

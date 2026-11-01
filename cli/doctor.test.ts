@@ -8,7 +8,8 @@ import {
 } from '../test-fixtures/stateHelpers.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from '../lib/projectTasks.ts';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { readProcessStart } from '../lib/processIdentity.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -183,6 +184,49 @@ describe('doctor on a registered project', () => {
       expect(json.ok).toBe(true);
       expect(json.checks.projectSelection).toBeNull();
     } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a live coordinator without a matching coordinator.pid', async () => {
+    const target = mkdtempSync(join(tmpdir(), 'orc-doctor-target-'));
+    const script = join(target, 'coordinator.js');
+    writeFileSync(script, 'setInterval(() => {}, 1000);\n');
+    const coordinator = spawn(process.execPath, [script], { stdio: 'ignore' });
+    try {
+      await new Promise<void>((resolve, reject) => { coordinator.once('spawn', resolve); coordinator.once('error', reject); });
+      const pid = coordinator.pid!;
+      spawnSync('git', ['init', '-q'], { cwd: target });
+      ensureStateInitialized(dir);
+      initProjectTaskStore(dir);
+      closeProjectTaskStores();
+      writeFileSync(join(dir, 'control.json'), JSON.stringify({
+        protocol_version: 1, transport: 'unix', path: join(dir, 'control.sock'),
+        pid, started_at: new Date().toISOString(), process_start: readProcessStart(pid),
+      }));
+      const doctor = () => {
+        const result = spawnSync(process.execPath, ['cli/doctor.ts', '--json'], {
+          cwd: repoRoot, env: { ...process.env, ...bridgeProjectEnv(dir, target) }, encoding: 'utf8',
+        });
+        return { status: result.status, json: JSON.parse(result.stdout) };
+      };
+
+      let { status, json } = doctor();
+      expect(status).toBe(1);
+      expect(json.checks.coordinatorLock.problem).toMatch(`coordinator PID ${pid} is running but`);
+      expect(json.checks.coordinatorLock.problem).toMatch(/coordinator\.pid is missing/);
+
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: 999999999, started_at: 'x' }));
+      ({ status, json } = doctor());
+      expect(status).toBe(1);
+      expect(json.checks.coordinatorLock.problem).toMatch(/coordinator\.pid names PID 999999999/);
+
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid, started_at: 'x', process_start: readProcessStart(pid) }));
+      ({ status, json } = doctor());
+      expect(json.checks.coordinatorLock.problem).toBeNull();
+      expect(status, JSON.stringify(json)).toBe(0);
+    } finally {
+      coordinator.kill('SIGKILL');
       rmSync(target, { recursive: true, force: true });
     }
   });
