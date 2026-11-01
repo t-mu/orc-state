@@ -947,9 +947,9 @@ async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date
 
 /**
  * Restore run signals once, on the first tick after a start: the hook
- * snapshots in run-activity.json and the active runs' events.
+ * snapshots in run-activity.json and the active runs' events. Returns true
+ * when replayed worker notes changed a run's activity snapshot.
  */
-/** Returns true when replayed worker notes changed a run's activity snapshot. */
 function hydrateRunSignals(claims: Claim[]): boolean {
   if (signalsHydrated) return false;
   try {
