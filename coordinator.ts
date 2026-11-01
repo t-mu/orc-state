@@ -949,15 +949,18 @@ async function removeStaleWorkers(agents: Agent[], claims: Claim[], nowMs = Date
  * Restore run signals once, on the first tick after a start: the hook
  * snapshots in run-activity.json and the active runs' events.
  */
-function hydrateRunSignals(claims: Claim[]): void {
-  if (signalsHydrated) return;
+/** Returns true when replayed worker notes changed a run's activity snapshot. */
+function hydrateRunSignals(claims: Claim[]): boolean {
+  if (signalsHydrated) return false;
   try {
     const activeRunIds = activeRunIdsOf(claims);
-    runSignals.hydrate(readRunActivity(STATE_DIR), readEventsForRuns(EVENTS_FILE, activeRunIds));
+    const { hookActivity } = runSignals.hydrate(readRunActivity(STATE_DIR), readEventsForRuns(EVENTS_FILE, activeRunIds));
     signalsHydrated = true;
+    return hookActivity.length > 0;
   } catch (error) {
     // Retried on the next tick; until then the run signals start from this tick's events.
     log(`warning: failed to hydrate run signals: ${(error as Error).message}`);
+    return false;
   }
 }
 
@@ -969,7 +972,8 @@ function activeRunIdsOf(claims: Claim[]): string[] {
  * The single consumer of `pty-hook-events/*.ndjson`. Drains each active run's
  * hook file once per tick into RunSignals: permission events wait for the
  * run's input-block check; tool/activity/turn_end events update the run's
- * activity snapshot. Hook activity renews the run's heartbeat and lease like
+ * activity snapshot (worker notes arrive on durable events instead, folded in
+ * processEventCheckpoint). Hook activity renews the run's heartbeat and lease like
  * a phase event once the lease is half used or the last heartbeat is half a
  * lease old (shouldRenewFromHookActivity), and a new todo/note label may emit
  * `activity_note`.
@@ -1484,14 +1488,16 @@ async function tick() {
   // Drain hook events before lifecycle events and infer phases against the
   // claims as they were before this batch, so a run that work_complete merged
   // this tick still gets its complete/finalize phases.
-  hydrateRunSignals(claims);
+  const hydratedActivityChanged = hydrateRunSignals(claims);
   const hookActivityChanged = ingestHookEvents(claims);
   const claimsBeforeEvents = claims;
-  ({ agents, claims } = await processEventCheckpoint(agents, claims, workerPoolConfig));
+  const checkpoint = await processEventCheckpoint(agents, claims, workerPoolConfig);
+  ({ agents, claims } = checkpoint);
+  const eventActivityChanged = checkpoint.activityChanged;
   // A run that failed in this batch gets no phases after its terminal event.
   const failedRuns = new Set(claims.filter((claim) => claim.state === 'failed').map((claim) => claim.run_id));
   inferRunPhases(claimsBeforeEvents.filter((claim) => !failedRuns.has(claim.run_id)));
-  retainActiveRunSignals([...claimsBeforeEvents, ...claims], hookActivityChanged);
+  retainActiveRunSignals([...claimsBeforeEvents, ...claims], hydratedActivityChanged || hookActivityChanged || eventActivityChanged);
   ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
   ({ agents, claims } = await probeActiveWorkerSessions(agents, claims, workerPoolConfig));
 
@@ -1544,13 +1550,15 @@ async function processEventCheckpoint(
   agents: Agent[],
   claims: Claim[],
   workerPoolConfig: WorkerPoolConfig,
-): Promise<{ agents: Agent[]; claims: Claim[] }> {
+): Promise<{ agents: Agent[]; claims: Claim[]; activityChanged: boolean }> {
+  let activityChanged = false;
   try {
     const cursor = getEventCursor();
     const batch = readEventBatch(EVENTS_FILE, cursor, EVENT_BATCH_SIZE);
     for (const row of batch) {
       if (row.event) {
-        runSignals.ingest([row.event]);
+        // A worker note on the event relabels the run's activity snapshot.
+        if (runSignals.ingest([row.event]).hookActivity.length > 0) activityChanged = true;
         await processTerminalRunEvents([row.event], workerPoolConfig);
       } else {
         advanceCursor(row.seq);
@@ -1563,7 +1571,7 @@ async function processEventCheckpoint(
       console.error((err as Error).stack);
     }
   }
-  return { agents, claims };
+  return { agents, claims, activityChanged };
 }
 
 async function probeActiveWorkerSessions(

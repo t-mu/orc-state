@@ -1,6 +1,6 @@
 import type { Claim } from '../types/claims.ts';
 import type { OrcEvent } from '../types/events.ts';
-import type { DispatchedHookEvents, PermissionHookEvent, ToolHookEvent } from './hookEventBus.ts';
+import type { DispatchedHookEvents, PermissionHookEvent, RunActivityHookEvent, ToolHookEvent } from './hookEventBus.ts';
 import { toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './phaseInference.ts';
 import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressAlertProgressAt } from './runProgress.ts';
 import { claimedRunStartupAnchor, latestRunActivityMap, newestTimestamp, runIdleMs } from './runActivity.ts';
@@ -116,13 +116,30 @@ export interface HookActivityChange {
 }
 
 export interface IngestResult {
-  /** Runs whose hook activity snapshot changed (run-activity.json needs a rewrite). */
+  /** Runs whose activity snapshot changed, from hook events or worker notes (run-activity.json needs a rewrite). */
   hookActivity: HookActivityChange[];
 }
 
 export interface CurrentActivity {
   label: string;
   source: RunActivitySource;
+}
+
+/**
+ * Worker notes (`orc progress --note`) carried on the worker's own heartbeat
+ * and progress events as `payload.note`, per run, as note activity.
+ */
+function workerNotes(events: OrcEvent[]): Map<string, { agentId: string; notes: RunActivityHookEvent[] }> {
+  const byRun = new Map<string, { agentId: string; notes: RunActivityHookEvent[] }>();
+  for (const event of events) {
+    const { run_id: runId, agent_id: agentId, actor_type: actorType } = event as { run_id?: string; agent_id?: string; actor_type?: string };
+    const note = (event as { payload?: { note?: unknown } }).payload?.note;
+    if (actorType !== 'agent' || !runId || !agentId || typeof note !== 'string' || note.trim().length === 0) continue;
+    const entry = byRun.get(runId) ?? { agentId, notes: [] };
+    entry.notes.push({ type: 'activity', source: 'note', label: note.trim(), ts: event.ts });
+    byRun.set(runId, entry);
+  }
+  return byRun;
 }
 
 function earlier(a: string | undefined, b: string): boolean {
@@ -167,7 +184,7 @@ export class RunSignals {
    * label time, so it is not re-announced; a persisted `review_read_at` is
    * phase-inference evidence again) and the active runs' events.
    */
-  hydrate(activity: RunActivityMap, events: OrcEvent[] = [], nowMs: number = Date.now()): void {
+  hydrate(activity: RunActivityMap, events: OrcEvent[] = [], nowMs: number = Date.now()): IngestResult {
     for (const [runId, snapshot] of Object.entries(activity)) {
       this.hookActivity[runId] = snapshot;
       if (snapshot.review_read_at && !this.toolPhaseState.has(runId)) {
@@ -178,12 +195,13 @@ export class RunSignals {
         this.notes.set(runId, { label: snapshot.label, emitted_at_ms: Number.isFinite(labelMs) ? labelMs : nowMs });
       }
     }
-    this.ingest(events, undefined, nowMs);
+    return this.ingest(events, undefined, nowMs);
   }
 
   /**
    * Fold durable events and, when given, one tick's drained hook events into
-   * the per-run state. A hook batch replaces the runs' tool-derived phase
+   * the per-run state. A worker note (`payload.note` on the worker's heartbeat
+   * or progress event) labels the run like a hook note. A hook batch replaces the runs' tool-derived phase
    * candidates; runs absent from it have none this tick.
    */
   ingest(events: OrcEvent[], hookEvents?: Map<string, RunHookEvents>, nowMs: number = Date.now()): IngestResult {
@@ -215,6 +233,14 @@ export class RunSignals {
     }
 
     const changes: HookActivityChange[] = [];
+    for (const [runId, { agentId, notes }] of workerNotes(events)) {
+      const previousTs = latestHookActivityTs(this.hookActivity[runId]);
+      const before = this.hookActivity[runId];
+      this.hookActivity[runId] = applyHookActivity(before, runId, agentId, notes, nowMs);
+      if (this.hookActivity[runId].label !== before?.label || this.hookActivity[runId].label_ts !== before?.label_ts) {
+        changes.push({ runId, previousTs, ts: latestHookActivityTs(this.hookActivity[runId]) });
+      }
+    }
     if (!hookEvents) return { hookActivity: changes };
     this.toolCandidates.clear();
     for (const [runId, { agentId, permission, activity }] of hookEvents) {

@@ -1,7 +1,7 @@
 import { resolveControlPrincipal } from './controlPrincipal.ts';
 import { ConflictError, NotFoundError } from './domainErrors.ts';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { appendSequencedEvent, readEventsSince, withEventDb } from './eventLog.ts';
@@ -76,20 +76,6 @@ function finalizationPayload(eventName: string): { status: EventFinalizationStat
   if (eventName === 'finalize_rebase_started') return { status: 'finalize_rebase_in_progress' };
   if (eventName === 'ready_to_merge') return { status: 'ready_to_merge' };
   return null;
-}
-
-/**
- * Hand a worker note to the coordinator's single hook-event consumer, which
- * folds it into the run activity snapshot as `source: 'note'`.
- */
-function queueActivityNote(stateDir: string, agentId: string, note: string, ts: string): void {
-  try {
-    const dir = join(stateDir, 'pty-hook-events');
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, `${agentId}.ndjson`), `${JSON.stringify({ type: 'activity', source: 'note', label: note, ts })}\n`);
-  } catch {
-    // The note is already on the progress event; the activity line is best-effort.
-  }
 }
 
 function nextFinalizationTransition(claim: Claim | null) {
@@ -179,7 +165,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       } else if (event === 'run_failed') {
         finishRun(stateDir, runId, agentId, { success: false, failureReason: reason, failureCode: 'ERR_WORKER_REPORTED_FAILURE', policy });
       } else if (event === 'heartbeat') {
-        heartbeat(stateDir, runId, agentId);
+        heartbeat(stateDir, runId, agentId, { note });
       } else {
         const extra = { ...(reason ? { reason } : {}), ...(note ? { note } : {}) };
         const payload = finalizationPayload(event) ?? (Object.keys(extra).length > 0 ? extra : undefined);
@@ -190,7 +176,6 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
           ...(payload ? { payload } : {}),
         } as OrcEvent, { lockStrategy: 'none' });
       }
-      if (note) queueActivityNote(stateDir, agentId, note, at);
       return { message: `progress event accepted: ${event} run=${runId} agent=${agentId}` };
     }
     case 'review-submit': {

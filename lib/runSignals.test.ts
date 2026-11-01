@@ -218,6 +218,39 @@ describe('RunSignals', () => {
     expect(signals.phaseCandidates(claim({ started_at: null }), T0)).toEqual([]);
   });
 
+  it('folds a worker note from its heartbeat or progress event into the run label and announces it', () => {
+    const signals = new RunSignals(CONFIG);
+    const result = signals.ingest([event('heartbeat', { ts: at(-2 * MIN), payload: { lease_expires_at: at(MIN), note: ' Running tests ' } })], undefined, T0);
+    expect(result.hookActivity).toEqual([{ runId: 'run-1', previousTs: null, ts: at(-2 * MIN) }]);
+    expect(signals.hookSnapshot('run-1')).toMatchObject({ label: 'Running tests', source: 'note', label_ts: at(-2 * MIN) });
+    expect(signals.currentActivity('run-1', T0)).toEqual({ label: 'Running tests', source: 'note' });
+    signals.ingest([event('phase_started', { ts: at(-MIN), phase: 'review', payload: { note: 'Fixing findings' } })], undefined, T0);
+    expect(signals.hookSnapshot('run-1')).toMatchObject({ label: 'Fixing findings', source: 'note' });
+  });
+
+  it('ignores events without a note, coordinator events and older notes, reporting no change', () => {
+    const signals = new RunSignals(CONFIG);
+    signals.ingest([], hooks('run-1', [{ type: 'activity', label: 'Todo', source: 'todo', ts: at(-MIN) }]), T0);
+    const result = signals.ingest([
+      event('heartbeat', { ts: at(-30_000), payload: { lease_expires_at: at(MIN) } }),
+      event('phase_started', { ts: at(-30_000), actor_type: 'coordinator', payload: { note: 'not a worker' } }),
+      event('heartbeat', { ts: at(-30_000), payload: { note: '   ' } }),
+      event('heartbeat', { ts: at(-5 * MIN), payload: { note: 'stale' } }),
+    ], undefined, T0);
+    expect(result.hookActivity).toEqual([]);
+    expect(signals.hookSnapshot('run-1')).toMatchObject({ label: 'Todo', source: 'todo' });
+  });
+
+  it('replays a worker note on hydrate without re-announcing a persisted one', () => {
+    const persisted = new RunSignals(CONFIG);
+    const note = event('heartbeat', { ts: at(-MIN), payload: { note: 'Reviewing' } });
+    persisted.hydrate({ 'run-1': snapshot({ label: 'Reviewing', source: 'note', label_ts: at(-MIN) }) }, [note], T0);
+    expect(persisted.currentActivity('run-1', T0)).toBeNull();
+    const fresh = new RunSignals(CONFIG);
+    expect(fresh.hydrate({}, [note], T0).hookActivity).toHaveLength(1);
+    expect(fresh.currentActivity('run-1', T0)).toEqual({ label: 'Reviewing', source: 'note' });
+  });
+
   it('forget drops every per-run signal and reports whether a hook snapshot went', () => {
     const signals = new RunSignals(CONFIG);
     signals.ingest([event('review_submitted', { ts: at(-MIN) }), event('phase_started', { ts: at(-MIN), phase: 'review' })]);

@@ -160,7 +160,8 @@ export function heartbeat(
     leaseDurationMs = DEFAULT_LEASE_MS,
     emitEvent = true,
     at = new Date().toISOString(),
-  }: { leaseDurationMs?: number; emitEvent?: boolean; at?: string } = {},
+    note = null,
+  }: { leaseDurationMs?: number; emitEvent?: boolean; at?: string; note?: string | null } = {},
 ): { lease_expires_at: string } {
   return withLock(lockPath(stateDir), () => {
     const claims = readJson(stateDir, 'claims.json') as ClaimsState;
@@ -187,7 +188,7 @@ export function heartbeat(
         ts: at, event: 'heartbeat',
         actor_type: 'agent', actor_id: agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
-        payload: { lease_expires_at },
+        payload: { lease_expires_at, ...(note ? { note } : {}) },
       }] : []);
 
     return { lease_expires_at };
