@@ -509,12 +509,16 @@ Activity (lifecycle events, heartbeats, tool hook events) proves a run is
 alive. Progress is tracked separately: a phase change (reported or inferred), a
 `git commit` seen in a tool hook event, or a lifecycle event (`run_started`,
 `review_submitted`, `work_complete`, `finalize_rebase_started`,
-`ready_to_merge`, `input_requested`, `input_provided`). A run that is alive (not
-yet stale) but has made no progress for `run_no_progress_escalate_ms` (30 min,
-counted from its start when it has none) gets one `worker_needs_attention`
-with `payload.reason: "no_progress"`, `idle_ms`, `no_progress_ms` and `phase`.
-New progress re-arms the alert. Runs awaiting input or in finalization are not
-checked. Commits seen before a coordinator restart are not replayed, so the
+`ready_to_merge`, `input_requested`, `input_provided`, `input_response`). File
+edits and test runs are not progress. A run that is alive (not yet stale) but
+has made no progress for `run_no_progress_escalate_ms` (60 min, counted from
+its start when it has none) gets one `worker_needs_attention` with
+`payload.reason: "no_progress"`, `idle_ms`, `no_progress_ms`, `phase` and
+`progress_at` (the progress point it was measured from). New progress re-arms
+the alert; after a coordinator restart the replayed alerts' `progress_at` keeps
+it from repeating. Runs awaiting input or in finalization are not checked.
+Tool hook events carry no exit status, so a failed `git commit` also counts as
+progress. Commits seen before a coordinator restart are not replayed, so the
 progress timestamp falls back to the newest progress event.
 
 #### Agent events

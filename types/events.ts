@@ -328,7 +328,7 @@ export interface WorkerNeedsAttentionEvent extends BaseEvent {
    */
   payload:
     | { reason: 'stale'; idle_ms: number }
-    | { reason: 'no_progress'; idle_ms: number; no_progress_ms: number; phase: string | null };
+    | { reason: 'no_progress'; idle_ms: number; no_progress_ms: number; phase: string | null; progress_at: string };
 }
 
 // ── Remediation events ───────────────────────────────────────────────────────

@@ -14,8 +14,11 @@ const RUN_PROGRESS_EVENTS = new Set([
   'ready_to_merge',
   'input_requested',
   'input_provided',
+  'input_response',
 ]);
 
+// Tool hook events carry no exit status, so a failed `git commit` (rejected by a
+// pre-commit hook, nothing to commit) also counts as progress.
 const GIT_COMMIT_PATTERN = /\bgit\b(?:\s+-C\s+\S+)?\s+commit\b/;
 
 /** True when an event is a lifecycle event that counts as progress. */
@@ -32,6 +35,14 @@ export function isCommitToolEvent(event: ToolHookEvent): boolean {
 export function isExplicitPhaseEvent(event: { event?: string; actor_type?: string; payload?: unknown }): boolean {
   if (event.event !== 'phase_started' || event.actor_type === 'coordinator') return false;
   return (event.payload as { inferred?: unknown } | undefined)?.inferred !== true;
+}
+
+/** The `progress_at` of a `worker_needs_attention {reason: "no_progress"}` event, or null. */
+export function noProgressAlertProgressAt(event: { event?: string; payload?: unknown }): string | null {
+  if (event.event !== 'worker_needs_attention') return null;
+  const payload = event.payload as { reason?: unknown; progress_at?: unknown } | undefined;
+  if (payload?.reason !== 'no_progress' || typeof payload.progress_at !== 'string') return null;
+  return payload.progress_at;
 }
 
 export interface NoProgressInput {

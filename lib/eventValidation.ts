@@ -296,6 +296,13 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
         'must be a non-negative integer',
         errors,
       );
+      requirePayloadField(
+        event,
+        'progress_at',
+        (v) => typeof v === 'string' && Number.isFinite(Date.parse(v)),
+        'must be an ISO timestamp',
+        errors,
+      );
     }
     requirePayloadField(
       event,

@@ -1902,6 +1902,51 @@ describe('hook event bus', () => {
     expect(attention('run-committing')).toHaveLength(0);
   });
 
+  it('does not repeat a no_progress alert after a restart, nor alert a run that just got its input answered', async () => {
+    seedState(dir, {
+      agents: [
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+      ],
+      tasks: [
+        { ...DISPATCHABLE_TASK, ref: 'proj/alerted', status: 'in_progress' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/answered', status: 'in_progress' },
+      ],
+      claims: [
+        inProgressClaim('run-alerted', 'worker-01', 'proj/alerted', 90 * 60 * 1000),
+        inProgressClaim('run-answered', 'worker-02', 'proj/answered', 90 * 60 * 1000),
+      ],
+    });
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const phaseAt = ago(89);
+    for (const [runId, agentId, taskRef] of [['run-alerted', 'worker-01', 'proj/alerted'], ['run-answered', 'worker-02', 'proj/answered']]) {
+      appendSequencedEvent(dir, {
+        ts: phaseAt, event: 'phase_started', actor_type: 'agent', actor_id: agentId,
+        run_id: runId, task_ref: taskRef, agent_id: agentId, phase: 'implement',
+      } as Parameters<typeof appendSequencedEvent>[1]);
+    }
+    // A previous coordinator already alerted run-alerted for this progress point.
+    appendSequencedEvent(dir, {
+      ts: ago(20), event: 'worker_needs_attention', actor_type: 'coordinator', actor_id: 'coordinator',
+      run_id: 'run-alerted', task_ref: 'proj/alerted', agent_id: 'worker-01',
+      payload: { reason: 'no_progress', idle_ms: 0, no_progress_ms: 69 * 60 * 1000, phase: 'implement', progress_at: phaseAt },
+    } as Parameters<typeof appendSequencedEvent>[1]);
+    // run-answered waited on the master for over an hour; the answer just arrived.
+    appendSequencedEvent(dir, {
+      ts: ago(1), event: 'input_response', actor_type: 'human', actor_id: 'master',
+      run_id: 'run-answered', task_ref: 'proj/answered', agent_id: 'worker-02',
+      payload: { response: 'use option A' },
+    } as Parameters<typeof appendSequencedEvent>[1]);
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Bash', brief: 'npm test', ts: ago(1) }]);
+    writeHookEvents('worker-02', [{ type: 'tool', tool: 'Bash', brief: 'npm test', ts: ago(1) }]);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn().mockResolvedValue('') }));
+    await runTicks(['--run-no-progress-escalate-ms=1800000'], 2);
+
+    const alerts = readEvents(dir).filter((e) => e.event === 'worker_needs_attention'
+      && (e.payload as Record<string, unknown>)?.reason === 'no_progress');
+    expect(alerts.map((e) => e.run_id)).toEqual(['run-alerted']);
+  });
+
   it('does not let an inferred phase transition reset the nudge count', async () => {
     seedState(dir, {
       agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],

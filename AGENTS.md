@@ -364,7 +364,7 @@ gate commands and hook events, so a worker that forgets a phase signal still sho
 the right phase. Inferred transitions count as progress but, unlike a worker's own
 phase signal, do not reset the run's nudge count. Liveness is not progress: a run
 that stays alive without a phase change, commit, or lifecycle event for
-`run_no_progress_escalate_ms` (30 min) gets `worker_needs_attention
+`run_no_progress_escalate_ms` (60 min) gets `worker_needs_attention
 {reason: "no_progress"}`. A Claude worker's `Stop` hook blocks it from ending its turn while
 its run is unfinished (`stop_blocked` events; capped per window and per run).
 A coordinator restart does not kill workers: tmux

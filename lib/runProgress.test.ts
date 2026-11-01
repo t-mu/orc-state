@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressEscalationMs } from './runProgress.ts';
+import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressAlertProgressAt, noProgressEscalationMs } from './runProgress.ts';
 
 describe('isProgressLifecycleEvent', () => {
   it('counts lifecycle events of a run', () => {
-    for (const event of ['run_started', 'review_submitted', 'work_complete', 'finalize_rebase_started', 'ready_to_merge', 'input_requested', 'input_provided']) {
+    for (const event of ['run_started', 'review_submitted', 'work_complete', 'finalize_rebase_started', 'ready_to_merge', 'input_requested', 'input_provided', 'input_response']) {
       expect(isProgressLifecycleEvent({ event, run_id: 'r1' })).toBe(true);
     }
   });
@@ -43,6 +43,15 @@ describe('isExplicitPhaseEvent', () => {
     expect(isExplicitPhaseEvent({ event: 'phase_started', actor_type: 'coordinator', payload: { phase: 'review', inferred: true } })).toBe(false);
     expect(isExplicitPhaseEvent({ event: 'phase_started', actor_type: 'agent', payload: { inferred: true } })).toBe(false);
     expect(isExplicitPhaseEvent({ event: 'heartbeat', actor_type: 'agent' })).toBe(false);
+  });
+});
+
+describe('noProgressAlertProgressAt', () => {
+  it('reads progress_at from a no_progress alert only', () => {
+    expect(noProgressAlertProgressAt({ event: 'worker_needs_attention', payload: { reason: 'no_progress', progress_at: '2026-11-01T11:00:00.000Z' } }))
+      .toBe('2026-11-01T11:00:00.000Z');
+    expect(noProgressAlertProgressAt({ event: 'worker_needs_attention', payload: { reason: 'stale', idle_ms: 1 } })).toBeNull();
+    expect(noProgressAlertProgressAt({ event: 'heartbeat', payload: { reason: 'no_progress', progress_at: 'x' } })).toBeNull();
   });
 });
 

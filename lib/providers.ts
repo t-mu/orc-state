@@ -119,7 +119,7 @@ export const DEFAULT_COORDINATOR_CONFIG: Readonly<CoordinatorConfig> = Object.fr
   worker_stale_force_fail_ms: 7_200_000,
   hook_idle_nudge_ms: 300_000,
   hook_idle_escalate_ms: 600_000,
-  run_no_progress_escalate_ms: 1_800_000,
+  run_no_progress_escalate_ms: 3_600_000,
   merge_strategy: 'direct' as const,
   pr_provider: null,
   pr_push_remote: 'origin',

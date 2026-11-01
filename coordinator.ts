@@ -35,7 +35,7 @@ import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, t
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
 import { latestRunActivityMap, newestTimestamp, runIdleMs, shouldRenewFromHookActivity } from './lib/runActivity.ts';
 import { drainHookEvents, type PermissionHookEvent, type ToolHookEvent } from './lib/hookEventBus.ts';
-import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressEscalationMs } from './lib/runProgress.ts';
+import { isCommitToolEvent, isExplicitPhaseEvent, isProgressLifecycleEvent, noProgressAlertProgressAt, noProgressEscalationMs } from './lib/runProgress.ts';
 import { inferPhaseTransitions, toolPhaseCandidates, type PhaseCandidate, type ToolPhaseState } from './lib/phaseInference.ts';
 import {
   applyHookActivity, latestHookActivityTs, readRunActivity, shouldEmitActivityNote, toolInFlight, writeRunActivity,
@@ -314,6 +314,9 @@ function observeRunActivity(events: OrcEvent[]): void {
   for (const event of events) {
     const progressRunId = (event as { run_id?: string }).run_id;
     if (progressRunId && isProgressLifecycleEvent(event)) noteRunProgress(progressRunId, event.ts);
+    // Replayed after a restart: the progress point an alert was already sent for.
+    const alertedFor = noProgressAlertProgressAt(event);
+    if (progressRunId && alertedFor) noProgressNotifiedForByRun.set(progressRunId, alertedFor);
     if (event.event === 'review_submitted' && event.run_id) {
       const first = reviewSubmittedAtByRun.get(event.run_id);
       if (!first || Date.parse(event.ts) < Date.parse(first)) reviewSubmittedAtByRun.set(event.run_id, event.ts);
@@ -1506,7 +1509,7 @@ async function enforceInProgressLifecycle(
         run_id: claim.run_id,
         task_ref: claim.task_ref,
         agent_id: claim.agent_id,
-        payload: { reason: 'no_progress', idle_ms: idleMs, no_progress_ms: noProgressMs, phase: currentPhase },
+        payload: { reason: 'no_progress', idle_ms: idleMs, no_progress_ms: noProgressMs, phase: currentPhase, progress_at: progressAt },
       });
       noProgressNotifiedForByRun.set(claim.run_id, progressAt);
       log(`escalated run ${claim.run_id} (${claim.agent_id}): alive but no progress for ${Math.round(noProgressMs / 60000)}min`);
