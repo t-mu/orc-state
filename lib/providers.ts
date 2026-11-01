@@ -69,6 +69,8 @@ export interface CoordinatorConfig {
   // Shorter idle thresholds for runs whose harness reports tool hook events (ms)
   hook_idle_nudge_ms: number;
   hook_idle_escalate_ms: number;
+  // A live run without progress (phase change, commit, lifecycle event) for this long is escalated (ms)
+  run_no_progress_escalate_ms: number;
   // PR merge strategy
   merge_strategy: 'direct' | 'pr';
   pr_provider: 'github' | null;
@@ -117,6 +119,7 @@ export const DEFAULT_COORDINATOR_CONFIG: Readonly<CoordinatorConfig> = Object.fr
   worker_stale_force_fail_ms: 7_200_000,
   hook_idle_nudge_ms: 300_000,
   hook_idle_escalate_ms: 600_000,
+  run_no_progress_escalate_ms: 1_800_000,
   merge_strategy: 'direct' as const,
   pr_provider: null,
   pr_push_remote: 'origin',
@@ -337,6 +340,7 @@ export function loadCoordinatorConfig({
     worker_stale_force_fail_ms: parsePositiveInteger(cc.worker_stale_force_fail_ms, 'coordinator.worker_stale_force_fail_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_force_fail_ms,
     hook_idle_nudge_ms: parsePositiveInteger(cc.hook_idle_nudge_ms, 'coordinator.hook_idle_nudge_ms') ?? DEFAULT_COORDINATOR_CONFIG.hook_idle_nudge_ms,
     hook_idle_escalate_ms: parsePositiveInteger(cc.hook_idle_escalate_ms, 'coordinator.hook_idle_escalate_ms') ?? DEFAULT_COORDINATOR_CONFIG.hook_idle_escalate_ms,
+    run_no_progress_escalate_ms: parsePositiveInteger(cc.run_no_progress_escalate_ms, 'coordinator.run_no_progress_escalate_ms') ?? DEFAULT_COORDINATOR_CONFIG.run_no_progress_escalate_ms,
     merge_strategy: (cc.merge_strategy === 'pr' ? 'pr' : DEFAULT_COORDINATOR_CONFIG.merge_strategy),
     pr_provider: (cc.pr_provider === 'github' ? 'github' : DEFAULT_COORDINATOR_CONFIG.pr_provider),
     pr_push_remote: (typeof cc.pr_push_remote === 'string' && cc.pr_push_remote ? cc.pr_push_remote : DEFAULT_COORDINATOR_CONFIG.pr_push_remote),

@@ -1643,6 +1643,11 @@ describe('hook event bus', () => {
     };
   }
 
+  // The stale alert only: these runs have made no progress since they started, so a no_progress alert may also fire.
+  function isStaleAttention(e: Record<string, unknown>) {
+    return e.event === 'worker_needs_attention' && (e.payload as Record<string, unknown>)?.reason === 'stale';
+  }
+
   function writeHookEvents(agentId: string, records: unknown[]) {
     mkdirSync(join(dir, 'pty-hook-events'), { recursive: true });
     appendFileSync(join(dir, 'pty-hook-events', `${agentId}.ndjson`), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
@@ -1687,7 +1692,7 @@ describe('hook event bus', () => {
     expect(sentTo).not.toContain('pty:worker-01');
     const events = readEvents(dir);
     expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-quiet')).toBe(true);
-    expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-busy')).toBe(false);
+    expect(events.some((e) => isStaleAttention(e) && e.run_id === 'run-busy')).toBe(false);
     expect(events.some((e) => e.event === 'need_input' && e.run_id === 'run-busy')).toBe(false);
 
     // Lease renewed the way phase events renew it, and the hook file was consumed.
@@ -1860,6 +1865,72 @@ describe('hook event bus', () => {
     expect(phasesOf('run-fixes')).toEqual(['review']);
   });
 
+  it('escalates a run that is alive but without progress, once, and not a run that committed', async () => {
+    seedState(dir, {
+      agents: [
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+      ],
+      tasks: [
+        { ...DISPATCHABLE_TASK, ref: 'proj/spinning', status: 'in_progress' },
+        { ...DISPATCHABLE_TASK, ref: 'proj/committing', status: 'in_progress' },
+      ],
+      claims: [
+        inProgressClaim('run-spinning', 'worker-01', 'proj/spinning', 40 * 60 * 1000),
+        inProgressClaim('run-committing', 'worker-02', 'proj/committing', 40 * 60 * 1000),
+      ],
+    });
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    // Both runs report an explicit phase newer than their start, so nothing is inferred from run_started.
+    for (const [runId, agentId, taskRef] of [['run-spinning', 'worker-01', 'proj/spinning'], ['run-committing', 'worker-02', 'proj/committing']]) {
+      appendSequencedEvent(dir, {
+        ts: ago(39), event: 'phase_started', actor_type: 'agent', actor_id: agentId,
+        run_id: runId, task_ref: taskRef, agent_id: agentId, phase: 'implement',
+      } as Parameters<typeof appendSequencedEvent>[1]);
+    }
+    // Both are alive (a tool call a minute ago); only one has progressed recently.
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Bash', brief: 'npm test', ts: ago(1) }]);
+    writeHookEvents('worker-02', [{ type: 'tool', tool: 'Bash', brief: 'git commit -m "feat(a): b"', ts: ago(1) }]);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send: vi.fn().mockResolvedValue('') }));
+    await runTicks(['--run-no-progress-escalate-ms=1800000'], 2);
+
+    const events = readEvents(dir);
+    const attention = (runId: string) => events.filter((e) => e.event === 'worker_needs_attention' && e.run_id === runId);
+    expect(attention('run-spinning')).toHaveLength(1);
+    expect(attention('run-spinning')[0]?.payload).toMatchObject({ reason: 'no_progress', phase: 'implement' });
+    expect(Number((attention('run-spinning')[0]?.payload as Record<string, unknown>).no_progress_ms)).toBeGreaterThanOrEqual(39 * 60 * 1000);
+    expect(attention('run-committing')).toHaveLength(0);
+  });
+
+  it('does not let an inferred phase transition reset the nudge count', async () => {
+    seedState(dir, {
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [inProgressClaim('run-cycling', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
+    });
+    // An explicit explore phase newer than the start: implement is not inferred until an edit arrives.
+    appendSequencedEvent(dir, {
+      ts: new Date(Date.now() - 39 * 60 * 1000).toISOString(), event: 'phase_started', actor_type: 'agent', actor_id: 'worker-01',
+      run_id: 'run-cycling', task_ref: 'proj/fix-bug', agent_id: 'worker-01', phase: 'explore',
+    } as Parameters<typeof appendSequencedEvent>[1]);
+    const send = vi.fn().mockResolvedValue('');
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ send }));
+    const argv = ['--worker-stale-soft-ms=600000', '--worker-stale-nudge-ms=600000', '--remediation-max-nudges=1'];
+    // Tick 1: idle run is nudged (nudge count 1).
+    await runTicks(argv, 1);
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // An edit infers implement; the worker reported no phase change, so the nudge count stands.
+    writeHookEvents('worker-01', [{ type: 'tool', tool: 'Edit', brief: 'lib/a.ts', ts: new Date().toISOString() }]);
+    await runTicks(argv, 1);
+
+    const events = readEvents(dir);
+    expect(events.some((e) => e.event === 'phase_started' && e.run_id === 'run-cycling'
+      && (e.payload as Record<string, unknown>)?.inferred === true && e.phase === 'implement')).toBe(true);
+    const remediation = events.filter((e) => e.event === 'remediation_applied' && e.run_id === 'run-cycling');
+    expect(remediation.map((e) => (e.payload as Record<string, unknown>).policy_id)).toEqual(['excessive_nudges']);
+  });
+
   it('nudges and escalates a hook-reporting run after the shorter hook idle thresholds', async () => {
     seedState(dir, {
       agents: [
@@ -1906,7 +1977,7 @@ describe('hook event bus', () => {
     await runTicks([], 1);
 
     const events = readEvents(dir);
-    expect(events.some((e) => (e.event === 'worker_needs_attention' || e.event === 'need_input') && e.run_id === 'run-testing')).toBe(false);
+    expect(events.some((e) => (isStaleAttention(e) || e.event === 'need_input') && e.run_id === 'run-testing')).toBe(false);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -1923,7 +1994,7 @@ describe('hook event bus', () => {
     await runTicks([], 1);
 
     const events = readEvents(dir);
-    expect(events.some((e) => e.event === 'worker_needs_attention' || e.event === 'need_input')).toBe(false);
+    expect(events.some((e) => isStaleAttention(e) || e.event === 'need_input')).toBe(false);
     expect(send).not.toHaveBeenCalled();
   });
 

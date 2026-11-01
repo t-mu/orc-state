@@ -321,7 +321,14 @@ export interface WorkerNeedsAttentionEvent extends BaseEvent {
   run_id: string;
   agent_id: string;
   task_ref: string;
-  payload: { reason: 'stale'; idle_ms: number };
+  /**
+   * `stale`: no activity for the soft threshold. `no_progress`: alive (recent
+   * activity) but no phase change, commit, or lifecycle event for
+   * `run_no_progress_escalate_ms`.
+   */
+  payload:
+    | { reason: 'stale'; idle_ms: number }
+    | { reason: 'no_progress'; idle_ms: number; no_progress_ms: number; phase: string | null };
 }
 
 // ── Remediation events ───────────────────────────────────────────────────────

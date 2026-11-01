@@ -284,10 +284,19 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     requirePayloadField(
       event,
       'reason',
-      (v) => v === 'stale',
-      'must be "stale"',
+      (v) => v === 'stale' || v === 'no_progress',
+      'must be "stale" or "no_progress"',
       errors,
     );
+    if ((event as { payload?: { reason?: unknown } } | null)?.payload?.reason === 'no_progress') {
+      requirePayloadField(
+        event,
+        'no_progress_ms',
+        (v) => Number.isInteger(v) && (v as number) >= 0,
+        'must be a non-negative integer',
+        errors,
+      );
+    }
     requirePayloadField(
       event,
       'idle_ms',

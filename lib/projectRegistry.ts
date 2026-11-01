@@ -48,6 +48,7 @@ const SETTING_KINDS: Readonly<Record<string, SettingKind>> = {
   'coordinator.worker_stale_force_fail_ms': 'positive',
   'coordinator.hook_idle_nudge_ms': 'positive',
   'coordinator.hook_idle_escalate_ms': 'positive',
+  'coordinator.run_no_progress_escalate_ms': 'positive',
   'coordinator.merge_strategy': 'merge_strategy',
   'coordinator.pr_provider': 'pr_provider',
   'coordinator.pr_push_remote': 'string',
