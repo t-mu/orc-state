@@ -164,11 +164,15 @@ export class RunSignals {
   /**
    * Restore state after a coordinator restart: hook snapshots from
    * run-activity.json (a persisted label counts as already announced at its
-   * label time, so it is not re-announced) and the active runs' events.
+   * label time, so it is not re-announced; a persisted `review_read_at` is
+   * phase-inference evidence again) and the active runs' events.
    */
   hydrate(activity: RunActivityMap, events: OrcEvent[] = [], nowMs: number = Date.now()): void {
     for (const [runId, snapshot] of Object.entries(activity)) {
       this.hookActivity[runId] = snapshot;
+      if (snapshot.review_read_at && !this.toolPhaseState.has(runId)) {
+        this.toolPhaseState.set(runId, { review_read_at: snapshot.review_read_at });
+      }
       if (snapshot.label && !this.notes.has(runId)) {
         const labelMs = Date.parse(snapshot.label_ts ?? '');
         this.notes.set(runId, { label: snapshot.label, emitted_at_ms: Number.isFinite(labelMs) ? labelMs : nowMs });
@@ -221,14 +225,19 @@ export class RunSignals {
       for (const tool of tools) {
         if (isCommitToolEvent(tool)) this.noteProgress(runId, tool.ts, nowMs);
       }
+      let reviewReadAt: string | null = null;
       if (tools.length > 0) {
         const result = toolPhaseCandidates(tools, this.toolPhaseState.get(runId) ?? { review_read_at: null });
         this.toolPhaseState.set(runId, result.state);
         this.toolCandidates.set(runId, result.candidates);
+        reviewReadAt = result.state.review_read_at;
       }
       if (activity.length > 0) {
         const previousTs = latestHookActivityTs(this.hookActivity[runId]);
-        this.hookActivity[runId] = applyHookActivity(this.hookActivity[runId], runId, agentId, activity, nowMs);
+        const snapshot = applyHookActivity(this.hookActivity[runId], runId, agentId, activity, nowMs);
+        // Persisted with the snapshot so a restarted coordinator keeps the review-read evidence.
+        if (reviewReadAt) snapshot.review_read_at = reviewReadAt;
+        this.hookActivity[runId] = snapshot;
         changes.push({ runId, previousTs, ts: latestHookActivityTs(this.hookActivity[runId]) });
       }
     }

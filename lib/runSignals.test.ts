@@ -194,6 +194,30 @@ describe('RunSignals', () => {
     expect(signals.idleMs(claim(), T0)).toBe(MIN);
   });
 
+  it('persists review_read_at in the hook snapshot so a restarted coordinator still infers the rebase', () => {
+    const before = new RunSignals(CONFIG);
+    before.ingest([], hooks('run-1', [{ type: 'tool', tool: 'Bash', brief: 'orc review-read --run-id=run-1', ts: at(0) }]), T0);
+    const persisted = JSON.parse(JSON.stringify(before.hookActivityMap()));
+    expect(persisted['run-1'].review_read_at).toBe(at(0));
+
+    // A later batch without review-read keeps the persisted time.
+    before.ingest([], hooks('run-1', [{ type: 'tool', tool: 'Bash', brief: 'ls', ts: at(1000) }]), T0 + 1000);
+    expect(before.hookSnapshot('run-1')?.review_read_at).toBe(at(0));
+
+    const after = new RunSignals(CONFIG);
+    after.hydrate(persisted, [], T0 + 2000);
+    after.ingest([], hooks('run-1', [{ type: 'tool', tool: 'Bash', brief: 'git rebase main', ts: at(2000) }]), T0 + 2000);
+    expect(after.phaseCandidates(claim({ started_at: null }), T0 + 2000))
+      .toEqual([{ phase: 'complete', ts: at(2000), evidence: 'cmd: git rebase main', requires: 'review' }]);
+  });
+
+  it('without a persisted review_read_at a rebase after restart is not complete evidence', () => {
+    const signals = new RunSignals(CONFIG);
+    signals.hydrate({ 'run-1': snapshot({ last_tool_ts: at(-MIN) }) }, [], T0);
+    signals.ingest([], hooks('run-1', [{ type: 'tool', tool: 'Bash', brief: 'git rebase main', ts: at(0) }]), T0);
+    expect(signals.phaseCandidates(claim({ started_at: null }), T0)).toEqual([]);
+  });
+
   it('forget drops every per-run signal and reports whether a hook snapshot went', () => {
     const signals = new RunSignals(CONFIG);
     signals.ingest([event('review_submitted', { ts: at(-MIN) }), event('phase_started', { ts: at(-MIN), phase: 'review' })]);

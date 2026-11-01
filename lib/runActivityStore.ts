@@ -44,6 +44,11 @@ export interface RunActivitySnapshot {
   open_tools?: Record<string, string>;
   /** When the worker's turn last ended (a `turn_end` record): the run was live until then. */
   last_turn_end_ts?: string;
+  /**
+   * When the run last ran `orc review-read` (phase inference: a later `git rebase main`
+   * means complete). Kept here so a restarted coordinator still infers the rebase.
+   */
+  review_read_at?: string;
 }
 
 export type RunActivityMap = Record<string, RunActivitySnapshot>;
