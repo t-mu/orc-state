@@ -1,6 +1,5 @@
 
-# orc-state runtime data
-.orc-state/
+# master worktrees
 .worktrees
 
 # provider tool directories — installed output, not source
@@ -23,3 +22,5 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+# local scratch files
+tmp/
