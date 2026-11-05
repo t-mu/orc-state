@@ -53,15 +53,7 @@ The full protocol (commands, review constraints, PR loop, input requests) is `te
 - Status is runtime-owned: the coordinator marks a task done after merge. Never edit a spec's `status:`; `orc task-mark-done` is operator recovery only.
 - Inspection: `orc status`, `orc doctor`. Everything else is recovery/debug: `docs/cli.md`, `docs/recovery.md`.
 
-Task lifecycle (transitions and owners: `docs/contracts.md`):
-
-```
-todo → claimed → in_progress → done → released
-                     ↓
-                  blocked          (todo/claimed/in_progress/blocked → cancelled)
-```
-
-A task is claimable when `status == todo` and every `depends_on` ref is `done`/`released`.
+Task lifecycle, transitions and dispatch eligibility: `docs/contracts.md` → Task Lifecycle.
 
 ## Write rules
 

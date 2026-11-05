@@ -36,7 +36,7 @@ Providers come from the project settings (`orc project config list`); a task's `
 Ask the master (it calls `create_task`), or use the CLI:
 
 ```bash
-orc project task create --feature=general --title="Add request logging" --body-file=~/specs/add-logging.md
+orc project task create --feature=general --title="Add request logging" --body-file="$HOME"/specs/add-logging.md
 orc project task import ~/specs/add-logging.md   # or import a Markdown spec
 ```
 
