@@ -1,173 +1,76 @@
 # Architecture
 
-A high-level overview of how orc-state works. For terminology definitions, see
-[Concepts](./concepts.md). For system invariants and state machine rules, see
-[Contracts & invariants](./contracts.md). For configuration options, see
-[Configuration](./configuration.md).
+State, lifecycle and invariants: [contracts.md](./contracts.md). Settings: [configuration.md](./configuration.md).
 
 ---
 
 ## Overview
 
-orc-state is a local orchestration runtime that dispatches coding tasks to autonomous
-AI agents. You write task specs as markdown files, run `orc start-session`, and the
-system assigns tasks to headless agent workers that implement, test, and self-review
-the work — each in an isolated git worktree. Completed branches are rebased and merged
-back to main automatically.
-
----
-
-## Runtime diagram
+orc-state dispatches coding tasks to headless AI agent workers. Tasks live in the project's SQLite store (`runtime.db`; Markdown only through explicit import/export). `orc start-session` starts the coordinator and the master; the coordinator runs each task in its own git worktree, and the worker implements, tests, self-reviews and rebases it. The coordinator then merges it, or requests a finalize rebase first.
 
 ```
 orc start-session
     |
     +---> Coordinator (background)        Master (foreground)
-              |                                |
-              | ticks every ~30s              | user interaction
-              |                               | task creation
-              v                               | monitoring
-         Pick eligible task
-              |
+              | tick (30 s)                   | user, task authoring, monitoring
               v
-         Spawn worker in .worktrees/<run-id>/
-              |
+         pick eligible task
               v
-         Worker: explore -> implement -> review -> complete
-              |
+         spawn worker in <state>/worktrees/<run_id>
               v
-         Coordinator merges to main, cleans up worktree
+         worker: explore → implement → review → complete → finalize
+              v
+         coordinator merges (or PR), removes worktree
 ```
 
 ---
 
 ## Components
 
-### Coordinator
+| Role | Process | Owns |
+|------|---------|------|
+| Coordinator | background Node process (`orc start-session`) | dispatch, session liveness probes (tmux pane / PTY pid), lease expiry and requeue, phase inference, merge, the control API |
+| Master | foreground provider session | task authoring (`create_task`), monitoring (`orc status`, `orc watch`), answering input requests, scouts; never implements |
+| Worker | headless session, one per run, random orc-themed name | its worktree; reports through `orc run-*` / `orc progress`; never merges or removes its worktree |
+| Scout | ephemeral read-only session launched by the master | a `SCOUT_REPORT`; no state or file writes |
 
-The coordinator is a background Node.js process started by `orc start-session`. On
-each tick it reads the backlog, finds tasks whose dependencies are satisfied, and
-dispatches them to available workers. It also monitors worker liveness (via PTY PID
-probing), expires stalled claims, requeues failed tasks, and merges completed worktree
-branches back to main.
-
-The coordinator owns the dispatch decision and the merge. Workers do not merge
-themselves.
-
-### Master
-
-The master is the foreground agent session — your interactive conversation. It creates
-tasks, monitors progress via `orc status` and `orc watch`, responds to worker questions
-(`orc run-input-respond`), and can request investigation scouts. The master does not
-implement tasks directly.
-
-### Worker
-
-A worker is a headless agent session spawned by the coordinator for a single task run.
-It is assigned a random orc-themed two-word name (e.g., `broken-nose`, `slithering-arrow`)
-that is unique among currently active workers. The provider (Claude, Codex, Gemini) is resolved at dispatch
-time from the task's `required_provider` field, or from the configured default when absent.
-The worker operates entirely inside an isolated git worktree (`.worktrees/<run-id>/`),
-follows a five-phase lifecycle (explore, implement, review, complete, finalize), and
-signals progress through `orc` CLI commands. When work is done, it signals the coordinator
-and waits for the merge. The coordinator removes the worker's agent registration after the
-run completes, freeing the concurrency slot for the next task.
-
-### Scout
-
-A scout is an ephemeral read-only agent launched by the master to investigate a
-specific question — why a worker is stalled, what a piece of code does, or what git
-history shows. Scouts do not write files, mutate state, or participate in the task
-lifecycle. The master cleans them up after reading their report.
-
----
+The worker's provider comes from the task's `required_provider` or the configured default. Workers are registered at dispatch and removed after the run.
 
 ## Data flow
 
-1. **Spec authored** — the master (`create_task`) or you (`orc project task create|import`)
-   store the task spec as a revision in the project's SQLite task store (`runtime.db`).
-2. **Projection updated** — the task store is projected into the read-only
-   `backlog.json` that the scheduler and status views read.
-3. **Task becomes eligible** — once a task's `depends_on` refs are all `done` or
-   `released`, the coordinator marks it eligible for dispatch.
-4. **Claim created** — when concurrency capacity is available (live worker count is below
-   `max_workers`), the coordinator registers a new task-scoped worker agent, resolves the
-   provider from the task's `required_provider` field or the configured default, creates a
-   claim in `claims.json` pinned to the task's latest revision, and launches a PTY session for the new worker.
-5. **Worker runs** — the worker reads the spec, writes code, runs tests, and submits
-   the work for self-review. Each lifecycle event is appended to `events.db`.
-6. **Work complete** — the worker signals `run-work-complete`; the coordinator takes
-   over to rebase the branch and merge it to main.
-7. **Task released** — after merge, the task transitions to `released` and the worktree
-   is removed.
+1. Task authored (`create_task`, `orc project task create|import`) → immutable revision in `runtime.db`, projected to `backlog.json`.
+2. Eligibility is derived each tick: `todo`, dependencies `done`/`released`, plus the rules in [contracts.md → Task Lifecycle](./contracts.md#task-lifecycle).
+3. Capacity = `max_workers` − agents with an active claim. When > 0 the coordinator registers a worker, creates a run in `events.db` `runs` pinned to the latest revision, creates the worktree and launches the session.
+4. The worker runs the phased workflow; lifecycle events go to the coordinator over the control API and land in `events.db`.
+5. `run-work-complete` → the coordinator merges (direct) or drives the PR flow, records `done`, then `released`, and removes the worktree.
+
+## Two roots
+
+- **Orchestration root**: the project state directory `<data-home>/projects/<project_id>/`; holds state, worktrees, logs.
+- **Target repo root**: the registered Git repository; all product-code git operations target it. Run worktrees live under the state directory but are worktrees of the target repo, which receives only product commits.
 
 ---
 
-## State directory
+## Glossary
 
-All runtime state lives in the project's external state directory
-(`<data-home>/projects/<project_id>/`), outside the repository. Agents never write these
-files directly — all mutations go through `orc` CLI commands or MCP tool handlers.
-
-| File | Contents |
-|------|----------|
-| `runtime.db` | SQLite task store: revisions, status, transitions, runs, plans |
-| `backlog.json` | Features and tasks (read-only projection of `runtime.db`) |
-| `agents.json` | Registered agents and their session metadata |
-| `claims.json` | Active and historical run claims |
-| `events.db` | Append-only SQLite event log |
-| `memory.db` | SQLite memory store for agent notes (FTS5-indexed) |
-
-For field-level schemas and concurrency guarantees, see [Contracts & invariants](./contracts.md).
-
----
-
-## Two-root model
-
-orc resolves two roots:
-
-- **Orchestration root** — the project's external state directory; owns state,
-  worktrees and logs. The coordinator runs against it.
-- **Target repo root** — the repository whose product code the runs operate on.
-  All product-code git operations (worktree creation, branch delete, merge, PR
-  push) target this repo.
-
-The roots differ: the orchestration root is the project's external state
-directory in the data home, and the target is the registered Git repository. Worktrees are placed under the state directory but
-are git worktrees **of the target repo**, which receives only product-code
-commits.
-
----
-
-## Worker capacity
-
-`max_workers` is a concurrency limit, not a count of pre-created worker agents. No idle
-worker agents exist between tasks — capacity is computed dynamically as the configured
-limit minus the number of workers currently registered in `agents.json`. When a run
-completes, the coordinator removes the worker from the registry and the freed slot becomes
-available for the next dispatch.
-
-Worker names are drawn randomly from fixed orc-themed adjective and noun lists
-(`broken-nose`, `slithering-arrow`, `iron-fang`, etc.) and are unique only among
-agents currently registered. A name is released for reuse once the worker is
-deregistered after its run completes.
-
-## Worktree isolation
-
-Each task run gets its own git worktree at `.worktrees/<run-id>/`. This means:
-
-- **No shared working tree conflicts** — two workers implementing different tasks
-  simultaneously never touch the same checkout.
-- **Clean rebase surface** — when the worker finishes, the coordinator rebases the
-  isolated branch onto the latest main before merging.
-- **Safe failure** — if a run fails, the worktree is simply removed; no partial changes
-  reach main.
-
-The coordinator creates the worktree before dispatching the worker and removes it after
-a successful merge. Workers must not remove their own worktree or merge to main.
-
-## See also
-
-- [Concepts & terminology](./concepts.md)
-- [Writing custom adapters](./adapters.md)
-- [Contracts & invariants](./contracts.md)
+| Term | Meaning |
+|------|---------|
+| Coordinator | Background process that dispatches, supervises and merges |
+| Master | Foreground agent the user talks to; authors tasks, answers workers |
+| Worker | Task-scoped headless agent session for one run |
+| Scout | Read-only investigation agent launched with `request_scout` |
+| Task | Unit of work: ref `<feature>/<slug>`, revisions, runtime-owned status |
+| Feature | Grouping of tasks; the first segment of a task ref |
+| Spec revision | Immutable task body + metadata; a run pins one |
+| Plan | Saved design artifact in SQLite, imported/exported as Markdown ([plan-template.md](./plan-template.md)) |
+| Run | One attempt of a task (`run-<timestamp>-<hex>`); a task may have several |
+| Claim | Run ↔ task ↔ worker binding with a lease |
+| Lease | Claim expiry time, renewed by run activity |
+| Phase | Worker workflow step: explore, implement, review, complete, finalize |
+| Finalization | Post-work-complete merge/rebase/PR state of a run |
+| Worktree | `<state>/worktrees/<run_id>`, a git worktree of the target repo per run |
+| Provider | AI backend: `claude`, `codex`, `gemini` |
+| Adapter | Provider/transport layer behind one interface ([adapters.md](./adapters.md)) |
+| Session handle | `<transport>:<agent_id>` (`tmux`, `pty`, `app`) |
+| Session secret | Per-session credential in the session's environment |
+| Project | Registered target repo with a stable `project_id` and state directory |

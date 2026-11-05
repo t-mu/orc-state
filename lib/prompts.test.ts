@@ -144,16 +144,16 @@ describe('printManagedWorkerNotice()', () => {
 
 describe('active runtime contract docs', () => {
   const activePaths = [
-    '../contracts.md',
+    '../docs/contracts.md',
     '../README.md',
     '../adapters/interface.ts',
     '../templates/master-bootstrap-v1.txt',
   ];
 
   it('describe orc run-* as the active worker reporting contract', () => {
-    const contracts = readFileSync(new URL('../contracts.md', import.meta.url), 'utf8');
+    const contracts = readFileSync(new URL('../docs/contracts.md', import.meta.url), 'utf8');
     expect(contracts).toContain('orc run-start');
-    expect(contracts).toContain('orc run-heartbeat');
+    expect(contracts).toContain('orc run-work-complete');
     expect(contracts).toContain('orc run-finish');
     expect(contracts).toContain('orc run-fail');
   });
