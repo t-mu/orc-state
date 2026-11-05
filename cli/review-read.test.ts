@@ -42,6 +42,18 @@ function submitReview(runId: string, agentId: string, outcome: 'approved' | 'fin
 }
 
 describe('orc review-read', () => {
+  it('lets a newer bridged review replace the same labelled reviewer', () => {
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-abc', 'orch/review', 'broken-nose', 'in_progress', 'now', 'now')").run();
+    });
+    submitReview('run-abc', 'broken-nose', 'findings', 'stale', 'critic');
+    bridgeReviewFeedback(dir, 'run-abc', 'broken-nose', 'approved', 'fixed', 'critic');
+    const parsed = JSON.parse(runCli(['--run-id=run-abc', '--json']).stdout) as { count: number; reviews: Array<{ payload: { findings: string; reviewer?: string } }> };
+    expect(parsed.count).toBe(1);
+    expect(parsed.reviews[0].payload).toMatchObject({ findings: 'fixed', reviewer: 'critic' });
+  });
+
   it('keeps one review per reviewer label when reviewers share the worker agent_id', () => {
     submitReview('run-abc', 'broken-nose', 'findings', 'critic: old finding', 'critic');
     submitReview('run-abc', 'broken-nose', 'approved', 'integrator: fine', 'integrator');

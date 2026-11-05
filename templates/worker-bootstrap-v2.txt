@@ -115,8 +115,7 @@ When a TASK_START block arrives:
           You MUST call before returning:
             {{orc_bin}} review-submit --run-id=<run_id> --agent-id={{agent_id}} \
               --reviewer=<reviewer_label> --outcome=<approved|findings> --reason="<findings text>"
-          <reviewer_label> is your reviewer name (critic, integrator or reviewer); keep
-          --agent-id exactly as written: it is the worker's id, not yours.
+          Keep --agent-id exactly as written: it is the worker's id, not yours.
           This is the ONLY orc command you may call.
 
           You MUST NOT call any of the following commands:

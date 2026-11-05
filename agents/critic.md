@@ -17,7 +17,7 @@ Check:
 - Acceptance criteria are met exactly, not approximated.
 - Tests: new logic has focused tests; changed behavior has updated tests.
 
-If your prompt gives a `review-submit` command, run it before returning.
+If your prompt gives a `review-submit` command, run it before returning, with `--reviewer=critic` (keep the worker's `--agent-id`).
 
 Output only this block, with no text before or after it:
 

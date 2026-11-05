@@ -180,7 +180,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       return { message: `progress event accepted: ${event} run=${runId} agent=${agentId}` };
     }
     case 'review-submit': {
-      const messageId = bridgeReviewFeedback(stateDir, request.run_id, request.agent_id, request.outcome, request.reason);
+      const messageId = bridgeReviewFeedback(stateDir, request.run_id, request.agent_id, request.outcome, request.reason, request.reviewer);
       appendSequencedEvent(stateDir, {
         ts: at, event: 'review_submitted', actor_type: 'agent', actor_id: request.agent_id,
         run_id: request.run_id, agent_id: request.agent_id,

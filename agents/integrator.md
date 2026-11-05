@@ -15,7 +15,7 @@ Check:
 - Coherence: no mixed paradigms left behind; the change composes with existing commands and tests.
 - Operator experience: errors surface at the right layer; recovery needs no undocumented steps.
 
-If your prompt gives a `review-submit` command, run it before returning.
+If your prompt gives a `review-submit` command, run it before returning, with `--reviewer=integrator` (keep the worker's `--agent-id`).
 
 Output only this block, with no text before or after it:
 

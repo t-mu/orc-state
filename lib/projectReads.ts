@@ -55,23 +55,27 @@ export function readRunReviews(stateDir: string, runId: string): ReviewSubmitted
     limit: 100,
   }) as ReviewSubmittedEvent[];
 
-  const reviewerKey = (e: ReviewSubmittedEvent) => (e.payload.reviewer ? `${e.agent_id}#${e.payload.reviewer}` : e.agent_id);
-  const byAgent = new Map<string, ReviewSubmittedEvent>();
+  const reviewerKey = (agentId: string, reviewer: string | undefined) => (reviewer ? `${agentId}#${reviewer}` : agentId);
+  const byReviewer = new Map<string, ReviewSubmittedEvent>();
   for (const e of events) {
-    byAgent.set(reviewerKey(e), e);
+    byReviewer.set(reviewerKey(e.agent_id, e.payload.reviewer), e);
   }
   const eventMessageIds = new Set(events.map((event) => event.payload.message_id).filter((id): id is string => typeof id === 'string'));
   for (const message of readBridgedReviewFeedback(stateDir, runId)) {
     if (eventMessageIds.has(message.messageId)) continue;
-    const current = byAgent.get(message.agentId);
+    const key = reviewerKey(message.agentId, message.reviewer);
+    const current = byReviewer.get(key);
     if (current && current.ts > message.createdAt) continue;
-    byAgent.set(message.agentId, {
+    byReviewer.set(key, {
       seq: 0, ts: message.createdAt, event: 'review_submitted', actor_type: 'agent', actor_id: message.agentId,
       run_id: runId, agent_id: message.agentId,
-      payload: { outcome: message.outcome, findings: message.findings, message_id: message.messageId },
+      payload: {
+        outcome: message.outcome, findings: message.findings, message_id: message.messageId,
+        ...(message.reviewer ? { reviewer: message.reviewer } : {}),
+      },
     });
   }
-  return [...byAgent.values()];
+  return [...byReviewer.values()];
 }
 
 export const DEFAULT_WAKE_UP_BUDGET = 800;
