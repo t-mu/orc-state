@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import {
-  reduceLifecycleEvent,
+  reduceLifecycleEvent as reduceWithLeases,
   coerceEventTs,
   authoritativeTs,
   type LifecycleEventInput,
 } from './workerLifecycleReducer.ts';
 import type { Claim } from '../types/claims.ts';
 import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
+import { DEFAULT_LEASE_CONFIG } from './providers.ts';
+
+const reduceLifecycleEvent = (
+  event: Parameters<typeof reduceWithLeases>[0], claim: Parameters<typeof reduceWithLeases>[1], nowIso: string,
+  leases: Parameters<typeof reduceWithLeases>[3] = DEFAULT_LEASE_CONFIG,
+) => reduceWithLeases(event, claim, nowIso, leases);
 
 const NOW = '2026-03-11T08:00:00.000Z';
 

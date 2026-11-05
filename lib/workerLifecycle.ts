@@ -13,6 +13,7 @@ import { assertRunMayFinish } from './projectTasks.ts';
 import { storeDrawer, wingFromTaskRef } from './memoryStore.ts';
 import { getAgent, updateAgentRuntime } from './agentRegistry.ts';
 import { ControlError } from './controlProtocol.ts';
+import { loadLeaseConfig } from './providers.ts';
 import type { Claim } from '../types/claims.ts';
 import type { EventFinalizationStatus, OrcEvent, OrcEventInput } from '../types/events.ts';
 
@@ -165,7 +166,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       } else if (event === 'run_failed') {
         finishRun(stateDir, runId, agentId, { success: false, failureReason: reason, failureCode: 'ERR_WORKER_REPORTED_FAILURE', policy });
       } else if (event === 'heartbeat') {
-        heartbeat(stateDir, runId, agentId, { note });
+        heartbeat(stateDir, runId, agentId, { note, leaseDurationMs: loadLeaseConfig().default_ms });
       } else {
         const extra = { ...(reason ? { reason } : {}), ...(note ? { note } : {}) };
         const payload = finalizationPayload(event) ?? (Object.keys(extra).length > 0 ? extra : undefined);

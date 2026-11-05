@@ -1,5 +1,5 @@
 import type { Claim, FinalizationState } from '../types/claims.ts';
-import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
+import type { LeaseConfig } from './providers.ts';
 
 // ── Input type ─────────────────────────────────────────────────────────────
 
@@ -101,20 +101,11 @@ export function authoritativeTs(
  *
  * This function has no side effects and performs no I/O.
  */
-export interface LifecycleLeases {
-  /** Lease a progressing run is renewed to (`leases.default_ms`). */
-  default_ms: number;
-  /** Lease once work is complete and awaiting finalization (`leases.finalize_ms`). */
-  finalize_ms: number;
-}
-
-const DEFAULT_LIFECYCLE_LEASES: LifecycleLeases = { default_ms: DEFAULT_LEASE_MS, finalize_ms: FINALIZE_LEASE_MS };
-
 export function reduceLifecycleEvent(
   event: LifecycleEventInput,
   claim: Claim | null,
   nowIso: string,
-  leases: LifecycleLeases = DEFAULT_LIFECYCLE_LEASES,
+  leases: Pick<LeaseConfig, 'default_ms' | 'finalize_ms'>,
 ): LifecycleAction {
   const eventTs = coerceEventTs(event.ts, nowIso);
 

@@ -8,6 +8,7 @@ import {
   markTaskEnvelopeSent,
   startRun,
   heartbeat,
+  renewLeaseOnly,
   finishRun,
   setRunFinalizationState,
   setRunInputState,
@@ -287,6 +288,20 @@ describe('heartbeat', () => {
     // Use an `at` timestamp 2 minutes in the future — past the 1-minute lease
     const futureAt = new Date(Date.now() + 120_000).toISOString();
     expect(() => heartbeat(dir, run_id, 'agent-01', { at: futureAt })).toThrow('expired');
+  });
+});
+
+describe('renewLeaseOnly', () => {
+  it('renews to the given duration but never shortens a longer lease', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01', { leaseDurationMs: 5 * 60 * 1000 });
+    startRun(dir, run_id, 'agent-01');
+    renewLeaseOnly(dir, run_id, { leaseDurationMs: 10 * 60 * 1000 });
+    const lease = () => Date.parse(readClaims(dir).claims.find((c) => c.run_id === run_id)!.lease_expires_at) - Date.now();
+    expect(lease()).toBeGreaterThan(9 * 60 * 1000);
+    heartbeat(dir, run_id, 'agent-01', { leaseDurationMs: 60 * 60 * 1000 });
+    renewLeaseOnly(dir, run_id, { leaseDurationMs: 10 * 60 * 1000 });
+    expect(lease()).toBeGreaterThan(59 * 60 * 1000);
   });
 });
 
