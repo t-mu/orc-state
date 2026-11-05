@@ -3,7 +3,7 @@
  *
  * Drives `codex app-server --listen stdio://` (JSON-RPC, one JSON object per
  * line) instead of the Codex terminal UI. Proven locally against Codex CLI
- * 0.163 under a ChatGPT login (docs/vnext-provider-protocols.md):
+ * 0.163 under a ChatGPT login (docs/configuration.md "Worker Runtimes"):
  * initialize → account/read → thread/start → turn/start → turn/completed, and
  * thread/resume from a second process.
  *

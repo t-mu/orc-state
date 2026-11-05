@@ -1,185 +1,58 @@
 # Testing
 
-## Overview
+## Suites
 
-The test suite has three tiers:
+| Command | Config | Runs |
+|---------|--------|------|
+| `npm test` | `vitest.config.mjs` | `pretest` (`tsc` check + test configs, `eslint .`), then every `*.test.ts` except `e2e/`, `e2e-real/` |
+| `npm run test:e2e` | `vitest.e2e.config.mjs` | `e2e/` with fixture provider CLIs (`test-fixtures/`) |
+| `npm run test:real-providers` | `vitest.real-providers.config.mjs` | `e2e-real/` against real `claude` / `codex` (opt-in) |
+| `npx vitest run -c vitest.integration.config.mjs` | `vitest.integration.config.mjs` | only `*.integration.test.ts` (no npm script; `npm test` runs them too) |
 
-| Command | What it runs | When to use |
-|---------|-------------|-------------|
-| `npm test` | Unit + integration tests (no real providers) | Default — run on every change |
-| `npm run test:e2e` | E2E tests with fixture CLIs | Before merging coordinator changes |
-| `npm run test:real-providers` | Real-provider smoke tests (opt-in) | Before releases or after provider integration changes |
+Every config:
+- strips inherited `ORC_*` variables (`vitest.orcEnv.mjs`, guarded by `vitest.orcEnv.test.ts`), so the suite is safe inside a worker session; tests get only `ORC_DATA_HOME` (an empty test home) and, except real-providers, `ORC_SESSION_TRANSPORT=pty`;
+- gives tests a private `TMUX_TMPDIR` (`vitest.tmuxTmpdir.mjs` globalSetup).
 
-Every vitest config removes all inherited `ORC_*` variables before any test
-worker starts (`vitest.orcEnv.mjs`), so running the suite from inside a live
-orc session (a worker's `ORC_STATE_DIR`, control socket, secrets) never
-reaches that session's project. Test workers see only the values the config
-sets deliberately (an `ORC_DATA_HOME` that names no registry, plus
-`ORC_SESSION_TRANSPORT=pty` outside the real-provider config); a test that
-needs another `ORC_*` value sets it itself. `vitest.orcEnv.test.ts` guards
-this for each config. Opt-in switches you pass on the command line therefore
-use a `RUN_` prefix (`RUN_REAL_PROVIDERS`, `RUN_TMUX_SMOKE`, `RUN_DOCKER_SMOKE`):
-an `ORC_*` switch would be stripped.
+Command-line switches therefore use a `RUN_` prefix; an `ORC_*` switch is stripped.
 
----
+## Env switches
 
-## Unit and integration tests
+| Variable | Effect |
+|----------|--------|
+| `RUN_REAL_PROVIDERS=1` | enables `e2e-real/` (Claude and Codex) |
+| `RUN_REAL_PROVIDERS_CODEX=1` | enables only the Codex real-provider test |
+| `RUN_TMUX_SMOKE=1` | real tmux terminal smoke (`lib/terminalBroker.test.ts`) |
+| `RUN_DOCKER_SMOKE=1` | Docker project image smoke (`docker/project/project.integration.test.ts`) |
+| `RUN_STRICT_PTY_TESTS=1` | a failed PTY support probe fails the run instead of skipping PTY suites (CI on PTY-capable runners) |
+| `RUN_PTY_AVAILABLE=1` | skip the probe and force PTY suites to run |
 
-```bash
-npm test
-```
-
-Runs all tests under `vitest.config.mjs`. Excludes `e2e/` and `e2e-real/`.
-These tests use mocked adapters, fixture CLIs, or in-process state — no real
-provider binary is required.
-
----
-
-## E2E tests
-
-```bash
-npm run test:e2e
-```
-
-Runs tests under `e2e/`. Uses fixture CLI scripts that simulate provider
-behavior at the PTY boundary without making real API calls.
-
----
-
-## Real-provider smoke tests
+## Real-provider suite
 
 ```bash
 RUN_REAL_PROVIDERS=1 npm run test:real-providers
+RUN_REAL_PROVIDERS_CODEX=1 npm run test:real-providers          # Codex only
+npm run test:real-providers -- e2e-real/harness/harness.test.ts  # harness only, no provider or switch needed
 ```
 
-Runs the opt-in real-provider suite under `e2e-real/`. This suite starts a
-real coordinator process, dispatches tasks to real provider CLIs
-(`claude`, `codex`), and validates the full coordinator + worker lifecycle.
+- Serial (`fileParallelism: false`, `singleThread: true`); `testTimeout` 30 min.
+- Each test: temp root with a clean git repo and temp `ORC_DATA_HOME`, `orc project add`, `worker_pool.max_workers=1`, two dependent tasks, real coordinator, asserts `run_started` per run and that all paths stay in the temp root.
+- Per-task / overall timeout: Claude 10 / 25 min, Codex 15 / 35 min.
+- Tests skip when the binary is missing, PTY is unavailable, or the binary does not spawn. Auth is not checked: log in first ([recovery.md](./recovery.md#providers)).
+- Not covered: `start-session`/master, input requests, sandbox mode, concurrent workers, provider output text.
 
-### When to run
+## Provider protocol smoke
 
-- Before cutting a release
-- After changes to the coordinator dispatch or worker lifecycle code
-- When debugging provider-specific PTY integration issues
+Real inference, not part of any suite; uses the CLI's existing login and strips API-key env from the child:
 
-### Required environment flags
+```bash
+ORC_CODEX_SMOKE_BINARY=<path to codex> node scripts/vnext-provider-smoke.ts codex
+ORC_CLAUDE_SMOKE_BINARY=<path to claude> node scripts/vnext-provider-smoke.ts claude
+```
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `RUN_REAL_PROVIDERS=1` | Yes | Opt-in gate. Without this, the smoke test suite skips all real-provider tests. |
+The `*_SMOKE_BINARY` overrides default to `codex` / `claude` on `PATH`.
 
-### Required provider binaries
+## Writing tests
 
-Each smoke test gates itself on the availability of the corresponding provider
-binary. Tests skip automatically if the binary is not found, PTY support is
-unavailable, or the binary does not spawn noninteractively.
-
-| Provider | Binary | Install |
-|----------|--------|---------|
-| Claude | `claude` | `npm install -g @anthropic-ai/claude-code` |
-| Codex | `codex` | `npm install -g @openai/codex` |
-
-The suite does **not** verify auth (API key validity, active login session).
-If a provider binary is installed but not authenticated, the coordinator
-startup will fail with a runtime error — not a readiness failure. Set up auth
-before running the suite:
-
-- **Claude:** Run `claude` in a terminal and complete the login flow, or set `ANTHROPIC_API_KEY`.
-- **Codex:** Run `codex` in a terminal and complete the login flow, or set `OPENAI_API_KEY`.
-
-### Execution model
-
-The suite runs **serially** (one file at a time, no concurrency). This is
-enforced by `vitest.real-providers.config.mjs` (`fileParallelism: false`,
-`singleFork: true`). Real provider sessions are expensive and must not overlap.
-
-Each smoke test:
-1. Creates an isolated temp root (outside the real checkout) holding a clean
-   target git repo and a temp `ORC_DATA_HOME`, and registers the repo there with
-   `orc project add` — no orc files are written into the repo
-2. Stores the provider settings with `orc project config set`
-   (`worker_pool.max_workers = 1`) and seeds the tasks with
-   `orc project task create` (no real master session)
-3. Starts a real coordinator process with `ORC_DATA_HOME` and the project's
-   `ORC_PROJECT_ID`; every other inherited `ORC_*` variable is removed, so the
-   suite never touches the project it is run from
-4. Dispatches two sequential tasks to a real provider worker
-5. Polls for task completion and lifecycle events
-6. Asserts path containment and cleans up
-
-The harness's own tests (`e2e-real/harness/harness.test.ts`) need no provider
-credentials or `RUN_REAL_PROVIDERS`: they exercise registration, seeding, the
-runtime env and a real coordinator start with no tasks, so no worker is
-launched. Run them alone with
-`npm run test:real-providers -- e2e-real/harness/harness.test.ts`.
-
-### Timeouts
-
-Real provider sessions can take 3–5 minutes per task (the provider needs to
-bootstrap, parse the TASK_START payload, and execute the spec). Each test
-allows up to 3 minutes per task and 7 minutes overall.
-
-If a test times out, check:
-- Whether the provider binary hangs on an interactive prompt (first-run banners, auth flows)
-- Whether the coordinator log shows a dispatch failure
-- Whether the worker session started but stalled at a tool permission prompt
-
-### What the suite covers
-
-- `coordinator + real Claude worker`: blessed dispatch path with two sequential tasks
-- `coordinator + real Codex worker`: blessed dispatch path with two sequential tasks
-
-For each case, the test validates:
-- Two sequential task completions (task 2 depends on task 1)
-- Lifecycle event sequencing (`run_started` appears for each run)
-- Path containment (the project state directory, its run worktrees, and artifacts stay inside the temp root)
-
-### What the suite does NOT cover
-
-- `orc start-session` or real master agent startup
-- Cross-provider master/worker combinations
-- `input_request` / `input_response` flows
-- Sandbox-mode execution or host-level process containment
-- Multiple concurrent workers
-- Exact byte-stable provider output (no assertions on CLI text)
-
-The real-provider suite is **functional smoke coverage**, not a security
-boundary test. Path containment is verified at the filesystem level via
-`run-worktrees.json` path checks, not hard OS-level sandboxing.
-
-### Troubleshooting
-
-**Test skips immediately without running:**
-- Check that `RUN_REAL_PROVIDERS=1` is set in the environment.
-- Check that the provider binary is installed and on `$PATH`.
-
-**Coordinator startup timeout:**
-- The coordinator must produce output within the test's startup timeout.
-- Check for startup errors: run `orc doctor` with the temp `ORC_DATA_HOME` and
-  `ORC_PROJECT_ID` from the test.
-
-**Task completion timeout:**
-- The worker session may be stalled at an interactive prompt.
-- Run the provider CLI manually (`claude` or `codex`) and check for first-run auth flows.
-
-**Path containment failure:**
-- An orchestrator-managed path escaped the temp root.
-- Check `run-worktrees.json` in the project state directory
-  (`<temp root>/data/projects/<project-id>/`).
-- This is a coordinator bug — open an issue with the coordinator stdout from the test failure.
-
----
-
-## Writing new tests
-
-- Unit tests: add `*.test.ts` files anywhere except `e2e/` and `e2e-real/`.
-- E2E tests: add files under `e2e/`.
-- Real-provider smoke tests: add files under `e2e-real/` and use the shared
-  harness in `e2e-real/harness/`. Gate new tests with `describe.skipIf(!ENABLED)`
-  where `ENABLED = process.env.RUN_REAL_PROVIDERS === '1'`.
-
-## See also
-
-- [Getting started](./getting-started.md)
-- [Contracts & invariants](./contracts.md)
-- [CLI reference](./cli.md)
+- Unit: `*.test.ts` anywhere outside `e2e/`, `e2e-real/`.
+- E2E: `e2e/`. Fixture CLIs: [test-fixtures/README.md](../test-fixtures/README.md).
+- Real-provider: `e2e-real/` using `e2e-real/harness/`; gate with `describe.skipIf(process.env.RUN_REAL_PROVIDERS !== '1')`.

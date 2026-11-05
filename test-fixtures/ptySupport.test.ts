@@ -14,7 +14,7 @@ describe('test-fixtures/ptySupport.ts', () => {
     expect(() => detectPtySupport({
       strict: true,
       probe: () => false,
-    })).toThrow(/ORC_STRICT_PTY_TESTS=1/);
+    })).toThrow(/RUN_STRICT_PTY_TESTS=1/);
   });
 
   it('returns true when probe succeeds in strict mode', () => {

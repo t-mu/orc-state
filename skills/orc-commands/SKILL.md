@@ -7,156 +7,83 @@ description: >
 argument-hint: "[command name or operation]"
 ---
 
-# Orc Commands Reference
+# orc commands
 
-## Critical: State Directory
+Cheat-sheet. Full flags: `docs/cli.md`, or `orc <subcommand> --help` (prints usage, never runs the command).
 
-All orc commands act on a registered project. Its state lives outside the
-repository, in the project state directory (`orc project show` prints it).
-Inside a registered repository (or any of its worktrees) the repository selects
-its project; elsewhere pass `--project=<id>` (or set `ORC_PROJECT_ID`):
+Every command acts on one registered project. Inside its repository or a worktree the repo selects it; elsewhere pass `--project=<id>` (or set `ORC_PROJECT_ID`). `orc project show` prints the state directory.
 
-```bash
-orc --project=<project-id> <cmd>
-```
+## Blessed path
 
-The `kill-all`
-command is especially dangerous to run accidentally — it stops the coordinator and
-clears all agents.
+1. `orc start-session` — coordinator + master (TTY).
+2. Author tasks: `orc project task create|edit|import` or MCP `create_task`/`update_task`.
+3. Dispatch is automatic; the coordinator marks tasks done after merge.
+4. Workers: `run-start` → `run-work-complete` → `run-finish`.
+5. Inspect: `orc status`, `orc doctor`.
 
----
+## Inspection
 
-## All Subcommands
+| Command | Use |
+|---|---|
+| `orc status [--json] [--mine --agent-id=<id>]` / `orc watch` | agents, tasks, claims |
+| `orc doctor` / `orc preflight` | state validation / environment check |
+| `orc runs-active`, `orc run-info <run_id>`, `orc waiting-input` | runs, one run, pending questions |
+| `orc worker-status [<agent_id>]`, `orc sessions [--all]` | worker health; session state (running/recoverable/unknown) |
+| `orc events-tail [--n=<N>] [--event=<name>]`, `orc events-filter [--run-id=] [--agent-id=] [--event=] [--last=N]` | event log |
+| `orc review-read --run-id=<id>` | submitted reviews, one per reviewer label |
+| `orc attach <agent_id\|run_id> [--write]` | tmux session; read-only unless `--write`; Ctrl-b d detaches |
+| `orc terminal <provider\|shell> <run_id> [--write] [--once]` | provider terminal or worktree shell (any session type) |
 
-## Blessed Path First
+## Tasks and runs (operator / master)
 
-Normal workflow:
+| Command | Effect |
+|---|---|
+| `orc project task list\|show\|revisions\|export`, `orc project plan list\|show\|import\|export` | read and move task/plan Markdown |
+| `orc task-reset <ref>` | any non-`todo` status → `todo`, cancels active claims |
+| `orc task-unblock <ref> [--reason=]` | `blocked` → `todo` |
+| `orc task-cancel <ref> [--reason=]` | non-terminal → `cancelled` |
+| `orc task-mark-done <ref>` | recovery: mark done (coordinator normally does it) |
+| `orc run-close <run_id> [--reason=]` | recovery: close a manually merged run, clean its worktree and branch |
+| `orc run-expire <run_id>` | force-expire a claim and requeue its task |
+| `orc delegate --task-ref=<ref> [--target-agent-id=<id>]` | manual dispatch (recovery; dispatch is automatic) |
+| `orc run-input-respond --run-id= --agent-id= --response=` | answer a worker; master session only (`ORC_MASTER_SECRET`) or MCP `respond_input` |
+| `orc pr-status <pr_ref> [--wait]`, `pr-diff`, `pr-review`, `pr-merge` | PR mode |
 
-1. `orc start-session`
-2. author the task with `orc project task create|edit|import` or the `create_task`/`update_task` MCP tools (no file in the repository)
-3. task status is runtime-owned: change it only through lifecycle commands
-4. `orc delegate`
-5. worker lifecycle via `run-start` -> `run-work-complete` -> `run-finish`
-6. inspect with `orc status` / `orc doctor`
+## Worker commands (inside a worker session only)
 
-Outside the blessed workflow, use only:
+| Command | Use |
+|---|---|
+| `orc run-start --run-id= --agent-id=` | required first |
+| `orc progress --event=phase_started --phase=<explore\|implement\|review\|complete\|finalize> --run-id= --agent-id=` | phase signal; `--event=heartbeat --note=<text>` sets the `orc watch` line |
+| `orc run-work-complete --run-id= --agent-id=` | work and review done; wait for coordinator |
+| `orc run-finish --run-id= --agent-id=` | terminal success, after work-complete |
+| `orc run-fail --run-id= --agent-id= [--reason=] [--policy=requeue\|block]` | terminal failure (default `requeue`) |
+| `orc run-input-request --run-id= --agent-id= --question=<text>` | ask the master; blocks until answered |
+| `orc review-submit --run-id= --agent-id=<worker_id> --reviewer=<label> --outcome=<approved\|findings> --reason=` | reviewer sub-agents, with the worker's agent_id |
+| `orc memory-wake-up [--wing=]`, `orc memory-record --content=`, `orc memory-search <q>`, `orc memory-status` | memory |
 
-- supported inspection commands for observability
-- advanced / specialized commands for setup or niche workflows
-- recovery/debug commands for exceptional cases
+Lifecycle commands need the worker's session secret; outside a worker session they are refused (except `memory-record`).
 
-### Session / Coordinator Management
+## Worker cleanup and reset
 
-| Command | Usage | Notes |
-|---------|-------|-------|
-| `start-session` | `orc start-session [--provider=<claude\|codex\|gemini>]` | Starts coordinator + master session interactively. Requires TTY. |
-| `status` | `orc status [--mine] [--agent-id=<id>]` | Print agent/task/claim table. |
-| `doctor` | `orc doctor` | Validate state files, check provider keys/binaries, find orphaned claims. |
-| `preflight` | `orc preflight` | Lightweight environment health check. |
-| `init` | `orc init [--provider=claude,codex] [--worker-provider=<name>]` | Configure a registered project (`orc project add <git-path>` first): records providers in the project registry and initializes the external state directory. Writes nothing into the repository; `--force` is refused. |
-| `kill-all` | `orc kill-all` | ⚠️ Stops coordinator + clears ALL agents. Use only to fully reset. **Never run in a loop or batch script** — it has no `--help` guard and executes immediately. |
-| `install-agents` | `orc install-agents [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic agent prompts into `.claude/agents/` or `.codex/agents/`. |
-| `install-skills` | `orc install-skills [--global] [--provider=claude,codex] [--dry-run]` | Install the packaged provider-agnostic skills into `.claude/skills/` or `.codex/skills/`. |
+| Command | Effect |
+|---|---|
+| `orc worker-remove <id> [--keep-session]` | stop and remove one worker; refused while it holds a claim |
+| `orc worker-gc` | remove dead workers without claims (only when no coordinator runs) |
+| `orc kill-all [--keep-sessions]` | stops the coordinator, stops all sessions, resets active tasks, removes run worktrees |
 
-### Worker Management
+`kill-all` is a full reset: never run it in a loop or script.
 
-These commands are recovery/debug only. Do not choose them when the blessed workflow applies.
+## Restart
 
-| Command | Usage | Notes |
-|---------|-------|-------|
-| `attach` | `orc attach <agent_id\|run_id> [--write]` | Open a tmux worker's real session in a TTY. Read-only (observe) by default; `--write` enables input (control). Ctrl-b d detaches. `pty:`/`app:` sessions: use `orc terminal provider <run_id>`. |
-| `worker-remove` | `orc worker-remove <id> [--keep-session]` | Stop a worker's session and remove it. Refused while it holds an active claim, and for the master or a scout. |
-| `worker-gc` | `orc worker-gc` | Remove offline and dead workers that hold no active claim when no coordinator runs (the coordinator does this itself; never the master or scouts). |
+- Coordinator only: `orc start-session` → "Terminate and restart coordinator". tmux workers are adopted.
+- Full reset: `orc kill-all`, then `orc start-session`.
+- Never `ps | grep | kill`: it hits every project's coordinator. Stuck states: `docs/recovery.md`.
 
-### Supported Inspection
-
-These commands are for observability. They are supported, but they are not alternate workflow entry points.
-
-| Command | Usage | Notes |
-|---------|-------|-------|
-| `watch` | `orc watch` | Live-refresh status display. |
-| `runs-active` | `orc runs-active` | List all in-progress/claimed runs. |
-| `events-tail` | `orc events-tail` | Tail the persisted event stream. |
-
-### Task Management
-
-| Command | Usage | Notes |
-|---------|-------|-------|
-| `task-mark-done` | `orc task-mark-done <feature/task>` | Mark a task done in runtime state (the coordinator does this after merge). No spec is edited; status is runtime-owned. |
-| `task-reset` | `orc task-reset <feature/task>` | Reset a task to `todo`, cancelling any active claim. Use when a blocked or stuck task needs another attempt. |
-| `task-unblock` | `orc task-unblock <feature/task>` | Transition a blocked task back to `todo`. |
-| `task-cancel` | `orc task-cancel <feature/task> [--reason=<text>]` | Cancel a task that is not yet terminal (the master's `cancel_task`). |
-| `delegate` | `orc delegate --task-ref=<feature/task> [--target-agent-id=<id>] [--task-type=<implementation\|refactor>] [--note=<text>] [--actor-id=<id>]` | Assign a task to a worker. |
-
-### Run Lifecycle (Worker Commands)
-
-Workers emit these from inside their PTY session via Bash tool. In a registered project they are sent to the coordinator with the worker's session secret (`ORC_SESSION_SECRET`) and refused outside a worker session (except `memory-record`); they retry for up to `ORC_CONTROL_RETRY_MS` while the coordinator restarts. To stop a run from outside, use `orc task-reset <ref>` or `reset_task`/`cancel_task`.
-
-| Command | Usage | Notes |
-|---------|-------|-------|
-| `run-start` | `orc run-start --run-id=<id> --agent-id=<id>` | **Required first.** Acknowledge task start. |
-| `run-work-complete` | `orc run-work-complete --run-id=<id> --agent-id=<id>` | Signal implementation+review+rebase done. Remain alive for coordinator finalization. |
-| `run-finish` | `orc run-finish --run-id=<id> --agent-id=<id>` | Terminal success. Emit only after `run-work-complete` handoff. |
-| `run-fail` | `orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--policy=requeue\|block]` | Terminal failure. Default policy is `requeue`. |
-| `progress` | `orc progress --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--note=<text>] [--policy=<requeue\|block>]` | Emit a named lifecycle event (e.g. `phase_started`, `phase_finished`). `--note` is a short current-activity line shown by `orc watch`; `--reason` is for failures/blocks. |
-
-### Input Request / Response
-
-For workers that need master input (e.g. blocked on a decision):
-
-| Command | Usage | Notes |
-|---------|-------|-------|
-| `run-input-request` | `orc run-input-request --run-id=<id> --agent-id=<id> --question=<text> [--timeout-ms=<ms>]` | Worker calls this to ask master a question. Blocks until response or timeout. |
-| `run-input-respond` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>]` | Master answers a worker's input request. It needs the master's `ORC_MASTER_SECRET`, so run it from the master session (or use MCP `respond_input`); worker and operator shells are refused. |
-
-### Memory (Worker)
-
-Workers use these to persist and recall drawer-scoped memories. Store lives at `memory.db` in the project state directory (SQLite).
-
-| Command | Usage | Notes |
-|---------|-------|-------|
-| `memory-wake-up` | `orc memory-wake-up [--wing=<wing>] [--budget=<N>]` | Recall essential memories at session start. |
-| `memory-record` | `orc memory-record --content="..." [--wing=<wing>] [--hall=<hall>] [--room=<room>] [--importance=<N>]` | Store a memory. |
-| `memory-search` | `orc memory-search <query> [--wing=<wing>] [--room=<room>]` | FTS5 search across stored memories. |
-| `memory-status` | `orc memory-status` | Memory store statistics. |
-
----
-
-## Common Operational Patterns
-
-### Reset a blocked/failed task to todo
-
-```bash
-orc task-reset <feature>/<N>-<slug>
-```
-
-Use the CLI or MCP tools for orchestrator state changes. Do not mutate state
-files through internal library helpers from an agent session.
-
-### Restart coordinator cleanly
-
-Recovery/debug only:
-
-```bash
-# 1. Kill existing
-ps aux | grep "coordinator.ts" | grep -v grep | awk '{print $2}' | xargs kill
-
-# 2. Start it for an explicit project (avoids cwd ambiguity)
-ORC_PROJECT_ID=<project-id> node /path/to/orc-state/coordinator.ts \
-  >> "<project state directory>/coordinator.out.log" 2>&1 &
-```
-
----
-
-## Run Lifecycle State Machine
+## Run lifecycle
 
 ```
-claim_created  →  run_started  →  [phase_started / phase_finished / heartbeat]
-                                           ↓
-                                   run_work_complete  (non-terminal; wait for coordinator)
-                                           ↓
-                              run_finished  |  run_failed
+claim_created → run_started → phase_started… → work_complete → run_finished | run_failed
 ```
 
-Coordinator also emits:
-- `claim_expired` — when run hits idle timeout (30 min default); task requeued
+Lease renewal is automatic. A dead session is expired (`claim_expired`) and its task requeued. Events: `docs/contracts.md`.

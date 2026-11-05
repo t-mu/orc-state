@@ -8,6 +8,7 @@ import { createProjectTask, describeProjectTask, initProjectTaskStore, revisePro
 import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, importTaskMarkdownSources, readTaskMarkdownSources } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
 import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
+import { USAGE } from './usage.ts';
 
 function option(args: string[], name: string): string | undefined {
   const prefixed = args.find((arg) => arg.startsWith(`--${name}=`));
@@ -19,7 +20,7 @@ function positionals(args: string[]): string[] {
 }
 
 function usage(): never {
-  throw new Error('Usage: orc project add <git-path> [--name=N] | list | select <id> | show [--project=id] | config <list|get|set|unset> [key] [value] [--global] [--project=id] | task <list|show|revisions|create|edit|import|export> [ref|path] [--project=id] | plan <list|show|import|export> [id|path] [--project=id]');
+  throw new Error(`Usage: ${USAGE['project']}`);
 }
 
 const TASK_FIELD_FLAGS: Record<string, string> = {

@@ -29,7 +29,7 @@ function runCli(args: string[] = []) {
   });
 }
 
-function submitReview(runId: string, agentId: string, outcome: 'approved' | 'findings', findings: string) {
+function submitReview(runId: string, agentId: string, outcome: 'approved' | 'findings', findings: string, reviewer?: string) {
   appendSequencedEvent(dir, {
     ts: new Date().toISOString(),
     event: 'review_submitted',
@@ -37,11 +37,36 @@ function submitReview(runId: string, agentId: string, outcome: 'approved' | 'fin
     actor_id: agentId,
     run_id: runId,
     agent_id: agentId,
-    payload: { outcome, findings },
+    payload: { outcome, findings, ...(reviewer ? { reviewer } : {}) },
   });
 }
 
 describe('orc review-read', () => {
+  it('lets a newer bridged review replace the same labelled reviewer', () => {
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-abc', 'orch/review', 'broken-nose', 'in_progress', 'now', 'now')").run();
+    });
+    submitReview('run-abc', 'broken-nose', 'findings', 'stale', 'critic');
+    bridgeReviewFeedback(dir, 'run-abc', 'broken-nose', 'approved', 'fixed', 'critic');
+    const parsed = JSON.parse(runCli(['--run-id=run-abc', '--json']).stdout) as { count: number; reviews: Array<{ payload: { findings: string; reviewer?: string } }> };
+    expect(parsed.count).toBe(1);
+    expect(parsed.reviews[0].payload).toMatchObject({ findings: 'fixed', reviewer: 'critic' });
+  });
+
+  it('keeps one review per reviewer label when reviewers share the worker agent_id', () => {
+    submitReview('run-abc', 'broken-nose', 'findings', 'critic: old finding', 'critic');
+    submitReview('run-abc', 'broken-nose', 'approved', 'integrator: fine', 'integrator');
+    submitReview('run-abc', 'broken-nose', 'approved', 'critic: fixed', 'critic');
+    const result = runCli(['--run-id=run-abc', '--json']);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { count: number; reviews: Array<{ payload: { findings: string; reviewer?: string } }> };
+    expect(parsed.count).toBe(2);
+    expect(parsed.reviews.map((r) => `${r.payload.reviewer}:${r.payload.findings}`).sort())
+      .toEqual(['critic:critic: fixed', 'integrator:integrator: fine']);
+    const text = runCli(['--run-id=run-abc']);
+    expect(text.stdout).toContain('Review from broken-nose (critic) [approved]');
+  });
   it('reads durable feedback when event emission was interrupted', () => {
     initEventsDb(dir);
     withEventDbTransaction(dir, (db) => {

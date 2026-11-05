@@ -1,4 +1,18 @@
 ---
+# Canonical plan format, parsed by `parsePlan` in lib/planDocs.ts
+# (`orc project plan import` reads it, `orc project plan export` writes it).
+#   - Frontmatter (all required): plan_id (non-negative integer, own sequence, may collide
+#     with task numbers), name (`^[a-z][a-z0-9-]*$`), title, created_at, updated_at,
+#     derived_task_refs (`[]`, inline `[a/b, c/d]`, or a `  - ref` list).
+#   - Required `##` sections (any order): Objective, Scope, Out of Scope, Constraints,
+#     Affected Areas, Implementation Steps.
+#   - Implementation Steps holds only `### Step N — Title` headings (`—` or `-`); step
+#     numbers are unique; any other `###` heading is rejected.
+#   - Dependencies: a line `Depends on: N` or `Depends on: N, M` in a step body.
+#     Task specs use `depends_on:` frontmatter instead.
+#   - Body must not contain TBD, TODO, `???`, or `[bracketed]` text outside fenced code
+#     and `[text](url)` links.
+#   - UTF-8, no byte-order mark.
 plan_id: 0
 name: <feature-slug>
 title: <Human readable plan title>
@@ -11,39 +25,32 @@ derived_task_refs: []
 
 ## Objective
 
-One or two sentences describing the outcome this plan achieves.
+<!-- 1-2 sentences: the outcome. -->
 
 ## Scope
 
-Concrete outcomes this plan delivers. One bullet per outcome.
+- <!-- one deliverable per bullet -->
 
 ## Out of Scope
 
-Work explicitly excluded from this plan. One bullet per exclusion.
+- <!-- one exclusion per bullet -->
 
 ## Constraints
 
-Hard constraints that bound the implementation — systems that must not change,
-invariants that must hold, performance or compatibility requirements.
+- <!-- invariants, systems that must not change, compatibility -->
 
 ## Affected Areas
 
-Files, modules, or subsystems this plan touches. One bullet per area.
+- <!-- one file, module or subsystem per bullet -->
 
 ## Implementation Steps
 
-Ordered, atomic steps. Each step is a numbered or `###` heading followed by a
-body describing the work. Include explicit dependencies on earlier steps using
-the exact structured cue `Depends on: N` (or `Depends on: N, M`) — this cue is
-specific to plan artifacts. Backlog specs continue to use the prose
-`Depends on Task N.` form.
-
 ### Step 1 — First step title
 
-Description of the first step's work.
+<!-- the work of this step -->
 
 ### Step 2 — Second step title
 
-Description of the second step's work.
+<!-- the work of this step -->
 
 Depends on: 1

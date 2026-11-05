@@ -15,12 +15,13 @@ import { boolFlag } from '../lib/args.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
+import { USAGE } from './usage.ts';
 
 const asJson = boolFlag('json');
 const runId = process.argv.slice(2).find((a) => !a.startsWith('-'));
 
 if (!runId) {
-  console.error('Usage: orc run-info <run_id> [--json]');
+  console.error(`Usage: ${USAGE['run-info']}`);
   process.exit(1);
 }
 

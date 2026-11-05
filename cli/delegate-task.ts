@@ -9,6 +9,7 @@
 import { flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const taskRef = flag('task-ref');
 const targetAgentId = flag('target-agent-id');
@@ -18,7 +19,7 @@ const note = flag('note') ?? null;
 const actorId = flag('actor-id');
 
 if (!taskRef) {
-  console.error('Usage: orc delegate --task-ref=<feature/task> [--target-agent-id=<agent_id>] [--task-type=<implementation|refactor>] [--note=<text>] [--actor-id=<agent_id>]');
+  console.error(`Usage: ${USAGE['delegate']}`);
   process.exit(1);
 }
 

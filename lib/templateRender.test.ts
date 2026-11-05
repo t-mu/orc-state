@@ -15,6 +15,14 @@ describe('renderTemplate', () => {
     expect(rendered).not.toContain('{{');
   });
 
+  it('tells the worker which --reviewer label each reviewer submits with', () => {
+    const rendered = renderTemplate('worker-bootstrap-v2.txt', { agent_id: 'bob', orc_bin: 'orc', provider: 'claude', session_token: 't' });
+    expect(rendered).toContain('review-submit --run-id=<run_id> --agent-id=bob');
+    expect(rendered).toContain('<reviewer_label> replaced by `reviewer`');
+    expect(rendered).toContain('<reviewer_label> replaced by `critic`');
+    expect(rendered).toContain('`integrator` for the other');
+  });
+
   it('renders master bootstrap with substituted agent and provider', () => {
     const rendered = renderTemplate('master-bootstrap-v1.txt', {
       agent_id: 'master',

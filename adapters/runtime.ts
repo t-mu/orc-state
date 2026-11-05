@@ -8,7 +8,7 @@
  * capability yields a typed CapabilityRefusal rather than a silent fallback.
  *
  * Capabilities are declared only for behaviour proven against the real
- * provider (docs/vnext-provider-protocols.md); protocol methods that exist but
+ * provider (docs/configuration.md "Worker Runtimes"); protocol methods that exist but
  * have not been exercised end to end stay `false`.
  */
 

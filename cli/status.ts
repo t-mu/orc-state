@@ -15,6 +15,7 @@ import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts
 import { STATE_DIR } from '../lib/paths.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
 import { formatErrorMessage } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const json = boolFlag('json');
 const mine = boolFlag('mine');
@@ -24,7 +25,7 @@ const once = boolFlag('once');
 const intervalMs = intFlag('interval-ms', 5000);
 
 if (mine && !agentId) {
-  console.error('Usage: orc status --mine --agent-id=<id> [--json]');
+  console.error(`--mine requires --agent-id\nUsage: ${USAGE['status']}`);
   process.exit(1);
 }
 

@@ -44,7 +44,7 @@ function withRegistry<T>(env: NodeJS.ProcessEnv, operation: (registry: ProjectRe
 }
 
 /**
- * Select the active project, following docs/global-project-contract.md:
+ * Select the active project, following docs/configuration.md (project selection):
  * an explicit `ORC_PROJECT_ID` (set by `--project`, by an operator, or by the
  * coordinator for its workers) wins and must be registered; inside a Git
  * repository its canonical root selects the registered project (an ambiguous

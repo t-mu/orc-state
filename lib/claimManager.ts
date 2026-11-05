@@ -212,7 +212,11 @@ export function renewLeaseOnly(
     if (!claim || !['claimed', 'in_progress'].includes(claim.state)) return;
     const now = new Date();
     if (claim.lease_expires_at && new Date(claim.lease_expires_at) < now) return; // already expired
-    claim.lease_expires_at = new Date(now.getTime() + leaseDurationMs).toISOString();
+    // Never shorten: a finalize lease (leases.finalize_ms) outlives the default.
+    const renewedMs = now.getTime() + leaseDurationMs;
+    const currentMs = claim.lease_expires_at ? Date.parse(claim.lease_expires_at) : NaN;
+    if (Number.isFinite(currentMs) && currentMs >= renewedMs) return;
+    claim.lease_expires_at = new Date(renewedMs).toISOString();
     commitClaims(stateDir, claims);
   });
 }

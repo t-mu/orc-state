@@ -1,14 +1,41 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { symlinkSync } from 'node:fs';
+import { readFileSync, symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
 import { bridgeProjectEnv, cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
-import { buildNodeArgs, isMainModule, readVersion } from './orc.ts';
+import { buildNodeArgs, COMMANDS, isMainModule, readVersion } from './orc.ts';
+import { USAGE, wantsHelp } from './usage.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 
 describe('cli/orc.ts', () => {
+  it('has a usage synopsis for every subcommand', () => {
+    expect(Object.keys(USAGE).sort()).toEqual(Object.keys(COMMANDS).sort());
+  });
+
+  it('prints usage for <subcommand> --help without running the command', () => {
+    for (const subcommand of ['kill-all', 'worker-gc', 'start-session', 'install-agents', 'worker-remove']) {
+      const result = spawnSync('node', ['cli/orc.ts', subcommand, '--help'], {
+        cwd: repoRoot, encoding: 'utf8', env: { ...process.env, ORC_STATE_DIR: '/nonexistent-orc-help-test' },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`Usage: orc ${subcommand}`);
+    }
+  });
+
+  it('prints usage from cli/usage.ts only (no second copy in a command)', () => {
+    for (const file of new Set(Object.values(COMMANDS))) {
+      const code = readFileSync(join(repoRoot, 'cli', file), 'utf8').split('\n').filter((line) => !/^\s*(\*|\/\/)/.test(line));
+      expect(code.filter((line) => /['"`]Usage: orc /.test(line)), file).toEqual([]);
+    }
+  });
+
+  it('treats --help after a -- separator as an argument', () => {
+    expect(wantsHelp(['--', '--help'])).toBe(false);
+    expect(wantsHelp(['x', '-h'])).toBe(true);
+  });
+
   it('groups blessed workflow, recovery/debug, inspection, and specialized commands in help output', () => {
     const result = spawnSync('node', ['cli/orc.ts', '--help'], {
       cwd: repoRoot,

@@ -43,7 +43,10 @@ export async function readViaCoordinator<T>(
 
 /**
  * A run's reviews: its review_submitted events plus bridged reviewer
- * feedback messages, deduplicated by agent_id (latest submission wins).
+ * feedback messages, deduplicated per reviewer (latest submission wins).
+ * A reviewer is its agent_id plus the optional `reviewer` label, so the
+ * reviewers of one worker (which all submit with the worker's agent_id) stay
+ * separate.
  */
 export function readRunReviews(stateDir: string, runId: string): ReviewSubmittedEvent[] {
   const events = queryEvents(stateDir, {
@@ -52,22 +55,27 @@ export function readRunReviews(stateDir: string, runId: string): ReviewSubmitted
     limit: 100,
   }) as ReviewSubmittedEvent[];
 
-  const byAgent = new Map<string, ReviewSubmittedEvent>();
+  const reviewerKey = (agentId: string, reviewer: string | undefined) => (reviewer ? `${agentId}#${reviewer}` : agentId);
+  const byReviewer = new Map<string, ReviewSubmittedEvent>();
   for (const e of events) {
-    byAgent.set(e.agent_id, e);
+    byReviewer.set(reviewerKey(e.agent_id, e.payload.reviewer), e);
   }
   const eventMessageIds = new Set(events.map((event) => event.payload.message_id).filter((id): id is string => typeof id === 'string'));
   for (const message of readBridgedReviewFeedback(stateDir, runId)) {
     if (eventMessageIds.has(message.messageId)) continue;
-    const current = byAgent.get(message.agentId);
+    const key = reviewerKey(message.agentId, message.reviewer);
+    const current = byReviewer.get(key);
     if (current && current.ts > message.createdAt) continue;
-    byAgent.set(message.agentId, {
+    byReviewer.set(key, {
       seq: 0, ts: message.createdAt, event: 'review_submitted', actor_type: 'agent', actor_id: message.agentId,
       run_id: runId, agent_id: message.agentId,
-      payload: { outcome: message.outcome, findings: message.findings, message_id: message.messageId },
+      payload: {
+        outcome: message.outcome, findings: message.findings, message_id: message.messageId,
+        ...(message.reviewer ? { reviewer: message.reviewer } : {}),
+      },
     });
   }
-  return [...byAgent.values()];
+  return [...byReviewer.values()];
 }
 
 export const DEFAULT_WAKE_UP_BUDGET = 800;

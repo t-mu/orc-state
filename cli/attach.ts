@@ -16,12 +16,13 @@ import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
 import { tmuxAttachCommand } from '../adapters/tmux.ts';
 import type { Claim } from '../types/claims.ts';
+import { USAGE } from './usage.ts';
 
 const id = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
 const write = boolFlag('write');
 
 if (!id) {
-  console.error('Usage: orc attach <agent_id|run_id> [--write]');
+  console.error(`Usage: ${USAGE['attach']}`);
   process.exit(1);
 }
 

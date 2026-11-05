@@ -30,12 +30,6 @@ export interface TaskCancelledEvent extends BaseEvent {
   payload?: Record<string, unknown>;
 }
 
-export interface TaskReleasedEvent extends BaseEvent {
-  event: 'task_released';
-  task_ref: string;
-  payload?: Record<string, unknown>;
-}
-
 export interface TaskDelegatedEvent extends BaseEvent {
   event: 'task_delegated';
   task_ref: string;
@@ -58,28 +52,12 @@ export interface ClaimCreatedEvent extends BaseEvent {
   payload: { lease_expires_at: string; [key: string]: unknown };
 }
 
-export interface ClaimRenewedEvent extends BaseEvent {
-  event: 'claim_renewed';
-  run_id: string;
-  task_ref: string;
-  agent_id: string;
-  payload: { lease_expires_at: string; [key: string]: unknown };
-}
-
 export interface ClaimExpiredEvent extends BaseEvent {
   event: 'claim_expired';
   run_id: string;
   task_ref: string;
   agent_id?: string;
   payload: { policy: FailurePolicy; [key: string]: unknown };
-}
-
-export interface ClaimReleasedEvent extends BaseEvent {
-  event: 'claim_released';
-  run_id: string;
-  task_ref?: string;
-  agent_id?: string;
-  payload?: Record<string, unknown>;
 }
 
 // ── Run lifecycle events ─────────────────────────────────────────────────────
@@ -311,7 +289,7 @@ export interface ReviewSubmittedEvent extends BaseEvent {
   event: 'review_submitted';
   run_id: string;
   agent_id: string;
-  payload: { outcome: 'approved' | 'findings'; findings: string; [key: string]: unknown };
+  payload: { outcome: 'approved' | 'findings'; findings: string; reviewer?: string; [key: string]: unknown };
 }
 
 // ── Worker attention events ───────────────────────────────────────────────────
@@ -382,13 +360,10 @@ export type OrcEvent =
   | TaskAddedEvent
   | TaskUpdatedEvent
   | TaskCancelledEvent
-  | TaskReleasedEvent
   | TaskDelegatedEvent
   | TaskDispatchBlockedEvent
   | ClaimCreatedEvent
-  | ClaimRenewedEvent
   | ClaimExpiredEvent
-  | ClaimReleasedEvent
   | TaskEnvelopeSentEvent
   | RunStartedEvent
   | WorkCompleteEvent

@@ -9,13 +9,14 @@
 import { flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 // Without --actor-id the coordinator records the caller: the operator as human, a master session as the master.
 const actorId = flag('actor-id');
 
 if (!taskRef) {
-  console.error('Usage: orc task-reset <task_ref> [--actor-id=<id>]');
+  console.error(`Usage: ${USAGE['task-reset']}`);
   process.exit(1);
 }
 

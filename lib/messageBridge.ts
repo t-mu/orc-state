@@ -81,7 +81,7 @@ export function readDurableInputResponse(stateDir: string, requestId: string): s
   });
 }
 
-export function bridgeReviewFeedback(stateDir: string, runId: string, agentId: string, outcome: 'approved' | 'findings', reason: string): string | null {
+export function bridgeReviewFeedback(stateDir: string, runId: string, agentId: string, outcome: 'approved' | 'findings', reason: string, reviewer?: string): string | null {
   return withEventDbTransaction(stateDir, (db) => {
     if (!activeRun(db, runId, agentId)) return null;
     const recipient = runningSession(db, agentId, runId);
@@ -90,22 +90,25 @@ export function bridgeReviewFeedback(stateDir: string, runId: string, agentId: s
       (message_id, run_id, idempotency_key, direction, kind, payload, created_at, sender_id, sender_session_id,
        recipient_id, recipient_session_id, recipient_run_id)
       VALUES (?, ?, ?, 'inbound', 'feedback', ?, ?, 'reviewer', NULL, ?, ?, ?)`)
-      .run(id, runId, `review:${id}`, JSON.stringify({ text: reason, outcome }), new Date().toISOString(),
+      .run(id, runId, `review:${id}`, JSON.stringify({ text: reason, outcome, ...(reviewer ? { reviewer } : {}) }), new Date().toISOString(),
         agentId, recipient?.session_id ?? null, runId);
     return id;
   });
 }
 
 export function readBridgedReviewFeedback(stateDir: string, runId: string): Array<{
-  messageId: string; agentId: string; outcome: 'approved' | 'findings'; findings: string; createdAt: string;
+  messageId: string; agentId: string; outcome: 'approved' | 'findings'; findings: string; createdAt: string; reviewer?: string;
 }> {
   return withEventDb(stateDir, (db) => {
     const rows = db.prepare("SELECT message_id, recipient_id, payload, created_at FROM messages WHERE run_id = ? AND kind = 'feedback' AND sender_id = 'reviewer' ORDER BY created_at, rowid")
       .all(runId) as Array<{ message_id: string; recipient_id: string; payload: string; created_at: string }>;
     return rows.flatMap((row) => {
-      const payload = JSON.parse(row.payload) as { text?: unknown; outcome?: unknown };
+      const payload = JSON.parse(row.payload) as { text?: unknown; outcome?: unknown; reviewer?: unknown };
       if ((payload.outcome !== 'approved' && payload.outcome !== 'findings') || typeof payload.text !== 'string') return [];
-      return [{ messageId: row.message_id, agentId: row.recipient_id, outcome: payload.outcome, findings: payload.text, createdAt: row.created_at }];
+      return [{
+        messageId: row.message_id, agentId: row.recipient_id, outcome: payload.outcome, findings: payload.text, createdAt: row.created_at,
+        ...(typeof payload.reviewer === 'string' && payload.reviewer ? { reviewer: payload.reviewer } : {}),
+      }];
     });
   });
 }

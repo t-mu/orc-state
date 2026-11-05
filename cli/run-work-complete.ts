@@ -2,12 +2,13 @@
 import { flag } from '../lib/args.ts';
 import { executeRunWorkComplete } from '../lib/runCommands.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
 
 if (!runId || !agentId) {
-  console.error('Usage: orc run-work-complete --run-id=<id> --agent-id=<id>');
+  console.error(`Usage: ${USAGE['run-work-complete']}`);
   process.exit(1);
 }
 

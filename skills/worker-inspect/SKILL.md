@@ -9,44 +9,28 @@ argument-hint: "<agent-id>"
 
 # Worker Inspect
 
-**TRIGGER when:** "what is X doing?", "what's X up to?", "is X stuck?", "check on X",
-"how is X going?", "is X making progress?", "what's X working on?", "is X running?",
-"show X's logs", "what does X's output say?", "check on run Y", "what's run Y doing?"
+Trigger on a named worker or run ("what is X doing?", "is X stuck?", "check run Y"). For overall status with no named worker, call `get_status()` instead.
 
-**DO NOT TRIGGER for:** broad system status with no specific worker or run — use
-`get_status()` inline instead. Do not trigger on "are workers stuck?" without a
-specific agent or run reference.
+## Intent → tool
 
----
+Call one tool; add a second only if the first is insufficient.
 
-## Lookup Table — match intent to MCP tool
-
-Call **one** tool. Do not chain multiple tools unless the first result is insufficient.
-
-| User intent | Tool to call |
+| Intent | Call |
 |---|---|
-| What is worker X doing? / What's X working on? / Is X making progress? | `get_agent_workview(agent_id: X)` |
-| Is X stuck? / Why is X not responding? | `get_agent_workview(agent_id: X)` — check `input_state` field in the result |
-| Is anyone waiting for input? / Are any workers blocked on a question? | `list_waiting_input()` |
-| Details on a specific run? / What's run Y doing? | `get_run(run_id: Y)` |
-| Show worker X's raw terminal output | `orc terminal provider <run_id> --once` *(bash — no MCP equivalent; for a scout use `get_scout_report`). `orc attach <agent_id>` opens the live tmux session but needs a real TTY* |
-| What happened recently with X? | `get_recent_events(agent_id: X)` |
-| Has scout X reported? / What did scout X find? | `get_scout_report(agent_id: X)` — then `remove_scout(agent_id: X)` once read |
+| What is X doing / progressing? | `get_agent_workview(agent_id)` → `active_run.current_activity`, `active_run.last_heartbeat_at`, `blockers` |
+| Run details, input or finalization state | `get_run(run_id)` → claim fields (`state`, `input_state`, `finalization_state`, `finalization_blocked_reason`, `lease_expires_at`), `worktree_path`, `task_spec_revision_status` |
+| Which runs are stalled? | `list_stalled_runs()` (excludes runs waiting for input or running a tool call) |
+| Who is waiting for input? | `list_waiting_input()` → `question`, `waiting_seconds` |
+| Current phase / recent history | `get_recent_events(agent_id or run_id)` (latest `phase_started`) |
+| Raw terminal output | bash `orc terminal provider <run_id> --once`; live tmux session: `orc attach <agent_id>` (needs a TTY) |
+| Session state after a coordinator restart | bash `orc sessions` (running / recoverable / unknown) |
+| Scout result | `get_scout_report(agent_id)`, then `remove_scout(agent_id)` |
 
-**Always prefer MCP tools over bash `orc` commands** — they return structured JSON
-with no parsing needed. Fall back to `orc terminal provider <run_id> --once` only
-when raw terminal output is explicitly needed.
-
----
+Prefer MCP tools (structured JSON) over bash; use bash only for what has no MCP tool.
 
 ## Diagnostic hints
 
-After calling the matched tool, check for these patterns in the output:
-
-- **`input_state: awaiting_input`** — worker is blocked on a question; surface this to
-  the user and ask whether to respond. Do not call `respond_input()` autonomously.
-- **High idle time + `phase: implement`** — likely running a long test suite or genuinely stuck
-- **`finalization_state: blocked_finalize`** — coordinator failed to merge; check `finalization_blocked_reason`
-- **`status: offline`** with claim still active — session crashed; claim expires on lease timeout
-- **PTY shows "Press up to edit queued mess"** — worker lost context; reset with `orc task-reset <task-ref>`
-- **Lease expiring soon + `status: running`** — heartbeat loop may have died
+- `input_state: awaiting_input` → the worker is blocked on a question. Tell the user; do not call `respond_input()` on your own.
+- `finalization_state: blocked_finalize` → merge failed; read `finalization_blocked_reason`, then see `docs/recovery.md`.
+- Agent `status: offline` while its claim is active → the coordinator's liveness probe finds the dead session and requeues the task on its next tick.
+- Listed by `list_stalled_runs` with an old `last_heartbeat_at` → no recent progress; check `get_recent_events`, then raw output.

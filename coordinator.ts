@@ -69,7 +69,7 @@ import { reduceLifecycleEvent } from './lib/workerLifecycleReducer.ts';
 import { resolveOrcBinSh } from './lib/orcBin.ts';
 import { builtinPolicies, evaluateRemediationPolicies, loadRemediationConfig } from './lib/remediationPolicies.ts';
 import type { RemediationSignals } from './lib/remediationPolicies.ts';
-import { AGENT_DEAD_TTL_MS, DEFAULT_LEASE_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
+import { AGENT_DEAD_TTL_MS, GIT_OP_TIMEOUT_MS, TASK_TYPES } from './lib/constants.ts';
 import type { Backlog } from './types/backlog.ts';
 import { writeProjectDescriptor } from './lib/projectContext.ts';
 import { readProcessStart } from './lib/processIdentity.ts';
@@ -995,9 +995,9 @@ function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): boolean 
   for (const { runId, previousTs, ts } of hookActivity) {
     const claim = byRun.get(runId);
     if (claim?.state === 'in_progress' && ts && ts !== previousTs
-      && shouldRenewFromHookActivity(claim, ts, nowMs, DEFAULT_LEASE_MS)) {
+      && shouldRenewFromHookActivity(claim, ts, nowMs, LEASE_CONFIG.default_ms)) {
       try {
-        heartbeat(STATE_DIR, claim.run_id, claim.agent_id, { emitEvent: false, at: ts });
+        heartbeat(STATE_DIR, claim.run_id, claim.agent_id, { emitEvent: false, at: ts, leaseDurationMs: LEASE_CONFIG.default_ms });
         recordAgentActivity(STATE_DIR, claim.agent_id, { at: ts });
       } catch {
         // Ignore races with terminal events or expired leases.
@@ -1598,7 +1598,7 @@ async function probeActiveWorkerSessions(
       // Skip claimed runs (still in dispatch handshake).
       if (claim.state === 'in_progress') {
         try {
-          renewLeaseOnly(STATE_DIR, claim.run_id);
+          renewLeaseOnly(STATE_DIR, claim.run_id, { leaseDurationMs: LEASE_CONFIG.default_ms });
         } catch { /* claim may have transitioned — safe to ignore */ }
       }
       continue;
@@ -1983,6 +1983,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       event as Parameters<typeof reduceLifecycleEvent>[0],
       claim,
       nowIso,
+      LEASE_CONFIG,
     );
 
     // ── Apply reducer action ───────────────────────────────────────────────

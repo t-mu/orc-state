@@ -9,13 +9,14 @@
 import { flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const reason = flag('reason');
 const actorId = flag('actor-id');
 
 if (!taskRef) {
-  console.error('Usage: orc task-unblock <task_ref> [--reason=<text>] [--actor-id=<id>]');
+  console.error(`Usage: ${USAGE['task-unblock']}`);
   process.exit(1);
 }
 

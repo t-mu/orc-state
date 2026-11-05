@@ -2,6 +2,7 @@
 import { flag } from '../lib/args.ts';
 import { executeRunFail } from '../lib/runCommands.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -16,7 +17,7 @@ if (!VALID_POLICIES.includes(policy)) {
 }
 
 if (!runId || !agentId) {
-  console.error('Usage: orc run-fail --run-id=<id> --agent-id=<id> [--reason=<text>] [--code=<code>] [--policy=requeue|block]');
+  console.error(`Usage: ${USAGE['run-fail']}`);
   process.exit(1);
 }
 

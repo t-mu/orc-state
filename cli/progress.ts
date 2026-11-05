@@ -7,6 +7,7 @@
 import { flag } from '../lib/args.ts';
 import { submitLifecycle } from '../lib/lifecycleDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const event = flag('event');
 const runId = flag('run-id');
@@ -17,7 +18,7 @@ const note = flag('note');
 const policy = flag('policy') ?? 'requeue';
 
 if (!event || !runId || !agentId) {
-  console.error('Usage: orc progress --event=<type> --run-id=<id> --agent-id=<id> [--phase=<name>] [--reason=<text>] [--note=<text>] [--policy=<requeue|block>]');
+  console.error(`Usage: ${USAGE['progress']}`);
   process.exit(1);
 }
 

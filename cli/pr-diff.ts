@@ -9,11 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { storedSettings, type OrcSettings } from '../lib/providers.ts';
 import { getGitHostAdapter } from '../lib/gitHosts/index.ts';
+import { USAGE } from './usage.ts';
 
 export function run(argv: string[] = process.argv.slice(2), settings: OrcSettings = storedSettings()): void {
   const prRef = argv.find((a) => !a.startsWith('--'));
   if (!prRef) {
-    console.error('Usage: orc pr-diff <pr_ref>');
+    console.error(`Usage: ${USAGE['pr-diff']}`);
     process.exit(1);
   }
 

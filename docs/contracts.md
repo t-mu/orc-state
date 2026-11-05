@@ -1,776 +1,291 @@
 # Contracts & Invariants
 
-Runtime contracts, state schemas, and lifecycle invariants for the orc-state
-orchestration framework. This is a reference for people building on, extending,
-or debugging the system.
-
-The future global-project ownership contract is in
-[Global project and task ownership contract](./global-project-contract.md).
-The current file describes the active implementation: registered projects.
+State files, task and run lifecycle, events, the local control API and the invariants that hold across them.
 
 ---
 
-## State Directory
+## State Files
 
-All runtime state lives in the project state directory (`<data-home>/projects/<project_id>/`; launched sessions also receive it as `ORC_STATE_DIR`).
-State files are never written directly by agents or external tools -- all mutations
-go through `orc` CLI commands or MCP tool handlers, which hold appropriate locks.
+Project state directory: `<data-home>/projects/<project_id>/` (sessions receive it as `ORC_STATE_DIR`). Agents never write it directly; every change goes through `orc` commands, MCP tools or the coordinator.
+
+### Authoritative stores
 
 | File | Format | Contents |
 |------|--------|----------|
-| `runtime.db` | SQLite (WAL mode) | Project task store: revisions, status, transitions, runs, plans |
-| `backlog.json` | JSON | Features and tasks (the full backlog), a read-only projection of `runtime.db` |
-| `agents.json` | JSON | Registered agents and their session metadata |
-| `claims.json` | JSON | Active and historical run claims |
-| `events.db` | SQLite (WAL mode) | Append-only event log with FTS index |
+| `runtime.db` | SQLite | Project task store: `tasks`, `task_spec_revisions`, `task_dependencies`, `task_transitions`, `task_runs`, `task_imports`, `plan_documents` |
+| `events.db` | SQLite (WAL), schema v7 | Append-only `events` (+ FTS index) and operational tables: `runs` (authoritative claims), `sessions`, `commands`, `messages`, `input_requests`, `offsets`, `control_leases`, `terminals` |
+| `memory.db` | SQLite (FTS5) | Agent memory drawers; independent of the operational stores |
+| `agents.json` | JSON | Agent registry; session fields are overlaid from `events.db` `sessions` |
 
-Auxiliary runtime files (not orchestrator state):
+### Projections (never read back as truth)
+
+| File | Projection of |
+|------|---------------|
+| `backlog.json` | `runtime.db` tasks (features + tasks) |
+| `claims.json` | `events.db` `runs` |
+
+### Auxiliary files
 
 | Path | Purpose |
 |------|---------|
-| `pty-pids/<agent_id>.pid` | Cross-process heartbeat probing for PTY sessions |
-| `pty-logs/<agent_id>.log` | Raw PTY/tmux pane output capture (output tails) |
-| `pty-hook-events/<agent_id>.ndjson` | Provider hook events (`permission`, `tool_start`, `tool`, `activity`), appended by the session's hooks, and `turn_end`, appended by the coordinator on `POST /v1/stop-check`; drained only by the coordinator tick (`lib/hookEventBus.ts`) for an agent with an active claim, by renaming it to `<agent_id>.ndjson.processing`, reading and deleting it (a `.processing` file left by a crash is drained first on the next tick); deleted when the session stops, and at coordinator start or by `orc worker-gc` once its agent is no longer registered |
-| `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do task labels by id and the active task id, so a status-only `TaskUpdate` resolves its label; written only by `hooks/orc-hook.ts`, deleted when the session stops (or, after a crash, with the events file) |
-| `run-activity.json` | Coordinator-owned per-run activity snapshot (label, source, last tool, tool calls in flight, last turn end, and `review_read_at`, the last `orc review-read`, which phase inference needs after a coordinator restart) built by `RunSignals` (`lib/runSignals.ts`) from hook events and from worker notes (`payload.note` on the worker's own heartbeat and progress events, from `orc progress --note`); entries are removed when a run ends. Read it with `readRunActivity(stateDir)` (`lib/runActivityStore.ts`) |
-| `control.json` | Control API endpoint descriptor (protocol version, transport, socket path, daemon PID) |
-| `control.token` | Control API bearer token, mode `0600`, rotated on each daemon start |
-| `control.sock` | Control API Unix socket, mode `0600` (under the OS temp dir when the state path is too long) |
+| `project.json` | Project descriptor (id, name, target root); lets a worker resolve its project without the registry |
+| `coordinator.pid` | Coordinator pid lock (pid + process start) |
+| `control.json` | Control API descriptor (protocol version, transport, socket path, daemon pid) |
+| `control.token` | Control API bearer token, `0600`, rotated on each daemon start |
+| `control.sock` | Control API Unix socket, `0600` (under the OS temp dir when the path is too long) |
+| `operator.token` | Operator token, rewritten on every coordinator start |
+| `run-worktrees.json` | Run → worktree/branch mapping |
+| `worktrees/<run_id>/` | Run worktrees (git worktrees of the target repo; `ORC_WORKTREES_DIR` overrides) |
+| `run-specs/<run_id>.md` | Pinned task revision body, read-only (`0444`), the worker's `task_spec_path` |
+| `event-checkpoint.json` | Coordinator event-processing checkpoint (`last_processed_seq`, processed ids) |
+| `run-activity.json` | Coordinator per-run activity: label, source, last tool, tool calls in flight, last turn end, `review_read_at` (`lib/runSignals.ts`) |
+| `pty-hook-events/<agent_id>.ndjson` | Hook records (`permission`, `tool_start`, `tool`, `activity`, `turn_end`); drained only by the coordinator tick via `.processing` rename; see [adapters.md](./adapters.md) |
+| `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do labels by id + active id |
+| `pty-pids/<agent_id>.pid` | PTY session pid |
+| `pty-logs/<agent_id>.log` | PTY/tmux output capture (output tails) |
+| `pty-settings/<agent_id>.json` | Per-session provider settings (hooks, sandbox) |
+| `mcp-config.json` | Master MCP config written by `orc start-session` (references `${ORC_MASTER_SECRET}`, never its value) |
+| `.lock` | Advisory lock serializing JSON state writes |
 
-### Concurrency model
+### Schemas
 
-JSON state files use filesystem advisory locking (`withLock`) to serialize
-writes. The SQLite event store uses WAL mode, which allows concurrent readers
-with a single writer. Agents must never call locking primitives directly --
-the CLI and MCP handlers manage this.
+| Schema | Enums |
+|--------|-------|
+| [backlog.schema.json](../schemas/backlog.schema.json) | `status`: `todo\|claimed\|in_progress\|blocked\|done\|released\|cancelled`; `task_type`: `implementation\|refactor`; `priority`: `low\|normal\|high\|critical`; `planning_state`: `ready_for_dispatch\|archived`; `review_level`: `none\|light\|full`; `merge_strategy`: `direct\|pr`; `required_provider`: `codex\|claude\|gemini` |
+| [agents.schema.json](../schemas/agents.schema.json) | `status`: `idle\|running\|offline\|dead` (`dead` is never set; such records are removed); `role`: `worker\|reviewer\|master\|scout`; `provider`: `codex\|claude\|gemini\|human` |
+| [claims.schema.json](../schemas/claims.schema.json) | `state`: `claimed\|in_progress\|done\|failed`; `finalization_state`: `awaiting_finalize\|finalize_rebase_requested\|finalize_rebase_in_progress\|ready_to_merge\|blocked_finalize\|pr_created\|pr_review_in_progress\|pr_merged\|pr_failed\|null`; `input_state`: `awaiting_input\|null` |
+| [event.schema.json](../schemas/event.schema.json) | see **Events** |
+| [run-worktrees.schema.json](../schemas/run-worktrees.schema.json), [event-checkpoint.schema.json](../schemas/event-checkpoint.schema.json), [snapshot.schema.json](../schemas/snapshot.schema.json) | — |
 
----
-
-## Backlog State (`backlog.json`)
-
-```
-{
-  version: "1",
-  features: Feature[]
-}
-```
-
-### Feature
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `ref` | string | yes | Unique feature identifier |
-| `title` | string | yes | Human-readable name |
-| `description` | string | no | Longer description |
-| `tasks` | Task[] | yes | Ordered list of tasks within this feature |
-| `created_at` | ISO 8601 | no | Creation timestamp |
-
-### Task
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `ref` | string | yes | Unique task identifier (`<feature>/<slug>`) |
-| `title` | string | yes | Human-readable name |
-| `status` | TaskStatus | yes | Current lifecycle state |
-| `description` | string | no | Detailed description |
-| `task_type` | `"implementation"` \| `"refactor"` | no | Classification |
-| `priority` | `"low"` \| `"normal"` \| `"high"` \| `"critical"` | no | Scheduling priority |
-| `planning_state` | `"ready_for_dispatch"` \| `"archived"` | no | Planning metadata |
-| `depends_on` | TaskRef[] | no | Refs that must be `done` or `released` before dispatch |
-| `acceptance_criteria` | string[] | no | Criteria for review |
-| `attempt_count` | number | no | How many times this task has been attempted |
-| `requeue_eligible_after` | ISO 8601 | no | Earliest time a requeued task can be re-claimed |
-| `blocked_reason` | string | no | Why the task is blocked |
-| `required_provider` | ProviderName | no | Force dispatch to a specific provider |
-| `parent_task_ref` | TaskRef | no | Parent task for subtask relationships |
-| `delegated_by` | string | no | Who delegated this task |
-| `owner` | string | no | Current owner agent |
-| `created_at` | ISO 8601 | no | Creation timestamp |
-| `updated_at` | ISO 8601 | no | Last modification timestamp |
-
-### TaskStatus values
-
-```
-"todo" | "claimed" | "in_progress" | "blocked" | "done" | "released" | "cancelled"
-```
+Task refs: `<feature>/<slug>`. Run ids: `run-<timestamp>-<hex>`. Worker agent ids: random orc-themed two-word names, unique among active workers.
 
 ---
 
 ## Task Lifecycle
 
 ```
-                        +------------------+
-                        |                  |
-                        v                  |
-  +------+  delegate  +---------+  run-start  +-------------+
-  | todo | ---------> | claimed | ----------> | in_progress |
-  +------+            +---------+             +-------------+
-     ^                                          |         |
-     |          task-reset                      |         |
-     +------------------------------------------+         |
-     |          (from claimed/in_progress/blocked)        |
-     |                                                    |
-     |                                          +---------+--------+
-     |                                          |                  |
-     |                            task-mark-done|  run-fail        |
-     |                                          |  --policy=block  |
-     |                                          v                  v
-     |                                       +------+        +---------+
-     |                                       | done |        | blocked |
-     |                                       +------+        +---------+
-     |                                          |
-     |                            coordinator   |
-     |                            merge         |
-     |                                          v
-     |                                      +----------+
-     |                                      | released |
-     |                                      +----------+
+todo → claimed → in_progress → done → released
+          ↓           ↓
+         todo (requeue) / blocked
+todo/claimed/in_progress/blocked → cancelled
 ```
 
-### Transition table
+| Transition | Cause and owner |
+|---|---|
+| `todo → claimed` | Coordinator atomically verifies readiness and creates a run pinned to the latest revision |
+| `claimed → in_progress` | Worker `orc run-start` |
+| `in_progress → done` | Coordinator after a confirmed merge (`merge_succeeded`), once. `run-work-complete` changes only the run's finalization state. Recovery: `orc task-mark-done` |
+| `done → released` | Coordinator post-merge release. Both satisfy dependencies |
+| `claimed/in_progress → todo` | Failed run requeued (`run-fail` default policy, lease expiry, dead session); counts an attempt and sets `requeue_eligible_after` |
+| `claimed/in_progress → blocked` | `run-fail --policy=block` (reason required), or 5 failed attempts |
+| `blocked → todo` | Operator `orc task-unblock` / master `unblock_task` |
+| `non-todo → todo` | Operator `orc task-reset` / master `reset_task`, including a done or cancelled task |
+| `todo/claimed/in_progress/blocked → cancelled` | Master `cancel_task` / operator `orc task-cancel` |
 
-| Transition | Trigger | Who |
-|------------|---------|-----|
-| `todo` -> `claimed` | `orc delegate` | Coordinator |
-| `claimed` -> `in_progress` | `orc run-start` | Worker |
-| `in_progress` -> `done` | Post-merge runtime completion, applied by the coordinator in its own process (`orc task-mark-done <ref>` is the operator's recovery command) | Coordinator |
-| `done` -> `released` | Post-merge release | Coordinator |
-| `any` -> `blocked` | `orc run-fail --policy=block` | Worker |
-| `blocked/claimed/in_progress` -> `todo` | `orc task-reset <ref>` | Operator |
-| `any` -> `cancelled` | MCP `cancel_task` | Coordinator |
+- Every status change is a `task_transitions` row (cause, run, actor) written in the same transaction as the task and run binding; the `events.db` event follows, and startup reconciliation repairs a crash between them.
+- Infrastructure failures (dispatch, session start, run-start timeout) do not count an attempt.
+- A run that ends after its task was reset or cancelled leaves the task alone.
+- Status is never edited through a spec or `update_task`; imports never apply status.
+- A `todo` task with an unfinished dependency stays `todo`; `blocked` means an explicit decision or failure.
 
 ### Dispatch eligibility
 
-A task is eligible for dispatch when all of:
-- `status == "todo"`
-- Every ref in `depends_on` has status `done` or `released`
-- `requeue_eligible_after` is null or in the past
+Derived at claim time, never stored:
+
+- `status == todo`, every `depends_on` ref `done`/`released` in the same project
+- `requeue_eligible_after` null or past
+- `planning_state` absent or `ready_for_dispatch`
+- `owner` absent or the claiming agent
+- agent can run the task (`required_provider`)
+- capacity: `max_workers` − agents with an active claim > 0
 
 ---
 
-## Agent State (`agents.json`)
-
-```
-{
-  version: "1",
-  agents: Agent[]
-}
-```
-
-### Agent
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `agent_id` | string | yes | Unique identifier — `master` for the master agent; workers use random orc-themed two-word names (e.g. `broken-nose`, `slithering-arrow`) that are unique among currently active workers |
-| `provider` | `"claude"` \| `"codex"` \| `"gemini"` \| `"human"` | yes | Provider backend |
-| `model` | string | no | Specific model variant |
-| `status` | AgentStatus | yes | Current agent state |
-| `role` | `"worker"` \| `"reviewer"` \| `"master"` \| `"scout"` | no | Agent role |
-| `session_handle` | string | no | PTY session handle (`pty:<agent_id>`) |
-| `session_token` | string | no | Id of the agent's current session (named for history; not a credential) |
-| `session_started_at` | ISO 8601 | no | When the PTY session was created |
-| `session_ready_at` | ISO 8601 | no | When the session became ready for commands |
-| `provider_ref` | object | no | Provider-specific metadata |
-| `registered_at` | ISO 8601 | yes | Registration timestamp |
-| `last_heartbeat_at` | ISO 8601 | no | Last successful heartbeat probe |
-| `last_status_change_at` | ISO 8601 | no | Last status transition |
-
-### AgentStatus values
-
-```
-"idle" | "running" | "offline" | "dead"
-```
-
-- **idle** -- registered and session alive, no active run
-- **running** -- actively executing a claimed task
-- **offline** -- session unreachable or shut down gracefully
-- **dead** -- legacy value, no longer set: the coordinator now removes a worker record instead of marking it dead. Records already holding it are removed by the coordinator, or by `orc worker-gc` when no coordinator runs
-
----
-
-## Claims State (`claims.json`)
-
-```
-{
-  version: "1",
-  claims: Claim[]
-}
-```
-
-A claim binds a task to an agent for the duration of a run. Claims are never
-deleted -- completed and failed claims remain in the array as historical records.
-
-### Claim
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `run_id` | string | yes | Unique run identifier (`run-<timestamp>-<hex>`) |
-| `task_ref` | string | yes | The claimed task |
-| `agent_id` | string | yes | The agent executing this run |
-| `state` | ClaimState | yes | Current claim state |
-| `claimed_at` | ISO 8601 | yes | When the claim was created |
-| `lease_expires_at` | ISO 8601 | yes | When the lease expires without activity |
-| `task_envelope_sent_at` | ISO 8601 | no | When the TASK_START envelope was sent |
-| `last_heartbeat_at` | ISO 8601 | no | Last activity timestamp from worker |
-| `started_at` | ISO 8601 | no | When `run-start` was called |
-| `finished_at` | ISO 8601 | no | When the run reached a terminal state |
-| `failure_reason` | string | no | Reason for failure (on `run-fail`) |
-| `finalization_state` | FinalizationState | no | Post-work-complete finalization progress |
-| `finalization_retry_count` | number | no | How many finalize rebases have been attempted |
-| `finalization_blocked_reason` | string | no | Why finalization is blocked |
-| `input_state` | InputState | no | Whether the worker is awaiting master input |
-| `input_requested_at` | ISO 8601 | no | When input was requested |
-| `session_start_retry_count` | number | no | Session start retry attempts |
-| `session_start_retry_next_at` | ISO 8601 | no | Next session start retry time |
-| `session_start_last_error` | string | no | Last session start error |
-| `escalation_notified_at` | ISO 8601 | no | When an escalation notification was sent |
-
-### ClaimState values
-
-```
-"claimed" | "in_progress" | "done" | "failed"
-```
-
-### FinalizationState values
-
-```
-"awaiting_finalize"              -- work-complete received, waiting for coordinator
-"finalize_rebase_requested"      -- coordinator asked worker to rebase
-"finalize_rebase_in_progress"    -- worker is rebasing
-"ready_to_merge"                 -- rebase complete, coordinator can merge
-"blocked_finalize"               -- finalization hit an unrecoverable problem
-null                             -- not in finalization (pre-work-complete or terminal)
-```
-
-### InputState values
-
-```
-"awaiting_input"    -- worker blocked on master input
-null                -- not waiting for input
-```
-
----
-
-## Claim Lifecycle and Lease Management
-
-```
-  delegate           run-start         work-complete       run-finish
-  +--------+  ack   +-----------+  wc  +-----------+  fin +---------+
-  | claimed | ----> | in_progress| --> | in_progress| --> |  done   |
-  +--------+       +-----------+      | (finalize) |     +---------+
-                                       +-----------+
-                          |
-                     run-fail
-                          |
-                          v
-                      +--------+
-                      | failed |
-                      +--------+
-```
-
-### Lease mechanism
-
-Every claim has a `lease_expires_at` timestamp. The lease duration is **30 minutes** by default.
-
-- **Creation**: `lease_expires_at` is set to `now + 30m` when the claim is created.
-- **Renewal**: The coordinator automatically extends the lease whenever phase events
-  (`phase_started`, `phase_finished`, `review_submitted`, etc.) are processed.
-- **Expiry**: The coordinator periodically checks for claims where
-  `lease_expires_at < now`. Expired claims are released, and the task is
-  requeued (`status` -> `todo`) or blocked depending on policy.
-
-### Worker liveness
-
-Liveness is determined by the coordinator: on each tick it probes the worker's
-PTY PID via `process.kill(pid, 0)`. If the PID is dead, the coordinator clears
-the agent session, expires the claim, and requeues the task.
-
-Lease renewal is automatic — the coordinator extends the lease whenever phase events
-are processed. Claude tool hook events renew the heartbeat and lease too, but only when
-the activity is newer than `last_heartbeat_at` and the lease is at least half used or
-`last_heartbeat_at` is at least half a lease old (`shouldRenewFromHookActivity` in
-`lib/runActivity.ts`); otherwise they only update `run-activity.json`, which is what idle
-detection reads. Workers do not need to emit periodic heartbeats.
-
-### Invariants
-
-- **Single active claim per task**: At most one claim with state `claimed` or
-  `in_progress` may exist for a given `task_ref` at any time.
-- **Agent existence**: `claim.agent_id` must reference an agent in `agents.json`.
-- **Task existence**: `claim.task_ref` must reference a task in `backlog.json`.
-- **Monotonic finalization**: Finalization state transitions only move forward
-  (e.g., `awaiting_finalize` -> `ready_to_merge`, never backwards).
-
----
-
-## Worker Lifecycle
-
-Workers are task-scoped: the coordinator registers a new worker agent and launches its
-PTY session at dispatch time, then removes the agent registration after the run completes.
-No persistent idle worker agents exist between tasks.
-
-The worker lifecycle is the sequence of `orc run-*` commands a worker emits
-during task execution. These commands mutate claim state and emit events.
-
-```
-  TASK_START envelope received
-         |
-         v
-  orc run-start                  claimed -> in_progress
-         |
-         v
-  [implement + test + review]
-         |
-         v
-  orc run-work-complete          finalization_state -> awaiting_finalize
-         |
-         v
-  [coordinator merge + optional finalize rebase]
-         |
-         v
-  orc task-mark-done <ref>       runtime task status -> done
-         |
-         v
-  orc run-finish                 claim state -> done (terminal)
-
-
-  At any point:
-  orc run-fail                   claim state -> failed (terminal)
-                                 task -> requeued (default) or blocked
-```
-
-### Command preconditions
-
-| Command | Precondition |
-|---------|-------------|
-| `run-start` | Claim exists with `state == "claimed"`, agent matches |
-| `run-work-complete` | Claim `state == "in_progress"`, task status is `done` |
-| `run-finish` | Claim `state == "in_progress"` or `"done"`, work-complete was called |
-| `run-fail` | Claim `state == "claimed"` or `"in_progress"` |
-| `run-input-request` | Claim `state == "in_progress"` |
-
-### Failure policies
-
-`orc run-fail` accepts `--policy=<requeue|block>` (default: `requeue`):
-
-- **requeue**: Task status reverts to `todo`. `attempt_count` is incremented.
-  The task becomes eligible for re-dispatch after any `requeue_eligible_after` delay.
-- **block**: Task status becomes `blocked` with the provided `--reason`.
-  Requires manual `orc task-unblock` or `orc task-reset` to re-enter the queue.
-
-### Input request flow
-
-When a worker is blocked on ambiguous requirements or external dependencies:
-
-```
-  Worker                              Master
-    |                                   |
-    |-- run-input-request ----------->  |
-    |   (claim.input_state =            |
-    |    "awaiting_input")              |
-    |                                   |
-    |   (blocks, waiting)               |
-    |                                   |
-    |  <--------- run-input-respond ----|
-    |   (claim.input_state = null)      |
-    |                                   |
-    |-- resumes work --------->         |
-```
-
-The `run-input-request` command blocks until a matching `run-input-respond`
-is received. The claim lease remains active while the worker process is alive.
-
----
-
-## Event Log (`events.db`)
-
-All state transitions and lifecycle events are recorded in an append-only
-SQLite database. Events are the audit trail -- they are never modified or
-deleted during normal operation.
-
-### Storage schema
-
-```sql
-CREATE TABLE events (
-  seq       INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id  TEXT    NOT NULL UNIQUE,
-  ts        TEXT    NOT NULL,           -- ISO 8601 UTC
-  event     TEXT    NOT NULL,           -- event type discriminator
-  agent_id  TEXT,                       -- agent-scoped events
-  run_id    TEXT,                       -- run-scoped events
-  task_ref  TEXT,                       -- task-scoped events
-  payload   TEXT    NOT NULL            -- full JSON event object
-);
-```
-
-A full-text search index (`events_fts`) is maintained via trigger for
-free-text queries across event, agent_id, run_id, task_ref, and payload.
-
-`PRAGMA user_version` and `schema_migrations` track atomic upgrades of the
-same database. Version 1 adds `runs`, `sessions`, `commands`, `messages`,
-`input_requests`, `offsets`, and `control_leases`. Run and session references
-use SQLite foreign keys; command and message idempotency keys are unique.
-Version 2 adds `runs.claim_json` and the `runtime_cutovers` marker. On first
-claim read or transition, legacy claims are imported once in a transaction;
-SQLite then owns run state while `claims.json` is refreshed as a compatibility
-view. Session IDs are separate from run and agent IDs, including for sessions
-without a task run. Other JSON state remains in place pending later cutovers.
-`orc doctor` checks the version, migration record, tables, and foreign
-key integrity. See [Runtime Database Upgrade and Restore](./recovery.md#runtime-database-upgrade-and-restore)
-before upgrading an existing project.
-
-### Event fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `seq` | integer | yes | Monotonically increasing sequence number |
-| `event_id` | string (UUID) | yes | Durable identity for replay-safe deduplication |
-| `ts` | ISO 8601 | yes | Wall-clock UTC timestamp |
-| `event` | string (enum) | yes | Event type discriminator |
-| `actor_type` | `"agent"` \| `"coordinator"` \| `"human"` | yes | Who emitted the event |
-| `actor_id` | string | yes | agent_id, `"coordinator"`, or human handle |
-| `run_id` | string | no | Present on run/claim/phase events |
-| `task_ref` | string | no | Present on task and run events |
-| `agent_id` | string | no | Present on agent-scoped events |
-| `phase` | string | no | Phase name for phase_started/phase_finished |
-| `payload` | object | no | Event-specific data (schema varies by type) |
-
-### Event types
-
-#### Run lifecycle events
-
-| Event | Emitted by | When |
-|-------|-----------|------|
-| `run_started` | Worker | `orc run-start` acknowledged |
-| `heartbeat` | Worker/Coordinator | Phase event processed (lease renewal); `orc progress --event=heartbeat --note=<text>` carries the worker's note as `payload.note` |
-| `work_complete` | Worker | `orc run-work-complete` |
-| `run_finished` | Worker | `orc run-finish` (terminal success) |
-| `run_failed` | Worker | `orc run-fail` (terminal failure) |
-| `run_cancelled` | Coordinator | Run forcibly cancelled |
-
-#### Claim events
-
-| Event | Emitted by | When |
-|-------|-----------|------|
-| `claim_created` | Coordinator | Task claimed for a worker |
-| `claim_renewed` | Coordinator | Phase event extended the lease |
-| `claim_expired` | Coordinator | Lease expired (no recent activity) |
-| `claim_released` | Coordinator | Claim released after completion |
-
-#### Task events
-
-| Event | Emitted by | When |
-|-------|-----------|------|
-| `task_added` | Operator/Coordinator | New task registered |
-| `task_updated` | Various | Task metadata changed |
-| `task_cancelled` | Operator | Task cancelled |
-| `task_released` | Coordinator | Task released after merge |
-| `task_delegated` | Coordinator | Task assigned to a worker |
-| `task_dispatch_blocked` | Coordinator | Dispatch failed (deps unmet, no agent) |
-| `task_envelope_sent` | Coordinator | TASK_START envelope delivered |
-
-#### Phase tracking events
-
-| Event | Emitted by | When |
-|-------|-----------|------|
-| `phase_started` | Worker/Coordinator | Entering a new phase (explore, implement, review, complete, finalize). The coordinator emits it with `payload.inferred: true`, `payload.evidence` and `payload.evidence_ts` when it infers the phase (see below). A run's current phase is its `phase_started` with the highest `seq` |
-| `phase_finished` | Worker | Phase completed |
-| `finalize_rebase_started` | Worker | Finalize rebase underway |
-| `ready_to_merge` | Worker/Coordinator | Rebase done, ready for merge |
-
-**Phase inference.** Workers often skip `orc progress --event=phase_started`,
-so the coordinator also derives the phase (`lib/phaseInference.ts`) from gate
-commands and Claude tool hook events:
+## Run Lifecycle
+
+| Command | Precondition | Effect |
+|---------|--------------|--------|
+| `orc run-start` | claim `claimed`, agent matches | claim + task → `in_progress` |
+| `orc progress --event=<e>` | claim `in_progress` (`phase_*` need `--phase`; `blocked`/`need_input` need `--reason`) | event recorded |
+| `orc run-work-complete` | claim `in_progress`, `finalization_state` null or `finalize_rebase_in_progress` | `work_complete` (→ `awaiting_finalize`) or `ready_to_merge` (after a finalize rebase) |
+| `orc run-finish` | claim `in_progress`, task `done`/`released` (refused before the merge) | claim → `done` |
+| `orc run-fail [--policy=requeue\|block]` | claim `claimed`/`in_progress` | claim → `failed`; task requeued or blocked |
+| `orc run-input-request` | claim `in_progress` | `input_state → awaiting_input`; blocks until `run-input-respond` |
+
+Direct mode: after work-complete the coordinator merges, or requests a finalize rebase (`finalize_rebase_requested` → worker `finalize_rebase_started` → rebase → `run-work-complete` again), then sends FINALIZE_SUCCESS; the worker calls `run-finish`. PR mode: the coordinator sends PR_REVIEW, the worker runs the PR loop and calls `run-work-complete`; the coordinator merges the PR. The worker workflow is in `templates/worker-bootstrap-v2.txt`.
+
+### Lease and liveness
+
+- Lease: `leases.default_ms` (30 min); `leases.finalize_ms` (60 min) once work is complete; `coordinator.pr_finalize_lease_ms` (24 h) for PR finalization.
+- Renewal: the coordinator extends the lease when it processes the run's lifecycle/phase events. Claude hook activity renews only when newer than `last_heartbeat_at` and the lease is half used or the heartbeat half a lease old (`shouldRenewFromHookActivity`, `lib/runActivity.ts`); otherwise it only updates `run-activity.json`. Workers send no periodic heartbeat.
+- Expiry: claim → `failed` (`ERR_LEASE_EXPIRED`), task requeued with backoff, blocked after 5 attempts; `claim_expired` emitted. A run whose task is already `done` (finalize window) is skipped. An input wait over 1 h expires with `ERR_INPUT_TIMEOUT`.
+- Liveness: each tick probes the session — `tmux:` asks the private tmux server for the pane process, `pty:` checks the pid with its recorded start time. A dead process clears the session, expires the claim and requeues the task.
+- Idle: `worker_stale_soft_ms` / `worker_stale_nudge_ms` / `worker_stale_force_fail_ms`; runs that deliver hook events use `hook_idle_nudge_ms` / `hook_idle_escalate_ms`. A run with a tool call in flight is never stalled (`isStalled`, `lib/runSignals.ts`). A `Stop` hook (`turn_end`) closes tool calls that never reported back. Defaults: [configuration.md](./configuration.md).
+- Progress ≠ liveness. Progress = a phase change (reported or inferred), a `git commit` seen in a hook event, or `run_started`, `review_submitted`, `work_complete`, `finalize_rebase_started`, `ready_to_merge`, `input_requested`, `input_provided`, `input_response`. No progress for `run_no_progress_escalate_ms` (60 min) → one `worker_needs_attention {reason: no_progress}`; new progress re-arms it. Runs awaiting input or in finalization are not checked.
+- Stop hook: a Claude worker's `Stop` is refused while its run is unfinished (`stop_blocked`), at most 3 per run per 10 min and 9 per run.
+- Coordinator restart: tmux sessions are adopted, unwritable sessions become `recoverable`, `app:` sessions end and their runs are requeued.
+
+### Phase inference
+
+The coordinator emits `phase_started {inferred: true, evidence, evidence_ts}` (`lib/phaseInference.ts`):
 
 | Phase | Inferred when (first of) |
 |-------|--------------------------|
-| `explore` | the TASK_START envelope is delivered |
-| `implement` | `run-start` is accepted, or a file edit (`Edit`/`MultiEdit`/`Write`/`NotebookEdit`) after an explicit `explore` |
-| `review` | a reviewer sub-agent is spawned (an `Agent`/`Task` call whose `subagent_type` is a reviewer such as `critic` or `integrator`, or a generic sub-agent whose description mentions `review`), or the run's first `review_submitted` |
-| `complete` | after review, a `git rebase main` (or `origin/main`) that follows an `orc review-read`, or else `run-work-complete` (PR-mode runs skip the rebase) |
-| `finalize` | `run-work-complete` is accepted (right after `complete` when that has the same evidence) |
+| `explore` | TASK_START delivered |
+| `implement` | `run-start` accepted, or a file edit after an explicit `explore` |
+| `review` | a reviewer sub-agent spawned (`critic`, `integrator`, or a description mentioning `review`), or the first `review_submitted` |
+| `complete` | after review, `git rebase main`/`origin/main` following an `orc review-read`, else `run-work-complete` |
+| `finalize` | `run-work-complete` accepted |
 
-A commit is not evidence: implement commits happen too. Inference only moves a
-run forward (review fixes stay in review), and an explicit `phase_started`
-newer than the evidence wins. Each inferred event carries `inferred: true`,
-`evidence` (e.g. `tool: Agent critic`, `cmd: git rebase main`,
-`event: work_complete`) and `evidence_ts`, the evidence time. The event itself
-is stamped when the coordinator emits it, so it never sorts before events
-already in the log; phases are ordered by `seq` everywhere (the coordinator's
-`RunSignals`, `orc status`/`phase_history`, `orc watch`, the Stop hook's phase
-and the restart hydrate), and lease renewal and inference read `evidence_ts`.
-Inference runs only for runs still active after the tick's event batch: a run
-that finished, failed or was cancelled in the batch gets no phase events after
-its terminal event.
-The `review-read` marker is kept in the run's `run-activity.json` entry
-(`review_read_at`), so a restarted coordinator still infers `complete` from a
-`git rebase main` that follows a `review-read` it saw before the restart.
+- Commits are not evidence. Inference only moves forward; a newer explicit `phase_started` wins.
+- Events are stamped at emission; phases are ordered by `seq` everywhere; a run that ended in the tick's batch gets no inferred phase.
+- `review_read_at` in `run-activity.json` survives a coordinator restart.
+- Inferred phases count as progress but do not reset the nudge count.
 
-An inferred transition is progress (see below) but does not reset the run's
-nudge count: only a worker-reported `phase_started` does, so a worker cycling
-tool calls cannot escape the nudge-count remediation policies.
+---
 
-#### Progress versus liveness
+## Events
 
-Activity (lifecycle events, heartbeats, tool hook events) proves a run is
-alive. Progress is tracked separately: a phase change (reported or inferred), a
-`git commit` seen in a tool hook event, or a lifecycle event (`run_started`,
-`review_submitted`, `work_complete`, `finalize_rebase_started`,
-`ready_to_merge`, `input_requested`, `input_provided`, `input_response`). File
-edits and test runs are not progress. A run that is alive (not yet stale) but
-has made no progress for `run_no_progress_escalate_ms` (60 min, counted from
-its start when it has none) gets one `worker_needs_attention` with
-`payload.reason: "no_progress"`, `idle_ms`, `no_progress_ms`, `phase` and
-`progress_at` (the progress point it was measured from). New progress re-arms
-the alert; after a coordinator restart the replayed alerts' `progress_at` keeps
-it from repeating. Runs awaiting input or in finalization are not checked.
-Tool hook events carry no exit status, so a failed `git commit` also counts as
-progress. Commits seen before a coordinator restart are not replayed, so the
-progress timestamp falls back to the newest progress event.
+Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `task_ref`, `payload`). Fields and per-event payloads: [schemas/event.schema.json](../schemas/event.schema.json) plus `lib/eventValidation.ts`. `event_id` is optional; `actor_type` is `agent|coordinator|human`.
 
-#### Agent events
+| Event | Emitter | Note |
+|-------|---------|------|
+| `claim_created` | Coordinator | Task claimed for a worker |
+| `claim_expired` | Coordinator / operator | Lease or input timeout, dead session, `orc run-expire` |
+| `task_envelope_sent` | Coordinator | TASK_START delivered |
+| `run_started` | Worker | `orc run-start` |
+| `heartbeat` | Worker | `orc progress --event=heartbeat [--note]`; `payload.note` feeds `orc watch` |
+| `phase_started` | Worker / Coordinator | `--phase`; inferred ones carry `inferred`, `evidence`, `evidence_ts` |
+| `phase_finished` | Worker | `orc progress` |
+| `review_submitted` | Reviewer (worker's agent_id) | `orc review-submit --outcome --reason [--reviewer]` |
+| `work_complete` | Worker | `orc run-work-complete` |
+| `finalize_rebase_started` | Worker | after `finalize_rebase_requested` |
+| `ready_to_merge` | Worker | `run-work-complete` after a finalize rebase |
+| `run_finished` | Worker | `orc run-finish` |
+| `run_failed` | Worker | `orc run-fail` |
+| `run_cancelled` | Coordinator / operator | cancel, reset, `kill-all` |
+| `blocked`, `unblocked` | Worker | only via `orc progress` |
+| `need_input` | Coordinator / Worker | run-start or in-progress nudge sent; validates `run-input-request` |
+| `input_provided` | Master | legacy, via `orc progress` |
+| `input_requested` | Worker | `orc run-input-request` |
+| `input_response` | Master | `orc run-input-respond` / `respond_input` |
+| `agent_online` | Coordinator | session confirmed alive |
+| `reported_for_duty` | Worker | session ready |
+| `agent_offline` | Coordinator | session lost, or unclaimed record removed (`reason: worker_record_removed`, `code`) |
+| `agent_marked_dead` | Coordinator | unclaimed worker past the dead TTL; record removed |
+| `agent_registered` | — | in schema, not emitted |
+| `session_started`, `session_start_failed` | Coordinator | provider session launch |
+| `session_reconciled` | Coordinator | restart reconciliation (`session_id`, `state`, `outcome`, `reason`) |
+| `task_added`, `task_updated` | Master / operator / Coordinator | task created / changed |
+| `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task` |
+| `task_dispatch_blocked` | Coordinator | dispatch refused (deps, no agent) |
+| `command_queued` … `command_outcome_unknown` | Coordinator | durable command states: `queued`, `dispatching`, `send_started`, `sent`, `accepted`, `running`, `completed`, `failed`, `cancelled`, `outcome_unknown` |
+| `coordinator_started`, `coordinator_stopped` | Coordinator | process start/stop |
+| `worker_needs_attention` | Coordinator | `reason`: `stale` or `no_progress` |
+| `remediation_applied` | Coordinator | automatic remediation |
+| `activity_note` | Coordinator | to-do/note label changed (`label`, `source`); ≤ 1 per 30 s per run |
+| `stop_blocked` | Coordinator | `Stop` hook refused (`phase`, `count`, `stop_hook_active`) |
 
-| Event | Emitted by | When |
-|-------|-----------|------|
-| `agent_registered` | Coordinator | New agent registered |
-| `agent_online` | Coordinator | Agent session confirmed alive |
-| `reported_for_duty` | Worker | Worker reports ready |
-| `agent_offline` | Coordinator | Agent session lost, or (`reason: worker_record_removed`, `code` = `status_offline` \| `status_dead` \| `session_exited`) an unclaimed worker record was removed |
-| `agent_marked_dead` | Coordinator | An unclaimed worker's heartbeat passed the dead TTL; its record is removed |
-| `session_start_failed` | Coordinator | PTY session failed to start |
-| `session_reconciled` | Coordinator | Restart reconciliation or ownership decision for a provider session (`payload.session_id`, `state`, `outcome`, `reason`) |
-| `session_started` | Coordinator | PTY session launched successfully |
-
-#### Blocking and input events
-
-| Event | Emitted by | When |
-|-------|-----------|------|
-| `blocked` | Worker | Task blocked (`run-fail --policy=block`) |
-| `unblocked` | Operator | Task unblocked (`task-unblock`) |
-| `need_input` | Worker | Legacy input-needed signal |
-| `input_provided` | Master | Legacy input-provided signal |
-| `input_requested` | Worker | `run-input-request` (current) |
-| `input_response` | Master | `run-input-respond` (current) |
-
-#### Coordinator events
-
-| Event | Emitted by | When |
-|-------|-----------|------|
-| `coordinator_started` | Coordinator | Coordinator process started |
-| `coordinator_stopped` | Coordinator | Coordinator process stopped |
-| `worker_needs_attention` | Coordinator | Escalation: `payload.reason` is `stale` (no activity for the soft threshold) or `no_progress` (alive, but no progress for `run_no_progress_escalate_ms`; see **Progress versus liveness**) |
-| `remediation_applied` | Coordinator | Automatic remediation action taken |
-| `activity_note` | Coordinator | A run's to-do or note label changed (`payload.label`, `payload.source`: `todo`/`note`); at most once per 30 s per run. Tool-call labels stay in `run-activity.json` and are not recorded as events (events recorded before this change may carry `source: tool`, which stays valid) |
-| `stop_blocked` | Coordinator | A Claude worker's `Stop` hook (`orc stop-check`) was refused because its run is unfinished (`payload.phase`, the run's current phase or null; `payload.count`, this block's number in the 10-minute window; `payload.stop_hook_active`, recorded for diagnosis only); at most 3 per run per 10 minutes and 9 per run in total |
-
-### Notification events
-
-A subset of events are classified as "notification events" for the master
-agent's notification polling. These are:
-
-- `run_finished`
-- `run_failed`
-- `run_cancelled`
-- `worker_needs_attention`
-- `input_requested`
-- `input_response`
-
-### Querying events
-
-Events can be queried via `orc events-tail` (CLI) or `query_events` (MCP tool)
-with filters on `run_id`, `agent_id`, `event_type`, `after_seq`, and free-text
-search. Results are capped at 500 per query.
+- Notification events (master polling): `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response`.
+- Query: `orc events-tail`, MCP `query_events` (filters `run_id`, `agent_id`, `event_type`, `after_seq`, free text; ≤ 500 rows).
 
 ---
 
 ## Local Control API
 
-The coordinator serves a versioned control API while it runs. A project
-coordinator requires it (it refuses to start with `ORC_CONTROL_API=off`), because
-its workers' lifecycle commands go through `POST /v1/lifecycle`.
+- The coordinator serves HTTP/JSON over the Unix socket in `control.json`. A project coordinator refuses to start without it (`ORC_CONTROL_API=off` or an unservable socket).
+- Every request: `x-orc-protocol: 1` and `Authorization: Bearer <control.token>`.
+- Callers identify with `x-orc-session: <session secret>` or `x-orc-operator: <operator.token>`. Actor and recipient names in a body are never trusted.
+- Responses: `{ protocol_version, ok: true, result }` or `{ protocol_version, ok: false, error: { code, message } }`, `code` ∈ `unsupported_protocol_version|unauthenticated|forbidden|not_found|conflict|bad_request|unavailable|internal`. `unavailable` = daemon stopping, stopped or crashed.
+- Snapshot then subscribe: read `/v1/snapshot`, stream `/v1/events/stream?after=<cursor>`; reconnect from the last processed `seq`. An `event: null` frame is a corrupt row; its `seq` still advances.
 
-**Transport.** HTTP/JSON over the Unix socket named in `control.json`. Host to
-container transport is still open (Task 195); the descriptor's `transport` field
-lets a later transport be added without changing the protocol.
+### Credentials
 
-**Every request** sends `x-orc-protocol: 1` and `Authorization: Bearer <control.token>`.
-A missing or unsupported version returns `unsupported_protocol_version`; a missing
-or wrong token returns `401 unauthenticated`. Responses are
-`{ protocol_version, ok: true, result }` or `{ protocol_version, ok: false, error: { code, message } }`
-with `code` in `unsupported_protocol_version | unauthenticated | forbidden | not_found | conflict | bad_request | unavailable | internal`.
-`unavailable` means the daemon is shutting down, stopped, or crashed (stale descriptor).
+| Credential | Held by | Notes |
+|---|---|---|
+| Bearer `control.token` | any process that can read the state dir | reaches the daemon only; names no caller |
+| `ORC_SESSION_SECRET` | each worker/scout session's environment | state keeps its SHA-256 hash; a session id authenticates nobody |
+| `ORC_MASTER_SECRET` | master provider environment (`orc start-session`) | MCP config references `${ORC_MASTER_SECRET}`; needed for `respond_input` / `run-input-respond` |
+| `operator.token` | a shell with no session | acts as operator, recorded as `--actor-id` (`human` or a registered agent) or `human` |
 
-**Mutations** also send `x-orc-session` with the caller's session credential
-(see **Session credentials** below). Actor and recipient names in the request body are
-never trusted. Commands go through the durable command queue,
-which enforces run scope: a worker may only address its own run; the master may
-address any active run, but only that run's recipient session. Derived
-`legacy-*` session IDs (imported from `agents.json`) are never accepted.
+- `ORC_SESSION_ID` names the session (e.g. `report-for-duty`); it is not a credential. `ORC_CONTROL_SOCKET` gives workers the socket path.
+- Session states: `running`, `recoverable`, `unknown`, `offline`. Commands and messages need `running`; every other route accepts any non-`offline` session, so a `recoverable` worker can still report.
+- An MCP server without `ORC_MASTER_SECRET` refuses every write tool and points at the CLI; read tools work.
+- Limit: secrets are as private as the sandbox. A `full-access` process of the same user, or a sandbox without its own process namespace (Codex), can read `/proc/<pid>/environ`, `control.token` and `operator.token`; only Claude's sandbox hides `operator.token`. Sandboxed workers get only their worktree, the target `.git` write subtrees and the socket, and reach the socket on Linux/Codex only with `worker_pool.sandbox_network: open`.
 
-**Session credentials (task 231).** `x-orc-session` carries the caller's
-session secret, which only that session's process holds (its environment);
-the state stores its SHA-256 hash, so a session id from `agents.json` or the
-`sessions` table authenticates nobody. An operator without a
-session sends `x-orc-operator: <operator token>`, the value the coordinator
-writes to `operator.token` on every start. **Known limitation.** Any process
-running as the same OS user outside a sandbox can still read `control.token`,
-`operator.token` or other processes' environments, or open `events.db`
-directly; sandboxing (with the default `restricted` network) is what stops a
-worker. Only Claude's sandbox hides `operator.token`, and a sandbox without its
-own process namespace (Codex's) can read peer and master secrets from
-`/proc/<pid>/environ`; such a worker reaches the socket at all only with
-`worker_pool.sandbox_network: open`.
+### Routing and direct fallback
 
-**Who may read.** The bearer token only reaches the daemon; every route also
-names its caller. One principal resolver classifies a live master session, a worker session scoped to one run, or an operator token; bearer-only requests have no principal. Whole-project reads (`/v1/snapshot`, `/v1/events`,
-`/v1/events/stream`, `GET /v1/tasks…`) and every `/v1/terminals…` route need
-the master's session secret or the operator token: a worker session gets
-`403 forbidden`, a caller with neither `401`. A worker reads its own run's
-reviews and the project's memories through the scoped routes below. Worker lifecycle
-requests (`/v1/lifecycle`) are checked against the caller's own run.
+| Command group | While the coordinator runs | No coordinator |
+|---|---|---|
+| Worker lifecycle: `run-start`, `progress`, `run-work-complete`, `run-fail`, `run-finish`, `run-input-request`, `review-submit`, `report-for-duty` | `POST /v1/lifecycle` with the session secret; must be the run's own session | retried up to 2 min (`ORC_CONTROL_RETRY_MS`), then fail; no direct write |
+| `memory-record` | `POST /v1/lifecycle` | operator shell (no secret) writes directly |
+| Master/operator mutations: `task-cancel`, `task-reset`, `task-unblock`, `delegate`, `run-input-respond`, `run-expire`, `run-close`, `task-mark-done`; MCP `cancel_task`, `reset_task`, `unblock_task`, `delegate_task`, `close_run`, `respond_input` | `POST /v1/operator` | direct write under the state lock after the same authorization; prints `coordinator is not running; applying <op> directly` |
+| Task authoring: `orc project task create\|edit\|import`, MCP `create_task`/`update_task` | `/v1/tasks…` | direct write, same message |
+| Reads by a worker: `review-read`, `memory-wake-up` | `GET /v1/runs/<id>/reviews`, `GET /v1/memory/wake-up` | read state directly (read-only for a worker session; fails when no process holds the WAL files) |
+| Always direct: `orc project plan import`, `worker-remove`, `worker-gc`, `kill-all`, `request_scout`, `remove_scout` | — | — |
 
-**Session states.** A session is `running`, `recoverable`, `unknown` or
-`offline`. Commands (`/v1/commands…`) and messages (`/v1/messages…`) need a
-`running` session: any other session, and the operator token, get `401`.
-Every other route accepts a session that is not `offline`, so a worker whose
-session is `recoverable` after a coordinator restart can still report its run,
-and a recoverable master can still act.
+A coordinator that holds the pid lock but does not answer gets a retryable `unavailable`, never a direct write.
 
-The MCP server presents the session it runs in. Started by `orc start-session`
-it holds the master's secret and is recorded as the master. Run without one, its
-write tools (`create_task`, `update_task`, `cancel_task`, `reset_task`,
-`unblock_task`, `delegate_task`, `close_run`, `respond_input`, `request_scout`, `remove_scout`, `memory_store`)
-refuse and point at the orc CLI; its read tools still work. The operator acts
-through the CLI, recorded as `human` by default. Delivery of queued commands to a provider transport is also not
-wired yet; commands stay `queued` until a dispatcher with a transport runs. A sandboxed worker may retry a SQLite read-only open only while usable WAL/SHM files remain, such as after a coordinator crash or during version skew. If they are absent, the read fails until the coordinator starts.
+### Routes
 
-| Method | Path | Result |
-|--------|------|--------|
-| `GET` | `/v1/snapshot` | Master or operator only. `{ project, cursor, generated_at, runs, sessions }`; cursor, runs and sessions come from one SQLite read transaction. `sessions` lists running sessions so callers can find a run's recipient session. In a project state directory `project` is `{ id, name, target_repo_root }` and each run carries `task_status` and `spec_revision` from project SQLite; otherwise `project` is null |
-| `GET` | `/v1/events?after=<seq>&limit=<n>` | Master or operator only. `{ events: [{ seq, event }], cursor }` (`limit` 1-1000) |
-| `GET` | `/v1/events/stream?after=<seq>` | Master or operator only. NDJSON frames `{ type: 'event', seq, event }` and `{ type: 'heartbeat', cursor }` |
-| `GET` | `/v1/runs/<run_id>/reviews` | `{ reviews }`: the run's `review_submitted` events plus bridged reviewer feedback, latest per agent (what `orc review-read` prints). Needs a session secret (a worker reads only its own run, `403` otherwise; the master any run) or the operator token (`x-orc-operator`); else `401` |
-| `GET` | `/v1/memory/wake-up?wing=<w>&budget=<tokens>` | `{ initialized, text }` (what `orc memory-wake-up` prints); `initialized` is false without a memory store. `budget` defaults to 800. Memories are project-wide: any session secret or the operator token reads them; else `401` |
-| `POST` | `/v1/stop-check` | A Claude worker's `Stop` hook (`orc stop-check`) asks whether its session may end its turn. Body `{ stop_hook_active? }`; result `{ allow, reason? }`. The run is the session's own: only a worker session secret (not `offline`) is accepted: another session or the operator token is `403`, no credential `401`. Every check for the caller's active run first appends a `turn_end` hook record (it closes the run's open tool calls). Blocks (`allow: false`, recording `stop_blocked`) while the run is `claimed`/`in_progress` with no work-complete handoff, no finalization state and no pending input request, at most 3 times per run in 10 minutes and 9 times per run in total; otherwise allows |
-| `POST` | `/v1/lifecycle` | Worker lifecycle request `{ op, agent_id, run_id?, ... }`, applied by the coordinator. `op` is `run-start`, `run-fail` (`reason`, `code`, `policy`), `run-finish`, `run-work-complete`, `progress` (`event`, `phase?`, `reason?`, `policy?`), `review-submit` (`outcome`, `reason`), `input-request` (`question`) -> `{ request_id, request_seq, active }`, `input-poll` (`request_id`, `request_seq`, `heartbeat?`) -> `{ response, active }`, `input-timeout`, `memory-record` (`content`, `wing?`, `hall?`, `room?`, `importance?`; no `agent_id`) or `report-for-duty` (`session_token`, the session id). Result `{ message, ... }`. The session must not be `offline` (`running`, `recoverable` or `unknown`) and must be launched for that agent and run (else `403 forbidden`; an unrecognised or offline session `401`). An offline session may still send `input-poll` for its own run (its heartbeat is ignored) and `run-finish` or `progress` `run_finished` once that run is `done`. A rejected transition is `409 conflict`; an unexpected lifecycle failure is `500 internal` |
-| `POST` | `/v1/operator` | Master or operator mutation `{ op, actor_id?, ... }`, applied by the coordinator (task 232). `op` is `cancel-task` (`task_ref`, `reason?`), `reset-task` (`task_ref`), `unblock-task` (`task_ref`, `reason?`), `delegate-task` (`task_ref`, `target_agent_id?`, `task_type?`, `note?`), `run-expire` (`run_id`), `run-close` (`run_id`, `reason?`), `task-mark-done` (`task_ref`) or `respond-input` (`run_id`, `agent_id`, `response`, `request_id?`, `record_memory?`); the result is the MCP tool's. With `x-orc-session` the credential must be the master's session secret, its session not `offline` (a worker's is `403 forbidden`, an unknown one `401`), and is recorded as the master: an `actor_id` it sends is ignored. Without it the caller must send `x-orc-operator` with the operator token (else `401`) and acts as the operator, recorded as `actor_id` (`human` or a registered agent, else `400 bad_request`) or `human`; `respond-input` always needs the master session (`403`). A missing task or agent is `404 not_found`, bad input `400 bad_request`, a refused transition `409 conflict`, using typed domain errors; anything unexpected is `500 internal` |
-| `POST` | `/v1/commands` | Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` -> `202 { command }` |
-| `POST` | `/v1/commands/<id>/ack` | Recipient ACK `{ state: accepted\|running\|completed\|failed }` -> `{ command }` |
-| `POST` | `/v1/messages` | Needs a `running` session (else `401`). Send `{ run_id, recipient_session_id, idempotency_key, kind, text, artifact_refs?, parent_message_id? }` -> `202 { message }` |
-| `GET` | `/v1/messages?include_consumed=1` | Needs a `running` session (else `401`). Caller mailbox `{ messages }`; consumed messages are omitted by default |
-| `POST` | `/v1/messages/<id>/consume` | Needs a `running` session (else `401`). Idempotently acknowledge a mailbox item -> `{ message }` |
-| `POST` | `/v1/terminals/provider` | Master or operator only. `{ run_id }` -> `{ terminal }`: observe the run's tmux provider session (what `orc terminal provider` uses) |
-| `POST` | `/v1/terminals/shell` | Master or operator only. `{ run_id }` -> `{ terminal }`: a shell the coordinator starts in the run's worktree, outside any provider sandbox |
-| `GET` | `/v1/terminals/<id>?after=<seq>` | Master or operator only. `{ terminal, screen, output, cursor }` |
-| `POST` | `/v1/terminals/<id>/lease` | Master or operator only. `{ action: acquire, owner_id, ttl_ms? }` -> `{ lease_id, expires_at }`; `{ action: renew\|release, lease_id }` |
-| `POST` | `/v1/terminals/<id>/input`, `/v1/terminals/<id>/resize` | Master or operator only, holding the lease. `{ lease_id, data }` or `{ lease_id, columns, rows }` |
-| `GET` | `/v1/tasks` | Master or operator only. Project state directories only (else `404 not_found`): `{ tasks }`, each with `spec_revision`, `content_hash` and `body_markdown` |
-| `GET` | `/v1/tasks/<ref>` | Master or operator only. `{ task }`; unknown ref -> `404 not_found`. Encode the ref (`app%2Flogin`) |
-| `GET` | `/v1/tasks/<ref>/revisions` | Master or operator only. `{ revisions }` (immutable, oldest first, without bodies); unknown ref -> `404` |
-| `POST` | `/v1/tasks` | Master or operator only: a worker session gets `403`, a caller with neither `401`. The master is recorded as itself (an `actor_id` it sends is ignored); the operator as `actor_id` (`human` or a registered agent, else `400`) or `human`. Create a database-only task `{ feature?, ref?, title?, body_markdown?, description?, acceptance_criteria?, depends_on?, priority?, required_provider?, ... }` -> `201 { task }`; existing ref -> `409 conflict`; invalid field -> `400 bad_request` |
-| `POST` | `/v1/tasks/<ref>/revisions` | Master or operator only, as for `POST /v1/tasks`. Edit `{ expected_revision, ...fields }` -> `{ task, changed }`; a stale `expected_revision` -> `409 conflict`, one below 1 or a self-dependency `400 bad_request`; `status` is never editable (`400`, naming the lifecycle commands to use) |
-| `POST` | `/v1/tasks/import` | Master or operator only, as for `POST /v1/tasks`. Import `{ files: [{ path, text }], strict?, actor_id? }`: the client reads the specs and sends their text (up to 32 MiB); `path` only labels results and errors, and the coordinator never opens it. Every file must be a spec (`400` otherwise); the import is atomic and returns `{ imported }` |
+| Method | Path | Caller | Result |
+|--------|------|--------|--------|
+| `GET` | `/v1/snapshot` | master, operator | `{ project, cursor, generated_at, runs, sessions }` from one read transaction; runs carry `task_status`, `spec_revision` |
+| `GET` | `/v1/events?after=&limit=` | master, operator | `{ events: [{ seq, event }], cursor }`, `limit` 1-1000 |
+| `GET` | `/v1/events/stream?after=` | master, operator | NDJSON `{type:'event',seq,event}` / `{type:'heartbeat',cursor}` |
+| `GET` | `/v1/runs/<run_id>/reviews` | own-run worker, master, operator | `{ reviews }`, latest per agent + reviewer label |
+| `GET` | `/v1/memory/wake-up?wing=&budget=` | any session, operator | `{ initialized, text }`; `budget` 800 |
+| `POST` | `/v1/stop-check` | worker session only | `{ allow, reason? }`; appends `turn_end` first |
+| `POST` | `/v1/lifecycle` | worker session for that run | `{ op, agent_id, run_id?, ... }`; `op`: `run-start`, `run-fail`, `run-finish`, `run-work-complete`, `progress`, `review-submit`, `input-request`, `input-poll`, `input-timeout`, `memory-record`, `report-for-duty`. An offline session may still `input-poll` and repeat `run-finish` on a done run |
+| `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `respond-input` (master only). The master's `actor_id` is ignored |
+| `POST` | `/v1/commands`, `/v1/commands/<id>/ack` | `running` session | enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` → `202`; ACK `accepted\|running\|completed\|failed`. Delivered to `app:` sessions by `CommandDispatcher` |
+| `POST`/`GET` | `/v1/messages`, `/v1/messages/<id>/consume` | `running` session | send → `202 { message }`; mailbox (`include_consumed=1`); consume. Kinds: `message`, `question`, `review_request` (needs artifact refs), `feedback`, `result` (needs parent id) |
+| `POST` | `/v1/terminals/provider`, `/v1/terminals/shell` | master, operator | `{ run_id }` → `{ terminal }` (tmux provider view / worktree shell outside any sandbox) |
+| `GET` | `/v1/terminals/<id>?after=` | master, operator | `{ terminal, screen, output, cursor }` |
+| `POST` | `/v1/terminals/<id>/lease`, `/input`, `/resize` | master, operator (input/resize need the lease) | `acquire\|renew\|release`; `{ lease_id, data }`; `{ lease_id, columns, rows }` |
+| `GET` | `/v1/tasks`, `/v1/tasks/<ref>`, `/v1/tasks/<ref>/revisions` | master, operator | tasks with `spec_revision`, `content_hash`, `body_markdown`; encode the ref (`app%2Flogin`) |
+| `POST` | `/v1/tasks`, `/v1/tasks/<ref>/revisions`, `/v1/tasks/import` | master, operator | create → `201`; edit needs `expected_revision` (stale → `409`; `status` → `400`); import `{ files: [{ path, text }], strict? }`, atomic, ≤ 32 MiB |
 
-Message kinds are `message`, `question`, `review_request`, `feedback`, and
-`result`. A review request needs explicit artifact refs; a result needs a
-parent message ID. The daemon checks both runs and both sessions when routing
-between workers. It queues a non-side-effecting `semantic_message` command to
-the recipient provider with only the message ID. Text is stored as data in
-SQLite and cannot select a control command kind. A recipient can reconnect
-with a new session on the same run and read or consume its queued mailbox items.
-`run-input-request`, `run-input-respond`, and `review-submit` continue emitting
-their existing events while writing corresponding message records for active
-runs; legacy event readers remain supported. For a durable input request,
-`run-input-respond` requires the master's credential: its secret
-(`ORC_MASTER_SECRET`). Review feedback is queued for the
-worker's run mailbox.
-
-**Snapshot then subscribe.** Read `/v1/snapshot`, then stream from
-`after=cursor`. Every event committed after the snapshot has `seq > cursor`. To
-reconnect, including after a daemon restart, stream from the last `seq` you
-processed. An `event: null` frame is a corrupt or invalid row; its `seq` still
-advances the cursor.
+Status codes: no or wrong credential `401`; wrong principal (e.g. a worker on a master route, another run) `403`; missing task/agent `404`; bad input `400`; refused transition `409`; unexpected `500`.
 
 ---
 
 ## Session Handles
 
-Worker session handles use the format `<transport>:<agent_id>`.
+Format `<transport>:<agent_id>` (`tmux:broken-nose`, `pty:master`, `app:…`). `ORC_SESSION_TRANSPORT`: `auto` (tmux if available, else pty), `tmux`, `pty`. Existing sessions keep the transport in their handle.
 
-Examples: `tmux:broken-nose`, `pty:broken-nose`, `pty:master`
-
-| Transport | Owner of the provider process | Survives coordinator exit | Writable by |
-|-----------|-------------------------------|---------------------------|-------------|
-| `tmux` | A private tmux server (`tmux -L orc-<hash of state dir>`) | Yes | Any orc process of the same user |
-| `pty` | The process that spawned it via node-pty | No (the PTY closes with its owner) | Only the spawning process |
-
-`ORC_SESSION_TRANSPORT` picks the transport for new sessions: `auto` (default,
-tmux when the `tmux` binary is available, otherwise pty), `tmux` or `pty`.
-Existing sessions are always handled by the transport named in their handle.
-When a session is restarted, the coordinator rewrites `session_handle` in
-`agents.json`.
+| Transport | Owner | Survives coordinator exit |
+|-----------|-------|---------------------------|
+| `tmux` | private tmux server `tmux -L orc-<hash>` | yes; writable by any orc process of the user |
+| `pty` | the spawning process (node-pty) | no |
+| `app` | the coordinator (structured runtime stdio) | no; run requeued |
 
 ### Session supervision
 
-Each provider session is a row in the `sessions` table of `events.db`, keyed
-by a unique session ID that differs from both the agent ID and the run ID. The
-row records the transport, the provider process PID with its start time
-(`process_start`, used to detect PID reuse), the owning process (`owner_id`)
-and an ownership lease (`owner_expires_at`) renewed every coordinator tick.
+Each session is a `sessions` row in `events.db` (own id, transport, pid + `process_start`, `owner_id`, `owner_expires_at` renewed each tick).
 
-| State | Meaning | Accepts commands |
-|-------|---------|------------------|
-| `running` | Live and writable by the current owner | Yes |
-| `recoverable` | Process alive but this coordinator cannot write to it (a PTY from an earlier coordinator) | No |
-| `unknown` | A live process does not match the recorded PID and start time, or no identity was recorded | No |
-| `offline` | Process exited, its supervisor is gone, or the agent moved to a new session | No |
+| State | Meaning |
+|-------|---------|
+| `running` | live and writable by the current owner |
+| `recoverable` | alive, but this coordinator cannot write to it |
+| `unknown` | live process does not match the recorded pid/start, or no identity recorded |
+| `offline` | exited, supervisor gone, or replaced |
 
-On startup the coordinator reconciles every non-offline session with the live
-process and records a `session_reconciled` event with the outcome (`adopted`,
-`recoverable`, `unknown`, `exited` or `superseded`) and a reason. It never kills
-a session during reconciliation. Every direct coordinator write (task envelope,
-nudge, PR review) is refused unless the agent's session row is `running` and the
-live process still matches the recorded PID and start time; a mismatch moves the
-session to `unknown`. Stopping or replacing a session (`orc worker-remove`, a
-relaunch) moves every non-offline row of that agent to `offline`. On shutdown it stops PTY sessions it owns
-(they could not outlive it) and leaves tmux sessions running for the next
-coordinator to adopt. `orc sessions` lists supervised sessions with their state
-and reason; see `docs/recovery.md` → **Recoverable or Unknown Sessions**.
+- Startup reconciles every non-offline session and records `session_reconciled` (`adopted`, `recoverable`, `unknown`, `exited`, `superseded`); it never kills one.
+- Every direct write to a session (envelope, nudge, PR review) requires `running` and a matching pid/start; a mismatch moves it to `unknown`.
+- Shutdown stops owned PTY sessions and leaves tmux sessions for the next coordinator.
+- `orc sessions` lists them; recovery: [recovery.md](./recovery.md#recoverable-or-unknown-sessions).
 
 ---
 
-## Cross-cutting Invariants
+## Invariants
 
-These invariants hold across all state files and must never be violated:
-
-1. **Single active claim per task**: At most one claim with state `claimed` or
-   `in_progress` exists per `task_ref`.
-
-2. **Referential integrity**: Every `claim.agent_id` maps to an agent in
-   `agents.json`. Every `claim.task_ref` maps to a task in `backlog.json`.
-
-3. **Event schema compliance**: All events satisfy `schemas/event.schema.json`
-   plus runtime validation in `lib/eventValidation.ts`.
-
-4. **Monotonic event sequence**: `seq` values in `events.db` are strictly
-   increasing (enforced by SQLite `AUTOINCREMENT`).
-
-5. **Lease enforcement**: No claim with an expired lease should remain in
-   `claimed` or `in_progress` state indefinitely. The coordinator sweeps
-   for expired leases and transitions them.
-
-6. **Task status consistency**: A task's `status` in `backlog.json` must agree
-   with the state of its active claim in `claims.json`:
-   - `claimed` task has exactly one `claimed` claim
-   - `in_progress` task has exactly one `in_progress` claim
-   - `done` task may have a `done` claim
-   - `todo` task has no active (`claimed`/`in_progress`) claims
-
-7. **Write exclusivity**: State files are modified only through `orc` CLI
-   commands or MCP tool handlers. Direct file writes by agents are forbidden.
-
-## See also
-
-- [Getting started](./getting-started.md)
-- [Architecture overview](./architecture.md)
-- [Configuration](./configuration.md)
+1. **One active claim per task**: at most one run in `claimed`/`in_progress` per `task_ref`.
+2. **Referential integrity**: every run's `task_ref` exists in `runtime.db`; its `agent_id` in `agents.json` while active.
+3. **Status consistency**: a task's `runtime.db` status agrees with its active run in `events.db` `runs` — `claimed` ↔ one `claimed` run, `in_progress` ↔ one `in_progress` run, `todo` ↔ none; a `done` task may still have its run in finalization. `reconcile` repairs drift.
+4. **Pinned spec**: a run keeps the revision it was claimed with; later edits affect only future runs.
+5. **Single terminal outcome**: completion and failure retries are idempotent; `done` is recorded once per run.
+6. **Forward-only finalization**: `finalization_state` never moves backwards.
+7. **Event compliance**: events satisfy `schemas/event.schema.json` and `lib/eventValidation.ts`; `seq` strictly increases.
+8. **Lease enforcement**: no expired claim stays `claimed`/`in_progress` outside the finalize window.
+9. **Write exclusivity**: state changes only through `orc` commands, MCP tools or the coordinator; one coordinator owns a project's writes at a time.

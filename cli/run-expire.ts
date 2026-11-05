@@ -2,10 +2,11 @@
 /** Force-expire a claim and requeue its task. */
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const runId = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
 if (!runId) {
-  console.error('Usage: orc run-expire <run_id>');
+  console.error(`Usage: ${USAGE['run-expire']}`);
   process.exit(1);
 }
 

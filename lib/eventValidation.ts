@@ -60,12 +60,10 @@ function requireAgentId(event: unknown, errors: string[]): void {
 function validateCoreEventInvariants(event: unknown, errors: string[]): void {
   const e = event as { event?: string; agent_id?: string; run_id?: string; payload?: Record<string, unknown> } | null;
   const eventName = e?.event;
-  const taskEvents = new Set(['task_added', 'task_updated', 'task_cancelled', 'task_released', 'task_delegated', 'task_dispatch_blocked']);
+  const taskEvents = new Set(['task_added', 'task_updated', 'task_cancelled', 'task_delegated', 'task_dispatch_blocked']);
   const runLifecycleEvents = new Set([
     'claim_created',
-    'claim_renewed',
     'claim_expired',
-    'claim_released',
     'task_envelope_sent',
     'run_started',
     'work_complete',
@@ -197,7 +195,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     }
   }
 
-  if (eventName === 'claim_created' || eventName === 'claim_renewed') {
+  if (eventName === 'claim_created') {
     requirePayloadField(
       event,
       'lease_expires_at',
