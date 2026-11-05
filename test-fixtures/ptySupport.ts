@@ -36,8 +36,8 @@ function probePtySupport(env = process.env) {
 }
 
 export function detectPtySupport({
-  strict = process.env.ORC_STRICT_PTY_TESTS === '1',
-  force = process.env.ORC_PTY_AVAILABLE === '1',
+  strict = process.env.RUN_STRICT_PTY_TESTS === '1',
+  force = process.env.RUN_PTY_AVAILABLE === '1',
   env = process.env,
   probe = probePtySupport,
 } = {}) {
@@ -45,9 +45,9 @@ export function detectPtySupport({
   const supported = probe(env);
   if (!supported && strict) {
     throw new Error(
-      'PTY support probe failed while ORC_STRICT_PTY_TESTS=1. ' +
+      'PTY support probe failed while RUN_STRICT_PTY_TESTS=1. ' +
       'This environment cannot run strict PTY integration coverage. ' +
-      'If your local machine is PTY-capable but probe is flaky, run with ORC_PTY_AVAILABLE=1.',
+      'If your local machine is PTY-capable but probe is flaky, run with RUN_PTY_AVAILABLE=1.',
     );
   }
   return supported;

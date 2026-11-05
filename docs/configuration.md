@@ -129,8 +129,6 @@ Export writes frontmatter for the definition fields plus `spec_revision` and `co
 
 | Variable | Description |
 |----------|-------------|
-| `ORC_STRICT_PTY_TESTS` | Set to `1` to fail tests when PTY support is unavailable |
-| `ORC_PTY_AVAILABLE` | Set to `1` to skip PTY probe and assume PTY is available |
 
 ## Settings
 
