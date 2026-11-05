@@ -98,13 +98,15 @@ When a TASK_START block arrives:
        Spawn ONE reviewer (agents/reviewer.md) with:
        - The acceptance criteria for this task
        - The full diff output (not just file names): `git diff --stat --patch main...HEAD`
-       - The REVIEWER CONSTRAINTS block below
+       - The REVIEWER CONSTRAINTS block below, with <reviewer_label> replaced by `reviewer`
 
      review_level: full  (default when review_level is absent from frontmatter)
        Spawn TWO independent reviewers (critic + integrator) with:
        - The acceptance criteria for this task
        - The full diff output (not just file names): `git diff --stat --patch main...HEAD`
-       - The REVIEWER CONSTRAINTS block below
+       - The REVIEWER CONSTRAINTS block below, with <reviewer_label> replaced by `critic`
+         for one reviewer and `integrator` for the other (one label per reviewer:
+         reviews with the same label replace each other in review-read)
 
           --- REVIEWER CONSTRAINTS (read this before doing anything) ---
           You are a code reviewer sub-agent operating at MAX_DEPTH=1.
@@ -115,7 +117,8 @@ When a TASK_START block arrives:
           You MUST call before returning:
             {{orc_bin}} review-submit --run-id=<run_id> --agent-id={{agent_id}} \
               --reviewer=<reviewer_label> --outcome=<approved|findings> --reason="<findings text>"
-          Keep --agent-id exactly as written: it is the worker's id, not yours.
+          <reviewer_label> must be your own label (filled in above); keep --agent-id
+          exactly as written: it is the worker's id, not yours.
           This is the ONLY orc command you may call.
 
           You MUST NOT call any of the following commands:
@@ -173,7 +176,7 @@ When a TASK_START block arrives:
            If unresolvable: {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} --reason="unresolvable rebase conflict" --policy=requeue
          STEP B — Review-fix loop (max 3 iterations):
            Generate diff: git diff --stat --patch origin/main...HEAD
-           Spawn sub-agents per review_level (none=self-review, light=one reviewer, full=critic+integrator).
+           Spawn sub-agents per review_level (none=self-review, light=one reviewer, full=critic+integrator), each with its own <reviewer_label> as in step 6.
            Collect findings: {{orc_bin}} review-read --run-id=<run_id>
            If all approved: exit loop. If findings: fix, commit, loop.
            If iteration > 3: {{orc_bin}} run-fail --run-id=<run_id> --agent-id={{agent_id}} --reason="review-fix loop exceeded 3 iterations" --policy=requeue
