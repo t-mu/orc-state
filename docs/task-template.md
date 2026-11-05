@@ -1,143 +1,63 @@
 ---
 ref: <feature>/<slug>
-feature: <feature-ref>
-review_level: full
+feature: <feature>
+title: <Imperative title>
 priority: normal
+review_level: full
+# depends_on:
+#   - <feature>/<slug>
+# required_provider: claude
+# task_type: implementation
 # merge_strategy: direct
+# model: <provider model id>
 ---
 
-# <Imperative Title>
+<!-- Frontmatter: `ref` is required (`^[a-z0-9-]+/[a-z0-9-]+$`), its prefix must equal `feature`.
+     `title` defaults to the first `# ` heading. priority: low|normal|high|critical.
+     review_level: none|light|full (default full). task_type: implementation|refactor.
+     merge_strategy: direct|pr. Dependencies go only in `depends_on:`; prose is not parsed.
+     No `status:`: it is runtime-owned (ignored on import, rejected with `--strict`). -->
 
-Independent.
-<!-- Replace with a dependency line when needed, e.g.: "Depends on Task N-1. Blocks Task N+1." -->
+# <Imperative title>
 
 ## Scope
 
 **In scope:**
-- <!-- One concrete outcome per bullet. -->
+- <!-- one concrete outcome per bullet -->
 
 **Out of scope:**
-- <!-- Explicit exclusions. Name specific files, systems, or concerns that must not change. -->
-
----
+- <!-- files, systems or concerns that must not change -->
 
 ## Context
 
-<!-- Why this change is needed. What breaks or is missing without it.
-     Link to related tasks, prior work, or the spec that motivates this. -->
-
 ### Current state
-
-<!-- 2-5 lines describing how the relevant system behaves today.
-     State the current limitation, bug, or missing capability plainly. -->
+<!-- 2-5 lines: how it behaves today and what is wrong or missing -->
 
 ### Desired state
-
-<!-- 2-5 lines describing the intended end state after this task lands.
-     Make the before/after delta obvious. -->
+<!-- 2-5 lines: the end state after this task -->
 
 ### Start here
-
-<!-- 1-3 concrete files to inspect first. Use this to give a fresh worker an
-     immediate entry point into the codebase. -->
-
-- `path/to/file.mjs` — <!-- first file to inspect -->
-
-<!-- Optional:
-### Dependency context
-
-Include only when this task depends on prior work in a way that would not
-be obvious from the code alone. Summarize the needed baseline in 2-4 lines
-instead of sending the worker to read older tasks.
--->
-
-**Affected files:**
-- `path/to/file.mjs` — <!-- what role this file plays -->
-
----
-
-## Goals
-
-<!-- 3–7 "must" statements. Each must be independently verifiable. -->
-
-1. Must ...
-2. Must ...
-3. Must ...
-
----
+- `path/to/file.ts` — <!-- first file to read and its role -->
 
 ## Implementation
 
-<!-- Ordered, atomic steps. Each step touches one file or one concern.
-     Include exact file paths, expected code shape, and any invariants to preserve.
-     Call out files that must remain unchanged. -->
-
 ### Step 1 — <description>
-
-**File:** `path/to/file.mjs`
-
-```js
-// expected shape or diff
-```
-
-<!-- Invariant: do not modify X -->
-
-### Step 2 — ...
-
----
+<!-- file, expected change, invariants to preserve -->
 
 ## Acceptance criteria
-
-<!-- Binary checklist. Each item tied to observable behavior.
-     Include at least one failure/edge-case item. -->
+<!-- Parsed: each `- [ ]` item under this heading becomes the task's acceptance_criteria,
+     handed to reviewers. Binary, observable, at least one failure/edge case. -->
 
 - [ ] ...
-- [ ] ...
-- [ ] Exits with code 1 and a descriptive message when <failure condition>.
 - [ ] No changes to files outside the stated scope.
-
----
-
-## Tests
-
-<!-- Exact test descriptions to add or update. Reference the test file path.
-     Follow the pattern in existing *.test.mjs / *.test.ts files. -->
-
-Add to `path/to/file.test.mjs`:
-
-```js
-it('<description>', () => { ... });
-```
-
----
 
 ## Verification
 
 ```bash
-# Targeted verification for this task only
-# Prefer the narrowest commands that prove the change works.
-npx vitest run path/to/targeted.test.mjs
+npx vitest run path/to/file.test.ts   # narrowest proof first
+npm test                              # required before run-work-complete
+orc doctor                            # only when schema, state or CLI changes are in scope
 ```
-
-```bash
-# Final required repo-wide checks before marking the task done
-nvm use 24 && npm test
-```
-
-```bash
-# Smoke checks — include only when schema, state, or CLI changes are in scope
-orc doctor
-orc status
-# Expected: exits 0, no validation errors
-```
-
----
 
 ## Risk / Rollback
-
-<!-- Required when the task: mutates state files, changes a JSON schema,
-     adds/removes npm scripts, or has partial-write failure modes.
-     Omit only for pure code changes with no stateful side effects. -->
-
-**Risk:** <!-- What can go wrong. -->
-**Rollback:** <!-- How to recover. E.g. "revert backlog.json from git; re-run orc:doctor." -->
+<!-- Only when the task changes state files, schemas or npm scripts. -->
