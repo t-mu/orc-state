@@ -1,11 +1,12 @@
 ---
 name: reviewer
+description: Single combined reviewer for review_level light. Use after implementation to check acceptance criteria, regressions, conventions and integration fit in one pass.
+tools: Read, Grep, Glob, Bash
 maxTurns: 10
 models:
   claude: sonnet
   codex: gpt-5.4
   gemini: 2.5-pro
-tools: [Read, Grep, Glob, Bash]
 ---
 
 # Reviewer
@@ -26,8 +27,8 @@ Check:
 
 Do NOT explore the codebase independently — review the provided diff only.
 
-You MUST call before returning (run_id and agent_id are in your prompt):
-  /home/node/.npm-global/bin/orc review-submit --run-id=<run_id> --agent-id=<your_agent_id> \
+You MUST call before returning (run_id and the worker's agent_id are in your prompt):
+  orc review-submit --run-id=<run_id> --agent-id=<worker_agent_id> --reviewer=reviewer \
     --outcome=<approved|findings> --reason="<findings text>"
 This is the ONLY orc command you may call.
 

@@ -43,7 +43,10 @@ export async function readViaCoordinator<T>(
 
 /**
  * A run's reviews: its review_submitted events plus bridged reviewer
- * feedback messages, deduplicated by agent_id (latest submission wins).
+ * feedback messages, deduplicated per reviewer (latest submission wins).
+ * A reviewer is its agent_id plus the optional `reviewer` label, so the
+ * reviewers of one worker (which all submit with the worker's agent_id) stay
+ * separate.
  */
 export function readRunReviews(stateDir: string, runId: string): ReviewSubmittedEvent[] {
   const events = queryEvents(stateDir, {
@@ -52,9 +55,10 @@ export function readRunReviews(stateDir: string, runId: string): ReviewSubmitted
     limit: 100,
   }) as ReviewSubmittedEvent[];
 
+  const reviewerKey = (e: ReviewSubmittedEvent) => (e.payload.reviewer ? `${e.agent_id}#${e.payload.reviewer}` : e.agent_id);
   const byAgent = new Map<string, ReviewSubmittedEvent>();
   for (const e of events) {
-    byAgent.set(e.agent_id, e);
+    byAgent.set(reviewerKey(e), e);
   }
   const eventMessageIds = new Set(events.map((event) => event.payload.message_id).filter((id): id is string => typeof id === 'string'));
   for (const message of readBridgedReviewFeedback(stateDir, runId)) {

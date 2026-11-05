@@ -311,7 +311,7 @@ export interface ReviewSubmittedEvent extends BaseEvent {
   event: 'review_submitted';
   run_id: string;
   agent_id: string;
-  payload: { outcome: 'approved' | 'findings'; findings: string; [key: string]: unknown };
+  payload: { outcome: 'approved' | 'findings'; findings: string; reviewer?: string; [key: string]: unknown };
 }
 
 // ── Worker attention events ───────────────────────────────────────────────────

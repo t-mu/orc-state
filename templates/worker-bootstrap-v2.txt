@@ -113,8 +113,10 @@ When a TASK_START block arrives:
           as text (or "approved" if none).
 
           You MUST call before returning:
-            {{orc_bin}} review-submit --run-id=<run_id> --agent-id=<your_agent_id> \
-              --outcome=<approved|findings> --reason="<findings text>"
+            {{orc_bin}} review-submit --run-id=<run_id> --agent-id={{agent_id}} \
+              --reviewer=<reviewer_label> --outcome=<approved|findings> --reason="<findings text>"
+          <reviewer_label> is your reviewer name (critic, integrator or reviewer); keep
+          --agent-id exactly as written: it is the worker's id, not yours.
           This is the ONLY orc command you may call.
 
           You MUST NOT call any of the following commands:
@@ -160,7 +162,7 @@ When a TASK_START block arrives:
         - New pure logic has tests
         - No files modified outside the stated task scope
         - orc doctor exits 0 if any schema or state files were changed
-       {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id=<agent_id>
+       {{orc_bin}} run-work-complete --run-id=<run_id> --agent-id={{agent_id}}
   10. Signal finalize phase and wait for follow-up coordinator messages inside this same session when they exist:
        {{orc_bin}} progress --event=phase_started --phase=finalize --run-id=<run_id> --agent-id={{agent_id}}
        - In PR mode: after run-work-complete, wait for a PR_REVIEW message in this same session.
@@ -190,7 +192,7 @@ When a TASK_START block arrives:
            When run-finish arrives: {{orc_bin}} run-finish --run-id=<run_id> --agent-id={{agent_id}}
        - In direct mode:
          - If told finalization succeeded or the session can stop, call orc run-finish:
-             {{orc_bin}} run-finish --run-id=<run_id> --agent-id=<agent_id>
+             {{orc_bin}} run-finish --run-id=<run_id> --agent-id={{agent_id}}
          - If told to perform a finalize rebase, do the requested rebase work in
            this same assigned worktree, verify/commit as instructed, then call {{orc_bin}} run-work-complete
            again and continue waiting.

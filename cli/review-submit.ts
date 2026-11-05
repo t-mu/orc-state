@@ -7,11 +7,12 @@ const runId = flag('run-id');
 const agentId = flag('agent-id');
 const outcome = flag('outcome');
 const reason = flag('reason');
+const reviewer = flag('reviewer');
 
 const VALID_OUTCOMES = ['approved', 'findings'] as const;
 
 if (!runId || !agentId) {
-  console.error('Usage: orc review-submit --run-id=<id> --agent-id=<id> --outcome=<approved|findings> --reason=<text>');
+  console.error('Usage: orc review-submit --run-id=<id> --agent-id=<id> --outcome=<approved|findings> --reason=<text> [--reviewer=<label>]');
   process.exit(1);
 }
 
@@ -28,6 +29,7 @@ if (!reason?.trim()) {
 try {
   const result = await submitLifecycle({
     op: 'review-submit', run_id: runId, agent_id: agentId, outcome: outcome as 'approved' | 'findings', reason,
+    ...(reviewer?.trim() ? { reviewer: reviewer.trim() } : {}),
   });
   console.log(result.message);
 } catch (error) {

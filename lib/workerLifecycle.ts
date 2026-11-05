@@ -25,7 +25,7 @@ export type LifecycleRequest =
   | { op: 'run-start' | 'run-finish' | 'run-work-complete' | 'input-timeout'; run_id: string; agent_id: string }
   | { op: 'run-fail'; run_id: string; agent_id: string; reason: string; code: string; policy: string }
   | { op: 'progress'; run_id: string; agent_id: string; event: string; phase?: string | null; reason?: string | null; note?: string | null; policy?: string | null }
-  | { op: 'review-submit'; run_id: string; agent_id: string; outcome: 'approved' | 'findings'; reason: string }
+  | { op: 'review-submit'; run_id: string; agent_id: string; outcome: 'approved' | 'findings'; reason: string; reviewer?: string }
   | { op: 'input-request'; run_id: string; agent_id: string; question: string }
   | { op: 'input-poll'; run_id: string; agent_id: string; request_id: string; request_seq: number; heartbeat?: boolean }
   | { op: 'memory-record'; content: string; wing?: string | null; hall?: string | null; room?: string | null; importance?: number }
@@ -183,7 +183,7 @@ export function applyLifecycle(stateDir: string, request: LifecycleRequest): Lif
       appendSequencedEvent(stateDir, {
         ts: at, event: 'review_submitted', actor_type: 'agent', actor_id: request.agent_id,
         run_id: request.run_id, agent_id: request.agent_id,
-        payload: { outcome: request.outcome, findings: request.reason, message_id: messageId },
+        payload: { outcome: request.outcome, findings: request.reason, message_id: messageId, ...(request.reviewer ? { reviewer: request.reviewer } : {}) },
       });
       if (request.outcome === 'findings') {
         try {
@@ -270,7 +270,7 @@ export function parseLifecycleRequest(body: Record<string, unknown>): LifecycleR
   for (const field of required) {
     if (typeof body[field] !== 'string' || !body[field]) throw new ControlError('bad_request', `${field} is required`, 400);
   }
-  for (const field of ['phase', 'reason', 'note', 'policy', 'wing', 'hall', 'room']) optionalString(body, field);
+  for (const field of ['phase', 'reason', 'note', 'policy', 'wing', 'hall', 'room', 'reviewer']) optionalString(body, field);
   if (op === 'input-poll' && !Number.isSafeInteger(body.request_seq)) throw new ControlError('bad_request', 'request_seq must be an integer', 400);
   if (op === 'review-submit' && !['approved', 'findings'].includes(body.outcome as string)) {
     throw new ControlError('bad_request', "outcome must be 'approved' or 'findings'", 400);

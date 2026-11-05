@@ -3,8 +3,8 @@
  * cli/review-read.ts
  * Usage: orc review-read --run-id=<id> [--json]
  *
- * Retrieves all review_submitted events for a run, deduplicated by agent_id
- * (latest submission wins). In a registered project the running coordinator
+ * Retrieves all review_submitted events for a run, deduplicated per reviewer
+ * (agent_id + --reviewer label; latest submission wins). In a registered project the running coordinator
  * serves them, so a sandboxed worker without write access can read them.
  * Exits 0 whatever the reviews say — the worker decides whether to proceed;
  * exits 1 only when the reviews could not be read (retry later).
@@ -43,6 +43,6 @@ if (reviews.length === 0) {
 }
 
 for (const r of reviews) {
-  console.log(`\n--- Review from ${r.agent_id} [${r.payload.outcome}] ---`);
+  console.log(`\n--- Review from ${r.agent_id}${r.payload.reviewer ? ` (${r.payload.reviewer})` : ''} [${r.payload.outcome}] ---`);
   console.log(r.payload.findings);
 }

@@ -60,6 +60,12 @@ describe('orc review-submit', () => {
     expect((ev!.payload as Record<string, unknown>).findings).toBe('LGTM');
   });
 
+  it('stores the optional --reviewer label in the payload', async () => {
+    await runCli(['--run-id=run-abc', '--agent-id=broken-nose', '--reviewer=critic', '--outcome=approved', '--reason=LGTM']);
+    const ev = readEvents().find((e) => e.event === 'review_submitted');
+    expect((ev!.payload as Record<string, unknown>).reviewer).toBe('critic');
+  });
+
   it('stores outcome=findings with full findings text', async () => {
     await runCli([
       '--run-id=run-abc',
