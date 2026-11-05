@@ -1,334 +1,117 @@
-# Operator Recovery Guide
+# Recovery and Troubleshooting
 
-This guide covers multi-step operational recovery procedures. For quick
-single-symptom fixes, see [Troubleshooting](./troubleshooting.md).
+`$STATE` = the project state directory (`stateDir` in `orc project show`). Never edit state files; use `orc` commands. Command flags: [cli.md](./cli.md). Lifecycle, liveness and lease rules: [contracts.md](./contracts.md).
 
 ## Runtime Database Upgrade and Restore
 
-The operational schema shares `events.db` with the event log, in the project
-state directory (`stateDir` in `orc project show`; written `$STATE` below).
-Before starting a newer binary against an existing project, stop the
-coordinator and workers, then back up the databases and JSON state together
-(the `sqlite3` command-line tool is required for this procedure):
+Back up before running a newer binary (stop the coordinator and workers; needs `sqlite3`):
 
 ```bash
-STATE='<project state directory>'
 sqlite3 "$STATE/runtime.db" ".backup '$STATE/runtime.db.pre-upgrade'"
-sqlite3 "$STATE/events.db" ".backup '$STATE/events.db.pre-upgrade'"
+sqlite3 "$STATE/events.db"  ".backup '$STATE/events.db.pre-upgrade'"
 cp "$STATE/claims.json" "$STATE/claims.json.pre-upgrade"
 cp "$STATE/agents.json" "$STATE/agents.json.pre-upgrade"
-cp "$STATE/backlog.json" "$STATE/backlog.json.pre-upgrade"
 ```
 
-The first open applies each versioned migration in its own transaction. `orc doctor`
-reports the current `runtimeSchema.version` and any missing tables or migration
-records. Version 1 creates operational tables. Version 2 adds the run cutover
-schema. The first claim read or transition imports legacy claims once and
-records the `runs` row in `runtime_cutovers`; SQLite then owns run
-state and `claims.json` is a compatibility projection. Provider session IDs
-are stored separately from agent and run IDs. A failed migration rolls back
-its tables and version record. A database from a newer binary is refused
-rather than downgraded.
-
-Version 7 adds per-session credentials (task 231). Workers launched before it hold no session secret, so after the upgrade their
-lifecycle commands fail with `ORC_SESSION_SECRET is not set`. Drain running work
-before upgrading, or reset each in-flight task afterwards with
-`orc task-reset <ref>` so it is redispatched to a worker that has one. Restart
-`orc start-session` too, so the master gets its secret.
-
-If startup fails after an upgrade, stop the coordinator and every process using
-the database. Keep the failed database for diagnosis, then restore the backup
-and run the previous binary:
+Restore (all database users stopped; events after the backup are lost):
 
 ```bash
 mv "$STATE/events.db" "$STATE/events.db.failed"
-rm -f "$STATE/events.db-wal" "$STATE/events.db-shm" "$STATE/runtime.db-wal" "$STATE/runtime.db-shm"
-cp "$STATE/events.db.pre-upgrade" "$STATE/events.db"
-cp "$STATE/runtime.db.pre-upgrade" "$STATE/runtime.db"
+rm -f "$STATE"/events.db-wal "$STATE"/events.db-shm "$STATE"/runtime.db-wal "$STATE"/runtime.db-shm
+cp "$STATE/events.db.pre-upgrade"   "$STATE/events.db"
+cp "$STATE/runtime.db.pre-upgrade"  "$STATE/runtime.db"
 cp "$STATE/claims.json.pre-upgrade" "$STATE/claims.json"
 cp "$STATE/agents.json.pre-upgrade" "$STATE/agents.json"
-cp "$STATE/backlog.json.pre-upgrade" "$STATE/backlog.json"
 orc doctor
 ```
 
-Only restore while all database users are stopped. The backup includes events;
-restoring it discards events written after the backup. Restore the JSON files
-from the same point in time. Do not edit
-`PRAGMA user_version` or remove migration records to force a downgrade.
+- Migrations apply on first open, one transaction each; `orc doctor` reports `runtimeSchema.version`. A database from a newer binary is refused.
+- Never edit `PRAGMA user_version` or migration records to force a downgrade.
+- `backlog.json` is a projection of `runtime.db`; it needs no backup.
 
-## Finalization Failure (`blocked_finalize`)
+## Sessions and coordinator
 
-A run enters `blocked_finalize` when the coordinator cannot complete the
-coordinator-owned finalization flow after the configured retry path. The work is
-preserved in the run worktree and branch metadata tracked by the coordinator.
+| Symptom | Check | Fix |
+|---------|-------|-----|
+| `No registered project here…` | `orc project list` | `orc project add <git-path>`; outside a repo `orc project select <id>` or `--project=<id>` |
+| `target repository is not a git repository` (doctor) | `git -C <path> rev-parse` | `git init` and commit, then `orc project add`, `orc init` |
+| Coordinator not running | `orc status`, `orc doctor` | `orc start-session`. tmux sessions are adopted, `pty:` sessions become `recoverable`, `app:` runs are requeued |
+| `orc doctor` reports a live coordinator whose `coordinator.pid` is missing or wrong | `orc doctor` | `orc kill-all` finds it via `control.json`, then `orc start-session` |
+| Repeated `session_start_failed` | `orc events-tail --event=session_start_failed`, [Providers](#providers) | fix install/auth; the task is requeued after the retries; `orc task-reset <ref>` if it stays stuck |
+| `orc status` shows unexpected `configured_slots` / provider | `orc project config list`, `env \| grep '^ORC_'` | `orc project config set worker_pool.max_workers <n>` / `worker_pool.provider <name>`; an exported `ORC_MAX_WORKERS` / `ORC_WORKER_PROVIDER` wins |
+| `orc doctor` reports state errors | `orc doctor --json` | stop sessions, [restore](#runtime-database-upgrade-and-restore); state is outside the repo, Git cannot restore it |
+| State inconsistent beyond the fixes here | `orc doctor --json`, `orc status` | [Full reset](#full-reset) |
 
-### Symptoms
+### Recoverable or Unknown Sessions
 
-- `orc status` shows `finalization_state=blocked_finalize`
-- Recent failures include a preserved finalization problem
-- The worker may no longer be able to finish through the normal handoff path
+`orc sessions` shows `state=recoverable|unknown` with a `reason:`; the coordinator never kills or redispatches them.
 
-### Recovery Steps
+- `recoverable`: process alive, this coordinator cannot write to it (a `pty:` session from an earlier coordinator). The worker can still run `orc run-*`; it gets no nudges or envelopes.
+- `unknown`: live process does not match the recorded PID + start time, or has no recorded identity. Not adopted.
+- Fix: let it finish, or `orc task-reset <ref>` (or `orc task-cancel <ref>`), then `orc worker-remove <agent_id>` (refused while a claim is active; signals only a matching process).
+- Prevent: keep `tmux` installed and `ORC_SESSION_TRANSPORT` at `auto` or `tmux`.
 
-1. Find the blocked run with `orc status` or `orc runs-active`.
-2. Inspect the preserved worktree and branch metadata for that run.
-3. Prefer the normal coordinator-owned path first.
-   - If the worker is still active, use the documented finalize-rebase handoff flow.
-   - If the live worker/coordinator handoff is no longer recoverable, move to manual recovery.
-4. Manual recovery is recovery-only, not the normal workflow. Run it in the
-   preserved run worktree (`orc run-info <run_id>` prints its path; it lives
-   under `<state>/worktrees/<run_id>` on branch `task/<run_id>`), commit any
-   leftover change there, then merge from the main checkout:
+## Runs and claims
+
+| Symptom | Check | Fix |
+|---------|-------|-----|
+| Worker stuck in `in_progress` | `orc attach <agent_id>` (read-only, `--write` to type), or `orc terminal provider <run_id> --once` for `pty:`; `orc doctor` | `orc task-reset <ref>`, then `orc worker-remove <agent_id>`; dispatch is automatic |
+| Dead worker, claim not released | `orc runs-active`, `orc doctor` | a dead process expires the claim at once; else `orc task-reset <ref>` |
+| Offline/dead workers left in `orc status` (`idle\|running\|offline\|dead`) | `orc status` | a running coordinator removes them; without one `orc worker-gc` (keeps workers with a claim) |
+| Worker blocked on `run-input-request` | `orc waiting-input` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response="…"`; otherwise it fails on timeout and is requeued |
+| Task `blocked` | `orc status`, `orc project task show <ref>` | fix the cause, `orc task-unblock <ref>` |
+| Task never dispatched | `orc project task show <ref>` (`depends_on`) | finish the dependency; `orc task-reset <dep-ref>` if it is stuck |
+| `finalization_state=blocked_finalize` | `orc status`, `orc run-info <run_id>` | [Finalization Failure](#finalization-failure-blocked_finalize) |
+
+### Finalization Failure (`blocked_finalize`)
+
+The coordinator could not finish its merge flow; work is kept in `<state>/worktrees/<run_id>` on branch `task/<run_id>`. If the worker is still live, use the finalize-rebase handoff. Otherwise merge by hand, from the main checkout for the last three commands:
 
 ```bash
-cd <state>/worktrees/<run_id>
-git rebase main
-# resolve conflicts, then: git add <file> && git rebase --continue
-npm test
+cd <state>/worktrees/<run_id>        # commit any leftover change first
+git rebase main && npm test
 git -C <main-repo> merge task/<run_id> --no-ff -m "task(<task_ref>): merge worktree"
 orc task-mark-done <task_ref>
 orc run-close <run_id> --reason="merged manually after blocked_finalize"
 ```
 
-5. `orc task-mark-done` records the task done; `orc run-close` (the master's
-   `close_run`) then closes the claim, which nothing else does once its task is
-   done: it records the claim `done`, emits `run_finished` with
-   `{closed_by, reason, manual: true}`, and removes the run worktree, its branch
-   and its `run-worktrees.json` entry the way the coordinator does after a merge.
-   Commit and merge everything you need first: that removal is forced. Run it
-   from the main checkout, not from inside the worktree it removes. A branch that
-   is not merged into `main` (squash, rebase or fast-forward merges do not count)
-   keeps its worktree; remove it by hand once nothing in it is needed.
-   When the branch is merged, `run-close` also marks a task that is not yet
-   `done` done, so the merged work is not requeued.
-   It refuses a run whose task is not `done`/`released` and whose branch is not
-   merged; for work merged another way run `orc task-mark-done` first, otherwise
-   `orc run-expire <run_id>` or `orc task-reset <task_ref>` requeue the task.
-   `run-close` does not stop a worker session: if `orc status` still lists the
-   run's worker, remove it with `orc worker-remove <agent_id>`.
-6. Do not treat `orc run-finish` as the default manual recovery step after preserved finalization failure. That command is only valid if the live handoff path still supports it.
+- `run-close` (MCP `close_run`) closes the claim and force-removes the worktree and branch; details in [cli.md](./cli.md). A branch not merged with a merge commit keeps its worktree.
+- Work that should be redone instead: `orc run-expire <run_id>` or `orc task-reset <task_ref>`.
+- `run-close` does not stop the worker: `orc worker-remove <agent_id>`. Do not use `orc run-finish` here.
 
-## Hung Input Request
+## Worktrees
 
-If a worker is blocked on `orc run-input-request` and the master cannot respond:
+Run worktrees live at `<state>/worktrees/<run_id>`, registered in `$STATE/run-worktrees.json`.
 
-1. Find the run with `orc runs-active`.
-2. Respond through the supported input-response path:
+| Symptom | Check | Fix |
+|---------|-------|-----|
+| Worktree left after a run finished or failed | `git worktree list` vs `orc runs-active` | `git worktree remove [--force] <state>/worktrees/<run_id>`, then `git worktree prune` |
+| Worktree creation fails (path exists) | `git worktree list` | `git worktree prune`; `rm -rf <state>/worktrees/<run_id>` if it remains; `orc task-reset <ref>` |
 
-```bash
-orc run-input-respond --run-id=<run_id> --agent-id=<agent_id> --response="..."
-```
+## Providers
 
-3. If a response cannot be provided before timeout, expect the run to fail through the timeout path.
-4. If operator intervention is still needed, stop the worker through the normal worker-management path and requeue or reset the task as needed.
+| Provider | Install | Auth |
+|----------|---------|------|
+| Claude | `npm install -g @anthropic-ai/claude-code` | run `claude` and log in, or `ANTHROPIC_API_KEY` |
+| Codex | `npm install -g @openai/codex` | run `codex` and log in, or `OPENAI_API_KEY` |
+| Gemini | `npm install -g @google/gemini-cli` | run `gemini` and log in, or `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
 
-## Session Start Failure After Retries
+`Binary '<x>' not found on PATH` → install, open a new shell, `orc doctor`. Auth failures are not caught by `orc doctor`: run the CLI once by hand.
 
-If coordinator logs show repeated `session_start_failed` after the bounded retry path:
+## Tests
 
-1. Check the provider CLI is installed and in `PATH`.
+| Symptom | Check | Fix |
+|---------|-------|-----|
+| An `ORC_*` switch has no effect in tests | — | configs strip inherited `ORC_*`; use the `RUN_*` switches ([testing.md](./testing.md#env-switches)) |
+| PTY suites skipped | `ptySupport.ts` probe | `RUN_PTY_AVAILABLE=1` to force; `RUN_STRICT_PTY_TESTS=1` to fail instead |
+| Real-provider test skips | `RUN_REAL_PROVIDERS=1` set? binary on `PATH`? | set the switch, install the binary |
+| Real-provider test times out | provider CLI by hand (first-run or auth prompt) | log in, rerun |
+
+## Full reset
 
 ```bash
-which claude
-which codex
-which gemini
-```
-
-2. Check provider authentication and local environment health.
-3. If the coordinator retried the session start and all attempts failed, the task is automatically requeued. For manual intervention, use the worker cleanup path.
-4. If a worker session remains unhealthy after cleanup, use `orc task-reset` to return the task to `todo` before redispatching work.
-
-## Stale Workers
-
-Workers become stale when a PTY session terminates unexpectedly but the agent registration is
-not cleaned up. The coordinator expires the claim when it detects the dead PID, but the stale
-worker entry may remain in agent state.
-
-### Symptoms
-
-- `orc status` shows workers in `offline` or `error` state that are not processing tasks
-- `orc doctor` reports stale worker entries
-
-### Diagnosis
-
-```bash
-orc doctor
-orc runs-active
-```
-
-### Fix
-
-If a task was claimed by the stale worker, reset it first so it can be
-re-dispatched (this releases the claim):
-
-```bash
-orc task-reset <task-ref>
-```
-
-A running coordinator removes the stale worker record itself. With no
-coordinator running, remove offline and dead workers (a worker that still
-holds an active claim is kept):
-
-```bash
-orc worker-gc
-```
-
-## Recoverable or Unknown Sessions
-
-### Symptoms
-
-- `orc sessions` shows a session with `state=recoverable` or `state=unknown` and a `reason:` line.
-- The coordinator log shows `marked recoverable` or a `session_reconciled` event with outcome `recoverable` or `unknown`.
-
-### Diagnosis
-
-- `recoverable`: the provider process is alive but this coordinator cannot
-  write to it, usually a `pty:` session from an earlier coordinator process.
-  The worker keeps running and can still report through `orc run-*`, but it
-  cannot receive nudges, task envelopes or queued commands.
-- `unknown`: a live process exists but does not match the recorded PID and
-  start time (the PID may have been reused), or the session predates identity
-  recording. orc refuses to adopt it.
-
-### Fix
-
-The coordinator never kills or redispatches these sessions on its own.
-
-1. Let the worker finish (no action), or stop it: first release its claim with
-   `orc task-reset <task_ref>` (or `orc task-cancel <task_ref>`), then run
-   `orc worker-remove <agent_id>`, which refuses while a claim is active. The
-   stop only signals the recorded process if its start time still matches.
-2. To avoid the case for future workers, keep `tmux` installed and leave
-   `ORC_SESSION_TRANSPORT` at `auto` (or set `tmux`). tmux sessions survive a
-   coordinator restart and are adopted.
-
----
-
-## Stuck/Orphaned Worktrees
-
-After a run finishes or fails, the coordinator cleans up the worktree and branch. If the
-coordinator was interrupted or the cleanup step was skipped, the worktree directory persists
-even though no active run is using it.
-
-### Symptoms
-
-- `.worktrees/` contains directories for runs that have finished or failed
-- `git worktree list` shows entries with no corresponding active run
-
-### Diagnosis
-
-Compare the worktree list against active runs:
-
-```bash
-git worktree list
-orc runs-active
-```
-
-Entries in `git worktree list` with no matching entry in `orc runs-active` are orphaned.
-
-### Fix
-
-Remove each orphaned worktree entry:
-
-```bash
-git worktree remove .worktrees/<run_id>
-```
-
-If the directory cannot be removed cleanly, use the force flag:
-
-```bash
-git worktree remove --force .worktrees/<run_id>
-```
-
-After removing orphaned worktrees, prune any lingering metadata:
-
-```bash
-git worktree prune
-```
-
-## Blocked Tasks
-
-A task enters `blocked` state when a worker calls `orc run-fail --policy=block`. This prevents
-automatic requeue so that the operator can review the failure before the task is retried.
-
-### Symptoms
-
-- `orc status` shows tasks with status `blocked`
-- A task that should be eligible does not get dispatched
-
-### Diagnosis
-
-Check the task list and its dependency chain:
-
-```bash
-orc status
-```
-
-Inspect the task spec to review the `depends_on` field and the failure reason recorded in state.
-
-### Fix
-
-If the underlying issue has been resolved, unblock the task:
-
-```bash
-orc task-unblock <task-ref>
-```
-
-If the task is waiting on a dependency that is not yet `done`, complete the dependency first.
-If the dependency itself is stuck, reset it and re-dispatch:
-
-```bash
-orc task-reset <dependency-ref>
-orc delegate
-```
-
-## Full System Reset
-
-Use this procedure only when session state is corrupted and normal recovery paths are not
-viable — for example, after multiple coordinator crashes or when state files are inconsistent
-beyond what `orc doctor` can report.
-
-### Symptoms
-
-- `orc status` or `orc doctor` returns errors even after individual recovery steps
-- Multiple workers or runs are stuck in inconsistent states with no clear path forward
-
-### Diagnosis
-
-```bash
-orc doctor --json
-orc status
-```
-
-Review the output to confirm that incremental recovery is not possible.
-
-### Fix
-
-Stop all agents and clear all session state:
-
-```bash
-orc kill-all
-```
-
-`kill-all` finds the coordinator through `coordinator.pid`, or through
-`control.json` when that file is missing or stale; it signals a PID only after
-checking it is alive, matches the recorded start time and runs a coordinator
-script. `orc doctor` reports a live coordinator whose `coordinator.pid` is
-missing or names another PID, and a second coordinator refuses to start
-while one is recorded in `control.json`.
-
-**Warning:** This stops all work in progress. Active runs will be interrupted. Unmerged
-worktrees remain on disk and must be cleaned up manually if needed (see
-[Stuck/Orphaned Worktrees](#stuckorphaned-worktrees) above).
-
-After `kill-all` completes, start a fresh session:
-
-```bash
+orc kill-all [--keep-sessions]
 orc start-session
 ```
 
-## See also
-
-- [Troubleshooting](./troubleshooting.md)
-- [Contracts & invariants](./contracts.md)
-- [Getting started](./getting-started.md)
+`kill-all` stops the coordinator, stops every agent session (skipped with `--keep-sessions`), clears `agents.json`, resets `claimed`/`in_progress` tasks to `todo`, cancels their claims (`run_cancelled`, reason `kill_all`) and **removes every run worktree** in `run-worktrees.json`. Unmerged work is lost: merge or copy it first.
