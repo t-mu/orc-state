@@ -12,12 +12,13 @@ import { createAdapter } from '../adapters/index.ts';
 import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { boolFlag } from '../lib/args.ts';
 import { cliError, formatErrorMessage } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const workerId = process.argv[2];
 const keepSession = boolFlag('keep-session');
 
 if (!workerId) {
-  console.error('Usage: orc worker-remove <worker_id> [--keep-session]');
+  console.error(`Usage: ${USAGE['worker-remove']}`);
   process.exit(1);
 }
 try {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { symlinkSync } from 'node:fs';
+import { readFileSync, symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
 import { bridgeProjectEnv, cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -21,6 +21,13 @@ describe('cli/orc.ts', () => {
       });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain(`Usage: orc ${subcommand}`);
+    }
+  });
+
+  it('prints usage from cli/usage.ts only (no second copy in a command)', () => {
+    for (const file of new Set(Object.values(COMMANDS))) {
+      const code = readFileSync(join(repoRoot, 'cli', file), 'utf8').split('\n').filter((line) => !/^\s*(\*|\/\/)/.test(line));
+      expect(code.filter((line) => /['"`]Usage: orc /.test(line)), file).toEqual([]);
     }
   });
 

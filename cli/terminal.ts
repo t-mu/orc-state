@@ -7,10 +7,11 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { cliError } from './shared.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
+import { USAGE } from './usage.ts';
 
 const [kind, runId] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 if ((kind !== 'provider' && kind !== 'shell') || !runId) {
-  console.error('Usage: orc terminal <provider|shell> <run_id> [--write] [--once]');
+  console.error(`Usage: ${USAGE['terminal']}`);
   process.exit(1);
 }
 

@@ -11,13 +11,14 @@
 import { flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const runId = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
 const reason = flag('reason');
 const actorId = flag('actor-id');
 
 if (!runId) {
-  console.error('Usage: orc run-close <run_id> [--reason=<text>] [--actor-id=<id>]');
+  console.error(`Usage: ${USAGE['run-close']}`);
   process.exit(1);
 }
 

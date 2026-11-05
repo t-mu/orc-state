@@ -12,6 +12,7 @@ import { flag, intFlag } from '../lib/args.ts';
 import { applyLifecycle } from '../lib/workerLifecycle.ts';
 import { submitLifecycle } from '../lib/lifecycleDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 export function recordMemory(stateDir: string, opts: {
   content: string;
@@ -28,7 +29,7 @@ export function recordMemory(stateDir: string, opts: {
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const content = flag('content');
   if (!content) {
-    console.error('Usage: orc memory-record --content="..." [--wing=X] [--hall=Y] [--room=Z] [--importance=N]');
+    console.error(`Usage: ${USAGE['memory-record']}`);
     process.exit(1);
   }
   const opts = { content, wing: flag('wing'), hall: flag('hall'), room: flag('room'), importance: intFlag('importance', 5) };

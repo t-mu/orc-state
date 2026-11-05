@@ -10,11 +10,12 @@ import { resolve } from 'node:path';
 import { storedSettings, type OrcSettings } from '../lib/providers.ts';
 import { getGitHostAdapter } from '../lib/gitHosts/index.ts';
 import { boolFlag, flag } from '../lib/args.ts';
+import { USAGE } from './usage.ts';
 
 export function run(argv: string[] = process.argv.slice(2), settings: OrcSettings = storedSettings()): void {
   const prRef = argv.find((a) => !a.startsWith('--'));
   if (!prRef) {
-    console.error('Usage: orc pr-review <pr_ref> --approve|--request-changes --body="..."');
+    console.error(`Usage: ${USAGE['pr-review']}`);
     process.exit(1);
   }
 
@@ -23,7 +24,7 @@ export function run(argv: string[] = process.argv.slice(2), settings: OrcSetting
   const body = flag('body', argv) ?? '';
 
   if (!approve && !requestChanges) {
-    console.error('Usage: orc pr-review <pr_ref> --approve|--request-changes --body="..."');
+    console.error(`Usage: ${USAGE['pr-review']}`);
     process.exit(1);
   }
 

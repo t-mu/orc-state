@@ -8,6 +8,7 @@
  */
 import { flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
+import { USAGE } from './usage.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -17,7 +18,7 @@ const actorId = flag('actor-id');
 const requestedId = flag('request-id');
 
 if (!runId || !agentId || !response) {
-  console.error('Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>]');
+  console.error(`Usage: ${USAGE['run-input-respond']}`);
   process.exit(1);
 }
 

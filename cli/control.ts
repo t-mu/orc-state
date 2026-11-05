@@ -24,6 +24,7 @@ import { STATE_DIR } from '../lib/paths.ts';
 import type { AckState } from '../lib/controlProtocol.ts';
 import type { MessageKind } from '../lib/messageRouter.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const [subcommand, ...positional] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
@@ -75,7 +76,7 @@ try {
     });
     console.log(JSON.stringify(result.command));
   } else if (subcommand === 'ack') {
-    if (!positional[0]) throw new Error('Usage: orc control ack <command_id> --state=<state>');
+    if (!positional[0]) throw new Error(`Usage: ${USAGE['control']}`);
     const result = await client.acknowledge(positional[0], required('state') as AckState);
     console.log(JSON.stringify(result.command));
   } else if (subcommand === 'message') {
@@ -90,10 +91,10 @@ try {
   } else if (subcommand === 'messages') {
     console.log(JSON.stringify(await client.messages(boolFlag('include-consumed'))));
   } else if (subcommand === 'consume') {
-    if (!positional[0]) throw new Error('Usage: orc control consume <message_id>');
+    if (!positional[0]) throw new Error(`Usage: ${USAGE['control']}`);
     console.log(JSON.stringify((await client.consumeMessage(positional[0])).message));
   } else {
-    throw new Error('Usage: orc control <snapshot|events|command|ack|message|messages|consume> [flags]');
+    throw new Error(`Usage: ${USAGE['control']}`);
   }
 } catch (error) {
   cliError(error);

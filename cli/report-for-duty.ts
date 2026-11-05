@@ -2,13 +2,14 @@
 import { flag } from '../lib/args.ts';
 import { submitLifecycle } from '../lib/lifecycleDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const agentId = flag('agent-id');
 // The launched session's id; --session-token is its older name.
 const sessionId = flag('session-id') ?? flag('session-token');
 
 if (!agentId || !sessionId) {
-  console.error('Usage: orc report-for-duty --agent-id=<id> --session-id=<id>');
+  console.error(`Usage: ${USAGE['report-for-duty']}`);
   process.exit(1);
 }
 

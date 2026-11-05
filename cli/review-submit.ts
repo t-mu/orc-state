@@ -2,6 +2,7 @@
 import { flag } from '../lib/args.ts';
 import { submitLifecycle } from '../lib/lifecycleDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const runId = flag('run-id');
 const agentId = flag('agent-id');
@@ -12,7 +13,7 @@ const reviewer = flag('reviewer');
 const VALID_OUTCOMES = ['approved', 'findings'] as const;
 
 if (!runId || !agentId) {
-  console.error('Usage: orc review-submit --run-id=<id> --agent-id=<id> --outcome=<approved|findings> --reason=<text> [--reviewer=<label>]');
+  console.error(`Usage: ${USAGE['review-submit']}`);
   process.exit(1);
 }
 

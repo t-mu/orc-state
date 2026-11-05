@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { STATE_DIR } from '../lib/paths.ts';
 import { closeMemoryDb, searchMemory } from '../lib/memoryStore.ts';
 import { flag } from '../lib/args.ts';
+import { USAGE } from './usage.ts';
 
 export function runMemorySearch(stateDir: string, query: string, opts: { wing?: string | null; room?: string | null } = {}): number {
   const dbPath = join(stateDir, 'memory.db');
@@ -37,7 +38,7 @@ export function runMemorySearch(stateDir: string, query: string, opts: { wing?: 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const query = process.argv.slice(2).find((a) => !a.startsWith('-'));
   if (!query) {
-    console.error('Usage: orc memory-search <query> [--wing=X] [--room=Y]');
+    console.error(`Usage: ${USAGE['memory-search']}`);
     process.exit(1);
   }
   const wing = flag('wing');

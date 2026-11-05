@@ -10,12 +10,13 @@
 import { flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
+import { USAGE } from './usage.ts';
 
 const taskRef = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
 const actorId = flag('actor-id');
 
 if (!taskRef) {
-  console.error('Usage: orc task-mark-done <task_ref> [--actor-id=<id>]');
+  console.error(`Usage: ${USAGE['task-mark-done']}`);
   process.exit(1);
 }
 
