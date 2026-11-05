@@ -26,9 +26,7 @@
       "type": "string",
       "enum": [
         "claim_created",
-        "claim_renewed",
         "claim_expired",
-        "claim_released",
         "task_envelope_sent",
         "run_started",
         "review_submitted",
@@ -68,7 +66,6 @@
         "task_added",
         "task_updated",
         "task_cancelled",
-        "task_released",
         "task_delegated",
         "task_dispatch_blocked",
         "coordinator_started",
