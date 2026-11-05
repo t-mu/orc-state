@@ -198,9 +198,9 @@ When a worker is launched, its model is resolved as: `provider_models[provider]`
 | `session_ready_timeout_ms` | integer | `120000` | Time to wait for a worker session to become ready (ms) |
 | `session_ready_nudge_ms` | integer | `15000` | Delay before first nudge to an unready session (ms) |
 | `session_ready_nudge_interval_ms` | integer | `30000` | Interval between session-ready nudges (ms) |
-| `run_inactive_timeout_ms` | integer | `1800000` | Time before an inactive run is timed out (ms) |
+| `run_inactive_timeout_ms` | integer | `1800000` | Unused (superseded by `worker_stale_force_fail_ms`). Kept so stored settings still load. |
 | `run_inactive_nudge_ms` | integer | `600000` | Delay before first nudge to an inactive run (ms) |
-| `run_inactive_escalate_ms` | integer | `900000` | Delay before escalating an inactive run (ms) |
+| `run_inactive_escalate_ms` | integer | `900000` | Unused (superseded by `worker_stale_soft_ms` / `hook_idle_escalate_ms`). Kept so stored settings still load. |
 | `run_inactive_nudge_interval_ms` | integer | `300000` | Interval between inactivity nudges (ms) |
 | `session_start_max_attempts` | integer | `3` | Unused: workers are never relaunched, so session starts are not retried. Kept so stored settings still load; slated for removal. |
 | `session_start_retry_delay_ms` | integer | `30000` | Unused: workers are never relaunched, so session starts are not retried. Kept so stored settings still load; slated for removal. |
@@ -222,8 +222,8 @@ All `coordinator` fields can also be passed as CLI flags to `coordinator.ts` (e.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `default_ms` | integer | `1800000` (30 min) | Default claim lease duration |
-| `finalize_ms` | integer | `3600000` (60 min) | Extended lease for the finalize phase |
+| `default_ms` | integer | `1800000` (30 min) | Claim lease; renewed to this on each phase/progress event |
+| `finalize_ms` | integer | `3600000` (60 min) | Lease after `run-work-complete` while awaiting finalization |
 
 ## Worker Runtimes
 

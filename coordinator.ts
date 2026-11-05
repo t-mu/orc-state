@@ -1983,6 +1983,7 @@ export async function processTerminalRunEvents(events: ProcessableEvent[], worke
       event as Parameters<typeof reduceLifecycleEvent>[0],
       claim,
       nowIso,
+      LEASE_CONFIG,
     );
 
     // ── Apply reducer action ───────────────────────────────────────────────

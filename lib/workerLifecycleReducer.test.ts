@@ -437,3 +437,15 @@ describe('preserves coordinator-visible behavior after reducer extraction', () =
     }
   });
 });
+
+describe('configured leases', () => {
+  it('renews and extends with the configured lease durations', () => {
+    const leases = { default_ms: 111_000, finalize_ms: 222_000 };
+    const now = new Date().toISOString();
+    const claim = { run_id: 'run-1', task_ref: 'a/b', agent_id: 'w', state: 'in_progress', claimed_at: now, started_at: now, lease_expires_at: new Date(Date.now() + 60_000).toISOString() } as unknown as Parameters<typeof reduceLifecycleEvent>[1];
+    const phase = reduceLifecycleEvent({ event: 'phase_started', run_id: 'run-1', agent_id: 'w', ts: now, phase: 'implement' } as Parameters<typeof reduceLifecycleEvent>[0], claim, now, leases);
+    expect(phase).toMatchObject({ type: 'heartbeat', leaseDurationMs: 111_000 });
+    const done = reduceLifecycleEvent({ event: 'work_complete', run_id: 'run-1', agent_id: 'w', ts: now } as Parameters<typeof reduceLifecycleEvent>[0], claim, now, leases);
+    expect(done).toMatchObject({ extendLeaseMs: 222_000 });
+  });
+});
