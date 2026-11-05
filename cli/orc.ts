@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve }   from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { USAGE, wantsHelp } from './usage.ts';
 
 function resolveScript(name: string): string {
   const resolved = resolve(import.meta.dirname, name);
@@ -31,7 +32,7 @@ export function readVersion(): string {
   return pkg.version ?? '0.0.0';
 }
 
-const COMMANDS: Record<string, string> = {
+export const COMMANDS: Record<string, string> = {
   'start-session':      'start-session.ts',
   'status':             'status.ts',
   'watch':              'watch.ts',
@@ -223,6 +224,13 @@ export function main(argv: string[]): number {
     console.error(`Unknown subcommand: ${subcommand}`);
     console.error('Run "orc --help" to see available subcommands.');
     return 1;
+  }
+
+  if (wantsHelp(rest)) {
+    // Never run the command: several (kill-all, worker-gc, start-session) ignore unknown flags.
+    console.log(`Usage: ${USAGE[subcommand] ?? `orc ${subcommand} [args...]`}`);
+    console.log('See docs/cli.md for details.');
+    return 0;
   }
 
   const scriptPath = resolveScript(script);
