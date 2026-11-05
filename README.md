@@ -4,74 +4,45 @@
 
 Spawn, command, and coordinate.
 
-A provider-agnostic orchestration framework for autonomous coding agents.
-Dispatches tasks to AI workers, manages their lifecycle, and merges results —
-all locally in your repo, backed by nothing but files.
+A provider-agnostic orchestration runtime for autonomous coding agents: it dispatches tasks to AI workers, manages their lifecycle and merges the results. Runs locally; state lives in SQLite and files outside your repository, served to agents over a local control socket.
 
-- **Provider-agnostic** — Claude, Codex, Gemini. Same orchestration, any model.
-- **Cross-provider** — mix and match agent providers freely in the same session.
-- **Zero infrastructure** — no servers, no external services. Everything runs locally in your repo.
-- **Parallel autonomous agents** — multiple agents working in isolated worktrees simultaneously.
-- **Terminal-native** — live dashboard, full CLI control, zero context switching.
+- **Provider-agnostic**: Claude, Codex, Gemini, mixed freely in one session.
+- **No infrastructure**: no servers or external services.
+- **Parallel**: each worker runs in its own git worktree.
+- **Terminal-native**: live dashboard and full CLI control.
 
 ## Quick start
 
-Requires Node.js 24+ and at least one supported provider CLI
-([Claude](https://docs.anthropic.com/en/docs/claude-code),
-[Codex](https://github.com/openai/codex),
-or [Gemini](https://github.com/google/gemini-cli)).
+Requires Node.js 24+ and a provider CLI ([Claude](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex) or [Gemini](https://github.com/google/gemini-cli)).
 
 ```bash
 npm install -g orc-state
 orc project add ~/code/my-project   # register the repository
 cd ~/code/my-project
-orc init                            # pick providers; stored in the project registry
-orc install --global --provider=claude   # optional: skills and agents for your user
-orc start-session                   # start orchestrating
+orc init                            # pick providers
+orc install --global --provider=claude   # optional: skills and agents
+orc start-session                   # coordinator + master session
 ```
 
-`orc init` walks you through provider selection and records it in the
-project registry; it writes nothing into your repository. All orc state lives
-outside the repository, in the project's state directory. After init,
-`orc start-session` reads the project settings — no flags required. It wires
-the orchestrator MCP server into the master session itself.
-
-`orc start-session` starts the coordinator in the background and opens a
-master agent session in your terminal. If a coordinator is already running,
-it reuses it. You pick the provider for your master session at init time
-(or override with `--provider=<name>`).
+Details: [Getting started](./docs/getting-started.md).
 
 ## How it works
 
-You're now in a conversation with the master agent. Start planning the work
-— discuss scope, break it into units, and ask the master to create tasks.
-It stores them in the project's task store (`create_task`); no file is written
-to your repository.
-
-Once tasks are in the backlog, the coordinator dispatches them to worker
-agents that execute each task in an isolated git worktree. You can monitor
-progress, intervene on blockers, and review results — all through the
-master session.
-
-For deeper work, you can also author tasks yourself with
-`orc project task create|edit`, or import Markdown specs with
-`orc project task import <path>`. See
-[Concepts & terminology](./docs/concepts.md) and
-[Architecture overview](./docs/architecture.md) for the mental model.
+- You plan with the master agent; it creates tasks in the project's task store.
+- The coordinator dispatches each task to a worker in an isolated worktree, then merges it.
+- You monitor and unblock through the master or `orc status` / `orc watch`.
 
 ## Documentation
 
 - [Getting started](./docs/getting-started.md)
-- [Concepts & terminology](./docs/concepts.md)
-- [Architecture overview](./docs/architecture.md)
+- [Architecture](./docs/architecture.md)
 - [Configuration](./docs/configuration.md)
 - [CLI reference](./docs/cli.md)
-- [Memory system](./docs/memory.md)
-- [Writing custom adapters](./docs/adapters.md)
+- [Contracts](./docs/contracts.md)
+- [Memory](./docs/memory.md)
+- [Adapters](./docs/adapters.md)
 - [Testing](./docs/testing.md)
-- [Contracts & invariants](./docs/contracts.md)
-- [Troubleshooting](./docs/troubleshooting.md)
-- [Recovery guide](./docs/recovery.md)
+- [Recovery](./docs/recovery.md)
 
 ## License
 

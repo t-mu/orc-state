@@ -2,36 +2,23 @@
 
 ## Prerequisites
 
-- **Node.js 24+** — required for native TypeScript type stripping (no build step)
-- **Git** — worktree isolation requires git
-- **At least one agent provider** — Claude Code, Codex CLI, or Gemini CLI installed and authenticated
+- Node.js 24+
+- Git
+- At least one provider CLI installed and authenticated: Claude Code, Codex CLI or Gemini CLI ([recovery.md](recovery.md) for install/auth problems)
 
 ## Install
 
 ```bash
 npm install -g orc-state
-orc project add ~/code/my-project   # register the Git repository as a project
+orc project add ~/code/my-project            # register the repo; state lives outside it
 cd ~/code/my-project
-orc init                            # pick providers (or: orc init --provider=claude,codex)
+orc init                                     # pick providers (non-TTY: --provider=claude,codex)
+orc install --global --provider=claude,codex # optional: skills and agents for your user
+orc doctor                                   # verify
 ```
 
-`orc project add` registers the repository and gives it an external state
-directory; nothing is written into the repository. The `init` command walks
-you through provider selection (`--provider=...` and `--worker-provider=...`
-skip the prompts; `--provider` is required outside a TTY) and records it in
-the project registry. It does not install skills, agents, or MCP
-configuration: `orc start-session` wires the orchestrator MCP server into the
-master itself, and skills and agents are installed for your user with:
-
-```bash
-orc install --global --provider=claude,codex
-```
-
-Verify:
-
-```bash
-orc --help
-```
+- `orc init` records provider settings in the registry; it writes nothing into the repository.
+- `orc start-session` wires the orchestrator MCP server into the master itself.
 
 ## Start a session
 
@@ -39,141 +26,38 @@ orc --help
 orc start-session
 ```
 
-This launches two things:
+- **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
+- **Master** (foreground): your interactive session.
 
-1. **Coordinator** — background process that dispatches tasks to workers, monitors heartbeats, and manages the run lifecycle
-2. **Master agent** — foreground interactive session where you direct the work
+Providers come from the project settings (`orc project config list`); a task's `required_provider` overrides the worker provider.
 
-The provider for master and worker sessions is configured during `orc init` and stored in the project settings (`orc project config list`). You can override per task via `required_provider` in the task spec, or mix providers across workers in the same session.
+## Create a task
 
-## Create your first task
-
-Tasks live in the project's task store, not in the repository. Each task is a self-contained spec that tells a worker exactly what to do. Ask the master to create one (`create_task`), use `orc project task create`, or import a Markdown spec.
-
-Write a spec anywhere outside the orchestrator, e.g. `~/specs/add-logging.md`:
-
-```markdown
----
-ref: general/1-add-logging
-feature: general
-priority: normal
----
-
-# Task 1 — Add request logging
-
-Independent.
-
-## Scope
-
-**In scope:**
-- Add structured logging to the HTTP handler
-
-**Out of scope:**
-- Changing existing test infrastructure
-
----
-
-## Context
-
-### Current state
-No request logging exists.
-
-### Desired state
-Every incoming request logs method, path, and duration.
-
-### Start here
-- `src/handler.ts` — the HTTP handler
-
-**Affected files:**
-- `src/handler.ts` — add logging calls
-- `src/handler.test.ts` — add test for log output
-
----
-
-## Goals
-
-1. Must log method, path, and response time for every request
-2. Must not add external dependencies
-3. Must include at least one test
-
----
-
-## Acceptance criteria
-
-- [ ] Every request produces a structured log line
-- [ ] `npm test` passes
-- [ ] No changes to files outside the stated scope
-```
-
-Import it into the project's task store (the file itself stays outside the
-orchestrator; edit and re-import, or use `orc project task edit`):
+Ask the master (it calls `create_task`), or use the CLI:
 
 ```bash
-orc project task import ~/specs/add-logging.md
+orc project task create --feature=general --title="Add request logging" --body-file=~/specs/add-logging.md
+orc project task import ~/specs/add-logging.md   # or import a Markdown spec
 ```
 
-## Dispatch work
+Task body format: [task-template.md](task-template.md).
 
-Delegate the task to a worker:
+## Dispatch
+
+Automatic: each tick the coordinator claims an eligible `todo` task, creates a worktree and starts a worker when `worker_pool.max_workers` allows. To force a dispatch: `orc delegate --task-ref=<feature/task>`.
+
+## Monitor
 
 ```bash
-orc delegate
+orc status                 # one-shot summary
+orc watch                  # live dashboard
+orc events-tail            # recent events
+orc attach <agent-id>      # worker's tmux terminal, read-only (--write for input, Ctrl-b d detaches)
+orc doctor                 # health check
 ```
 
-The coordinator assigns the task to an available worker, creates an isolated git worktree, and starts a headless agent session. The worker follows a five-phase lifecycle automatically: explore, implement, review, complete, finalize.
+## Next
 
-## Monitor progress
-
-Check current state:
-
-```bash
-orc status
-```
-
-Live dashboard with auto-refresh:
-
-```bash
-orc watch
-```
-
-Tail the event stream:
-
-```bash
-orc events-tail
-```
-
-Watch a specific worker's live tmux terminal (read-only; Ctrl-b d detaches,
-`--write` enables input):
-
-```bash
-orc attach <agent-id>
-```
-
-Check system health:
-
-```bash
-orc doctor
-```
-
-## What happens behind the scenes
-
-1. **Coordinator claims the task** — status moves from `todo` to `claimed`
-2. **Worker starts** — `run-start` transitions the task to `in_progress`; the worker reads the spec, writes code, and runs tests in an isolated worktree
-3. **Self-review** — the worker spawns sub-agent reviewers that audit the diff against acceptance criteria
-4. **Completion** — the worker rebases onto main and signals `run-work-complete`
-5. **Merge** — the coordinator merges the worktree branch, records the task `done`, and cleans up
-
-The coordinator monitors worker health by probing the worker process. If a worker dies, the coordinator expires the claim and requeues the task.
-
-## Next steps
-
-- [Configuration](./configuration.md) — provider settings, concurrency, timeouts
-- [CLI reference](./cli.md) — full command documentation
-- [Writing custom adapters](./adapters.md) — add support for new agent providers
-- [Contracts & invariants](./contracts.md) — system guarantees and state machine rules
-
-## See also
-
-- [Concepts & terminology](./concepts.md)
-- [Configuration](./configuration.md)
-- [CLI reference](./cli.md)
+- [Configuration](configuration.md)
+- [CLI reference](cli.md)
+- [Architecture](architecture.md)

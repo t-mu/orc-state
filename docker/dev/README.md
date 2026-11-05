@@ -1,80 +1,40 @@
 # Dev Container
 
-Bookworm-based development container with:
+| | |
+|---|---|
+| Base | Debian bookworm, Node 24, user `node` (home `/home/node`) |
+| Tools | `codex`, `claude`, `opencode`, `gh`, `bubblewrap`, `git`, `ripgrep`, `sqlite3`, `tmux`, `ffmpeg` |
+| Persistence | Docker volume for `/home/node` (provider logins/config survive restarts); host `~/.config/gh` mounted for `gh` |
+| Not baked in | The repository and any auth state; clone inside the container |
 
-- Node 24
-- `codex`
-- `claude`
-- `opencode`
-- `gh`
-- `bubblewrap`
-- common dev tools (`git`, `ripgrep`, `sqlite3`, `tmux`, `ffmpeg`)
+`NPM_CONFIG_PREFIX=/home/node/.npm-global` (its `bin` is on `PATH`).
 
-This image is for cloning the repo inside the container. It does not bake in the
-repository or any auth state.
+## Entrypoint
 
-It uses the official image's built-in `node` user, so the container home is
-`/home/node`.
+On every start it:
 
-The compose file uses a persistent Docker volume for `/home/node`, so Codex and
-Claude auth/config live inside the container environment and survive restarts.
-GitHub CLI auth is shared from the host via `~/.config/gh`.
+- writes `/home/node/.codex/config.toml`:
+  ```toml
+  model = "gpt-5.4"
+  model_reasoning_effort = "medium"
+  ask_for_approval = "never"
+  sandbox = "danger-full-access"
 
-The image also sets `NPM_CONFIG_PREFIX=/home/node/.npm-global` and includes that
-bin directory on `PATH`. When the cloned repo exists at
-`/home/node/workspace/orc-state`, the devbox entrypoint runs `npm link` there so
-the local source tree provides the `orc` binary directly.
+  [features]
+  multi_agent = true
+  ```
+- merges `enabledMcpjsonServers: ["orchestrator"]`, `enableAllProjectMcpServers: true`, `permissions.defaultMode: "bypassPermissions"` and `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` and, when `/home/node/workspace/orc-state` exists, into its `.claude/settings.local.json`;
+- runs `npm link` in `/home/node/workspace/orc-state` when it exists.
 
-On container startup, the devbox entrypoint writes `/home/node/.codex/config.toml`
-with:
+Cloned the repo after the first start? Restart the container (or run the bootstrap below).
 
-```toml
-ask_for_approval = "never"
-sandbox = "danger-full-access"
-
-[features]
-multi_agent = true
-```
-
-That keeps the aggressive Codex settings local to the container instead of your
-host machine.
-
-If `/home/node/workspace/orc-state` already exists, the entrypoint also ensures
-the repo-local `.claude/settings.local.json` contains:
-
-```json
-{
-  "enabledMcpjsonServers": [
-    "orchestrator"
-  ],
-  "enableAllProjectMcpServers": true,
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  },
-  "skipDangerousModePermissionPrompt": true
-}
-```
-
-If you clone the repo after the container is already running for the first time,
-restart the container once so the entrypoint can apply the Claude settings merge.
-
-## Build
+## Build and start
 
 ```bash
 docker compose -f docker/dev/docker-compose.yml build
-```
-
-## Start
-
-```bash
+docker rm -f devbox    # only if an older devbox container exists
 docker compose -f docker/dev/docker-compose.yml up -d
 docker exec -it devbox bash
-```
-
-If an older `devbox` container already exists, remove it first:
-
-```bash
-docker rm -f devbox
 ```
 
 ## Bootstrap inside the container
@@ -84,22 +44,13 @@ cd ~/workspace
 git clone <repo-url> orc-state
 cd orc-state
 npm install
+npm run build          # the orc bin is dist/cli/orc.js
 npm run link-local-all
 npm link
-```
-
-If you cloned the repo after the container was already running, either run
-`npm link` once manually as above or restart the container so the entrypoint can
-link `orc` automatically on startup.
-
-Verify:
-
-```bash
-which orc
 orc --help
 ```
 
-## Log in
+## Log in (once per volume)
 
 ```bash
 gh auth login
@@ -107,18 +58,6 @@ codex login
 claude login
 ```
 
-Those logins are stored inside the persistent `/home/node` Docker volume, so
-you only need to do them once per devbox volume. `gh` reuses the host login
-state through the mounted `~/.config/gh` directory.
+## Codex
 
-## Codex config
-
-`/home/node/.codex/config.toml` is created automatically by the entrypoint on
-container startup.
-
-In this Docker environment, the explicit CLI bypass flag is still needed to get
-full access reliably. Use:
-
-```bash
-npm run codex
-```
+Full access still needs the CLI bypass flag here: `npm run codex` (`codex --dangerously-bypass-approvals-and-sandbox`).
