@@ -28,6 +28,13 @@ case "${1:-}" in
   status) "${compose[@]}" ps ;;
   shell) "${compose[@]}" exec project bash ;;
   preflight) "${compose[@]}" exec project /usr/local/bin/orc-project-preflight ;;
+  init)
+    providers="${2:-claude}"
+    "${compose[@]}" run --rm --no-deps project bash -c '
+      orc project show >/dev/null 2>&1 || orc project add /workspace/project
+      orc init "--provider=$1"
+    ' _ "$providers"
+    ;;
   login)
     provider="${2:-claude}"
     case "$provider" in claude|codex|gemini|gh) ;; *) echo "Unknown login tool: $provider" >&2; exit 2 ;; esac
@@ -52,7 +59,7 @@ case "${1:-}" in
     "${compose[@]}" exec project orc start-session "--provider=$provider"
     ;;
   *)
-    echo 'Usage: orc-project.sh <build|login [provider]|up|down|status|shell|preflight|master [provider]>' >&2
+    echo 'Usage: orc-project.sh <build|login [provider]|init [providers]|up|down|status|shell|preflight|master [provider]>' >&2
     exit 2
     ;;
 esac
