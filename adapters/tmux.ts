@@ -181,8 +181,11 @@ function inspect(agentId: string): SessionInspection {
   };
 }
 
-/** tmux marks a pane dead on its pty's EOF, slightly before it reaps the process and records the status. */
-const EXIT_STATUS_WAIT_MS = 5_000;
+/**
+ * tmux marks a pane dead on its pty's EOF, slightly before it reaps the process and records the status.
+ * tmux before 3.3 has no `#{pane_dead_signal}`: a signal kill reads as no status after this wait (unknown).
+ */
+const EXIT_STATUS_WAIT_MS = 2_000;
 const EXIT_STATUS_POLL_MS = 50;
 
 /** A dead pane kept by `remain-on-exit`: its exit code or killing signal. */

@@ -145,6 +145,17 @@ describe('codex app-server runtime: session start', () => {
     expect(events[0].provider_meta).toMatchObject({ resumed: true });
   });
 
+  it('resumes the thread named by the session resume key, with its developer instructions, and records its exit', async () => {
+    const { adapter } = await loadAdapter();
+    const result = await startSession(adapter, { resume_conversation_id: 'thread-earlier', system_prompt: 'BOOT' });
+    expect(frames('thread/start')).toEqual([]);
+    expect(frames('thread/resume')[0].params).toMatchObject({ threadId: 'thread-earlier', developerInstructions: expect.stringContaining('BOOT') });
+    expect(adapter.exitStatus(result.session_handle)).toBeNull();
+    process.kill((result.provider_ref as { pid: number }).pid, 'SIGKILL');
+    await waitFor(() => adapter.exitStatus(result.session_handle) != null);
+    expect(adapter.exitStatus(result.session_handle)).toEqual({ code: null, signal: 'SIGKILL' });
+  });
+
   it('fails clearly for a missing worktree without spawning', async () => {
     const { adapter } = await loadAdapter();
     await expect(adapter.start('worker-1', { working_directory: join(dir, 'missing') })).rejects.toThrow('assigned working directory does not exist');

@@ -239,7 +239,7 @@ The run is requeued as before when any of these holds:
 - The run worktree is gone (Claude keeps conversations per working directory).
 - The run already resumed twice (budget 2 per run).
 
-A crash is a signal or a non-zero exit code. tmux keeps the dead pane (`remain-on-exit`) so its status can be read. PTY and `app:` exits are seen only by the coordinator that launched the process.
+A crash is a signal or a non-zero exit code. tmux keeps the dead worker pane (`remain-on-exit`, set per worker window) so its status can be read; telling a signal kill apart needs tmux 3.3 or later, older tmux reports it as `unknown`. An invalid `sessions.resume` value is logged and treated as `off`. PTY and `app:` exits are seen only by the coordinator that launched the process.
 
 Events: `session_resumed` on success. `session_resume_failed` when the budget is spent or the relaunch fails; the run is then requeued.
 

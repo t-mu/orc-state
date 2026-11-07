@@ -423,8 +423,9 @@ async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) 
     if (!agent || agent.status === 'offline') continue;
 
     if (!agent.session_handle) {
-      // The session is gone before the worker reported for duty: resumed when
-      // it can be, else requeued for a fresh worker.
+      // The session is gone before the worker reported for duty. Its handle was
+      // cleared, so no exit status is observable: the decision classifies the exit
+      // as unknown and always requeues for a fresh worker.
       await resumeOrRequeue(claim, agent, {
         reason: 'session_start_failed: worker session is gone before reported_for_duty',
         code: 'ERR_SESSION_START_FAILED',
@@ -900,7 +901,7 @@ async function resumeOrRequeue(
     const worktree = getRunWorktree(STATE_DIR, claim.run_id);
     const worktreePath = worktree?.worktree_path ?? null;
     decision = decideSessionResume({
-      setting: loadSessionsConfig().resume,
+      setting: sessionResumeSetting(),
       provider: agent.provider,
       transport: session.transport,
       conversationId: session.provider_conversation_id,
@@ -944,6 +945,16 @@ async function resumeOrRequeue(
   await cleanupRunCapacity(claim.agent_id);
   if (session) log(`run ${claim.run_id} not resumed: ${decision.resume ? 'no worktree' : decision.reason}`);
   return 'requeued';
+}
+
+/** An unreadable setting (e.g. ORC_SESSIONS_RESUME=false) must not stall the dead-session path: requeue. */
+function sessionResumeSetting(): 'auto' | 'off' {
+  try {
+    return loadSessionsConfig().resume;
+  } catch (error) {
+    log(`warning: ${(error as Error).message}; dead sessions are requeued, not resumed`);
+    return 'off';
+  }
 }
 
 async function sendResumeNudge(adapter: ReturnType<typeof createAdapter>, agent: Agent, claim: Claim, sessionId: string, generation: number) {
@@ -1237,7 +1248,7 @@ async function executeRemediation(
   claim: Claim,
   agent: Agent,
 ) {
-  const emitRemediationEvent = () => {
+  const emitRemediationEvent = (appliedAction = action) => {
     emit({
       event: 'remediation_applied',
       actor_type: 'coordinator',
@@ -1245,7 +1256,7 @@ async function executeRemediation(
       run_id: claim.run_id,
       task_ref: claim.task_ref,
       agent_id: claim.agent_id,
-      payload: { policy_id: policyId, action, message },
+      payload: { policy_id: policyId, action: appliedAction, message },
     });
   };
 
@@ -1272,7 +1283,8 @@ async function executeRemediation(
       if (policyId === 'session_dead') {
         // A dead session goes through the one resume-or-requeue decision.
         const outcome = await resumeOrRequeue(claim, agent, { reason: `remediation[${policyId}]: ${message}`, code: 'ERR_REMEDIATION_REQUEUE' });
-        emitRemediationEvent();
+        // The event reports what was done: a resumed run was not requeued.
+        emitRemediationEvent(outcome === 'resumed' ? 'resume' : action);
         log(`remediation[${policyId}]: ${outcome} run ${claim.run_id}`);
         if (outcome === 'resumed') break;
         runInactiveNudgeAtMs.delete(claim.run_id);

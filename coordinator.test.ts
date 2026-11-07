@@ -5434,21 +5434,22 @@ describe('dead worker session resume (v1/run-resume)', () => {
   const RUN = 'run-resume-1';
 
   async function seedCrashedWorker({
-    provider = 'claude', transport = 'tmux', resumeCount = 0, conversationId = 'conv-1', worktree = true,
-  }: { provider?: string; transport?: string; resumeCount?: number; conversationId?: string | null; worktree?: boolean } = {}) {
+    provider = 'claude', transport = 'tmux', resumeCount = 0, conversationId = 'conv-1', worktree = true, beforeReport = false,
+  }: { provider?: string; transport?: string; resumeCount?: number; conversationId?: string | null; worktree?: boolean; beforeReport?: boolean } = {}) {
     const now = new Date().toISOString();
     const worktreePath = join(dir, 'worktrees', RUN);
     if (worktree) mkdirSync(join(worktreePath, '.git'), { recursive: true });
     seedState(dir, {
       agents: [{
         agent_id: 'worker-r', provider, role: 'worker', status: 'running', ephemeral: true,
-        session_handle: `${transport === 'app-server' ? 'app' : transport}:worker-r`, session_token: 'sess-r',
-        session_started_at: now, session_ready_at: now, registered_at: now, last_heartbeat_at: now,
+        // Before report-for-duty a session that failed has had its handle cleared.
+        session_handle: beforeReport ? null : `${transport === 'app-server' ? 'app' : transport}:worker-r`, session_token: 'sess-r',
+        session_started_at: now, session_ready_at: beforeReport ? null : now, registered_at: now, last_heartbeat_at: now,
       }],
-      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: beforeReport ? 'claimed' : 'in_progress' }],
       claims: [{
-        run_id: RUN, task_ref: 'proj/fix-bug', agent_id: 'worker-r', state: 'in_progress',
-        claimed_at: now, task_envelope_sent_at: now, started_at: now, last_heartbeat_at: now,
+        run_id: RUN, task_ref: 'proj/fix-bug', agent_id: 'worker-r', state: beforeReport ? 'claimed' : 'in_progress',
+        claimed_at: now, task_envelope_sent_at: beforeReport ? null : now, started_at: beforeReport ? null : now, last_heartbeat_at: now,
         lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
         finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
         input_state: null, input_requested_at: null,
@@ -5472,8 +5473,10 @@ describe('dead worker session resume (v1/run-resume)', () => {
   }
 
   function crashedAdapter(exit: { code: number | null; signal: number | null } | null, start = vi.fn()
-    .mockResolvedValue({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } })) {
+    .mockResolvedValue({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } }),
+  { aliveForFirstProbe = false }: { aliveForFirstProbe?: boolean } = {}) {
     let alive = false;
+    let probes = 0;
     start.mockImplementation(() => {
       alive = true;
       return Promise.resolve({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } });
@@ -5481,8 +5484,8 @@ describe('dead worker session resume (v1/run-resume)', () => {
     const send = vi.fn().mockResolvedValue('');
     const stop = vi.fn().mockResolvedValue(undefined);
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({
-      heartbeatProbe: vi.fn().mockImplementation(() => Promise.resolve(alive)),
-      exitStatus: vi.fn().mockImplementation(() => (alive ? null : exit)),
+      heartbeatProbe: vi.fn().mockImplementation(() => Promise.resolve(alive || (aliveForFirstProbe && probes++ === 0))),
+      exitStatus: vi.fn().mockImplementation(() => (alive || (aliveForFirstProbe && probes === 0) ? null : exit)),
       start, send, stop,
     }));
     return { start, send, stop };
@@ -5593,6 +5596,63 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+  });
+
+  it('resumes a dead session found by the session_dead remediation, and reports the resume', async () => {
+    await seedCrashedWorker();
+    // The tick's liveness probe still sees it alive; the remediation probe sees it dead.
+    const { start } = crashedAdapter({ code: null, signal: 9 }, undefined, { aliveForFirstProbe: true });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)).toMatchObject({ state: 'in_progress', agent_id: 'worker-r' });
+    const remediation = readEvents(dir).filter((e) => e.event === 'remediation_applied');
+    expect(remediation).toEqual([expect.objectContaining({ payload: expect.objectContaining({ policy_id: 'session_dead', action: 'resume' }) })]);
+    expect(readEvents(dir).some((e) => e.event === 'session_resumed')).toBe(true);
+  });
+
+  it('requeues a session cleared before report-for-duty: no exit status, so exit_reason is unknown', async () => {
+    await seedCrashedWorker({ beforeReport: true });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+    expect(await sessionRow()).toMatchObject({ exit_reason: 'unknown', state: 'offline' });
+  });
+
+  it('resumes a crashed Codex app-server worker on its thread with the structured runtime', async () => {
+    await seedCrashedWorker({ provider: 'codex', transport: 'app-server', conversationId: 'thread-1' });
+    const { start } = crashedAdapter({ code: 1, signal: null });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).toHaveBeenCalledOnce();
+    const config = start.mock.calls[0][1] as Record<string, unknown>;
+    expect(config).toMatchObject({ runtime: 'structured', resume_conversation_id: 'thread-1' });
+    // Thread config, not a message: the bootstrap goes back as developer instructions.
+    expect(String(config.system_prompt)).toContain('WORKER_BOOTSTRAP');
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('in_progress');
+  });
+
+  it('requeues instead of failing the tick when sessions.resume is invalid', async () => {
+    await seedCrashedWorker();
+    process.env.ORC_SESSIONS_RESUME = 'false';
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+    try {
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+    } finally {
+      delete process.env.ORC_SESSIONS_RESUME;
+    }
 
     expect(start).not.toHaveBeenCalled();
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');

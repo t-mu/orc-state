@@ -297,8 +297,9 @@ export async function launchWorkerSession(
  * Relaunch a task worker whose session process crashed, in place: same
  * `session_id`, worktree, environment, settings and MCP isolation, resuming
  * its provider conversation. The secret rotates before the launch (the old one
- * is rejected from then on) and the bootstrap is not resent; the caller sends
- * the continue nudge. On failure nothing is cleaned up: the caller requeues.
+ * is rejected from then on) and the bootstrap is not resent as a message (a
+ * Codex thread gets it back as developer instructions); the caller sends the
+ * continue nudge. On failure nothing is cleaned up: the caller requeues.
  */
 export async function resumeWorkerSession(
   stateDir: string,
@@ -331,8 +332,15 @@ export async function resumeWorkerSession(
     const workerEnv = stripWorkerProfileControlEnv(normalizeWorkerEnv({
       ORC_STATE_DIR: stateDir,
     }, repoRoot, { id: project.id, stateDir, sessionId: session.session_id, sessionSecret }));
+    const structured = session.transport === 'app-server';
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
       ...(session.provider_conversation_id ? { resume_conversation_id: session.provider_conversation_id } : {}),
+      // A Codex thread takes the bootstrap as developer instructions (thread config, not a message);
+      // `thread/resume` is given them again rather than relying on the thread keeping them.
+      ...(structured ? {
+        system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc',
+          session.session_id, { workerBootstrapProfile: resolveWorkerBootstrapProfile() }),
+      } : {}),
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory,
       read_only: false,
@@ -341,7 +349,7 @@ export async function resumeWorkerSession(
       ...(sandboxNetwork ? { sandbox_network: sandboxNetwork } : {}),
       startup_profile: resolveWorkerStartupProfile(),
       // The resumed session keeps its runtime: an `app:` session resumes its thread on the structured runtime.
-      ...(session.transport === 'app-server' ? { runtime: 'structured' as WorkerRuntime } : {}),
+      ...(structured ? { runtime: 'structured' as WorkerRuntime } : {}),
       env: workerEnv,
     });
     const nowIso = new Date().toISOString();
