@@ -37,12 +37,8 @@ const SETTING_KINDS: Readonly<Record<string, SettingKind>> = {
   'coordinator.session_ready_timeout_ms': 'positive',
   'coordinator.session_ready_nudge_ms': 'positive',
   'coordinator.session_ready_nudge_interval_ms': 'positive',
-  'coordinator.run_inactive_timeout_ms': 'positive',
   'coordinator.run_inactive_nudge_ms': 'positive',
-  'coordinator.run_inactive_escalate_ms': 'positive',
   'coordinator.run_inactive_nudge_interval_ms': 'positive',
-  'coordinator.session_start_max_attempts': 'positive',
-  'coordinator.session_start_retry_delay_ms': 'positive',
   'coordinator.memory_prune_interval_ms': 'nonnegative',
   'coordinator.worker_stale_soft_ms': 'positive',
   'coordinator.worker_stale_nudge_ms': 'positive',
@@ -58,7 +54,8 @@ const SETTING_KINDS: Readonly<Record<string, SettingKind>> = {
   'leases.finalize_ms': 'positive',
 };
 
-const ENV_KEYS: Readonly<Record<string, string>> = {
+/** Environment variable that overrides each setting that has one. */
+export const PROJECT_SETTING_ENV_KEYS: Readonly<Record<string, string>> = {
   default_provider: 'ORC_DEFAULT_PROVIDER',
   default_execution_mode: 'ORC_DEFAULT_EXECUTION_MODE',
   'master.provider': 'ORC_MASTER_PROVIDER',
@@ -73,7 +70,22 @@ const ENV_KEYS: Readonly<Record<string, string>> = {
   'sessions.resume': 'ORC_SESSIONS_RESUME',
 };
 
+/** Keys earlier releases accepted. Stored values are ignored; `unset` still removes them. */
+const REMOVED_SETTINGS: ReadonlySet<string> = new Set([
+  'coordinator.run_inactive_timeout_ms',
+  'coordinator.run_inactive_escalate_ms',
+  'coordinator.session_start_max_attempts',
+  'coordinator.session_start_retry_delay_ms',
+]);
+
+/** Every supported setting key; `worker_pool.provider_models.<provider>` is the one pattern key. */
+export const PROJECT_SETTING_KEYS: readonly string[] = Object.freeze([
+  ...Object.keys(SETTING_KINDS),
+  ...['codex', 'claude', 'gemini'].map((provider) => `worker_pool.provider_models.${provider}`),
+]);
+
 function settingKind(key: string): SettingKind {
+  if (REMOVED_SETTINGS.has(key)) throw new Error(`Setting ${key} was removed and is no longer supported; unset it with: orc project config unset ${key}`);
   if (/^worker_pool\.provider_models\.(codex|claude|gemini)$/.test(key)) return 'string';
   const kind = SETTING_KINDS[key];
   if (!kind) throw new Error(`Unknown or secret-bearing project setting: ${key}`);
@@ -255,7 +267,7 @@ export class ProjectRegistry {
   }
 
   unsetSetting(key: string, projectId?: string): void {
-    settingKind(key);
+    if (!REMOVED_SETTINGS.has(key)) settingKind(key);
     if (projectId && !this.get(projectId)) throw new Error(`Project is not registered: ${projectId}`);
     this.db.prepare('DELETE FROM settings WHERE scope = ? AND key = ?').run(projectId ?? '', key);
   }
@@ -268,7 +280,8 @@ export class ProjectRegistry {
 
   effectiveSettings(projectId: string, cli: Record<string, unknown> = {}, env: NodeJS.ProcessEnv = process.env): Record<string, SettingValue> {
     const effective = { ...this.settings(), ...this.settings(projectId) };
-    for (const [key, envName] of Object.entries(ENV_KEYS)) {
+    for (const key of REMOVED_SETTINGS) delete effective[key];
+    for (const [key, envName] of Object.entries(PROJECT_SETTING_ENV_KEYS)) {
       const raw = env[envName];
       if (raw !== undefined) effective[key] = validateProjectSetting(key, settingKind(key) === 'positive' || settingKind(key) === 'nonnegative' ? Number(raw) : raw);
     }
