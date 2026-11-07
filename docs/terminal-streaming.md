@@ -47,11 +47,13 @@
 | Sizing | Attach with `-f ignore-size` (`read-only,ignore-size` not tested); never send `refresh-client -C`; viewer uses the pane size from `#{pane_width}x#{pane_height}` | Without it, `-C` resizes the worker under `window-size latest` (Q2) |
 | Snapshot | `capture-pane -e -p` + `display -p '#{cursor_x} #{cursor_y}'` → write, `CSI y;x H`, then stream; for a clean full-screen state, `resize-window -x W-1` then `-x W` to force a redraw | 0 wrong rows for `claude`/`vim` (Q4); `resize-window` sets `window-size manual`, `setw -u window-size` undoes it |
 | Backpressure | `refresh-client -f pause-after=<s>`; resume with `refresh-client -A '%<pane>:continue'` (pausing not exercised) | Keeps a slow viewer from buffering without limit |
-| Min tmux | **3.2** (refuse streaming below it and fall back to the current `capture-pane` polling) | `-f` flags, `ignore-size`, `pause-after` (Q3) |
+| Min tmux | **3.2**, which orc requires for every session (`MIN_TMUX_VERSION`, checked by `orc doctor` and `orc start-session`); there is no polling fallback | `-f` flags, `ignore-size`, `pause-after` (Q3) |
 
 ## Implementation (v1/terminal-streams)
 
 - `lib/terminalHost.ts`: `%output` decoding, the control-line parser, and `TerminalStreams` (one connection per terminal, shared by its viewers). `TmuxTerminalDriver.connect` in `lib/terminalBroker.ts` is the `tmux -C attach-session -f ignore-size` client.
 - Sizing: viewers never send `refresh-client -C`; the lease holder (or the first viewer when no one holds the lease) sizes the pane with `resize-window` (which sets `window-size manual`), first one column short and back so the TUI redraws.
 - Exit: `%exit`, a lost client, or the pane found dead (checked every second; a worker pane kept by `remain-on-exit` sends no `%exit`) ends the stream with an `exit` frame.
+- Snapshot overlap: output already queued in the control client's pipe when a viewer's snapshot is taken reaches that viewer after the snapshot, so a few bytes may be applied twice. The redraw that follows the size change, or the TUI's next repaint, corrects the screen.
+- `orc terminal`: a viewer without the lease sizes the pane only when it opens. Later local resizes are sent only by a `--write` viewer.
 - Backpressure: `pause-after` is not used yet; a viewer more than 8 MiB behind is disconnected and reopens.

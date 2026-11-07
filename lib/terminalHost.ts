@@ -112,7 +112,9 @@ export class TerminalStreams {
   /**
    * Adds a viewer: it gets a `snapshot` frame now and `output` frames after it.
    * The snapshot is read synchronously, so no output is delivered between the
-   * two. Returns the function that removes this viewer.
+   * two. Output already queued in the client's pipe when the snapshot is taken
+   * still arrives after it and may repeat a few bytes the snapshot shows; the
+   * redraw after sizing corrects that. Returns the function that removes this viewer.
    */
   open(handle: string, viewer: TerminalViewer): () => void {
     let entry = this.entries.get(handle);

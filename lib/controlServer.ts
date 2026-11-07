@@ -495,7 +495,8 @@ export async function startControlServer(stateDir: string, options: ControlServe
       closing = true;
       clearInterval(terminalSweep);
       terminals.close();
-      for (const res of streams) res.destroy();
+      // Terminal streams just ended with an exit frame; destroying them would drop it.
+      for (const res of streams) if (!res.writableEnded) res.destroy();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       let ours = true;
       try {
