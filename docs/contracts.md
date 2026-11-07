@@ -253,7 +253,7 @@ Status codes: no or wrong credential `401`; wrong principal (e.g. a worker on a 
 
 ## Session Handles
 
-Format `<transport>:<agent_id>` (`tmux:broken-nose`, `pty:master`, `app:…`). `ORC_SESSION_TRANSPORT`: `auto` (tmux if available, else pty), `tmux`, `pty`. Existing sessions keep the transport in their handle.
+Format `<transport>:<agent_id>` (`tmux:broken-nose`, `tmux:master`, `pty:broken-nose`, `app:…`). `ORC_SESSION_TRANSPORT`: `auto` (tmux if available, else pty), `tmux`, `pty`. Existing sessions keep the transport in their handle.
 
 | Transport | Owner | Survives coordinator exit |
 |-----------|-------|---------------------------|

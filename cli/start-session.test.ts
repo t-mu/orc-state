@@ -1016,6 +1016,7 @@ describe('cli/start-session.ts', () => {
       const resumed = queryEvents(dir, { event_type: 'session_resumed' });
       expect(resumed).toHaveLength(1);
       expect(resumed[0]).toMatchObject({ agent_id: 'master', payload: { session_id: 'session-old', generation: 1, provider_conversation_id: 'conv-1234' } });
+      expect(queryEvents(dir, { event_type: 'session_started' }).at(-1)).toMatchObject({ payload: { session_id: 'session-old' } });
     }, 15_000);
 
     it('falls back to a fresh conversation when the resume fails', async () => {

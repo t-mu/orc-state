@@ -9,7 +9,7 @@ import { closeProviderSessionsForAgent, commitClaims, recordProviderSession } fr
 import { CommandDispatcher } from './commandDelivery.ts';
 import {
   classifySession, currentSessionOwnerId, identityMismatch, listSupervisedSessions, reconcileSessions,
-  renewSessionOwnership, setSessionState, type SupervisedSession,
+  renewSessionOwnership, retireDeadMaster, setSessionState, type SupervisedSession,
 } from './sessionSupervisor.ts';
 import type { SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
@@ -144,6 +144,28 @@ describe('reconcileSessions', () => {
     // A dead master's session goes offline, so its credential stops authenticating.
     inspection = { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, reason: 'tmux session not found' };
     expect(await reconcile()).toEqual([expect.objectContaining({ session_id: 'session-master', state: 'offline', outcome: 'exited' })]);
+  });
+
+  it('retires a master that exited while detached: offline, session closed (v1/master-tmux)', async () => {
+    seedState(dir, { agents: [{ ...agent('master', 'session-master'), role: 'master' }] });
+    recordProviderSession(dir, {
+      sessionId: 'session-master', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
+      startedAt: '2026-01-01T00:00:00.000Z', transport: 'tmux',
+    });
+    const master = (): Agent => ({ ...agent('master', 'session-master'), role: 'master' });
+
+    expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(true))).toBe(false);
+    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master')?.state).toBe('running');
+
+    expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(false))).toBe(true);
+    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master')?.state).toBe('offline');
+    const { listAgents } = await import('./agentRegistry.ts');
+    expect(listAgents(dir).find((a) => a.agent_id === 'master')).toMatchObject({ status: 'offline', session_handle: null });
+    // An offline master or one without a handle is never probed.
+    const probe = vi.fn(() => Promise.resolve(false));
+    expect(await retireDeadMaster(dir, [{ ...master(), status: 'offline' }], probe)).toBe(false);
+    expect(await retireDeadMaster(dir, [{ ...master(), session_handle: null }], probe)).toBe(false);
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it('refuses commands to a recoverable session', () => {

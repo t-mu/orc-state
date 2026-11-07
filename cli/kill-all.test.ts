@@ -213,6 +213,28 @@ describe('cli/kill-all.ts', () => {
       expect(stop).toHaveBeenCalledTimes(2);
     });
 
+    it('stops a tmux master and revokes its credential (v1/master-tmux)', async () => {
+      seedState([agentRecord({ agent_id: 'master', role: 'master', session_handle: 'tmux:master' })]);
+      const { initEventsDb } = await import('../lib/eventLog.ts');
+      initEventsDb(dir);
+      const { recordProviderSession } = await import('../lib/runStore.ts');
+      recordProviderSession(dir, {
+        sessionId: 'session-master', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
+        startedAt: '2026-01-01T00:00:00.000Z', transport: 'tmux', credentialHash: 'hash',
+      });
+
+      const stop = vi.fn().mockResolvedValue(undefined);
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
+
+      setEnv(dir);
+      process.argv = ['node', 'kill-all.ts'];
+      await import('./kill-all.ts');
+
+      expect(stop).toHaveBeenCalledWith('tmux:master');
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master')?.state).toBe('offline');
+    });
+
     it('skips adapter.stop for agents without a session_handle', async () => {
       seedState([agentRecord({ agent_id: 'idle', session_handle: null })]);
 

@@ -4,6 +4,7 @@
 
 - Node.js 24+
 - Git
+- tmux: the master runs in orc's tmux server, and workers use it when available
 - At least one provider CLI installed and authenticated: Claude Code, Codex CLI or Gemini CLI ([recovery.md](recovery.md) for install/auth problems)
 
 ## Install

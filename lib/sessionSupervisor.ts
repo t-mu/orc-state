@@ -4,6 +4,8 @@ import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eve
 import { isSameProcess, readProcessStart } from './processIdentity.ts';
 import type { SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
+import { updateAgentRuntime } from './agentRegistry.ts';
+import { closeProviderSessionsForAgent } from './runStore.ts';
 
 /**
  * Session states (Task 202). Only `running` sessions accept commands.
@@ -200,4 +202,26 @@ export async function reconcileSessions(
     }
   }
   return results;
+}
+
+/**
+ * The master runs detached in orc's tmux server, so its exit is noticed here,
+ * each coordinator tick, rather than by an attached terminal: a master whose
+ * session is gone goes offline and its session closes, so its credential
+ * stops authenticating. Returns whether a master was retired.
+ */
+export async function retireDeadMaster(
+  stateDir: string,
+  agents: Agent[],
+  isAlive: (agent: Agent) => Promise<boolean>,
+): Promise<boolean> {
+  const master = agents.find((agent) => agent.role === 'master');
+  if (!master?.session_handle || master.status === 'offline') return false;
+  if (await isAlive(master)) return false;
+  const now = new Date().toISOString();
+  updateAgentRuntime(stateDir, master.agent_id, {
+    status: 'offline', session_handle: null, provider_ref: null, last_status_change_at: now,
+  });
+  closeProviderSessionsForAgent(stateDir, master.agent_id, now);
+  return true;
 }

@@ -545,7 +545,8 @@ try {
       last_heartbeat_at: startedAt,
       last_status_change_at: startedAt,
     });
-    appendSessionStartedEvent(STATE_DIR, sessionReset);
+    // A resumed master keeps its session id; the event names the session that runs.
+    appendSessionStartedEvent(STATE_DIR, { ...sessionReset, session_id: sessionId });
   } catch (error) {
     // The master must not outlive a failed start: its secret would be valid nowhere, its state half-written.
     await createTmuxAdapter({ provider: master.provider }).stop(started.session_handle);
