@@ -121,7 +121,7 @@ Client for the coordinator's local control API. Fails with "Control daemon is no
 | `events` | `[--after=<seq>]` `[--limit=<n>]` `[--follow]` `[--max-events=<n>]` |
 | `command` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<kind>` `--idempotency-key=<key>` `[--payload=<json>]` |
 | `ack <command_id>` | `--state=<accepted\|running\|completed\|failed>` |
-| `message` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<message\|question\|review_request\|feedback\|result>` `--text=<text>` `--idempotency-key=<key>` `[--artifact-ref=<ref>]` `[--parent-message=<id>]` |
+| `message` | `--run-id=<id>` `--recipient-session=<id>` \| `--recipient-agent=<id>` (exactly one) `--kind=<message\|question\|review_request\|feedback\|result>` `--text=<text>` `--idempotency-key=<key>` `[--artifact-ref=<ref>]` `[--parent-message=<id>]` |
 | `messages` | `[--include-consumed]` |
 | `consume <message_id>` | — |
 

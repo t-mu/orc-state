@@ -241,7 +241,7 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 | `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `respond-input` (master only). The master's `actor_id` is ignored |
 | `POST` | `/v1/commands`, `/v1/commands/<id>/ack` | `running` session | enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` → `202`; ACK `accepted\|running\|completed\|failed`. Delivered to `app:` sessions by `CommandDispatcher` |
 | `POST`/`GET` | `/v1/messages`, `/v1/messages/<id>/consume` | `running` session | send `{ run_id, recipient_session_id \| recipient_agent_id, idempotency_key, kind, text }` (exactly one recipient, else `bad_request`; an agent resolves to its running session, else `conflict`) → `202 { message }`; mailbox (`include_consumed=1`); consume. Kinds: `message`, `question`, `review_request` (needs artifact refs), `feedback`, `result` (needs parent id) |
-| `POST` | `/v1/terminals/provider`, `/v1/terminals/shell` | master, operator | `{ run_id }` → `{ terminal }` (tmux provider view / worktree shell outside any sandbox); id `provider:<session_id>` / `shell:<session_id>` of the run's session |
+| `POST` | `/v1/terminals/provider`, `/v1/terminals/shell` | master, operator | `{ run_id }` → `{ terminal }` (tmux provider view / worktree shell outside any sandbox); id `provider:<session_id>` / `shell:<session_id>` of the run's latest session; a run with no session gets `conflict`. A newer session retires the old id |
 | `GET` | `/v1/terminals/<id>?after=` | master, operator | `{ terminal, screen, output, cursor }` |
 | `POST` | `/v1/terminals/<id>/lease`, `/input`, `/resize` | master, operator (input/resize need the lease) | `acquire\|renew\|release`; `{ lease_id, data }`; `{ lease_id, columns, rows }` |
 | `GET` | `/v1/tasks`, `/v1/tasks/<ref>`, `/v1/tasks/<ref>/revisions` | master, operator | tasks with `spec_revision`, `content_hash`, `body_markdown`; encode the ref (`app%2Flogin`) |
@@ -273,7 +273,7 @@ Session identity (schema v8):
 | `sessions` | `provider_conversation_id` | provider's conversation id, used to resume (nullable) |
 | `sessions` | `generation`, `resume_count` | integers, default `0` |
 | `sessions` | `exit_reason` | `crash`, `finished`, `user_exit`, `killed`, `unknown`, or null |
-| `terminals` | `session_id`, `run_id` | keyed by session; `run_id` null for run-less sessions (master, scouts). Rows from before v8 keep their `<kind>:<run_id>` id |
+| `terminals` | `session_id`, `run_id` | keyed by session; `run_id` null for run-less sessions (master, scouts). Rows from before v8 keep their `<kind>:<run_id>` id but the migration marks them `offline` and drops their leases; the next open creates the session-keyed row |
 | `messages` | `run_id` | null for run-less messages |
 | `messages` | `recipient_session_id`, `recipient_agent_id` | exactly one is set (CHECK); `recipient_id` always names the recipient agent |
 

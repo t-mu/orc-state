@@ -82,7 +82,9 @@ try {
   } else if (subcommand === 'message') {
     const refs = process.argv.slice(2).filter((arg) => arg.startsWith('--artifact-ref=')).map((arg) => arg.slice('--artifact-ref='.length));
     const result = await client.sendMessage({
-      runId: required('run-id'), recipientSessionId: required('recipient-session'),
+      runId: required('run-id'),
+      ...(flag('recipient-session') ? { recipientSessionId: flag('recipient-session')! } : {}),
+      ...(flag('recipient-agent') ? { recipientAgentId: flag('recipient-agent')! } : {}),
       idempotencyKey: required('idempotency-key'), kind: required('kind') as MessageKind, text: required('text'),
       ...(refs.length ? { artifactRefs: refs } : {}),
       ...(flag('parent-message') ? { parentMessageId: flag('parent-message')! } : {}),

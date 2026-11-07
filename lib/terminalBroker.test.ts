@@ -163,6 +163,26 @@ describe('terminal broker', () => {
     expect(driver.writes).toEqual([{ handle: 'tmux:worker-a', data: 'y' }]);
   });
 
+  it('retires a shell id when its run gets a new session so one handle has one writer', async () => {
+    const client = new ControlClient(dir);
+    const old = (await client.openTerminal('shell', 'run-b')).terminal;
+    await client.acquireTerminal(old.terminal_id, 'old-writer');
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-b'").run();
+      db.prepare("INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, started_at, updated_at) VALUES ('session-b2', 'run-b', 'worker-b', 'codex', 'running', 'app-server', '2026-01-02', '2026-01-02')").run();
+    });
+    const current = (await client.openTerminal('shell', 'run-b')).terminal;
+    expect(current).toMatchObject({ terminal_id: 'shell:session-b2', handle: old.handle });
+    await expect(client.acquireTerminal(old.terminal_id, 'second')).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await client.observeTerminal(old.terminal_id)).terminal.state).toBe('offline');
+    await expect(client.acquireTerminal(current.terminal_id, 'writer')).resolves.toHaveProperty('lease_id');
+  });
+
+  it('refuses a shell for a run that has no session yet', async () => {
+    withEventDbTransaction(dir, (db) => db.prepare("DELETE FROM sessions WHERE session_id = 'session-b'").run());
+    await expect(new ControlClient(dir).openTerminal('shell', 'run-b')).rejects.toMatchObject({ code: 'conflict' });
+  });
+
   it('keeps an existing shell alive if persisting a reconnect fails', () => {
     const terminal = broker.shell('run-b');
     const failing = new TerminalBroker(dir, { driver, worktreeForRun: () => worktree });

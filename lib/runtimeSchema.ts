@@ -285,6 +285,10 @@ export function migrateRuntimeSchema(db: Database.Database): void {
         FROM terminals t;
         DROP TABLE terminals;
         ALTER TABLE terminals_v8 RENAME TO terminals;
+        -- Pre-v8 rows keep their <kind>:<run_id> id but are retired: the next open creates the
+        -- session-keyed row, so one handle never has two live ids with separate writer leases.
+        UPDATE terminals SET state = 'offline' WHERE state = 'running';
+        DELETE FROM control_leases WHERE resource_type = 'terminal';
         CREATE INDEX terminals_session_idx ON terminals(session_id, kind);
         CREATE INDEX terminals_run_idx ON terminals(run_id);
         CREATE TABLE messages_v8 (

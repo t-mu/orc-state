@@ -150,13 +150,19 @@ export class TerminalBroker {
   private isCurrent(db: Database.Database, terminal: TerminalRecord): boolean {
     const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(terminal.run_id) as { state: string } | undefined;
     if (!run || !['claimed', 'in_progress'].includes(run.state)) return false;
-    if (terminal.kind === 'shell') return true;
+    // Pre-v8 rows have no session and are never current; a newer session retires the old id.
+    if (terminal.session_id == null) return false;
+    if (terminal.kind === 'shell') {
+      const latest = db.prepare('SELECT session_id FROM sessions WHERE run_id = ? ORDER BY rowid DESC LIMIT 1')
+        .get(terminal.run_id) as { session_id: string } | undefined;
+      return latest?.session_id === terminal.session_id;
+    }
     const agentId = terminal.handle.startsWith('tmux:') ? terminal.handle.slice(5) : '';
     if (!agentId) return false;
     const session = db.prepare(`SELECT session_id, run_id, state, transport FROM sessions WHERE agent_id = ?
       ORDER BY rowid DESC LIMIT 1`).get(agentId) as { session_id: string; run_id: string; state: string; transport: string | null } | undefined;
     return session?.run_id === terminal.run_id && session.state === 'running' && session.transport === 'tmux'
-      && (terminal.session_id == null || terminal.session_id === session.session_id);
+      && terminal.session_id === session.session_id;
   }
 
   private available(terminal: TerminalRecord): boolean {

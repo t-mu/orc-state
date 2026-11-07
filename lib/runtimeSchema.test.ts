@@ -169,11 +169,14 @@ describe('runtime schema migration', () => {
             ('msg-agent', 'run-1', 'k-agent', 'outbound', 'question', '{}', 'now', 'worker-1', 'master', NULL, NULL);
         INSERT INTO input_requests (request_id, run_id, message_id, idempotency_key, question, state, created_at)
           VALUES ('req-1', 'run-1', 'msg-agent', 'k-agent', 'why?', 'pending', 'now');
+        INSERT INTO control_leases (resource_type, resource_id, lease_id, owner_id, expires_at)
+          VALUES ('terminal', 'provider:run-1', 'lease-t', 'operator', '2999-01-01');
       `);
       migrateRuntimeSchema(db);
       expect(db.pragma('user_version', { simple: true })).toBe(8);
-      expect(db.prepare('SELECT terminal_id, session_id, run_id, handle FROM terminals').all())
-        .toEqual([{ terminal_id: 'provider:run-1', session_id: 'session-1', run_id: 'run-1', handle: 'tmux:worker-1' }]);
+      expect(db.prepare('SELECT terminal_id, session_id, run_id, handle, state FROM terminals').all())
+        .toEqual([{ terminal_id: 'provider:run-1', session_id: 'session-1', run_id: 'run-1', handle: 'tmux:worker-1', state: 'offline' }]);
+      expect(db.prepare("SELECT count(*) AS n FROM control_leases WHERE resource_type = 'terminal'").get()).toEqual({ n: 0 });
       expect(db.prepare('SELECT message_id, recipient_id, recipient_session_id, recipient_agent_id FROM messages ORDER BY message_id').all()).toEqual([
         { message_id: 'msg-agent', recipient_id: 'master', recipient_session_id: null, recipient_agent_id: 'master' },
         { message_id: 'msg-session', recipient_id: 'worker-1', recipient_session_id: 'session-1', recipient_agent_id: null },
