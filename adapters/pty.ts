@@ -35,7 +35,7 @@ import { resolveOrcBin, shellEscape } from '../lib/orcBin.ts';
 import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { isPidAlive, isSameProcess, processIdentity } from '../lib/processIdentity.ts';
-import type { SessionInspection } from './interface.ts';
+import type { SessionExitStatus, SessionInspection } from './interface.ts';
 import type { SandboxNetwork } from '../lib/providers.ts';
 import { OPERATOR_TOKEN_FILE } from '../lib/controlProtocol.ts';
 import { taskLabelsPath } from '../hooks/orc-hook.ts';
@@ -316,6 +316,11 @@ export function isolatedMcpArgs(provider: string): string[] {
   return [];
 }
 
+function stringConfig(config: Record<string, unknown>, key: string): string | null {
+  const value = config[key];
+  return typeof value === 'string' && value ? value : null;
+}
+
 function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: string, claudeSettingsPath?: string) {
   // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
   // 'full-access' for backward compatibility when field is absent.
@@ -353,6 +358,11 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
       args.push('--dangerously-skip-permissions');
     }
     if (claudeSettingsPath) args.push('--settings', claudeSettingsPath);
+    // The conversation id is chosen by orc so a crashed session can be resumed in place.
+    const resumeId = stringConfig(config, 'resume_conversation_id');
+    const conversationId = stringConfig(config, 'conversation_id');
+    if (resumeId) args.push('--resume', resumeId);
+    else if (conversationId) args.push('--session-id', conversationId);
     args.push(...isolatedMcpArgs('claude'));
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     return args;
@@ -653,6 +663,8 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
   const sessions      = new Map<string, ReturnType<typeof pty.spawn>>(); // agentId → IPty
   const outputStreams  = new Map<string, ReturnType<typeof createWriteStream>>(); // agentId → WriteStream
   const recentOutput = new Map<string, string>(); // agentId → recent sanitized PTY output
+  const exits = new Map<string, SessionExitStatus>(); // agentId → how its last process ended
+  const latest = new Map<string, ReturnType<typeof pty.spawn>>(); // agentId → last spawned process, until stop()
 
   function getRecentOutput(agentId: string) {
     return recentOutput.get(agentId) ?? readLogTail(agentId);
@@ -673,6 +685,7 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
         outputStreams.delete(agentId);
         recentOutput.delete(agentId);
       }
+      exits.delete(agentId);
 
       ensureDirs();
 
@@ -699,10 +712,18 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           recentOutput.set(agentId, next.slice(-RECENT_OUTPUT_BYTES));
         });
 
+        const spawnedProcess = ptyProcess;
+        ptyProcess.onExit(({ exitCode, signal }) => {
+          // A later start() for the same agent replaces the session; only the current process records.
+          if (latest.get(agentId) !== spawnedProcess) return;
+          exits.set(agentId, { code: signal ? null : exitCode, signal: signal || null });
+        });
+
         // Write PID file (with start time, to detect PID reuse) for cross-process heartbeat.
         writePidFile(agentId, ptyProcess.pid);
 
         sessions.set(agentId, ptyProcess);
+        latest.set(agentId, ptyProcess);
         outputStreams.set(agentId, stream);
       } catch (error) {
         if (stream) {
@@ -746,6 +767,11 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
       await new Promise((r) => setTimeout(r, 200));
       ptyProcess.write('\r');
       return '';
+    },
+
+    /** Only the coordinator that spawned the PTY sees its exit. */
+    exitStatus(sessionHandle: string): SessionExitStatus | null {
+      try { return exits.get(parseHandle(sessionHandle)) ?? null; } catch { return null; }
     },
 
     ownsSession(sessionHandle: string) {
@@ -872,6 +898,8 @@ export function createPtyAdapter({ provider = 'claude' }: { provider?: string } 
           outputStreams.delete(agentId);
           recentOutput.delete(agentId);
         }
+        exits.delete(agentId);
+        latest.delete(agentId);
         const pidFile = pidPath(agentId);
         try {
           // Never signal a PID that now belongs to an unrelated process.

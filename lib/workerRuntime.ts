@@ -11,7 +11,8 @@ import { randomUUID } from 'node:crypto';
 import { recordProviderSession } from './runStore.ts';
 import { readProjectDescriptor } from './projectContext.ts';
 import { defaultSocketPath } from './controlProtocol.ts';
-import { SESSION_OWNER_TTL_MS, currentSessionOwnerId } from './sessionSupervisor.ts';
+import { SESSION_OWNER_TTL_MS, currentSessionOwnerId, type SupervisedSession } from './sessionSupervisor.ts';
+import { beginSessionResume, completeSessionResume } from './sessionResume.ts';
 import type { WorkerBootstrapProfile } from './sessionBootstrap.ts';
 
 function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
@@ -134,7 +135,12 @@ export function markWorkerOffline(
 
 interface Adapter {
   start(agentId: string, options: {
-    system_prompt: string;
+    /** Absent on a resume: the provider conversation already holds the bootstrap. */
+    system_prompt?: string;
+    /** Claude: the `--session-id` of a new conversation. */
+    conversation_id?: string;
+    /** Claude `--resume` / Codex `thread/resume` target. */
+    resume_conversation_id?: string;
     model: string | null;
     working_directory: string | null | undefined;
     read_only?: boolean;
@@ -203,7 +209,10 @@ export async function launchWorkerSession(
     }, repoRoot, { id: project.id, stateDir, sessionId, sessionSecret }));
     const workerBootstrapProfile = resolveWorkerBootstrapProfile();
     const workerStartupProfile = resolveWorkerStartupProfile();
+    // orc chooses the Claude conversation id so a crashed session can be resumed (`--resume`).
+    const conversationId = agent.provider === 'claude' ? randomUUID() : null;
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
+      ...(conversationId ? { conversation_id: conversationId } : {}),
       system_prompt: buildSessionBootstrap(
         agent.agent_id,
         agent.provider,
@@ -236,7 +245,7 @@ export async function launchWorkerSession(
       last_heartbeat_at: nowIso,
       last_status_change_at: nowIso,
     };
-    const ref = (provider_ref ?? {}) as { transport?: unknown; pid?: unknown; process_start?: unknown };
+    const ref = (provider_ref ?? {}) as { transport?: unknown; pid?: unknown; process_start?: unknown; thread_id?: unknown };
     recordProviderSession(stateDir, {
       sessionId,
       runId,
@@ -250,6 +259,7 @@ export async function launchWorkerSession(
       ownerId: currentSessionOwnerId(),
       ownerExpiresAt: new Date(Date.now() + SESSION_OWNER_TTL_MS).toISOString(),
       credentialHash: credentialHash(sessionSecret),
+      providerConversationId: conversationId ?? (typeof ref.thread_id === 'string' ? ref.thread_id : null),
     });
     updateAgentRuntime(stateDir, agent.agent_id, updates);
     syncAgentRuntime(agent, updates);
@@ -280,6 +290,98 @@ export async function launchWorkerSession(
       },
     });
     return { ok: false, reason };
+  }
+}
+
+/**
+ * Relaunch a task worker whose session process crashed, in place: same
+ * `session_id`, worktree, environment, settings and MCP isolation, resuming
+ * its provider conversation. The secret rotates before the launch (the old one
+ * is rejected from then on) and the bootstrap is not resent as a message (a
+ * Codex thread gets it back as developer instructions); the caller sends the
+ * continue nudge. On failure nothing is cleaned up: the caller requeues.
+ */
+export async function resumeWorkerSession(
+  stateDir: string,
+  agent: Agent,
+  session: SupervisedSession,
+  {
+    adapter,
+    workingDirectory,
+    repoRoot = null,
+    taskModel = null,
+    executionMode,
+    sandboxNetwork,
+    reason,
+  }: {
+    adapter: Adapter;
+    workingDirectory: string;
+    repoRoot?: string | null;
+    taskModel?: string | null;
+    executionMode?: ExecutionMode;
+    sandboxNetwork?: SandboxNetwork;
+    reason: string;
+  },
+): Promise<{ ok: true; generation: number } | { ok: false; generation: number; reason: string }> {
+  const sessionSecret = newSessionSecret();
+  const begun = beginSessionResume(stateDir, session.session_id, credentialHash(sessionSecret));
+  if (!begun) return { ok: false, generation: session.generation, reason: 'session record not found' };
+  try {
+    const project = readProjectDescriptor(stateDir);
+    if (!project) throw new Error(`Not a registered project's state directory (no project descriptor): ${stateDir}`);
+    const workerEnv = stripWorkerProfileControlEnv(normalizeWorkerEnv({
+      ORC_STATE_DIR: stateDir,
+    }, repoRoot, { id: project.id, stateDir, sessionId: session.session_id, sessionSecret }));
+    const structured = session.transport === 'app-server';
+    const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
+      ...(session.provider_conversation_id ? { resume_conversation_id: session.provider_conversation_id } : {}),
+      // A Codex thread takes the bootstrap as developer instructions (thread config, not a message);
+      // `thread/resume` is given them again rather than relying on the thread keeping them.
+      ...(structured ? {
+        system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc',
+          session.session_id, { workerBootstrapProfile: resolveWorkerBootstrapProfile() }),
+      } : {}),
+      model: taskModel ?? agent.model ?? null,
+      working_directory: workingDirectory,
+      read_only: false,
+      require_git_checkout: true,
+      execution_mode: executionMode ?? 'full-access',
+      ...(sandboxNetwork ? { sandbox_network: sandboxNetwork } : {}),
+      startup_profile: resolveWorkerStartupProfile(),
+      // The resumed session keeps its runtime: an `app:` session resumes its thread on the structured runtime.
+      ...(structured ? { runtime: 'structured' as WorkerRuntime } : {}),
+      env: workerEnv,
+    });
+    const nowIso = new Date().toISOString();
+    const ref = (provider_ref ?? {}) as { transport?: unknown; pid?: unknown; process_start?: unknown; thread_id?: unknown; protocol_ready?: unknown };
+    completeSessionResume(stateDir, session, {
+      generation: begun.generation,
+      providerRef: provider_ref,
+      transport: typeof ref.transport === 'string' ? ref.transport : null,
+      processPid: typeof ref.pid === 'number' ? ref.pid : null,
+      processStart: typeof ref.process_start === 'string' ? ref.process_start : null,
+      ownerId: currentSessionOwnerId(),
+      ownerExpiresAt: new Date(Date.now() + SESSION_OWNER_TTL_MS).toISOString(),
+      conversationId: typeof ref.thread_id === 'string' ? ref.thread_id : null,
+      reason,
+    });
+    // A session that had reported for duty is still ready: the resumed conversation carries it.
+    const wasReady = agent.session_ready_at != null;
+    const updates: Partial<Agent> = {
+      status: 'running',
+      session_handle,
+      session_token: session.session_id,
+      session_started_at: nowIso,
+      session_ready_at: wasReady || ref.protocol_ready === true ? nowIso : null,
+      provider_ref: provider_ref as Agent['provider_ref'],
+      last_heartbeat_at: nowIso,
+      last_status_change_at: nowIso,
+    };
+    updateAgentRuntime(stateDir, agent.agent_id, updates);
+    syncAgentRuntime(agent, updates);
+    return { ok: true, generation: begun.generation };
+  } catch (error) {
+    return { ok: false, generation: begun.generation, reason: (error as Error)?.message ?? String(error) };
   }
 }
 

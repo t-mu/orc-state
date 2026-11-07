@@ -27,7 +27,7 @@ import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseO
 import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter, resolveSessionTransport } from './adapters/index.ts';
-import { adapterDetectInputBlock, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
+import { adapterDetectInputBlock, adapterExitStatus, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
 import { removeDeadTmuxSocket } from './adapters/tmux.ts';
 import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
@@ -44,13 +44,14 @@ import { renderTemplate } from './lib/templateRender.ts';
 import { ACTIVE_PROJECT, assertProjectMode, ORC_PACKAGE_ROOT, STATE_DIR, EVENTS_FILE, WORKTREES_DIR, TARGET_REPO_ROOT } from './lib/paths.ts';
 import { flag, intFlag } from './lib/args.ts';
 import { reconcileState } from './lib/reconcile.ts';
-import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig } from './lib/providers.ts';
+import { loadWorkerPoolConfig, loadCoordinatorConfig, loadLeaseConfig, loadSessionsConfig } from './lib/providers.ts';
 import { checkSandboxControlSocket } from './lib/sandboxDeps.ts';
 import { cleanupRunWorktree, deleteRunWorktree, ensureRunWorktree, getRunWorktree, pruneMissingRunWorktrees } from './lib/runWorktree.ts';
 import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError } from './lib/promptInjectionScan.ts';
 import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
-import { spawnEphemeralWorker } from './lib/workerRuntime.ts';
+import { resumeWorkerSession, spawnEphemeralWorker } from './lib/workerRuntime.ts';
+import { classifySessionExit, decideSessionResume, latestRunSession, recordSessionExit, recordSessionResumeFailed, type ResumeDecision } from './lib/sessionResume.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
@@ -422,15 +423,13 @@ async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) 
     if (!agent || agent.status === 'offline') continue;
 
     if (!agent.session_handle) {
-      // A task-scoped worker's session is launched once at dispatch and never
-      // relaunched: a claim whose session is gone is requeued for a fresh worker.
-      finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
-        success: false,
-        failureReason: 'session_start_failed: worker session is gone before reported_for_duty',
-        failureCode: 'ERR_SESSION_START_FAILED',
-        policy: 'requeue',
+      // The session is gone before the worker reported for duty. Its handle was
+      // cleared, so no exit status is observable: the decision classifies the exit
+      // as unknown and always requeues for a fresh worker.
+      await resumeOrRequeue(claim, agent, {
+        reason: 'session_start_failed: worker session is gone before reported_for_duty',
+        code: 'ERR_SESSION_START_FAILED',
       });
-      await cleanupRunCapacity(claim.agent_id);
       sessionReadyNudgeAtMs.delete(claim.run_id);
       continue;
     }
@@ -881,6 +880,92 @@ async function cleanupRunCapacity(agentId: string) {
   removeAgent(STATE_DIR, agentId);
 }
 
+/**
+ * The one exit for a run whose worker session is gone (task v1/run-resume).
+ * A crashed session that can resume (lib/sessionResume.ts decideSessionResume)
+ * is relaunched in place on the same claim and nudged to continue; anything
+ * else fails the run with `policy: requeue` and frees its worker, as before.
+ */
+async function resumeOrRequeue(
+  claim: Claim,
+  agent: Agent | null | undefined,
+  failure: { reason: string; code: string },
+): Promise<'resumed' | 'requeued'> {
+  const session = agent ? latestRunSession(STATE_DIR, agent.agent_id, claim.run_id) : null;
+  let decision: ResumeDecision = { resume: false, reason: 'no session record for this run', budgetExhausted: false };
+  if (agent && session) {
+    const adapter = getAdapter(agent.provider);
+    const status = agent.session_handle ? adapterExitStatus(adapter, agent.session_handle) : null;
+    const exitReason = classifySessionExit(status, { workComplete: claim.finalization_state != null });
+    recordSessionExit(STATE_DIR, session.session_id, exitReason);
+    const worktree = getRunWorktree(STATE_DIR, claim.run_id);
+    const worktreePath = worktree?.worktree_path ?? null;
+    decision = decideSessionResume({
+      setting: sessionResumeSetting(),
+      provider: agent.provider,
+      transport: session.transport,
+      conversationId: session.provider_conversation_id,
+      exitReason,
+      resumeCount: session.resume_count,
+      worktreeExists: Boolean(worktreePath && existsSync(worktreePath)),
+    });
+    if (decision.resume && worktreePath) {
+      const workerPoolConfig = loadWorkerPoolConfig();
+      const task = findTask(readBacklog(STATE_DIR), claim.task_ref);
+      const result = await resumeWorkerSession(STATE_DIR, agent, session, {
+        adapter,
+        workingDirectory: worktreePath,
+        repoRoot: ORC_PACKAGE_ROOT,
+        taskModel: task?.model ?? null,
+        executionMode: workerPoolConfig.execution_mode,
+        sandboxNetwork: workerPoolConfig.sandbox_network,
+        reason: failure.reason,
+      });
+      if (result.ok) {
+        log(`resumed ${agent.agent_id} for run ${claim.run_id} (session ${session.session_id}, generation ${result.generation}) after ${failure.reason}`);
+        try {
+          await sendResumeNudge(adapter, agent, claim, session.session_id, result.generation);
+        } catch (error) {
+          log(`warning: resume nudge to ${agent.agent_id} failed: ${(error as Error).message}`);
+        }
+        return 'resumed';
+      }
+      decision = { resume: false, reason: `relaunch failed: ${result.reason}`, budgetExhausted: false };
+      recordSessionResumeFailed(STATE_DIR, session, decision.reason, result.generation);
+    } else if (!decision.resume && decision.budgetExhausted) {
+      recordSessionResumeFailed(STATE_DIR, session, decision.reason);
+    }
+  }
+  finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
+    success: false,
+    failureReason: failure.reason,
+    failureCode: failure.code,
+    policy: 'requeue',
+  });
+  await cleanupRunCapacity(claim.agent_id);
+  if (session) log(`run ${claim.run_id} not resumed: ${decision.resume ? 'no worktree' : decision.reason}`);
+  return 'requeued';
+}
+
+/** An unreadable setting (e.g. ORC_SESSIONS_RESUME=false) must not stall the dead-session path: requeue. */
+function sessionResumeSetting(): 'auto' | 'off' {
+  try {
+    return loadSessionsConfig().resume;
+  } catch (error) {
+    log(`warning: ${(error as Error).message}; dead sessions are requeued, not resumed`);
+    return 'off';
+  }
+}
+
+async function sendResumeNudge(adapter: ReturnType<typeof createAdapter>, agent: Agent, claim: Claim, sessionId: string, generation: number) {
+  const text = buildResumeNudge(claim, sessionId, generation);
+  if (isStructuredSession(adapter, agent.session_handle!)) {
+    await deliverStructured(agent.session_handle!, text, 'session_resume', `session-resume:${sessionId}:${generation}`);
+  } else {
+    await adapter.send(agent.session_handle!, text);
+  }
+}
+
 function hasOtherActiveClaim(agentId: string, runId: string) {
   try {
     const claims = (readJson(STATE_DIR, 'claims.json') as { claims?: Claim[] }).claims ?? [];
@@ -1163,7 +1248,7 @@ async function executeRemediation(
   claim: Claim,
   agent: Agent,
 ) {
-  const emitRemediationEvent = () => {
+  const emitRemediationEvent = (appliedAction = action) => {
     emit({
       event: 'remediation_applied',
       actor_type: 'coordinator',
@@ -1171,7 +1256,7 @@ async function executeRemediation(
       run_id: claim.run_id,
       task_ref: claim.task_ref,
       agent_id: claim.agent_id,
-      payload: { policy_id: policyId, action, message },
+      payload: { policy_id: policyId, action: appliedAction, message },
     });
   };
 
@@ -1195,6 +1280,18 @@ async function executeRemediation(
 
     case 'requeue_now':
     case 'block': {
+      if (policyId === 'session_dead') {
+        // A dead session goes through the one resume-or-requeue decision.
+        const outcome = await resumeOrRequeue(claim, agent, { reason: `remediation[${policyId}]: ${message}`, code: 'ERR_REMEDIATION_REQUEUE' });
+        // The event reports what was done: a resumed run was not requeued.
+        emitRemediationEvent(outcome === 'resumed' ? 'resume' : action);
+        log(`remediation[${policyId}]: ${outcome} run ${claim.run_id}`);
+        if (outcome === 'resumed') break;
+        runInactiveNudgeAtMs.delete(claim.run_id);
+        runNudgeCount.delete(claim.run_id);
+        runLastPhase.delete(claim.run_id);
+        break;
+      }
       const policy = action === 'block' ? 'block' as const : 'requeue' as const;
       finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
         success: false,
@@ -1616,14 +1713,8 @@ async function probeActiveWorkerSessions(
       continue;
     }
 
-    log(`worker ${claim.agent_id} PTY PID dead — expiring claim ${claim.run_id} and requeueing ${claim.task_ref}`);
-    finishRun(STATE_DIR, claim.run_id, claim.agent_id, {
-      success: false,
-      failureReason: 'pty_pid_dead: PTY session exited unexpectedly',
-      failureCode: 'ERR_PTY_DEAD',
-      policy: 'requeue',
-    });
-    await cleanupRunCapacity(claim.agent_id);
+    log(`worker ${claim.agent_id} session process dead — resuming or requeueing run ${claim.run_id} (${claim.task_ref})`);
+    await resumeOrRequeue(claim, agent, { reason: 'pty_pid_dead: PTY session exited unexpectedly', code: 'ERR_PTY_DEAD' });
     cleaned = true;
   }
 
@@ -1887,6 +1978,24 @@ function buildRunStartNudge(claim: Claim) {
     `Call this command immediately via your Bash tool:`,
     `${resolveOrcBinSh(ORC_PACKAGE_ROOT)} run-start --run-id=${claim.run_id} --agent-id=${claim.agent_id}`,
     `RUN_NUDGE_END`,
+  ].join('\n');
+}
+
+/** Sent instead of the bootstrap to a resumed session: the conversation already holds the task. */
+function buildResumeNudge(claim: Claim, sessionId: string, generation: number) {
+  const { phase } = runSignals.currentPhase(claim.run_id);
+  return [
+    'SESSION_RESUMED',
+    `run_id: ${claim.run_id}`,
+    `task_ref: ${claim.task_ref}`,
+    `session_id: ${sessionId}`,
+    `generation: ${generation}`,
+    `phase: ${phase ?? 'unknown'}`,
+    `last_progress_at: ${claim.last_heartbeat_at ?? claim.started_at ?? 'unknown'}`,
+    'Your session process exited unexpectedly and was resumed in place: same run, claim, worktree and agent id.',
+    'Check git status for work in progress, then continue the task from where you left off.',
+    'Lifecycle commands and their flags are unchanged.',
+    'SESSION_RESUMED_END',
   ].join('\n');
 }
 

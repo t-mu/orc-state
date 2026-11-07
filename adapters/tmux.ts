@@ -24,7 +24,7 @@ import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { withEventDbTransaction } from '../lib/eventLog.ts';
 import { logger } from '../lib/logger.ts';
 import { detectBlockingPromptFromText, prepareProviderLaunch, runStartupDialogs } from './pty.ts';
-import type { SessionInspection } from './interface.ts';
+import type { SessionExitStatus, SessionInspection } from './interface.ts';
 
 const OUTPUT_TAIL_BYTES = 8 * 1024;
 const CAPTURE_LINES = 200;
@@ -181,6 +181,30 @@ function inspect(agentId: string): SessionInspection {
   };
 }
 
+/**
+ * tmux marks a pane dead on its pty's EOF, slightly before it reaps the process and records the status.
+ * tmux before 3.3 has no `#{pane_dead_signal}`: a signal kill reads as no status after this wait (unknown).
+ */
+const EXIT_STATUS_WAIT_MS = 2_000;
+const EXIT_STATUS_POLL_MS = 50;
+
+/** A dead pane kept by `remain-on-exit`: its exit code or killing signal. */
+function exitStatus(agentId: string): SessionExitStatus | null {
+  const deadline = Date.now() + EXIT_STATUS_WAIT_MS;
+  for (;;) {
+    const result = tmux(['display-message', '-p', '-t', target(agentId), '#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}']);
+    if (result.error || result.status !== 0) return null;
+    const [dead, status, signal] = result.stdout.trim().split('|');
+    if (dead !== '1') return null;
+    if (status || signal || Date.now() >= deadline) {
+      const code = status ? Number(status) : Number.NaN;
+      const sig = signal ? Number(signal) : Number.NaN;
+      return { code: Number.isInteger(code) ? code : null, signal: Number.isInteger(sig) ? sig : (signal || null) };
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, EXIT_STATUS_POLL_MS);
+  }
+}
+
 function capture(agentId: string, lines = CAPTURE_LINES): string | null {
   const result = tmux(['capture-pane', '-p', '-J', '-S', `-${lines}`, '-t', target(agentId)]);
   return result.status === 0 ? result.stdout : null;
@@ -241,7 +265,7 @@ export interface TmuxLaunch { binary: string; args: string[]; env: Record<string
  * `launch`, its output piped to the agent's log. Returns the launcher's
  * private directory, which the caller removes once the pane has run it.
  */
-function openSession(agentId: string, launch: TmuxLaunch): string {
+function openSession(agentId: string, launch: TmuxLaunch, { remainOnExit = false }: { remainOnExit?: boolean } = {}): string {
   tmux(['kill-session', '-t', target(agentId)]);
   mkdirSync(dirname(logPath(agentId)), { recursive: true });
   writeFileSync(logPath(agentId), '');
@@ -257,7 +281,11 @@ function openSession(agentId: string, launch: TmuxLaunch): string {
   chmodSync(launcher, 0o700);
   try {
     // history-limit applies to panes created after it is set, so it precedes new-session in one command list.
-    tmuxOrThrow(['set-option', '-g', 'history-limit', String(HISTORY_LIMIT), ';', 'new-session', '-d', '-s', tmuxSessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher)],
+    // remain-on-exit keeps this window's dead pane, so its exit status tells a crash from a normal exit
+    // (session resume). It is set on this window only, in the same command list, before the server
+    // returns to its event loop, so even a process that exits at once is kept.
+    tmuxOrThrow(['set-option', '-g', 'history-limit', String(HISTORY_LIMIT), ';', 'new-session', '-d', '-s', tmuxSessionName(agentId), '-x', '220', '-y', '50', '-c', launch.cwd, shellQuote(launcher),
+      ...(remainOnExit ? [';', 'set-option', '-w', '-t', target(agentId), 'remain-on-exit', 'on'] : [])],
       { env: stripNestedProviderEnv(process.env) as Record<string, string> });
   } catch (error) {
     rmSync(dirname(launcher), { recursive: true, force: true });
@@ -312,7 +340,8 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
   return {
     async start(agentId: string, config: Record<string, unknown> = {}) {
       const launch = prepareProviderLaunch(provider, agentId, config);
-      const launcherDir = openSession(agentId, launch);
+      // Only a worker window keeps its dead pane: its exit status decides a session resume.
+      const launcherDir = openSession(agentId, launch, { remainOnExit: true });
       try {
         const started = inspect(agentId);
         if (!started.alive || started.pid == null) throw new Error(`tmux session for ${agentId} exited during startup`);
@@ -345,6 +374,10 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
 
     survivesCoordinatorExit(sessionHandle: string) {
       return String(sessionHandle).startsWith('tmux:');
+    },
+
+    exitStatus(sessionHandle: string): SessionExitStatus | null {
+      try { return exitStatus(parseHandle(sessionHandle)); } catch { return null; }
     },
 
     inspectSession(sessionHandle: string): SessionInspection {

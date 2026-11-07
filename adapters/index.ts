@@ -83,6 +83,7 @@ export function createAdapter(provider: string, options: Record<string, unknown>
     detectInputBlock: (sessionHandle: string, hookEvents?: Array<{ message?: string }>) => route(sessionHandle).detectInputBlock(sessionHandle, hookEvents),
     inspectSession: (sessionHandle: string) => route(sessionHandle).inspectSession(sessionHandle),
     survivesCoordinatorExit: (sessionHandle: string) => tmux.survivesCoordinatorExit(sessionHandle),
+    exitStatus: (sessionHandle: string) => route(sessionHandle).exitStatus(sessionHandle),
   };
   assertAdapterContract(adapter);
   return adapter;

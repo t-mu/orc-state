@@ -146,6 +146,25 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     await expect(adapter.heartbeatProbe(second.session_handle)).resolves.toBe(false);
   }, 20_000);
 
+  it('keeps a dead pane so its exit code or killing signal is known (session resume)', async () => {
+    const { adapter } = await loadAdapter();
+    const clean = await adapter.start('worker-1', { working_directory: dir });
+    expect(adapter.exitStatus(clean.session_handle)).toBeNull();
+    await adapter.send(clean.session_handle, 'EXIT');
+    // A loaded host can take longer than exitStatus's own wait to reap the process.
+    const recorded = (handle: string) => { const status = adapter.exitStatus(handle); return status != null && (status.code != null || status.signal != null); };
+    await waitFor(() => !adapter.inspectSession(clean.session_handle).alive && recorded(clean.session_handle), 30_000);
+    expect(adapter.exitStatus(clean.session_handle)).toEqual({ code: 0, signal: null });
+
+    const killed = await adapter.start('worker-2', { working_directory: dir });
+    process.kill((killed.provider_ref as { pid: number }).pid, 'SIGKILL');
+    await waitFor(() => !adapter.inspectSession(killed.session_handle).alive && recorded(killed.session_handle), 30_000);
+    expect(adapter.exitStatus(killed.session_handle)).toEqual({ code: null, signal: 9 });
+
+    await adapter.stop(killed.session_handle);
+    expect(adapter.exitStatus(killed.session_handle)).toBeNull();
+  }, 75_000);
+
   it('gives each session its own env without leaking it through the shared server', async () => {
     const { adapter } = await loadAdapter();
     const first = await adapter.start('worker.1', { working_directory: dir, env: { ORC_PROBE: 'first' } });

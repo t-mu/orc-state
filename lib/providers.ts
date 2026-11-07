@@ -168,6 +168,7 @@ interface RawSettings {
   worker_pool?: Record<string, unknown> | null;
   coordinator?: Record<string, unknown> | null;
   leases?: Record<string, unknown> | null;
+  sessions?: Record<string, unknown> | null;
 }
 
 /** Registry settings: the active project's over the global ones, or the global ones when no project is active. */
@@ -190,7 +191,7 @@ function parseSettings(settings: OrcSettings): RawSettings {
 
   const result: RawSettings = { default_provider: defaultProvider, default_execution_mode: defaultExecutionMode };
 
-  for (const section of ['master', 'worker_pool', 'coordinator', 'leases'] as const) {
+  for (const section of ['master', 'worker_pool', 'coordinator', 'leases', 'sessions'] as const) {
     const value = settings[section];
     if (value == null) continue;
     if (typeof value !== 'object' || Array.isArray(value)) {
@@ -360,4 +361,24 @@ export function loadLeaseConfig({
     default_ms: parsePositiveInteger(lc.default_ms, 'leases.default_ms') ?? DEFAULT_LEASE_CONFIG.default_ms,
     finalize_ms: parsePositiveInteger(lc.finalize_ms, 'leases.finalize_ms') ?? DEFAULT_LEASE_CONFIG.finalize_ms,
   };
+}
+
+/** `auto`: a crashed worker session is resumed in place; `off`: the run is requeued (docs/configuration.md). */
+export type SessionResumeMode = 'auto' | 'off';
+
+export interface SessionsConfig {
+  resume: SessionResumeMode;
+}
+
+export function loadSessionsConfig({
+  env = process.env,
+  settings = storedSettings(),
+}: {
+  env?: NodeJS.ProcessEnv;
+  settings?: OrcSettings | undefined;
+} = {}): SessionsConfig {
+  const raw = parseSettings(settings);
+  const resume = env.ORC_SESSIONS_RESUME ?? (raw.sessions?.resume as string | null | undefined) ?? 'auto';
+  if (resume !== 'auto' && resume !== 'off') throw new Error(`Invalid sessions.resume "${resume}". Must be auto or off.`);
+  return { resume };
 }

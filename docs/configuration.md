@@ -98,6 +98,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 | `ORC_WORKER_EXECUTION_MODE` | `worker_pool.execution_mode` | `full-access` |
 | `ORC_WORKER_RUNTIME` | `worker_pool.runtime` | `cli` |
 | `ORC_WORKER_SANDBOX_NETWORK` | `worker_pool.sandbox_network` | `restricted` |
+| `ORC_SESSIONS_RESUME` | `sessions.resume` | `auto` |
 
 ### Set for launched sessions
 
@@ -151,6 +152,12 @@ Workers are spawned on demand per task and removed after it; there are no idle w
 | `execution_mode` | `full-access` | Worker execution mode |
 | `runtime` | `cli` | `cli` or `structured` ([Worker Runtimes](#worker-runtimes)) |
 | `sandbox_network` | `restricted` | Sandboxed control-socket access ([Execution Modes](#execution-modes)) |
+
+### `sessions`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `resume` | `auto` | `auto` resumes a crashed worker session in place; `off` requeues its run ([Session Resume](#session-resume)) |
 
 ### `coordinator`
 
@@ -211,7 +218,30 @@ Codex app-server:
 - Input is delivered between turns only; nudges skip a mid-turn worker; `FINALIZE_SUCCESS` is not delivered.
 - The handshake marks the session ready (no `report-for-duty`).
 - Steering, interrupt and approvals are refused (`unsupported_capability`); threads run with `approvalPolicy: never`.
-- The session ends with the coordinator that launched it; the run is requeued. Roll back with `runtime: cli`.
+- A crashed app-server is resumed on its thread (`thread/resume`, [Session Resume](#session-resume)). The session ends with the coordinator that launched it; that run is requeued. Roll back with `runtime: cli`.
+
+## Session Resume
+
+When a task worker's provider process dies mid-run, the coordinator resumes it in place instead of requeueing the run: same claim, `session_id`, worktree, environment, `--settings` (hooks, sandbox) and MCP isolation. The session gets a new secret (the old one is rejected) and its `generation` goes up by 1. The bootstrap is not resent; the worker gets a `SESSION_RESUMED` message with the run's phase and last progress time.
+
+| Provider / runtime | Resume |
+|--------------------|--------|
+| Claude CLI (tmux or PTY) | Yes: orc starts the conversation with `--session-id <uuid>` and relaunches with `--resume <uuid>` |
+| Codex `structured` (`app:`) | Yes: `thread/resume` on the recorded thread id |
+| Codex CLI | No |
+| Gemini | No |
+
+The run is requeued as before when any of these holds:
+
+- `sessions.resume` is `off`.
+- The provider or runtime cannot resume (table above).
+- The exit was not a crash: a clean exit after `run-work-complete` (`finished`), a clean exit before it such as `/exit` (`user_exit`), or no observed exit status (`unknown`).
+- The run worktree is gone (Claude keeps conversations per working directory).
+- The run already resumed twice (budget 2 per run).
+
+A crash is a signal or a non-zero exit code. tmux keeps the dead worker pane (`remain-on-exit`, set per worker window) so its status can be read; telling a signal kill apart needs tmux 3.3 or later, older tmux reports it as `unknown`. An invalid `sessions.resume` value is logged and treated as `off`. PTY and `app:` exits are seen only by the coordinator that launched the process.
+
+Events: `session_resumed` on success. `session_resume_failed` when the budget is spent or the relaunch fails; the run is then requeued.
 
 ## Execution Modes
 
