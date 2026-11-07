@@ -13,7 +13,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | File | Format | Contents |
 |------|--------|----------|
 | `runtime.db` | SQLite | Project task store: `tasks`, `task_spec_revisions`, `task_dependencies`, `task_transitions`, `task_runs`, `task_imports`, `plan_documents` |
-| `events.db` | SQLite (WAL), schema v7 | Append-only `events` (+ FTS index) and operational tables: `runs` (authoritative claims), `sessions`, `commands`, `messages`, `input_requests`, `offsets`, `control_leases`, `terminals` |
+| `events.db` | SQLite (WAL), schema v8 | Append-only `events` (+ FTS index) and operational tables: `runs` (authoritative claims), `sessions`, `commands`, `messages`, `input_requests`, `offsets`, `control_leases`, `terminals` |
 | `memory.db` | SQLite (FTS5) | Agent memory drawers; independent of the operational stores |
 | `agents.json` | JSON | Agent registry; session fields are overlaid from `events.db` `sessions` |
 
@@ -176,6 +176,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `agent_registered` | — | in schema, not emitted |
 | `session_started`, `session_start_failed` | Coordinator | provider session launch |
 | `session_reconciled` | Coordinator | restart reconciliation (`session_id`, `state`, `outcome`, `reason`) |
+| `session_resumed`, `session_resume_failed` | Coordinator | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
 | `task_added`, `task_updated` | Master / operator / Coordinator | task created / changed |
 | `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task` |
 | `task_dispatch_blocked` | Coordinator | dispatch refused (deps, no agent) |
@@ -239,8 +240,8 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 | `POST` | `/v1/lifecycle` | worker session for that run | `{ op, agent_id, run_id?, ... }`; `op`: `run-start`, `run-fail`, `run-finish`, `run-work-complete`, `progress`, `review-submit`, `input-request`, `input-poll`, `input-timeout`, `memory-record`, `report-for-duty`. An offline session may still `input-poll` and repeat `run-finish` on a done run |
 | `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `respond-input` (master only). The master's `actor_id` is ignored |
 | `POST` | `/v1/commands`, `/v1/commands/<id>/ack` | `running` session | enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` → `202`; ACK `accepted\|running\|completed\|failed`. Delivered to `app:` sessions by `CommandDispatcher` |
-| `POST`/`GET` | `/v1/messages`, `/v1/messages/<id>/consume` | `running` session | send → `202 { message }`; mailbox (`include_consumed=1`); consume. Kinds: `message`, `question`, `review_request` (needs artifact refs), `feedback`, `result` (needs parent id) |
-| `POST` | `/v1/terminals/provider`, `/v1/terminals/shell` | master, operator | `{ run_id }` → `{ terminal }` (tmux provider view / worktree shell outside any sandbox) |
+| `POST`/`GET` | `/v1/messages`, `/v1/messages/<id>/consume` | `running` session | send `{ run_id, recipient_session_id \| recipient_agent_id, idempotency_key, kind, text }` (exactly one recipient, else `bad_request`; an agent resolves to its running session, else `conflict`) → `202 { message }`; mailbox (`include_consumed=1`); consume. Kinds: `message`, `question`, `review_request` (needs artifact refs), `feedback`, `result` (needs parent id) |
+| `POST` | `/v1/terminals/provider`, `/v1/terminals/shell` | master, operator | `{ run_id }` → `{ terminal }` (tmux provider view / worktree shell outside any sandbox); id `provider:<session_id>` / `shell:<session_id>` of the run's latest session; a run with no session gets `conflict`. A newer session retires the old id |
 | `GET` | `/v1/terminals/<id>?after=` | master, operator | `{ terminal, screen, output, cursor }` |
 | `POST` | `/v1/terminals/<id>/lease`, `/input`, `/resize` | master, operator (input/resize need the lease) | `acquire\|renew\|release`; `{ lease_id, data }`; `{ lease_id, columns, rows }` |
 | `GET` | `/v1/tasks`, `/v1/tasks/<ref>`, `/v1/tasks/<ref>/revisions` | master, operator | tasks with `spec_revision`, `content_hash`, `body_markdown`; encode the ref (`app%2Flogin`) |
@@ -263,6 +264,18 @@ Format `<transport>:<agent_id>` (`tmux:broken-nose`, `pty:master`, `app:…`). `
 ### Session supervision
 
 Each session is a `sessions` row in `events.db` (own id, transport, pid + `process_start`, `owner_id`, `owner_expires_at` renewed each tick).
+
+Session identity (schema v8):
+
+| Table | Column | Meaning |
+|-------|--------|---------|
+| `sessions` | `session_id` | stable across a resume; a resume rotates only `credential_hash` and bumps `generation` |
+| `sessions` | `provider_conversation_id` | provider's conversation id, used to resume (nullable) |
+| `sessions` | `generation`, `resume_count` | integers, default `0` |
+| `sessions` | `exit_reason` | `crash`, `finished`, `user_exit`, `killed`, `unknown`, or null |
+| `terminals` | `session_id`, `run_id` | keyed by session; `run_id` null for run-less sessions (master, scouts). Rows from before v8 keep their `<kind>:<run_id>` id but the migration marks them `offline` and drops their leases; the next open creates the session-keyed row |
+| `messages` | `run_id` | null for run-less messages |
+| `messages` | `recipient_session_id`, `recipient_agent_id` | exactly one is set (CHECK); `recipient_id` always names the recipient agent |
 
 | State | Meaning |
 |-------|---------|

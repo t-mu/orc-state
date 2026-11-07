@@ -51,7 +51,8 @@ function record(ref: { pid: number; process_start: string }): SupervisedSession 
   return {
     session_id: 's-1', run_id: null, agent_id: 'worker-1', provider: 'gemini', state: 'running', transport: 'tmux',
     process_pid: ref.pid, process_start: ref.process_start, owner_id: 'pid:1:exited', owner_expires_at: null,
-    state_reason: null, started_at: '', updated_at: '',
+    state_reason: null, provider_conversation_id: null, generation: 0, resume_count: 0, exit_reason: null,
+    started_at: '', updated_at: '',
   };
 }
 

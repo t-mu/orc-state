@@ -48,7 +48,7 @@ describe('runtime schema migration', () => {
     initEventsDb(dir);
     const repeated = new Database(join(dir, 'events.db'), { readonly: true });
     try {
-      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 7 });
+      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 8 });
     } finally {
       repeated.close();
     }
@@ -118,8 +118,8 @@ describe('runtime schema migration', () => {
       db.prepare("INSERT INTO commands (command_id, run_id, session_id, actor_id, recipient_id, idempotency_key, kind, payload, state, created_at) VALUES ('cmd-old', 'run-old', 'session-old', 'master', 'agent-old', 'key-old', 'send', '{}', 'queued', 'now')").run();
       db.prepare("INSERT INTO control_leases (resource_type, resource_id, lease_id, session_id, owner_id, expires_at) VALUES ('run', 'run-old', 'lease-old', 'session-old', 'agent-old', 'later')").run();
       migrateRuntimeSchema(db);
-      expect(db.pragma('user_version', { simple: true })).toBe(7);
-      expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }]);
+      expect(db.pragma('user_version', { simple: true })).toBe(8);
+      expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }]);
       expect((db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name)).toContain('credential_hash');
       expect((db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name))
         .toEqual(expect.arrayContaining(['transport', 'process_pid', 'process_start', 'owner_id', 'owner_expires_at', 'state_reason']));
@@ -134,13 +134,13 @@ describe('runtime schema migration', () => {
 
   it('refuses a future version before touching its schema', () => {
     const db = new Database(join(dir, 'events.db'));
-    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 8');
+    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 9');
     db.close();
     expect(() => initEventsDb(dir)).toThrow('newer than supported version');
     const check = new Database(join(dir, 'events.db'), { readonly: true });
     try {
       expect(check.prepare("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeUndefined();
-      expect(check.pragma('user_version', { simple: true })).toBe(8);
+      expect(check.pragma('user_version', { simple: true })).toBe(9);
     } finally {
       check.close();
     }
@@ -148,6 +148,68 @@ describe('runtime schema migration', () => {
     const result = doctor(dir);
     expect(result.status).toBe(1);
     expect((JSON.parse(result.stdout) as { checks: { runtimeSchema: { version: number; ok: boolean } } }).checks.runtimeSchema)
-      .toMatchObject({ version: 8, ok: false });
+      .toMatchObject({ version: 9, ok: false });
+  });
+
+  it('upgrades a version 7 store with terminal and message rows intact after an interrupted attempt', () => {
+    const db = new Database(join(dir, 'events.db'));
+    try {
+      db.exec('CREATE TABLE terminals_v8 (id INTEGER PRIMARY KEY)');
+      expect(() => migrateRuntimeSchema(db)).toThrow();
+      expect(db.pragma('user_version', { simple: true })).toBe(7);
+      expect((db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name)).not.toContain('generation');
+      db.exec('DROP TABLE terminals_v8');
+      db.exec(`
+        INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-1', 'feature/task', 'worker-1', 'in_progress', 'now', 'now');
+        INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at) VALUES ('session-1', 'run-1', 'worker-1', 'claude', 'running', 'now', 'now');
+        INSERT INTO terminals (terminal_id, run_id, kind, handle, worktree_path, log_path, state, created_at, updated_at)
+          VALUES ('provider:run-1', 'run-1', 'provider', 'tmux:worker-1', '/wt', '/log', 'running', 'now', 'now');
+        INSERT INTO messages (message_id, run_id, idempotency_key, direction, kind, payload, created_at, sender_id, recipient_id, recipient_session_id, recipient_run_id)
+          VALUES ('msg-session', 'run-1', 'k-session', 'outbound', 'message', '{}', 'now', 'master', 'worker-1', 'session-1', 'run-1'),
+            ('msg-agent', 'run-1', 'k-agent', 'outbound', 'question', '{}', 'now', 'worker-1', 'master', NULL, NULL);
+        INSERT INTO input_requests (request_id, run_id, message_id, idempotency_key, question, state, created_at)
+          VALUES ('req-1', 'run-1', 'msg-agent', 'k-agent', 'why?', 'pending', 'now');
+        INSERT INTO control_leases (resource_type, resource_id, lease_id, owner_id, expires_at)
+          VALUES ('terminal', 'provider:run-1', 'lease-t', 'operator', '2999-01-01');
+      `);
+      migrateRuntimeSchema(db);
+      expect(db.pragma('user_version', { simple: true })).toBe(8);
+      expect(db.prepare('SELECT terminal_id, session_id, run_id, handle, state FROM terminals').all())
+        .toEqual([{ terminal_id: 'provider:run-1', session_id: 'session-1', run_id: 'run-1', handle: 'tmux:worker-1', state: 'offline' }]);
+      expect(db.prepare("SELECT count(*) AS n FROM control_leases WHERE resource_type = 'terminal'").get()).toEqual({ n: 0 });
+      expect(db.prepare('SELECT message_id, recipient_id, recipient_session_id, recipient_agent_id FROM messages ORDER BY message_id').all()).toEqual([
+        { message_id: 'msg-agent', recipient_id: 'master', recipient_session_id: null, recipient_agent_id: 'master' },
+        { message_id: 'msg-session', recipient_id: 'worker-1', recipient_session_id: 'session-1', recipient_agent_id: null },
+      ]);
+      expect(db.prepare("SELECT message_id FROM input_requests WHERE request_id = 'req-1'").get()).toEqual({ message_id: 'msg-agent' });
+      expect(db.prepare("SELECT generation, resume_count, exit_reason, provider_conversation_id FROM sessions WHERE session_id = 'session-1'").get())
+        .toEqual({ generation: 0, resume_count: 0, exit_reason: null, provider_conversation_id: null });
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+    } finally {
+      db.close();
+    }
+    expect(inspectRuntimeSchema(dir)).toEqual({ ok: true, version: 8, messages: [] });
+  });
+
+  it('stores terminals and messages for a run-less session and enforces one message recipient', () => {
+    ensureStateInitialized(dir);
+    const db = new Database(join(dir, 'events.db'));
+    try {
+      db.pragma('foreign_keys = ON');
+      db.prepare("INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at) VALUES ('session-master', NULL, 'master', 'claude', 'running', 'now', 'now')").run();
+      db.prepare(`INSERT INTO terminals (terminal_id, session_id, run_id, kind, handle, worktree_path, log_path, state, created_at, updated_at)
+        VALUES ('provider:session-master', 'session-master', NULL, 'provider', 'tmux:master', '/repo', '/log', 'running', 'now', 'now')`).run();
+      const message = db.prepare(`INSERT INTO messages (message_id, run_id, idempotency_key, direction, kind, payload, created_at, recipient_id, recipient_session_id, recipient_agent_id)
+        VALUES (?, NULL, ?, 'outbound', 'message', '{}', 'now', 'master', ?, ?)`);
+      message.run('msg-1', 'k-1', 'session-master', null);
+      message.run('msg-2', 'k-2', null, 'master');
+      expect(() => message.run('msg-3', 'k-3', 'session-master', 'master')).toThrow(/CHECK/);
+      expect(() => message.run('msg-4', 'k-4', null, null)).toThrow(/CHECK/);
+      expect(() => db.prepare("UPDATE sessions SET exit_reason = 'exploded' WHERE session_id = 'session-master'").run()).toThrow(/CHECK/);
+      db.prepare("UPDATE sessions SET exit_reason = 'user_exit', generation = 1, resume_count = 1 WHERE session_id = 'session-master'").run();
+      expect(db.prepare('SELECT count(*) AS n FROM messages WHERE run_id IS NULL').get()).toEqual({ n: 2 });
+    } finally {
+      db.close();
+    }
   });
 });

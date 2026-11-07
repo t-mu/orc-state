@@ -58,4 +58,14 @@ describe('legacy input and review message bridge', () => {
     expect(mailbox.find((message) => message.message_id === id)).toMatchObject({ kind: 'feedback', state: 'queued' });
     expect(JSON.parse(mailbox.find((message) => message.message_id === id)!.payload)).toEqual({ text: 'Fix line 3', outcome: 'findings' });
   });
+
+  it('addresses the agent when its recipient has no running session', () => {
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'master-1'").run());
+    const id = bridgeInputRequest(dir, 'run-a', 'worker-a', 'request-2', 'Choose B?');
+    expect(withEventDb(dir, (db) => db.prepare('SELECT recipient_id, recipient_session_id, recipient_agent_id FROM messages WHERE message_id = ?').get(id)))
+      .toEqual({ recipient_id: 'master', recipient_session_id: null, recipient_agent_id: 'master' });
+    const feedback = bridgeReviewFeedback(dir, 'run-a', 'worker-a', 'approved', 'ok');
+    expect(withEventDb(dir, (db) => db.prepare('SELECT recipient_session_id, recipient_agent_id FROM messages WHERE message_id = ?').get(feedback)))
+      .toEqual({ recipient_session_id: 'worker-a-1', recipient_agent_id: null });
+  });
 });

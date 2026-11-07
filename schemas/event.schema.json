@@ -62,6 +62,8 @@
         "agent_marked_dead",
         "session_start_failed",
         "session_reconciled",
+        "session_resumed",
+        "session_resume_failed",
         "session_started",
         "task_added",
         "task_updated",

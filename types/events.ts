@@ -270,6 +270,33 @@ export interface SessionReconciledEvent extends BaseEvent {
   payload: { session_id: string; state: string; previous_state?: string; reason?: string; [key: string]: unknown };
 }
 
+/** A session id survives a resume; the payload carries the new generation. */
+interface SessionResumePayload {
+  session_id: string;
+  agent_id: string;
+  run_id?: string;
+  generation: number;
+  provider_conversation_id?: string;
+  reason?: string;
+  [key: string]: unknown;
+}
+
+export interface SessionResumedEvent extends BaseEvent {
+  event: 'session_resumed';
+  agent_id: string;
+  run_id?: string;
+  task_ref?: string;
+  payload: SessionResumePayload;
+}
+
+export interface SessionResumeFailedEvent extends BaseEvent {
+  event: 'session_resume_failed';
+  agent_id: string;
+  run_id?: string;
+  task_ref?: string;
+  payload: SessionResumePayload & { reason: string };
+}
+
 export interface SessionStartFailedEvent extends BaseEvent {
   event: 'session_start_failed';
   run_id: string;
@@ -389,6 +416,8 @@ export type OrcEvent =
   | AgentMarkedDeadEvent
   | SessionStartFailedEvent
   | SessionReconciledEvent
+  | SessionResumedEvent
+  | SessionResumeFailedEvent
   | SessionStartedEvent
   | CoordinatorStartedEvent
   | CoordinatorStoppedEvent

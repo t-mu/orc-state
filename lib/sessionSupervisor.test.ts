@@ -40,6 +40,7 @@ function session(overrides: Partial<SupervisedSession> = {}): SupervisedSession 
   return {
     session_id: 's', run_id: null, agent_id: 'a', provider: 'claude', state: 'running', transport: 'tmux',
     process_pid: 100, process_start: 'proc:5', owner_id: null, owner_expires_at: null, state_reason: null,
+    provider_conversation_id: null, generation: 0, resume_count: 0, exit_reason: null,
     started_at: '', updated_at: '', ...overrides,
   };
 }

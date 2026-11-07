@@ -94,6 +94,8 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
         'agent_marked_dead',
         'session_start_failed',
         'session_reconciled',
+        'session_resumed',
+        'session_resume_failed',
   ]);
 
   if (eventName && taskEvents.has(eventName)) {
@@ -133,6 +135,18 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
   if (eventName === 'session_reconciled') {
     requirePayloadField(event, 'session_id', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
     requirePayloadField(event, 'state', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+  }
+
+  if (eventName === 'session_resumed' || eventName === 'session_resume_failed') {
+    const nonEmpty = (v: unknown) => typeof v === 'string' && v.length > 0;
+    const optional = (v: unknown) => v === undefined || nonEmpty(v);
+    requirePayloadField(event, 'session_id', nonEmpty, 'must be a non-empty string', errors);
+    requirePayloadField(event, 'agent_id', nonEmpty, 'must be a non-empty string', errors);
+    requirePayloadField(event, 'generation', (v) => Number.isInteger(v) && (v as number) >= 0, 'must be a non-negative integer', errors);
+    requirePayloadField(event, 'run_id', optional, 'must be a non-empty string when present', errors);
+    requirePayloadField(event, 'provider_conversation_id', optional, 'must be a non-empty string when present', errors);
+    requirePayloadField(event, 'reason', eventName === 'session_resume_failed' ? nonEmpty : optional,
+      eventName === 'session_resume_failed' ? 'must be a non-empty string' : 'must be a non-empty string when present', errors);
   }
 
   if (eventName && COMMAND_EVENTS.has(eventName)) {

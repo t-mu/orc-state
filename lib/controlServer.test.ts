@@ -324,6 +324,20 @@ describe('local daemon control API', () => {
     expect(withEventDb(dir, (db) => (db.prepare("SELECT COUNT(*) AS n FROM commands WHERE kind = 'task_reset'").get() as { n: number }).n)).toBe(0);
   });
 
+  it('addresses a message to an agent through its running session and requires exactly one recipient', async () => {
+    const a = new ControlClient(dir, { credential: 'session-a' });
+    const base = { runId: 'run-a', kind: 'message' as const, text: 'Hello' };
+    await expect(a.sendMessage({ ...base, idempotencyKey: 'both', recipientSessionId: 'session-b', recipientAgentId: 'worker-b' }))
+      .rejects.toMatchObject({ code: 'bad_request' });
+    await expect(a.sendMessage({ ...base, idempotencyKey: 'neither' })).rejects.toMatchObject({ code: 'bad_request' });
+    const message = (await a.sendMessage({ ...base, idempotencyKey: 'by-agent', recipientAgentId: 'worker-b' })).message;
+    expect(message).toMatchObject({ recipient_id: 'worker-b', recipient_agent_id: 'worker-b', recipient_session_id: null, recipient_run_id: 'run-b' });
+    expect((await new ControlClient(dir, { credential: 'session-b' }).messages()).messages.map((m) => m.message_id)).toContain(message.message_id);
+    await expect(a.sendMessage({ ...base, idempotencyKey: 'by-agent', recipientSessionId: 'session-b' })).rejects.toMatchObject({ code: 'conflict' });
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-b'").run());
+    await expect(a.sendMessage({ ...base, idempotencyKey: 'no-session', recipientAgentId: 'worker-b' })).rejects.toMatchObject({ code: 'conflict' });
+  });
+
   it('retries the same review message across sender and recipient reconnects', async () => {
     const input = { runId: 'run-a', recipientSessionId: 'session-b', idempotencyKey: 'reconnect-review',
       kind: 'review_request' as const, text: 'Review', artifactRefs: ['git:abc'] };

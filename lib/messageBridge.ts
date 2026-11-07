@@ -17,6 +17,11 @@ function runningSession(db: import('better-sqlite3').Database, agentId: string, 
     .get(agentId, runId) as Session | undefined ?? null;
 }
 
+/** A message names its recipient session, or the agent when none is running. */
+function recipientFields(agentId: string, session: Session | null): [string | null, string | null] {
+  return session ? [session.session_id, null] : [null, agentId];
+}
+
 /** Add a durable copy when the run has moved to the operational tables. */
 export function bridgeInputRequest(stateDir: string, runId: string, agentId: string, requestId: string, question: string): string | null {
   return withEventDbTransaction(stateDir, (db) => {
@@ -26,10 +31,10 @@ export function bridgeInputRequest(stateDir: string, runId: string, agentId: str
     const messageId = `msg-${randomUUID()}`;
     db.prepare(`INSERT OR IGNORE INTO messages
       (message_id, run_id, idempotency_key, direction, kind, payload, created_at, sender_id, sender_session_id,
-       recipient_id, recipient_session_id, recipient_run_id)
-      VALUES (?, ?, ?, 'outbound', 'question', ?, ?, ?, ?, 'master', ?, NULL)`)
+       recipient_id, recipient_session_id, recipient_agent_id, recipient_run_id)
+      VALUES (?, ?, ?, 'outbound', 'question', ?, ?, ?, ?, 'master', ?, ?, NULL)`)
       .run(messageId, runId, `input:${requestId}`, JSON.stringify({ text: question, request_id: requestId }),
-        new Date().toISOString(), agentId, sender?.session_id ?? null, master?.session_id ?? null);
+        new Date().toISOString(), agentId, sender?.session_id ?? null, ...recipientFields('master', master));
     const stored = db.prepare('SELECT message_id FROM messages WHERE idempotency_key = ?').get(`input:${requestId}`) as { message_id: string };
     db.prepare(`INSERT OR IGNORE INTO input_requests
       (request_id, run_id, message_id, idempotency_key, question, state, created_at)
@@ -64,10 +69,10 @@ export function bridgeInputResponse(stateDir: string, runId: string, agentId: st
     const id = `msg-${randomUUID()}`;
     db.prepare(`INSERT INTO messages
       (message_id, run_id, idempotency_key, direction, kind, payload, created_at, sender_id,
-       recipient_id, recipient_session_id, recipient_run_id, parent_message_id)
-      VALUES (?, ?, ?, 'inbound', 'feedback', ?, ?, 'human', ?, ?, ?, ?)`)
+       recipient_id, recipient_session_id, recipient_agent_id, recipient_run_id, parent_message_id)
+      VALUES (?, ?, ?, 'inbound', 'feedback', ?, ?, 'human', ?, ?, ?, ?, ?)`)
       .run(id, runId, `input-response:${request.request_id}`, JSON.stringify({ text: response, request_id: request.request_id }),
-        new Date().toISOString(), agentId, recipient?.session_id ?? null, runId, request.message_id);
+        new Date().toISOString(), agentId, ...recipientFields(agentId, recipient), runId, request.message_id);
     db.prepare("UPDATE input_requests SET state = 'answered', response = ?, answered_at = ? WHERE request_id = ?")
       .run(response, new Date().toISOString(), request.request_id);
     return id;
@@ -88,10 +93,10 @@ export function bridgeReviewFeedback(stateDir: string, runId: string, agentId: s
     const id = `msg-${randomUUID()}`;
     db.prepare(`INSERT INTO messages
       (message_id, run_id, idempotency_key, direction, kind, payload, created_at, sender_id, sender_session_id,
-       recipient_id, recipient_session_id, recipient_run_id)
-      VALUES (?, ?, ?, 'inbound', 'feedback', ?, ?, 'reviewer', NULL, ?, ?, ?)`)
+       recipient_id, recipient_session_id, recipient_agent_id, recipient_run_id)
+      VALUES (?, ?, ?, 'inbound', 'feedback', ?, ?, 'reviewer', NULL, ?, ?, ?, ?)`)
       .run(id, runId, `review:${id}`, JSON.stringify({ text: reason, outcome, ...(reviewer ? { reviewer } : {}) }), new Date().toISOString(),
-        agentId, recipient?.session_id ?? null, runId);
+        agentId, ...recipientFields(agentId, recipient), runId);
     return id;
   });
 }

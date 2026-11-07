@@ -9,9 +9,11 @@ import { withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { getRunWorktree } from './runWorktree.ts';
 
 export type TerminalKind = 'provider' | 'shell';
+/** Ids are `<kind>:<session_id>`; rows from before schema 8 keep their `<kind>:<run_id>` id. */
 export interface TerminalRecord {
   terminal_id: string;
-  run_id: string;
+  session_id: string | null;
+  run_id: string | null;
   kind: TerminalKind;
   handle: string;
   worktree_path: string;
@@ -148,12 +150,19 @@ export class TerminalBroker {
   private isCurrent(db: Database.Database, terminal: TerminalRecord): boolean {
     const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(terminal.run_id) as { state: string } | undefined;
     if (!run || !['claimed', 'in_progress'].includes(run.state)) return false;
-    if (terminal.kind === 'shell') return true;
+    // Pre-v8 rows have no session and are never current; a newer session retires the old id.
+    if (terminal.session_id == null) return false;
+    if (terminal.kind === 'shell') {
+      const latest = db.prepare('SELECT session_id FROM sessions WHERE run_id = ? ORDER BY rowid DESC LIMIT 1')
+        .get(terminal.run_id) as { session_id: string } | undefined;
+      return latest?.session_id === terminal.session_id;
+    }
     const agentId = terminal.handle.startsWith('tmux:') ? terminal.handle.slice(5) : '';
     if (!agentId) return false;
-    const session = db.prepare(`SELECT run_id, state, transport FROM sessions WHERE agent_id = ?
-      ORDER BY rowid DESC LIMIT 1`).get(agentId) as { run_id: string; state: string; transport: string | null } | undefined;
-    return session?.run_id === terminal.run_id && session.state === 'running' && session.transport === 'tmux';
+    const session = db.prepare(`SELECT session_id, run_id, state, transport FROM sessions WHERE agent_id = ?
+      ORDER BY rowid DESC LIMIT 1`).get(agentId) as { session_id: string; run_id: string; state: string; transport: string | null } | undefined;
+    return session?.run_id === terminal.run_id && session.state === 'running' && session.transport === 'tmux'
+      && terminal.session_id === session.session_id;
   }
 
   private available(terminal: TerminalRecord): boolean {
@@ -161,34 +170,34 @@ export class TerminalBroker {
       && this.driver.alive(terminal.handle);
   }
 
-  private save(runId: string, kind: TerminalKind, handle: string, logPath: string): TerminalRecord {
+  private save(runId: string, sessionId: string, kind: TerminalKind, handle: string, logPath: string): TerminalRecord {
     const path = this.worktree(runId);
-    const terminalId = `${kind}:${runId}`;
+    const terminalId = `${kind}:${sessionId}`;
     const now = new Date().toISOString();
     return withEventDbTransaction(this.stateDir, (db) => {
       const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(runId) as { state: string } | undefined;
       if (!run || !['claimed', 'in_progress'].includes(run.state)) throw new ControlError('conflict', 'Run is not active', 409);
-      if (kind === 'provider' && !this.isCurrent(db, { run_id: runId, kind, handle } as TerminalRecord))
+      if (kind === 'provider' && !this.isCurrent(db, { session_id: sessionId, run_id: runId, kind, handle } as TerminalRecord))
         throw new ControlError('conflict', 'Provider session no longer belongs to this run', 409);
-      db.prepare(`INSERT INTO terminals (terminal_id, run_id, kind, handle, worktree_path, log_path, state, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)
+      db.prepare(`INSERT INTO terminals (terminal_id, session_id, run_id, kind, handle, worktree_path, log_path, state, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
         ON CONFLICT (terminal_id) DO UPDATE SET handle = excluded.handle, worktree_path = excluded.worktree_path,
           log_path = excluded.log_path, state = 'running', updated_at = excluded.updated_at`)
-        .run(terminalId, runId, kind, handle, path, logPath, now, now);
+        .run(terminalId, sessionId, runId, kind, handle, path, logPath, now, now);
       return db.prepare('SELECT * FROM terminals WHERE terminal_id = ?').get(terminalId) as TerminalRecord;
     });
   }
 
   provider(runId: string): TerminalRecord {
-    const session = withEventDb(this.stateDir, (db) => db.prepare(`SELECT agent_id, transport FROM sessions
-      WHERE run_id = ? AND state = 'running' ORDER BY rowid DESC LIMIT 1`).get(runId) as { agent_id: string; transport: string | null } | undefined);
+    const session = withEventDb(this.stateDir, (db) => db.prepare(`SELECT session_id, agent_id, transport FROM sessions
+      WHERE run_id = ? AND state = 'running' ORDER BY rowid DESC LIMIT 1`).get(runId) as { session_id: string; agent_id: string; transport: string | null } | undefined);
     if (!session || session.transport !== 'tmux') throw new ControlError('conflict', 'Run has no tmux provider terminal', 409);
     const handle = `tmux:${session.agent_id}`;
-    const candidate = { run_id: runId, kind: 'provider', handle } as TerminalRecord;
+    const candidate = { session_id: session.session_id, run_id: runId, kind: 'provider', handle } as TerminalRecord;
     if (!withEventDb(this.stateDir, (db) => this.isCurrent(db, candidate)))
       throw new ControlError('conflict', 'Provider session no longer belongs to this run', 409);
     if (!this.driver.alive(handle)) throw new ControlError('unavailable', 'Provider terminal is not running', 503);
-    return this.save(runId, 'provider', handle, join(this.stateDir, 'pty-logs', `${session.agent_id}.log`));
+    return this.save(runId, session.session_id, 'provider', handle, join(this.stateDir, 'pty-logs', `${session.agent_id}.log`));
   }
 
   shell(runId: string): TerminalRecord {
@@ -197,12 +206,17 @@ export class TerminalBroker {
     const logDir = join(this.stateDir, 'terminal-logs');
     mkdirSync(logDir, { recursive: true, mode: 0o700 });
     const logPath = join(logDir, `${shellName(runId)}.log`);
-    const run = withEventDb(this.stateDir, (db) => db.prepare('SELECT state FROM runs WHERE run_id = ?').get(runId) as { state: string } | undefined);
+    const { run, session } = withEventDb(this.stateDir, (db) => ({
+      run: db.prepare('SELECT state FROM runs WHERE run_id = ?').get(runId) as { state: string } | undefined,
+      // The shell belongs to the run's worktree; it is recorded under the run's latest session.
+      session: db.prepare('SELECT session_id FROM sessions WHERE run_id = ? ORDER BY rowid DESC LIMIT 1').get(runId) as { session_id: string } | undefined,
+    }));
     if (!run || !['claimed', 'in_progress'].includes(run.state)) throw new ControlError('conflict', 'Run is not active', 409);
-    if (!this.driver.alive(handle)) this.markOffline(`shell:${runId}`);
+    if (!session) throw new ControlError('conflict', 'Run has no session', 409);
+    if (!this.driver.alive(handle)) this.markOffline(`shell:${session.session_id}`);
     const started = this.driver.startShell(handle, path, logPath);
     if (!this.driver.alive(handle)) throw new ControlError('unavailable', 'Worktree shell did not start', 503);
-    try { return this.save(runId, 'shell', handle, logPath); }
+    try { return this.save(runId, session.session_id, 'shell', handle, logPath); }
     catch (error) { if (started) this.driver.stop(handle); throw error; }
   }
 

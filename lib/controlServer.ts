@@ -250,9 +250,11 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (req.method === 'GET') return ok({ messages: listMessages(stateDir, messageActor, url.searchParams.get('include_consumed') === '1') });
       if (req.method === 'POST') {
         const body = await readBody(req);
-        if (typeof body.run_id !== 'string' || typeof body.recipient_session_id !== 'string' || typeof body.idempotency_key !== 'string'
+        if (typeof body.run_id !== 'string' || typeof body.idempotency_key !== 'string'
           || typeof body.kind !== 'string' || typeof body.text !== 'string') throw new ControlError('bad_request', 'Message fields are required', 400);
-        const input: SendMessageInput = { runId: body.run_id, recipientSessionId: body.recipient_session_id,
+        const input: SendMessageInput = { runId: body.run_id,
+          ...(body.recipient_session_id === undefined ? {} : { recipientSessionId: body.recipient_session_id as string }),
+          ...(body.recipient_agent_id === undefined ? {} : { recipientAgentId: body.recipient_agent_id as string }),
           idempotencyKey: body.idempotency_key, kind: body.kind as SendMessageInput['kind'], text: body.text,
           ...(body.artifact_refs === undefined ? {} : { artifactRefs: body.artifact_refs as string[] }),
           ...(body.parent_message_id === undefined ? {} : { parentMessageId: body.parent_message_id as string }),
