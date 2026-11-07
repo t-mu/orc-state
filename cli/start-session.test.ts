@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.doUnmock('../lib/binaryCheck.ts');
   vi.doUnmock('../lib/templateRender.ts');
   vi.doUnmock('node:child_process');
-  vi.doUnmock('node-pty');
+  vi.doUnmock('../adapters/tmux.ts');
   dir = createTempStateDir('orch-start-session-test-');
 });
 
@@ -31,8 +31,11 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
   vi.doUnmock('../lib/agentRegistry.ts');
-  vi.doUnmock('node-pty');
+  vi.doUnmock('../adapters/tmux.ts');
   vi.doUnmock('node:child_process');
+  ttyRestore?.();
+  ttyRestore = null;
+  delete process.env.TMUX;
   process.chdir(originalCwd);
   if (originalPwd === undefined) {
     delete process.env.PWD;
@@ -115,7 +118,7 @@ function makeSpawnMock({ writeCoordinatorPid = false, providerSpawnError = null 
       return { unref: vi.fn(), on: vi.fn() };
     }
 
-    // Master foreground provider spawn via mocked node-pty
+    // Master provider launch via the faked startTmuxSession
     if (providerSpawnError) throw providerSpawnError;
 
     let dataCallback: ((chunk: string) => void) | null = null;
@@ -141,7 +144,78 @@ function mockProcessExit() {
   });
 }
 
-function mockSpawn(spawnMock = makeSpawnMock(), spawnSyncMock: ReturnType<typeof vi.fn> | null = null) {
+/**
+ * orc's tmux server, faked: startTmuxSession hands the launch to the provider
+ * spawn mock (so its calls read like a spawn), sessions it starts are alive
+ * until an attach ends them, and attaches are recorded.
+ */
+const tmuxFake = {
+  alive: new Set<string>(),
+  attaches: [] as Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }>,
+  exitOnAttach: false,
+  /** A `--resume` launch dies at once, as Claude does for a conversation it cannot find. */
+  failResume: false,
+  stop: vi.fn(),
+  reset() {
+    this.alive.clear();
+    this.attaches = [];
+    this.exitOnAttach = false;
+    this.failResume = false;
+    this.stop = vi.fn().mockImplementation((handle: string) => { this.alive.delete(handle.slice('tmux:'.length)); return Promise.resolve(); });
+  },
+  onAttach(args: string[], env: NodeJS.ProcessEnv | undefined) {
+    this.attaches.push({ args, env });
+    if (this.exitOnAttach) this.alive.delete(args[args.length - 1].replace(/^=/, ''));
+    return { status: 0, stdout: '' };
+  },
+};
+
+function mockTmux(spawnMock: ReturnType<typeof vi.fn>, { available = true } = {}) {
+  tmuxFake.reset();
+  vi.doMock('../adapters/tmux.ts', () => ({
+    isTmuxAvailable: vi.fn().mockReturnValue(available),
+    inspectTmuxSession: vi.fn().mockImplementation((name: string) => ({ alive: tmuxFake.alive.has(name) })),
+    tmuxAttachCommand: vi.fn().mockImplementation((name: string) => ({ command: 'tmux', args: ['attach-session', '-t', `=${name}`] })),
+    startTmuxSession: vi.fn().mockImplementation((agentId: string, launch: { binary: string; args: string[] }, provider: string) => {
+      const proc = (spawnMock as unknown as (...args: unknown[]) => { pid: number })(launch.binary, launch.args, launch);
+      if (tmuxFake.failResume && launch.args.includes('--resume')) tmuxFake.alive.delete(agentId);
+      else tmuxFake.alive.add(agentId);
+      return {
+        session_handle: `tmux:${agentId}`,
+        provider_ref: {
+          pid: proc.pid, provider, binary: launch.binary, transport: 'tmux', process_start: `proc:${proc.pid}`,
+          tmux_socket: 'orc-test', tmux_session: agentId,
+        },
+      };
+    }),
+    createTmuxAdapter: vi.fn().mockImplementation(() => ({ stop: tmuxFake.stop })),
+  }));
+}
+
+/** Runs start-session as if from a real terminal, so it attaches to the master. */
+function withTty() {
+  const stdin = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+  const stdout = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+  Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+  // A TTY would make the wizard prompt for real; answer as the non-interactive defaults do.
+  vi.doMock('../lib/prompts.ts', async () => ({
+    ...await vi.importActual<typeof import('../lib/prompts.ts')>('../lib/prompts.ts'),
+    isInteractive: vi.fn().mockReturnValue(false),
+    promptCoordinatorAction: vi.fn().mockResolvedValue('reuse'),
+    promptMasterAction: vi.fn().mockImplementation((existing: unknown) => Promise.resolve(existing ? 'reuse' : 'register')),
+    promptProvider: vi.fn().mockImplementation((value: string | undefined) => Promise.resolve(value ?? 'claude')),
+  }));
+  ttyRestore = () => {
+    for (const [stream, desc] of [[process.stdin, stdin], [process.stdout, stdout]] as const) {
+      if (desc) Object.defineProperty(stream, 'isTTY', desc);
+      else delete (stream as { isTTY?: boolean }).isTTY;
+    }
+  };
+}
+let ttyRestore: (() => void) | null = null;
+
+function mockSpawn(spawnMock = makeSpawnMock(), spawnSyncMock: ReturnType<typeof vi.fn> | null = null, { tmuxAvailable = true } = {}) {
   const resolvedSpawnSyncMock = spawnSyncMock
     ?? vi.fn().mockImplementation((command: string, args: string[] = [], options?: { cwd?: string }) => {
       if (command === 'git' && args.includes('--show-toplevel')) {
@@ -149,6 +223,9 @@ function mockSpawn(spawnMock = makeSpawnMock(), spawnSyncMock: ReturnType<typeof
       }
       if (command === 'ps') {
         return { status: 0, stdout: `node ${coordinatorScriptPath}` };
+      }
+      if (command === 'tmux' && args[0] === 'attach-session') {
+        return tmuxFake.onAttach(args, (options as { env?: NodeJS.ProcessEnv } | undefined)?.env);
       }
       return { status: 0, stdout: `node ${coordinatorScriptPath}` };
     });
@@ -160,7 +237,7 @@ function mockSpawn(spawnMock = makeSpawnMock(), spawnSyncMock: ReturnType<typeof
       spawnSync: resolvedSpawnSyncMock,
     };
   });
-  vi.doMock('node-pty', () => ({ default: { spawn: spawnMock } }));
+  mockTmux(spawnMock, { available: tmuxAvailable });
   return spawnMock;
 }
 
@@ -305,6 +382,8 @@ describe('cli/start-session.ts', () => {
     it('closes the master\'s session when the master exits, so its id stops authenticating (task 232)', async () => {
       seedState();
       mockSpawn(makeSpawnMock());
+      tmuxFake.exitOnAttach = true;
+      withTty();
       mockBinaryCheck(true);
       setEnv(dir);
       seedCoordinatorRunning();
@@ -737,8 +816,8 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
 
       const out = lines.join('\n');
-      expect(out).toContain('This terminal is the MASTER session.');
-      expect(out).toContain('MASTER:  foreground planner/delegator in this terminal');
+      expect(out).toContain('detach with Ctrl-b d or close this terminal, and it keeps running');
+      expect(out).toContain('MASTER:  planner/delegator; orc start-session attaches to it (or starts it)');
       expect(out).toContain('MANAGED WORKERS');
       expect(out).toContain('WORKERS: coordinator-managed background capacity launched per task');
       expect(out).toContain('orc delegate');
@@ -776,8 +855,8 @@ describe('cli/start-session.ts', () => {
     });
   });
 
-  describe('master foreground session', () => {
-    it('spawns claude provider with --mcp-config and stdio inherit', async () => {
+  describe('master session', () => {
+    it('launches claude with --mcp-config and the secret only in the launcher env', async () => {
       seedState();
       const spawnMock = makeSpawnMock();
       mockSpawn(spawnMock);
@@ -799,14 +878,213 @@ describe('cli/start-session.ts', () => {
       expect(bootstrapText).toContain('provider: claude');
       expect(bootstrapText).not.toContain('{{agent_id}}');
       expect(providerCall![1].some((arg: string) => String(arg).includes('mcp-config.json'))).toBe(true);
-      expect(providerCall![2]).toEqual(expect.objectContaining({
-        name: 'xterm-256color',
-      }));
+      // The secret travels in the launcher env only, never on the command line.
+      const launch = providerCall![2] as { env: Record<string, string>; cwd: string };
+      expect(launch.env.ORC_MASTER_SECRET).toMatch(/.+/);
+      expect(providerCall![1].join(' ')).not.toContain(launch.env.ORC_MASTER_SECRET);
+      expect(launch.cwd).toBeTruthy();
     });
 
-    it('marks master offline after foreground session exits', async () => {
+    it('runs the master as a supervised tmux session that outlives start-session', async () => {
       seedState();
       mockSpawn();
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      const [session] = listSupervisedSessions(dir).filter((row) => row.agent_id === 'master');
+      expect(session).toMatchObject({ state: 'running', transport: 'tmux', process_pid: 12345, process_start: 'proc:12345' });
+      // A fresh Claude master gets a conversation id it can be resumed from.
+      expect(session.provider_conversation_id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(tmuxFake.alive.has('master')).toBe(true);
+    });
+
+    it('starts a fresh Claude conversation with a recorded --session-id', async () => {
+      seedState();
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      const args = (spawnMock.mock.calls.find((c: unknown[]) => String(c[0]).endsWith('claude')) as [string, string[]])[1];
+      expect(args).not.toContain('--resume');
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      expect(args[args.indexOf('--session-id') + 1]).toBe(listSupervisedSessions(dir)[0].provider_conversation_id);
+    });
+
+    it('leaves the master running and its session valid after the terminal detaches', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      mockBinaryCheck(true);
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(tmuxFake.attaches).toHaveLength(1);
+      expect(tmuxFake.attaches[0].args).toEqual(['attach-session', '-t', '=master']);
+      expect(lines.join('\n')).toContain('Detached. The master keeps running');
+      expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      expect(listSupervisedSessions(dir).find((row) => row.agent_id === 'master')?.state).toBe('running');
+    });
+
+    it('attaches from inside an existing tmux session by clearing TMUX', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      process.env.TMUX = '/tmp/tmux-1000/default,1,0';
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(tmuxFake.attaches).toHaveLength(1);
+      expect(tmuxFake.attaches[0].env).toBeDefined();
+      expect(tmuxFake.attaches[0].env).not.toHaveProperty('TMUX');
+    });
+
+    it('reattaches to a live master instead of starting another, leaving state untouched', async () => {
+      seedState([masterAgent({ status: 'running', session_handle: 'tmux:master', provider_ref: { pid: 4242, transport: 'tmux' } })]);
+      seedActiveRuntimeState();
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      tmuxFake.alive.add('master');
+      withTty();
+      const promptCoordinatorAction = vi.fn().mockResolvedValue('terminate');
+      const promptMasterAction = vi.fn().mockResolvedValue('replace');
+      vi.doMock('../lib/prompts.ts', () => ({
+        promptProvider: vi.fn().mockResolvedValue('claude'),
+        isInteractive: vi.fn().mockReturnValue(true),
+        promptCoordinatorAction,
+        promptMasterAction,
+        printManagedWorkerNotice: vi.fn(),
+      }));
+      mockBinaryCheck(true);
+      const exitSpy = mockProcessExit();
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:0');
+
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(promptCoordinatorAction).not.toHaveBeenCalled();
+      expect(promptMasterAction).not.toHaveBeenCalled();
+      expect(spawnMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('claude'))).toBe(false);
+      expect(tmuxFake.attaches).toHaveLength(1);
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
+    });
+
+    it('resumes the recorded Claude conversation under the same session when the master process is dead', async () => {
+      seedState([masterAgent({ status: 'offline' })]);
+      const { recordProviderSession, closeProviderSessionsForAgent } = await import('../lib/runStore.ts');
+      recordProviderSession(dir, {
+        sessionId: 'session-old', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
+        startedAt: '2026-01-01T00:00:00Z', transport: 'tmux', credentialHash: 'old-hash', providerConversationId: 'conv-1234',
+      });
+      closeProviderSessionsForAgent(dir, 'master', '2026-01-01T01:00:00Z');
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
+
+      const args = (spawnMock.mock.calls.find((c: unknown[]) => String(c[0]).endsWith('claude')) as [string, string[]])[1];
+      expect(args[args.indexOf('--resume') + 1]).toBe('conv-1234');
+      expect(args).not.toContain('--session-id');
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      const sessions = listSupervisedSessions(dir).filter((row) => row.agent_id === 'master');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        session_id: 'session-old', state: 'running', provider_conversation_id: 'conv-1234', generation: 1, resume_count: 1, process_pid: 12345,
+      });
+      expect(readAgents()[0]).toMatchObject({ status: 'running', session_handle: 'tmux:master', session_token: 'session-old' });
+      const resumed = queryEvents(dir, { event_type: 'session_resumed' });
+      expect(resumed).toHaveLength(1);
+      expect(resumed[0]).toMatchObject({ agent_id: 'master', payload: { session_id: 'session-old', generation: 1, provider_conversation_id: 'conv-1234' } });
+      expect(queryEvents(dir, { event_type: 'session_started' }).at(-1)).toMatchObject({ payload: { session_id: 'session-old' } });
+    }, 15_000);
+
+    it('falls back to a fresh conversation when the resume fails', async () => {
+      seedState([masterAgent({ status: 'offline' })]);
+      const { recordProviderSession, closeProviderSessionsForAgent } = await import('../lib/runStore.ts');
+      recordProviderSession(dir, {
+        sessionId: 'session-old', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
+        startedAt: '2026-01-01T00:00:00Z', providerConversationId: 'conv-gone',
+      });
+      closeProviderSessionsForAgent(dir, 'master', '2026-01-01T01:00:00Z');
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      tmuxFake.failResume = true;
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
+
+      const launches = spawnMock.mock.calls.filter((c: unknown[]) => String(c[0]).endsWith('claude')).map((c: unknown[]) => c[1] as string[]);
+      expect(launches).toHaveLength(2);
+      expect(launches[0]).toContain('--resume');
+      const freshId = launches[1][launches[1].indexOf('--session-id') + 1];
+      expect(freshId).not.toBe('conv-gone');
+      const failed = queryEvents(dir, { event_type: 'session_resume_failed' });
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toMatchObject({ agent_id: 'master', payload: { session_id: 'session-old', provider_conversation_id: 'conv-gone' } });
+      expect(queryEvents(dir, { event_type: 'session_resumed' })).toHaveLength(0);
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      const running = listSupervisedSessions(dir).filter((row) => row.agent_id === 'master' && row.state === 'running');
+      expect(running).toHaveLength(1);
+      expect(running[0]).toMatchObject({ provider_conversation_id: freshId });
+      expect(running[0].session_id).not.toBe('session-old');
+    });
+
+    it('starts fresh instead of resuming when the master was just replaced', async () => {
+      seedState([masterAgent()]);
+      const { recordProviderSession } = await import('../lib/runStore.ts');
+      recordProviderSession(dir, {
+        sessionId: 'session-old', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
+        startedAt: '2026-01-01T00:00:00Z', providerConversationId: 'conv-1234',
+      });
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      vi.doMock('../lib/prompts.ts', () => ({
+        promptProvider: vi.fn().mockResolvedValue('claude'),
+        isInteractive: vi.fn().mockReturnValue(true),
+        promptCoordinatorAction: vi.fn().mockResolvedValue('reuse'),
+        promptMasterAction: vi.fn().mockResolvedValue('replace'),
+        printManagedWorkerNotice: vi.fn(),
+      }));
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude'];
+      await import('./start-session.ts');
+
+      const args = (spawnMock.mock.calls.find((c: unknown[]) => String(c[0]).endsWith('claude')) as [string, string[]])[1];
+      expect(args).not.toContain('--resume');
+      expect(args[args.indexOf('--session-id') + 1]).not.toBe('conv-1234');
+    });
+
+    it('marks master offline when the master exits while attached', async () => {
+      seedState();
+      mockSpawn();
+      tmuxFake.exitOnAttach = true;
+      withTty();
       mockBinaryCheck(true);
 
       setEnv(dir);
@@ -901,20 +1179,23 @@ describe('cli/start-session.ts', () => {
       expect(coordinatorCalls).toHaveLength(0);
     });
 
-    it('exits 1 when master provider CLI exits non-zero', async () => {
-      seedState();
-      mockSpawn(makeSpawnMock({ providerCloseCode: 2 }));
+    it('exits 1 before touching state when tmux is not available', async () => {
+      seedState([masterAgent()]);
+      seedActiveRuntimeState();
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock, null, { tmuxAvailable: false });
       mockBinaryCheck(true);
       const exitSpy = mockProcessExit();
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       setEnv(dir);
       seedCoordinatorRunning();
-      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      process.argv = ['node', 'start-session.ts'];
       await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('exited with code 2'));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('tmux is not available'));
+      expect(readClaims()[0].state).toBe('in_progress');
     });
 
     it('rolls back reset and suppresses session_started when master runtime update fails after spawn', async () => {
@@ -947,6 +1228,8 @@ describe('cli/start-session.ts', () => {
       await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
+      // The started master does not outlive the failed start.
+      expect(tmuxFake.stop).toHaveBeenCalledWith('tmux:master');
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(false);
       expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');

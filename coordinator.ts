@@ -59,6 +59,7 @@ import { sessionAuthenticator, startControlServer, type ControlServer } from './
 import {
   IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, currentSessionForAgent, currentSessionOwnerId,
   identityMismatch, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession,
+  retireDeadMaster,
 } from './lib/sessionSupervisor.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
@@ -563,6 +564,16 @@ async function markFinalizeBlocked(claim: Claim, workerPoolConfig: WorkerPoolCon
   await cleanupRunCapacity(claim.agent_id);
   log(`run ${claim.run_id} blocked during finalization: ${reason}`);
   return true;
+}
+
+/** A master that exited while detached goes offline and loses its credential (v1/master-tmux). */
+async function retireMasterIfDead(agents: Agent[]): Promise<void> {
+  try {
+    const retired = await retireDeadMaster(STATE_DIR, agents, (master) => getAdapter(master.provider).heartbeatProbe(master.session_handle!));
+    if (retired) log('master session exited; marked the master offline and closed its session');
+  } catch (error) {
+    log(`warning: master liveness check failed: ${(error as Error).message}`);
+  }
 }
 
 function checkMasterHealth(agents: Agent[]): void {
@@ -1501,7 +1512,8 @@ async function tick() {
   ({ agents, claims } = await expireAndCleanupStaleLeases(agents, claims, workerPoolConfig));
   ({ agents, claims } = await probeActiveWorkerSessions(agents, claims, workerPoolConfig));
 
-  checkMasterHealth(agents);
+  await retireMasterIfDead(agents);
+  checkMasterHealth(listCoordinatorAgents(STATE_DIR));
   ({ agents, claims } = reloadTickState(workerPoolConfig));
 
   const attemptsByTask = buildAttemptCountLookup();

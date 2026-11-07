@@ -13,15 +13,20 @@
  * in non-TTY / CI mode they must be supplied as flags.
  *
  * Flow:
+ *   0. A live master in orc's tmux server: make sure the coordinator runs, then reattach
  *   1. Reuse/restart coordinator
- *   2. Reuse/replace/register the foreground master session
- *   3. Start the master provider CLI in this terminal
+ *   2. Reuse/replace/register the master
+ *   3. Start the master provider CLI in a tmux session (resuming its Claude
+ *      conversation when one is recorded) and attach this terminal to it
+ *
+ * Detaching (Ctrl-b d) or closing the terminal leaves the master running; its
+ * credential is revoked when the master exits or by `orc kill-all`.
  */
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { spawn, execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import pty from 'node-pty';
 
 import {
   listAgents,
@@ -35,7 +40,7 @@ import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
-import { closeProviderSessionsForAgent, recordProviderSession } from '../lib/runStore.ts';
+import { closeProviderSessionsForAgent, recordProviderSession, recordSessionResumeFailed, resumeProviderSession } from '../lib/runStore.ts';
 import { credentialHash, newSessionSecret } from '../lib/sessionCredentials.ts';
 import {
   promptProvider,
@@ -45,7 +50,9 @@ import {
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
-import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
+import { createTmuxAdapter, inspectTmuxSession, isTmuxAvailable, startTmuxSession, tmuxAttachCommand } from '../adapters/tmux.ts';
+import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
+import { listSupervisedSessions } from '../lib/sessionSupervisor.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
 import { findLiveCoordinator } from '../lib/coordinatorLiveness.ts';
@@ -55,10 +62,6 @@ import {
   resetVolatileRuntimeStateForSession,
   restoreVolatileRuntimeStateFromSnapshot,
 } from '../lib/sessionState.ts';
-
-export let masterPty: ReturnType<typeof pty.spawn> | null = null;
-
-ensureNodePtySpawnHelperPermissions();
 
 function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): string {
   return fileURLToPath(new URL(
@@ -228,6 +231,92 @@ try {
 const agents = listAgents(STATE_DIR);
 let master = agents.find((a) => a.role === 'master') ?? null;
 
+/** The tmux session of a master whose process is still running, or null. */
+function liveMasterTmuxName(agent: typeof master): string | null {
+  const handle = agent?.session_handle;
+  if (!handle?.startsWith('tmux:')) return null;
+  const name = handle.slice('tmux:'.length);
+  return inspectTmuxSession(name).alive ? name : null;
+}
+
+async function ensureCoordinatorRunning() {
+  const { running, pid } = coordinatorStatus();
+  if (running) {
+    console.log(`✓ Coordinator already running  (PID ${pid})`);
+    return;
+  }
+  try {
+    const newPid = await spawnCoordinator();
+    console.log(newPid ? `✓ Coordinator running  (PID ${newPid})` : '  Coordinator spawned (PID confirmation pending)');
+  } catch (err) {
+    console.warn(`Warning: coordinator failed to start: ${formatErrorMessage(err)}. Master session continues without coordinator.`);
+  }
+}
+
+/**
+ * Attach this terminal to the master's tmux session, with input. tmux refuses
+ * to attach from inside another client while TMUX is set, and orc's server is
+ * a different socket, so a nested client is the only option (as orc attach).
+ * Returns once the client detaches or the master exits.
+ */
+function attachMaster(agent: NonNullable<typeof master>, sessionName: string) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.log(`\nMaster '${agent.agent_id}' is running in orc's tmux server. Run orc start-session from a terminal to attach.`);
+    return;
+  }
+  console.log(`\nAttaching to master '${agent.agent_id}' — Ctrl-b d detaches; the master keeps running.`);
+  const { TMUX: _tmux, ...env } = process.env;
+  const { command, args } = tmuxAttachCommand(sessionName, { write: true, providerRef: agent.provider_ref });
+  const result = spawnSync(command, args, { stdio: 'inherit', env });
+  if (result.error) console.error(`Could not run ${command}: ${result.error.message}`);
+  if (inspectTmuxSession(sessionName).alive) {
+    console.log('\nDetached. The master keeps running; run orc start-session to reattach.');
+    return;
+  }
+  markMasterOffline(agent.agent_id);
+  console.log('\nMaster session ended. Coordinator continues running in the background.');
+}
+
+function markMasterOffline(agentId: string) {
+  const now = new Date().toISOString();
+  try {
+    updateAgentRuntime(STATE_DIR, agentId, {
+      status: 'offline',
+      session_handle: null,
+      provider_ref: null,
+      last_status_change_at: now,
+    });
+  } catch {
+    // Agent may have been removed by orc kill-all; safe to ignore.
+  }
+  try {
+    // An ended master's id must stop authenticating.
+    closeProviderSessionsForAgent(STATE_DIR, agentId, now);
+  } catch {
+    // Best effort, as above.
+  }
+}
+
+/** Whether the tmux session is still alive after `ms`. */
+async function survives(sessionName: string, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (!inspectTmuxSession(sessionName).alive) return false;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return inspectTmuxSession(sessionName).alive;
+}
+
+// ── Reattach a live master ─────────────────────────────────────────────────
+
+const liveMasterSession = liveMasterTmuxName(master);
+if (master && liveMasterSession) {
+  console.log(`✓ Master '${master.agent_id}' is already running`);
+  await ensureCoordinatorRunning();
+  attachMaster(master, liveMasterSession);
+  process.exit(0);
+}
+
 // ── Startup wizard ─────────────────────────────────────────────────────────
 
 const { running: coordinatorRunning, pid: coordinatorPid } = coordinatorStatus();
@@ -251,6 +340,8 @@ if (masterAction === 'cancel') {
   if (isInteractive()) console.log('Cancelled.');
   process.exit(isInteractive() ? 0 : 1);
 }
+// A master registered or replaced now has no conversation to resume.
+let freshMaster = false;
 if (masterAction === 'replace' && master) {
   removeAgent(STATE_DIR, master.agent_id);
   console.log(`✓ Removed existing master '${master.agent_id}'`);
@@ -274,6 +365,7 @@ if (!master) {
     process.exit(1);
   }
   registerAgent(STATE_DIR, { agent_id: agentId, provider, role: 'master' });
+  freshMaster = true;
   console.log(`✓ Registered master agent '${agentId}' (${provider})`);
   master = getAgent(STATE_DIR, agentId);
 }
@@ -292,6 +384,11 @@ if (!binaryOk) {
   process.exit(1);
 }
 
+if (!isTmuxAvailable()) {
+  console.error('Cannot start master session: tmux is not available. orc start-session runs the master in orc\'s tmux server; install tmux.');
+  process.exit(1);
+}
+
 // ── Auth probe ─────────────────────────────────────────────────────────────
 
 const authResult = probeProviderAuth(master.provider);
@@ -306,31 +403,45 @@ const sessionReset = coordinatorAction === 'reuse'
   ? prepareSessionReuse(STATE_DIR)
   : resetVolatileRuntimeStateForSession(STATE_DIR);
 
-// Coordinator spawn is deferred until after pty.spawn succeeds — see below.
-// This avoids a lock race: if pty.spawn throws, the error recovery path calls
+// Coordinator spawn is deferred until after the master starts — see below.
+// This avoids a lock race: if the start throws, the error recovery path calls
 // restoreVolatileRuntimeStateFromSnapshot which needs the .lock file, but a
 // freshly spawned coordinator may be holding it during its first tick.
 
-// ── Master foreground session ──────────────────────────────────────────────
+// ── Master session ─────────────────────────────────────────────────────────
 
 const binaryName = (PROVIDER_BINARIES)[master.provider] ?? master.provider;
-// Resolve to absolute path so node-pty can find it regardless of its PATH.
+// Resolve to an absolute path so the launcher finds it regardless of the tmux server's PATH.
 let resolvedBinary = binaryName;
 try { resolvedBinary = execFileSync('which', [binaryName], { encoding: 'utf8' }).trim(); } catch { /* keep binaryName */ }
 const binary = resolvedBinary;
-const masterPidDir = join(STATE_DIR, 'pty-pids');
-const masterPidPath = join(masterPidDir, 'master.pid');
 console.log(`\n✓ Starting ${master.provider} CLI as master session...`);
-console.log('  This terminal is the MASTER session.');
-console.log('  Workers are separate headless PTY sessions managed by the coordinator.');
+console.log("  The master runs in orc's tmux server: detach with Ctrl-b d or close this terminal, and it keeps running.");
+console.log('  Workers are separate sessions managed by the coordinator.');
 printManagedWorkerNotice();
 console.log('\nSession recap:');
-console.log('  MASTER:  foreground planner/delegator in this terminal');
+console.log('  MASTER:  planner/delegator; orc start-session attaches to it (or starts it)');
 console.log('  WORKERS: coordinator-managed background capacity launched per task');
 console.log('\nNext steps:');
 console.log('  Delegate work:      orc delegate [--target-agent-id=<id>] --task-ref=<feature/task>');
 console.log('  Check status:       orc status');
 console.log('  Recovery/debug:     orc terminal / orc worker-remove / orc worker-gc');
+
+/**
+ * The Claude conversation a dead master left behind (recorded on its session),
+ * resumed under the same session id. A newly registered master starts fresh.
+ */
+let resumable = !freshMaster && master.provider === 'claude'
+  ? listSupervisedSessions(STATE_DIR).filter((row) => row.agent_id === master.agent_id && row.provider_conversation_id).at(-1) ?? null
+  : null;
+let conversationId = master.provider === 'claude' ? (resumable?.provider_conversation_id ?? randomUUID()) : null;
+/** Claude's own flags naming the conversation: resume the recorded one, or fix the id of a new one. */
+const conversationArgs = () => {
+  if (!conversationId) return [];
+  return resumable ? ['--resume', conversationId] : ['--session-id', conversationId];
+};
+/** A resume that fails (conversation gone, or recorded under another directory) ends the CLI within this window. */
+const RESUME_SURVIVAL_MS = 3_000;
 
 let spawnArgs: string[] = [];
 const masterConfig = loadMasterConfig();
@@ -342,6 +453,7 @@ try {
     spawnArgs = ['--mcp-config', mcpConfigPath, '--system-prompt', bootstrap, '--name', 'MASTER', ...masterModelArgs];
     console.log('  MCP server: orchestrator tools available in this session.');
     console.log('  Master bootstrap loaded via --system-prompt.');
+    if (resumable) console.log(`  Resuming conversation ${conversationId}.`);
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
     console.log('\n----- MASTER BOOTSTRAP -----');
     console.log(bootstrap);
@@ -384,146 +496,68 @@ try {
   process.exit(1);
 }
 
-let stdinRawEnabled = false;
-const stdinDataHandler = (data: Buffer | string) => {
-  if (masterPty) {
-    masterPty.write(String(data));
+let masterSessionName: string;
+try {
+  // The secret reaches the master only through the tmux launcher's environment (deleted before exec).
+  const launch = () => startTmuxSession(master.agent_id, {
+    binary,
+    args: [...spawnArgs, ...conversationArgs()],
+    env: { ...stripNestedProviderEnv(process.env), ORC_MASTER_SECRET: masterSecret } as Record<string, string>,
+    cwd: resolveInvocationCwd(),
+  }, master.provider);
+  let started = launch();
+  if (resumable && !(await survives(started.session_handle.slice('tmux:'.length), RESUME_SURVIVAL_MS))) {
+    console.warn(`  Could not resume conversation ${conversationId}; starting a fresh one.`);
+    recordSessionResumeFailed(STATE_DIR, resumable.session_id, 'provider CLI exited while resuming its conversation');
+    resumable = null;
+    conversationId = randomUUID();
+    started = launch();
   }
-};
-const stdoutResizeHandler = () => {
-  if (masterPty) {
-    masterPty.resize(process.stdout.columns ?? 220, process.stdout.rows ?? 50);
-  }
-};
-// A killed start-session must not leave the master's credential valid: close its session on the way out.
-for (const [signal, code] of [['SIGHUP', 129], ['SIGTERM', 143]] as const) {
-  process.once(signal, () => {
-    markMasterOffline();
-    try { masterPty?.kill(); } catch { /* already gone */ }
-    // The normal teardown below never runs after process.exit: restore the terminal and drop the pid file here.
-    if (stdinRawEnabled && process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') process.stdin.setRawMode(false);
-    try { unlinkSync(masterPidPath); } catch { /* already gone */ }
-    process.exit(code);
-  });
-}
-
-const cliResult = await new Promise<{ type: string; error?: Error | undefined; code?: number | undefined; signal?: string | undefined }>((resolvePromise) => {
+  masterSessionName = started.session_handle.slice('tmux:'.length);
   try {
-    masterPty = pty.spawn(binary, spawnArgs, {
-      name: 'xterm-256color',
-      cols: process.stdout.columns ?? 220,
-      rows: process.stdout.rows ?? 50,
-      cwd: resolveInvocationCwd(),
-      env: { ...process.env, ORC_MASTER_SECRET: masterSecret } as Record<string, string>,
-    });
     const startedAt = new Date().toISOString();
-    recordProviderSession(STATE_DIR, {
-      sessionId: sessionReset.session_id,
-      runId: null,
-      agentId: master.agent_id,
-      provider: master.provider,
-      providerRef: null,
-      startedAt,
-      credentialHash: credentialHash(masterSecret),
-    });
+    const ref = started.provider_ref;
+    const sessionId = resumable?.session_id ?? sessionReset.session_id;
+    const identity = { transport: 'tmux', processPid: ref.pid, processStart: ref.process_start };
+    if (resumable) {
+      resumeProviderSession(STATE_DIR, {
+        sessionId, providerRef: ref, at: startedAt, ...identity, credentialHash: credentialHash(masterSecret),
+      });
+    } else {
+      recordProviderSession(STATE_DIR, {
+        sessionId,
+        runId: null,
+        agentId: master.agent_id,
+        provider: master.provider,
+        providerRef: ref,
+        startedAt,
+        ...identity,
+        credentialHash: credentialHash(masterSecret),
+        providerConversationId: conversationId,
+      });
+    }
     updateAgentRuntime(STATE_DIR, master.agent_id, {
       status: 'running',
+      session_handle: started.session_handle,
+      session_token: sessionId,
+      session_started_at: startedAt,
+      provider_ref: ref as typeof master.provider_ref,
       last_heartbeat_at: startedAt,
       last_status_change_at: startedAt,
     });
-    appendSessionStartedEvent(STATE_DIR, sessionReset);
-
-    // Coordinator spawn deferred to here — pty.spawn succeeded, state is committed.
-    // Fire-and-forget: master session doesn't depend on coordinator being confirmed alive.
-    const { running: coordRunning, pid: coordPid } = coordinatorStatus();
-    if (coordRunning) {
-      console.log(`✓ Coordinator already running  (PID ${coordPid})`);
-    } else {
-      spawnCoordinator().then((newPid) => {
-        console.log(newPid
-          ? `✓ Coordinator running  (PID ${newPid})`
-          : '  Coordinator spawned (PID confirmation pending)');
-      }).catch((err: unknown) => {
-        console.warn(`Warning: coordinator failed to start: ${formatErrorMessage(err)}. Master session continues without coordinator.`);
-      });
-    }
+    // A resumed master keeps its session id; the event names the session that runs.
+    appendSessionStartedEvent(STATE_DIR, { ...sessionReset, session_id: sessionId });
   } catch (error) {
-    restoreVolatileRuntimeStateFromSnapshot(STATE_DIR, sessionReset.snapshot);
-    if (masterPty) {
-      try {
-        masterPty.kill();
-      } catch {
-        // best effort
-      }
-      masterPty = null;
-    }
-    resolvePromise({ type: 'error', error: error as Error });
-    return;
+    // The master must not outlive a failed start: its secret would be valid nowhere, its state half-written.
+    await createTmuxAdapter({ provider: master.provider }).stop(started.session_handle);
+    throw error;
   }
-
-  mkdirSync(masterPidDir, { recursive: true });
-  writeFileSync(masterPidPath, String(masterPty.pid));
-
-  masterPty.onData((data) => process.stdout.write(data));
-  masterPty.onExit(({ exitCode, signal }) => resolvePromise({ type: 'close', code: exitCode, signal: signal as string | undefined }));
-
-  if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
-    process.stdin.setRawMode(true);
-    stdinRawEnabled = true;
-  }
-  process.stdin.resume();
-  process.stdin.on('data', stdinDataHandler);
-  process.stdout.on('resize', stdoutResizeHandler);
-});
-
-process.stdin.off('data', stdinDataHandler);
-process.stdout.off('resize', stdoutResizeHandler);
-if (stdinRawEnabled && process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
-  process.stdin.setRawMode(false);
-}
-if (process.stdin.isTTY) {
-  process.stdin.pause();
-}
-try {
-  unlinkSync(masterPidPath);
-} catch {
-  // already gone
-}
-masterPty = null;
-
-function markMasterOffline() {
-  if (!master) return;
-  const now = new Date().toISOString();
-  try {
-    updateAgentRuntime(STATE_DIR, master.agent_id, {
-      status: 'offline',
-      session_handle: null,
-      provider_ref: null,
-      last_status_change_at: now,
-    });
-  } catch {
-    // Agent may have been removed by orc kill-all before teardown; safe to ignore.
-  }
-  try {
-    // The coordinator leaves the master's session to us: an ended master's id must stop authenticating.
-    closeProviderSessionsForAgent(STATE_DIR, master.agent_id, now);
-  } catch {
-    // Best effort, as above.
-  }
-}
-
-if (cliResult.type === 'error') {
-  console.error(
-    `Failed to start master provider CLI '${String(binary)}' for ${master.provider}: ${cliResult.error?.message ?? 'unknown error'}`,
-  );
+} catch (error) {
+  restoreVolatileRuntimeStateFromSnapshot(STATE_DIR, sessionReset.snapshot);
+  console.error(`Failed to start master provider CLI '${String(binary)}' for ${master.provider}: ${formatErrorMessage(error)}`);
   process.exit(1);
-} else if (cliResult.code !== 0) {
-  console.error(
-    `Master provider CLI '${binary}' exited with code ${cliResult.code ?? 'null'}${cliResult.signal ? ` (signal ${cliResult.signal})` : ''}.`,
-  );
-  markMasterOffline();
-  process.exit(1);
-} else {
-  markMasterOffline();
-  console.log('\nMaster session ended. Coordinator continues running in the background.');
 }
+
+// Coordinator spawn deferred to here — the master started and its state is committed.
+await ensureCoordinatorRunning();
+attachMaster(master, masterSessionName);

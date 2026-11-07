@@ -164,6 +164,24 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     }
   }, 20_000);
 
+  it('startTmuxSession() runs a given command through the launcher, its secret only in the process env (v1/master-tmux)', async () => {
+    const { module, adapter } = await loadAdapter();
+    const started = module.startTmuxSession('master', {
+      binary: 'sleep', args: ['30'], env: { ...process.env, ORC_MASTER_SECRET: 'probe-secret' } as Record<string, string>, cwd: dir,
+    }, 'claude');
+    expect(started.session_handle).toBe('tmux:master');
+    expect(started.provider_ref).toMatchObject({ transport: 'tmux', provider: 'claude', binary: 'sleep', tmux_session: module.tmuxSessionName('master') });
+    expect(module.inspectTmuxSession('master')).toMatchObject({ alive: true, pid: started.provider_ref.pid });
+    // The launcher is gone once the pane has run it.
+    expect(readdirSync(tmpdir()).filter((name) => name.startsWith('orc-launch-'))
+      .some((name) => existsSync(join(tmpdir(), name, 'master.launch.sh')))).toBe(false);
+    if (existsSync('/proc/self/environ')) {
+      expect(readFileSync(`/proc/${started.provider_ref.pid}/environ`, 'utf8').split('\0')).toContain('ORC_MASTER_SECRET=probe-secret');
+    }
+    await adapter.stop(started.session_handle);
+    expect(module.inspectTmuxSession('master').alive).toBe(false);
+  }, 20_000);
+
   it('starts the provider in the assigned worktree (task 204)', async () => {
     const worktree = join(dir, 'worktrees', 'run-1');
     mkdirSync(worktree, { recursive: true });

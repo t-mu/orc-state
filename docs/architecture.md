@@ -11,7 +11,7 @@ orc-state dispatches coding tasks to headless AI agent workers. Tasks live in th
 ```
 orc start-session
     |
-    +---> Coordinator (background)        Master (foreground)
+    +---> Coordinator (background)        Master (tmux, attached)
               | tick (30 s)                   | user, task authoring, monitoring
               v
          pick eligible task
@@ -30,7 +30,7 @@ orc start-session
 | Role | Process | Owns |
 |------|---------|------|
 | Coordinator | background Node process (`orc start-session`) | dispatch, session liveness probes (tmux pane / PTY pid), lease expiry and requeue, phase inference, merge, the control API |
-| Master | foreground provider session | task authoring (`create_task`), monitoring (`orc status`, `orc watch`), answering input requests, scouts; never implements |
+| Master | provider session in orc's tmux server; `orc start-session` attaches to it | task authoring (`create_task`), monitoring (`orc status`, `orc watch`), answering input requests, scouts; never implements |
 | Worker | headless session, one per run, random orc-themed name | its worktree; reports through `orc run-*` / `orc progress`; never merges or removes its worktree |
 | Scout | ephemeral read-only session launched by the master | a `SCOUT_REPORT`; no state or file writes |
 
@@ -56,7 +56,7 @@ The worker's provider comes from the task's `required_provider` or the configure
 | Term | Meaning |
 |------|---------|
 | Coordinator | Background process that dispatches, supervises and merges |
-| Master | Foreground agent the user talks to; authors tasks, answers workers |
+| Master | Agent the user talks to, in orc's tmux server (`orc start-session` attaches); authors tasks, answers workers |
 | Worker | Task-scoped headless agent session for one run |
 | Scout | Read-only investigation agent launched with `request_scout` |
 | Task | Unit of work: ref `<feature>/<slug>`, revisions, runtime-owned status |

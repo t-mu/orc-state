@@ -176,7 +176,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `agent_registered` | — | in schema, not emitted |
 | `session_started`, `session_start_failed` | Coordinator | provider session launch |
 | `session_reconciled` | Coordinator | restart reconciliation (`session_id`, `state`, `outcome`, `reason`) |
-| `session_resumed`, `session_resume_failed` | Coordinator | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
+| `session_resumed`, `session_resume_failed` | Coordinator; `start-session` (master resume) | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
 | `task_added`, `task_updated` | Master / operator / Coordinator | task created / changed |
 | `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task` |
 | `task_dispatch_blocked` | Coordinator | dispatch refused (deps, no agent) |
@@ -253,7 +253,7 @@ Status codes: no or wrong credential `401`; wrong principal (e.g. a worker on a 
 
 ## Session Handles
 
-Format `<transport>:<agent_id>` (`tmux:broken-nose`, `pty:master`, `app:…`). `ORC_SESSION_TRANSPORT`: `auto` (tmux if available, else pty), `tmux`, `pty`. Existing sessions keep the transport in their handle.
+Format `<transport>:<agent_id>` (`tmux:broken-nose`, `tmux:master`, `pty:broken-nose`, `app:…`). `ORC_SESSION_TRANSPORT`: `auto` (tmux if available, else pty), `tmux`, `pty`. Existing sessions keep the transport in their handle.
 
 | Transport | Owner | Survives coordinator exit |
 |-----------|-------|---------------------------|

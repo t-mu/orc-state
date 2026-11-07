@@ -4,6 +4,8 @@ import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eve
 import { isSameProcess, readProcessStart } from './processIdentity.ts';
 import type { SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
+import { updateAgentRuntime } from './agentRegistry.ts';
+import { closeProviderSessionsForAgent } from './runStore.ts';
 
 /**
  * Session states (Task 202). Only `running` sessions accept commands.
@@ -182,11 +184,9 @@ export async function reconcileSessions(
   const byAgent = new Map(agents.map((agent) => [agent.agent_id, agent]));
   const results: ReconcileResult[] = [];
   for (const session of listSupervisedSessions(stateDir, ['running', 'recoverable', 'unknown'])) {
+    // The master is supervised like any session: `orc start-session` runs it in orc's tmux server
+    // and records its `tmux:` handle, so a dead master's credential stops authenticating here too.
     const agent = byAgent.get(session.agent_id);
-    // The foreground master session belongs to `orc start-session`, which records it (superseding the
-    // previous one) and closes it when the master exits; the coordinator never launched it and holds no
-    // handle for it, so it is not the coordinator's to supersede.
-    if (agent?.role === 'master') continue;
     let decision: Pick<ReconcileResult, 'state' | 'outcome' | 'reason'>;
     if (!agent?.session_handle || agent.session_token !== session.session_id) {
       decision = { state: 'offline', outcome: 'superseded', reason: 'agent no longer references this session' };
@@ -202,4 +202,26 @@ export async function reconcileSessions(
     }
   }
   return results;
+}
+
+/**
+ * The master runs detached in orc's tmux server, so its exit is noticed here,
+ * each coordinator tick, rather than by an attached terminal: a master whose
+ * session is gone goes offline and its session closes, so its credential
+ * stops authenticating. Returns whether a master was retired.
+ */
+export async function retireDeadMaster(
+  stateDir: string,
+  agents: Agent[],
+  isAlive: (agent: Agent) => Promise<boolean>,
+): Promise<boolean> {
+  const master = agents.find((agent) => agent.role === 'master');
+  if (!master?.session_handle || master.status === 'offline') return false;
+  if (await isAlive(master)) return false;
+  const now = new Date().toISOString();
+  updateAgentRuntime(stateDir, master.agent_id, {
+    status: 'offline', session_handle: null, provider_ref: null, last_status_change_at: now,
+  });
+  closeProviderSessionsForAgent(stateDir, master.agent_id, now);
+  return true;
 }
