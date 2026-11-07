@@ -107,7 +107,7 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     expect(extractScoutReport(log).report).toBeNull();
   }, 20_000);
 
-  it('shares the provider writer lease with the coordinator send path', async () => {
+  it('sends for the coordinator while an operator holds the input lease, and holds operator input back meanwhile', async () => {
     const { adapter } = await loadAdapter();
     const started = await adapter.start('worker-1', { working_directory: dir });
     writeFileSync(join(dir, '.git'), 'gitdir: dummy');
@@ -121,12 +121,12 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     const broker = new TerminalBroker(dir, { worktreeForRun: () => dir });
     const terminal = broker.provider('run-1');
     const human = broker.acquire(terminal.terminal_id, 'human');
-    await expect(adapter.send(started.session_handle, 'PING')).rejects.toThrow('Terminal already has a writer');
-    broker.release(terminal.terminal_id, human.lease_id);
     const sending = adapter.send(started.session_handle, 'PING');
-    expect(() => broker.acquire(terminal.terminal_id, 'human')).toThrow('Terminal already has a writer');
+    expect(() => broker.input(terminal.terminal_id, human.lease_id, 'x')).toThrow(expect.objectContaining({ code: 'busy' }));
     await sending;
-    expect(() => broker.acquire(terminal.terminal_id, 'human')).not.toThrow();
+    await waitFor(() => (adapter.getOutputTail(started.session_handle) ?? '').includes('FIXTURE_PONG'));
+    expect(() => broker.input(terminal.terminal_id, human.lease_id, 'x')).not.toThrow();
+    broker.release(terminal.terminal_id, human.lease_id);
   }, 20_000);
 
   it('reports provider exit and supervisor loss as offline', async () => {

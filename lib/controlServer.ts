@@ -8,7 +8,7 @@ import { CommandDispatcher, type CommandAuthenticator } from './commandDelivery.
 import {
   CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER, defaultSocketPath,
-  type AckState, type ControlEndpoint, type StreamFrame, type SubmitCommandRequest,
+  type AckState, type ControlEndpoint, type StreamFrame, type SubmitCommandRequest, type TerminalFrame,
 } from './controlProtocol.ts';
 import { readEventBatch } from './eventLog.ts';
 import { readProcessStart } from './processIdentity.ts';
@@ -29,6 +29,8 @@ const MAX_BODY_BYTES = 1024 * 1024;
 /** A whole backlog directory travels as text in one import request. */
 const MAX_IMPORT_BODY_BYTES = 32 * 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
+/** A terminal viewer this far behind is dropped; it reopens and gets a fresh snapshot. */
+const MAX_TERMINAL_BACKLOG_BYTES = 8 * 1024 * 1024;
 
 export interface ControlServerOptions {
   socketPath?: string;
@@ -114,6 +116,13 @@ async function readBody(req: IncomingMessage, limit = MAX_BODY_BYTES): Promise<R
 function actorField(body: Record<string, unknown>): string | undefined {
   if (body.actor_id !== undefined && typeof body.actor_id !== 'string') throw new InputError('actor_id must be a string');
   return body.actor_id;
+}
+
+function optionalIntParam(url: URL, name: string): number | undefined {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return undefined;
+  if (!/^\d+$/.test(raw)) throw new ControlError('bad_request', `${name} must be a non-negative integer`, 400);
+  return Number(raw);
 }
 
 function seqParam(url: URL, name: string): number {
@@ -230,6 +239,26 @@ export async function startControlServer(stateDir: string, options: ControlServe
     pump();
   }
 
+  /** NDJSON terminal frames. Headers go out with the first frame, so a refused open is still a JSON error. */
+  function terminalStream(res: ServerResponse, terminalId: string, url: URL): void {
+    const leaseId = url.searchParams.get('lease_id');
+    const columns = optionalIntParam(url, 'columns');
+    const rows = optionalIntParam(url, 'rows');
+    const write = (frame: TerminalFrame): void => {
+      if (res.destroyed || res.writableEnded) return;
+      if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
+      res.write(`${JSON.stringify(frame)}\n`);
+      if (res.writableLength > MAX_TERMINAL_BACKLOG_BYTES) res.destroy();
+    };
+    const close = terminals.stream(terminalId, { send: write, end: () => res.end() }, {
+      ...(columns === undefined ? {} : { columns }), ...(rows === undefined ? {} : { rows }),
+      ...(leaseId === null ? {} : { leaseId }),
+    });
+    streams.add(res);
+    const heartbeat = setInterval(() => write({ type: 'heartbeat' }), heartbeatMs);
+    res.on('close', () => { clearInterval(heartbeat); streams.delete(res); close(); });
+  }
+
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     assertOpen();
     const version = req.headers[PROTOCOL_HEADER];
@@ -306,7 +335,8 @@ export async function startControlServer(stateDir: string, options: ControlServe
       return stream(res, seqParam(url, 'after'));
     }
     // A terminal (a worker's provider session, or a shell the coordinator starts outside any sandbox) is never a worker's to open.
-    if (url.pathname.startsWith('/v1/terminals/')) projectReader(req);
+    if (url.pathname.startsWith('/v1/terminals/') || url.pathname === '/v1/sessions') projectReader(req);
+    if (req.method === 'GET' && url.pathname === '/v1/sessions') return ok({ sessions: terminals.sessions() });
     if (req.method === 'POST' && url.pathname === '/v1/terminals/provider') {
       const body = await readBody(req);
       if (typeof body.run_id !== 'string' || !body.run_id) throw new ControlError('bad_request', 'run_id is required', 400);
@@ -317,12 +347,12 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (typeof body.run_id !== 'string' || !body.run_id) throw new ControlError('bad_request', 'run_id is required', 400);
       return ok({ terminal: terminals.shell(body.run_id) });
     }
-    const terminalRoute = /^\/v1\/terminals\/([^/]+)(?:\/(lease|input|resize))?$/.exec(url.pathname);
+    const terminalRoute = /^\/v1\/terminals\/([^/]+)\/(stream|lease|input|resize)$/.exec(url.pathname);
     if (terminalRoute) {
       const terminalId = decodePathSegment(terminalRoute[1]);
       const action = terminalRoute[2];
-      if (req.method === 'GET' && !action) return ok(terminals.observe(terminalId, seqParam(url, 'after')));
-      if (req.method === 'POST' && action) {
+      if (req.method === 'GET' && action === 'stream') return terminalStream(res, terminalId, url);
+      if (req.method === 'POST' && action !== 'stream') {
         const body = await readBody(req);
         if (action === 'lease') {
           if (body.action === 'acquire') return ok(terminals.acquire(terminalId, body.owner_id as string, body.ttl_ms === undefined ? undefined : Number(body.ttl_ms)));
@@ -464,6 +494,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     close: () => {
       closing = true;
       clearInterval(terminalSweep);
+      terminals.close();
       for (const res of streams) res.destroy();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       let ours = true;

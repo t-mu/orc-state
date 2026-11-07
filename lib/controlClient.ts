@@ -5,7 +5,8 @@ import { createInterface } from 'node:readline';
 import {
   CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER,
-  type AckState, type ControlEndpoint, type ControlResponse, type StreamFrame, type SubmitCommandRequest,
+  type AckState, type ControlEndpoint, type ControlResponse, type SessionTerminalView, type StreamFrame, type SubmitCommandRequest,
+  type TerminalFrame,
 } from './controlProtocol.ts';
 import type { DurableCommand } from './commandDelivery.ts';
 import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
@@ -199,8 +200,21 @@ export class ControlClient {
     return this.call('POST', `/v1/terminals/${kind}`, { run_id: runId });
   }
 
-  observeTerminal(terminalId: string, after = 0): Promise<{ terminal: TerminalRecord; screen: string; output: string; cursor: number }> {
-    return this.call('GET', `/v1/terminals/${encodeURIComponent(terminalId)}?after=${after}`);
+  /** Running sessions; `terminal_id` is null for one with no terminal to stream (`app:` sessions). */
+  sessions(): Promise<{ sessions: SessionTerminalView[] }> { return this.call('GET', '/v1/sessions'); }
+
+  /**
+   * Yield a terminal's frames: one `snapshot`, then `output`/`heartbeat`, and
+   * `exit` last. Pass the size to have the pane sized (by the lease holder, or
+   * the first viewer when no one holds the lease). No reconnect: reopen after `exit`.
+   */
+  async *streamTerminal(terminalId: string, options: { leaseId?: string; columns?: number; rows?: number } = {}, signal?: AbortSignal): AsyncGenerator<TerminalFrame> {
+    const query = new URLSearchParams();
+    if (options.leaseId) query.set('lease_id', options.leaseId);
+    if (options.columns !== undefined) query.set('columns', String(options.columns));
+    if (options.rows !== undefined) query.set('rows', String(options.rows));
+    const suffix = query.size ? `?${query}` : '';
+    yield* this.ndjson<TerminalFrame>(`/v1/terminals/${encodeURIComponent(terminalId)}/stream${suffix}`, signal);
   }
 
   acquireTerminal(terminalId: string, ownerId: string): Promise<{ lease_id: string; expires_at: string }> {
@@ -228,9 +242,15 @@ export class ControlClient {
    * Callers reconnect with the last seq they processed to resume without gaps.
    */
   async *subscribe(after: number, signal?: AbortSignal): AsyncGenerator<EventRow> {
+    for await (const frame of this.ndjson<StreamFrame>(`/v1/events/stream?after=${after}`, signal)) {
+      if (frame.type === 'event') yield { seq: frame.seq, event: frame.event };
+    }
+  }
+
+  private async *ndjson<T>(path: string, signal?: AbortSignal): AsyncGenerator<T> {
     const { endpoint, token } = discover(this.stateDir);
     const res = await new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
-      const req = request({ socketPath: endpoint.path, path: `/v1/events/stream?after=${after}`, method: 'GET', agent: false, headers: this.headers(token), signal }, resolve);
+      const req = request({ socketPath: endpoint.path, path, method: 'GET', agent: false, headers: this.headers(token), signal }, resolve);
       req.on('error', (error) => reject(connectionError(error)));
       req.end();
     });
@@ -244,8 +264,7 @@ export class ControlClient {
     try {
       for await (const line of lines) {
         if (!line) continue;
-        const frame = JSON.parse(line) as StreamFrame;
-        if (frame.type === 'event') yield { seq: frame.seq, event: frame.event };
+        yield JSON.parse(line) as T;
       }
     } catch (error) {
       if ((error as Error).name !== 'AbortError' && !signal?.aborted) throw error;
