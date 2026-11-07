@@ -39,10 +39,10 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | `run-specs/<run_id>.md` | Pinned task revision body, read-only (`0444`), the worker's `task_spec_path` |
 | `event-checkpoint.json` | Coordinator event-processing checkpoint (`last_processed_seq`, processed ids) |
 | `run-activity.json` | Coordinator per-run activity: label, source, last tool, tool calls in flight, last turn end, `review_read_at` (`lib/runSignals.ts`) |
-| `pty-hook-events/<agent_id>.ndjson` | Hook records (`permission`, `tool_start`, `tool`, `activity`, `turn_end`); drained only by the coordinator tick via `.processing` rename; see [adapters.md](./adapters.md) |
+| `pty-hook-events/<agent_id>.ndjson` | Hook records (`permission`, `tool_start`, `tool`, `activity`, `turn_end`); drained only by the coordinator tick via `.processing` rename; name kept for compatibility; see [adapters.md](./adapters.md) |
 | `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do labels by id + active id |
-| `pty-logs/<agent_id>.log` | PTY/tmux output capture (output tails) |
-| `pty-settings/<agent_id>.json` | Per-session provider settings (hooks, sandbox) |
+| `pty-logs/<agent_id>.log` | tmux output capture (output tails); `pty-` directory names are kept for compatibility |
+| `pty-settings/<agent_id>.json` | Per-session provider settings (hooks, sandbox); name kept for compatibility |
 | `mcp-config.json` | Master MCP config written by `orc start-session` (references `${ORC_MASTER_SECRET}`, never its value) |
 | `.lock` | Advisory lock serializing JSON state writes |
 

@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
+import { processIdentity } from '../lib/processIdentity.ts';
 
 const tmux = { start: vi.fn().mockResolvedValue({ session_handle: 'tmux:a' }), send: vi.fn(), stop: vi.fn(), heartbeatProbe: vi.fn(), exitStatus: vi.fn(),
   attach: vi.fn(), getOutputTail: vi.fn(), ownsSession: vi.fn(), detectInputBlock: vi.fn(), inspectSession: vi.fn(),
@@ -60,6 +65,47 @@ describe('createAdapter transport routing', () => {
     expect(adapter.survivesCoordinatorExit('pty:old')).toBe(false);
     expect(tmux.send).not.toHaveBeenCalled();
     expect(tmux.heartbeatProbe).not.toHaveBeenCalled();
+  });
+});
+
+describe('legacy pty: session cleanup on stop', () => {
+  async function sleeper() {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)']);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return child;
+  }
+
+  it('signals the recorded provider process only when its identity matches, then removes the session files', async () => {
+    const dir = createTempStateDir('legacy-pty-stop-');
+    const previous = process.env.ORC_STATE_DIR;
+    process.env.ORC_STATE_DIR = dir;
+    const live = await sleeper();
+    const reused = await sleeper();
+    try {
+      for (const sub of ['pty-pids', 'pty-settings', 'pty-hook-events']) mkdirSync(join(dir, sub), { recursive: true });
+      writeFileSync(join(dir, 'pty-pids', 'live.pid'), JSON.stringify(processIdentity(live.pid!)));
+      // Same pid, different start time: a reused pid must never be signalled.
+      writeFileSync(join(dir, 'pty-pids', 'reused.pid'), JSON.stringify({ pid: reused.pid, start: 'proc:not-this-one' }));
+      writeFileSync(join(dir, 'pty-settings', 'live.json'), '{}');
+      writeFileSync(join(dir, 'pty-hook-events', 'live.ndjson'), '');
+      const adapter = (await load()).createAdapter('claude');
+
+      await adapter.stop('pty:live');
+      await adapter.stop('pty:reused');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(live.signalCode).toBe('SIGTERM');
+      expect(reused.exitCode).toBeNull();
+      expect(reused.signalCode).toBeNull();
+      for (const path of ['pty-pids/live.pid', 'pty-pids/reused.pid', 'pty-settings/live.json', 'pty-hook-events/live.ndjson']) {
+        expect(existsSync(join(dir, path)), path).toBe(false);
+      }
+    } finally {
+      live.kill('SIGKILL');
+      reused.kill('SIGKILL');
+      if (previous === undefined) delete process.env.ORC_STATE_DIR; else process.env.ORC_STATE_DIR = previous;
+      cleanupTempStateDir(dir);
+    }
   });
 });
 

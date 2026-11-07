@@ -4,7 +4,7 @@
 
 - Node.js 24+
 - Git
-- tmux: the master runs in orc's tmux server, and workers use it when available
+- tmux 3.2 or newer: the master and every worker run in orc's tmux server; `orc doctor` and `orc start-session` check it
 - At least one provider CLI installed and authenticated: Claude Code, Codex CLI or Gemini CLI ([recovery.md](recovery.md) for install/auth problems)
 
 ## Install

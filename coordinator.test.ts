@@ -313,6 +313,31 @@ describe('worker session lifecycle', () => {
     expect(readAgents(dir).find((a) => a.agent_id === 'worker-01')).toBeUndefined();
   });
 
+  it('treats a legacy pty: session from an older orc as dead through the real adapter, without throwing', async () => {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-01', provider: 'claude', role: 'worker', status: 'running',
+        session_handle: 'pty:worker-01', provider_ref: null, registered_at: new Date().toISOString(),
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: 'run-legacy-pty', task_ref: 'proj/fix-bug', agent_id: 'worker-01', state: 'in_progress',
+        claimed_at: new Date().toISOString(), task_envelope_sent_at: new Date().toISOString(),
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(), last_heartbeat_at: new Date().toISOString(),
+        started_at: new Date().toISOString(), finalization_state: null, finalization_retry_count: 0,
+        finalization_blocked_reason: null, input_state: null, input_requested_at: null,
+        session_start_retry_count: 0, session_start_retry_next_at: null, session_start_last_error: null,
+      }],
+    });
+    // No adapter mock: the real router sends pty: handles to its offline adapter, never to tmux.
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const claim = readClaims(dir).find((c) => c.run_id === 'run-legacy-pty')!;
+    expect(claim.state).toBe('failed');
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-01')).toBeUndefined();
+  });
+
   it('does not expire claim when heartbeatProbe returns true for active worker', async () => {
     seedState(dir, {
       agents: [{

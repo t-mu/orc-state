@@ -144,7 +144,7 @@ export function makeAdapterMock(overrides: Record<string, unknown> = {}): { crea
   return {
     createAdapter: () => ({
       heartbeatProbe: vi.fn().mockResolvedValue(true),
-      start: vi.fn().mockResolvedValue({ session_handle: 'pty:default', provider_ref: null }),
+      start: vi.fn().mockResolvedValue({ session_handle: 'tmux:default', provider_ref: null }),
       send: vi.fn().mockResolvedValue(''),
       stop: vi.fn().mockResolvedValue(undefined),
       attach: vi.fn().mockResolvedValue(''),

@@ -4,7 +4,7 @@ Repo guide for every agent (workers, master, developers). Read before touching a
 
 ## Project
 
-Provider-agnostic multi-agent orchestration runtime for coding agents (Claude, Codex, Gemini). A coordinator dispatches project tasks to task-scoped worker sessions (tmux, else PTY, or structured `app:`), drives their run lifecycle, and reports to a master agent that runs in orc's tmux server (`orc start-session` attaches to it). State: SQLite stores plus JSON projections in the project state directory, outside the repository. Roles and glossary: `docs/architecture.md`.
+Provider-agnostic multi-agent orchestration runtime for coding agents (Claude, Codex, Gemini). A coordinator dispatches project tasks to task-scoped worker sessions (tmux, or structured `app:`), drives their run lifecycle, and reports to a master agent that runs in orc's tmux server (`orc start-session` attaches to it). State: SQLite stores plus JSON projections in the project state directory, outside the repository. Roles and glossary: `docs/architecture.md`.
 
 ## Stack
 

@@ -1,3 +1,8 @@
+import { readFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
+import { isSameProcess } from '../lib/processIdentity.ts';
+import { taskLabelsPath } from '../hooks/orc-hook.ts';
 import { createTmuxAdapter, checkTmux } from './tmux.ts';
 import { createCodexAppServerAdapter, isAppServerHandle } from './codexAppServer.ts';
 import { assertAdapterContract, adapterGetOutputTail, type SessionInspection } from './interface.ts';
@@ -16,17 +21,40 @@ function assertTmuxUsable(): void {
 }
 
 /**
+ * Stops what a legacy `pty:` session left behind: the provider process the
+ * old node-pty adapter recorded in `pty-pids/<agent>.pid` (it can outlive the
+ * coordinator that spawned it) gets SIGTERM only when its pid and start time
+ * still match, so a reused pid is never signalled; a bare-pid file cannot
+ * prove identity and is only removed. The pid, hook-event and settings files go.
+ */
+function stopLegacyPtySession(sessionHandle: string): void {
+  if (!sessionHandle.startsWith('pty:') || sessionHandle.length <= 4) return;
+  const agentId = sessionHandle.slice(4);
+  const pidFile = join(STATE_DIR, 'pty-pids', `${agentId}.pid`);
+  try {
+    const record = JSON.parse(readFileSync(pidFile, 'utf8')) as { pid?: unknown; start?: unknown };
+    if (typeof record?.pid === 'number' && typeof record.start === 'string' && isSameProcess({ pid: record.pid, start: record.start })) {
+      process.kill(record.pid, 'SIGTERM');
+    }
+  } catch { /* no pid file, unreadable, or the process is already gone */ }
+  const eventsFile = hookEventPath(agentId);
+  for (const path of [pidFile, eventsFile, `${eventsFile}.processing`, taskLabelsPath(eventsFile), join(STATE_DIR, 'pty-settings', `${agentId}.json`)]) {
+    try { unlinkSync(path); } catch { /* already gone or never created */ }
+  }
+}
+
+/**
  * Sessions whose handle no adapter owns — chiefly `pty:` handles left in state
- * by an orc that still had the node-pty transport. Their process (if any) died
- * with the coordinator that spawned it and nothing can write to it, so every
- * call reports the session offline; the coordinator then clears it and
- * requeues or resumes the run like any dead session.
+ * by an orc that still had the node-pty transport. Nothing can write to them,
+ * so every call reports the session offline; the coordinator then clears it
+ * and requeues or resumes the run like any dead session, and `stop` ends a
+ * provider process the old adapter left running (stopLegacyPtySession).
  */
 const offlineAdapter = {
   send: (sessionHandle: string) => Promise.reject(new Error(`Session ${sessionHandle} is offline: orc runs terminal sessions in tmux only`)),
   attach: (sessionHandle: string) => { console.log(`(session ${sessionHandle} is offline: orc runs terminal sessions in tmux only)`); },
   heartbeatProbe: () => Promise.resolve(false),
-  stop: () => Promise.resolve(),
+  stop: (sessionHandle: string) => { stopLegacyPtySession(sessionHandle); return Promise.resolve(); },
   getOutputTail: () => null,
   ownsSession: () => false,
   detectInputBlock: () => null,
