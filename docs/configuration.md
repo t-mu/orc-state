@@ -123,7 +123,7 @@ orc project config unset worker_pool.max_workers
 
 For Claude models prefer the aliases `sonnet`, `opus`, `haiku`.
 
-These are the only supported keys. `set` rejects any other key; a key removed in 1.0 (`coordinator.run_inactive_timeout_ms`, `coordinator.run_inactive_escalate_ms`, `coordinator.session_start_max_attempts`, `coordinator.session_start_retry_delay_ms`) is ignored when stored and can still be `unset`.
+These are the only supported keys. `set` rejects any other key; a key removed in 1.0 (`coordinator.run_inactive_timeout_ms`, `coordinator.run_inactive_escalate_ms`, `coordinator.session_start_max_attempts`, `coordinator.session_start_retry_delay_ms`) is ignored when stored, left out of `config list`/`get` (still shown by `config list --global` for the global scope), and can still be `unset`.
 
 ### Top level
 

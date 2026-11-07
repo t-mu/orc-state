@@ -280,6 +280,7 @@ export class ProjectRegistry {
 
   effectiveSettings(projectId: string, cli: Record<string, unknown> = {}, env: NodeJS.ProcessEnv = process.env): Record<string, SettingValue> {
     const effective = { ...this.settings(), ...this.settings(projectId) };
+    for (const key of REMOVED_SETTINGS) delete effective[key];
     for (const [key, envName] of Object.entries(PROJECT_SETTING_ENV_KEYS)) {
       const raw = env[envName];
       if (raw !== undefined) effective[key] = validateProjectSetting(key, settingKind(key) === 'positive' || settingKind(key) === 'nonnegative' ? Number(raw) : raw);

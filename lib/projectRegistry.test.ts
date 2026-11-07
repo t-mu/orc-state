@@ -120,7 +120,8 @@ describe('global project registry', () => {
     db.prepare('INSERT INTO settings (scope, key, value_json) VALUES (?, ?, ?)').run('', 'coordinator.session_start_retry_delay_ms', '30000');
     db.close();
     registry = new ProjectRegistry(join(temp, 'data'));
-    expect(registry.effectiveSettings(project.id, {}, {})['coordinator.run_inactive_escalate_ms']).toBe(900000);
+    expect(registry.effectiveSettings(project.id, {}, {})).toEqual({});
+    expect(registry.settings(project.id)['coordinator.run_inactive_escalate_ms']).toBe(900000);
     const env = { ORC_DATA_HOME: join(temp, 'data') };
     const settings = projectConfigObject({ id: project.id, name: project.name, stateDir: project.stateDir, targetRepoRoot: project.canonicalGitRoot, source: 'environment' }, env);
     expect(settings.coordinator).toEqual({ run_inactive_escalate_ms: 900000, session_start_retry_delay_ms: 30000 });
@@ -129,7 +130,8 @@ describe('global project registry', () => {
     expect(coordinator).not.toHaveProperty('run_inactive_escalate_ms');
     registry.unsetSetting('coordinator.run_inactive_escalate_ms', project.id);
     registry.unsetSetting('coordinator.session_start_retry_delay_ms');
-    expect(registry.effectiveSettings(project.id, {}, {})).toEqual({});
+    expect(registry.settings(project.id)).toEqual({});
+    expect(registry.settings()).toEqual({});
   });
 
   it('documents exactly the supported setting keys and their environment variables', () => {
