@@ -122,7 +122,7 @@ export class ControlClient {
 
   sendMessage(input: SendMessageInput): Promise<{ message: SemanticMessage }> {
     return this.call('POST', '/v1/messages', {
-      run_id: input.runId, recipient_session_id: input.recipientSessionId,
+      run_id: input.runId, recipient_session_id: input.recipientSessionId, recipient_agent_id: input.recipientAgentId,
       idempotency_key: input.idempotencyKey, kind: input.kind, text: input.text,
       artifact_refs: input.artifactRefs, parent_message_id: input.parentMessageId,
     });

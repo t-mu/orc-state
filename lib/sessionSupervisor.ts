@@ -25,9 +25,16 @@ export interface SupervisedSession {
   owner_id: string | null;
   owner_expires_at: string | null;
   state_reason: string | null;
+  /** Survives a resume; only `credential_hash` rotates and `generation` increases. */
+  provider_conversation_id: string | null;
+  generation: number;
+  resume_count: number;
+  exit_reason: SessionExitReason | null;
   started_at: string;
   updated_at: string;
 }
+
+export type SessionExitReason = 'crash' | 'finished' | 'user_exit' | 'killed' | 'unknown';
 
 export interface ReconcileResult {
   session_id: string;
@@ -53,7 +60,8 @@ export function listSupervisedSessions(stateDir: string, states?: SessionState[]
   if (!existsSync(join(stateDir, 'events.db'))) return [];
   return withEventDb(stateDir, (db) => {
     const rows = db.prepare(`SELECT session_id, run_id, agent_id, provider, state, transport, process_pid, process_start,
-      owner_id, owner_expires_at, state_reason, started_at, updated_at FROM sessions ORDER BY rowid`).all() as SupervisedSession[];
+      owner_id, owner_expires_at, state_reason, provider_conversation_id, generation, resume_count, exit_reason,
+      started_at, updated_at FROM sessions ORDER BY rowid`).all() as SupervisedSession[];
     return states ? rows.filter((row) => states.includes(row.state)) : rows;
   });
 }
@@ -101,8 +109,8 @@ export function setSessionState(
 export function currentSessionForAgent(stateDir: string, agentId: string): SupervisedSession | null {
   if (!existsSync(join(stateDir, 'events.db'))) return null;
   return withEventDb(stateDir, (db) => (db.prepare(`SELECT session_id, run_id, agent_id, provider, state, transport, process_pid,
-    process_start, owner_id, owner_expires_at, state_reason, started_at, updated_at FROM sessions
-    WHERE agent_id = ? AND state <> 'offline' ORDER BY rowid DESC LIMIT 1`).get(agentId) as SupervisedSession | undefined) ?? null);
+    process_start, owner_id, owner_expires_at, state_reason, provider_conversation_id, generation, resume_count, exit_reason,
+    started_at, updated_at FROM sessions WHERE agent_id = ? AND state <> 'offline' ORDER BY rowid DESC LIMIT 1`).get(agentId) as SupervisedSession | undefined) ?? null);
 }
 
 export const IDENTITY_MISMATCH_REASON = 'live process does not match the recorded process identity';

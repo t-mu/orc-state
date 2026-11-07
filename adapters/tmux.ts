@@ -207,10 +207,11 @@ function write(agentId: string, text: string): void {
 function claimSendLease(agentId: string): { resourceId: string; leaseId: string } | null {
   if (!existsSync(join(STATE_DIR, 'events.db'))) return null;
   return withEventDbTransaction(STATE_DIR, (db) => {
-    const session = db.prepare(`SELECT run_id FROM sessions WHERE agent_id = ? AND state = 'running'
-      AND transport = 'tmux' ORDER BY rowid DESC LIMIT 1`).get(agentId) as { run_id: string | null } | undefined;
+    const session = db.prepare(`SELECT session_id, run_id FROM sessions WHERE agent_id = ? AND state = 'running'
+      AND transport = 'tmux' ORDER BY rowid DESC LIMIT 1`).get(agentId) as { session_id: string; run_id: string | null } | undefined;
     if (!session?.run_id) return null;
-    const resourceId = `provider:${session.run_id}`;
+    // Matches the broker's provider terminal id (`provider:<session_id>`).
+    const resourceId = `provider:${session.session_id}`;
     const current = db.prepare("SELECT expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
       .get(resourceId) as { expires_at: string } | undefined;
     if (current && Date.parse(current.expires_at) > Date.now()) throw new Error('Terminal already has a writer');

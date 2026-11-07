@@ -80,6 +80,7 @@ describe('terminal broker', () => {
     const observer = new ControlClient(dir);
     const terminal = (await observer.openTerminal('provider', 'run-a')).terminal;
     expect((await observer.observeTerminal(terminal.terminal_id)).screen).toContain('screen:tmux:worker-a');
+    expect(terminal).toMatchObject({ terminal_id: 'provider:session-a', session_id: 'session-a', run_id: 'run-a' });
     const child = await exec(process.execPath, ['cli/terminal.ts', 'provider', 'run-a', '--once'], {
       cwd: repoRoot, env: { ...process.env, ORC_STATE_DIR: dir }, encoding: 'utf8',
     });
@@ -110,6 +111,7 @@ describe('terminal broker', () => {
     const client = new ControlClient(dir);
     await expect(client.openTerminal('provider', 'run-b')).rejects.toMatchObject({ code: 'conflict' });
     const terminal = (await client.openTerminal('shell', 'run-b')).terminal;
+    expect(terminal).toMatchObject({ terminal_id: 'shell:session-b', session_id: 'session-b', run_id: 'run-b', handle: 'shell:run-b' });
     const lease = await client.acquireTerminal(terminal.terminal_id, 'operator');
     await client.inputTerminal(terminal.terminal_id, lease.lease_id, 'pwd\r');
     await client.releaseTerminal(terminal.terminal_id, lease.lease_id);
@@ -155,6 +157,7 @@ describe('terminal broker', () => {
     await expect(client.acquireTerminal(old.terminal_id, 'next')).rejects.toMatchObject({ code: 'unavailable' });
     await expect(client.openTerminal('provider', 'run-a')).rejects.toMatchObject({ code: 'conflict' });
     const current = (await client.openTerminal('provider', 'run-c')).terminal;
+    expect(current.terminal_id).toBe('provider:session-c');
     const currentLease = await client.acquireTerminal(current.terminal_id, 'new-writer');
     await client.inputTerminal(current.terminal_id, currentLease.lease_id, 'y');
     expect(driver.writes).toEqual([{ handle: 'tmux:worker-a', data: 'y' }]);

@@ -202,6 +202,27 @@ describe('validateEventObject', () => {
     expect(ok).toEqual([]);
   });
 
+  it('validates session_resumed and session_resume_failed payloads and rejects unknown fields', () => {
+    const fields = { actor_type: 'coordinator', actor_id: 'coordinator', agent_id: 'worker-01' };
+    const payload = { session_id: 'sess-1', agent_id: 'worker-01', run_id: 'run-1', generation: 2, provider_conversation_id: 'conv-1' };
+    expect(validateEventObject(base('session_resumed', { ...fields, run_id: 'run-1', payload }))).toEqual([]);
+    expect(validateEventObject(base('session_resumed', { ...fields, payload: { session_id: 'sess-m', agent_id: 'master', generation: 0 } }))).toEqual([]);
+    expect(validateEventObject(base('session_resume_failed', { ...fields, payload: { ...payload, reason: 'conversation expired' } }))).toEqual([]);
+    expect(validateEventObject(base('session_resume_failed', { ...fields, payload })))
+      .toContain('payload.reason must be a non-empty string');
+    const bad = validateEventObject(base('session_resumed', { ...fields, payload: { session_id: '', generation: -1, provider_conversation_id: 5 } }));
+    expect(bad).toEqual(expect.arrayContaining([
+      'payload.session_id must be a non-empty string',
+      'payload.agent_id must be a non-empty string',
+      'payload.generation must be a non-negative integer',
+      'payload.provider_conversation_id must be a non-empty string when present',
+    ]));
+    expect(validateEventObject(base('session_resumed', { actor_type: 'coordinator', actor_id: 'coordinator', payload })))
+      .toContain('agent_id is required and must be a valid agent_id');
+    expect(validateEventObject(base('session_resumed', { ...fields, payload, resumed_by: 'me' })))
+      .toContain('(root) must NOT have additional properties');
+  });
+
   it('requires run_id, task_ref, and reason for session_start_failed', () => {
     const bad = validateEventObject(base('session_start_failed', {
       actor_type: 'coordinator',
