@@ -47,7 +47,7 @@ function stopLegacyPtySession(sessionHandle: string): void {
  * Sessions whose handle no adapter owns — chiefly `pty:` handles left in state
  * by an orc that still had the node-pty transport. Nothing can write to them,
  * so every call reports the session offline; the coordinator then clears it
- * and requeues or resumes the run like any dead session, and `stop` ends a
+ * and requeues the run (its exit was never observed), and `stop` ends a
  * provider process the old adapter left running (stopLegacyPtySession).
  */
 const offlineAdapter = {
