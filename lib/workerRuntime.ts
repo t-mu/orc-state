@@ -59,7 +59,7 @@ export function normalizeWorkerEnv(
     env.ORC_MASTER_SECRET = '';
   }
   // Prevent interactive editors, pagers, and merge-tool prompts from blocking
-  // headless PTY sessions. Workers never need an interactive editor.
+  // headless sessions. Workers never need an interactive editor.
   env.EDITOR = 'true';
   env.GIT_EDITOR = 'true';
   env.PAGER = 'cat';
@@ -386,7 +386,7 @@ export async function resumeWorkerSession(
 }
 
 /**
- * Register a fresh ephemeral worker agent and launch its PTY session.
+ * Register a fresh ephemeral worker agent and launch its session.
  *
  * Ephemeral workers are task-scoped: they are registered with ephemeral=true
  * and exist only for the duration of one run. The coordinator removes their

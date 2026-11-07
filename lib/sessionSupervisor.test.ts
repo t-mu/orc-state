@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { processIdentity } from './processIdentity.ts';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, queryEvents, withEventDb, withEventDbTransaction } from './eventLog.ts';
@@ -68,7 +66,7 @@ describe('classifySession', () => {
   });
 
   it('marks a live but unwritable session recoverable with operator guidance', () => {
-    const result = classifySession(session({ transport: 'pty' }), { ...live(100, 'proc:5', false), transport: 'pty', reason: 'pty is owned by another process' });
+    const result = classifySession(session({ transport: 'pty' }), { ...live(100, 'proc:5', false), transport: 'tmux', reason: 'pty is owned by another process' });
     expect(result.state).toBe('recoverable');
     expect(result.reason).toContain('orc worker-remove');
   });
@@ -102,7 +100,7 @@ describe('reconcileSessions', () => {
     ];
     const inspections: Record<string, SessionInspection> = {
       'worker-a': live(100, 'proc:5'),
-      'worker-b': { ...live(200, 'proc:6', false), transport: 'pty', reason: 'pty is owned by another process and cannot be written' },
+      'worker-b': { ...live(200, 'proc:6', false), transport: 'tmux', reason: 'pty is owned by another process and cannot be written' },
       'worker-c': live(300, 'proc:other'),
       'worker-d': { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, reason: 'tmux session not found' },
     };
@@ -204,42 +202,32 @@ describe('closing recoverable and unknown sessions', () => {
   });
 });
 
-describe('PID reuse with real processes', () => {
+describe('legacy pty: sessions with real processes', () => {
   async function spawnSleeper() {
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)']);
     await new Promise((resolve) => setTimeout(resolve, 50));
     return child;
   }
 
-  it('never adopts a live process that differs from the recorded one', async () => {
-    const original = await spawnSleeper();
-    const recorded = processIdentity(original.pid!)!;
-    original.kill('SIGKILL');
-    await new Promise((resolve) => original.once('exit', resolve));
-    // macOS ps reports lstart only to the nearest second. Keep the replacement
-    // outside that second so the test actually exercises an identity mismatch.
-    await new Promise((resolve) => setTimeout(resolve, 1100));
+  it('reconciles a pty: session as offline and never signals its recorded process', async () => {
+    // Even a live process at exactly the recorded pid and start is not adopted:
+    // orc has no pty transport left that could write to it.
     const other = await spawnSleeper();
+    const recorded = processIdentity(other.pid!)!;
     const previousStateDir = process.env.ORC_STATE_DIR;
     try {
       process.env.ORC_STATE_DIR = dir;
       vi.resetModules();
-      const { createPtyAdapter } = await import('../adapters/pty.ts');
-      const adapter = createPtyAdapter({ provider: 'claude' });
-      mkdirSync(join(dir, 'pty-pids'), { recursive: true });
-      // The PID now belongs to another process: the recorded start time no longer matches.
-      insertSession('s-reused', 'worker-a', null, other.pid!, recorded.start, 'pty');
-      writeFileSync(join(dir, 'pty-pids', 'worker-a.pid'), JSON.stringify({ pid: other.pid, start: recorded.start }));
-      // A legacy bare PID file cannot prove identity either.
-      insertSession('s-legacy', 'worker-b', null, other.pid!, recorded.start, 'pty');
-      writeFileSync(join(dir, 'pty-pids', 'worker-b.pid'), String(other.pid));
+      const { createAdapter } = await import('../adapters/index.ts');
+      const adapter = createAdapter('claude');
+      insertSession('s-legacy', 'worker-a', null, other.pid!, recorded.start, 'pty');
 
       const results = await reconcileSessions(dir, {
         owner: 'me',
-        agents: [agent('worker-a', 's-reused', 'pty:worker-a'), agent('worker-b', 's-legacy', 'pty:worker-b')],
+        agents: [agent('worker-a', 's-legacy', 'pty:worker-a')],
         inspect: (a) => Promise.resolve(adapter.inspectSession(a.session_handle!)),
       });
-      expect(Object.fromEntries(results.map((r) => [r.session_id, r.state]))).toEqual({ 's-reused': 'offline', 's-legacy': 'unknown' });
+      expect(results.map((r) => [r.session_id, r.state])).toEqual([['s-legacy', 'offline']]);
       await adapter.stop('pty:worker-a');
       expect(other.exitCode).toBeNull();
       expect(other.signalCode).toBeNull();

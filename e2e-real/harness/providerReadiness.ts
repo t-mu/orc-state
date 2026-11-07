@@ -5,7 +5,7 @@
  *
  * Readiness is defined as three binary checks only:
  *   1. binary  — the provider CLI exists on PATH
- *   2. pty     — node-pty can be loaded (PTY support available)
+ *   2. tmux    — tmux >= 3.2 is installed (orc runs every provider session in tmux)
  *   3. spawn   — the CLI is spawnable noninteractively (exits without hanging)
  *
  * Auth is NOT checked here. If the provider fails during actual coordinator
@@ -14,8 +14,9 @@
  */
 import { spawnSync } from 'node:child_process';
 import { stripNestedProviderEnv } from '../../lib/providerChildEnv.ts';
+import { checkTmux, removeDeadTmuxSocket } from '../../adapters/tmux.ts';
 
-export type ReadinessStage = 'binary' | 'pty' | 'spawn';
+export type ReadinessStage = 'binary' | 'tmux' | 'spawn';
 
 export interface ProviderReadinessResult {
   /** Whether the provider passed all readiness checks. */
@@ -60,93 +61,28 @@ function checkBinary(provider: string): ProviderReadinessResult {
 }
 
 /**
- * Check stage 2: node-pty is loadable.
+ * Check stage 2: a supported tmux is installed.
  */
-async function checkPty(): Promise<ProviderReadinessResult> {
-  try {
-    await import('node-pty');
-    return { ok: true, failedStage: null, message: '' };
-  } catch (err) {
-    return {
-      ok: false,
-      failedStage: 'pty',
-      message: `PTY support unavailable: node-pty could not be loaded. Error: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+function checkTmuxStage(): ProviderReadinessResult {
+  const tmux = checkTmux();
+  return tmux.ok
+    ? { ok: true, failedStage: null, message: '' }
+    : { ok: false, failedStage: 'tmux', message: `tmux unavailable: ${tmux.problem}` };
 }
 
 /**
  * Check stage 3: CLI is spawnable in the way the real-provider suite uses it.
  *
- * For Codex, that means a short interactive PTY launch. `codex --version` is
- * too weak because the real failure mode happens on interactive startup.
+ * For Codex, that means a short interactive launch in a terminal (a throwaway
+ * tmux server). `codex --version` is too weak because the real failure mode
+ * happens on interactive startup.
  *
  * For other providers, `<binary> --version` remains sufficient as a cheap
  * smoke check until they need a stronger probe.
  */
 async function checkSpawn(provider: string): Promise<ProviderReadinessResult> {
   const binary = PROVIDER_BINARIES[provider] ?? provider;
-  if (provider === 'codex') {
-    try {
-      const { default: pty } = await import('node-pty');
-      const env = stripNestedProviderEnv(process.env) as Record<string, string>;
-      const args = ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent'];
-
-      return await new Promise<ProviderReadinessResult>((resolve) => {
-        let settled = false;
-        let output = '';
-
-        const finish = (result: ProviderReadinessResult) => {
-          if (settled) return;
-          settled = true;
-          resolve(result);
-        };
-
-        try {
-          const proc = pty.spawn(binary, args, {
-            name: 'xterm-256color',
-            cols: 120,
-            rows: 30,
-            cwd: process.cwd(),
-            env,
-          });
-
-          proc.onData((chunk) => {
-            output += chunk;
-            if (output.length > 4000) output = output.slice(-4000);
-          });
-
-          proc.onExit(({ exitCode, signal }) => {
-            finish({
-              ok: false,
-              failedStage: 'spawn',
-              message:
-                `Provider '${provider}': interactive PTY launch exited immediately ` +
-                `(exitCode=${exitCode}${signal != null ? `, signal=${signal}` : ''}). ` +
-                `Output tail: ${(output || '(empty)').trim()}`,
-            });
-          });
-
-          setTimeout(() => {
-            try { proc.kill(); } catch { /* ignore */ }
-            finish({ ok: true, failedStage: null, message: '' });
-          }, 3000);
-        } catch (err) {
-          finish({
-            ok: false,
-            failedStage: 'spawn',
-            message: `Provider '${provider}': failed to start interactive PTY probe: ${err instanceof Error ? err.message : String(err)}`,
-          });
-        }
-      });
-    } catch (err) {
-      return {
-        ok: false,
-        failedStage: 'spawn',
-        message: `Provider '${provider}': failed to initialize PTY readiness probe: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
+  if (provider === 'codex') return await checkInteractiveSpawn(provider, binary, ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent']);
 
   try {
     const result = spawnSync(binary, ['--version'], {
@@ -175,6 +111,37 @@ async function checkSpawn(provider: string): Promise<ProviderReadinessResult> {
   }
 }
 
+/** Starts `binary args` in a private tmux server and fails if it exits within 3 s. */
+async function checkInteractiveSpawn(provider: string, binary: string, args: string[]): Promise<ProviderReadinessResult> {
+  const socket = `orc-readiness-${process.pid}`;
+  const tmux = (tmuxArgs: string[]) => spawnSync(process.env.ORC_TMUX_BIN ?? 'tmux', ['-L', socket, ...tmuxArgs], {
+    env: stripNestedProviderEnv(process.env), encoding: 'utf8', timeout: 5000,
+  });
+  const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+  try {
+    const started = tmux(['set-option', '-g', 'remain-on-exit', 'on', ';', 'new-session', '-d', '-s', 'probe', '-x', '120', '-y', '30', '-c', process.cwd(),
+      [binary, ...args].map(quote).join(' ')]);
+    if (started.status !== 0) {
+      return { ok: false, failedStage: 'spawn', message: `Provider '${provider}': failed to start interactive probe: ${(started.stderr || '').trim()}` };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const state = tmux(['display-message', '-p', '-t', '=probe:', '#{pane_dead} #{pane_dead_status}']);
+    const [dead, status] = (state.stdout ?? '').trim().split(' ');
+    if (dead !== '0') {
+      const output = tmux(['capture-pane', '-p', '-t', '=probe:']).stdout ?? '';
+      return {
+        ok: false,
+        failedStage: 'spawn',
+        message: `Provider '${provider}': interactive launch exited immediately (exitCode=${status ?? '?'}). Output tail: ${(output.slice(-4000) || '(empty)').trim()}`,
+      };
+    }
+    return { ok: true, failedStage: null, message: '' };
+  } finally {
+    tmux(['kill-server']);
+    removeDeadTmuxSocket(socket, { waitMs: 2000 });
+  }
+}
+
 /**
  * Run all three readiness checks for a provider in order.
  * Stops at the first failure and returns a stage-specific diagnostic.
@@ -183,8 +150,8 @@ export async function checkProviderReadiness(provider: string): Promise<Provider
   const binaryResult = checkBinary(provider);
   if (!binaryResult.ok) return binaryResult;
 
-  const ptyResult = await checkPty();
-  if (!ptyResult.ok) return ptyResult;
+  const tmuxResult = checkTmuxStage();
+  if (!tmuxResult.ok) return tmuxResult;
 
   const spawnResult = await checkSpawn(provider);
   if (!spawnResult.ok) return spawnResult;

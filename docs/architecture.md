@@ -29,7 +29,7 @@ orc start-session
 
 | Role | Process | Owns |
 |------|---------|------|
-| Coordinator | background Node process (`orc start-session`) | dispatch, session liveness probes (tmux pane / PTY pid), lease expiry and requeue, phase inference, merge, the control API |
+| Coordinator | background Node process (`orc start-session`) | dispatch, session liveness probes (tmux pane), lease expiry and requeue, phase inference, merge, the control API |
 | Master | provider session in orc's tmux server; `orc start-session` attaches to it | task authoring (`create_task`), monitoring (`orc status`, `orc watch`), answering input requests, scouts; never implements |
 | Worker | headless session, one per run, random orc-themed name | its worktree; reports through `orc run-*` / `orc progress`; never merges or removes its worktree |
 | Scout | ephemeral read-only session launched by the master | a `SCOUT_REPORT`; no state or file writes |
@@ -71,6 +71,6 @@ The worker's provider comes from the task's `required_provider` or the configure
 | Worktree | `<state>/worktrees/<run_id>`, a git worktree of the target repo per run |
 | Provider | AI backend: `claude`, `codex`, `gemini` |
 | Adapter | Provider/transport layer behind one interface ([adapters.md](./adapters.md)) |
-| Session handle | `<transport>:<agent_id>` (`tmux`, `pty`, `app`) |
+| Session handle | `<transport>:<agent_id>` (`tmux`, `app`) |
 | Session secret | Per-session credential in the session's environment |
 | Project | Registered target repo with a stable `project_id` and state directory |

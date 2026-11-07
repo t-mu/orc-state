@@ -2,7 +2,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 
 export function isPackLikeCommand(env: NodeJS.ProcessEnv = process.env): boolean {
   const npmCommand = env.npm_command ?? '';
@@ -27,8 +26,6 @@ export function runPrepare(env: NodeJS.ProcessEnv = process.env): void {
       log(`warning: failed to install git hooks: ${(error as Error).message}`);
     }
   }
-
-  ensureNodePtySpawnHelperPermissions();
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

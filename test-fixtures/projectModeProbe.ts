@@ -20,7 +20,7 @@ if (action === 'status') {
 if (action === 'launch') {
   const { ensureRunWorktree } = await import('../lib/runWorktree.ts');
   const { normalizeWorkerEnv } = await import('../lib/workerRuntime.ts');
-  const { prepareProviderLaunch } = await import('../adapters/pty.ts');
+  const { prepareProviderLaunch } = await import('../adapters/providerLaunch.ts');
   const { codexAppServerSandboxParams } = await import('../adapters/codexAppServer.ts');
   const { loadWorkerPoolConfig } = await import('../lib/providers.ts');
   const worktree = ensureRunWorktree(paths.STATE_DIR, { runId: 'run-probe', taskRef: 'app/probe', agentId: 'worker-a' });

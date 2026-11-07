@@ -1,6 +1,6 @@
 # Test fixtures
 
-`fake-provider-cli.ts`: deterministic provider CLI for PTY integration and e2e tests. `bin/claude`, `bin/codex`, `bin/gemini` wrap it with the provider name; prepend them to `PATH`:
+`fake-provider-cli.ts`: deterministic provider CLI for tmux integration and e2e tests. `bin/claude`, `bin/codex`, `bin/gemini` wrap it with the provider name; prepend them to `PATH`:
 
 ```bash
 PATH="$(pwd)/test-fixtures/bin:$PATH"
@@ -18,4 +18,4 @@ PATH="$(pwd)/test-fixtures/bin:$PATH"
 
 Other fixtures: `fake-codex-app-server.ts` (Codex app-server), `fakeCoordinator.ts`, `projectCli.ts`, `projectModeProbe.ts`, `stateHelpers.ts`.
 
-PTY suites skip when `ptySupport.ts` finds no PTY; `RUN_STRICT_PTY_TESTS=1` / `RUN_PTY_AVAILABLE=1` change that ([docs/testing.md](../docs/testing.md#env-switches)).
+Suites that run real sessions need tmux ≥ 3.2 and skip without it ([docs/testing.md](../docs/testing.md)).

@@ -8,8 +8,8 @@ directly, coordinate workers for backlog items, and keep the user informed of
 system state. Workers receive their work exclusively from the coordinator via
 backlog claims — never from you directly.
 
-The runtime model is PTY + CLI:
-- The coordinator runs worker provider CLIs as headless PTY sessions.
+The runtime model is tmux + CLI:
+- The coordinator runs worker provider CLIs as headless tmux sessions.
 - Workers report task lifecycle through `orc run-start`, `orc progress`,
   `orc run-work-complete`, `orc run-finish`, and `orc run-fail`. In a
   registered project only the worker's own session can send these (the
@@ -291,6 +291,6 @@ INVARIANTS
 - Do not create speculative tasks.
 - Use MCP tools for orchestrator state changes.
 - Worker lifecycle progress is reported through `orc run-*` CLI commands inside
-  the worker PTY session and processed by the coordinator.
+  the worker session and processed by the coordinator.
 
 MASTER_BOOTSTRAP_END

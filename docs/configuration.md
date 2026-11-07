@@ -76,8 +76,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 | `ORC_PROJECT_ID` | Select a registered project | — |
 | `ORC_STATE_DIR` | Set for launched sessions: resolves the project from `project.json` without the registry. Selects no project on its own | Project state dir |
 | `ORC_WORKTREES_DIR` | Run worktree directory | `<state>/worktrees` |
-| `ORC_SESSION_TRANSPORT` | Worker sessions: `auto` (tmux if installed, else node-pty), `tmux`, `pty`. tmux sessions survive a coordinator restart. The master always runs in tmux | `auto` |
-| `ORC_TMUX_BIN` | tmux binary | `tmux` |
+| `ORC_TMUX_BIN` | tmux binary (≥ 3.2). The master and every worker run in tmux, so sessions survive a coordinator restart; `orc doctor` and `orc start-session` fail when it is missing or older | `tmux` |
 | `ORC_CONTROL_API` | Serve the control API (`control.sock`, `control.json`, `control.token`) | on |
 | `ORC_CONTROL_RETRY_MS` | Retry window for worker lifecycle commands while the coordinator is unreachable | `120000` |
 | `ORC_LOG_LEVEL` | `debug`, `info`, `warn`, `error`, `silent` | `warn` |
@@ -208,7 +207,7 @@ Times in ms. Behaviour of the liveness thresholds: [contracts.md](contracts.md).
 
 | Runtime | Behaviour |
 |---------|-----------|
-| `cli` (default) | Provider's interactive CLI in a terminal (tmux or PTY); input is unacknowledged typed text. |
+| `cli` (default) | Provider's interactive CLI in a tmux terminal; input is unacknowledged typed text. |
 | `structured` | Codex runs `codex app-server --listen stdio://` (session `app:<agent_id>`). Other providers stay on `cli` and record `provider_ref.runtime_fallback`. |
 
 Codex app-server:
@@ -226,7 +225,7 @@ When a task worker's provider process dies mid-run, the coordinator resumes it i
 
 | Provider / runtime | Resume |
 |--------------------|--------|
-| Claude CLI (tmux or PTY) | Yes: orc starts the conversation with `--session-id <uuid>` and relaunches with `--resume <uuid>` |
+| Claude CLI (tmux) | Yes: orc starts the conversation with `--session-id <uuid>` and relaunches with `--resume <uuid>` |
 | Codex `structured` (`app:`) | Yes: `thread/resume` on the recorded thread id |
 | Codex CLI | No |
 | Gemini | No |
@@ -239,7 +238,7 @@ The run is requeued as before when any of these holds:
 - The run worktree is gone (Claude keeps conversations per working directory).
 - The run already resumed twice (budget 2 per run).
 
-A crash is a signal or a non-zero exit code. tmux keeps the dead worker pane (`remain-on-exit`, set per worker window) so its status can be read; telling a signal kill apart needs tmux 3.3 or later, older tmux reports it as `unknown`. An invalid `sessions.resume` value is logged and treated as `off`. PTY and `app:` exits are seen only by the coordinator that launched the process.
+A crash is a signal or a non-zero exit code. tmux keeps the dead worker pane (`remain-on-exit`, set per worker window) so its status can be read; telling a signal kill apart needs tmux 3.3 or later, older tmux reports it as `unknown`. An invalid `sessions.resume` value is logged and treated as `off`. `app:` exits are seen only by the coordinator that launched the process.
 
 Events: `session_resumed` on success. `session_resume_failed` when the budget is spent or the relaunch fails; the run is then requeued.
 
@@ -271,7 +270,7 @@ Set with `default_execution_mode`, `master.execution_mode`, `worker_pool.executi
 -c sandbox_workspace_write.writable_roots=["<control-socket>","<target>/.git/objects","<target>/.git/refs","<target>/.git/logs","<target>/.git/worktrees"]
 ```
 
-These override keys were not verified against a live Codex sandbox. If sandboxed commits or `orc` calls fail, check them against your `codex` version (`codexSandboxWritableRootArgs` / `codexSandboxNetworkArgs` in `adapters/pty.ts`).
+These override keys were not verified against a live Codex sandbox. If sandboxed commits or `orc` calls fail, check them against your `codex` version (`codexSandboxWritableRootArgs` / `codexSandboxNetworkArgs` in `adapters/providerLaunch.ts`).
 
 ### Scouts
 

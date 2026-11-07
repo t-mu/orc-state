@@ -26,10 +26,10 @@ type ProcessableEvent = DistributiveOmit<OrcEvent, 'seq' | 'actor_type' | 'actor
 import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseOnly, markTaskEnvelopeSent, setEscalationNotified, setRunFinalizationState, setRunInputState, startRun, setPrRef, setPrCreatedAt } from './lib/claimManager.ts';
 import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
-import { createAdapter, resolveSessionTransport } from './adapters/index.ts';
+import { createAdapter } from './adapters/index.ts';
 import { adapterDetectInputBlock, adapterExitStatus, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
-import { removeDeadTmuxSocket } from './adapters/tmux.ts';
+import { checkTmux, removeDeadTmuxSocket } from './adapters/tmux.ts';
 import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
 import { CommandDispatcher, acknowledgeFromRuntime, isDeferred, type AckState, type CommandTransport, type DurableCommand } from './lib/commandDelivery.ts';
 import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch, readEventsForRuns } from './lib/eventLog.ts';
@@ -110,7 +110,7 @@ function getAdapter(provider: string): ReturnType<typeof createAdapter> {
 // A structured session's input is a durable command: the transport submits it
 // over the provider protocol and records `accepted` only when the provider
 // answers; turn events then move it to running and completed/failed. CLI
-// sessions keep the direct PTY path and are refused by this transport. Input
+// sessions keep the direct terminal path and are refused by this transport. Input
 // for a session whose turn is still running waits in the queue (no attempt is
 // used) and goes out when the turn ends.
 
@@ -398,7 +398,7 @@ function buildReportForDutyNudge(agent: Agent) {
     'SESSION_NUDGE',
     `agent_id: ${agent.agent_id}`,
     `session_id: ${agent.session_token ?? '(missing)'}`,
-    'Missing required reported_for_duty acknowledgement for this PTY session.',
+    'Missing required reported_for_duty acknowledgement for this session.',
     'Call this command immediately via your Bash tool:',
     `${resolveOrcBinSh(ORC_PACKAGE_ROOT)} report-for-duty --agent-id=${agent.agent_id} --session-id=${agent.session_token ?? ''}`,
     'SESSION_NUDGE_END',
@@ -779,7 +779,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig, eve
       log(`warning: failed to extend lease for PR finalization on ${claim.run_id}: ${(error as Error).message}`);
     }
 
-    // Send PR_REVIEW into the existing worker's PTY session
+    // Send PR_REVIEW into the existing worker's session
     const workerAgent = getAgent(STATE_DIR, claim.agent_id);
     if (!workerAgent?.session_handle) {
       return markFinalizeBlocked(claim, workerPoolConfig, 'worker session_handle missing at PR_REVIEW send time');
@@ -2367,7 +2367,7 @@ async function inspectAgentSession(agent: Agent, session: SupervisedSession): Pr
   if (inspected) return inspected;
   const alive = await adapter.heartbeatProbe(agent.session_handle!);
   return {
-    transport: agent.session_handle!.startsWith('tmux:') ? 'tmux' : 'pty',
+    transport: agent.session_handle!.startsWith('tmux:') ? 'tmux' : 'legacy',
     alive, writable: alive && adapterOwnsSession(adapter, agent.session_handle!) === true,
     pid: session.process_pid, processStart: session.process_start,
   };
@@ -2460,11 +2460,8 @@ export async function main() {
   }
 
   reconcileState(STATE_DIR);
-  try {
-    log(`session transport for new workers: ${resolveSessionTransport()}`);
-  } catch (error) {
-    log(`warning: ${(error as Error).message}`);
-  }
+  const tmux = checkTmux();
+  log(tmux.ok ? `worker sessions run in ${tmux.version}` : `warning: ${tmux.problem}; no worker session can start`);
   await reconcileSupervisedSessions();
   // Project workers cannot report without the control API.
   try {
@@ -2521,7 +2518,7 @@ export async function doShutdown() {
     });
   }
 
-  // Stop all managed worker PTY sessions
+  // Stop all managed worker sessions
   try {
     const agents = listCoordinatorAgents(STATE_DIR);
     for (const agent of agents) {

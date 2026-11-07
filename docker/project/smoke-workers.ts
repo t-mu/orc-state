@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Opt-in image smoke: two provider worker PTYs in the same container. */
+/** Opt-in image smoke: two provider worker sessions in the same container. */
 import { createTmuxAdapter } from '../../adapters/tmux.ts';
 
 process.env.PATH = `/opt/orc-state/test-fixtures/bin:${process.env.PATH ?? ''}`;

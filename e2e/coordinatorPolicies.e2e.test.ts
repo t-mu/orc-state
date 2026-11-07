@@ -8,7 +8,7 @@ import {
   seedProjectTasks,
 } from '../test-fixtures/stateHelpers.ts';
 import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
-import { createSessionHandle } from '../adapters/pty.ts';
+const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
 
 let dir: string;
 
@@ -207,7 +207,7 @@ describe('coordinator policy e2e', () => {
         provider: 'claude',
         role: 'master',
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
         provider_ref: null,
         registered_at: '2026-01-01T00:00:00Z',
       }],
@@ -444,7 +444,7 @@ describe('coordinator policy e2e', () => {
         provider: 'claude',
         role: 'master',
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
         provider_ref: null,
         registered_at: '2026-01-01T00:00:00Z',
       }],
@@ -492,7 +492,7 @@ describe('coordinator policy e2e', () => {
     const agent = readAgents().agents.find((a) => a.agent_id === spawnedAgentId);
     expect(agent).toBeDefined();
     expect(agent!.status).toBe('running');
-    expect(agent!.session_handle).toMatch(/^pty:/);
+    expect(agent!.session_handle).toMatch(/^tmux:/);
 
     const claims = readClaims().claims.filter((c) => ['claimed', 'in_progress', 'done'].includes(c.state as string));
     expect(claims).toHaveLength(1);

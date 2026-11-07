@@ -134,11 +134,11 @@ describe('updateAgentRuntime', () => {
 
   it('updates session_handle and provider_ref', () => {
     updateAgentRuntime(dir, 'agent-01', {
-      session_handle: 'pty:agent-01',
+      session_handle: 'tmux:agent-01',
       provider_ref: { pid: 99999, provider: 'claude', binary: 'claude' },
     });
     const a = getAgent(dir, 'agent-01')!;
-    expect(a.session_handle).toBe('pty:agent-01');
+    expect(a.session_handle).toBe('tmux:agent-01');
     expect(a.provider_ref!.pid).toBe(99999);
   });
 

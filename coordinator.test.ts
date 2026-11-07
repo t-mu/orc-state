@@ -128,7 +128,7 @@ describe('worker session lifecycle', () => {
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:new-worker', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:new-worker', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
@@ -141,7 +141,7 @@ describe('worker session lifecycle', () => {
     const workers = readAgents(dir).filter((a) => a.role === 'worker');
     expect(workers).toHaveLength(1);
     expect(workers[0].status).toBe('running');
-    expect(workers[0].session_handle).toBe('pty:new-worker');
+    expect(workers[0].session_handle).toBe('tmux:new-worker');
     expect(workers[0].ephemeral).toBe(true);
     expect(workers[0].provider).toBe('codex');
 
@@ -164,7 +164,7 @@ describe('worker session lifecycle', () => {
 
     const mockStart = vi.fn()
       .mockRejectedValueOnce(new Error('spawn failed'))
-      .mockResolvedValue({ session_handle: 'pty:new-worker', provider_ref: null });
+      .mockResolvedValue({ session_handle: 'tmux:new-worker', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
@@ -202,7 +202,7 @@ describe('worker session lifecycle', () => {
       }],
     });
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker-01', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:worker-01', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
 
     const { tick } = await import('./coordinator.ts');
@@ -218,7 +218,7 @@ describe('worker session lifecycle', () => {
     expect(claims).toHaveLength(0);
   });
 
-  it('does not refresh agent last_heartbeat_at just because a PTY session is reachable', async () => {
+  it('does not refresh agent last_heartbeat_at just because a session is reachable', async () => {
     const staleTs = new Date(Date.now() - 10 * 60_000).toISOString();
     seedState(dir, {
       agents: [{
@@ -226,7 +226,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         last_heartbeat_at: staleTs,
         registered_at: new Date().toISOString(),
@@ -249,7 +249,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -273,7 +273,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -320,7 +320,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -366,7 +366,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -413,7 +413,7 @@ describe('worker session lifecycle', () => {
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:spawned-worker', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:spawned-worker', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
@@ -426,7 +426,7 @@ describe('worker session lifecycle', () => {
     expect(workers).toHaveLength(1);
     const [worker] = workers;
     expect(worker.status).toBe('running');
-    expect(worker.session_handle).toBe('pty:spawned-worker');
+    expect(worker.session_handle).toBe('tmux:spawned-worker');
     expect(worker.last_heartbeat_at).toBeTruthy();
     expect(worker.ephemeral).toBe(true);
 
@@ -447,8 +447,8 @@ describe('worker session lifecycle', () => {
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
     const mockStart = vi.fn()
-      .mockResolvedValueOnce({ session_handle: 'pty:worker-1', provider_ref: null })
-      .mockResolvedValueOnce({ session_handle: 'pty:worker-2', provider_ref: null });
+      .mockResolvedValueOnce({ session_handle: 'tmux:worker-1', provider_ref: null })
+      .mockResolvedValueOnce({ session_handle: 'tmux:worker-2', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
@@ -488,7 +488,7 @@ describe('worker session lifecycle', () => {
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:new-worker', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:new-worker', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn().mockReturnValue({
@@ -519,7 +519,7 @@ describe('worker session lifecycle', () => {
         role: 'worker',
         ephemeral: true,
         status: 'running',
-        session_handle: 'pty:active-worker',
+        session_handle: 'tmux:active-worker',
         session_token: 'token-active',
         session_started_at: now,
         session_ready_at: null,
@@ -552,7 +552,7 @@ describe('worker session lifecycle', () => {
     });
     process.env.ORC_MAX_WORKERS = '1'; // capacity = 1 - 1 active = 0
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:new', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:new', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
@@ -616,7 +616,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         session_token: 'session-token-1',
         session_started_at: new Date().toISOString(),
         session_ready_at: null,
@@ -667,7 +667,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         session_token: 'session-token-1',
         session_started_at: new Date().toISOString(),
         session_ready_at: null,
@@ -793,7 +793,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -842,7 +842,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -907,7 +907,7 @@ describe('worker session lifecycle', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -951,7 +951,7 @@ describe('worker session lifecycle', () => {
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'codex'; // pool default is codex
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:claude-worker', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:claude-worker', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
@@ -973,7 +973,7 @@ describe('worker session lifecycle', () => {
     process.env.ORC_MAX_WORKERS = '1';
     process.env.ORC_WORKER_PROVIDER = 'gemini'; // pool default
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:gemini-worker', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:gemini-worker', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock());
 
@@ -997,7 +997,7 @@ describe('worker session lifecycle', () => {
     process.env.ORC_MAX_WORKERS = '2';
     process.env.ORC_WORKER_PROVIDER = 'codex';
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:worker', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:worker', provider_ref: null });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
     vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
       ensureRunWorktree: vi.fn().mockImplementation((_: string, { runId }: { runId: string }) => ({
@@ -1028,7 +1028,7 @@ describe('worker session lifecycle', () => {
         role: 'worker',
         ephemeral: true,
         status: 'running',
-        session_handle: 'pty:amber-anchor',
+        session_handle: 'tmux:amber-anchor',
         session_token: 'token-xyz',
         session_started_at: now,
         session_ready_at: now,
@@ -1114,7 +1114,7 @@ describe('worker session lifecycle', () => {
         role: 'worker',
         ephemeral: true,
         status: 'running',
-        session_handle: 'pty:amber-anchor',
+        session_handle: 'tmux:amber-anchor',
         session_token: 'token-abc',
         session_started_at: now,
         session_ready_at: now,
@@ -1161,7 +1161,7 @@ describe('worker session lifecycle', () => {
     expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
   });
 
-  it('stops a launched PTY session when post-claim dispatch fails', async () => {
+  it('stops a launched session when post-claim dispatch fails', async () => {
     const now = new Date().toISOString();
     seedState(dir, {
       agents: [{
@@ -1170,7 +1170,7 @@ describe('worker session lifecycle', () => {
         role: 'worker',
         ephemeral: true,
         status: 'running',
-        session_handle: 'pty:amber-anchor',
+        session_handle: 'tmux:amber-anchor',
         session_token: 'token-abc',
         session_started_at: now,
         session_ready_at: now,
@@ -1207,7 +1207,7 @@ describe('worker session lifecycle', () => {
     await tick();
 
     // Session was stopped when dispatch failed
-    expect(mockStop).toHaveBeenCalledWith('pty:amber-anchor');
+    expect(mockStop).toHaveBeenCalledWith('tmux:amber-anchor');
     // Ephemeral agent removed
     expect(readAgents(dir).filter((a) => a.role === 'worker')).toHaveLength(0);
   });
@@ -1301,7 +1301,7 @@ describe('stale worker removal', () => {
   it('keeps an unclaimed worker and finishes the tick when its session probe throws', async () => {
     const now = new Date().toISOString();
     seedState(dir, {
-      agents: [{ agent_id: 'worker-probe', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-probe', registered_at: now, last_heartbeat_at: now }],
+      agents: [{ agent_id: 'worker-probe', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:worker-probe', registered_at: now, last_heartbeat_at: now }],
     });
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({
       heartbeatProbe: vi.fn().mockRejectedValue(new Error('pty unavailable')),
@@ -1318,7 +1318,7 @@ describe('stale worker removal', () => {
     seedState(dir, {
       agents: [{
         agent_id: 'worker-recoverable', provider: 'claude', role: 'worker', status: 'running',
-        session_handle: 'pty:worker-recoverable', session_token: 'sess-r', registered_at: staleTs, last_heartbeat_at: staleTs,
+        session_handle: 'tmux:worker-recoverable', session_token: 'sess-r', registered_at: staleTs, last_heartbeat_at: staleTs,
       }],
     });
     const { initEventsDb, withEventDbTransaction } = await import('./lib/eventLog.ts');
@@ -1346,7 +1346,7 @@ describe('in-progress stale escalation', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -1410,7 +1410,7 @@ describe('in-progress stale escalation', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -1464,7 +1464,7 @@ describe('in-progress stale escalation', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -1518,7 +1518,7 @@ describe('in-progress stale escalation', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -1568,7 +1568,7 @@ describe('in-progress stale escalation', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -1667,8 +1667,8 @@ describe('hook event bus', () => {
   it('does not nudge or escalate a run whose tool hook events are recent, even without phase events', async () => {
     seedState(dir, {
       agents: [
-        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
-        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'tmux:worker-02' },
       ],
       tasks: [
         { ...DISPATCHABLE_TASK, ref: 'proj/busy', status: 'in_progress' },
@@ -1688,8 +1688,8 @@ describe('hook event bus', () => {
     await runTicks(['--worker-stale-soft-ms=600000', '--worker-stale-nudge-ms=600000', '--run-inactive-nudge-interval-ms=600000'], 2);
 
     const sentTo = send.mock.calls.map((call) => call[0]);
-    expect(sentTo).toContain('pty:worker-02');
-    expect(sentTo).not.toContain('pty:worker-01');
+    expect(sentTo).toContain('tmux:worker-02');
+    expect(sentTo).not.toContain('tmux:worker-01');
     const events = readEvents(dir);
     expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-quiet')).toBe(true);
     expect(events.some((e) => isStaleAttention(e) && e.run_id === 'run-busy')).toBe(false);
@@ -1711,7 +1711,7 @@ describe('hook event bus', () => {
   function seedBusyRun(heartbeatAgoMs: number) {
     const heartbeatAt = new Date(Date.now() - heartbeatAgoMs).toISOString();
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01', last_heartbeat_at: heartbeatAt }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01', last_heartbeat_at: heartbeatAt }],
       tasks: [{ ...DISPATCHABLE_TASK, ref: 'proj/busy', status: 'in_progress' }],
       claims: [{
         ...inProgressClaim('run-busy', 'worker-01', 'proj/busy', heartbeatAgoMs),
@@ -1752,7 +1752,7 @@ describe('hook event bus', () => {
     const ago = (minutes: number) => new Date(now - minutes * 60 * 1000).toISOString();
     const claim = inProgressClaim('run-phases', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000);
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [{ ...claim, task_envelope_sent_at: ago(30) }],
     });
@@ -1810,7 +1810,7 @@ describe('hook event bus', () => {
   it('infers complete then finalize from run-work-complete for a reviewed run without a rebase (PR mode)', async () => {
     const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-pr', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000)],
     });
@@ -1839,7 +1839,7 @@ describe('hook event bus', () => {
   it('infers no phases for a run that finished in the same event batch', async () => {
     const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-ended', 'worker-01', 'proj/fix-bug', 29 * 60 * 1000)],
     });
@@ -1865,8 +1865,8 @@ describe('hook event bus', () => {
     const ago = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
     seedState(dir, {
       agents: [
-        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
-        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'tmux:worker-02' },
       ],
       tasks: [
         { ...DISPATCHABLE_TASK, ref: 'proj/commit', status: 'in_progress' },
@@ -1901,8 +1901,8 @@ describe('hook event bus', () => {
   it('escalates a run that is alive but without progress, once, and not a run that committed', async () => {
     seedState(dir, {
       agents: [
-        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
-        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'tmux:worker-02' },
       ],
       tasks: [
         { ...DISPATCHABLE_TASK, ref: 'proj/spinning', status: 'in_progress' },
@@ -1938,8 +1938,8 @@ describe('hook event bus', () => {
   it('does not repeat a no_progress alert after a restart, nor alert a run that just got its input answered', async () => {
     seedState(dir, {
       agents: [
-        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
-        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'tmux:worker-02' },
       ],
       tasks: [
         { ...DISPATCHABLE_TASK, ref: 'proj/alerted', status: 'in_progress' },
@@ -1982,7 +1982,7 @@ describe('hook event bus', () => {
 
   it('does not let an inferred phase transition reset the nudge count', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-cycling', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
     });
@@ -2012,8 +2012,8 @@ describe('hook event bus', () => {
   it('nudges and escalates a hook-reporting run after the shorter hook idle thresholds', async () => {
     seedState(dir, {
       agents: [
-        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
-        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'tmux:worker-02' },
       ],
       tasks: [
         { ...DISPATCHABLE_TASK, ref: 'proj/hooked', status: 'in_progress' },
@@ -2036,12 +2036,12 @@ describe('hook event bus', () => {
     expect(events.some((e) => e.event === 'need_input' && e.run_id === 'run-hooked')).toBe(true);
     expect(events.some((e) => e.event === 'worker_needs_attention' && e.run_id === 'run-plain')).toBe(false);
     expect(events.some((e) => e.event === 'need_input' && e.run_id === 'run-plain')).toBe(false);
-    expect(send.mock.calls.map((call) => call[0])).toEqual(['pty:worker-01']);
+    expect(send.mock.calls.map((call) => call[0])).toEqual(['tmux:worker-01']);
   });
 
   it('keeps the longer thresholds while a tool call is still running (PreToolUse without PostToolUse)', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-testing', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
     });
@@ -2061,7 +2061,7 @@ describe('hook event bus', () => {
 
   it('does not escalate at the long thresholds while a tool call is still running (same isStalled as orc status)', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-long-tool', 'worker-01', 'proj/fix-bug', 90 * 60 * 1000)],
     });
@@ -2081,7 +2081,7 @@ describe('hook event bus', () => {
 
   it('a turn_end record closes a tool call that never reported back, so the hook thresholds apply', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-refused', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
     });
@@ -2103,7 +2103,7 @@ describe('hook event bus', () => {
   it('reads the hook idle thresholds from coordinator settings', async () => {
     useSettings({ coordinator: { hook_idle_nudge_ms: 3_600_000, hook_idle_escalate_ms: 3_600_000 } });
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-hooked', 'worker-01', 'proj/fix-bug', 40 * 60 * 1000)],
     });
@@ -2125,8 +2125,8 @@ describe('hook event bus', () => {
     });
     seedState(dir, {
       agents: [
-        { ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' },
-        { ...WORKER, agent_id: 'worker-02', session_handle: 'pty:worker-02' },
+        { ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' },
+        { ...WORKER, agent_id: 'worker-02', session_handle: 'tmux:worker-02' },
       ],
       tasks: [
         { ...DISPATCHABLE_TASK, ref: 'proj/busy', status: 'in_progress' },
@@ -2146,12 +2146,12 @@ describe('hook event bus', () => {
     const busy = claims.find((c) => c.run_id === 'run-busy')!;
     expect(busy.finalization_state).toBe('finalize_rebase_in_progress');
     expect(busy.finalization_blocked_reason ?? null).toBeNull();
-    expect(send.mock.calls.some((call) => call[0] === 'pty:worker-01')).toBe(false);
+    expect(send.mock.calls.some((call) => call[0] === 'tmux:worker-01')).toBe(false);
   });
 
   it('hands permission hook events to input-block detection and skips malformed lines', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'claimed' }],
       claims: [{
         run_id: 'run-permission',
@@ -2181,7 +2181,7 @@ describe('hook event bus', () => {
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ detectInputBlock }));
     await runTicks(['--run-start-timeout-ms=600000']);
 
-    expect(detectInputBlock).toHaveBeenCalledWith('pty:worker-01', [
+    expect(detectInputBlock).toHaveBeenCalledWith('tmux:worker-01', [
       expect.objectContaining({ type: 'permission', message: 'Allow Bash(rm -rf build)?' }),
     ]);
     const claim = readClaims(dir).find((c) => c.run_id === 'run-permission')!;
@@ -2192,7 +2192,7 @@ describe('hook event bus', () => {
 
   it('removes a run activity snapshot once the run is no longer active', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-live', 'worker-01', 'proj/fix-bug', 60 * 1000)],
     });
@@ -2211,7 +2211,7 @@ describe('hook event bus', () => {
 
   it('survives a failed hydration read and hydrates on a later tick', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-hydrate', 'worker-01', 'proj/fix-bug', 60 * 1000)],
     });
@@ -2234,7 +2234,7 @@ describe('hook event bus', () => {
 
   it('does not re-emit activity_note for an unchanged label after a coordinator restart', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-restarted', 'worker-01', 'proj/fix-bug', 60 * 1000)],
     });
@@ -2255,7 +2255,7 @@ describe('hook event bus', () => {
 
   it('emits activity_note when the label changes, not again for the same label, and throttles changes', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-notes', 'worker-01', 'proj/fix-bug', 60 * 1000)],
     });
@@ -2283,7 +2283,7 @@ describe('hook event bus', () => {
 
   it('folds a worker note from its heartbeat event into run-activity.json and announces it', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-noted', 'worker-01', 'proj/fix-bug', 60 * 1000)],
     });
@@ -2312,7 +2312,7 @@ describe('hook event bus', () => {
 
   it('keeps tool-call labels out of events.db: no activity_note for a run labelled only by tool calls', async () => {
     seedState(dir, {
-      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'pty:worker-01' }],
+      agents: [{ ...WORKER, agent_id: 'worker-01', session_handle: 'tmux:worker-01' }],
       tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
       claims: [inProgressClaim('run-tools', 'worker-01', 'proj/fix-bug', 60 * 1000)],
     });
@@ -2337,7 +2337,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -2389,7 +2389,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -2435,7 +2435,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -2482,7 +2482,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -2535,7 +2535,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -2582,7 +2582,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -2627,7 +2627,7 @@ describe('processTerminalRunEvents', () => {
 
   it('extends lease to FINALIZE_LEASE_MS on work_complete', async () => {
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [{ ref: 'orch/task-wc', title: 'work complete lease test', status: 'in_progress' }],
       claims: [{
         run_id: 'run-wc-lease',
@@ -2666,7 +2666,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -2731,8 +2731,8 @@ describe('processTerminalRunEvents', () => {
       cwd: dir,
       encoding: 'utf8',
     }));
-    expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_WAIT'));
-    expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_SUCCESS'));
+    expect(send).toHaveBeenCalledWith('tmux:orc-1', expect.stringContaining('FINALIZE_WAIT'));
+    expect(send).toHaveBeenCalledWith('tmux:orc-1', expect.stringContaining('FINALIZE_SUCCESS'));
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-success');
 
     // A crash before cursor persistence must not replay the completed merge.
@@ -2756,7 +2756,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -2824,7 +2824,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -2867,8 +2867,8 @@ describe('processTerminalRunEvents', () => {
       payload: { status: 'awaiting_finalize', retry_count: 0 },
     }]);
 
-    expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_WAIT'));
-    expect(send).toHaveBeenCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_REBASE'));
+    expect(send).toHaveBeenCalledWith('tmux:orc-1', expect.stringContaining('FINALIZE_WAIT'));
+    expect(send).toHaveBeenCalledWith('tmux:orc-1', expect.stringContaining('FINALIZE_REBASE'));
     const claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-retry')!;
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(1);
@@ -2883,7 +2883,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -2931,7 +2931,7 @@ describe('processTerminalRunEvents', () => {
     expect(claim.finalization_retry_count).toBe(0);
     expect(claim.finalization_blocked_reason).toBeNull();
     expect(deliverySend).toHaveBeenCalledTimes(2);
-    expect(deliverySend).toHaveBeenLastCalledWith('pty:orc-1', expect.stringContaining('FINALIZE_REBASE'));
+    expect(deliverySend).toHaveBeenLastCalledWith('tmux:orc-1', expect.stringContaining('FINALIZE_REBASE'));
   });
 
   it('blocks finalization after the second undeliverable finalize request', async () => {
@@ -2941,7 +2941,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -2998,7 +2998,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -3332,7 +3332,7 @@ describe('processTerminalRunEvents', () => {
   it('does not merge a PR when the initial work_complete replays after review starts', async () => {
     seedState(dir, {
       agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running',
-        session_handle: 'pty:orc-1', registered_at: new Date().toISOString() }],
+        session_handle: 'tmux:orc-1', registered_at: new Date().toISOString() }],
       tasks: [{ ...DISPATCHABLE_TASK, ref: 'orch/pr-replay', status: 'in_progress' }],
       claims: [{ run_id: 'run-pr-replay', task_ref: 'orch/pr-replay', agent_id: 'orc-1',
         state: 'in_progress', claimed_at: new Date().toISOString(), started_at: new Date().toISOString(),
@@ -3377,7 +3377,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -3413,7 +3413,7 @@ describe('processTerminalRunEvents', () => {
     // The task is recorded done only from the coordinator's merge confirmation.
     const task = readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'orch/test-task')!;
     expect(task.status).toBe('in_progress');
-    expect(stop).toHaveBeenCalledWith('pty:orc-1');
+    expect(stop).toHaveBeenCalledWith('tmux:orc-1');
     expect(readAgents(dir).find((entry) => entry.agent_id === 'orc-1')).toBeUndefined();
   });
 
@@ -3424,7 +3424,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -3474,7 +3474,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -3531,7 +3531,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -3626,7 +3626,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1-new',
+        session_handle: 'tmux:orc-1-new',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -3654,7 +3654,7 @@ describe('processTerminalRunEvents', () => {
     const agent = readAgents(dir).find((entry) => entry.agent_id === 'orc-1')!;
     expect(stop).not.toHaveBeenCalled();
     expect(agent.status).toBe('running');
-    expect(agent.session_handle).toBe('pty:orc-1-new');
+    expect(agent.session_handle).toBe('tmux:orc-1-new');
   });
 
   it('processes run_failed with payload.code without error and marks claim failed', async () => {
@@ -3701,7 +3701,7 @@ describe('processTerminalRunEvents', () => {
         provider: 'claude',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -3734,7 +3734,7 @@ describe('processTerminalRunEvents', () => {
     const { tick } = await import('./coordinator.ts');
     await tick();
     let claim = readClaims(dir).find((entry) => entry.run_id === 'run-finalize-nudge')!;
-    expect(send).toHaveBeenCalledWith('pty:worker-01', expect.stringContaining('FINALIZE_REBASE'));
+    expect(send).toHaveBeenCalledWith('tmux:worker-01', expect.stringContaining('FINALIZE_REBASE'));
     expect(claim.finalization_state).toBe('finalize_rebase_requested');
     expect(claim.finalization_retry_count).toBe(2);
 
@@ -3782,7 +3782,7 @@ describe('buildTaskEnvelope', () => {
 });
 
 describe('doShutdown', () => {
-  it('stops all managed PTY sessions before coordinator_stopped event', async () => {
+  it('stops all managed sessions before coordinator_stopped event', async () => {
     process.env.ORC_MAX_WORKERS = '2';
     process.env.ORC_WORKER_PROVIDER = 'claude';
     seedState(dir, {
@@ -3792,7 +3792,7 @@ describe('doShutdown', () => {
           provider: 'claude',
           role: 'worker',
           status: 'running',
-          session_handle: 'pty:orc-1',
+          session_handle: 'tmux:orc-1',
           provider_ref: null,
           registered_at: new Date().toISOString(),
           last_heartbeat_at: new Date().toISOString(),
@@ -3802,7 +3802,7 @@ describe('doShutdown', () => {
           provider: 'claude',
           role: 'worker',
           status: 'running',
-          session_handle: 'pty:orc-2',
+          session_handle: 'tmux:orc-2',
           provider_ref: null,
           registered_at: new Date().toISOString(),
           last_heartbeat_at: new Date().toISOString(),
@@ -3826,8 +3826,8 @@ describe('doShutdown', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(0);
     expect(mockStop).toHaveBeenCalledTimes(2);
-    expect(mockStop).toHaveBeenCalledWith('pty:orc-1');
-    expect(mockStop).toHaveBeenCalledWith('pty:orc-2');
+    expect(mockStop).toHaveBeenCalledWith('tmux:orc-1');
+    expect(mockStop).toHaveBeenCalledWith('tmux:orc-2');
   });
 
   it('doShutdown continues if one session stop fails', async () => {
@@ -3840,7 +3840,7 @@ describe('doShutdown', () => {
           provider: 'claude',
           role: 'worker',
           status: 'running',
-          session_handle: 'pty:orc-1',
+          session_handle: 'tmux:orc-1',
           provider_ref: null,
           registered_at: new Date().toISOString(),
           last_heartbeat_at: new Date().toISOString(),
@@ -3850,7 +3850,7 @@ describe('doShutdown', () => {
           provider: 'claude',
           role: 'worker',
           status: 'running',
-          session_handle: 'pty:orc-2',
+          session_handle: 'tmux:orc-2',
           provider_ref: null,
           registered_at: new Date().toISOString(),
           last_heartbeat_at: new Date().toISOString(),
@@ -3917,11 +3917,11 @@ describe('doShutdown', () => {
     expect(readAgents(dir)[0]).toMatchObject({ session_handle: 'tmux:orc-1', status: 'running' });
   });
 
-  it('marks an unwritable surviving PTY recoverable without stopping it', async () => {
+  it('marks an unwritable surviving session recoverable without stopping it', async () => {
     seedState(dir, {
       agents: [{
         agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running',
-        session_handle: 'pty:orc-1', session_token: 'sess-1', provider_ref: null,
+        session_handle: 'tmux:orc-1', session_token: 'sess-1', provider_ref: null,
         registered_at: new Date().toISOString(), last_heartbeat_at: new Date().toISOString(),
       }],
     });
@@ -3930,15 +3930,15 @@ describe('doShutdown', () => {
     withEventDbTransaction(dir, (db) => {
       db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at,
         transport, process_pid, process_start, owner_id)
-        VALUES ('sess-1', NULL, 'orc-1', 'claude', 'running', '2026-01-01', '2026-01-01', 'pty', 4242, 'proc:42', 'pid:1:previous')`).run();
+        VALUES ('sess-1', NULL, 'orc-1', 'claude', 'running', '2026-01-01', '2026-01-01', 'tmux', 4242, 'proc:42', 'pid:1:previous')`).run();
     });
     const mockStop = vi.fn().mockResolvedValue(undefined);
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({
       stop: mockStop,
       ownsSession: vi.fn().mockReturnValue(false),
       inspectSession: vi.fn().mockReturnValue({
-        transport: 'pty', alive: true, writable: false, pid: 4242, processStart: 'proc:42',
-        reason: 'pty is owned by another process and cannot be written',
+        transport: 'tmux', alive: true, writable: false, pid: 4242, processStart: 'proc:42',
+        reason: 'session cannot be written',
       }),
       detectInputBlock: vi.fn().mockReturnValue(null),
     }));
@@ -3953,7 +3953,7 @@ describe('doShutdown', () => {
     expect(session.state).toBe('recoverable');
     expect(session.state_reason).toContain('orc worker-remove');
     expect(mockStop).not.toHaveBeenCalled();
-    expect(readAgents(dir)[0]).toMatchObject({ session_handle: 'pty:orc-1', session_token: 'sess-1' });
+    expect(readAgents(dir)[0]).toMatchObject({ session_handle: 'tmux:orc-1', session_token: 'sess-1' });
   });
 
   it('refuses direct sends to sessions the supervisor has not confirmed', async () => {
@@ -3961,7 +3961,7 @@ describe('doShutdown', () => {
     seedState(dir, {
       agents: ['orc-1', 'orc-2', 'orc-3'].map((id, index) => ({
         agent_id: id, provider: 'claude', role: 'worker', status: 'running',
-        session_handle: `${index === 0 ? 'tmux' : 'pty'}:${id}`, session_token: `sess-${index + 1}`, provider_ref: null,
+        session_handle: `tmux:${id}`, session_token: `sess-${index + 1}`, provider_ref: null,
         registered_at: now, last_heartbeat_at: now,
       })),
     });
@@ -3970,7 +3970,7 @@ describe('doShutdown', () => {
     withEventDbTransaction(dir, (db) => {
       db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, transport, process_pid, process_start, state_reason)
         VALUES ('sess-1', NULL, 'orc-1', 'claude', 'running', 'now', 'now', 'tmux', 4242, 'proc:42', NULL),
-          ('sess-2', NULL, 'orc-2', 'claude', 'recoverable', 'now', 'now', 'pty', 4343, 'proc:43', 'not writable')`).run();
+          ('sess-2', NULL, 'orc-2', 'claude', 'recoverable', 'now', 'now', 'tmux', 4343, 'proc:43', 'not writable')`).run();
     });
     const mockSend = vi.fn().mockResolvedValue('');
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({
@@ -3982,13 +3982,13 @@ describe('doShutdown', () => {
     const adapter = coordinator.getCoordinatorAdapter('claude');
 
     await expect(adapter.send('tmux:orc-1', 'TASK_START')).rejects.toThrow('is unknown');
-    await expect(adapter.send('pty:orc-2', 'nudge')).rejects.toThrow('is recoverable: not writable');
+    await expect(adapter.send('tmux:orc-2', 'nudge')).rejects.toThrow('is recoverable: not writable');
     expect(mockSend).not.toHaveBeenCalled();
     expect(withEventDb(dir, (db) => db.prepare("SELECT state FROM sessions WHERE session_id = 'sess-1'").get())).toEqual({ state: 'unknown' });
 
     // An agent without a session record keeps the legacy path.
-    await adapter.send('pty:orc-3', 'hello');
-    expect(mockSend).toHaveBeenCalledWith('pty:orc-3', 'hello');
+    await adapter.send('tmux:orc-3', 'hello');
+    expect(mockSend).toHaveBeenCalledWith('tmux:orc-3', 'hello');
   });
 
   it('releases coordinator lock only once across shutdown and exit hook', async () => {
@@ -4153,7 +4153,7 @@ describe('lifecycle reducer integration', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -4234,7 +4234,7 @@ describe('lifecycle reducer integration', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -4298,7 +4298,7 @@ describe('lifecycle reducer integration', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -4388,7 +4388,7 @@ describe('stale lease expiry and recovery via tick', () => {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -4442,7 +4442,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -4500,7 +4500,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -4564,7 +4564,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
         last_heartbeat_at: null,
@@ -4736,7 +4736,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -4779,7 +4779,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -4822,7 +4822,7 @@ describe('failure-injection: delayed, duplicate, and stale lifecycle events', ()
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         registered_at: new Date().toISOString(),
       }],
@@ -4875,7 +4875,7 @@ describe('PR finalization', () => {
   it('resolveMergeStrategy: task override wins over config', async () => {
     // Test by checking PR path is taken when merge_strategy=pr on the task
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [PR_TASK],
       claims: [PR_CLAIM],
     });
@@ -4916,7 +4916,7 @@ describe('PR finalization', () => {
   it('resolveMergeStrategy: falls back to config, then direct', async () => {
     // Task with no merge_strategy, config defaults to direct — direct path taken
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [{ ...DISPATCHABLE_TASK, ref: 'orch/direct-task', status: 'in_progress' }],
       claims: [{
         ...PR_CLAIM,
@@ -4963,7 +4963,7 @@ describe('PR finalization', () => {
 
   it('pushes branch and creates PR after work_complete when strategy=pr', async () => {
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [PR_TASK],
       claims: [PR_CLAIM],
     });
@@ -5016,7 +5016,7 @@ describe('PR finalization', () => {
     };
     const claimForCriteria = { ...PR_CLAIM, run_id: 'run-pr-body-test', task_ref: taskWithCriteria.ref };
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [taskWithCriteria],
       claims: [claimForCriteria],
     });
@@ -5055,14 +5055,14 @@ describe('PR finalization', () => {
 
   it('sends PR_REVIEW to existing worker instead of spawning reviewer', async () => {
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [PR_TASK],
       claims: [PR_CLAIM],
     });
 
     useSettings({ coordinator: { pr_provider: 'github' } });
 
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:pr-reviewer', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:pr-reviewer', provider_ref: null });
     const mockSend = vi.fn().mockResolvedValue('');
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart, send: mockSend, stop: vi.fn() }));
     vi.doMock('./lib/gitHosts/index.ts', () => ({
@@ -5094,9 +5094,9 @@ describe('PR finalization', () => {
     // No new session started (original agent already has session_handle)
     expect(mockStart).not.toHaveBeenCalled();
 
-    // PR_REVIEW envelope sent to original worker (pty:orc-1)
+    // PR_REVIEW envelope sent to original worker (tmux:orc-1)
     const envelopeCalls = mockSend.mock.calls.filter(
-      ([handle, msg]) => handle === 'pty:orc-1' && typeof msg === 'string' && String(msg).includes('PR_REVIEW'),
+      ([handle, msg]) => handle === 'tmux:orc-1' && typeof msg === 'string' && String(msg).includes('PR_REVIEW'),
     );
     expect(envelopeCalls.length).toBeGreaterThan(0);
 
@@ -5108,7 +5108,7 @@ describe('PR finalization', () => {
   it('merges PR on worker work_complete during pr_review_in_progress', async () => {
     seedState(dir, {
       agents: [
-        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
+        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-merge-task', status: 'in_progress' }],
       claims: [{
@@ -5168,7 +5168,7 @@ describe('PR finalization', () => {
   it('signals worker run-finish after successful PR merge', async () => {
     seedState(dir, {
       agents: [
-        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
+        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-signal-task', status: 'in_progress' }],
       claims: [{
@@ -5214,7 +5214,7 @@ describe('PR finalization', () => {
 
     // Coordinator must signal worker with FINALIZE_SUCCESS
     const successNotice = mockSend.mock.calls.find(
-      ([handle, msg]) => handle === 'pty:orc-1' && typeof msg === 'string' && String(msg).includes('FINALIZE_SUCCESS'),
+      ([handle, msg]) => handle === 'tmux:orc-1' && typeof msg === 'string' && String(msg).includes('FINALIZE_SUCCESS'),
     );
     expect(successNotice).toBeTruthy();
   });
@@ -5222,7 +5222,7 @@ describe('PR finalization', () => {
   it('sets pr_failed on worker run_fail during pr_review_in_progress and requeues task', async () => {
     seedState(dir, {
       agents: [
-        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
+        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-fail-task', status: 'in_progress' }],
       claims: [{
@@ -5272,7 +5272,7 @@ describe('PR finalization', () => {
   it('no reviewer agent registered during PR path', async () => {
     seedState(dir, {
       agents: [
-        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' },
+        { agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' },
       ],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-cleanup-task', status: 'in_progress' }],
       claims: [{
@@ -5324,7 +5324,7 @@ describe('PR finalization', () => {
 
   it('uses pr_finalize_lease_ms for PR claim leases', async () => {
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [{ ...PR_TASK, ref: 'orch/pr-lease-task', status: 'in_progress' }],
       claims: [{
         run_id: 'run-pr-lease',
@@ -5374,7 +5374,7 @@ describe('PR finalization', () => {
 
   it('direct finalization path is unchanged when merge_strategy=direct', async () => {
     seedState(dir, {
-      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'pty:orc-1' }],
+      agents: [{ agent_id: 'orc-1', role: 'worker', status: 'running', provider: 'claude', session_handle: 'tmux:orc-1' }],
       tasks: [{ ...DISPATCHABLE_TASK, ref: 'orch/direct-unchanged', status: 'in_progress' }],
       claims: [{
         run_id: 'run-direct-unchanged',

@@ -15,7 +15,7 @@ export function isSupportedExecutionMode(value: string): value is ExecutionMode 
 
 /**
  * Worker runtime (task 203). `cli` drives the provider's interactive CLI in a
- * terminal (PTY/tmux). `structured` drives a provider's structured local
+ * terminal (tmux). `structured` drives a provider's structured local
  * protocol where one is proven (Codex app-server); providers without one keep
  * the CLI runtime as an explicit fallback.
  */

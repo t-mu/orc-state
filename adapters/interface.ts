@@ -1,5 +1,5 @@
 /**
- * Provider Adapter Contract — PTY Session Edition
+ * Provider Adapter Contract
  *
  * All adapter factories must return an object implementing AdapterInterface.
  * Provider-specific runtime state lives inside the adapter; the core only ever
@@ -18,7 +18,7 @@
  *   provider_ref:   adapter-internal metadata (opaque to orchestrator core).
  *
  * send(sessionHandle, text) → Promise<string>
- *   Send text to the agent session. In the PTY adapter this is fire-and-forget
+ *   Send text to the agent session. In the tmux adapter this is fire-and-forget
  *   input delivery; worker lifecycle is reported through the `orc-run-*` CLI
  *   commands executed inside the worker session, not by parsing response text.
  *   Throws if sessionHandle is unknown or if delivery fails.
@@ -48,7 +48,8 @@
 
 /** What a supervisor can learn about a session without owning it. */
 export interface SessionInspection {
-  transport: 'pty' | 'tmux' | 'app-server';
+  /** `legacy`: a handle no adapter runs, such as a `pty:` session from an older orc. */
+  transport: 'tmux' | 'app-server' | 'legacy';
   alive: boolean;
   /** True when this process can deliver input to the session. */
   writable: boolean;
@@ -93,8 +94,8 @@ export function assertAdapterContract(adapter: unknown) {
  * - "session process is alive"
  * - "this coordinator process can actively send to it"
  *
- * PTY adapters use this to avoid treating cross-process PID liveness as
- * writable session ownership.
+ * The tmux adapter reports ownership only for a live pane; a handle no
+ * adapter owns (a legacy `pty:` session) is never owned.
  */
 export function adapterOwnsSession(adapter: unknown, sessionHandle: string) {
   if (typeof (adapter as Record<string, (...args: unknown[]) => unknown>)?.ownsSession !== 'function') return true;
@@ -132,7 +133,7 @@ export async function adapterInspectSession(adapter: unknown, sessionHandle: str
   try {
     return await inspect.call(adapter, sessionHandle);
   } catch (error) {
-    const transport = sessionHandle.startsWith('tmux:') ? 'tmux' : 'pty';
+    const transport = sessionHandle.startsWith('tmux:') ? 'tmux' : 'legacy';
     return { transport, alive: false, writable: false, pid: null, processStart: null, reason: (error as Error).message };
   }
 }

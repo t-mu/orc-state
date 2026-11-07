@@ -30,7 +30,7 @@ import { stripAnsi } from '../lib/ansi.ts';
 import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import { controlSocketOf, isolatedMcpArgs, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
+import { controlSocketOf, isolatedMcpArgs, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './providerLaunch.ts';
 import type { SessionExitStatus, SessionInspection } from './interface.ts';
 import {
   CapabilityRefusal,

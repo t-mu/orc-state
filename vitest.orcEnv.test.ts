@@ -28,7 +28,7 @@ console.log(JSON.stringify({ orcEnv, deliberate: config.test.env ?? {}, stateDir
 
 describe('vitest configs strip inherited ORC_* variables', () => {
   it('this test process inherited only the config\'s deliberate ORC_* values', () => {
-    expect(INHERITED_ORC_NAMES).toEqual(['ORC_DATA_HOME', 'ORC_SESSION_TRANSPORT']);
+    expect(INHERITED_ORC_NAMES).toEqual(['ORC_DATA_HOME']);
   });
 
   it.each(CONFIGS)('%s hides a live session\'s ORC_* environment from tests', async (config) => {

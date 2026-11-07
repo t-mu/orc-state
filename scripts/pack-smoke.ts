@@ -43,7 +43,7 @@ function findInstalledNodeModules(root: string): string {
     join(root, 'node_modules'),
     resolve(root, '..', '..', 'node_modules'),
   ];
-  const match = candidates.find((candidate) => existsSync(join(candidate, 'node-pty')));
+  const match = candidates.find((candidate) => existsSync(join(candidate, 'better-sqlite3')));
   if (!match) {
     throw new Error(`Could not locate node_modules for pack smoke test from ${root}`);
   }

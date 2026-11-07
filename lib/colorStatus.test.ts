@@ -18,7 +18,7 @@ beforeEach(() => {
   writeFileSync(join(stateDir, 'agents.json'), JSON.stringify({
     version: '1',
     agents: [
-      { agent_id: 'master', provider: 'claude', role: 'master', status: 'running', session_handle: 'pty:master' },
+      { agent_id: 'master', provider: 'claude', role: 'master', status: 'running', session_handle: 'tmux:master' },
       { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'offline' },
     ],
   }));

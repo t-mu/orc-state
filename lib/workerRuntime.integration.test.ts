@@ -8,7 +8,7 @@ import { normalizeWorkerEnv } from './workerRuntime.ts';
 // Task 204: workers start inside their assigned worktree. From that cwd the
 // `orc` CLI must still resolve the project state, and a worker's git
 // commit/rebase must write only inside the `.git` subtrees the sandbox grants
-// (adapters/pty.ts TARGET_GIT_WRITABLE_SUBPATHS). The worktree belongs to the
+// (adapters/providerLaunch.ts TARGET_GIT_WRITABLE_SUBPATHS). The worktree belongs to the
 // project's target repo and lives in its external state directory.
 
 const repoRoot = resolve(import.meta.dirname, '..');

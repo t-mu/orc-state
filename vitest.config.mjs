@@ -9,8 +9,7 @@ export default defineConfig({
     environment: 'node',
     // Tests get a private TMUX_TMPDIR so they never leak sockets into /tmp/tmux-<uid>.
     globalSetup: [resolve(import.meta.dirname, 'vitest.tmuxTmpdir.mjs')],
-    // Unit tests drive the node-pty path; tmux tests opt in explicitly.
-    env: { ORC_SESSION_TRANSPORT: 'pty', ORC_DATA_HOME: TEST_DATA_HOME },
+    env: { ORC_DATA_HOME: TEST_DATA_HOME },
     include: ['**/*.test.ts', '**/*.test.tsx'],
     exclude: ['**/node_modules/**', '**/e2e/**', '**/e2e-real/**', '.worktrees/**', '**/.worktrees/**', '.orc-state/**', '**/.orc-state/**'],
     typecheck: {

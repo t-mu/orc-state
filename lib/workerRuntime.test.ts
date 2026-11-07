@@ -373,7 +373,7 @@ describe('spawnEphemeralWorker', () => {
   });
 
   it('launches a worker session using the provider resolved at dispatch time', async () => {
-    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'pty:amber-anchor', provider_ref: null });
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:amber-anchor', provider_ref: null });
     const adapter = {
       start: mockStart,
       send: vi.fn(),

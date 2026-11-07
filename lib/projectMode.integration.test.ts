@@ -19,7 +19,7 @@ function git(cwd: string, ...args: string[]): string {
 function probe(cwd: string, env: Record<string, string> = {}, action = 'paths'): Record<string, unknown> {
   const clean = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ORC_')));
   const output = execFileSync(process.execPath, [PROBE, action], {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...clean, ORC_DATA_HOME: dataHome, ORC_SESSION_TRANSPORT: 'pty', ...env },
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...clean, ORC_DATA_HOME: dataHome, ...env },
   });
   return JSON.parse(output.trim().split('\n').at(-1)!) as Record<string, unknown>;
 }

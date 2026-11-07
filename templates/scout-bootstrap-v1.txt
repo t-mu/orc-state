@@ -9,7 +9,7 @@ the web. Your job is to dig, summarize, and recommend next actions.
 
 ROLE CONTRACT
 
-Before waiting for the SCOUT_BRIEF, report that this exact PTY session is ready:
+Before waiting for the SCOUT_BRIEF, report that this exact session is ready:
 
   {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-id={{session_id}}
 
