@@ -50,7 +50,7 @@ import {
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
-import { createTmuxAdapter, inspectTmuxSession, isTmuxAvailable, startTmuxSession, tmuxAttachCommand } from '../adapters/tmux.ts';
+import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand } from '../adapters/tmux.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { listSupervisedSessions } from '../lib/sessionSupervisor.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
@@ -384,8 +384,9 @@ if (!binaryOk) {
   process.exit(1);
 }
 
-if (!isTmuxAvailable()) {
-  console.error('Cannot start master session: tmux is not available. orc start-session runs the master in orc\'s tmux server; install tmux.');
+const tmuxCheck = checkTmux();
+if (!tmuxCheck.ok) {
+  console.error(`Cannot start master session: ${tmuxCheck.problem}. orc runs the master and every worker in its tmux server.`);
   process.exit(1);
 }
 

@@ -51,7 +51,7 @@
         },
         "session_handle": {
           "type": ["string", "null"],
-          "description": "Local attach target (adapter-specific handle, e.g. pty:agent-id). Null when offline."
+          "description": "Local attach target (adapter-specific handle, e.g. tmux:agent-id). Null when offline."
         },
         "session_token": {
           "type": ["string", "null"],

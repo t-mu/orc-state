@@ -1,41 +1,27 @@
 /**
- * adapters/pty.ts
+ * adapters/providerLaunch.ts
  *
- * Adapter that drives real CLI agent sessions as PTY child processes.
- * No direct provider credential env vars required. No external session manager required.
- *
- * Session handle format: pty:{agentId}
- *
- * Process ownership: the coordinator is the sole owner of PTY sessions.
- * CLI tools use the PID file fallback for heartbeat checks.
+ * Everything a provider CLI launch needs before it runs in a terminal: the
+ * binary, args, env and cwd (including the Claude settings/hooks file and the
+ * sandbox grants), the startup-dialog keystrokes, and blocking-prompt
+ * detection over terminal text. The tmux adapter (adapters/tmux.ts) runs the
+ * launch; the Codex app-server reuses the sandbox and MCP-isolation helpers.
  *
  * State written to STATE_DIR:
- *   pty-pids/{agentId}.pid  — PID for cross-process heartbeat
- *   pty-logs/{agentId}.log  — PTY output (truncated on each start())
+ *   pty-settings/{agentId}.json — Claude settings (hooks, sandbox) per session
+ *   (pty-logs/ and pty-hook-events/ are created here and written by the
+ *   session and its hooks; the directory names predate the tmux-only runtime.)
  *
  * Provider → CLI binary:
  *   claude → claude
  *   codex  → codex
  *   gemini → gemini
  */
-import pty from 'node-pty';
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath } from '../lib/paths.ts';
-import { stripAnsi } from '../lib/ansi.ts';
 import { resolveOrcBin, shellEscape } from '../lib/orcBin.ts';
-import { ensureNodePtySpawnHelperPermissions } from '../lib/nodePtyPermissions.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import { isPidAlive, isSameProcess, processIdentity } from '../lib/processIdentity.ts';
-import type { SessionExitStatus, SessionInspection } from './interface.ts';
 import type { SandboxNetwork } from '../lib/providers.ts';
 import { OPERATOR_TOKEN_FILE } from '../lib/controlProtocol.ts';
 import { taskLabelsPath } from '../hooks/orc-hook.ts';
@@ -57,13 +43,11 @@ export function claudeHookCommand(kind: string, eventsFile: string): string {
   return `node ${JSON.stringify(CLAUDE_HOOK_SCRIPT)} ${kind} ${JSON.stringify(eventsFile)}`;
 }
 
-const OUTPUT_TAIL_BYTES  = 8 * 1024; // 8 KB
-const RECENT_OUTPUT_BYTES = 16 * 1024;
 const STARTUP_DELAY_MS   = 1500;     // wait for CLI to initialise before sending bootstrap
 const BYPASS_SETTLE_MS   = 800;      // wait after bypass-accept for dialog to dismiss
 const CODEX_PROMPT_WAIT_MS = Number.parseInt(process.env.ORC_CODEX_PROMPT_WAIT_MS ?? '10000', 10);  // smoke harness override for Codex trust/workspace prompt polling
 const CODEX_PROMPT_POLL_MS = 250;
-// PTY-scan patterns must be narrow to avoid false positives from diagnostic text,
+// Prompt-scan patterns must be narrow to avoid false positives from diagnostic text,
 // echoed instructions, or tool output that merely mentions permission concepts.
 // Only match lines that look like actual interactive confirmation prompts.
 //
@@ -78,46 +62,12 @@ const BLOCKING_PROMPT_PATTERNS = [
   /[^\n]+\?\s*[\[(](?:y\/n|yes\/no)[\])]/i,
 ];
 
-ensureNodePtySpawnHelperPermissions();
-
-function pidPath(agentId: string) { return join(STATE_DIR, 'pty-pids', `${agentId}.pid`); }
-function logPath(agentId: string) { return join(STATE_DIR, 'pty-logs', `${agentId}.log`); }
-
-/**
- * Sanitize a raw PTY chunk for LLM-readable log files.
- *
- * Two passes:
- * 1. Strip all terminal escape sequences (CSI, OSC, and bare ESC codes).
- * 2. Collapse carriage-return overwrites — TUI spinners write `\r<new frame>`
- *    to overwrite the current line. After stripping escapes we honour those
- *    by keeping only the last segment before each newline.
- */
-function sanitizePtyChunk(raw: string): string {
-  // Strip CSI sequences: ESC [ ... <final byte>
-  // Strip OSC sequences: ESC ] ... (BEL or ST)
-  // Strip bare ESC + single char (e.g. ESC M — reverse index)
-  const stripped = raw
-    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')   // CSI
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC
-    .replace(/\x1b[^[\]]/g, '');               // bare ESC + char
-
-  // Collapse \r overwrites: split on \n, keep text after last \r in each line.
-  return stripped
-    .split('\n')
-    .map((line) => {
-      const idx = line.lastIndexOf('\r');
-      return idx === -1 ? line : line.slice(idx + 1);
-    })
-    .join('\n');
-}
-
 /** Claude's limit for the Stop hook; `orc stop-check` gives up on the coordinator well before it. */
 const STOP_HOOK_TIMEOUT_S = 15;
 
 function settingsPath(agentId: string) { return join(STATE_DIR, 'pty-settings', `${agentId}.json`); }
 
 function ensureDirs() {
-  mkdirSync(join(STATE_DIR, 'pty-pids'), { recursive: true });
   mkdirSync(join(STATE_DIR, 'pty-logs'), { recursive: true });
   mkdirSync(join(STATE_DIR, 'pty-hook-events'), { recursive: true });
   mkdirSync(join(STATE_DIR, 'pty-settings'), { recursive: true });
@@ -511,53 +461,6 @@ export async function runStartupDialogs(
   }
 }
 
-function writePidFile(agentId: string, pid: number): void {
-  const identity = processIdentity(pid);
-  writeFileSync(pidPath(agentId), JSON.stringify(identity ?? { pid, start: null }));
-}
-
-/** Accept both the JSON identity format and the legacy bare PID. */
-function readPidFile(agentId: string): { pid: number; start: string | null } | null {
-  const file = pidPath(agentId);
-  if (!existsSync(file)) return null;
-  const raw = readFileSync(file, 'utf8').trim();
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed === 'number') return Number.isSafeInteger(parsed) ? { pid: parsed, start: null } : null;
-    const record = parsed as { pid?: unknown; start?: unknown };
-    if (typeof record.pid !== 'number') return null;
-    return { pid: record.pid, start: typeof record.start === 'string' ? record.start : null };
-  } catch {
-    return null;
-  }
-}
-
-/** A legacy PID file has no start time, so only bare liveness can be checked. */
-function pidFileProcessAlive(record: { pid: number; start: string | null }): boolean {
-  return record.start ? isSameProcess({ pid: record.pid, start: record.start }) : isPidAlive(record.pid);
-}
-
-/** Create a "pty:{agentId}" session handle from an agent ID. */
-export function createSessionHandle(agentId: string): string {
-  return `pty:${agentId}`;
-}
-
-/** Parse "pty:{agentId}" → agentId. Throws on malformed handle. */
-function parseHandle(sessionHandle: unknown) {
-  const s = String(sessionHandle);
-  if (!s.startsWith('pty:') || s.length <= 4) {
-    throw new Error(`Invalid pty session handle: ${String(sessionHandle)}`);
-  }
-  return s.slice(4); // agentId
-}
-
-function readLogTail(agentId: string, maxBytes = OUTPUT_TAIL_BYTES) {
-  const path = logPath(agentId);
-  if (!existsSync(path)) return '';
-  const buf = readFileSync(path);
-  return buf.slice(-maxBytes).toString('utf8');
-}
-
 export function resolveBinary(binary: string, env: Record<string, string>) {
   if (!binary || binary.includes('/') || isAbsolute(binary)) return binary;
   const searchPath = env.PATH ?? process.env.PATH ?? '';
@@ -650,276 +553,3 @@ function shouldUseExtendedCodexPromptWait(config: Record<string, unknown>) {
   return config.startup_profile === 'real-provider-smoke';
 }
 
-/**
- * Create a pty adapter for the given provider.
- *
- * @param options
- * @param options.provider - 'claude' | 'codex' | 'gemini'
- */
-export function createPtyAdapter({ provider = 'claude' }: { provider?: string } = {}) {
-  const binary = PROVIDER_BINARIES[provider] ?? provider;
-
-  // In-process state. Only valid in the coordinator process that called start().
-  const sessions      = new Map<string, ReturnType<typeof pty.spawn>>(); // agentId → IPty
-  const outputStreams  = new Map<string, ReturnType<typeof createWriteStream>>(); // agentId → WriteStream
-  const recentOutput = new Map<string, string>(); // agentId → recent sanitized PTY output
-  const exits = new Map<string, SessionExitStatus>(); // agentId → how its last process ended
-  const latest = new Map<string, ReturnType<typeof pty.spawn>>(); // agentId → last spawned process, until stop()
-
-  function getRecentOutput(agentId: string) {
-    return recentOutput.get(agentId) ?? readLogTail(agentId);
-  }
-
-  return {
-    /**
-     * Spawn the CLI binary as a PTY child process.
-     * Streams output to the log file. Writes PID file.
-     * Delivers bootstrap via ptyProcess.write().
-     */
-    async start(agentId: string, config: Record<string, unknown> = {}) {
-      // Teardown any pre-existing session for this agentId.
-      if (sessions.has(agentId)) {
-        try { sessions.get(agentId)!.kill(); } catch { /* already dead */ }
-        try { outputStreams.get(agentId)!.end(); } catch { /* ignore */ }
-        sessions.delete(agentId);
-        outputStreams.delete(agentId);
-        recentOutput.delete(agentId);
-      }
-      exits.delete(agentId);
-
-      ensureDirs();
-
-      // Open output log — 'w' truncates so each session starts with a clean log.
-      let stream: ReturnType<typeof createWriteStream> | undefined;
-      let ptyProcess: ReturnType<typeof pty.spawn> | undefined;
-      try {
-        stream = createWriteStream(logPath(agentId), { flags: 'w' });
-        stream.on('error', () => { /* output stream teardown races are non-fatal */ });
-
-        const launch = prepareProviderLaunch(provider, agentId, config);
-        ptyProcess = pty.spawn(launch.binary, launch.args, {
-          name: 'xterm-256color',
-          cols: 220,
-          rows: 50,
-          cwd: launch.cwd,
-          env: launch.env,
-        });
-
-        ptyProcess.onData((data) => {
-          const sanitized = sanitizePtyChunk(data);
-          stream!.write(sanitized);
-          const next = (recentOutput.get(agentId) ?? '') + sanitized;
-          recentOutput.set(agentId, next.slice(-RECENT_OUTPUT_BYTES));
-        });
-
-        const spawnedProcess = ptyProcess;
-        ptyProcess.onExit(({ exitCode, signal }) => {
-          // A later start() for the same agent replaces the session; only the current process records.
-          if (latest.get(agentId) !== spawnedProcess) return;
-          exits.set(agentId, { code: signal ? null : exitCode, signal: signal || null });
-        });
-
-        // Write PID file (with start time, to detect PID reuse) for cross-process heartbeat.
-        writePidFile(agentId, ptyProcess.pid);
-
-        sessions.set(agentId, ptyProcess);
-        latest.set(agentId, ptyProcess);
-        outputStreams.set(agentId, stream);
-      } catch (error) {
-        if (stream) {
-          try { stream.destroy(); } catch { /* ignore */ }
-        }
-        throw error;
-      }
-
-      const spawned = ptyProcess;
-      await runStartupDialogs((text) => spawned.write(text), provider, config, () => getRecentOutput(agentId));
-
-      return {
-        session_handle: `pty:${agentId}`,
-        provider_ref: {
-          pid: ptyProcess.pid, provider, binary, transport: 'pty',
-          process_start: processIdentity(ptyProcess.pid)?.start ?? null,
-        },
-      };
-    },
-
-    /**
-     * Write text to the agent's PTY (fire-and-forget).
-     * Returns '' — the coordinator does not parse the return value.
-     * Throws if the agent is not in the in-process sessions Map.
-     */
-    async send(sessionHandle: string, text: string) {
-      const agentId    = parseHandle(sessionHandle);
-      const ptyProcess = sessions.get(agentId);
-      if (!ptyProcess) {
-        throw new Error(
-          `No active pty session for agent '${agentId}'. ` +
-          `The coordinator must own the session — was start() called in this process?`,
-        );
-      }
-      // All TUI provider CLIs (claude, codex, gemini) use PTY raw mode where
-      // CR (0x0D) is the submit key, not LF. Large messages trigger a paste
-      // indicator that must be dismissed with a separate CR write.
-      // A short pause between the text and the CR is required for the TUI
-      // to process the paste before accepting the submit keypress.
-      ptyProcess.write(String(text));
-      await new Promise((r) => setTimeout(r, 200));
-      ptyProcess.write('\r');
-      return '';
-    },
-
-    /** Only the coordinator that spawned the PTY sees its exit. */
-    exitStatus(sessionHandle: string): SessionExitStatus | null {
-      try { return exits.get(parseHandle(sessionHandle)) ?? null; } catch { return null; }
-    },
-
-    ownsSession(sessionHandle: string) {
-      try {
-        const agentId = parseHandle(sessionHandle);
-        return sessions.has(agentId);
-      } catch {
-        return false;
-      }
-    },
-
-    /**
-     * Report liveness, writability and process identity. A PTY can only be
-     * written by the process that spawned it, so a session that outlived its
-     * coordinator is alive but not writable.
-     */
-    inspectSession(sessionHandle: string): SessionInspection {
-      const agentId = parseHandle(sessionHandle);
-      const owned = sessions.get(agentId);
-      if (owned) {
-        const identity = processIdentity(owned.pid);
-        return { transport: 'pty', alive: identity != null, writable: identity != null, pid: owned.pid, processStart: identity?.start ?? null };
-      }
-      const record = readPidFile(agentId);
-      if (!record) return { transport: 'pty', alive: false, writable: false, pid: null, processStart: null, reason: 'no pid file' };
-      const alive = pidFileProcessAlive(record);
-      return {
-        transport: 'pty', alive, writable: false, pid: record.pid, processStart: record.start,
-        reason: alive ? 'pty is owned by another process and cannot be written' : 'process exited or pid was reused',
-      };
-    },
-
-    detectInputBlock(sessionHandle: string, hookEvents: Array<{ message?: string }> = []) {
-      try {
-        const agentId = parseHandle(sessionHandle);
-        // Fast path: permission hook events drained by the coordinator tick
-        // (the only reader of the hook-events file). They are high-confidence —
-        // written by the provider's own notification system, not text matching.
-        if (hookEvents.length > 0) {
-          return hookEvents[0].message || 'permission prompt detected';
-        }
-        // Universal fallback: scan recent PTY output for blocking prompt patterns.
-        const text = getRecentOutput(agentId);
-        return detectBlockingPromptFromText(text);
-      } catch {
-        return null;
-      }
-    },
-
-    getOutputTail(sessionHandle: string, maxBytes?: number): string | null {
-      try {
-        const agentId = parseHandle(sessionHandle);
-        const raw = readLogTail(agentId, maxBytes);
-        return stripAnsi(raw).trim();
-      } catch {
-        return null;
-      }
-    },
-
-    /**
-     * Print the tail of the agent's output log to stdout.
-     * Never throws.
-     */
-    attach(sessionHandle: string) {
-      try {
-        const agentId = parseHandle(sessionHandle);
-        const path    = logPath(agentId);
-        if (!existsSync(path)) {
-          console.log('(no output log — agent session not yet started)');
-          return;
-        }
-        const tail = readLogTail(agentId);
-        console.log(tail);
-      } catch {
-        console.log('(could not read pty output log)');
-      }
-    },
-
-    /**
-     * Return true if the agent session is alive.
-     *
-     * Primary path: check in-process sessions Map (coordinator only).
-     * Fallback path: read PID file and probe with process.kill(pid, 0)
-     *                (works from any process — e.g. orc-attach CLI).
-     *
-     * Never throws — any error returns false.
-     */
-    heartbeatProbe(sessionHandle: string): Promise<boolean> {
-      try {
-        const agentId    = parseHandle(sessionHandle);
-        const ptyProcess = sessions.get(agentId);
-
-        if (ptyProcess) {
-          try {
-            process.kill(ptyProcess.pid, 0);
-            return Promise.resolve(true);
-          } catch {
-            sessions.delete(agentId);
-            return Promise.resolve(false);
-          }
-        }
-
-        // Fallback: cross-process check via PID file, rejecting a reused PID.
-        const record = readPidFile(agentId);
-        return Promise.resolve(record != null && pidFileProcessAlive(record));
-      } catch {
-        return Promise.resolve(false);
-      }
-    },
-
-    /**
-     * Kill the PTY process and clean up all state.
-     * No-op if the session is not found.
-     */
-    stop(sessionHandle: string): Promise<void> {
-      try {
-        const agentId = parseHandle(sessionHandle);
-
-        const ptyProcess = sessions.get(agentId);
-        if (ptyProcess) {
-          try { ptyProcess.kill(); }    catch { /* already dead */ }
-          try { outputStreams.get(agentId)!.end(); } catch { /* ignore */ }
-          sessions.delete(agentId);
-          outputStreams.delete(agentId);
-          recentOutput.delete(agentId);
-        }
-        exits.delete(agentId);
-        latest.delete(agentId);
-        const pidFile = pidPath(agentId);
-        try {
-          // Never signal a PID that now belongs to an unrelated process.
-          const record = readPidFile(agentId);
-          if (record && pidFileProcessAlive(record)) {
-            try { process.kill(record.pid, 'SIGTERM'); } catch { /* already dead or inaccessible */ }
-          }
-        } catch {
-          // Ignore pid read/kill failures; unlink below is still best effort.
-        }
-        try { unlinkSync(pidFile); } catch { /* already gone */ }
-        // Clean up hook events and settings files created for this session.
-        try { unlinkSync(hookEventPath(agentId)); } catch { /* already gone or never created */ }
-        try { unlinkSync(`${hookEventPath(agentId)}.processing`); } catch { /* already gone */ }
-        try { unlinkSync(settingsPath(agentId)); } catch { /* already gone or never created */ }
-        try { unlinkSync(taskLabelsPath(hookEventPath(agentId))); } catch { /* already gone or never created */ }
-      } catch {
-        // No-op — malformed handle or session already cleaned up.
-      }
-      return Promise.resolve();
-    },
-  };
-}

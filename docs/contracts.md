@@ -39,11 +39,10 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | `run-specs/<run_id>.md` | Pinned task revision body, read-only (`0444`), the worker's `task_spec_path` |
 | `event-checkpoint.json` | Coordinator event-processing checkpoint (`last_processed_seq`, processed ids) |
 | `run-activity.json` | Coordinator per-run activity: label, source, last tool, tool calls in flight, last turn end, `review_read_at` (`lib/runSignals.ts`) |
-| `pty-hook-events/<agent_id>.ndjson` | Hook records (`permission`, `tool_start`, `tool`, `activity`, `turn_end`); drained only by the coordinator tick via `.processing` rename; see [adapters.md](./adapters.md) |
+| `pty-hook-events/<agent_id>.ndjson` | Hook records (`permission`, `tool_start`, `tool`, `activity`, `turn_end`); drained only by the coordinator tick via `.processing` rename; name kept for compatibility; see [adapters.md](./adapters.md) |
 | `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do labels by id + active id |
-| `pty-pids/<agent_id>.pid` | PTY session pid |
-| `pty-logs/<agent_id>.log` | PTY/tmux output capture (output tails) |
-| `pty-settings/<agent_id>.json` | Per-session provider settings (hooks, sandbox) |
+| `pty-logs/<agent_id>.log` | tmux output capture (output tails); `pty-` directory names are kept for compatibility |
+| `pty-settings/<agent_id>.json` | Per-session provider settings (hooks, sandbox); name kept for compatibility |
 | `mcp-config.json` | Master MCP config written by `orc start-session` (references `${ORC_MASTER_SECRET}`, never its value) |
 | `.lock` | Advisory lock serializing JSON state writes |
 
@@ -119,10 +118,10 @@ Direct mode: after work-complete the coordinator merges, or requests a finalize 
 - Lease: `leases.default_ms` (30 min); `leases.finalize_ms` (60 min) once work is complete; `coordinator.pr_finalize_lease_ms` (24 h) for PR finalization.
 - Renewal: the coordinator extends the lease when it processes the run's lifecycle/phase events. Claude hook activity renews only when newer than `last_heartbeat_at` and the lease is half used or the heartbeat half a lease old (`shouldRenewFromHookActivity`, `lib/runActivity.ts`); otherwise it only updates `run-activity.json`. Workers send no periodic heartbeat.
 - Expiry: claim → `failed` (`ERR_LEASE_EXPIRED`), task requeued with backoff, blocked after 5 attempts; `claim_expired` emitted. A run whose task is already `done` (finalize window) is skipped. An input wait over 1 h expires with `ERR_INPUT_TIMEOUT`.
-- Liveness: each tick probes the session — `tmux:` asks the private tmux server for the pane process, `pty:` checks the pid with its recorded start time. A dead process goes through one resume-or-requeue decision (`resumeOrRequeue` in `coordinator.ts`, rules in `lib/sessionResume.ts`):
+- Liveness: each tick probes the session — `tmux:` asks the private tmux server for the pane process; a legacy `pty:` handle from an older orc always probes dead. A dead process goes through one resume-or-requeue decision (`resumeOrRequeue` in `coordinator.ts`, rules in `lib/sessionResume.ts`):
   - Resumed in place when all hold: `sessions.resume` is `auto`; the provider supports resume (Claude CLI, Codex `app:`); a provider conversation id was recorded; the exit was a crash (a signal or a non-zero exit code); the run worktree exists; the run has resumed fewer than 2 times. The claim, `session_id`, worktree, env, `--settings` and MCP isolation are kept; the secret rotates (the old one is rejected); `generation` and `resume_count` go up by 1; `session_resumed` is emitted. The bootstrap is not resent: the worker gets a `SESSION_RESUMED` nudge with its phase and last progress time.
   - Otherwise the session is cleared, the claim expires and the task is requeued, as before. A spent budget or a failed relaunch also emits `session_resume_failed`.
-  - The exit cause is stored in `sessions.exit_reason`: `crash`; `finished` (clean exit after `run-work-complete`); `user_exit` (clean exit before it, e.g. `/exit`); `unknown` (no exit status was observed, e.g. the tmux session was killed, the PTY belonged to another coordinator, or the session was cleared before `report-for-duty`). An `unknown` exit is always requeued.
+  - The exit cause is stored in `sessions.exit_reason`: `crash`; `finished` (clean exit after `run-work-complete`); `user_exit` (clean exit before it, e.g. `/exit`); `unknown` (no exit status was observed, e.g. the tmux session was killed, the session was a legacy `pty:` one, or the session was cleared before `report-for-duty`). An `unknown` exit is always requeued.
 - Idle: `worker_stale_soft_ms` / `worker_stale_nudge_ms` / `worker_stale_force_fail_ms`; runs that deliver hook events use `hook_idle_nudge_ms` / `hook_idle_escalate_ms`. A run with a tool call in flight is never stalled (`isStalled`, `lib/runSignals.ts`). A `Stop` hook (`turn_end`) closes tool calls that never reported back. Defaults: [configuration.md](./configuration.md).
 - Progress ≠ liveness. Progress = a phase change (reported or inferred), a `git commit` seen in a hook event, or `run_started`, `review_submitted`, `work_complete`, `finalize_rebase_started`, `ready_to_merge`, `input_requested`, `input_provided`, `input_response`. No progress for `run_no_progress_escalate_ms` (60 min) → one `worker_needs_attention {reason: no_progress}`; new progress re-arms it. Runs awaiting input or in finalization are not checked.
 - Stop hook: a Claude worker's `Stop` is refused while its run is unfinished (`stop_blocked`), at most 3 per run per 10 min and 9 per run.
@@ -256,12 +255,11 @@ Status codes: no or wrong credential `401`; wrong principal (e.g. a worker on a 
 
 ## Session Handles
 
-Format `<transport>:<agent_id>` (`tmux:broken-nose`, `tmux:master`, `pty:broken-nose`, `app:…`). `ORC_SESSION_TRANSPORT`: `auto` (tmux if available, else pty), `tmux`, `pty`. Existing sessions keep the transport in their handle.
+Format `<transport>:<agent_id>` (`tmux:broken-nose`, `tmux:master`, `app:…`). Every terminal session runs in tmux (≥ 3.2). A `pty:` handle left by an older orc is treated as offline: the coordinator clears it and requeues its run.
 
 | Transport | Owner | Survives coordinator exit |
 |-----------|-------|---------------------------|
 | `tmux` | private tmux server `tmux -L orc-<hash>` | yes; writable by any orc process of the user |
-| `pty` | the spawning process (node-pty) | no |
 | `app` | the coordinator (structured runtime stdio) | no; run requeued |
 
 ### Session supervision
@@ -289,7 +287,7 @@ Session identity (schema v8):
 
 - Startup reconciles every non-offline session and records `session_reconciled` (`adopted`, `recoverable`, `unknown`, `exited`, `superseded`); it never kills one.
 - Every direct write to a session (envelope, nudge, PR review) requires `running` and a matching pid/start; a mismatch moves it to `unknown`.
-- Shutdown stops owned PTY sessions and leaves tmux sessions for the next coordinator.
+- Shutdown stops `app:` sessions and leaves tmux sessions for the next coordinator.
 - `orc sessions` lists them; recovery: [recovery.md](./recovery.md#recoverable-or-unknown-sessions).
 
 ---

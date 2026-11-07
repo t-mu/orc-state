@@ -10,7 +10,7 @@
  *    scripts. In project mode this also closes a privilege-escalation
  *    vector: a sandboxed worker cannot get a hook it planted executed by the
  *    UNSANDBOXED coordinator. The worker's `<target>/.git` sandbox grant
- *    already excludes `hooks/` (see adapters/pty.ts), so this is defense in
+ *    already excludes `hooks/` (see adapters/providerLaunch.ts), so this is defense in
  *    depth from the coordinator side.
  *  - core.fsmonitor=false — never spawn or trust an fsmonitor daemon during a
  *    coordinator-side git operation.

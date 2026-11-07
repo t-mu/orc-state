@@ -7,7 +7,7 @@ import { initProjectTaskStore } from '../lib/projectTasks.ts';
 import { importTaskMarkdown } from '../lib/taskMarkdown.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
 import { appendSequencedEvent } from '../lib/eventLog.ts';
-import { createSessionHandle } from '../adapters/pty.ts';
+const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
 
 // Minimal task spec simulating a consumer-authored backlog markdown.
 // The mock adapter below implements the same lifecycle behaviour as
@@ -93,7 +93,7 @@ describe('consumer lifecycle e2e', () => {
           role: 'master',
           model: null,
           status: 'running',
-          session_handle: 'pty:master',
+          session_handle: 'tmux:master',
           provider_ref: null,
           last_heartbeat_at: null,
           registered_at: new Date().toISOString(),

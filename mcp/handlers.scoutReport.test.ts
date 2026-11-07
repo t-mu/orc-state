@@ -23,8 +23,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   dir = createTempStateDir('orc-scout-report-test-');
   writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
-    { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'running', session_handle: 'pty:scout-1', registered_at: '2026-01-01T00:00:00.000Z' },
-    { agent_id: 'worker-a', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:worker-a', registered_at: '2026-01-01T00:00:00.000Z' },
+    { agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'running', session_handle: 'tmux:scout-1', registered_at: '2026-01-01T00:00:00.000Z' },
+    { agent_id: 'worker-a', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:worker-a', registered_at: '2026-01-01T00:00:00.000Z' },
   ] }));
 });
 
@@ -75,7 +75,7 @@ describe('scout report tools', () => {
     expect(await handleGetScoutReport(dir, { agent_id: 'scout-1' })).toMatchObject({ status: 'running', report: null, launched_at: '2026-01-01T00:00:00.000Z' });
     tail.mockReturnValue(`${template}\n${report}`);
     expect(await handleGetScoutReport(dir, { agent_id: 'scout-1' })).toMatchObject({ status: 'reported', report: expect.stringContaining('clock skew') });
-    expect(tail).toHaveBeenLastCalledWith('pty:scout-1', 64 * 1024);
+    expect(tail).toHaveBeenLastCalledWith('tmux:scout-1', 64 * 1024);
     tail.mockReturnValue('recommended_action:\nreset\nSCOUT_REPORT_END');
     expect(await handleGetScoutReport(dir, { agent_id: 'scout-1' })).toMatchObject({ status: 'truncated', report: null });
     tail.mockReturnValue(template);
@@ -88,7 +88,7 @@ describe('scout report tools', () => {
     await expect(handleRemoveScout(dir, { agent_id: 'worker-a' })).rejects.toThrow('not a scout');
     await expect(handleGetScoutReport(dir, { agent_id: 'missing' })).rejects.toThrow('Scout not found');
     expect(await handleRemoveScout(dir, { agent_id: 'scout-1' })).toEqual({ agent_id: 'scout-1', removed: true });
-    expect(stop).toHaveBeenCalledWith('pty:scout-1');
+    expect(stop).toHaveBeenCalledWith('tmux:scout-1');
     expect(await handleRemoveScout(dir, { agent_id: 'scout-1' })).toEqual({ agent_id: 'scout-1', removed: false, reason: 'not_found' });
     const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')) as { agents: Array<{ agent_id: string }> };
     expect(agents.agents.map((agent) => agent.agent_id)).toEqual(['worker-a']);

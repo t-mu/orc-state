@@ -402,7 +402,7 @@ describe('buildRuntimeEnv', () => {
 // ── orcWrapper ──────────────────────────────────────────────────────────────
 
 describe('orcWrapper', () => {
-  it('exposes a runnable orc wrapper for worker PTYs', () => {
+  it('exposes a runnable orc wrapper for worker sessions', () => {
     const repo = createRuntimeRepo();
     repos.push(repo);
 

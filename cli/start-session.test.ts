@@ -173,7 +173,9 @@ const tmuxFake = {
 function mockTmux(spawnMock: ReturnType<typeof vi.fn>, { available = true } = {}) {
   tmuxFake.reset();
   vi.doMock('../adapters/tmux.ts', () => ({
-    isTmuxAvailable: vi.fn().mockReturnValue(available),
+    checkTmux: vi.fn().mockReturnValue(available
+      ? { ok: true, version: 'tmux 3.4', problem: null }
+      : { ok: false, version: null, problem: 'tmux is not installed (orc needs tmux >= 3.2 on PATH, or ORC_TMUX_BIN)' }),
     inspectTmuxSession: vi.fn().mockImplementation((name: string) => ({ alive: tmuxFake.alive.has(name) })),
     tmuxAttachCommand: vi.fn().mockImplementation((name: string) => ({ command: 'tmux', args: ['attach-session', '-t', `=${name}`] })),
     startTmuxSession: vi.fn().mockImplementation((agentId: string, launch: { binary: string; args: string[] }, provider: string) => {
@@ -297,7 +299,7 @@ describe('cli/start-session.ts', () => {
     it('resets volatile runtime state and appends session_started on startup', async () => {
       seedState([masterAgent({
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
         provider_ref: { pid: 111 },
         last_heartbeat_at: '2026-01-01T00:00:00Z',
       })]);
@@ -1100,7 +1102,7 @@ describe('cli/start-session.ts', () => {
     it('exits 1 when binary check fails', async () => {
       seedState([masterAgent({
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
         provider_ref: { pid: 111 },
         last_heartbeat_at: '2026-01-01T00:00:00Z',
       })]);
@@ -1121,14 +1123,14 @@ describe('cli/start-session.ts', () => {
       expect(readClaims()[0].state).toBe('in_progress');
       expect(readAgents()[0]).toMatchObject({
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
       });
     });
 
     it('exits 1 when master provider CLI spawn fails', async () => {
       seedState([masterAgent({
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
         provider_ref: { pid: 111 },
         last_heartbeat_at: '2026-01-01T00:00:00Z',
       })]);
@@ -1154,7 +1156,7 @@ describe('cli/start-session.ts', () => {
       expect(readClaims()[0].state).toBe('in_progress');
       expect(readAgents()[0]).toMatchObject({
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
       });
     });
 
@@ -1179,7 +1181,7 @@ describe('cli/start-session.ts', () => {
       expect(coordinatorCalls).toHaveLength(0);
     });
 
-    it('exits 1 before touching state when tmux is not available', async () => {
+    it('exits 1 before touching state when tmux is not installed', async () => {
       seedState([masterAgent()]);
       seedActiveRuntimeState();
       const spawnMock = makeSpawnMock();
@@ -1194,14 +1196,14 @@ describe('cli/start-session.ts', () => {
       await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
 
       expect(exitSpy).toHaveBeenCalledWith(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('tmux is not available'));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('tmux is not installed'));
       expect(readClaims()[0].state).toBe('in_progress');
     });
 
     it('rolls back reset and suppresses session_started when master runtime update fails after spawn', async () => {
       seedState([masterAgent({
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
         provider_ref: { pid: 111 },
         last_heartbeat_at: '2026-01-01T00:00:00Z',
       })]);
@@ -1236,7 +1238,7 @@ describe('cli/start-session.ts', () => {
       expect(readClaims()[0].state).toBe('in_progress');
       expect(readAgents()[0]).toMatchObject({
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
       });
     });
 

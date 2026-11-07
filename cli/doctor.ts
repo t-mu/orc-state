@@ -16,6 +16,7 @@ import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import { coordinatorPidFileProblem } from '../lib/coordinatorLiveness.ts';
+import { checkTmux } from '../adapters/tmux.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 
@@ -37,6 +38,8 @@ const sandboxControlSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE
 const memoryHealth = validateMemoryDb(STATE_DIR);
 const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
 const coordinatorLock = { problem: coordinatorPidFileProblem(STATE_DIR) };
+// Every provider terminal session (master and workers) runs in tmux.
+const tmux = checkTmux();
 // Only a registered project runs.
 const projectSelection = ACTIVE_PROJECT ? null : { ok: false, message: NO_PROJECT_MESSAGE };
 
@@ -55,6 +58,7 @@ const checks: Record<string, unknown> = {
   memoryHealth,
   runtimeSchema,
   coordinatorLock,
+  tmux,
 };
 
 for (const provider of providers) {
@@ -118,6 +122,7 @@ const summary = {
     memoryHealth.ok &&
     runtimeSchema.ok &&
     coordinatorLock.problem === null &&
+    tmux.ok &&
     projectSelection === null &&
     (projectHealth?.ok ?? true),
   registered_workers: agents.length,
@@ -215,6 +220,10 @@ for (const message of runtimeSchema.messages) console.log(`  ${message}`);
 console.log('');
 console.log(`coordinator lock: ok=${String(coordinatorLock.problem === null)}`);
 if (coordinatorLock.problem) console.log(`  ${coordinatorLock.problem}`);
+
+console.log('');
+console.log(`tmux: ok=${String(tmux.ok)}${tmux.version ? ` version=${tmux.version}` : ''}`);
+if (tmux.problem) console.log(`  error: ${tmux.problem}`);
 
 if (projectSelection) {
   console.log('');

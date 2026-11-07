@@ -68,7 +68,7 @@ Under each active run, `watch` and `status` print a `└` activity line: a note 
 
 | Command | Flags | Notes |
 |---------|-------|-------|
-| `attach <agent_id\|run_id>` | `[--write]` | Real `tmux attach-session` on orc's private tmux server. Read-only by default; `--write` sends input; Ctrl-b d detaches. Needs a TTY; refuses `pty:`/`app:` sessions. |
+| `attach <agent_id\|run_id>` | `[--write]` | Real `tmux attach-session` on orc's private tmux server. Read-only by default; `--write` sends input; Ctrl-b d detaches. Needs a TTY; refuses non-tmux (`app:`) sessions. |
 | `terminal <provider\|shell> <run_id>` | `[--write]` `[--once]` | `provider`: the run's provider terminal; `shell`: a shell in the run worktree (survives detach; output in `<state>/terminal-logs/`). Read-only by default; `--write` takes the exclusive input lease; `--once` prints and exits. Ctrl-] detaches a writer, Ctrl-C an observer. Needs the coordinator and tmux; run from the master or an operator shell, never a worker. |
 | `worker-status [<agent_id>]` | `[--json]` | Worker state, active task, session. |
 | `worker-remove <worker_id>` | `[--keep-session]` | Refused while the worker holds a claim, and for the master or a scout. |

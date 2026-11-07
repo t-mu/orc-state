@@ -5,7 +5,7 @@
  *
  * Opt-in: set RUN_REAL_PROVIDERS=1 to enable.
  * Skips automatically when Codex provider is unavailable (binary not found,
- * PTY unsupported, or noninteractive spawn fails).
+ * tmux unavailable, or noninteractive spawn fails).
  *
  * What this test covers:
  *   - Coordinator dispatches a real Codex worker session for task 1

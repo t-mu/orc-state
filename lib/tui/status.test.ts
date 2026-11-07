@@ -100,7 +100,7 @@ const liveSlot: TuiStatus['worker_capacity']['slots'][number] = {
   provider: 'claude',
   model: null,
   status: 'running',
-  session_handle: 'pty:orc-1',
+  session_handle: 'tmux:orc-1',
   slot_state: 'busy',
   active_run_id: null,
   active_task_ref: null,
@@ -188,7 +188,7 @@ describe('buildWorkerSlotViewModels — phases', () => {
   it('keeps scouts out of the worker slots', () => {
     const vms = buildWorkerSlotViewModels({
       ...baseStatus,
-      scouts: [{ agent_id: 'scout-1', provider: 'claude', model: null, status: 'running', session_handle: 'pty:s', launched_at: null }],
+      scouts: [{ agent_id: 'scout-1', provider: 'claude', model: null, status: 'running', session_handle: 'tmux:s', launched_at: null }],
     });
     expect(vms.map((vm) => vm.slot_id)).toEqual(['orc-1']);
   });

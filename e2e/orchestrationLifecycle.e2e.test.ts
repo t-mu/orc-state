@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, readBacklog, seedProjectTasks, recordMergeConfirmation, type SeedTask } from '../test-fixtures/stateHelpers.ts';
 import { startRun, finishRun } from '../lib/claimManager.ts';
-import { createSessionHandle } from '../adapters/pty.ts';
+const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
 import { readEvents as readEventsFromDb, appendSequencedEvent } from '../lib/eventLog.ts';
 
 function readClaims(stateDir: string): { claims: Array<Record<string, unknown>> } {
@@ -88,7 +88,7 @@ function seedManagedPoolState(stateDir: string, tasks: SeedTask[] = [DEFAULT_TAS
         role: 'master',
         model: null,
         status: 'running',
-        session_handle: 'pty:master',
+        session_handle: 'tmux:master',
         provider_ref: null,
         last_heartbeat_at: null,
         registered_at: '2026-01-01T00:00:00.000Z',
@@ -179,7 +179,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
           provider: 'claude',
           role: 'master',
           status: 'running',
-          session_handle: 'pty:master',
+          session_handle: 'tmux:master',
           provider_ref: null,
           registered_at: '2026-01-01T00:00:00.000Z',
         },
@@ -188,7 +188,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
           provider: 'claude',
           role: 'worker',
           status: 'running',
-          session_handle: 'pty:worker-01',
+          session_handle: 'tmux:worker-01',
           session_token: 'tok-worker-01',
           session_started_at: '2026-01-01T00:00:00.000Z',
           session_ready_at: '2026-01-01T00:00:01.000Z',
@@ -262,8 +262,8 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
       payload: { status: 'awaiting_finalize', retry_count: 0 },
     }]);
 
-    expect(send).toHaveBeenCalledWith('pty:worker-01', expect.stringContaining('FINALIZE_WAIT'));
-    expect(send).toHaveBeenCalledWith('pty:worker-01', expect.stringContaining('FINALIZE_SUCCESS'));
+    expect(send).toHaveBeenCalledWith('tmux:worker-01', expect.stringContaining('FINALIZE_WAIT'));
+    expect(send).toHaveBeenCalledWith('tmux:worker-01', expect.stringContaining('FINALIZE_SUCCESS'));
     expect(cleanupRunWorktree).toHaveBeenCalledWith(dir, 'run-finalize-e2e');
     expect(readClaims(dir).claims.find((entry) => entry.run_id === 'run-finalize-e2e')?.state).toBe('done');
     expect(readBacklog(dir).features[0].tasks.find((entry) => entry.ref === 'docs/task-1')?.status).toBe('done');
@@ -399,7 +399,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     const adapter = {
       start: vi.fn().mockResolvedValue({
-        session_handle: 'pty:worker-01',
+        session_handle: 'tmux:worker-01',
         provider_ref: { provider: 'claude' },
       }),
       send: vi.fn().mockResolvedValue(''),
@@ -502,7 +502,7 @@ describe('orchestration lifecycle e2e (coordinator + orc-run-* CLI reporting)', 
 
     const agent = readAgents(dir).agents.find((a) => a.agent_id === agentId)!;
     expect(agent).toBeDefined();
-    expect(agent.session_handle).toMatch(/^pty:/);
+    expect(agent.session_handle).toMatch(/^tmux:/);
     expect(agent.status).toBe('running');
 
     const claim = readClaims(dir).claims.find((c) => c.task_ref === 'docs/task-1')!;

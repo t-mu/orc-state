@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSessionHandle } from '../adapters/pty.ts';
+const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
 import { TARGET_REPO_ROOT } from '../lib/paths.ts';
 
 const sendMock = vi.fn();
@@ -39,7 +39,7 @@ beforeEach(() => {
       provider: 'codex',
       role: 'master',
       status: 'running',
-      session_handle: 'pty:master',
+      session_handle: 'tmux:master',
       registered_at: '2026-01-01T00:00:00.000Z',
     }],
   }, null, 2));
@@ -85,8 +85,8 @@ describe('handleRequestScout', () => {
       expect.objectContaining({ agent_id: 'scout-1', role: 'scout', provider: 'codex' }),
       expect.objectContaining({ workingDirectory: runWorktree() }),
     );
-    expect(sendMock).toHaveBeenCalledWith('pty:scout-1', expect.stringContaining('SCOUT_BRIEF v1'));
-    expect(sendMock).toHaveBeenCalledWith('pty:scout-1', expect.stringContaining('Inspect why run-1 is stalled'));
+    expect(sendMock).toHaveBeenCalledWith('tmux:scout-1', expect.stringContaining('SCOUT_BRIEF v1'));
+    expect(sendMock).toHaveBeenCalledWith('tmux:scout-1', expect.stringContaining('Inspect why run-1 is stalled'));
     expect(result).toMatchObject({
       agent_id: 'scout-1',
       role: 'scout',
@@ -213,7 +213,7 @@ describe('handleRequestScout', () => {
           provider: 'codex',
           role: 'master',
           status: 'running',
-          session_handle: 'pty:master',
+          session_handle: 'tmux:master',
           registered_at: '2026-01-01T00:00:00.000Z',
         },
         {
@@ -221,7 +221,7 @@ describe('handleRequestScout', () => {
           provider: 'codex',
           role: 'worker',
           status: 'running',
-          session_handle: 'pty:orc-1',
+          session_handle: 'tmux:orc-1',
           registered_at: '2026-01-01T00:00:00.000Z',
         },
       ],

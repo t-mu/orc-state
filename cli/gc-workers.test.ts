@@ -84,7 +84,7 @@ describe('cli/gc-workers.ts', () => {
 
   it('leaves running workers with a session handle to the coordinator', async () => {
     writeAgents([
-      { agent_id: 'running', provider: 'claude', status: 'running', session_handle: 'pty:running', registered_at: '2026-01-01T00:00:00Z' },
+      { agent_id: 'running', provider: 'claude', status: 'running', session_handle: 'tmux:running', registered_at: '2026-01-01T00:00:00Z' },
     ]);
 
     const oldArgv = process.argv;

@@ -22,7 +22,8 @@ export const SESSION_RESUME_BUDGET = 2;
  * (`thread/resume`). The Codex and Gemini terminal CLIs cannot.
  */
 export function providerSupportsResume(provider: string, transport: string | null): boolean {
-  if (provider === 'claude') return transport === 'tmux' || transport === 'pty';
+  // A legacy `pty` session (older orc) is never resumed: its exit was not observed.
+  if (provider === 'claude') return transport === 'tmux';
   if (provider === 'codex') return transport === 'app-server';
   return false;
 }

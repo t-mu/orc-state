@@ -17,7 +17,7 @@ const REAL_ORC_ENTRYPOINT = join(REAL_CHECKOUT_ROOT, 'cli', 'orc.ts');
  * ORC_PROJECT_ID remain pinned to the temp repo's registered project.
  *
  * Returns the absolute path to the wrapper script. Set ORC_BIN to this
- * value or add the bin dir to PATH so worker PTYs resolve `orc` correctly.
+ * value or add the bin dir to PATH so worker sessions resolve `orc` correctly.
  */
 export function writeOrcWrapper(dir: string): string {
   const binDir = join(dir, 'bin');

@@ -13,7 +13,7 @@ A provider-agnostic orchestration runtime for autonomous coding agents: it dispa
 
 ## Quick start
 
-Requires Node.js 24+ and a provider CLI ([Claude](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex) or [Gemini](https://github.com/google/gemini-cli)).
+Requires Node.js 24+, tmux 3.2+ and a provider CLI ([Claude](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex) or [Gemini](https://github.com/google/gemini-cli)).
 
 ```bash
 npm install -g orc-state

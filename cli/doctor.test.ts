@@ -166,6 +166,37 @@ describe('cli/doctor.ts', () => {
   });
 });
 
+describe('doctor tmux check', () => {
+  function fakeTmux(versionOutput: string | null): string {
+    const bin = join(dir, 'fake-tmux');
+    writeFileSync(bin, versionOutput == null ? '#!/bin/sh\nexit 1\n' : `#!/bin/sh\necho '${versionOutput}'\n`, { mode: 0o755 });
+    return bin;
+  }
+
+  it('reports an error when tmux is missing', () => {
+    seedCleanState();
+    const result = runCli(['--json'], { ...process.env, ORC_TMUX_BIN: join(dir, 'no-such-tmux') });
+    const json = JSON.parse(result.stdout);
+    expect(result.status).toBe(1);
+    expect(json.checks.tmux).toMatchObject({ ok: false, version: null });
+    expect(json.checks.tmux.problem).toContain('tmux is not installed');
+  });
+
+  it('reports an error for tmux older than 3.2', () => {
+    seedCleanState();
+    const result = runCli([], { ...process.env, ORC_TMUX_BIN: fakeTmux('tmux 3.1c') });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('tmux: ok=false version=tmux 3.1c');
+    expect(result.stdout).toContain('error: tmux 3.1c is too old; orc needs tmux >= 3.2');
+  });
+
+  it('accepts tmux 3.2 and newer', () => {
+    seedCleanState();
+    const json = JSON.parse(runCli(['--json'], { ...process.env, ORC_TMUX_BIN: fakeTmux('tmux 3.3a') }).stdout);
+    expect(json.checks.tmux).toEqual({ ok: true, version: 'tmux 3.3a', problem: null });
+  });
+});
+
 describe('doctor on a registered project', () => {
   it('passes for a fresh project', () => {
     const target = mkdtempSync(join(tmpdir(), 'orc-doctor-target-'));

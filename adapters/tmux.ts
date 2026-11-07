@@ -23,7 +23,7 @@ import { readProcessStart } from '../lib/processIdentity.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { withEventDbTransaction } from '../lib/eventLog.ts';
 import { logger } from '../lib/logger.ts';
-import { detectBlockingPromptFromText, prepareProviderLaunch, runStartupDialogs } from './pty.ts';
+import { detectBlockingPromptFromText, prepareProviderLaunch, runStartupDialogs } from './providerLaunch.ts';
 import type { SessionExitStatus, SessionInspection } from './interface.ts';
 
 const OUTPUT_TAIL_BYTES = 8 * 1024;
@@ -145,9 +145,46 @@ function tmuxOrThrow(args: string[], options: { input?: string; env?: Record<str
   return result.stdout;
 }
 
-export function isTmuxAvailable(): boolean {
+/** Oldest tmux orc supports. */
+export const MIN_TMUX_VERSION = '3.2';
+
+/**
+ * Parses `tmux -V` output to `[major, minor]`: `tmux 3.2` → [3, 2], `tmux 3.3a`
+ * → [3, 3], `tmux next-3.5` → [3, 5]. A build from git master (`tmux master`)
+ * reports no number and parses as Infinity. Anything else is null.
+ */
+export function parseTmuxVersion(output: string): [number, number] | null {
+  const text = output.trim();
+  if (/^tmux master$/.test(text)) return [Infinity, Infinity];
+  const match = /^tmux (?:next-)?(\d+)\.(\d+)[a-z]?$/.exec(text);
+  return match ? [Number(match[1]), Number(match[2])] : null;
+}
+
+export interface TmuxCheck {
+  ok: boolean;
+  /** The `tmux -V` output, or null when tmux could not be run. */
+  version: string | null;
+  /** Why tmux cannot be used; null when ok. */
+  problem: string | null;
+}
+
+/** Whether `-V` output names a tmux at least MIN_TMUX_VERSION. */
+export function checkTmuxVersion(output: string | null): TmuxCheck {
+  if (output == null) return { ok: false, version: null, problem: `tmux is not installed (orc needs tmux >= ${MIN_TMUX_VERSION} on PATH, or ORC_TMUX_BIN)` };
+  const version = output.trim();
+  const parsed = parseTmuxVersion(version);
+  if (!parsed) return { ok: false, version, problem: `cannot read the tmux version from '${version}' (orc needs tmux >= ${MIN_TMUX_VERSION})` };
+  const [major, minor] = MIN_TMUX_VERSION.split('.').map(Number);
+  const tooOld = parsed[0] < major || (parsed[0] === major && parsed[1] < minor);
+  return tooOld
+    ? { ok: false, version, problem: `${version} is too old; orc needs tmux >= ${MIN_TMUX_VERSION}` }
+    : { ok: true, version, problem: null };
+}
+
+/** Runs `tmux -V` and checks it: orc runs every provider terminal session in tmux. */
+export function checkTmux(): TmuxCheck {
   const result = spawnSync(tmuxBinary(), ['-V'], { encoding: 'utf8', timeout: 5_000 });
-  return !result.error && result.status === 0;
+  return checkTmuxVersion(!result.error && result.status === 0 ? result.stdout : null);
 }
 
 function shellQuote(value: string): string {

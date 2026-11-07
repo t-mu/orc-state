@@ -31,7 +31,7 @@ function seedState(stateDir: string) {
         provider: 'codex',
         role: 'worker',
         status: 'running',
-        session_handle: 'pty:orc-1',
+        session_handle: 'tmux:orc-1',
         provider_ref: null,
         model: null,
         registered_at: '2026-01-01T00:00:00.000Z',
@@ -65,7 +65,7 @@ describe('worker control flow e2e', () => {
     delete process.env.ORC_PROJECT_ID;
     vi.unmock('../lib/prompts.ts');
     vi.unmock('../lib/binaryCheck.ts');
-    vi.unmock('node-pty');
+    vi.unmock('../adapters/tmux.ts');
     vi.unmock('node:child_process');
     vi.unmock('../adapters/index.ts');
   });
@@ -85,21 +85,17 @@ describe('worker control flow e2e', () => {
       },
     ]);
 
-    const ptySpawnMock = vi.fn().mockReturnValue({
-      pid: 1234,
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn(),
-      onData: vi.fn(),
-      onExit: vi.fn((cb) => {
-        cb({ exitCode: 0, signal: 0 });
-        return { dispose: vi.fn() };
-      }),
-      on: vi.fn(),
-      unref: vi.fn(),
-    });
-    vi.doMock('node-pty', () => ({
-      default: { spawn: ptySpawnMock },
+    // The master runs in orc's tmux server; no real tmux is touched here.
+    const startTmuxSession = vi.fn().mockImplementation((agentId: string, launch: { binary: string }, provider: string) => ({
+      session_handle: `tmux:${agentId}`,
+      provider_ref: { pid: 1234, provider, binary: launch.binary, transport: 'tmux', process_start: 'proc:1234', tmux_socket: 'orc-test', tmux_session: agentId },
+    }));
+    vi.doMock('../adapters/tmux.ts', () => ({
+      checkTmux: vi.fn().mockReturnValue({ ok: true, version: 'tmux 3.4', problem: null }),
+      inspectTmuxSession: vi.fn().mockReturnValue({ alive: true }),
+      tmuxAttachCommand: vi.fn().mockReturnValue({ command: 'tmux', args: [] }),
+      startTmuxSession,
+      createTmuxAdapter: vi.fn().mockReturnValue({ stop: vi.fn().mockResolvedValue(undefined) }),
     }));
     const spawnMock = vi.fn().mockImplementation((cmd, args) => {
       const target = Array.isArray(args) ? String(args[0] ?? '') : '';
@@ -138,6 +134,6 @@ describe('worker control flow e2e', () => {
     const workerAfterStartSession = readAgents(dir).find((a: Record<string, unknown>) => a.agent_id === 'orc-1');
     expect(workerAfterStartSession).toBeUndefined();
     expect(spawnMock.mock.calls.some(([cmd]) => cmd === 'codex')).toBe(false);
-    expect(ptySpawnMock).toHaveBeenCalled();
+    expect(startTmuxSession).toHaveBeenCalledWith('master', expect.any(Object), 'claude');
   });
 });

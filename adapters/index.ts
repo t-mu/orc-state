@@ -1,27 +1,69 @@
-import { createPtyAdapter } from './pty.ts';
-import { createTmuxAdapter, isTmuxAvailable } from './tmux.ts';
+import { readFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
+import { isSameProcess } from '../lib/processIdentity.ts';
+import { taskLabelsPath } from '../hooks/orc-hook.ts';
+import { createTmuxAdapter, checkTmux } from './tmux.ts';
 import { createCodexAppServerAdapter, isAppServerHandle } from './codexAppServer.ts';
-import { assertAdapterContract, adapterGetOutputTail } from './interface.ts';
+import { assertAdapterContract, adapterGetOutputTail, type SessionInspection } from './interface.ts';
 import { CLI_CAPABILITIES, CapabilityRefusal, type RuntimeEventListener, type SubmitOptions } from './runtime.ts';
 
 const SUPPORTED_PROVIDERS = new Set(['claude', 'codex', 'gemini']);
 
-export type SessionTransport = 'pty' | 'tmux';
+/** tmux is checked once per process, on the first terminal session it starts. */
+let tmuxUsable = false;
 
-let detectedTransport: SessionTransport | null = null;
+function assertTmuxUsable(): void {
+  if (tmuxUsable) return;
+  const check = checkTmux();
+  if (!check.ok) throw new Error(`Cannot start a provider session: ${check.problem}`);
+  tmuxUsable = true;
+}
 
 /**
- * ORC_SESSION_TRANSPORT selects how new sessions launch: `auto` (default)
- * uses tmux when the binary is available so sessions survive a coordinator
- * restart, otherwise node-pty; `tmux` or `pty` forces one.
+ * Stops what a legacy `pty:` session left behind: the provider process the
+ * old node-pty adapter recorded in `pty-pids/<agent>.pid` (it can outlive the
+ * coordinator that spawned it) gets SIGTERM only when its pid and start time
+ * still match, so a reused pid is never signalled; a bare-pid file cannot
+ * prove identity and is only removed. The pid, hook-event and settings files go.
  */
-export function resolveSessionTransport(): SessionTransport {
-  const configured = process.env.ORC_SESSION_TRANSPORT ?? 'auto';
-  if (configured === 'pty' || configured === 'tmux') return configured;
-  if (configured !== 'auto') throw new Error(`Invalid ORC_SESSION_TRANSPORT: ${configured} (expected auto, tmux or pty)`);
-  detectedTransport ??= isTmuxAvailable() ? 'tmux' : 'pty';
-  return detectedTransport;
+function stopLegacyPtySession(sessionHandle: string): void {
+  if (!sessionHandle.startsWith('pty:') || sessionHandle.length <= 4) return;
+  const agentId = sessionHandle.slice(4);
+  const pidFile = join(STATE_DIR, 'pty-pids', `${agentId}.pid`);
+  try {
+    const record = JSON.parse(readFileSync(pidFile, 'utf8')) as { pid?: unknown; start?: unknown };
+    if (typeof record?.pid === 'number' && typeof record.start === 'string' && isSameProcess({ pid: record.pid, start: record.start })) {
+      process.kill(record.pid, 'SIGTERM');
+    }
+  } catch { /* no pid file, unreadable, or the process is already gone */ }
+  const eventsFile = hookEventPath(agentId);
+  for (const path of [pidFile, eventsFile, `${eventsFile}.processing`, taskLabelsPath(eventsFile), join(STATE_DIR, 'pty-settings', `${agentId}.json`)]) {
+    try { unlinkSync(path); } catch { /* already gone or never created */ }
+  }
 }
+
+/**
+ * Sessions whose handle no adapter owns — chiefly `pty:` handles left in state
+ * by an orc that still had the node-pty transport. Nothing can write to them,
+ * so every call reports the session offline; the coordinator then clears it
+ * and requeues the run (its exit was never observed), and `stop` ends a
+ * provider process the old adapter left running (stopLegacyPtySession).
+ */
+const offlineAdapter = {
+  send: (sessionHandle: string) => Promise.reject(new Error(`Session ${sessionHandle} is offline: orc runs terminal sessions in tmux only`)),
+  attach: (sessionHandle: string) => { console.log(`(session ${sessionHandle} is offline: orc runs terminal sessions in tmux only)`); },
+  heartbeatProbe: () => Promise.resolve(false),
+  stop: (sessionHandle: string) => { stopLegacyPtySession(sessionHandle); return Promise.resolve(); },
+  getOutputTail: () => null,
+  ownsSession: () => false,
+  detectInputBlock: () => null,
+  // No exit was observed, so the run is requeued rather than resumed.
+  exitStatus: () => null,
+  inspectSession: (): SessionInspection => ({
+    transport: 'legacy', alive: false, writable: false, pid: null, processStart: null, reason: 'not a tmux or app-server session',
+  }),
+};
 
 /**
  * Providers with a proven structured runtime (task 203). Others fall back to
@@ -32,10 +74,10 @@ export const STRUCTURED_RUNTIME_PROVIDERS = new Set(['codex']);
 
 /**
  * Create an adapter for the given provider.
- * New sessions start on the resolved transport (or the structured runtime when
- * the start config asks for `runtime: 'structured'`); every other call is
- * routed by the session handle prefix, so existing `pty:`, `tmux:` and `app:`
- * sessions keep working regardless of the current setting.
+ * New sessions start in tmux (or the structured runtime when the start config
+ * asks for `runtime: 'structured'`); every other call is routed by the session
+ * handle prefix: `app:` to the structured runtime, `tmux:` to tmux, and any
+ * other handle (a `pty:` session from an older orc) reports offline.
  *
  * @param provider - 'claude' | 'codex' | 'gemini'
  * @param options
@@ -48,19 +90,17 @@ export function createAdapter(provider: string, options: Record<string, unknown>
     );
   }
 
-  const pty = createPtyAdapter({ ...options, provider });
   const tmux = createTmuxAdapter({ ...options, provider });
   const structured = STRUCTURED_RUNTIME_PROVIDERS.has(provider) ? createCodexAppServerAdapter({ provider }) : null;
   const route = (sessionHandle: string) => {
     if (structured && isAppServerHandle(sessionHandle)) return structured;
-    return String(sessionHandle).startsWith('tmux:') ? tmux : pty;
+    return String(sessionHandle).startsWith('tmux:') ? tmux : offlineAdapter;
   };
   const adapter = {
     start: async (agentId: string, config: Record<string, unknown> = {}) => {
       if (config.runtime === 'structured' && structured) return await structured.start(agentId, config);
-      const transport = resolveSessionTransport();
-      if (transport === 'tmux' && !isTmuxAvailable()) throw new Error('ORC_SESSION_TRANSPORT=tmux but tmux is not available');
-      const result = await (transport === 'tmux' ? tmux : pty).start(agentId, config);
+      assertTmuxUsable();
+      const result = await tmux.start(agentId, config);
       if (config.runtime !== 'structured') return result;
       return {
         ...result,
@@ -89,4 +129,4 @@ export function createAdapter(provider: string, options: Record<string, unknown>
   return adapter;
 }
 
-export { createPtyAdapter, createTmuxAdapter, assertAdapterContract, adapterGetOutputTail };
+export { createTmuxAdapter, assertAdapterContract, adapterGetOutputTail };

@@ -17,7 +17,7 @@ const crash: ResumeDecisionInput = {
 describe('providerSupportsResume', () => {
   it('supports the Claude CLI and Codex app-server, never Gemini or the Codex CLI', () => {
     expect(providerSupportsResume('claude', 'tmux')).toBe(true);
-    expect(providerSupportsResume('claude', 'pty')).toBe(true);
+    expect(providerSupportsResume('claude', 'pty')).toBe(false);
     expect(providerSupportsResume('codex', 'app-server')).toBe(true);
     expect(providerSupportsResume('codex', 'tmux')).toBe(false);
     expect(providerSupportsResume('codex', 'pty')).toBe(false);

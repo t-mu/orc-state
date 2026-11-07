@@ -35,7 +35,7 @@ orc doctor
 |---------|-------|-----|
 | `No registered project here…` | `orc project list` | `orc project add <git-path>`; outside a repo `orc project select <id>` or `--project=<id>` |
 | `target repository is not a git repository` (doctor) | `git -C <path> rev-parse` | `git init` and commit, then `orc project add`, `orc init` |
-| Coordinator not running | `orc status`, `orc doctor` | `orc start-session`. tmux sessions are adopted, `pty:` sessions become `recoverable`, `app:` runs are requeued |
+| Coordinator not running | `orc status`, `orc doctor` | `orc start-session`. tmux sessions are adopted, `app:` runs are requeued, legacy `pty:` sessions (from an older orc) are cleared and their runs requeued |
 | `orc doctor` reports a live coordinator whose `coordinator.pid` is missing or wrong | `orc doctor` | `orc kill-all` finds it via `control.json`, then `orc start-session` |
 | Repeated `session_start_failed` | `orc events-tail --event=session_start_failed`, [Providers](#providers) | fix install/auth; the task is requeued after the retries; `orc task-reset <ref>` if it stays stuck |
 | `session_resume_failed`, or a worker that keeps crashing and resuming | `orc events-tail --event=session_resumed`, `orc events-tail --event=session_resume_failed` | Each run resumes at most twice, then is requeued. To stop resuming: `orc project config set sessions.resume off` (read at each decision), or start the coordinator with `ORC_SESSIONS_RESUME=off`. A dead worker pane stays in tmux (`remain-on-exit`) until the coordinator stops the session. [Session Resume](configuration.md#session-resume) |
@@ -47,16 +47,16 @@ orc doctor
 
 `orc sessions` shows `state=recoverable|unknown` with a `reason:`; the coordinator never kills or redispatches them.
 
-- `recoverable`: process alive, this coordinator cannot write to it (a `pty:` session from an earlier coordinator). The worker can still run `orc run-*`; it gets no nudges or envelopes.
+- `recoverable`: process alive, this coordinator cannot write to it. The worker can still run `orc run-*`; it gets no nudges or envelopes.
 - `unknown`: live process does not match the recorded PID + start time, or has no recorded identity. Not adopted.
 - Fix: let it finish, or `orc task-reset <ref>` (or `orc task-cancel <ref>`), then `orc worker-remove <agent_id>` (refused while a claim is active; signals only a matching process).
-- Prevent: keep `tmux` installed and `ORC_SESSION_TRANSPORT` at `auto` or `tmux`.
+- Prevent: keep tmux ≥ 3.2 installed (`orc doctor` checks it).
 
 ## Runs and claims
 
 | Symptom | Check | Fix |
 |---------|-------|-----|
-| Worker stuck in `in_progress` | `orc attach <agent_id>` (read-only, `--write` to type), or `orc terminal provider <run_id> --once` for `pty:`; `orc doctor` | `orc task-reset <ref>`, then `orc worker-remove <agent_id>`; dispatch is automatic |
+| Worker stuck in `in_progress` | `orc attach <agent_id>` (read-only, `--write` to type), or `orc terminal provider <run_id> --once` without a TTY; `orc doctor` | `orc task-reset <ref>`, then `orc worker-remove <agent_id>`; dispatch is automatic |
 | Dead worker, claim not released | `orc runs-active`, `orc doctor` | a dead process expires the claim at once; else `orc task-reset <ref>` |
 | Offline/dead workers left in `orc status` (`idle\|running\|offline\|dead`) | `orc status` | a running coordinator removes them; without one `orc worker-gc` (keeps workers with a claim) |
 | Worker blocked on `run-input-request` | `orc waiting-input` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response="…"`; otherwise it fails on timeout and is requeued |
@@ -104,7 +104,7 @@ Run worktrees live at `<state>/worktrees/<run_id>`, registered in `$STATE/run-wo
 | Symptom | Check | Fix |
 |---------|-------|-----|
 | An `ORC_*` switch has no effect in tests | — | configs strip inherited `ORC_*`; use the `RUN_*` switches ([testing.md](./testing.md#env-switches)) |
-| PTY suites skipped | `ptySupport.ts` probe | `RUN_PTY_AVAILABLE=1` to force; `RUN_STRICT_PTY_TESTS=1` to fail instead |
+| tmux suites skipped | `tmux -V` | install tmux ≥ 3.2 |
 | Real-provider test skips | `RUN_REAL_PROVIDERS=1` set? binary on `PATH`? | set the switch, install the binary |
 | Real-provider test times out | provider CLI by hand (first-run or auth prompt) | log in, rerun |
 

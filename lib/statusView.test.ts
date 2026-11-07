@@ -96,7 +96,7 @@ describe('buildStatus', () => {
       agents: [
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
         { agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'idle' } as Agent,
-        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1' } as Agent,
+        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'tmux:scout-1' } as Agent,
         { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'idle', registered_at: '2026-01-01T00:00:00Z' } as Agent,
       ],
     });
@@ -107,7 +107,7 @@ describe('buildStatus', () => {
     expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['amber-anchor']);
     expect(s.scout_capacity).toBeUndefined();
     expect(s.scouts).toEqual([
-      { agent_id: 'scout-1', provider: 'codex', model: null, status: 'running', session_handle: 'pty:scout-1', launched_at: null },
+      { agent_id: 'scout-1', provider: 'codex', model: null, status: 'running', session_handle: 'tmux:scout-1', launched_at: null },
       { agent_id: 'scout-2', provider: 'claude', model: null, status: 'idle', session_handle: null, launched_at: '2026-01-01T00:00:00Z' },
     ]);
   });
@@ -352,7 +352,7 @@ describe('buildStatus', () => {
 
   it('counts dispatch-ready work waiting for capacity', () => {
     writeState({
-      agents: [{ agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'running', session_handle: 'pty:amber-anchor' } as Agent],
+      agents: [{ agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'running', session_handle: 'tmux:amber-anchor' } as Agent],
       tasks: [
         { ref: 'orch/task-1', title: 'Task 1', status: 'todo' },
         { ref: 'orch/task-2', title: 'Task 2', status: 'todo', depends_on: ['orch/task-3'] },
@@ -371,7 +371,7 @@ describe('buildStatus', () => {
 
   it('live workers without active claims still consume capacity slots', () => {
     writeState({
-      agents: [{ agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'running', session_handle: 'pty:amber-anchor' } as Agent],
+      agents: [{ agent_id: 'amber-anchor', provider: 'codex', role: 'worker', status: 'running', session_handle: 'tmux:amber-anchor' } as Agent],
     });
     writeConfig({ worker_pool: { max_workers: 2, provider: 'codex' } });
     writeEvents([]);
@@ -503,7 +503,7 @@ describe('buildStatus', () => {
 describe('current_activity', () => {
   function seedActiveRun() {
     writeState({
-      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:1' } as Agent],
+      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:1' } as Agent],
       claims: [{
         run_id: 'run-act-1',
         task_ref: 'orch/task-1',
@@ -544,7 +544,7 @@ describe('current_activity', () => {
   it('measures idle time from hook activity too, as the coordinator does, and never stalls a running tool call', () => {
     const old = new Date(Date.now() - 40 * 60_000).toISOString();
     writeState({
-      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:1' } as Agent],
+      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:1' } as Agent],
       claims: ['run-hook', 'run-tool'].map((run_id, index) => ({
         run_id, task_ref: `orch/task-${index + 1}`, agent_id: 'orc-1', state: 'in_progress',
         claimed_at: old, started_at: old, last_heartbeat_at: old,
@@ -660,7 +660,7 @@ describe('formatStatus', () => {
     writeState({
       agents: [
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
-        { agent_id: 'amber-anchor', provider: 'claude', role: 'worker', status: 'running', session_handle: 'pty:amber-anchor' } as Agent,
+        { agent_id: 'amber-anchor', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:amber-anchor' } as Agent,
       ],
     });
     writeConfig({ worker_pool: { max_workers: 3, provider: 'claude' } });
@@ -682,7 +682,7 @@ describe('formatStatus', () => {
     writeState({
       agents: [
         { agent_id: 'master', provider: 'claude', role: 'master', status: 'running' } as Agent,
-        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1' } as Agent,
+        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'tmux:scout-1' } as Agent,
         { agent_id: 'scout-2', provider: 'claude', role: 'scout', status: 'offline' } as Agent,
       ],
     });

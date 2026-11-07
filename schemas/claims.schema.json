@@ -57,7 +57,7 @@
         "task_envelope_sent_at": {
           "type": ["string", "null"],
           "format": "date-time",
-          "description": "Timestamp when the coordinator successfully delivered TASK_START into the worker PTY session."
+          "description": "Timestamp when the coordinator successfully delivered TASK_START into the worker session."
         },
         "last_heartbeat_at": {
           "type": ["string", "null"],

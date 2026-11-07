@@ -124,7 +124,7 @@ beforeEach(() => {
       provider: 'codex',
       role: 'worker',
       status: 'running',
-      session_handle: 'pty:1',
+      session_handle: 'tmux:1',
       last_heartbeat_at: '2026-01-01T00:01:00.000Z',
       registered_at: '2026-01-01T00:00:00.000Z',
     },
@@ -247,7 +247,7 @@ describe('mcp read handlers', () => {
       provider: 'claude',
       role: 'scout',
       status: 'running',
-      session_handle: 'pty:scout-1',
+      session_handle: 'tmux:scout-1',
       session_token: 'secret',
       last_heartbeat_at: null,
       registered_at: '2026-01-01T00:00:00.000Z',
@@ -258,7 +258,7 @@ describe('mcp read handlers', () => {
       provider: 'claude',
       model: null,
       status: 'running',
-      session_handle: 'pty:scout-1',
+      session_handle: 'tmux:scout-1',
       launched_at: '2026-01-01T00:00:00.000Z',
     }]);
   });

@@ -20,7 +20,7 @@ describe('cli/watch.ts', () => {
     seedValidState({
       agents: [
         { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
-        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1', registered_at: '2026-01-01T00:00:00Z' },
+        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'tmux:scout-1', registered_at: '2026-01-01T00:00:00Z' },
       ],
       claims: [{
         run_id: 'run-1',

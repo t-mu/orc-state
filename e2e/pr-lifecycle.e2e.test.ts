@@ -60,7 +60,7 @@ describe('PR merge strategy e2e', () => {
     seedState(dir, {
       agents: [{
         agent_id: 'orc-1', provider: 'claude', role: 'worker',
-        status: 'running', session_handle: 'pty:orc-1',
+        status: 'running', session_handle: 'tmux:orc-1',
         registered_at: new Date().toISOString(),
       }],
       tasks: [{ ...PR_TASK_BASE, ref: taskRef }],
@@ -122,9 +122,9 @@ describe('PR merge strategy e2e', () => {
     const reviewerAgent = agentsAfterInit.find((a) => (a as { agent_id: unknown }).agent_id !== 'orc-1');
     expect(reviewerAgent).toBeUndefined();
 
-    // PR_REVIEW sent to the existing worker (pty:orc-1)
+    // PR_REVIEW sent to the existing worker (tmux:orc-1)
     const prReviewSend = mockSend.mock.calls.find(
-      ([handle, msg]) => handle === 'pty:orc-1' && typeof msg === 'string' && String(msg).includes('PR_REVIEW'),
+      ([handle, msg]) => handle === 'tmux:orc-1' && typeof msg === 'string' && String(msg).includes('PR_REVIEW'),
     );
     expect(prReviewSend).toBeTruthy();
 
@@ -166,7 +166,7 @@ describe('PR merge strategy e2e', () => {
       agents: [
         {
           agent_id: 'orc-1', provider: 'claude', role: 'worker',
-          status: 'running', session_handle: 'pty:orc-1',
+          status: 'running', session_handle: 'tmux:orc-1',
           registered_at: new Date().toISOString(),
         },
       ],
@@ -217,7 +217,7 @@ describe('PR merge strategy e2e', () => {
       agents: [
         {
           agent_id: 'orc-1', provider: 'claude', role: 'worker',
-          status: 'running', session_handle: 'pty:orc-1',
+          status: 'running', session_handle: 'tmux:orc-1',
           registered_at: new Date().toISOString(),
         },
       ],
@@ -267,7 +267,7 @@ describe('PR merge strategy e2e', () => {
     seedState(dir, {
       agents: [{
         agent_id: 'orc-1', provider: 'codex', role: 'worker',
-        status: 'running', session_handle: 'pty:orc-1',
+        status: 'running', session_handle: 'tmux:orc-1',
         registered_at: new Date().toISOString(),
       }],
       tasks: [{

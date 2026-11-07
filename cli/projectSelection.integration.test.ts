@@ -12,7 +12,7 @@ let dataHome: string;
 
 function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ORC_')));
-  return { ...env, ORC_DATA_HOME: dataHome, ORC_SESSION_TRANSPORT: 'pty', ...extra };
+  return { ...env, ORC_DATA_HOME: dataHome, ...extra };
 }
 
 function orc(cwd: string, args: string[], extra: Record<string, string> = {}) {

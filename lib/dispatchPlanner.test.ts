@@ -7,7 +7,7 @@ function agent(agent_id: string, overrides: Partial<Agent> = {}): Agent {
     agent_id,
     status: 'running',
     role: 'worker',
-    session_handle: 'pty:worker',
+    session_handle: 'tmux:worker',
     ...overrides,
   } as Agent;
 }

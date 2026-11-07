@@ -81,7 +81,7 @@ describe('cli/status.ts', () => {
     seedValidState({
       agents: [
         { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
-        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'pty:scout-1', registered_at: '2026-01-01T00:00:00Z' },
+        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'tmux:scout-1', registered_at: '2026-01-01T00:00:00Z' },
       ],
       tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'in_progress' }],
       claims: [{

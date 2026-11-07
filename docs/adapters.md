@@ -4,9 +4,11 @@ The core never talks to provider binaries; it calls an adapter. `createAdapter(p
 
 | Handle | Adapter | Used when |
 |--------|---------|-----------|
-| `tmux:` | `adapters/tmux.ts` | new sessions when `ORC_SESSION_TRANSPORT` is `auto` (default) and tmux is installed, or `tmux` |
-| `pty:` | `adapters/pty.ts` (node-pty) | `auto` without tmux, or `pty` |
+| `tmux:` | `adapters/tmux.ts` | every new terminal session; needs tmux ≥ 3.2 (start fails otherwise) |
 | `app:` | `adapters/codexAppServer.ts` | Codex with `runtime: 'structured'` ([configuration.md → Worker Runtimes](./configuration.md)); other providers fall back to the CLI and record `runtime_fallback` |
+| any other (`pty:` from an older orc) | none | reported offline: probe `false`, `inspectSession` `alive: false`, `send` throws; `stop` sends SIGTERM to the provider process recorded in `pty-pids/<agent>.pid` only if its pid and start time still match, then removes the session files; the coordinator clears it like a dead session |
+
+Provider launch (binary, args, env, cwd, Claude settings/hooks, sandbox grants, startup-dialog keystrokes, prompt detection) is shared in `adapters/providerLaunch.ts`.
 
 ## Interface
 
@@ -19,7 +21,7 @@ Required (`AdapterInterface`, `adapters/interface.ts`; checked by `assertAdapter
 | `attach(handle)` | print a snapshot of recent output (`(no messages yet)` if none); `orc attach` opens a real tmux client instead |
 | `heartbeatProbe(handle)` → `boolean` | never throws |
 | `stop(handle)` | no-op for an unknown session |
-| `getOutputTail(handle, maxBytes?)` → `string \| null` | last 8 KB (or `maxBytes`), ANSI stripped, trimmed; `''` without a log, `null` on error. tmux reads the rendered pane (`capture-pane -J`, 10,000 lines scrollback) while it lives; pty returns the raw log, so prefer tmux for scouts with a TUI provider |
+| `getOutputTail(handle, maxBytes?)` → `string \| null` | last 8 KB (or `maxBytes`), ANSI stripped, trimmed; `''` without a log, `null` on error. tmux reads the rendered pane (`capture-pane -J`, 10,000 lines scrollback) while it lives, the raw log after |
 
 Optional (all present on the composite):
 
@@ -35,7 +37,7 @@ Optional (all present on the composite):
 
 ## Claude hooks
 
-The pty and tmux adapters write a Claude settings file whose hooks run `hooks/orc-hook.ts` (`dist/hooks/orc-hook.js`) as `node <script> <kind> <events-file>`. Each call appends at most one record and exits 0. The coordinator tick is the only reader.
+The tmux adapter writes a Claude settings file whose hooks run `hooks/orc-hook.ts` (`dist/hooks/orc-hook.js`) as `node <script> <kind> <events-file>`. Each call appends at most one record and exits 0. The coordinator tick is the only reader.
 
 | Hook | Kind | Record |
 |------|------|--------|
