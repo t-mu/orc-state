@@ -55,12 +55,8 @@ export interface CoordinatorConfig {
   session_ready_timeout_ms: number;
   session_ready_nudge_ms: number;
   session_ready_nudge_interval_ms: number;
-  run_inactive_timeout_ms: number;
   run_inactive_nudge_ms: number;
-  run_inactive_escalate_ms: number;
   run_inactive_nudge_interval_ms: number;
-  session_start_max_attempts: number;
-  session_start_retry_delay_ms: number;
   memory_prune_interval_ms: number;
   // Staleness detection thresholds (ms)
   worker_stale_soft_ms: number;
@@ -107,12 +103,8 @@ export const DEFAULT_COORDINATOR_CONFIG: Readonly<CoordinatorConfig> = Object.fr
   session_ready_timeout_ms: 120_000,
   session_ready_nudge_ms: 15_000,
   session_ready_nudge_interval_ms: 30_000,
-  run_inactive_timeout_ms: 1_800_000,
   run_inactive_nudge_ms: 600_000,
-  run_inactive_escalate_ms: 900_000,
   run_inactive_nudge_interval_ms: 300_000,
-  session_start_max_attempts: 3,
-  session_start_retry_delay_ms: 30_000,
   memory_prune_interval_ms: 3_600_000,
   worker_stale_soft_ms: 1_800_000,
   worker_stale_nudge_ms: 3_600_000,
@@ -329,12 +321,8 @@ export function loadCoordinatorConfig({
     session_ready_timeout_ms: parsePositiveInteger(cc.session_ready_timeout_ms, 'coordinator.session_ready_timeout_ms') ?? DEFAULT_COORDINATOR_CONFIG.session_ready_timeout_ms,
     session_ready_nudge_ms: parsePositiveInteger(cc.session_ready_nudge_ms, 'coordinator.session_ready_nudge_ms') ?? DEFAULT_COORDINATOR_CONFIG.session_ready_nudge_ms,
     session_ready_nudge_interval_ms: parsePositiveInteger(cc.session_ready_nudge_interval_ms, 'coordinator.session_ready_nudge_interval_ms') ?? DEFAULT_COORDINATOR_CONFIG.session_ready_nudge_interval_ms,
-    run_inactive_timeout_ms: parsePositiveInteger(cc.run_inactive_timeout_ms, 'coordinator.run_inactive_timeout_ms') ?? DEFAULT_COORDINATOR_CONFIG.run_inactive_timeout_ms,
     run_inactive_nudge_ms: parsePositiveInteger(cc.run_inactive_nudge_ms, 'coordinator.run_inactive_nudge_ms') ?? DEFAULT_COORDINATOR_CONFIG.run_inactive_nudge_ms,
-    run_inactive_escalate_ms: parsePositiveInteger(cc.run_inactive_escalate_ms, 'coordinator.run_inactive_escalate_ms') ?? DEFAULT_COORDINATOR_CONFIG.run_inactive_escalate_ms,
     run_inactive_nudge_interval_ms: parsePositiveInteger(cc.run_inactive_nudge_interval_ms, 'coordinator.run_inactive_nudge_interval_ms') ?? DEFAULT_COORDINATOR_CONFIG.run_inactive_nudge_interval_ms,
-    session_start_max_attempts: parsePositiveInteger(cc.session_start_max_attempts, 'coordinator.session_start_max_attempts') ?? DEFAULT_COORDINATOR_CONFIG.session_start_max_attempts,
-    session_start_retry_delay_ms: parsePositiveInteger(cc.session_start_retry_delay_ms, 'coordinator.session_start_retry_delay_ms') ?? DEFAULT_COORDINATOR_CONFIG.session_start_retry_delay_ms,
     memory_prune_interval_ms: parseNonNegativeInteger(cc.memory_prune_interval_ms, 'coordinator.memory_prune_interval_ms') ?? DEFAULT_COORDINATOR_CONFIG.memory_prune_interval_ms,
     worker_stale_soft_ms: parsePositiveInteger(cc.worker_stale_soft_ms, 'coordinator.worker_stale_soft_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_soft_ms,
     worker_stale_nudge_ms: parsePositiveInteger(cc.worker_stale_nudge_ms, 'coordinator.worker_stale_nudge_ms') ?? DEFAULT_COORDINATOR_CONFIG.worker_stale_nudge_ms,

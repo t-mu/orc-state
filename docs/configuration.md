@@ -123,6 +123,8 @@ orc project config unset worker_pool.max_workers
 
 For Claude models prefer the aliases `sonnet`, `opus`, `haiku`.
 
+These are the only supported keys. `set` rejects any other key; a key removed in 1.0 (`coordinator.run_inactive_timeout_ms`, `coordinator.run_inactive_escalate_ms`, `coordinator.session_start_max_attempts`, `coordinator.session_start_retry_delay_ms`) is ignored when stored and can still be `unset`.
+
 ### Top level
 
 | Key | Default | Description |
@@ -184,7 +186,6 @@ Times in ms. Behaviour of the liveness thresholds: [contracts.md](contracts.md).
 | `pr_provider` | `null` | `github`; required for `pr` |
 | `pr_push_remote` | `origin` | Remote for PR branches |
 | `pr_finalize_lease_ms` | `86400000` | Lease during PR finalization |
-| `run_inactive_timeout_ms`, `run_inactive_escalate_ms`, `session_start_max_attempts`, `session_start_retry_delay_ms` | — | Unused; accepted so stored settings load |
 
 `coordinator.ts` flags override settings: `--interval-ms`, `--mode`, `--run-start-timeout-ms`, `--session-ready-timeout-ms`, `--session-ready-nudge-ms`, `--session-ready-nudge-interval-ms`, `--run-inactive-nudge-ms`, `--run-inactive-nudge-interval-ms`, `--memory-prune-interval-ms`, `--worker-stale-soft-ms`, `--worker-stale-nudge-ms`, `--worker-stale-force-fail-ms`, `--hook-idle-nudge-ms`, `--hook-idle-escalate-ms`, `--run-no-progress-escalate-ms`. Other keys have no flag.
 

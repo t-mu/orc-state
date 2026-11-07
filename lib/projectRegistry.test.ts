@@ -1,9 +1,12 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ProjectRegistry, canonicalProjectGitRoot, projectDataHome, validateProjectSetting } from './projectRegistry.ts';
+import { projectConfigObject } from './projectContext.ts';
+import { PROJECT_SETTING_ENV_KEYS, PROJECT_SETTING_KEYS, ProjectRegistry, canonicalProjectGitRoot, projectDataHome, validateProjectSetting } from './projectRegistry.ts';
+import { DEFAULT_COORDINATOR_CONFIG, loadCoordinatorConfig } from './providers.ts';
 
 let temp: string;
 let registry: ProjectRegistry;
@@ -104,6 +107,50 @@ describe('global project registry', () => {
     expect(() => registry.setSetting('coordinator.pr_push_remote', 'https://ghp_abc@github.com/o/r.git')).toThrow('must not embed credentials');
     expect(() => registry.setSetting('worker_pool.max_workers', -1)).toThrow('non-negative');
     expect(() => validateProjectSetting('master.provider', 'unknown')).toThrow('Invalid');
+  });
+
+  it('rejects removed keys by name, ignores their stored values and still unsets them', () => {
+    const project = registry.add(gitRepo('product'));
+    expect(() => registry.setSetting('coordinator.run_inactive_timeout_ms', 1000, project.id)).toThrow('Setting coordinator.run_inactive_timeout_ms was removed');
+    expect(() => registry.setSetting('coordinator.session_start_max_attempts', 2)).toThrow('Setting coordinator.session_start_max_attempts was removed');
+    // A registry written by an earlier release may still hold them.
+    registry.close();
+    const db = new Database(join(temp, 'data', 'registry.db'));
+    db.prepare('INSERT INTO settings (scope, key, value_json) VALUES (?, ?, ?)').run(project.id, 'coordinator.run_inactive_escalate_ms', '900000');
+    db.prepare('INSERT INTO settings (scope, key, value_json) VALUES (?, ?, ?)').run('', 'coordinator.session_start_retry_delay_ms', '30000');
+    db.close();
+    registry = new ProjectRegistry(join(temp, 'data'));
+    expect(registry.effectiveSettings(project.id, {}, {})['coordinator.run_inactive_escalate_ms']).toBe(900000);
+    const env = { ORC_DATA_HOME: join(temp, 'data') };
+    const settings = projectConfigObject({ id: project.id, name: project.name, stateDir: project.stateDir, targetRepoRoot: project.canonicalGitRoot, source: 'environment' }, env);
+    expect(settings.coordinator).toEqual({ run_inactive_escalate_ms: 900000, session_start_retry_delay_ms: 30000 });
+    const coordinator = loadCoordinatorConfig({ settings });
+    expect(coordinator).toEqual(DEFAULT_COORDINATOR_CONFIG);
+    expect(coordinator).not.toHaveProperty('run_inactive_escalate_ms');
+    registry.unsetSetting('coordinator.run_inactive_escalate_ms', project.id);
+    registry.unsetSetting('coordinator.session_start_retry_delay_ms');
+    expect(registry.effectiveSettings(project.id, {}, {})).toEqual({});
+  });
+
+  it('documents exactly the supported setting keys and their environment variables', () => {
+    const doc = readFileSync(resolve(import.meta.dirname, '..', 'docs', 'configuration.md'), 'utf8');
+    const settingsDoc = doc.slice(doc.indexOf('\n## Settings\n'), doc.indexOf('\n## Resolution Order\n'));
+    const documented: string[] = [];
+    let prefix: string | null = null;
+    for (const line of settingsDoc.split('\n')) {
+      const heading = /^### (?:Top level|`([a-z_]+)`)$/.exec(line);
+      if (heading) { prefix = heading[1] ?? ''; continue; }
+      const row = /^\| `([a-z_]+)` \|/.exec(line);
+      if (prefix === null || !row) continue;
+      const key = prefix ? `${prefix}.${row[1]}` : row[1];
+      if (key === 'worker_pool.provider_models') documented.push(...['codex', 'claude', 'gemini'].map((provider) => `${key}.${provider}`));
+      else documented.push(key);
+    }
+    expect([...documented].sort()).toEqual([...PROJECT_SETTING_KEYS].sort());
+
+    const envDoc = doc.slice(doc.indexOf('### Providers and pools'), doc.indexOf('### Set for launched sessions'));
+    const documentedEnv = Object.fromEntries([...envDoc.matchAll(/^\| `(ORC_[A-Z_]+)` \| `([a-z_.]+)` \|/gm)].map(([, env, key]) => [key, env]));
+    expect(documentedEnv).toEqual(PROJECT_SETTING_ENV_KEYS);
   });
 
   it('exposes registration and configuration through orc project without a repo-local config file', () => {
