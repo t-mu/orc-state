@@ -31,7 +31,7 @@ import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { controlSocketOf, isolatedMcpArgs, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './pty.ts';
-import type { SessionInspection } from './interface.ts';
+import type { SessionExitStatus, SessionInspection } from './interface.ts';
 import {
   CapabilityRefusal,
   UnverifiedAuthError,
@@ -132,6 +132,7 @@ interface CodexSession {
   processStart: string | null;
   threadId: string | null;
   exited: boolean;
+  exitStatus: SessionExitStatus | null;
   nextId: number;
   pending: Map<number, PendingRpc>;
   /** Turn the provider is currently running, if any. */
@@ -331,7 +332,7 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     spawnError.catch(() => { /* surfaced through the handshake below */ });
     const session: CodexSession = {
       agentId, handle, child, pid: child.pid ?? -1, processStart: child.pid ? readProcessStart(child.pid) : null,
-      threadId: null, exited: false, nextId: 1, pending: new Map(), activeTurnId: null, submitting: null,
+      threadId: null, exited: false, exitStatus: null, nextId: 1, pending: new Map(), activeTurnId: null, submitting: null,
       turnCommands: new Map(), finishedTurns: new Set(),
     };
     const decoder = new JsonLineDecoder();
@@ -341,6 +342,7 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     child.stderr.resume();
     child.once('exit', (code, signal) => {
       session.exited = true;
+      session.exitStatus = { code: signal ? null : code, signal: signal ?? null };
       session.activeTurnId = null;
       for (const pending of session.pending.values()) pending.reject(new Error('app-server exited before responding'));
       session.pending.clear();
@@ -364,7 +366,9 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
             ? { developerInstructions: `${config.system_prompt}\n\n${STRUCTURED_TURN_INSTRUCTIONS}` }
             : {}),
         };
-        const resumeThreadId = typeof config.resume_thread_id === 'string' && config.resume_thread_id ? config.resume_thread_id : null;
+        // `resume_conversation_id` is the provider-neutral key the session resume uses (lib/sessionResume.ts).
+        const resumeRaw = config.resume_conversation_id ?? config.resume_thread_id;
+        const resumeThreadId = typeof resumeRaw === 'string' && resumeRaw ? resumeRaw : null;
         const response = resumeThreadId
           ? await rpc(session, 'thread/resume', { threadId: resumeThreadId, excludeTurns: true, ...threadParams })
           : await rpc(session, 'thread/start', threadParams);
@@ -516,6 +520,10 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     inspectSession,
     survivesCoordinatorExit(): boolean {
       return false;
+    },
+    /** Only the coordinator that launched the app-server sees its exit. */
+    exitStatus(sessionHandle: string): SessionExitStatus | null {
+      return sessions.get(sessionHandle)?.exitStatus ?? null;
     },
     /** Test/diagnostic view of the provider thread behind a session. */
     threadId(sessionHandle: string): string | null {

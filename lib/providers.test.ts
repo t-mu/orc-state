@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadWorkerPoolConfig, loadMasterConfig, loadCoordinatorConfig, loadLeaseConfig, resolveWorkerModel, isSupportedExecutionMode } from './providers.ts';
+import { loadWorkerPoolConfig, loadMasterConfig, loadCoordinatorConfig, loadLeaseConfig, loadSessionsConfig, resolveWorkerModel, isSupportedExecutionMode } from './providers.ts';
+import { validateProjectSetting } from './projectRegistry.ts';
 import type { WorkerPoolConfig } from './providers.ts';
 
 let settings: Record<string, unknown>;
@@ -463,5 +464,19 @@ describe('parseRawConfigFile default_execution_mode', () => {
     };
     const result = loadMasterConfig({ env: {}, settings });
     expect(result.execution_mode).toBe('sandbox');
+  });
+});
+
+describe('loadSessionsConfig', () => {
+  it('defaults sessions.resume to auto; the env var wins over the setting', () => {
+    expect(loadSessionsConfig({ env: {}, settings: {} })).toEqual({ resume: 'auto' });
+    expect(loadSessionsConfig({ env: {}, settings: { sessions: { resume: 'off' } } })).toEqual({ resume: 'off' });
+    expect(loadSessionsConfig({ env: { ORC_SESSIONS_RESUME: 'auto' }, settings: { sessions: { resume: 'off' } } })).toEqual({ resume: 'auto' });
+    expect(() => loadSessionsConfig({ env: { ORC_SESSIONS_RESUME: 'sometimes' }, settings: {} })).toThrow('Invalid sessions.resume');
+  });
+
+  it('is a registry setting that accepts only auto or off', () => {
+    expect(validateProjectSetting('sessions.resume', 'off')).toBe('off');
+    expect(() => validateProjectSetting('sessions.resume', 'never')).toThrow('Invalid sessions.resume');
   });
 });

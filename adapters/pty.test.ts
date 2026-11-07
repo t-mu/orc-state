@@ -22,13 +22,19 @@ afterEach(() => {
 
 function makeMockPty(pid = 12345) {
   let dataCallback: ((s: string) => void) | null = null;
+  let exitCallback: ((e: { exitCode: number; signal?: number }) => void) | null = null;
   const ptyProcess = {
     pid,
     write:  vi.fn(),
     kill:   vi.fn(),
     onData: vi.fn().mockImplementation((cb: (s: string) => void) => { dataCallback = cb; }),
+    onExit: vi.fn().mockImplementation((cb: (e: { exitCode: number; signal?: number }) => void) => { exitCallback = cb; }),
   };
-  return { ptyProcess, triggerData: (s: string) => dataCallback?.(s) };
+  return {
+    ptyProcess,
+    triggerData: (s: string) => dataCallback?.(s),
+    triggerExit: (e: { exitCode: number; signal?: number }) => exitCallback?.(e),
+  };
 }
 
 function binaryMatcher(name: string) {
@@ -36,7 +42,7 @@ function binaryMatcher(name: string) {
 }
 
 async function makeAdapter({ provider = 'claude', spawnReturn, spawnThrow }: { provider?: string; spawnReturn?: ReturnType<typeof makeMockPty>; spawnThrow?: Error } = {}) {
-  const { ptyProcess, triggerData } = spawnReturn ?? makeMockPty();
+  const { ptyProcess, triggerData, triggerExit } = spawnReturn ?? makeMockPty();
   const spawnSpy = spawnThrow
     ? vi.fn().mockImplementation(() => { throw spawnThrow; })
     : vi.fn().mockReturnValue(ptyProcess);
@@ -47,6 +53,7 @@ async function makeAdapter({ provider = 'claude', spawnReturn, spawnThrow }: { p
     spawnSpy,
     ptyProcess,
     triggerData,
+    triggerExit,
   };
 }
 
@@ -71,6 +78,35 @@ describe('pty adapter start()', () => {
     expect(spawnArgs[0]).toBe('--dangerously-skip-permissions');
     expect(spawnArgs[1]).toBe('--settings');
     expect(spawnArgs[2]).toMatch(/pty-settings[/\\]bob\.json$/);
+  });
+
+  it('starts a Claude conversation under the orc-chosen id, and resumes it with --resume', async () => {
+    const first = await makeAdapter({ provider: 'claude' });
+    await first.adapter.start('bob', { conversation_id: 'conv-1' });
+    const args = first.spawnSpy.mock.calls[0][1] as string[];
+    expect(args.slice(args.indexOf('--session-id'), args.indexOf('--session-id') + 2)).toEqual(['--session-id', 'conv-1']);
+    expect(args).not.toContain('--resume');
+
+    vi.resetModules();
+    const resumed = await makeAdapter({ provider: 'claude' });
+    await resumed.adapter.start('bob', { conversation_id: 'ignored', resume_conversation_id: 'conv-1' });
+    const resumeArgs = resumed.spawnSpy.mock.calls[0][1] as string[];
+    expect(resumeArgs.slice(resumeArgs.indexOf('--resume'), resumeArgs.indexOf('--resume') + 2)).toEqual(['--resume', 'conv-1']);
+    expect(resumeArgs).not.toContain('--session-id');
+    // Settings (hooks, sandbox) and MCP isolation are the same as on a first launch.
+    expect(resumeArgs).toEqual(expect.arrayContaining(['--settings', '--strict-mcp-config']));
+  }, 20_000);
+
+  it('records how the session process ended: exit code or signal', async () => {
+    const { adapter, triggerExit } = await makeAdapter({ provider: 'claude' });
+    await adapter.start('bob', {});
+    expect(adapter.exitStatus('pty:bob')).toBeNull();
+    triggerExit({ exitCode: 0, signal: 9 });
+    expect(adapter.exitStatus('pty:bob')).toEqual({ code: null, signal: 9 });
+    triggerExit({ exitCode: 3, signal: 0 });
+    expect(adapter.exitStatus('pty:bob')).toEqual({ code: 3, signal: null });
+    await adapter.stop('pty:bob');
+    expect(adapter.exitStatus('pty:bob')).toBeNull();
   });
 
   it('writes a settings file with Notification hook for claude provider', async () => {

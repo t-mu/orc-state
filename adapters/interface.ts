@@ -57,6 +57,16 @@ export interface SessionInspection {
   reason?: string;
 }
 
+/**
+ * How a session's provider process ended, as its transport observed it: an exit
+ * code, or the signal that killed it. Null from `exitStatus` means not observed
+ * (still running, or the session is gone without a record).
+ */
+export interface SessionExitStatus {
+  code: number | null;
+  signal: string | number | null;
+}
+
 export interface AdapterInterface {
   start(agentId: string, config: Record<string, unknown>): Promise<{ session_handle: string; provider_ref: unknown }>;
   send(sessionHandle: string, text: string): Promise<string>;
@@ -134,4 +144,15 @@ export async function adapterInspectSession(adapter: unknown, sessionHandle: str
 export function adapterSurvivesCoordinatorExit(adapter: unknown, sessionHandle: string): boolean {
   const survives = (adapter as { survivesCoordinatorExit?: (handle: string) => boolean })?.survivesCoordinatorExit;
   return typeof survives === 'function' ? survives.call(adapter, sessionHandle) : false;
+}
+
+/** Optional capability: the observed exit status of a session that ended, or null. */
+export function adapterExitStatus(adapter: unknown, sessionHandle: string): SessionExitStatus | null {
+  const exitStatus = (adapter as { exitStatus?: (handle: string) => SessionExitStatus | null })?.exitStatus;
+  if (typeof exitStatus !== 'function') return null;
+  try {
+    return exitStatus.call(adapter, sessionHandle);
+  } catch {
+    return null;
+  }
 }

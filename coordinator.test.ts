@@ -5429,3 +5429,183 @@ describe('PR finalization', () => {
     expect(claim.state).toBe('done');
   });
 });
+
+describe('dead worker session resume (v1/run-resume)', () => {
+  const RUN = 'run-resume-1';
+
+  async function seedCrashedWorker({
+    provider = 'claude', transport = 'tmux', resumeCount = 0, conversationId = 'conv-1', worktree = true,
+  }: { provider?: string; transport?: string; resumeCount?: number; conversationId?: string | null; worktree?: boolean } = {}) {
+    const now = new Date().toISOString();
+    const worktreePath = join(dir, 'worktrees', RUN);
+    if (worktree) mkdirSync(join(worktreePath, '.git'), { recursive: true });
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-r', provider, role: 'worker', status: 'running', ephemeral: true,
+        session_handle: `${transport === 'app-server' ? 'app' : transport}:worker-r`, session_token: 'sess-r',
+        session_started_at: now, session_ready_at: now, registered_at: now, last_heartbeat_at: now,
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: RUN, task_ref: 'proj/fix-bug', agent_id: 'worker-r', state: 'in_progress',
+        claimed_at: now, task_envelope_sent_at: now, started_at: now, last_heartbeat_at: now,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
+        input_state: null, input_requested_at: null,
+      }],
+    });
+    const { initEventsDb, withEventDbTransaction } = await import('./lib/eventLog.ts');
+    const { credentialHash } = await import('./lib/sessionCredentials.ts');
+    const { commitClaims } = await import('./lib/runStore.ts');
+    initEventsDb(dir);
+    commitClaims(dir, { version: '1', claims: readClaims(dir) as never });
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, transport,
+        process_pid, process_start, credential_hash, provider_conversation_id, resume_count, generation)
+        VALUES ('sess-r', ?, 'worker-r', ?, 'running', 'now', 'now', ?, 4242, 'proc:42', ?, ?, ?, ?)`)
+        .run(RUN, provider, transport, credentialHash('secret-old'), conversationId, resumeCount, resumeCount);
+    });
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      getRunWorktree: vi.fn().mockReturnValue({ run_id: RUN, branch: `task/${RUN}`, worktree_path: worktreePath }),
+    }));
+    return worktreePath;
+  }
+
+  function crashedAdapter(exit: { code: number | null; signal: number | null } | null, start = vi.fn()
+    .mockResolvedValue({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } })) {
+    let alive = false;
+    start.mockImplementation(() => {
+      alive = true;
+      return Promise.resolve({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } });
+    });
+    const send = vi.fn().mockResolvedValue('');
+    const stop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+      heartbeatProbe: vi.fn().mockImplementation(() => Promise.resolve(alive)),
+      exitStatus: vi.fn().mockImplementation(() => (alive ? null : exit)),
+      start, send, stop,
+    }));
+    return { start, send, stop };
+  }
+
+  async function sessionRow() {
+    const { listSupervisedSessions } = await import('./lib/sessionSupervisor.ts');
+    return listSupervisedSessions(dir).find((row) => row.session_id === 'sess-r')!;
+  }
+
+  it('resumes a killed Claude worker in place: --resume target, same session_id, generation +1, same claim, nudge not bootstrap', async () => {
+    const worktreePath = await seedCrashedWorker();
+    const { start, send, stop } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).toHaveBeenCalledOnce();
+    const [agentId, config] = start.mock.calls[0] as [string, Record<string, unknown>];
+    expect(agentId).toBe('worker-r');
+    expect(config).toMatchObject({ resume_conversation_id: 'conv-1', working_directory: worktreePath, require_git_checkout: true });
+    expect(config.system_prompt).toBeUndefined();
+    const env = config.env as Record<string, string>;
+    expect(env.ORC_SESSION_ID).toBe('sess-r');
+    expect(env.ORC_SESSION_SECRET).toBeTruthy();
+    expect(env.ORC_SESSION_SECRET).not.toBe('secret-old');
+
+    const { sessionForCredential } = await import('./lib/sessionCredentials.ts');
+    expect(sessionForCredential(dir, 'secret-old')).toBeNull();
+    expect(sessionForCredential(dir, env.ORC_SESSION_SECRET)?.session_id).toBe('sess-r');
+
+    expect(await sessionRow()).toMatchObject({ state: 'running', generation: 1, resume_count: 1, process_pid: 5151, provider_conversation_id: 'conv-1' });
+    const claim = readClaims(dir).find((c) => c.run_id === RUN)!;
+    expect(claim).toMatchObject({ state: 'in_progress', agent_id: 'worker-r' });
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-r')).toMatchObject({ session_token: 'sess-r', status: 'running' });
+    expect(stop).not.toHaveBeenCalled();
+
+    const texts = send.mock.calls.map((call) => String(call[1]));
+    expect(texts.some((text) => text.startsWith('SESSION_RESUMED') && text.includes(`run_id: ${RUN}`) && text.includes('generation: 1'))).toBe(true);
+    expect(texts.some((text) => text.includes('WORKER_BOOTSTRAP') || text.includes('TASK_START'))).toBe(false);
+
+    const resumed = readEvents(dir).filter((e) => e.event === 'session_resumed');
+    expect(resumed).toEqual([expect.objectContaining({
+      agent_id: 'worker-r', run_id: RUN, payload: expect.objectContaining({ session_id: 'sess-r', generation: 1, provider_conversation_id: 'conv-1' }),
+    })]);
+  });
+
+  it.each([
+    ['exits normally or via /exit', { code: 0, signal: null }],
+    ['has no observed exit status', null],
+  ])('requeues without resuming a worker that %s', async (_label, exit) => {
+    await seedCrashedWorker();
+    const { start } = crashedAdapter(exit);
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+    expect(readEvents(dir).some((e) => e.event === 'session_resumed' || e.event === 'session_resume_failed')).toBe(false);
+  });
+
+  it('requeues as today and emits session_resume_failed once the budget is spent', async () => {
+    await seedCrashedWorker({ resumeCount: 2 });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-r')).toBeUndefined();
+    const failed = readEvents(dir).filter((e) => e.event === 'session_resume_failed');
+    expect(failed).toEqual([expect.objectContaining({ run_id: RUN, payload: expect.objectContaining({ session_id: 'sess-r', reason: 'resume budget of 2 spent' }) })]);
+  });
+
+  it('requeues and emits session_resume_failed when the relaunch itself fails', async () => {
+    await seedCrashedWorker();
+    const { start } = crashedAdapter({ code: 1, signal: null });
+    start.mockReset();
+    start.mockRejectedValue(new Error('claude: conversation not found'));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+    const failed = readEvents(dir).filter((e) => e.event === 'session_resume_failed');
+    expect(failed).toEqual([expect.objectContaining({ payload: expect.objectContaining({ generation: 1, reason: expect.stringContaining('conversation not found') }) })]);
+  });
+
+  it('requeues when the worktree is missing', async () => {
+    await seedCrashedWorker({ worktree: false });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+  });
+
+  it('requeues when sessions.resume is off', async () => {
+    await seedCrashedWorker();
+    useSettings({ sessions: { resume: 'off' } });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+  });
+
+  it('never resumes a Gemini worker', async () => {
+    await seedCrashedWorker({ provider: 'gemini' });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    expect(start).not.toHaveBeenCalled();
+    expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
+  });
+});
