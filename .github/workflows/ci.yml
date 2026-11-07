@@ -6,6 +6,8 @@ on:
   pull_request:
 
 jobs:
+  # Check names are now "test (ubuntu-latest)" and "test (macos-latest)".
+  # Update any branch protection required checks that still name "test".
   test:
     strategy:
       fail-fast: false
