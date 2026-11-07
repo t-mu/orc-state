@@ -34,7 +34,9 @@ export interface ControlEndpoint {
 
 export type ControlErrorCode =
   | 'unsupported_protocol_version' | 'unauthenticated' | 'forbidden'
-  | 'not_found' | 'conflict' | 'bad_request' | 'unavailable' | 'internal';
+  | 'not_found' | 'conflict' | 'bad_request' | 'unavailable' | 'internal'
+  /** Retryable: the coordinator is sending to the terminal right now. */
+  | 'busy';
 
 export interface ControlErrorBody { code: ControlErrorCode; message: string }
 
@@ -46,6 +48,28 @@ export type ControlResponse<T> =
 export type StreamFrame =
   | { type: 'event'; seq: number; event: unknown }
   | { type: 'heartbeat'; cursor: number };
+
+/**
+ * One NDJSON line on `/v1/terminals/<id>/stream`. A viewer gets one `snapshot`
+ * (the visible screen with its escapes, `capture-pane -e -p`) before any
+ * `output`; `data` is base64 of raw pane bytes (a UTF-8 character may span two
+ * frames). `exit` is the last frame; the viewer reopens to see the terminal again.
+ */
+export type TerminalFrame =
+  | { type: 'snapshot'; screen: string; cursor_x: number; cursor_y: number; columns: number; rows: number }
+  | { type: 'output'; data: string }
+  | { type: 'exit'; reason: string }
+  | { type: 'heartbeat' };
+
+/** A running session in `GET /v1/sessions`; `terminal_id` is null when it has no streamable terminal (`app:` sessions). */
+export interface SessionTerminalView {
+  session_id: string;
+  agent_id: string;
+  run_id: string | null;
+  provider: string;
+  transport: string | null;
+  terminal_id: string | null;
+}
 
 export interface SubmitCommandRequest {
   run_id: string;

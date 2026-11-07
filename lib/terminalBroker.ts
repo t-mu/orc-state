@@ -1,12 +1,16 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
-import { ControlError } from './controlProtocol.ts';
+import { ControlError, type SessionTerminalView } from './controlProtocol.ts';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { getRunWorktree } from './runWorktree.ts';
+import {
+  TerminalStreams, TmuxControlParser,
+  type TerminalConnection, type TerminalSnapshot, type TerminalSource, type TerminalViewer,
+} from './terminalHost.ts';
 
 export type TerminalKind = 'provider' | 'shell';
 /** Ids are `<kind>:<session_id>`; rows from before schema 8 keep their `<kind>:<run_id>` id. */
@@ -23,11 +27,17 @@ export interface TerminalRecord {
   updated_at: string;
 }
 
+/**
+ * `control_leases.resource_type` of the marker the coordinator holds while it
+ * sends to a provider terminal (`adapters/tmux.ts`). The send never waits for
+ * the operator's lease; operator input during it gets a retryable `busy`.
+ */
+export const COORDINATOR_SEND_RESOURCE = 'terminal_send';
+
 /** The broker owns all writes. Implementations must be usable from another process. */
-export interface TerminalDriver {
+export interface TerminalDriver extends TerminalSource {
   startShell(handle: string, cwd: string, logPath: string): boolean;
   alive(handle: string): boolean;
-  capture(handle: string): string;
   input(handle: string, data: string): void;
   resize(handle: string, columns: number, rows: number): void;
   stop(handle: string): void;
@@ -92,9 +102,57 @@ export class TmuxTerminalDriver implements TerminalDriver {
     catch { return false; }
   }
 
-  capture(handle: string): string {
-    try { return this.run(['capture-pane', '-p', '-J', '-S', '-200', '-t', this.target(handle)]); }
-    catch { return ''; }
+  snapshot(handle: string): TerminalSnapshot {
+    try {
+      const [x, y, columns, rows] = this.run(['display-message', '-p', '-t', this.target(handle),
+        '#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}']).trim().split(' ').map(Number);
+      const screen = this.run(['capture-pane', '-e', '-p', '-t', this.target(handle)]);
+      return { screen, cursor_x: x, cursor_y: y, columns, rows };
+    } catch {
+      throw new ControlError('unavailable', 'Terminal is not running', 503);
+    }
+  }
+
+  /**
+   * One `tmux -C` client attached to the session. `ignore-size` keeps the
+   * client from resizing the window; only `resize()` sizes it.
+   */
+  connect(handle: string): TerminalConnection {
+    const env = { ...process.env };
+    delete env.TMUX;
+    delete env.TMUX_PANE;
+    const child = spawn(process.env.ORC_TMUX_BIN ?? 'tmux',
+      ['-L', tmuxSocketName(this.stateDir), '-C', 'attach-session', '-f', 'ignore-size', '-t', `=${this.name(handle)}`],
+      { env, stdio: ['pipe', 'pipe', 'ignore'] });
+    const parser = new TmuxControlParser();
+    const outputs: Array<(data: Buffer) => void> = [];
+    const exits: Array<(reason: string) => void> = [];
+    let done = false;
+    const exit = (reason: string): void => {
+      if (done) return;
+      done = true;
+      for (const listener of exits) listener(reason);
+    };
+    child.stdout.on('data', (chunk: Buffer) => {
+      for (const event of parser.push(chunk)) {
+        if (done) return;
+        if (event.type === 'output') for (const listener of outputs) listener(event.data);
+        else exit(event.reason);
+      }
+    });
+    child.stdin.on('error', () => { /* the client already exited; 'close' reports it */ });
+    child.on('error', (error) => exit(`control client failed: ${error.message}`));
+    child.on('close', () => exit('control client closed'));
+    return {
+      onOutput: (listener) => { outputs.push(listener); },
+      onExit: (listener) => { exits.push(listener); },
+      stop: () => {
+        if (done && child.exitCode !== null) return;
+        done = true;
+        child.stdin.end();
+        child.kill();
+      },
+    };
   }
 
   input(handle: string, data: string): void {
@@ -119,20 +177,29 @@ export class TmuxTerminalDriver implements TerminalDriver {
 }
 
 const DEFAULT_LEASE_MS = 30_000;
-const MAX_READ_BYTES = 64 * 1024;
+
+export interface StreamOptions { columns?: number; rows?: number; leaseId?: string }
+
+function validateSize(columns: number, rows: number): void {
+  if (!Number.isSafeInteger(columns) || columns < 20 || columns > 500 || !Number.isSafeInteger(rows) || rows < 5 || rows > 200)
+    throw new ControlError('bad_request', 'Invalid terminal size', 400);
+}
 
 export class TerminalBroker {
   private readonly stateDir: string;
   private readonly driver: TerminalDriver;
   private readonly worktreeForRun: (runId: string) => string | null;
+  private readonly streams: TerminalStreams;
 
   constructor(stateDir: string, options: {
     driver?: TerminalDriver;
     worktreeForRun?: (runId: string) => string | null;
+    livenessMs?: number;
   } = {}) {
     this.stateDir = stateDir;
     this.driver = options.driver ?? new TmuxTerminalDriver(stateDir);
     this.worktreeForRun = options.worktreeForRun ?? ((runId) => getRunWorktree(stateDir, runId)?.worktree_path ?? null);
+    this.streams = new TerminalStreams(this.driver, options.livenessMs === undefined ? {} : { livenessMs: options.livenessMs });
   }
 
   private worktree(runId: string): string {
@@ -220,32 +287,6 @@ export class TerminalBroker {
     catch (error) { if (started) this.driver.stop(handle); throw error; }
   }
 
-  observe(terminalId: string, after = 0): { terminal: TerminalRecord; screen: string; output: string; cursor: number } {
-    if (!Number.isSafeInteger(after) || after < 0) throw new ControlError('bad_request', 'after must be a non-negative integer', 400);
-    const terminal = this.row(terminalId);
-    if (!this.available(terminal) && terminal.state !== 'offline') {
-      this.markOffline(terminalId);
-      terminal.state = 'offline';
-    }
-    let output = '';
-    let cursor = after;
-    if (existsSync(terminal.log_path)) {
-      const size = statSync(terminal.log_path).size;
-      const start = Math.min(after, size);
-      const length = Math.min(size - start, MAX_READ_BYTES);
-      if (length > 0) {
-        const fd = openSync(terminal.log_path, 'r');
-        try {
-          const buffer = Buffer.alloc(length);
-          readSync(fd, buffer, 0, length, start);
-          output = buffer.toString('utf8');
-        } finally { closeSync(fd); }
-      }
-      cursor = start + length;
-    }
-    return { terminal, screen: terminal.state === 'running' ? this.driver.capture(terminal.handle) : '', output, cursor };
-  }
-
   acquire(terminalId: string, ownerId: string, ttlMs = DEFAULT_LEASE_MS): { lease_id: string; expires_at: string } {
     if (typeof ownerId !== 'string' || !ownerId || ownerId.length > 200) throw new ControlError('bad_request', 'owner_id is required', 400);
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1000 || ttlMs > 120_000) throw new ControlError('bad_request', 'ttl_ms must be 1000–120000', 400);
@@ -270,7 +311,7 @@ export class TerminalBroker {
     });
   }
 
-  private withLease<T>(terminalId: string, leaseId: string, action: (terminal: TerminalRecord) => T): T {
+  private withLease<T>(terminalId: string, leaseId: string, action: (terminal: TerminalRecord, db: Database.Database) => T): T {
     const terminal = this.row(terminalId);
     if (!this.available(terminal)) {
       this.markOffline(terminalId);
@@ -283,7 +324,7 @@ export class TerminalBroker {
       if (!lease || lease.lease_id !== leaseId || Date.parse(lease.expires_at) <= Date.now()) {
         throw new ControlError('forbidden', 'Valid terminal writer lease required', 403);
       }
-      const result = action(terminal);
+      const result = action(terminal, db);
       db.prepare("UPDATE control_leases SET expires_at = ? WHERE resource_type = 'terminal' AND resource_id = ?")
         .run(new Date(Date.now() + DEFAULT_LEASE_MS).toISOString(), terminalId);
       return result;
@@ -293,11 +334,15 @@ export class TerminalBroker {
   renew(terminalId: string, leaseId: string): void { this.withLease(terminalId, leaseId, () => undefined); }
   input(terminalId: string, leaseId: string, data: string): void {
     if (typeof data !== 'string' || data.length > 8192) throw new ControlError('bad_request', 'data must be at most 8192 characters', 400);
-    this.withLease(terminalId, leaseId, (terminal) => this.driver.input(terminal.handle, data));
+    this.withLease(terminalId, leaseId, (terminal, db) => {
+      const send = db.prepare('SELECT expires_at FROM control_leases WHERE resource_type = ? AND resource_id = ?')
+        .get(COORDINATOR_SEND_RESOURCE, terminalId) as { expires_at: string } | undefined;
+      if (send && Date.parse(send.expires_at) > Date.now()) throw new ControlError('busy', 'The coordinator is sending to this terminal; retry shortly', 409);
+      this.driver.input(terminal.handle, data);
+    });
   }
   resize(terminalId: string, leaseId: string, columns: number, rows: number): void {
-    if (!Number.isSafeInteger(columns) || columns < 20 || columns > 500 || !Number.isSafeInteger(rows) || rows < 5 || rows > 200)
-      throw new ControlError('bad_request', 'Invalid terminal size', 400);
+    validateSize(columns, rows);
     this.withLease(terminalId, leaseId, (terminal) => this.driver.resize(terminal.handle, columns, rows));
   }
   release(terminalId: string, leaseId: string): void {
@@ -306,6 +351,71 @@ export class TerminalBroker {
       WHERE resource_type = 'terminal' AND resource_id = ? AND lease_id = ?`).run(terminalId, leaseId).changes);
     if (!removed) throw new ControlError('forbidden', 'Valid terminal writer lease required', 403);
   }
+
+  /** Running sessions; `terminal_id` names the ones that have a live provider terminal to stream. */
+  sessions(): SessionTerminalView[] {
+    return withEventDb(this.stateDir, (db) => {
+      const rows = db.prepare(`SELECT session_id, agent_id, run_id, provider, transport FROM sessions
+        WHERE state = 'running' ORDER BY rowid`).all() as Array<Omit<SessionTerminalView, 'terminal_id'>>;
+      return rows.map((row) => {
+        const handle = `tmux:${row.agent_id}`;
+        const candidate = { session_id: row.session_id, run_id: row.run_id, kind: 'provider', handle } as TerminalRecord;
+        const streamable = row.transport === 'tmux' && row.run_id != null && this.isCurrent(db, candidate);
+        return { ...row, terminal_id: streamable ? `provider:${row.session_id}` : null };
+      });
+    }).map((view) => (view.terminal_id && !this.driver.alive(`tmux:${view.agent_id}`) ? { ...view, terminal_id: null } : view));
+  }
+
+  /**
+   * The terminal a stream opens. A provider id resolves through its session, so
+   * listing sessions is enough to open one; a session without a tmux terminal
+   * (an `app:` session) is `not_found`.
+   */
+  private streamTarget(terminalId: string): TerminalRecord {
+    if (terminalId.startsWith('provider:')) {
+      const session = withEventDb(this.stateDir, (db) => db.prepare('SELECT run_id, transport FROM sessions WHERE session_id = ?')
+        .get(terminalId.slice('provider:'.length)) as { run_id: string | null; transport: string | null } | undefined);
+      if (!session || session.transport !== 'tmux' || !session.run_id) throw new ControlError('not_found', `Terminal ${terminalId} not found`, 404);
+      const terminal = this.provider(session.run_id);
+      if (terminal.terminal_id !== terminalId) throw new ControlError('unavailable', 'Terminal session is no longer current', 503);
+      return terminal;
+    }
+    const terminal = this.row(terminalId);
+    if (!this.available(terminal)) {
+      this.markOffline(terminalId);
+      throw new ControlError('unavailable', 'Terminal is not running', 503);
+    }
+    return terminal;
+  }
+
+  /**
+   * Opens a live stream: `snapshot`, then `output` frames, until `exit`. With a
+   * size, the viewer that holds the input lease (`leaseId`), or the first
+   * viewer when nobody holds it, sizes the pane; a resize to one column less
+   * and back makes the TUI redraw. Returns the function that closes the stream.
+   */
+  stream(terminalId: string, viewer: TerminalViewer, options: StreamOptions = {}): () => void {
+    const sized = options.columns !== undefined || options.rows !== undefined;
+    if (sized) validateSize(Number(options.columns), Number(options.rows));
+    const terminal = this.streamTarget(terminalId);
+    const lease = withEventDb(this.stateDir, (db) => db.prepare("SELECT lease_id, expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
+      .get(terminal.terminal_id) as { lease_id: string; expires_at: string } | undefined);
+    const leased = lease !== undefined && Date.parse(lease.expires_at) > Date.now();
+    if (options.leaseId !== undefined && (!leased || lease.lease_id !== options.leaseId))
+      throw new ControlError('forbidden', 'Valid terminal writer lease required', 403);
+    const sizer = sized && (options.leaseId !== undefined || (!leased && this.streams.viewers(terminal.handle) === 0));
+    const close = this.streams.open(terminal.handle, viewer);
+    if (sizer) {
+      try {
+        this.driver.resize(terminal.handle, options.columns! - 1, options.rows!);
+        this.driver.resize(terminal.handle, options.columns!, options.rows!);
+      } catch { /* the stream works at the current size */ }
+    }
+    return close;
+  }
+
+  /** Ends every open stream with an `exit` frame. */
+  close(): void { this.streams.close(); }
 
   private markOffline(terminalId: string): void {
     withEventDbTransaction(this.stateDir, (db) => {

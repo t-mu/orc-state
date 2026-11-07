@@ -110,8 +110,8 @@ function commandCount(): number {
   return withEventDb(dir, (db) => (db.prepare('SELECT COUNT(*) AS n FROM commands').get() as { n: number }).n);
 }
 
-async function take(stream: AsyncGenerator<EventRow>, count: number): Promise<EventRow[]> {
-  const rows: EventRow[] = [];
+async function take<T = EventRow>(stream: AsyncGenerator<T>, count: number): Promise<T[]> {
+  const rows: T[] = [];
   for await (const row of stream) {
     rows.push(row);
     if (rows.length >= count) break;
@@ -533,11 +533,13 @@ describe('local daemon control API', () => {
     await expect(take(worker.subscribe(0), 1)).rejects.toMatchObject(forbidden);
     await expect(worker.openTerminal('shell', 'run-a')).rejects.toMatchObject(forbidden);
     await expect(worker.openTerminal('provider', 'run-b')).rejects.toMatchObject(forbidden);
-    await expect(worker.observeTerminal('term-1')).rejects.toMatchObject(forbidden);
+    await expect(take(worker.streamTerminal('term-1'), 1)).rejects.toMatchObject(forbidden);
+    await expect(worker.sessions()).rejects.toMatchObject(forbidden);
     await expect(worker.acquireTerminal('term-1', 'worker-a')).rejects.toMatchObject(forbidden);
     // The bearer token alone, as any process that can read the state directory holds it, opens nothing.
     const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
-    expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/terminals/term-1')).status).toBe(401);
+    expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/terminals/term-1/stream')).status).toBe(401);
+    expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/sessions')).status).toBe(401);
     await expect(new ControlClient(dir, { credential: 'session-master' }).snapshot()).resolves.toMatchObject({ runs: expect.any(Array) });
     await expect(new ControlClient(dir).events(0)).resolves.toMatchObject({ events: expect.any(Array) });
   });

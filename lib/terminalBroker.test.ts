@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './eventLog.ts';
+import { closeAllDatabases, initEventsDb, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
+import type { TerminalFrame } from './controlProtocol.ts';
 import { TerminalBroker, TmuxTerminalDriver, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
+import type { TerminalConnection, TerminalSnapshot } from './terminalHost.ts';
 
 const exec = promisify(execFile);
 const repoRoot = join(import.meta.dirname, '..');
@@ -18,8 +20,22 @@ let broker: TerminalBroker;
 let driver: FakeDriver;
 let worktree: string;
 
+class FakeConnection implements TerminalConnection {
+  readonly handle: string;
+  stopped = false;
+  private outputs: Array<(data: Buffer) => void> = [];
+  private exits: Array<(reason: string) => void> = [];
+  constructor(handle: string) { this.handle = handle; }
+  onOutput(listener: (data: Buffer) => void): void { this.outputs.push(listener); }
+  onExit(listener: (reason: string) => void): void { this.exits.push(listener); }
+  emit(text: string): void { for (const listener of this.outputs) listener(Buffer.from(text)); }
+  exit(reason: string): void { for (const listener of this.exits) listener(reason); }
+  stop(): void { this.stopped = true; }
+}
+
 class FakeDriver implements TerminalDriver {
   live = new Set(['tmux:worker-a']);
+  connections: FakeConnection[] = [];
   writes: Array<{ handle: string; data: string }> = [];
   sizes: Array<{ handle: string; columns: number; rows: number }> = [];
   logs = new Map<string, string>();
@@ -32,7 +48,14 @@ class FakeDriver implements TerminalDriver {
     return true;
   }
   alive(handle: string): boolean { return this.live.has(handle); }
-  capture(handle: string): string { return `screen:${handle}\n`; }
+  snapshot(handle: string): TerminalSnapshot {
+    return { screen: `screen:${handle}\n`, cursor_x: 3, cursor_y: 1, columns: 100, rows: 30 };
+  }
+  connect(handle: string): TerminalConnection {
+    const connection = new FakeConnection(handle);
+    this.connections.push(connection);
+    return connection;
+  }
   input(handle: string, data: string): void {
     this.writes.push({ handle, data });
     const log = this.logs.get(handle);
@@ -63,6 +86,37 @@ beforeEach(async () => {
   server = await startControlServer(dir, { terminals: broker });
 });
 
+/** Opens a stream and collects its frames; `next(n)` waits until `n` frames have arrived. */
+function openStream(client: ControlClient, terminalId: string, options: { leaseId?: string; columns?: number; rows?: number } = {}) {
+  const abort = new AbortController();
+  const frames: TerminalFrame[] = [];
+  let failure: Error | null = null;
+  const done = (async () => {
+    try { for await (const frame of client.streamTerminal(terminalId, options, abort.signal)) frames.push(frame); }
+    catch (error) { failure = error as Error; }
+  })();
+  const next = async (count: number): Promise<TerminalFrame[]> => {
+    const deadline = Date.now() + 3000;
+    while (frames.length < count) {
+      if (failure) throw failure;
+      if (Date.now() > deadline) throw new Error(`expected ${count} frames, got ${JSON.stringify(frames)}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return frames;
+  };
+  return { frames, next, done, close: async () => { abort.abort(); await done; }, failure: () => failure };
+}
+
+async function waitFor(check: () => boolean): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('condition not met in time');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+const terminalState = (id: string) => withEventDb(dir, (db) => (db.prepare('SELECT state FROM terminals WHERE terminal_id = ?').get(id) as { state: string }).state);
+
 afterEach(async () => {
   await server.close();
   closeAllDatabases();
@@ -76,10 +130,12 @@ describe('terminal broker', () => {
       { key: 'Up' }, { key: 'F1' }, { key: 'F5' }, { key: 'Enter' },
     ]);
   });
-  it('lets another process observe a provider without acquiring input or ending the session', async () => {
+  it('lets another process view a provider without acquiring input or ending the session', async () => {
     const observer = new ControlClient(dir);
     const terminal = (await observer.openTerminal('provider', 'run-a')).terminal;
-    expect((await observer.observeTerminal(terminal.terminal_id)).screen).toContain('screen:tmux:worker-a');
+    const view = openStream(observer, terminal.terminal_id);
+    expect((await view.next(1))[0]).toMatchObject({ type: 'snapshot', screen: 'screen:tmux:worker-a\n' });
+    await view.close();
     expect(terminal).toMatchObject({ terminal_id: 'provider:session-a', session_id: 'session-a', run_id: 'run-a' });
     const child = await exec(process.execPath, ['cli/terminal.ts', 'provider', 'run-a', '--once'], {
       cwd: repoRoot, env: { ...process.env, ORC_STATE_DIR: dir }, encoding: 'utf8',
@@ -116,9 +172,11 @@ describe('terminal broker', () => {
     await client.inputTerminal(terminal.terminal_id, lease.lease_id, 'pwd\r');
     await client.releaseTerminal(terminal.terminal_id, lease.lease_id);
     const restarted = new TerminalBroker(dir, { driver, worktreeForRun: () => worktree });
-    const view = restarted.observe(terminal.terminal_id);
-    expect(view.output).toContain('pwd\r');
-    expect(view.terminal.worktree_path).toBe(worktree);
+    expect(driver.writes).toEqual([{ handle: 'shell:run-b', data: 'pwd\r' }]);
+    expect(terminal.worktree_path).toBe(worktree);
+    const view = openStream(client, terminal.terminal_id);
+    expect((await view.next(1))[0]).toMatchObject({ type: 'snapshot', screen: 'screen:shell:run-b\n' });
+    await view.close();
     expect(driver.live.has('shell:run-b')).toBe(true);
     const oldLease = await client.acquireTerminal(terminal.terminal_id, 'old-writer');
     driver.live.delete('shell:run-b');
@@ -127,7 +185,7 @@ describe('terminal broker', () => {
     withEventDbTransaction(dir, (db) => db.prepare("UPDATE runs SET state = 'done' WHERE run_id = 'run-b'").run());
     restarted.reconcile();
     expect(driver.live.has('shell:run-b')).toBe(false);
-    expect(restarted.observe(terminal.terminal_id).terminal.state).toBe('offline');
+    expect(terminalState(terminal.terminal_id)).toBe('offline');
     await expect(client.openTerminal('shell', 'run-b')).rejects.toMatchObject({ code: 'conflict' });
     expect(driver.live.has('shell:run-b')).toBe(false);
   });
@@ -137,7 +195,7 @@ describe('terminal broker', () => {
     const terminal = (await client.openTerminal('provider', 'run-a')).terminal;
     const lease = await client.acquireTerminal(terminal.terminal_id, 'writer');
     withEventDbTransaction(dir, (db) => db.prepare("UPDATE runs SET state = 'done' WHERE run_id = 'run-a'").run());
-    expect((await client.observeTerminal(terminal.terminal_id)).terminal.state).toBe('offline');
+    await expect(openStream(client, terminal.terminal_id).next(1)).rejects.toMatchObject({ code: 'conflict' });
     await expect(client.inputTerminal(terminal.terminal_id, lease.lease_id, 'x')).rejects.toMatchObject({ code: 'unavailable' });
     await expect(client.acquireTerminal(terminal.terminal_id, 'next')).rejects.toMatchObject({ code: 'unavailable' });
     expect(driver.live.has('tmux:worker-a')).toBe(true);
@@ -174,7 +232,8 @@ describe('terminal broker', () => {
     const current = (await client.openTerminal('shell', 'run-b')).terminal;
     expect(current).toMatchObject({ terminal_id: 'shell:session-b2', handle: old.handle });
     await expect(client.acquireTerminal(old.terminal_id, 'second')).rejects.toMatchObject({ code: 'unavailable' });
-    expect((await client.observeTerminal(old.terminal_id)).terminal.state).toBe('offline');
+    await expect(openStream(client, old.terminal_id).next(1)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(terminalState(old.terminal_id)).toBe('offline');
     await expect(client.acquireTerminal(current.terminal_id, 'writer')).resolves.toHaveProperty('lease_id');
   });
 
@@ -190,6 +249,107 @@ describe('terminal broker', () => {
     expect(() => failing.shell('run-b')).toThrow('database unavailable');
     expect(driver.live.has(terminal.handle)).toBe(true);
   });
+
+  it('shares one connection between two viewers, snapshot first, and stops it when both close', async () => {
+    const client = new ControlClient(dir);
+    const id = (await client.openTerminal('provider', 'run-a')).terminal.terminal_id;
+    const first = openStream(client, id);
+    await first.next(1);
+    const second = openStream(client, id);
+    await second.next(1);
+    expect(driver.connections).toHaveLength(1);
+    driver.connections[0].emit('hello');
+    for (const view of [first, second]) {
+      const frames = await view.next(2);
+      expect(frames.map((frame) => frame.type)).toEqual(['snapshot', 'output']);
+      expect(Buffer.from((frames[1] as { data: string }).data, 'base64').toString()).toBe('hello');
+    }
+    await first.close();
+    await waitFor(() => broker['streams'].viewers('tmux:worker-a') === 1);
+    expect(driver.connections[0].stopped).toBe(false);
+    await second.close();
+    await waitFor(() => driver.connections[0].stopped);
+    const again = openStream(client, id);
+    await again.next(1);
+    expect(driver.connections).toHaveLength(2);
+    await again.close();
+  });
+
+  it('ends every viewer with an exit frame when the agent exits', async () => {
+    const client = new ControlClient(dir);
+    const id = (await client.openTerminal('provider', 'run-a')).terminal.terminal_id;
+    const view = openStream(client, id);
+    await view.next(1);
+    driver.connections[0].exit('session closed');
+    expect((await view.next(2))[1]).toEqual({ type: 'exit', reason: 'session closed' });
+    await view.done;
+    expect(driver.connections[0].stopped).toBe(true);
+  });
+
+  it('sizes the pane for the lease holder or the first viewer only, and keeps two agents apart', async () => {
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES ('run-c', 'orch/c', 'worker-c', 'in_progress', '2026-01-02', '2026-01-02')").run();
+      db.prepare("INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, started_at, updated_at) VALUES ('session-c', 'run-c', 'worker-c', 'claude', 'running', 'tmux', '2026-01-02', '2026-01-02')").run();
+    });
+    driver.live.add('tmux:worker-c');
+    const client = new ControlClient(dir);
+    const a = (await client.openTerminal('provider', 'run-a')).terminal.terminal_id;
+    const c = (await client.openTerminal('provider', 'run-c')).terminal.terminal_id;
+    const firstA = openStream(client, a, { columns: 120, rows: 40 });
+    await firstA.next(1);
+    const firstC = openStream(client, c, { columns: 90, rows: 25 });
+    await firstC.next(1);
+    // A resize one column short and back makes the TUI redraw.
+    expect(driver.sizes).toEqual([
+      { handle: 'tmux:worker-a', columns: 119, rows: 40 }, { handle: 'tmux:worker-a', columns: 120, rows: 40 },
+      { handle: 'tmux:worker-c', columns: 89, rows: 25 }, { handle: 'tmux:worker-c', columns: 90, rows: 25 },
+    ]);
+    expect(driver.connections.map((connection) => connection.handle)).toEqual(['tmux:worker-a', 'tmux:worker-c']);
+    driver.connections[1].emit('only-c');
+    expect((await firstC.next(2))[1]).toMatchObject({ type: 'output' });
+    expect(firstA.frames).toHaveLength(1);
+
+    driver.sizes = [];
+    const secondA = openStream(client, a, { columns: 60, rows: 20 });
+    await secondA.next(1);
+    expect(driver.sizes).toEqual([]);
+    const lease = await client.acquireTerminal(a, 'writer');
+    await expect(client.resizeTerminal(a, 'not-the-lease', 70, 20)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(openStream(client, a, { leaseId: 'not-the-lease', columns: 70, rows: 20 }).next(1)).rejects.toMatchObject({ code: 'forbidden' });
+    const writer = openStream(client, a, { leaseId: lease.lease_id, columns: 70, rows: 20 });
+    await writer.next(1);
+    expect(driver.sizes).toEqual([{ handle: 'tmux:worker-a', columns: 69, rows: 20 }, { handle: 'tmux:worker-a', columns: 70, rows: 20 }]);
+    await expect(openStream(client, a, { columns: 10, rows: 20 }).next(1)).rejects.toMatchObject({ code: 'bad_request' });
+    for (const view of [firstA, firstC, secondA, writer]) await view.close();
+  });
+
+  it('lists sessions with their terminals; an app session has none to stream', async () => {
+    const client = new ControlClient(dir);
+    expect((await client.sessions()).sessions).toEqual([
+      { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', provider: 'claude', transport: 'tmux', terminal_id: 'provider:session-a' },
+      { session_id: 'session-b', agent_id: 'worker-b', run_id: 'run-b', provider: 'codex', transport: 'app-server', terminal_id: null },
+    ]);
+    await expect(openStream(client, 'provider:session-b').next(1)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(openStream(client, 'provider:no-such-session').next(1)).rejects.toMatchObject({ code: 'not_found' });
+    // A provider id from the list opens without a prior POST /v1/terminals/provider.
+    const view = openStream(client, 'provider:session-a');
+    expect((await view.next(1))[0]).toMatchObject({ type: 'snapshot' });
+    await view.close();
+    driver.live.delete('tmux:worker-a');
+    expect((await client.sessions()).sessions[0].terminal_id).toBeNull();
+  });
+
+  it('refuses operator input with a retryable busy while the coordinator sends', async () => {
+    const client = new ControlClient(dir);
+    const id = (await client.openTerminal('provider', 'run-a')).terminal.terminal_id;
+    const lease = await client.acquireTerminal(id, 'operator');
+    withEventDbTransaction(dir, (db) => db.prepare(`INSERT INTO control_leases (resource_type, resource_id, lease_id, owner_id, expires_at)
+      VALUES ('terminal_send', ?, 'send-1', 'coordinator:1', '2099-01-01')`).run(id));
+    await expect(client.inputTerminal(id, lease.lease_id, 'x')).rejects.toMatchObject({ code: 'busy' });
+    withEventDbTransaction(dir, (db) => db.prepare("DELETE FROM control_leases WHERE resource_type = 'terminal_send'").run());
+    await client.inputTerminal(id, lease.lease_id, 'x');
+    expect(driver.writes).toEqual([{ handle: 'tmux:worker-a', data: 'x' }]);
+  });
 });
 
 describe.runIf(process.env.RUN_TMUX_SMOKE === '1')('real tmux terminal smoke', () => {
@@ -203,7 +363,7 @@ describe.runIf(process.env.RUN_TMUX_SMOKE === '1')('real tmux terminal smoke', (
       real.resize(handle, 110, 32);
       real.input(handle, 'pwd\r');
       await new Promise((resolve) => setTimeout(resolve, 250));
-      expect(new TmuxTerminalDriver(dir).capture(handle)).toContain(worktree);
+      expect(new TmuxTerminalDriver(dir).snapshot(handle).screen).toContain(worktree);
     } finally {
       real.stop(handle);
     }

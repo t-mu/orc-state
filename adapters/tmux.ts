@@ -264,8 +264,13 @@ function write(agentId: string, text: string): void {
   tmuxOrThrow(['paste-buffer', '-d', '-p', '-b', buffer, '-t', target(agentId)]);
 }
 
-/** Coordinator sends and operator input share the same persisted writer lease. */
-function claimSendLease(agentId: string): { resourceId: string; leaseId: string } | null {
+/**
+ * A coordinator send always goes through, even while an operator holds the
+ * terminal's input lease: it records a short-lived `terminal_send` marker
+ * (`COORDINATOR_SEND_RESOURCE` in lib/terminalBroker.ts) that makes operator
+ * input fail with a retryable `busy` until the send is done.
+ */
+function markCoordinatorSend(agentId: string): { resourceId: string; leaseId: string } | null {
   if (!existsSync(join(STATE_DIR, 'events.db'))) return null;
   return withEventDbTransaction(STATE_DIR, (db) => {
     const session = db.prepare(`SELECT session_id, run_id FROM sessions WHERE agent_id = ? AND state = 'running'
@@ -273,25 +278,22 @@ function claimSendLease(agentId: string): { resourceId: string; leaseId: string 
     if (!session?.run_id) return null;
     // Matches the broker's provider terminal id (`provider:<session_id>`).
     const resourceId = `provider:${session.session_id}`;
-    const current = db.prepare("SELECT expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
-      .get(resourceId) as { expires_at: string } | undefined;
-    if (current && Date.parse(current.expires_at) > Date.now()) throw new Error('Terminal already has a writer');
     const leaseId = randomUUID();
     db.prepare(`INSERT INTO control_leases (resource_type, resource_id, lease_id, owner_id, expires_at)
-      VALUES ('terminal', ?, ?, ?, ?) ON CONFLICT (resource_type, resource_id) DO UPDATE SET
+      VALUES ('terminal_send', ?, ?, ?, ?) ON CONFLICT (resource_type, resource_id) DO UPDATE SET
         lease_id = excluded.lease_id, owner_id = excluded.owner_id, expires_at = excluded.expires_at`)
       .run(resourceId, leaseId, `coordinator:${process.pid}`, new Date(Date.now() + 30_000).toISOString());
     return { resourceId, leaseId };
   });
 }
 
-function releaseSendLease(lease: { resourceId: string; leaseId: string } | null): void {
-  if (!lease) return;
+function clearCoordinatorSend(marker: { resourceId: string; leaseId: string } | null): void {
+  if (!marker) return;
   try {
     withEventDbTransaction(STATE_DIR, (db) => db.prepare(`DELETE FROM control_leases
-      WHERE resource_type = 'terminal' AND resource_id = ? AND lease_id = ?`).run(lease.resourceId, lease.leaseId));
+      WHERE resource_type = 'terminal_send' AND resource_id = ? AND lease_id = ?`).run(marker.resourceId, marker.leaseId));
   } catch (error) {
-    logger.warn(`[tmux] writer lease cleanup failed: ${(error as Error).message}`);
+    logger.warn(`[tmux] coordinator send marker cleanup failed: ${(error as Error).message}`);
   }
 }
 
@@ -393,14 +395,14 @@ export function createTmuxAdapter({ provider = 'claude' }: { provider?: string }
     async send(sessionHandle: string, text: string) {
       const agentId = parseHandle(sessionHandle);
       if (!inspect(agentId).alive) throw new Error(`No live tmux session for agent '${agentId}'`);
-      const lease = claimSendLease(agentId);
+      const marker = markCoordinatorSend(agentId);
       try {
         write(agentId, String(text));
         await new Promise((r) => setTimeout(r, SUBMIT_DELAY_MS));
         write(agentId, '\r');
         return '';
       } finally {
-        releaseSendLease(lease);
+        clearCoordinatorSend(marker);
       }
     },
 
