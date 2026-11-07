@@ -27,7 +27,15 @@ orc start-session
 ```
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
-- **Master** (foreground): your interactive session.
+- **Master**: your interactive session. It runs in orc's private tmux server and `start-session` attaches this terminal to it.
+
+`start-session` creates the master or reattaches to it (tmux is required):
+
+- Detach with `Ctrl-b d`, or close the terminal. The master keeps running and its MCP tools keep working.
+- Run `orc start-session` again to reattach to the same master. A live master is reattached with no prompts and no state reset.
+- If the master process has died, `start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.
+- It works from inside your own tmux session too, as a nested client.
+- `orc kill-all` stops the master and revokes its credential.
 
 Providers come from the project settings (`orc project config list`); a task's `required_provider` overrides the worker provider.
 

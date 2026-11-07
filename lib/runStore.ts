@@ -125,6 +125,8 @@ export function recordProviderSession(stateDir: string, session: {
   ownerExpiresAt?: string | null;
   /** Hash of the session's secret (task 231); the secret itself is never stored. */
   credentialHash?: string | null;
+  /** The provider's own conversation id, kept so a later launch can resume it. */
+  providerConversationId?: string | null;
 }): boolean {
   if (session.sessionId === session.agentId || session.sessionId === session.runId) {
     throw new Error('Provider session ID must differ from agent and run IDs');
@@ -135,18 +137,63 @@ export function recordProviderSession(stateDir: string, session: {
       .run(session.startedAt, session.agentId, session.sessionId);
     db.prepare(`
       INSERT INTO sessions (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at,
-        transport, process_pid, process_start, owner_id, owner_expires_at, state_reason, credential_hash)
-      VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+        transport, process_pid, process_start, owner_id, owner_expires_at, state_reason, credential_hash, provider_conversation_id)
+      VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         state = 'running', provider_ref = excluded.provider_ref, updated_at = excluded.updated_at,
         transport = excluded.transport, process_pid = excluded.process_pid, process_start = excluded.process_start,
         owner_id = excluded.owner_id, owner_expires_at = excluded.owner_expires_at, state_reason = NULL,
-        credential_hash = COALESCE(excluded.credential_hash, sessions.credential_hash)
+        credential_hash = COALESCE(excluded.credential_hash, sessions.credential_hash),
+        provider_conversation_id = COALESCE(excluded.provider_conversation_id, sessions.provider_conversation_id)
     `).run(session.sessionId, session.runId, session.agentId, session.provider,
       session.providerRef == null ? null : JSON.stringify(session.providerRef), session.startedAt, session.startedAt,
       session.transport ?? null, session.processPid ?? null, session.processStart ?? null,
-      session.ownerId ?? null, session.ownerExpiresAt ?? null, session.credentialHash ?? null);
+      session.ownerId ?? null, session.ownerExpiresAt ?? null, session.credentialHash ?? null,
+      session.providerConversationId ?? null);
     return true;
+  });
+}
+
+/**
+ * Bring a session back under its own id after its process was relaunched to
+ * resume the provider conversation: the new process identity and credential
+ * replace the old ones, `generation` and `resume_count` go up, and a
+ * `session_resumed` event records it. Returns the new generation, or null when
+ * no such session exists.
+ */
+export function resumeProviderSession(stateDir: string, session: {
+  sessionId: string;
+  providerRef: unknown;
+  at: string;
+  transport: string | null;
+  processPid: number | null;
+  processStart: string | null;
+  credentialHash: string;
+  actorId?: string;
+}): number | null {
+  return withEventDbTransaction(stateDir, (db) => {
+    const row = db.prepare('SELECT agent_id, run_id, provider_conversation_id FROM sessions WHERE session_id = ?')
+      .get(session.sessionId) as { agent_id: string; run_id: string | null; provider_conversation_id: string | null } | undefined;
+    if (!row) return null;
+    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
+      .run(session.at, row.agent_id, session.sessionId);
+    db.prepare(`UPDATE sessions SET state = 'running', state_reason = NULL, exit_reason = NULL, provider_ref = ?, updated_at = ?,
+        transport = ?, process_pid = ?, process_start = ?, owner_id = NULL, owner_expires_at = NULL, credential_hash = ?,
+        generation = generation + 1, resume_count = resume_count + 1
+      WHERE session_id = ?`).run(session.providerRef == null ? null : JSON.stringify(session.providerRef), session.at,
+      session.transport, session.processPid, session.processStart, session.credentialHash, session.sessionId);
+    const { generation } = db.prepare('SELECT generation FROM sessions WHERE session_id = ?').get(session.sessionId) as { generation: number };
+    const actorId = session.actorId ?? 'human';
+    appendSequencedEvent(stateDir, {
+      ts: session.at, event: 'session_resumed', actor_type: 'human', actor_id: actorId, agent_id: row.agent_id,
+      ...(row.run_id ? { run_id: row.run_id } : {}),
+      payload: {
+        session_id: session.sessionId, agent_id: row.agent_id, generation,
+        ...(row.run_id ? { run_id: row.run_id } : {}),
+        ...(row.provider_conversation_id ? { provider_conversation_id: row.provider_conversation_id } : {}),
+      },
+    });
+    return generation;
   });
 }
 
@@ -168,6 +215,24 @@ export function restoreProviderSessionsForAgents(stateDir: string, agents: Agent
       const session = latest.get(agent.agent_id) as { session_id: string } | undefined;
       if (session) reactivate.run(at, session.session_id);
     }
+  });
+}
+
+/** Record that relaunching a session to resume its provider conversation failed; the session is left as it was. */
+export function recordSessionResumeFailed(stateDir: string, sessionId: string, reason: string, actorId = 'human'): void {
+  withEventDbTransaction(stateDir, (db) => {
+    const row = db.prepare('SELECT agent_id, run_id, provider_conversation_id, generation FROM sessions WHERE session_id = ?')
+      .get(sessionId) as { agent_id: string; run_id: string | null; provider_conversation_id: string | null; generation: number } | undefined;
+    if (!row) return;
+    appendSequencedEvent(stateDir, {
+      ts: new Date().toISOString(), event: 'session_resume_failed', actor_type: 'human', actor_id: actorId, agent_id: row.agent_id,
+      ...(row.run_id ? { run_id: row.run_id } : {}),
+      payload: {
+        session_id: sessionId, agent_id: row.agent_id, generation: row.generation, reason,
+        ...(row.run_id ? { run_id: row.run_id } : {}),
+        ...(row.provider_conversation_id ? { provider_conversation_id: row.provider_conversation_id } : {}),
+      },
+    });
   });
 }
 

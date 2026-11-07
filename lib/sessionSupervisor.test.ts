@@ -131,13 +131,19 @@ describe('reconcileSessions', () => {
     expect(queryEvents(dir, { event_type: 'session_reconciled' })).toHaveLength(5);
   });
 
-  it('leaves the foreground master session to start-session (task 232)', async () => {
-    insertSession('session-master', 'master', null, null, null, 'pty');
-    // start-session records the master's session but never gives the master agent a handle.
-    const master: Agent = { ...agent('master', 'session-master'), role: 'master', session_handle: null };
-    const results = await reconcileSessions(dir, { owner: 'pid:2:new-coordinator', agents: [master], inspect: () => Promise.resolve(null) });
-    expect(results).toEqual([]);
-    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master')?.state).toBe('running');
+  it('supervises the master\'s tmux session like any other (v1/master-tmux)', async () => {
+    insertSession('session-master', 'master', null, 700, 'proc:7');
+    const master: Agent = { ...agent('master', 'session-master'), role: 'master' };
+    let inspection: SessionInspection | null = live(700, 'proc:7');
+    const reconcile = () => reconcileSessions(dir, { owner: 'pid:2:new-coordinator', agents: [master], inspect: () => Promise.resolve(inspection) });
+
+    expect(await reconcile()).toEqual([expect.objectContaining({ session_id: 'session-master', state: 'running', outcome: 'adopted' })]);
+    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master'))
+      .toMatchObject({ state: 'running', owner_id: 'pid:2:new-coordinator' });
+
+    // A dead master's session goes offline, so its credential stops authenticating.
+    inspection = { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, reason: 'tmux session not found' };
+    expect(await reconcile()).toEqual([expect.objectContaining({ session_id: 'session-master', state: 'offline', outcome: 'exited' })]);
   });
 
   it('refuses commands to a recoverable session', () => {

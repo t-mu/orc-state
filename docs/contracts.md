@@ -176,7 +176,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `agent_registered` | — | in schema, not emitted |
 | `session_started`, `session_start_failed` | Coordinator | provider session launch |
 | `session_reconciled` | Coordinator | restart reconciliation (`session_id`, `state`, `outcome`, `reason`) |
-| `session_resumed`, `session_resume_failed` | Coordinator | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
+| `session_resumed`, `session_resume_failed` | Coordinator; `start-session` (master resume) | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
 | `task_added`, `task_updated` | Master / operator / Coordinator | task created / changed |
 | `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task` |
 | `task_dispatch_blocked` | Coordinator | dispatch refused (deps, no agent) |

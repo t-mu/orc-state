@@ -11,7 +11,7 @@ orc-state dispatches coding tasks to headless AI agent workers. Tasks live in th
 ```
 orc start-session
     |
-    +---> Coordinator (background)        Master (foreground)
+    +---> Coordinator (background)        Master (tmux, attached)
               | tick (30 s)                   | user, task authoring, monitoring
               v
          pick eligible task
@@ -30,7 +30,7 @@ orc start-session
 | Role | Process | Owns |
 |------|---------|------|
 | Coordinator | background Node process (`orc start-session`) | dispatch, session liveness probes (tmux pane / PTY pid), lease expiry and requeue, phase inference, merge, the control API |
-| Master | foreground provider session | task authoring (`create_task`), monitoring (`orc status`, `orc watch`), answering input requests, scouts; never implements |
+| Master | provider session in orc's tmux server; `orc start-session` attaches to it | task authoring (`create_task`), monitoring (`orc status`, `orc watch`), answering input requests, scouts; never implements |
 | Worker | headless session, one per run, random orc-themed name | its worktree; reports through `orc run-*` / `orc progress`; never merges or removes its worktree |
 | Scout | ephemeral read-only session launched by the master | a `SCOUT_REPORT`; no state or file writes |
 

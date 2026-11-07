@@ -13,7 +13,7 @@
 | Command | Flags | Notes |
 |---------|-------|-------|
 | `init` | `[--provider=claude,codex,gemini]` `[--worker-provider=<name>]` | Needs a registered project (`orc project add`). Records `default_provider`, `worker_pool.provider`, and `worker_pool.max_workers` (when unset) in the registry; writes nothing into the repository. `--provider` is required outside a TTY. Refuses `--force`. |
-| `start-session` | `[--provider=claude\|codex\|gemini]` `[--agent-id=<id>]` | Starts the coordinator (background) and the master session (foreground, needs a TTY). Wires the orchestrator MCP server into the master. |
+| `start-session` | `[--provider=claude\|codex\|gemini]` `[--agent-id=<id>]` | Starts the coordinator (background) and the master in orc's tmux server (needs tmux), then attaches to it. A live master is reattached instead of starting another. `Ctrl-b d` or closing the terminal detaches and the master keeps running. A dead Claude master resumes its recorded conversation. Without a TTY it starts the master and does not attach. Wires the orchestrator MCP server into the master. |
 | `kill-all` | `[--keep-sessions]` | Full reset: stops the coordinator, terminates sessions (unless `--keep-sessions`), clears the agent registry, resets active tasks, removes run worktrees. |
 
 ```bash
