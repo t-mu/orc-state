@@ -142,7 +142,6 @@ class Screen {
     this.wrapPending = false;
   }
   write(s: string): void {
-     
     const re = /\x1b\[([0-9;?<>=]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[=>78DEHMNOc]|[\x00-\x1f]|[^\x00-\x1f\x1b]/gu;
     for (const m of s.matchAll(re)) {
       const tok = m[0];
@@ -240,7 +239,7 @@ async function main(): Promise<void> {
     clientA1_panesSeen: [...new Set(c.outputs.map((o) => o.pane))],
     clientA1_hasA2Marker: c.text().includes('MARK_A2'),
     clientA2_panesSeen: [...new Set(ci.outputs.map((o) => o.pane))],
-    firstOutputLatencyMs: (c.outputs[0]?.t ?? NaN) - t0,
+    firstOutputLatencyMs: (c.outputs.find((o) => o.t >= t0)?.t ?? NaN) - t0,
   };
 
   // Q5: escaping. Emit control chars, a backslash and UTF-8; compare raw payload vs decoded bytes.
@@ -292,7 +291,6 @@ async function main(): Promise<void> {
     cursor,
     redrawBytes: Buffer.byteLength(redraw),
     // Full clear (ED) or home + per-line erase (EL 2), as Ink does.
-     
     redrawHasClear: /\x1b\[[02]?J|\x1b\[H\x1b\[2K/.test(redraw),
     rowsWrong_snapshotPlusStream: mismatches(viaSnapshot),
     rowsWrong_streamOnly: mismatches(streamOnly),

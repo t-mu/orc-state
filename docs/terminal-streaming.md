@@ -1,14 +1,15 @@
 # Terminal streaming: tmux control mode findings
 
-Prototype: `node scripts/prototypes/tmux-control.ts [--tui=claude|vim|top] [--dump]`. Private server
-(`-S <tmpdir>/sock -f /dev/null`, `ORC_*`/`TMUX` stripped), two 100x30 sessions `a1`/`a2`, one `tmux -C`
-client per session. Measured on tmux 3.3a, 2026-11-07. Prints JSON; touches no orc state.
+- Prototype: `node scripts/prototypes/tmux-control.ts [--tui=claude|vim|top] [--dump]`; prints JSON, touches no orc state.
+- Private server: `-S <tmpdir>/sock -f /dev/null`, `ORC_*`/`TMUX` stripped from the environment.
+- Setup: two 100x30 sessions `a1`/`a2`, one `tmux -C` client per session.
+- Measured on tmux 3.3a, 2026-11-07.
 
 ## Results
 
 | # | Question | Observed |
 |---|---|---|
-| 1 | Control client gets only its attached session's output? | Yes. Client on `a1` saw only pane `%0`, never the `a2` marker; client on `a2` saw only `%1`. First `%output` 3 ms after `send-keys`. |
+| 1 | Control client gets only its attached session's output? | Yes. Client on `a1` saw only pane `%0`, never the `a2` marker; client on `a2` saw only `%1`. First `%output` 3–4 ms after `send-keys` (2 runs). |
 | 2 | Attaching resizes the agent window? | Attach alone: no (100x30 stays). `refresh-client -C 80x24` with default `window-size latest`: **yes**, window shrank to 80x24. With `window-size manual`: `-C 120x40` left it at 100x30. With client flag `ignore-size` (default `window-size`): `-C 70x20` left it at 100x30. |
 | 3 | Minimum tmux version | `attach -f`/`refresh-client -f`, `ignore-size`, `pause-after`, `%extended-output`: **3.2**. `window-size manual` and `resize-window`: 2.9. Control clients don't affect size until `refresh-client -C`: 2.6. Installed: **3.3a**. |
 | 4 | Snapshot + stream + resize redraws cleanly? | Yes. Resizing to 99 cols and back makes the TUI repaint the whole screen. Replaying snapshot + cursor + stream through a small VT model, then comparing with `capture-pane`: see table below. |
