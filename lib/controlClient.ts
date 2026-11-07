@@ -13,11 +13,33 @@ import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
-import type { OperatorRequest } from './operatorMutations.ts';
-import type { TaskMarkdownSource } from './taskMarkdown.ts';
+import type { OperatorOp, OperatorRequest } from './operatorMutations.ts';
+import type { ProjectTaskView, TaskAuthoringInput } from './projectTasks.ts';
+import type { TaskImportResult, TaskMarkdownSource } from './taskMarkdown.ts';
+import type { TaskStatus } from '../types/backlog.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 export interface EventRow { seq: number; event: unknown }
+
+/** `POST /v1/operator` results by `op` (shapes from `lib/operatorMutations.ts`). */
+export interface OperatorResults {
+  'cancel-task':
+    | { cancelled: true; task_ref: string; status: TaskStatus; cancelled_run_id?: string; cancelled_run_count?: number }
+    | { error: 'already_terminal'; task_ref: string; status: TaskStatus };
+  'reset-task': { reset: true; task_ref: string; previous_status: TaskStatus; cancelled_claims: number };
+  'unblock-task': { unblocked: true; task_ref: string };
+  'delegate-task':
+    | { task_ref: string; assigned_to: string }
+    | { warning: 'no_eligible_worker'; task_ref: string; message: string;
+      candidate_diagnostics: Array<{ agent_id: string; reasons: string[]; reason_messages: string[] }> };
+  'respond-input': { ok: true; run_id: string; agent_id: string; responded_by: string };
+  'run-expire': { run_id: string; task_ref: string; expired: true };
+  'run-close': { run_id: string; closed: true; task_ref: string; task_status: TaskStatus | null; branch: string;
+    branch_merged: boolean; worktree_cleaned: boolean };
+  'task-mark-done': { task_ref: string; done: true; previous_status: TaskStatus };
+}
+
+export type OperatorResult<Op extends OperatorOp = OperatorOp> = OperatorResults[Op];
 
 export interface ControlClientOptions {
   /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET). */
@@ -169,30 +191,30 @@ export class ControlClient {
   }
 
   /** Apply a master (its session) or operator (the operator token) mutation in the coordinator. */
-  operator(request: OperatorRequest): Promise<Record<string, unknown>> {
+  operator<Op extends OperatorOp>(request: OperatorRequest & { op: Op }): Promise<OperatorResult<Op>> {
     return this.call('POST', '/v1/operator', request);
   }
 
-  listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {
+  listTasks(): Promise<{ tasks: ProjectTaskView[] }> {
     return this.call('GET', '/v1/tasks');
   }
 
-  getTask(ref: string): Promise<{ task: Record<string, unknown> }> {
+  getTask(ref: string): Promise<{ task: ProjectTaskView }> {
     return this.call('GET', `/v1/tasks/${encodeURIComponent(ref)}`);
   }
 
-  createTask(input: Record<string, unknown>, actorId?: string): Promise<{ task: Record<string, unknown> }> {
+  createTask(input: TaskAuthoringInput, actorId?: string): Promise<{ task: ProjectTaskView }> {
     return this.call('POST', '/v1/tasks', { ...input, ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
   /** Fails with `conflict` when `expectedRevision` is no longer the latest revision. */
-  reviseTask(ref: string, expectedRevision: number, changes: Record<string, unknown>, actorId?: string): Promise<{ task: Record<string, unknown>; changed: boolean }> {
+  reviseTask(ref: string, expectedRevision: number, changes: TaskAuthoringInput, actorId?: string): Promise<{ task: ProjectTaskView; changed: boolean }> {
     return this.call('POST', `/v1/tasks/${encodeURIComponent(ref)}/revisions`, { ...changes, expected_revision: expectedRevision,
       ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
   /** Sends specs the caller read itself (readTaskMarkdownSources); the coordinator never opens a caller's path. */
-  importTasks(files: TaskMarkdownSource[], strict = false, actorId?: string): Promise<{ imported: unknown[] }> {
+  importTasks(files: TaskMarkdownSource[], strict = false, actorId?: string): Promise<{ imported: TaskImportResult[] }> {
     return this.call('POST', '/v1/tasks/import', { files, strict, ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 

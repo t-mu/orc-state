@@ -455,7 +455,9 @@ export function reviseProjectTask(
 }
 
 /** API view of a project task, including the revision an editor must pass back. */
-export function describeProjectTask(task: ProjectTask): Task & { feature_ref: string; content_hash: string; body_markdown: string } {
+export type ProjectTaskView = Task & { feature_ref: string; content_hash: string; body_markdown: string };
+
+export function describeProjectTask(task: ProjectTask): ProjectTaskView {
   return {
     ...projectTaskToBacklogTask(task),
     feature_ref: featureRefOf(task),

@@ -26,22 +26,6 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./adapters": {
-      "types": "./dist/adapters/index.d.ts",
-      "default": "./dist/adapters/index.js"
-    },
-    "./coordinator": {
-      "types": "./dist/coordinator.d.ts",
-      "default": "./dist/coordinator.js"
-    },
-    "./lib/stateValidation": {
-      "types": "./dist/lib/stateValidation.d.ts",
-      "default": "./dist/lib/stateValidation.js"
-    },
-    "./lib/eventValidation": {
-      "types": "./dist/lib/eventValidation.d.ts",
-      "default": "./dist/lib/eventValidation.js"
-    },
     "./schemas/*": "./dist/schemas/*.json"
   },
   "files": [

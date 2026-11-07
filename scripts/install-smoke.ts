@@ -15,7 +15,8 @@
  *   4. npm install <tarball>
  *   5. ./node_modules/.bin/orc --help   — verify binary resolves and runs
  *   6. ./node_modules/.bin/orc doctor   — verify CLI commands execute
- *   7. cleanup
+ *   7. import ControlClient from the package root; internal subpaths stay unexported
+ *   8. cleanup
  *
  * This is stronger than pack-smoke (which symlinks repo node_modules) because
  * it validates that the tarball's declared dependencies are actually sufficient
@@ -100,6 +101,16 @@ function main(): void {
     if (!result.stdout.includes('Doctor') && !result.stderr.includes('Doctor')) {
       throw new Error(`orc doctor did not produce expected output: ${result.stdout} / ${result.stderr}`);
     }
+
+    console.log('6. importing the public API...');
+    const imported = runWithEnv(process.execPath, ['--input-type=module', '-e', [
+      "const { ControlClient } = await import('orc-state');",
+      "if (typeof ControlClient !== 'function') throw new Error('ControlClient is not exported from the package root');",
+      "const internal = await import('orc-state/coordinator').then(() => true, (error) => error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' ? false : Promise.reject(error));",
+      "if (internal) throw new Error('orc-state/coordinator must not be exported');",
+      "console.log('public-api-ok');",
+    ].join('\n')], tmpProject, env);
+    if (!imported.includes('public-api-ok')) throw new Error(`public API import failed: ${imported}`);
 
     console.log('install smoke ok');
   } finally {
