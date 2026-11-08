@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { cliError, formatErrorMessage, loadClaim } from './shared.ts';
+
+const SHARED_PATH = fileURLToPath(new URL('./shared.ts', import.meta.url));
+
+/** Runs a snippet in a child Node process whose stdout is a pipe, as it is for `orc status --json | jq`. */
+function runPiped(body: string) {
+  const script = `import { printJson, exitAfterFlush } from ${JSON.stringify(SHARED_PATH)};\n${body}`;
+  return spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,6 +59,29 @@ describe('cli/shared.ts', () => {
       // in tests without a real state dir it will catch the ENOENT and return null.
       const claim = loadClaim('run-that-does-not-exist');
       expect(claim).toBeNull();
+    });
+  });
+
+  describe('printJson and exitAfterFlush', () => {
+    it('prints one compact line when stdout is piped', () => {
+      const result = runPiped("printJson({ a: 1, nested: { b: [1, 2] } });");
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe('{"a":1,"nested":{"b":[1,2]}}\n');
+    });
+
+    it('delivers a piped payload larger than 64 KB intact before exiting', () => {
+      const result = runPiped(`
+        const items = Array.from({ length: 4000 }, (_, i) => ({ i, pad: 'x'.repeat(40) }));
+        printJson({ items });
+        await exitAfterFlush(0);
+        console.log('NOT REACHED');
+      `);
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toContain('NOT REACHED');
+      expect(result.stdout.length).toBeGreaterThan(64 * 1024);
+      const parsed = JSON.parse(result.stdout) as { items: Array<{ i: number }> };
+      expect(parsed.items).toHaveLength(4000);
+      expect(parsed.items.at(-1)?.i).toBe(3999);
     });
   });
 });

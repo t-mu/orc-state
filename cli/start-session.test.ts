@@ -1449,7 +1449,9 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
       expect(lines.join('\n')).toContain('MCP server: orchestrator tools available');
       expect(lines.join('\n')).toContain('Master bootstrap loaded via --system-prompt.');
-      expect(lines.join('\n')).toContain('MASTER_BOOTSTRAP v2');
+      // The bootstrap goes to the master as its system prompt; the terminal gets one line naming it.
+      expect(lines.join('\n')).not.toContain('MASTER_BOOTSTRAP v2');
+      expect(lines.join('\n')).toContain('Bootstrap template: master-bootstrap-v1.txt');
 
       // fresh state for codex branch
       cleanupTempStateDir(dir);

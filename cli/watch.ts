@@ -34,7 +34,7 @@ export function renderPlainSnapshot({ intervalMs, stateDir }: Pick<WatchOptions,
   try {
     const status = buildStatus(stateDir);
     process.stdout.write('\x1b[2J\x1b[H');
-    console.log(renderBanner());
+    if (process.stdout.isTTY) console.log(renderBanner());
     console.log(colorFormatStatus(status));
     if (warnings.length > 0) {
       console.log('');

@@ -44,7 +44,7 @@ describe('orc task-cancel', { timeout: 30_000 }, () => {
     const result = orc(['task-cancel', 'app/doomed'], { ORC_SESSION_SECRET: 'not-the-master' });
     expect(result.status).toBe(1);
     expect(result.stderr).not.toContain('applying cancel-task directly');
-    expect(orc(['project', 'task', 'show', 'app/doomed']).stdout).toContain('"status": "todo"');
+    expect(JSON.parse(orc(['project', 'task', 'show', 'app/doomed']).stdout).status).toBe('todo');
   });
 
   it('prints usage without a task ref', () => {

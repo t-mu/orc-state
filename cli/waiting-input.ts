@@ -5,6 +5,7 @@
  *
  * Show all claims currently awaiting input, with the question text.
  */
+import { exitAfterFlush, printJson } from './shared.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { listWaitingInput } from '../lib/waitingInput.ts';
@@ -14,8 +15,8 @@ const asJson = boolFlag('json');
 const rows = listWaitingInput(STATE_DIR, readClaims(STATE_DIR).claims);
 
 if (asJson) {
-  console.log(JSON.stringify(rows, null, 2));
-  process.exit(0);
+  printJson(rows);
+  await exitAfterFlush(0);
 }
 
 console.log(`Waiting for Input (${rows.length} runs):`);

@@ -180,6 +180,14 @@ describe('orc project task', () => {
         .toMatchObject({ spec_revision: 2, priority: 'high', changed: true });
       expect(() => runProjectCommand(['task', 'edit', 'app/external', '--expected-revision=1', '--priority=low', flag], registry)).toThrow('revision conflict');
       expect(runProjectCommand(['task', 'list', flag], registry)).toEqual([{ ref: 'app/external', title: 'External', status: 'todo', spec_revision: 2 }]);
+      expect(runProjectCommand(['task', 'list', '--status=todo', flag], registry)).toHaveLength(1);
+      expect(runProjectCommand(['task', 'list', '--status=todo,done', flag], registry)).toHaveLength(1);
+      expect(runProjectCommand(['task', 'list', '--status=done', flag], registry)).toEqual([]);
+      expect(runProjectCommand(['task', 'list', '--status=done', '--status=todo', flag], registry)).toHaveLength(1);
+      expect(runProjectCommand(['task', 'list', '--feature=app', flag], registry)).toHaveLength(1);
+      expect(runProjectCommand(['task', 'list', '--feature=other', flag], registry)).toEqual([]);
+      expect(() => runProjectCommand(['task', 'list', '--status=bogus', flag], registry)).toThrow("Unknown status 'bogus'");
+      expect(() => runProjectCommand(['task', 'list', '--status=', flag], registry)).toThrow('--status needs at least one status');
       expect(() => runProjectCommand(['task', 'revisions', 'app/missing', flag], registry)).toThrow('Task not found');
       expect(readdirSync(repo)).toEqual(['.git']);
     } finally {

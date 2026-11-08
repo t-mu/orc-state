@@ -5,11 +5,14 @@ import { resolve } from 'node:path';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { describeProjects } from '../lib/projectList.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
-import { createProjectTask, describeProjectTask, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
+import { createProjectTask, describeProjectTask, featureRefOf, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
+import type { ProjectTask } from '../lib/projectTaskStore.ts';
+import { TASK_STATUSES } from '../lib/constants.ts';
 import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, importTaskMarkdownSources, readPlanMarkdownSource, readTaskMarkdownSources } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
 import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 import { USAGE } from './usage.ts';
+import { printJson } from './shared.ts';
 
 function option(args: string[], name: string): string | undefined {
   const prefixed = args.find((arg) => arg.startsWith(`--${name}=`));
@@ -49,12 +52,27 @@ function taskInput(args: string[], allowed: readonly string[]): Record<string, u
   return input;
 }
 
+/** `task list` rows, narrowed by `--status=<s>[,<s>]` (repeatable) and `--feature=<f>`; no flags lists every task. */
+function listTaskRows(tasks: ProjectTask[], args: string[]) {
+  const statusArgs = args.filter((arg) => arg.startsWith('--status='));
+  const statuses = statusArgs.flatMap((arg) => arg.slice('--status='.length).split(',')).map((item) => item.trim()).filter(Boolean);
+  if (statusArgs.length > 0 && statuses.length === 0) throw new Error(`--status needs at least one status. Usage: ${USAGE['project']}`);
+  for (const status of statuses) {
+    if (!TASK_STATUSES.includes(status)) throw new Error(`Unknown status '${status}'. Usage: ${USAGE['project']}`);
+  }
+  const feature = option(args, 'feature');
+  return tasks
+    .filter((task) => statuses.length === 0 || statuses.includes(task.status))
+    .filter((task) => feature === undefined || featureRefOf(task) === feature)
+    .map((task) => ({ ref: task.ref, title: task.title, status: task.status, spec_revision: task.revision }));
+}
+
 function runTaskCommand(args: string[], stateDir: string): unknown {
   const [verb, ...rest] = args;
   const values = positionals(rest);
   const store = initProjectTaskStore(stateDir);
   const actor = option(rest, 'actor-id') ?? 'human';
-  if (verb === 'list' && values.length === 0) return store.listTasks().map((task) => ({ ref: task.ref, title: task.title, status: task.status, spec_revision: task.revision }));
+  if (verb === 'list' && values.length === 0) return listTaskRows(store.listTasks(), rest);
   if (verb === 'show' && values.length === 1) {
     const revision = option(rest, 'revision');
     if (revision !== undefined) {
@@ -204,7 +222,7 @@ if (isMainModule(process.argv[1], import.meta.url)) {
   try {
     registry = new ProjectRegistry();
     const result = await runProjectCommandRouted(process.argv.slice(2), registry);
-    console.log(JSON.stringify(result, null, 2));
+    printJson(result);
   } catch (error) {
     console.error((error as Error).message);
     process.exitCode = 1;

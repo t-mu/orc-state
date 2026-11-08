@@ -3,6 +3,7 @@
  * cli/doctor.ts
  * Usage: node cli/doctor.ts [--json]
  */
+import { exitAfterFlush, printJson } from './shared.ts';
 import { execSync } from 'node:child_process';
 import { ACTIVE_PROJECT, NO_PROJECT_MESSAGE, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
 import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
@@ -136,8 +137,8 @@ const summary = {
 };
 
 if (asJson) {
-  console.log(JSON.stringify(summary, null, 2));
-  process.exit(summary.ok ? 0 : 1);
+  printJson(summary);
+  await exitAfterFlush(summary.ok ? 0 : 1);
 }
 
 console.log('Orchestrator Doctor');

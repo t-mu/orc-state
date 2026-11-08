@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs';
 import { boolFlag, flag, flagAll, intFlag } from '../lib/args.ts';
 import { readEvents } from '../lib/eventLog.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { exitAfterFlush, printJson } from './shared.ts';
 
 const asJson = boolFlag('json');
 const runIdFilter = flag('run-id');
@@ -47,8 +48,8 @@ for (const ev of allEvents) {
 const output = last > 0 ? matched.slice(-last) : matched;
 
 if (asJson) {
-  console.log(JSON.stringify(output, null, 2));
-  process.exit(0);
+  printJson(output);
+  await exitAfterFlush(0);
 }
 
 if (output.length === 0) {

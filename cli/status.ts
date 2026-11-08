@@ -15,7 +15,7 @@ import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
-import { formatErrorMessage } from './shared.ts';
+import { exitAfterFlush, formatErrorMessage, printJson } from './shared.ts';
 import { USAGE } from './usage.ts';
 
 const json = boolFlag('json');
@@ -60,26 +60,26 @@ if (!watch && !once) {
       process.exit(1);
     }
     if (json) {
-      console.log(JSON.stringify(agentStatus, null, 2));
+      printJson(agentStatus);
       printValidationWarnings(warnings);
     } else {
-      console.log(renderBanner());
+      if (process.stdout.isTTY) console.log(renderBanner());
       console.log(colorFormatAgentStatus(agentStatus, agentId as string));
       printValidationWarnings(warnings);
     }
-    process.exit(0);
+    await exitAfterFlush(0);
   }
 
   const status = buildStatus(STATE_DIR, { events });
   if (json) {
-    console.log(JSON.stringify(status, null, 2));
+    printJson(status);
     printValidationWarnings(warnings);
   } else {
-    console.log(renderBanner());
+    if (process.stdout.isTTY) console.log(renderBanner());
     console.log(colorFormatStatus(status));
     printValidationWarnings(warnings);
   }
-  process.exit(0);
+  await exitAfterFlush(0);
 }
 
 // ── Watch path ────────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ function render(): boolean {
   }
   try {
     process.stdout.write('\x1b[2J\x1b[H');
-    console.log(renderBanner());
+    if (process.stdout.isTTY) console.log(renderBanner());
     if (mine) {
       const agentStatus = buildAgentStatus(STATE_DIR, agentId as string);
       if (!agentStatus.agent) {

@@ -7,7 +7,7 @@ import { readEvents } from '../lib/eventLog.ts';
 import { EVENTS_FILE } from '../lib/paths.ts';
 import { boolFlag, flag, intFlag } from '../lib/args.ts';
 import { isRunEvent, isTaskEvent, isAgentEvent } from '../types/events.ts';
-import { cliError } from './shared.ts';
+import { cliError, exitAfterFlush, printJson } from './shared.ts';
 
 const asJson = boolFlag('json');
 const n = intFlag('n', 40);
@@ -27,8 +27,8 @@ if (eventName) {
 const tail = events.slice(-Math.max(1, n));
 
 if (asJson) {
-  console.log(JSON.stringify({ total: tail.length, events: tail }, null, 2));
-  process.exit(0);
+  printJson({ total: tail.length, events: tail });
+  await exitAfterFlush(0);
 }
 
 if (tail.length === 0) {
