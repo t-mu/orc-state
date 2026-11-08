@@ -19,6 +19,7 @@ export type {
 export type { DurableCommand } from './lib/commandDelivery.ts';
 export type { SemanticMessage, SendMessageInput } from './lib/messageRouter.ts';
 export type { ControlSnapshot } from './lib/statusProjection.ts';
+export type { StatusView } from './lib/statusView.ts';
 export type { TerminalRecord } from './lib/terminalBroker.ts';
 export type { LifecycleRequest, LifecycleResult } from './lib/workerLifecycle.ts';
 export type { OperatorOp, OperatorRequest } from './lib/operatorMutations.ts';

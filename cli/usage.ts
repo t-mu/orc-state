@@ -6,7 +6,7 @@
  */
 export const USAGE: Record<string, string> = {
   'start-session':     'orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>]',
-  'status':            'orc status [--json] [--mine --agent-id=<id>] [--watch|-w [--interval-ms=<ms>] [--once]]',
+  'status':            'orc status [--json [--events=<0-200>]] [--mine --agent-id=<id>] [--watch|-w [--interval-ms=<ms>] [--once]]',
   'watch':             'orc watch [--interval-ms=<ms>] [--once]',
   'attach':            'orc attach <agent_id|run_id> [--write]',
   'task-mark-done':    'orc task-mark-done <task_ref> [--actor-id=<id>]',

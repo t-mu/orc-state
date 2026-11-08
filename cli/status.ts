@@ -2,6 +2,7 @@
 /**
  * cli/status.ts
  * Usage: node cli/status.ts [--json] [--mine --agent-id=<id>]
+ *                           [--events=<0-200>]  (recentEvents in --json; default 20)
  *                           [--watch [-w] [--interval-ms=5000] [--once]]
  *
  * --watch / -w  Live-refresh mode: clears screen and re-renders on interval.
@@ -9,7 +10,7 @@
  * --interval-ms Polling interval in ms (default 5000). Only relevant with --watch.
  */
 import { boolFlag, flag, intFlag } from '../lib/args.ts';
-import { buildAgentStatus, buildStatus } from '../lib/statusView.ts';
+import { buildAgentStatus, buildStatus, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS } from '../lib/statusView.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
@@ -23,6 +24,13 @@ const agentId = flag('agent-id');
 const watch = boolFlag('watch') || process.argv.includes('-w');
 const once = boolFlag('once');
 const intervalMs = intFlag('interval-ms', 5000);
+
+const eventsRaw = flag('events');
+const events = eventsRaw == null ? DEFAULT_STATUS_EVENTS : Number(eventsRaw);
+if (eventsRaw != null && (!/^\d+$/.test(eventsRaw) || events > MAX_STATUS_EVENTS)) {
+  console.error(`--events must be an integer from 0 to ${MAX_STATUS_EVENTS}\nUsage: ${USAGE['status']}`);
+  process.exit(1);
+}
 
 if (mine && !agentId) {
   console.error(`--mine requires --agent-id\nUsage: ${USAGE['status']}`);
@@ -62,7 +70,7 @@ if (!watch && !once) {
     process.exit(0);
   }
 
-  const status = buildStatus(STATE_DIR);
+  const status = buildStatus(STATE_DIR, { events });
   if (json) {
     console.log(JSON.stringify(status, null, 2));
     printValidationWarnings(warnings);

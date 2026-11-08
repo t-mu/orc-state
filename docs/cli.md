@@ -47,7 +47,7 @@ orc start-session --provider=claude
 
 | Command | Flags | Notes |
 |---------|-------|-------|
-| `status` | `[--json]` `[--mine --agent-id=<id>]` `[--watch\|-w [--interval-ms=<ms>] [--once]]` | Agents, tasks, claims, capacity. |
+| `status` | `[--json [--events=<0-200>]]` `[--mine --agent-id=<id>]` `[--watch\|-w [--interval-ms=<ms>] [--once]]` | Agents, tasks, claims, capacity. |
 | `watch` | `[--interval-ms=<ms>]` `[--once]` | Live TUI; plain refresh without a TTY. |
 | `doctor` | `[--json]` `[--stale-progress-ms=<ms>]` `[--stale-start-ms=<ms>]` | Full health check: state files, provider binaries, stale workers, orphaned claims, invariants, sandbox deps, memory store, `events.db` schema (`checks.runtimeSchema`). Stale thresholds default to 20 min / 5 min. |
 | `preflight` | `[--json]` | Fast environment check before `start-session`. |

@@ -8,6 +8,7 @@ import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixt
 import { appendSequencedEvent, closeAllDatabases, initEventsDb, readEventBatch, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
 import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
+import { buildStatus } from './statusView.ts';
 import { ControlClient, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, PROTOCOL_HEADER, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
@@ -529,6 +530,7 @@ describe('local daemon control API', () => {
     const worker = new ControlClient(dir, { credential: 'session-a' });
     const forbidden = { code: 'forbidden', status: 403 };
     await expect(worker.snapshot()).rejects.toMatchObject(forbidden);
+    await expect(worker.status()).rejects.toMatchObject(forbidden);
     await expect(worker.events(0)).rejects.toMatchObject(forbidden);
     await expect(take(worker.subscribe(0), 1)).rejects.toMatchObject(forbidden);
     await expect(worker.openTerminal('shell', 'run-a')).rejects.toMatchObject(forbidden);
@@ -542,6 +544,26 @@ describe('local daemon control API', () => {
     expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/sessions')).status).toBe(401);
     await expect(new ControlClient(dir, { credential: 'session-master' }).snapshot()).resolves.toMatchObject({ runs: expect.any(Array) });
     await expect(new ControlClient(dir).events(0)).resolves.toMatchObject({ events: expect.any(Array) });
+  });
+
+  it('serves the status view over GET /v1/status with a cursor and a bounded recent-event count', async () => {
+    heartbeats(30);
+    const master = new ControlClient(dir, { credential: 'session-master' });
+    const status = await master.status();
+    expect(status.recentEvents).toHaveLength(20);
+    expect(status.cursor).toBe((await master.snapshot()).cursor);
+    expect(status.claims.active.map((run) => run.run_id).sort()).toEqual(['run-a', 'run-b']);
+    expect((await master.status({ events: 0 })).recentEvents).toEqual([]);
+    expect((await master.status({ events: 5 })).recentEvents).toHaveLength(5);
+    await expect(master.status({ events: 201 })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    await expect(master.status({ events: -1 })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    // `orc status --json` prints buildStatus(): the API returns an equal object apart from the cursor and the live events.
+    const { cursor: _a, recentEvents: _b, ...apiRest } = (await master.status()) as unknown as Record<string, unknown>;
+    const { cursor: _c, recentEvents: _d, ...localRest } = JSON.parse(JSON.stringify(buildStatus(dir))) as Record<string, unknown>;
+    expect(apiRest).toEqual(localRest);
+    const refused = await cli('cli/status.ts', '--json', '--events=201');
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain('--events must be an integer from 0 to 200');
   });
 
   it('resumes after the snapshot cursor across a disconnect and a daemon restart without gaps', async () => {

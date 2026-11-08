@@ -6,47 +6,12 @@
  * Show all claims currently awaiting input, with the question text.
  */
 import { STATE_DIR } from '../lib/paths.ts';
-import { queryEvents } from '../lib/eventLog.ts';
 import { readClaims } from '../lib/stateReader.ts';
+import { listWaitingInput } from '../lib/waitingInput.ts';
 import { boolFlag } from '../lib/args.ts';
 
 const asJson = boolFlag('json');
-const now = Date.now();
-
-const claimsState = readClaims(STATE_DIR);
-const waiting = claimsState.claims.filter((c) => c.input_state === 'awaiting_input');
-
-// Build map of run_id -> most recent input_requested event
-const questionMap = new Map<string, { question: string | null; ts: string | null }>();
-
-try {
-  const inputEvents = queryEvents(STATE_DIR, { event_type: 'input_requested' });
-  for (const ev of inputEvents) {
-    const e = ev as unknown as Record<string, unknown>;
-    if (typeof e.run_id === 'string') {
-      const payload = e.payload as Record<string, unknown> | undefined;
-      questionMap.set(e.run_id, {
-        question: typeof payload?.question === 'string' ? payload.question : null,
-        ts: typeof e.ts === 'string' ? e.ts : null,
-      });
-    }
-  }
-} catch {
-  // ignore event read errors — claims data is still usable
-}
-
-const rows = waiting.map((c) => {
-  const info = questionMap.get(c.run_id) ?? { question: null, ts: null };
-  const waitingSec = info.ts ? Math.round((now - new Date(info.ts).getTime()) / 1000) : null;
-  return {
-    run_id: c.run_id,
-    agent_id: c.agent_id,
-    task_ref: c.task_ref,
-    question: info.question,
-    waiting_seconds: waitingSec,
-    input_requested_at: info.ts,
-  };
-});
+const rows = listWaitingInput(STATE_DIR, readClaims(STATE_DIR).claims);
 
 if (asJson) {
   console.log(JSON.stringify(rows, null, 2));
