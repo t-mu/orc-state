@@ -65,6 +65,20 @@ orc attach <agent-id>      # worker's tmux terminal, read-only (--write for inpu
 orc doctor                 # health check
 ```
 
+## Upgrading from 0.3
+
+1.0 cannot migrate 0.3 state. Start the project again:
+
+| Step | Command |
+|---|---|
+| Register the repository | `orc project add <repo-path>` |
+| Pick providers | `orc init` |
+| Re-create open tasks | `orc project task create ...` or `orc project task import <spec.md>` |
+| Verify | `orc doctor` |
+
+- 0.3 kept state in `.orc-state/` inside the repository. 1.0 does not read it, and you can delete it. `orc doctor` warns while it is still there.
+- 0.3 run history, claims and events are not carried over.
+
 ## Next
 
 - [Configuration](configuration.md)

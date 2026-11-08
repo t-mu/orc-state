@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-11-08
+
+### Breaking
+
+- No upgrade path from 0.3: register the repository again and re-create tasks ([Upgrading from 0.3](docs/getting-started.md#upgrading-from-03)).
+- State has moved out of the repository: `.orc-state/`, `backlog/` and `plans/` are no longer read.
+- tmux 3.2+ is required. Platforms: macOS and Linux. Windows needs WSL.
+- Package exports are now only the root and `./schemas/*`; the `./adapters` and `./coordinator` subpaths are gone.
+- The root API now exports `ControlClient` and the control protocol types; `validateBacklog`, `validateClaims` and `validateStateDir` are removed.
+- Removed commands: see Removed.
+
+### Added
+
+- **Project registry**: `orc project add|list|select|show` registers repositories; `orc project config` holds settings globally or per project.
+- **Repo-external SQLite state**: tasks, runs, sessions and events live in SQLite under the data home, so nothing is written into the repository.
+- **Task store**: `orc project task create|edit|import|export` and `orc project plan import|export`. Each run pins the revision of its task spec.
+- **Local control API**: a versioned daemon API (protocol v1) on a local socket. Every session authenticates with its own secret, and worker, master and operator writes all go through the coordinator.
+- **Session resume**: a worker that crashes is resumed in place, up to twice per run, instead of the run being requeued (`sessions.resume`).
+- **Master detach/reattach**: the master runs in orc's tmux server. `Ctrl-b d` detaches, `orc start-session` reattaches, and a dead Claude master resumes its conversation.
+- **Terminal streams**: `orc terminal provider|shell <run_id>` streams a run's terminal live, with an exclusive `--write` input lease. A shell in the worktree persists across detaches.
+- `orc attach` opens a real tmux client, read-only by default; pass `--write` to type.
+- Recovery and inspection: `orc run-close` (for manually merged runs), `orc task-cancel`, `orc sessions`, `orc worker-gc`.
+- Run health: the coordinator infers run phases, escalates runs that are alive but not progressing, and blocks a worker from stopping while its run is unfinished.
+- Codex structured worker runtime: `codex app-server`, which runs as `app:` sessions.
+- CI runs on Ubuntu and macOS.
+
+### Changed
+
+- `orc init` records provider settings in the registry and writes nothing into the repository.
+- MCP write tools require the master session.
+- `orc status` lists scouts by id and state instead of reporting a scout capacity pool.
+- Every command prints its usage from one source.
+
+### Removed
+
+- The node-pty session transport: workers and the master run only in tmux, or as structured `app:` sessions.
+- Markdown backlog and plan verbs (`/plan`, `/spec`) and the backlog commands: `backlog-sync`, `backlog-sync-check`, `backlog-ready`, `backlog-blocked`, `backlog-orient`.
+- `task-create` and `feature-create`: use `orc project task create`.
+- Persistent workers and capability routing: `register-worker`, `start-worker-session`, `control-worker`, `deregister` and `worker-clearall` are gone. Use `worker-remove` and `worker-gc`.
+- The sibling layout, the legacy JSON layout and the 0.x migration.
+
 ## [0.3.0] - 2026-04-18
 
 ### Added

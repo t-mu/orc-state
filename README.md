@@ -11,9 +11,18 @@ A provider-agnostic orchestration runtime for autonomous coding agents: it dispa
 - **Parallel**: each worker runs in its own git worktree.
 - **Terminal-native**: live dashboard and full CLI control.
 
-## Quick start
+## Requirements
 
-Requires Node.js 24+, tmux 3.2+ and a provider CLI ([Claude](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex) or [Gemini](https://github.com/google/gemini-cli)).
+| Requirement | Version |
+|---|---|
+| Node.js | 24+ |
+| tmux | 3.2+ |
+| Git | any recent |
+| Provider CLI | [Claude](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex) or [Gemini](https://github.com/google/gemini-cli), authenticated |
+
+Platforms: macOS and Linux. Windows via WSL only.
+
+## Quick start
 
 ```bash
 npm install -g orc-state
@@ -24,7 +33,11 @@ orc install --global --provider=claude   # optional: skills and agents
 orc start-session                   # coordinator + master session
 ```
 
-Details: [Getting started](./docs/getting-started.md).
+- Detach from the master with `Ctrl-b d` or by closing the terminal; it keeps running.
+- Run `orc start-session` again to reattach to the same master.
+- `orc kill-all` stops the coordinator and the master.
+
+Details: [Getting started](./docs/getting-started.md). Upgrading from 0.3: [clean break](./docs/getting-started.md#upgrading-from-03).
 
 ## How it works
 
