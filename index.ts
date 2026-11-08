@@ -3,6 +3,7 @@
  *
  *   ControlClient, ControlError, CONTROL_PROTOCOL_VERSION — local control API client (protocol v1)
  *   createAdapter, assertAdapterContract  — provider adapter factory + contract check
+ *   listProjects                          — registered projects with control socket + coordinator liveness
  *   validateAgents                        — agents.json validator (an authoritative file)
  *   validateEventObject                   — event schema validator
  *   getWorkerBootstrap/getMasterBootstrap — package bootstrap helpers
@@ -29,6 +30,8 @@ export type { TaskImportResult, TaskMarkdownSource } from './lib/taskMarkdown.ts
 export type { ReviewSubmittedEvent } from './types/events.ts';
 
 export { createAdapter, assertAdapterContract } from './adapters/index.ts';
+export { listProjects } from './lib/projectList.ts';
+export type { ProjectListEntry } from './lib/projectList.ts';
 export { validateAgents } from './lib/stateValidation.ts';
 export { validateEventObject } from './lib/eventValidation.ts';
 export { getWorkerBootstrap, getMasterBootstrap } from './lib/sessionBootstrap.ts';

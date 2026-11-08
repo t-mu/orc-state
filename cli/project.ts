@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProjectRegistry } from '../lib/projectRegistry.ts';
+import { describeProjects } from '../lib/projectList.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { createProjectTask, describeProjectTask, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
 import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, importTaskMarkdownSources, readTaskMarkdownSources } from '../lib/taskMarkdown.ts';
@@ -100,8 +101,8 @@ export function runProjectCommand(args: string[], registry: ProjectRegistry, env
     return project;
   }
   if (action === 'list') {
-    if (values.length || rest.length) usage();
-    return registry.list();
+    if (values.length || rest.some((arg) => arg !== '--json')) usage();
+    return rest.includes('--json') ? describeProjects(registry) : registry.list();
   }
   if (action === 'select') {
     if (values.length !== 1 || rest.length !== 1) usage();

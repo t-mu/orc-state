@@ -11,6 +11,7 @@ describe('public API contract (index.ts)', () => {
       'createAdapter',
       'getMasterBootstrap',
       'getWorkerBootstrap',
+      'listProjects',
       'validateAgents',
       'validateEventObject',
     ]);
@@ -24,6 +25,7 @@ describe('public API contract (index.ts)', () => {
     expect(typeof orchestratorApi.assertAdapterContract).toBe('function');
     expect(typeof orchestratorApi.getWorkerBootstrap).toBe('function');
     expect(typeof orchestratorApi.getMasterBootstrap).toBe('function');
+    expect(typeof orchestratorApi.listProjects).toBe('function');
     expect(typeof orchestratorApi.validateAgents).toBe('function');
     expect(typeof orchestratorApi.validateEventObject).toBe('function');
   });
