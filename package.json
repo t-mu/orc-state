@@ -1,7 +1,7 @@
 {
   "name": "orc-state",
-  "version": "0.3.0",
-  "description": "Spawn, claim and fall in line. Agnostic cross-provider compatible agentic framework backed by nothing but files and empty promises.",
+  "version": "1.0.0",
+  "description": "Provider-agnostic orchestration runtime for coding agents (Claude, Codex, Gemini): dispatches tasks to workers in isolated git worktrees, with SQLite-backed state kept outside the repository.",
   "type": "module",
   "license": "MIT",
   "repository": {
