@@ -27,14 +27,13 @@ function controlSocket(stateDir: string): string | null {
 /** The registry's projects as list entries; a missing or unreadable state directory is not an error. */
 export function describeProjects(registry: ProjectRegistry): ProjectListEntry[] {
   return registry.list().map((project) => {
-    const socket = controlSocket(project.stateDir);
     return {
       id: project.id,
       name: project.name,
       target_repo_root: project.canonicalGitRoot,
       state_dir: project.stateDir,
-      control_socket: socket,
-      coordinator_running: socket !== null && findLiveCoordinator(project.stateDir) !== null,
+      control_socket: controlSocket(project.stateDir),
+      coordinator_running: findLiveCoordinator(project.stateDir) !== null,
     };
   });
 }

@@ -1,8 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readProcessStart } from './processIdentity.ts';
 import { runProjectCommand } from '../cli/project.ts';
 import { listProjects } from './projectList.ts';
 import { ProjectRegistry } from './projectRegistry.ts';
@@ -55,6 +56,21 @@ describe('listProjects', () => {
     const project = registry.add(gitRepo('broken'));
     writeFileSync(join(project.stateDir, 'control.json'), '{not json');
     expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })[0]).toMatchObject({ control_socket: null, coordinator_running: false });
+  });
+
+  it('reports a live coordinator found by its pid lock even without a control.json', async () => {
+    const project = registry.add(gitRepo('live'));
+    const script = join(temp, 'coordinator.js');
+    writeFileSync(script, 'setInterval(() => {}, 1000);\n');
+    const coordinator = spawn(process.execPath, [script], { stdio: 'ignore' });
+    try {
+      await new Promise<void>((resolve, reject) => { coordinator.once('spawn', resolve); coordinator.once('error', reject); });
+      const pid = coordinator.pid!;
+      writeFileSync(join(project.stateDir, 'coordinator.pid'), JSON.stringify({ pid, started_at: 'x', process_start: readProcessStart(pid) }));
+      expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })[0]).toMatchObject({ control_socket: null, coordinator_running: true });
+    } finally {
+      coordinator.kill();
+    }
   });
 
   it('is what `orc project list --json` prints, while plain list keeps the registry records', () => {
