@@ -8,6 +8,7 @@ import {
   type AckState, type ControlEndpoint, type ControlResponse, type SessionTerminalView, type StreamFrame, type SubmitCommandRequest,
   type TerminalFrame,
 } from './controlProtocol.ts';
+import type { ControlHealth } from './controlServer.ts';
 import type { DurableCommand } from './commandDelivery.ts';
 import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
@@ -118,6 +119,9 @@ export class ControlClient {
       req.end(text);
     });
   }
+
+  /** What the running coordinator has loaded (`GET /v1/health`); any authenticated caller may ask. */
+  health(): Promise<ControlHealth> { return this.call('GET', '/v1/health'); }
 
   snapshot(): Promise<ControlSnapshot> { return this.call('GET', '/v1/snapshot'); }
 

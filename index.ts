@@ -10,6 +10,7 @@
  * The root and `./schemas/*` are the only package exports; every other module is internal.
  */
 export { ControlClient } from './lib/controlClient.ts';
+export type { ControlHealth } from './lib/controlServer.ts';
 export type { ControlClientOptions, EventRow, OperatorResult, OperatorResults } from './lib/controlClient.ts';
 export { CONTROL_PROTOCOL_VERSION, ControlError } from './lib/controlProtocol.ts';
 export type {
