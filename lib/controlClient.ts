@@ -11,6 +11,7 @@ import {
 import type { DurableCommand } from './commandDelivery.ts';
 import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
+import type { StatusView } from './statusView.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
 import type { OperatorOp, OperatorRequest, OperatorResult } from './operatorMutations.ts';
@@ -119,6 +120,11 @@ export class ControlClient {
   }
 
   snapshot(): Promise<ControlSnapshot> { return this.call('GET', '/v1/snapshot'); }
+
+  /** The `orc status --json` view; `events` (0-200, default 20) sets how many recent events it carries. */
+  status({ events }: { events?: number } = {}): Promise<StatusView> {
+    return this.call('GET', `/v1/status${events === undefined ? '' : `?events=${events}`}`);
+  }
 
   messages(includeConsumed = false): Promise<{ messages: SemanticMessage[] }> {
     return this.call('GET', `/v1/messages${includeConsumed ? '?include_consumed=1' : ''}`);

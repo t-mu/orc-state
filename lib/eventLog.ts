@@ -50,6 +50,7 @@ function getDb(stateDir: string): Database.Database {
     CREATE INDEX IF NOT EXISTS events_run_seq_idx ON events(run_id, seq);
     CREATE INDEX IF NOT EXISTS events_run_event_ts_idx ON events(run_id, event, ts DESC, seq DESC)
       WHERE json_valid(payload) AND COALESCE(json_extract(payload, '$.actor_type'), '') NOT IN ('coordinator', 'human');
+    CREATE INDEX IF NOT EXISTS events_session_started_idx ON events(seq) WHERE event = 'session_started';
     DROP INDEX IF EXISTS events_run_phase_ts_idx;
     CREATE INDEX IF NOT EXISTS events_run_phase_seq_idx ON events(run_id, seq DESC)
       WHERE event = 'phase_started' AND json_valid(payload);
@@ -420,6 +421,50 @@ export function readEventsForRuns(logPath: string, runIds: string[]): OrcEvent[]
     }
   }
   return events;
+}
+
+export interface StatusEventWindow {
+  /** Highest event seq in the database when the window was read (0 when empty). */
+  cursor: number;
+  /** Events from the latest `session_started` on (the whole log when there is none), validated. */
+  sessionEvents: OrcEvent[];
+  /** Events of the given runs that precede the session boundary, validated. */
+  runEvents: OrcEvent[];
+  /** The last `recentLimit` events, newest last. */
+  recentEvents: OrcEvent[];
+}
+
+/**
+ * Read what the status view needs in one read transaction: the latest session
+ * boundary via the partial index, events from that seq, the earlier history of
+ * `runIds`, and the newest `recentLimit` events. Independent of total log size once a `session_started` exists; before that
+ * the session window is the whole log.
+ */
+export function readStatusEvents(stateDir: string, runIds: string[], recentLimit: number): StatusEventWindow {
+  if (!Number.isInteger(recentLimit) || recentLimit < 0) throw new Error('recentLimit must be a non-negative integer');
+  const db = getDb(stateDir);
+  return db.transaction((): StatusEventWindow => {
+    const { cursor } = db.prepare('SELECT COALESCE(MAX(seq), 0) AS cursor FROM events').get() as { cursor: number };
+    const { boundary } = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS boundary FROM events WHERE event = 'session_started'`)
+      .get() as { boundary: number };
+    const parse = (rows: Array<{ payload: string }>, validate: boolean): OrcEvent[] => {
+      const events: OrcEvent[] = [];
+      rows.forEach((row, i) => {
+        const event = parseEventRow(row, i, { validate });
+        if (event) events.push(event);
+      });
+      return events;
+    };
+    const sessionEvents = parse(
+      db.prepare('SELECT payload FROM events WHERE seq >= ? ORDER BY seq').all(boundary) as Array<{ payload: string }>, true);
+    const selectRun = db.prepare('SELECT payload FROM events WHERE run_id = ? AND seq < ? ORDER BY seq');
+    const runEvents = boundary > 0
+      ? [...new Set(runIds)].flatMap((id) => parse(selectRun.all(id, boundary) as Array<{ payload: string }>, true))
+      : [];
+    const recentRows = recentLimit === 0 ? [] : db.prepare('SELECT payload FROM events ORDER BY seq DESC LIMIT ?')
+      .all(Math.min(recentLimit, 200)) as Array<{ payload: string }>;
+    return { cursor, sessionEvents, runEvents, recentEvents: parse(recentRows.reverse(), false) };
+  })();
 }
 
 /**

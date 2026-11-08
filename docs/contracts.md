@@ -233,6 +233,7 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 
 | Method | Path | Caller | Result |
 |--------|------|--------|--------|
+| `GET` | `/v1/status?events=<0-200>` | master, operator | The `orc status --json` view (`StatusView`) with `cursor` (highest event seq it read, in one read transaction; continue with `/v1/events/stream?after=cursor`) and `waiting_input` (questions are read just after the event window, so one may be newer than `cursor`). `events` sets `recentEvents` length (default 20, `0` → `[]`); out of range → `400 bad_request`. Reads only events from the latest session boundary, those of active runs, and the recent ones |
 | `GET` | `/v1/snapshot` | master, operator | `{ project, cursor, generated_at, runs, sessions }` from one read transaction; runs carry `task_status`, `spec_revision` |
 | `GET` | `/v1/events?after=&limit=` | master, operator | `{ events: [{ seq, event }], cursor }`, `limit` 1-1000 |
 | `GET` | `/v1/events/stream?after=` | master, operator | NDJSON `{type:'event',seq,event}` / `{type:'heartbeat',cursor}` |
@@ -315,7 +316,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 
 | Export | Kind | Contract |
 |---|---|---|
-| `ControlClient` | class | Client for the control API (protocol v1), typed results per route; `streamTerminal` and `subscribe` yield NDJSON frames |
+| `ControlClient` | class | Client for the control API (protocol v1), typed results per route (`status({ events? })` returns `StatusView`); `streamTerminal` and `subscribe` yield NDJSON frames |
 | `ControlError` | class | `{ code: ControlErrorCode, status, message }` for every refused request |
 | `CONTROL_PROTOCOL_VERSION` | const | `1` |
 | `createAdapter`, `assertAdapterContract` | functions | Provider adapter factory + contract check |
@@ -324,7 +325,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | `getWorkerBootstrap`, `getMasterBootstrap` | functions | Package bootstrap templates |
 | `ControlClientOptions`, `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
 | `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
-| `ControlSnapshot`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
+| `ControlSnapshot`, `StatusView`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
 | `SubmitCommandRequest`, `AckState`, `DurableCommand`, `SemanticMessage`, `SendMessageInput` | types | **Experimental**, like the `/v1/commands…` and `/v1/messages…` routes they serve |
 
 ### Control API protocol v1
@@ -355,7 +356,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 
 | Command | Shape |
 |---|---|
-| `orc status --json` | `{ project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, recentEvents, eventReadError }` |
+| `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError }`; `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
 | `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
 | `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok` |
 | `orc preflight --json` | `{ ok, project, checks, warnings, details }`; exit 1 when not `ok` |

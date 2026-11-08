@@ -1,6 +1,7 @@
-import { join } from 'node:path';
 import { listCoordinatorAgents } from './agentRegistry.ts';
-import { readEvents, readRecentEvents } from './eventLog.ts';
+import { readStatusEvents } from './eventLog.ts';
+import { listWaitingInput, type WaitingInputRow } from './waitingInput.ts';
+import type { OrcEvent } from '../types/events.ts';
 import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap, runPhaseHistory } from './runActivity.ts';
 import type { RunPhaseEntry } from './runActivity.ts';
 import { loadWorkerPoolConfig, type OrcSettings } from './providers.ts';
@@ -93,17 +94,6 @@ interface FailureEntry {
   agent_id: string | null;
   reason: string;
   event?: string;
-}
-
-function latestSessionBoundarySeq(events: unknown[]): number {
-  let boundary = 0;
-  for (const ev of events) {
-    const event = ev as { event?: string; seq?: number } | null;
-    if (event?.event === 'session_started' && Number.isInteger(event.seq)) {
-      boundary = Math.max(boundary, event.seq as number);
-    }
-  }
-  return boundary;
 }
 
 function collectRecentFailures(events: unknown[]): { startup: FailureEntry[]; lifecycle: FailureEntry[] } {
@@ -236,12 +226,72 @@ export function buildScoutList(scoutAgents: Agent[]) {
   }));
 }
 
+export const DEFAULT_STATUS_EVENTS = 20;
+export const MIN_STATUS_EVENTS = 0;
+export const MAX_STATUS_EVENTS = 200;
+
+type ActiveClaimView = ReturnType<typeof buildActiveClaimMetrics>[number] & { current_activity: CurrentActivity | null };
+type FinalizationRun = {
+  run_id: string;
+  task_ref: string | null;
+  agent_id: string | null;
+  finalization_state: Claim['finalization_state'];
+  finalization_retry_count: number;
+  finalization_blocked_reason: string | null;
+  run_worktree_path: string | null;
+  run_branch: string | null;
+  idle_seconds: number | null;
+};
+
+/** What `buildStatus` returns: `orc status --json` and `GET /v1/status`. */
+export type StatusView = {
+  /** Highest event seq the view read; continue with `/v1/events/stream?after=cursor`. */
+  cursor: number;
+  project: { id: string; name: string; target_repo_root: string } | null;
+  agents: {
+    total: number; masters: number; workers: number; running: number; idle: number; offline: number;
+    list: Agent[];
+  };
+  master: {
+    agent_id: string; provider: string; model: string | null; status: string;
+    session_handle: string | null; last_heartbeat_at: string | null;
+  } | null;
+  worker_capacity: {
+    configured_slots: number; provider: string; model: string | null | undefined;
+    used_slots: number; available_slots: number; warming_slots: number; unavailable_slots: number;
+    slots: ReturnType<typeof buildSlotSummary>;
+    dispatch_ready_tasks: DispatchReadyTask[];
+    dispatch_ready_count: number;
+    waiting_for_capacity: number;
+  };
+  scouts: ReturnType<typeof buildScoutList>;
+  tasks: TaskCounts;
+  claims: {
+    active: ActiveClaimView[]; total: number; awaiting_run_started: number; in_progress: number; stalled: number;
+  };
+  finalization: {
+    total: number; awaiting_finalize: number; finalize_rebase_requested: number;
+    finalize_rebase_in_progress: number; ready_to_merge: number; blocked_finalize: number;
+    active: FinalizationRun[]; blocked_preserved: FinalizationRun[];
+  };
+  failures: { startup: FailureEntry[]; lifecycle: FailureEntry[] };
+  waiting_input: WaitingInputRow[];
+  recentEvents: OrcEvent[];
+  eventReadError: string;
+};
+
 /**
  * Build a structured status object from base state files + recent events.
  * All fields are plain data — formatting is the CLI's responsibility.
  * Worker pool settings come from the registry (`settings` injects them in tests).
  */
-export function buildStatus(stateDir: string, { settings }: { settings?: OrcSettings } = {}): Record<string, unknown> {
+export function buildStatus(
+  stateDir: string,
+  { settings, events = DEFAULT_STATUS_EVENTS }: { settings?: OrcSettings; events?: number } = {},
+): StatusView {
+  if (!Number.isInteger(events) || events < MIN_STATUS_EVENTS || events > MAX_STATUS_EVENTS) {
+    throw new RangeError(`events must be an integer from ${MIN_STATUS_EVENTS} to ${MAX_STATUS_EVENTS}`);
+  }
   const claimsFile = readJson(stateDir, 'claims.json') as { claims?: Claim[] };
   const backlogFile = readJson(stateDir, 'backlog.json') as Backlog;
   const workerPoolConfig = loadWorkerPoolConfig({ env: process.env, settings });
@@ -256,23 +306,21 @@ export function buildStatus(stateDir: string, { settings }: { settings?: OrcSett
   const awaitingRunStarted = activeClaims.filter((c) => c.state === 'claimed').length;
   const inProgressRuns = activeClaims.filter((c) => c.state === 'in_progress').length;
 
-  const eventsPath = join(stateDir, 'events.db');
-  let allEvents: unknown[] = [];
-  let recentEvents: unknown[] = [];
+  let cursor = 0;
+  let recentEvents: OrcEvent[] = [];
+  let sessionEvents: OrcEvent[] = [];
+  let allEvents: OrcEvent[] = [];
   let eventReadError = '';
   try {
-    allEvents = readEvents(eventsPath);
-    recentEvents = readRecentEvents(eventsPath, 20);
+    const window = readStatusEvents(stateDir, activeClaims.map((c) => c.run_id), events);
+    cursor = window.cursor;
+    recentEvents = window.recentEvents;
+    sessionEvents = window.sessionEvents;
+    // Run history from before the session boundary still feeds each active run's activity and phases.
+    allEvents = [...window.runEvents, ...window.sessionEvents];
   } catch (error) {
     eventReadError = (error as Error).message;
   }
-  const sessionBoundarySeq = latestSessionBoundarySeq(allEvents);
-  const sessionEvents = sessionBoundarySeq > 0
-    ? allEvents.filter((event) => {
-      const seq = (event as { seq?: number } | null)?.seq;
-      return Number.isInteger(seq) && (seq as number) >= sessionBoundarySeq;
-    })
-    : allEvents;
 
   const runActivity = latestRunActivityDetailMap(allEvents as Parameters<typeof latestRunActivityDetailMap>[0]);
   const nonHeartbeatRunActivity = latestRunActivityDetailMap(
@@ -323,6 +371,7 @@ export function buildStatus(stateDir: string, { settings }: { settings?: OrcSett
 
   const descriptor = readProjectDescriptor(stateDir);
   return {
+    cursor,
     // The project this state directory belongs to (null when it has no project descriptor).
     project: descriptor ? { id: descriptor.id, name: descriptor.name, target_repo_root: descriptor.target_repo_root } : null,
     agents: {
@@ -375,6 +424,7 @@ export function buildStatus(stateDir: string, { settings }: { settings?: OrcSett
       blocked_preserved: blockedFinalizationRuns,
     },
     failures: startupFailures,
+    waiting_input: listWaitingInput(stateDir, claims, nowMs),
     recentEvents,
     eventReadError,
   };

@@ -13,6 +13,7 @@ import {
 import { readEventBatch } from './eventLog.ts';
 import { readProcessStart } from './processIdentity.ts';
 import { readControlSnapshot } from './statusProjection.ts';
+import { buildStatus, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS } from './statusView.ts';
 import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
 import { resolveControlPrincipal, requirePrincipal, requireProjectAuthor, requireProjectReader, type ControlPrincipal, type SessionPrincipal } from './controlPrincipal.ts';
@@ -272,6 +273,12 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (req.method === 'GET' && url.pathname === '/v1/snapshot') {
       projectReader(req);
       return ok(readControlSnapshot(stateDir));
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/status') {
+      projectReader(req);
+      const events = optionalIntParam(url, 'events') ?? DEFAULT_STATUS_EVENTS;
+      if (events > MAX_STATUS_EVENTS) throw new ControlError('bad_request', `events must be between 0 and ${MAX_STATUS_EVENTS}`, 400);
+      return ok(buildStatus(stateDir, { events }));
     }
     if (url.pathname === '/v1/messages') {
       const caller = messageSession(req);

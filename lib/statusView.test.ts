@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
 import { writeRunActivity } from './runActivityStore.ts';
+import * as eventLog from './eventLog.ts';
+import { listWaitingInput } from './waitingInput.ts';
 import type { Agent, Task, Claim } from '../types/index.ts';
 
 type StatusResult = {
@@ -731,6 +733,70 @@ describe('buildAgentStatus', () => {
         planning_state: 'ready_for_dispatch',
       },
     ]);
+  });
+});
+
+describe('buildStatus event window', () => {
+  const activeRun = (): Claim => ({
+    run_id: 'run-live', task_ref: 'orch/task-1', agent_id: 'orc-1', state: 'in_progress',
+    claimed_at: '2026-01-01T00:00:00Z', started_at: '2026-01-01T00:00:01Z',
+    lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+  } as Claim);
+  const sessions = (count: number) => Array.from({ length: count }, (_, n) => [
+    { event: 'run_failed', run_id: `run-old-${n}`, task_ref: 'orch/task-1', agent_id: 'orc-1', actor_type: 'agent', actor_id: 'orc-1', payload: { reason: `failure ${n}` } },
+    { event: 'session_started', payload: { session_id: `s${n}`, reset_tasks: 0, reset_claims: 0, reset_agents: 0 } },
+  ]).flat();
+
+  it('reads only events after the latest session boundary, plus earlier history of active runs', () => {
+    writeState({
+      agents: [{ agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:1' } as Agent],
+      claims: [activeRun()],
+      tasks: [{ ref: 'orch/task-1', title: 'Task 1', status: 'in_progress', owner: 'orc-1', planning_state: 'ready_for_dispatch' } as Task],
+    });
+    writeEvents([
+      { event: 'phase_started', run_id: 'run-live', task_ref: 'orch/task-1', agent_id: 'orc-1', actor_type: 'agent', actor_id: 'orc-1', payload: { phase: 'implement' } },
+      ...sessions(3),
+      { event: 'heartbeat', run_id: 'run-live', task_ref: 'orch/task-1', agent_id: 'orc-1', actor_type: 'agent', actor_id: 'orc-1', payload: {}, ts: '2026-01-01T00:05:00Z' },
+    ]);
+    const readEvents = vi.spyOn(eventLog, 'readEvents');
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult & { cursor: number };
+    expect(readEvents).not.toHaveBeenCalled();
+    readEvents.mockRestore();
+    expect(s.cursor).toBe(8);
+    // Failures before the latest boundary are out of scope; the run's pre-boundary phase still shows.
+    expect(s.failures.lifecycle).toEqual([]);
+    expect(s.claims.active[0]).toMatchObject({ current_phase: 'implement', last_activity_event: 'heartbeat' });
+  });
+
+  it('bounds recentEvents with the events option and rejects out-of-range counts', () => {
+    writeState();
+    writeEvents(Array.from({ length: 30 }, () => ({ event: 'heartbeat', agent_id: 'orc-1', payload: {} })));
+    const count = (events?: number) => (buildStatus(dir, { settings, ...(events === undefined ? {} : { events }) }) as unknown as StatusResult).recentEvents;
+    expect(count()).toHaveLength(20);
+    expect(count(20).map((e) => e.seq)).toEqual(count().map((e) => e.seq));
+    expect(count(0)).toEqual([]);
+    expect(count(200)).toHaveLength(30);
+    expect(() => count(201)).toThrow(RangeError);
+    expect(() => count(-1)).toThrow(RangeError);
+  });
+
+  it('lists awaiting_input runs with their latest question and shares the logic with waiting-input', () => {
+    writeState({
+      claims: [{
+        run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', state: 'in_progress',
+        claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        input_state: 'awaiting_input',
+      } as Claim],
+    });
+    writeEvents([
+      ...Array.from({ length: 60 }, (_, n) => ({ event: 'input_requested', run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', actor_id: 'agent-01', payload: { question: `q${n}` }, ts: new Date(Date.now() - 60_000 + n).toISOString() })),
+    ]);
+    const s = buildStatus(dir, { settings }) as unknown as { waiting_input: unknown[] };
+    expect(s.waiting_input).toEqual([expect.objectContaining({ run_id: 'run-q', agent_id: 'agent-01', task_ref: 'a/1', question: 'q59' })]);
+    const direct = listWaitingInput(dir, [{ run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', input_state: 'awaiting_input' } as Claim]);
+    expect(direct[0]).toMatchObject({ question: 'q59' });
+    expect(direct[0].waiting_seconds).toBeGreaterThanOrEqual(59);
+    expect(listWaitingInput(dir, [{ run_id: 'run-x', task_ref: 'a/2', agent_id: 'agent-01', input_state: 'none' } as unknown as Claim])).toEqual([]);
   });
 });
 
