@@ -96,6 +96,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
         'session_reconciled',
         'session_resumed',
         'session_resume_failed',
+        'master_retired',
   ]);
 
   if (eventName && taskEvents.has(eventName)) {
@@ -135,6 +136,12 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
   if (eventName === 'session_reconciled') {
     requirePayloadField(event, 'session_id', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
     requirePayloadField(event, 'state', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+  }
+
+  if (eventName === 'master_retired') {
+    requirePayloadField(event, 'probe', (v) => typeof v === 'object' && v !== null && typeof (v as { alive?: unknown }).alive === 'boolean',
+      'must be an object with a boolean alive', errors);
+    requirePayloadField(event, 'consecutive_failures', (v) => Number.isInteger(v) && (v as number) >= 0, 'must be a non-negative integer', errors);
   }
 
   if (eventName === 'session_resumed' || eventName === 'session_resume_failed') {

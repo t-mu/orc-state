@@ -204,24 +204,102 @@ export async function reconcileSessions(
   return results;
 }
 
+/** One liveness probe of the master's session, as recorded on `master_retired`. */
+export interface MasterProbe {
+  alive: boolean;
+  reason: string | null;
+  pid: number | null;
+}
+
+/** Failed probes in a row, one per coordinator tick, before a master is retired. */
+export const MASTER_RETIRE_FAILURES = 2;
+
 /**
- * The master runs detached in orc's tmux server, so its exit is noticed here,
- * each coordinator tick, rather than by an attached terminal: a master whose
- * session is gone goes offline and its session closes, so its credential
- * stops authenticating. Returns whether a master was retired.
+ * Consecutive failed probes of one master session, kept by the coordinator
+ * across ticks. A new session (handle, token or start time) starts at zero.
  */
-export async function retireDeadMaster(
+export interface MasterLivenessTracker {
+  key: string | null;
+  failures: number;
+}
+
+export function newMasterLivenessTracker(): MasterLivenessTracker {
+  return { key: null, failures: 0 };
+}
+
+function masterSessionKey(master: Agent): string {
+  return [master.session_handle, master.session_token, master.session_started_at].join('|');
+}
+
+/**
+ * Take the master offline and close its session, so its credential stops
+ * authenticating, and record why in a `master_retired` event. Every master
+ * retirement goes through here: the coordinator's liveness check and
+ * `orc start-session` when its attached master ends.
+ */
+export function retireMaster(
   stateDir: string,
-  agents: Agent[],
-  isAlive: (agent: Agent) => Promise<boolean>,
-): Promise<boolean> {
-  const master = agents.find((agent) => agent.role === 'master');
-  if (!master?.session_handle || master.status === 'offline') return false;
-  if (await isAlive(master)) return false;
+  master: Agent,
+  { probe, consecutiveFailures, actor }: { probe: MasterProbe; consecutiveFailures: number; actor: 'coordinator' | 'human' },
+): void {
   const now = new Date().toISOString();
   updateAgentRuntime(stateDir, master.agent_id, {
     status: 'offline', session_handle: null, provider_ref: null, last_status_change_at: now,
   });
   closeProviderSessionsForAgent(stateDir, master.agent_id, now);
+  appendSequencedEvent(stateDir, {
+    ts: now, event: 'master_retired', actor_type: actor, actor_id: actor, agent_id: master.agent_id,
+    payload: {
+      session_handle: master.session_handle ?? null,
+      session_id: master.session_token ?? null,
+      probe,
+      consecutive_failures: consecutiveFailures,
+    },
+  });
+}
+
+/**
+ * The master runs detached in orc's tmux server, so its exit is noticed here,
+ * each coordinator tick, rather than by an attached terminal: a master whose
+ * session is gone goes offline and its session closes, so its credential
+ * stops authenticating. One failed probe is not enough: the master is retired
+ * only after `minFailures` failed probes in a row, and a failure within
+ * `graceMs` of the session's start (the first tick after `orc start-session`)
+ * is not counted. Returns whether a master was retired.
+ */
+export async function retireDeadMaster(
+  stateDir: string,
+  agents: Agent[],
+  probe: (agent: Agent) => Promise<MasterProbe>,
+  {
+    tracker = newMasterLivenessTracker(),
+    graceMs = 0,
+    minFailures = MASTER_RETIRE_FAILURES,
+    nowMs = Date.now(),
+  }: { tracker?: MasterLivenessTracker; graceMs?: number; minFailures?: number; nowMs?: number } = {},
+): Promise<boolean> {
+  const master = agents.find((agent) => agent.role === 'master');
+  if (!master?.session_handle || master.status === 'offline') {
+    tracker.key = null;
+    tracker.failures = 0;
+    return false;
+  }
+  const key = masterSessionKey(master);
+  if (tracker.key !== key) {
+    tracker.key = key;
+    tracker.failures = 0;
+  }
+  const result = await probe(master);
+  if (result.alive) {
+    tracker.failures = 0;
+    return false;
+  }
+  const startedMs = master.session_started_at ? Date.parse(master.session_started_at) : Number.NaN;
+  if (Number.isFinite(startedMs) && nowMs - startedMs < graceMs) return false;
+  tracker.failures += 1;
+  if (tracker.failures < minFailures) return false;
+  retireMaster(stateDir, master, { probe: result, consecutiveFailures: tracker.failures, actor: 'coordinator' });
+  tracker.key = null;
+  tracker.failures = 0;
   return true;
 }

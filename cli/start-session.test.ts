@@ -155,12 +155,15 @@ const tmuxFake = {
   exitOnAttach: false,
   /** A `--resume` launch dies at once, as Claude does for a conversation it cannot find. */
   failResume: false,
+  /** The pane process a live session reports. */
+  pid: 12345,
   stop: vi.fn(),
   reset() {
     this.alive.clear();
     this.attaches = [];
     this.exitOnAttach = false;
     this.failResume = false;
+    this.pid = 12345;
     this.stop = vi.fn().mockImplementation((handle: string) => { this.alive.delete(handle.slice('tmux:'.length)); return Promise.resolve(); });
   },
   onAttach(args: string[], env: NodeJS.ProcessEnv | undefined) {
@@ -176,7 +179,9 @@ function mockTmux(spawnMock: ReturnType<typeof vi.fn>, { available = true } = {}
     checkTmux: vi.fn().mockReturnValue(available
       ? { ok: true, version: 'tmux 3.4', problem: null }
       : { ok: false, version: null, problem: 'tmux is not installed (orc needs tmux >= 3.2 on PATH, or ORC_TMUX_BIN)' }),
-    inspectTmuxSession: vi.fn().mockImplementation((name: string) => ({ alive: tmuxFake.alive.has(name) })),
+    inspectTmuxSession: vi.fn().mockImplementation((name: string) => (tmuxFake.alive.has(name)
+      ? { alive: true, pid: tmuxFake.pid, processStart: `proc:${tmuxFake.pid}` }
+      : { alive: false, pid: null, processStart: null, reason: 'tmux session not found' })),
     tmuxAttachCommand: vi.fn().mockImplementation((name: string) => ({ command: 'tmux', args: ['attach-session', '-t', `=${name}`] })),
     startTmuxSession: vi.fn().mockImplementation((agentId: string, launch: { binary: string; args: string[] }, provider: string) => {
       const proc = (spawnMock as unknown as (...args: unknown[]) => { pid: number })(launch.binary, launch.args, launch);
@@ -1097,6 +1102,73 @@ describe('cli/start-session.ts', () => {
       const master = readAgents().find((a: Record<string, unknown>) => a.agent_id === 'master');
       expect(master.status).toBe('offline');
       expect(master.session_handle).toBeNull();
+      // The retirement says why (general/master-liveness-race).
+      expect(queryEvents(dir, { event_type: 'master_retired' })).toMatchObject([{
+        agent_id: 'master', actor_type: 'human',
+        payload: { session_handle: 'tmux:master', probe: { alive: false, reason: 'tmux session not found', pid: null }, consecutive_failures: 2 },
+      }]);
+    });
+
+    it('restores a master marked offline while its tmux pane runs, so its secret authenticates again', async () => {
+      seedState([masterAgent({ status: 'offline', session_handle: null, provider_ref: null })]);
+      const { recordProviderSession, closeProviderSessionsForAgent } = await import('../lib/runStore.ts');
+      const { credentialHash } = await import('../lib/sessionCredentials.ts');
+      const providerRef = { pid: 4242, transport: 'tmux', process_start: 'proc:4242', tmux_session: 'master' };
+      recordProviderSession(dir, {
+        sessionId: 'session-live', runId: null, agentId: 'master', provider: 'claude', providerRef,
+        startedAt: '2026-01-01T00:00:00Z', transport: 'tmux', processPid: 4242, processStart: 'proc:4242',
+        credentialHash: credentialHash('live-secret'), providerConversationId: 'conv-live',
+      });
+      closeProviderSessionsForAgent(dir, 'master', '2026-01-01T00:00:08Z');
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      tmuxFake.alive.add('master');
+      tmuxFake.pid = 4242;
+      withTty();
+      mockBinaryCheck(true);
+      const exitSpy = mockProcessExit();
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:0');
+
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(spawnMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('claude'))).toBe(false);
+      expect(tmuxFake.attaches).toHaveLength(1);
+      expect(readAgents()[0]).toMatchObject({
+        status: 'running', session_handle: 'tmux:master', session_token: 'session-live', provider_ref: providerRef,
+      });
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      expect(listSupervisedSessions(dir).filter((row) => row.agent_id === 'master')).toMatchObject([{ session_id: 'session-live', state: 'running' }]);
+      // The live master's secret proves a running session again.
+      const { sessionForCredential } = await import('../lib/sessionCredentials.ts');
+      expect(sessionForCredential(dir, 'live-secret')).toMatchObject({ session_id: 'session-live', agent_id: 'master', state: 'running' });
+      expect(queryEvents(dir, { event_type: 'session_reconciled' })).toMatchObject([{
+        agent_id: 'master', payload: { session_id: 'session-live', state: 'running', previous_state: 'offline', outcome: 'restored' },
+      }]);
+    });
+
+    it('does not restore a closed master session that belongs to another process', async () => {
+      seedState([masterAgent({ status: 'offline', session_handle: null, provider_ref: null })]);
+      const { recordProviderSession, closeProviderSessionsForAgent } = await import('../lib/runStore.ts');
+      recordProviderSession(dir, {
+        sessionId: 'session-old', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
+        startedAt: '2026-01-01T00:00:00Z', transport: 'tmux', processPid: 1111, processStart: 'proc:1111',
+      });
+      closeProviderSessionsForAgent(dir, 'master', '2026-01-01T00:00:08Z');
+      const spawnMock = makeSpawnMock();
+      mockSpawn(spawnMock);
+      tmuxFake.alive.add('master');
+      tmuxFake.pid = 4242;
+      mockBinaryCheck(true);
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts'];
+      await import('./start-session.ts');
+
+      // No session to restore: start-session launches a master as it did before.
+      expect(spawnMock.mock.calls.some((c: unknown[]) => String(c[0]).endsWith('claude'))).toBe(true);
+      expect(queryEvents(dir, { event_type: 'session_reconciled' })).toHaveLength(0);
     });
 
     it('exits 1 when binary check fails', async () => {

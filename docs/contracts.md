@@ -179,7 +179,8 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `agent_marked_dead` | Coordinator | unclaimed worker past the dead TTL; record removed |
 | `agent_registered` | — | in schema, not emitted |
 | `session_started`, `session_start_failed` | Coordinator | provider session launch |
-| `session_reconciled` | Coordinator | restart reconciliation (`session_id`, `state`, `outcome`, `reason`) |
+| `session_reconciled` | Coordinator; `start-session` (master repair) | restart reconciliation (`session_id`, `state`, `outcome`, `reason`); `outcome: restored` when `start-session` reopens a live master's closed session |
+| `master_retired` | Coordinator; `start-session` (attached master ended) | master went offline and its session closed (`session_handle`, `session_id`, `probe: { alive, reason, pid }`, `consecutive_failures`) |
 | `session_resumed`, `session_resume_failed` | Coordinator; `start-session` (master resume) | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
 | `task_added`, `task_updated` | Master / operator / Coordinator | task created / changed |
 | `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task` |
@@ -294,6 +295,8 @@ Session identity (schema v8):
 | `offline` | exited, supervisor gone, or replaced |
 
 - Startup reconciles every non-offline session and records `session_reconciled` (`adopted`, `recoverable`, `unknown`, `exited`, `superseded`); it never kills one.
+- The master is probed each tick. It is retired (offline, handle cleared, session closed so its secret stops authenticating, `master_retired` with the failed probe) only after 2 failed probes in a row; a failure within one tick interval of its `session_started_at` is not counted. `orc start-session` retires an attached master that ended only after 2 failed probes too.
+- `orc start-session` repairs a master marked offline whose tmux pane still runs: it reopens the closed session whose pid/start match the live pane (`session_reconciled`, `outcome: restored`) and restores the agent record, so the master's secret authenticates again. No matching session: it starts a master as usual.
 - Every direct write to a session (envelope, nudge, PR review) requires `running` and a matching pid/start; a mismatch moves it to `unknown`.
 - Shutdown stops `app:` sessions and leaves tmux sessions for the next coordinator.
 - `orc sessions` lists them; recovery: [recovery.md](./recovery.md#recoverable-or-unknown-sessions).

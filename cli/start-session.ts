@@ -40,7 +40,7 @@ import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
 import { flag }                  from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
-import { closeProviderSessionsForAgent, recordProviderSession, recordSessionResumeFailed, resumeProviderSession } from '../lib/runStore.ts';
+import { recordProviderSession, recordSessionResumeFailed, reopenLiveSession, resumeProviderSession } from '../lib/runStore.ts';
 import { credentialHash, newSessionSecret } from '../lib/sessionCredentials.ts';
 import {
   promptProvider,
@@ -52,7 +52,7 @@ import {
 import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand } from '../adapters/tmux.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import { listSupervisedSessions } from '../lib/sessionSupervisor.ts';
+import { listSupervisedSessions, MASTER_RETIRE_FAILURES, retireMaster, type MasterProbe } from '../lib/sessionSupervisor.ts';
 import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
 import { findLiveCoordinator } from '../lib/coordinatorLiveness.ts';
@@ -239,6 +239,35 @@ function liveMasterTmuxName(agent: typeof master): string | null {
   return inspectTmuxSession(name).alive ? name : null;
 }
 
+/**
+ * A master retired while its pane still runs (task general/master-liveness-race):
+ * restore its agent record and reopen its session from the live pane, so its
+ * secret authenticates again. Only the session whose recorded process is the
+ * live pane's is reopened. Returns the session name, or null when there is
+ * nothing to repair.
+ */
+function repairRetiredMaster(agent: typeof master): string | null {
+  if (!agent || agent.session_handle) return null;
+  const name = agent.agent_id;
+  const inspection = inspectTmuxSession(name);
+  if (!inspection.alive || inspection.pid == null || inspection.processStart == null) return null;
+  const at = new Date().toISOString();
+  const reopened = reopenLiveSession(STATE_DIR, {
+    agentId: agent.agent_id, processPid: inspection.pid, processStart: inspection.processStart, at,
+    reason: 'orc start-session found the master marked offline while its tmux pane runs',
+  });
+  if (!reopened) return null;
+  updateAgentRuntime(STATE_DIR, agent.agent_id, {
+    status: 'running',
+    session_handle: `tmux:${name}`,
+    session_token: reopened.sessionId,
+    provider_ref: reopened.providerRef as typeof agent.provider_ref,
+    last_heartbeat_at: at,
+    last_status_change_at: at,
+  });
+  return name;
+}
+
 async function ensureCoordinatorRunning() {
   const { running, pid } = coordinatorStatus();
   if (running) {
@@ -269,31 +298,42 @@ function attachMaster(agent: NonNullable<typeof master>, sessionName: string) {
   const { command, args } = tmuxAttachCommand(sessionName, { write: true, providerRef: agent.provider_ref });
   const result = spawnSync(command, args, { stdio: 'inherit', env });
   if (result.error) console.error(`Could not run ${command}: ${result.error.message}`);
-  if (inspectTmuxSession(sessionName).alive) {
+  const exit = confirmMasterExit(sessionName);
+  if (!exit) {
     console.log('\nDetached. The master keeps running; run orc start-session to reattach.');
     return;
   }
-  markMasterOffline(agent.agent_id);
+  markMasterOffline(agent.agent_id, sessionName, exit);
   console.log('\nMaster session ended. Coordinator continues running in the background.');
 }
 
-function markMasterOffline(agentId: string) {
-  const now = new Date().toISOString();
+/** Wait between the probes that confirm the master's exit. */
+const MASTER_EXIT_PROBE_INTERVAL_MS = 500;
+
+/**
+ * Probe the master's pane until it answers alive (null) or fails
+ * MASTER_RETIRE_FAILURES times in a row: one failed probe never retires a master.
+ */
+function confirmMasterExit(sessionName: string): { probe: MasterProbe; failures: number } | null {
+  for (let failures = 1; ; failures += 1) {
+    const inspection = inspectTmuxSession(sessionName);
+    if (inspection.alive) return null;
+    if (failures >= MASTER_RETIRE_FAILURES) {
+      return { probe: { alive: false, reason: inspection.reason ?? 'session not alive', pid: inspection.pid }, failures };
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, MASTER_EXIT_PROBE_INTERVAL_MS);
+  }
+}
+
+function markMasterOffline(agentId: string, sessionName: string, exit: { probe: MasterProbe; failures: number }) {
   try {
-    updateAgentRuntime(STATE_DIR, agentId, {
-      status: 'offline',
-      session_handle: null,
-      provider_ref: null,
-      last_status_change_at: now,
-    });
+    const current = getAgent(STATE_DIR, agentId);
+    // Already retired (by the coordinator) or relaunched by another start-session: nothing to do.
+    if (!current || current.status === 'offline' || current.session_handle !== `tmux:${sessionName}`) return;
+    // An ended master's id must stop authenticating.
+    retireMaster(STATE_DIR, current, { probe: exit.probe, consecutiveFailures: exit.failures, actor: 'human' });
   } catch {
     // Agent may have been removed by orc kill-all; safe to ignore.
-  }
-  try {
-    // An ended master's id must stop authenticating.
-    closeProviderSessionsForAgent(STATE_DIR, agentId, now);
-  } catch {
-    // Best effort, as above.
   }
 }
 
@@ -309,7 +349,14 @@ async function survives(sessionName: string, ms: number): Promise<boolean> {
 
 // ── Reattach a live master ─────────────────────────────────────────────────
 
-const liveMasterSession = liveMasterTmuxName(master);
+let liveMasterSession = liveMasterTmuxName(master);
+if (!liveMasterSession) {
+  liveMasterSession = repairRetiredMaster(master);
+  if (liveMasterSession && master) {
+    console.log(`✓ Master '${master.agent_id}' was marked offline while running; restored its record and session`);
+    master = getAgent(STATE_DIR, master.agent_id);
+  }
+}
 if (master && liveMasterSession) {
   console.log(`✓ Master '${master.agent_id}' is already running`);
   await ensureCoordinatorRunning();
