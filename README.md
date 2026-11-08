@@ -35,7 +35,7 @@ orc start-session                   # coordinator + master session
 
 - Detach from the master with `Ctrl-b d` or by closing the terminal; it keeps running.
 - Run `orc start-session` again to reattach to the same master.
-- `orc kill-all` stops the coordinator and the master.
+- `orc kill-all` stops the coordinator and the master, resets active tasks and removes run worktrees.
 
 Details: [Getting started](./docs/getting-started.md). Upgrading from 0.3: [clean break](./docs/getting-started.md#upgrading-from-03).
 

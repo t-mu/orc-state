@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - tmux 3.2+ is required. Platforms: macOS and Linux. Windows needs WSL.
 - Package exports are now only the root and `./schemas/*`; the `./adapters` and `./coordinator` subpaths are gone.
 - The root API now exports `ControlClient` and the control protocol types; `validateBacklog`, `validateClaims` and `validateStateDir` are removed.
-- Removed commands: see Removed.
 
 ### Added
 

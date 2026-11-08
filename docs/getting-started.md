@@ -72,7 +72,7 @@ orc doctor                 # health check
 | Step | Command |
 |---|---|
 | Register the repository | `orc project add <repo-path>` |
-| Pick providers | `orc init` |
+| Pick providers (from the repository) | `cd <repo-path> && orc init` |
 | Re-create open tasks | `orc project task create ...` or `orc project task import <spec.md>` |
 | Verify | `orc doctor` |
 
