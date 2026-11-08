@@ -867,6 +867,49 @@ describe('worker session lifecycle', () => {
       expect(send.mock.calls[0][1]).toContain('TASK_START');
     });
 
+    function seedScout(overrides: Record<string, unknown> = {}) {
+      const startedAt = new Date().toISOString();
+      seedState(dir, {
+        agents: [{
+          agent_id: 'scout-1', provider: 'claude', role: 'scout', status: 'running',
+          session_handle: 'tmux:scout-1', session_token: 'scout-token-1', session_started_at: startedAt, session_ready_at: null,
+          provider_ref: null, registered_at: startedAt, ...overrides,
+        }],
+      });
+      mkdirSync(join(dir, 'pty-hook-events'), { recursive: true });
+      appendFileSync(join(dir, 'pty-hook-events', 'scout-1.ndjson'),
+        `${JSON.stringify({ type: 'session_start', session_id: 'conv-s', source: 'startup', orc_session_id: 'scout-token-1', ts: new Date().toISOString() })}\n`);
+    }
+
+    it('marks a scout (no claim) ready from its session-start hook', async () => {
+      seedScout();
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
+
+      await tickWith();
+
+      const ready = readEvents(dir).find((e) => e.event === 'reported_for_duty');
+      expect(ready).toMatchObject({ agent_id: 'scout-1' });
+      expect(ready!.payload).toMatchObject({ session_token: 'scout-token-1', source: 'hook' });
+      expect(readAgents(dir).find((a) => a.agent_id === 'scout-1')?.session_ready_at).toBeTruthy();
+      expect(existsSync(join(dir, 'pty-hook-events', 'scout-1.ndjson'))).toBe(false);
+    });
+
+    it('leaves an already ready scout alone', async () => {
+      seedScout({ session_ready_at: new Date(Date.now() + 1000).toISOString() });
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
+      await tickWith();
+      expect(readEvents(dir).some((e) => e.event === 'reported_for_duty')).toBe(false);
+      // An already ready scout's hook file is not drained.
+      expect(existsSync(join(dir, 'pty-hook-events', 'scout-1.ndjson'))).toBe(true);
+    });
+
+    it('does not mark an offline scout ready', async () => {
+      seedScout({ status: 'offline' });
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
+      await tickWith();
+      expect(readEvents(dir).some((e) => e.event === 'reported_for_duty')).toBe(false);
+    });
+
     it('requeues a Claude session whose hook never fires after the readiness timeout', async () => {
       seedAwaitingSession('claude', 200_000);
       const send = vi.fn().mockResolvedValue('');

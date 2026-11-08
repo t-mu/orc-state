@@ -122,6 +122,11 @@ describe('buildSessionBootstrap', () => {
       expect(rendered, role).not.toContain('{{');
     }
     expect(getWorkerBootstrap('claude')).not.toContain('report-for-duty');
+    const smoke = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token-123', { workerBootstrapProfile: 'smoke' });
+    expect(smoke).toContain('WORKER_BOOTSTRAP_SMOKE');
+    expect(smoke).not.toContain('report-for-duty');
+    expect(buildSessionBootstrap('bob', 'codex', 'worker', 'orc', 'token-123', { workerBootstrapProfile: 'smoke' }))
+      .toContain('orc report-for-duty --agent-id=bob --session-id=token-123');
   });
 
   it('tells a worker of a provider without a session-start hook to report for duty', () => {

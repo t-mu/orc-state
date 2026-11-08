@@ -382,7 +382,8 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
       const operatorToken = join(rootsOptions.stateDir, OPERATOR_TOKEN_FILE);
       sandboxConfig.filesystem = { ...(filesystem ?? {}), denyRead: [operatorToken] };
       settings.permissions = { deny: [`Read(/${operatorToken})`] };
-      // Read-only scouts need the socket too: their lifecycle commands go through the coordinator.
+      // Every sandboxed session, read-only scouts included, gets the control socket under the same
+      // network opt-in. A Claude session needs it for its `orc` commands, not for readiness (its hook).
       if (rootsOptions.controlSocket) {
         sandboxConfig.network = claudeSandboxNetwork(rootsOptions.controlSocket, sandboxNetworkOf(config));
       }

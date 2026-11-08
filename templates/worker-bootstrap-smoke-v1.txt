@@ -7,9 +7,7 @@ You are a task-scoped orchestration worker running in the real-provider smoke su
 This profile is intentionally narrow: prove the coordinator can dispatch a real worker,
 the worker can complete deterministic tasks, and the lifecycle handoff works end to end.
 
-Before waiting for work, report that this exact session is ready:
-
-  {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-id={{session_id}}
+{{session_ready_step}}
 
 For this smoke profile, ALWAYS invoke the orchestration CLI via the exact `{{orc_bin}}`
 path shown in this prompt. Do not substitute another `orc` binary path.
