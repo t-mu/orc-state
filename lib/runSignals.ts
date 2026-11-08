@@ -103,8 +103,8 @@ export function staleThresholds(
   return { soft: config.softMs, nudge: config.nudgeMs, finalizeRetry: config.finalizeRetryMs };
 }
 
-/** One run's drained hook events, as the coordinator hands them to `ingest`. */
-export interface RunHookEvents extends DispatchedHookEvents {
+/** One run's drained hook events, as the coordinator hands them to `ingest` (session starts are handled apart). */
+export interface RunHookEvents extends Omit<DispatchedHookEvents, 'sessionStart'> {
   agentId: string;
 }
 

@@ -76,7 +76,7 @@ describe('provider launch', () => {
     expect(resumeArgs).toEqual(expect.arrayContaining(['--settings', '--strict-mcp-config']));
   }, 20_000);
 
-  it('writes a settings file with Notification hook for claude provider', async () => {
+  it('writes a settings file with SessionStart and Notification hooks for claude provider', async () => {
     const { adapter } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', {});
 
@@ -86,6 +86,7 @@ describe('provider launch', () => {
     const events = join(dir, 'pty-hook-events', 'bob.ndjson');
     const cmd = (kind: string) => ({ type: 'command', command: expect.stringMatching(new RegExp(`orc-hook\\.ts" ${kind} ".*bob\\.ndjson"$`)) });
     expect(settings.hooks).toEqual({
+      SessionStart: [{ hooks: [cmd('session_start')] }],
       Notification: [{ hooks: [cmd('permission')] }],
       PostToolUse: [{ matcher: '*', hooks: [cmd('tool')] }],
       PostToolUseFailure: [{ matcher: '*', hooks: [cmd('tool')] }],
@@ -96,7 +97,7 @@ describe('provider launch', () => {
     expect(settings.hooks.Notification[0].hooks[0].command).toContain(JSON.stringify(events));
   });
 
-  it('the generated hook commands run and append permission/tool/activity records', async () => {
+  it('the generated hook commands run and append session_start/permission/tool/activity records', async () => {
     const { adapter } = await makeAdapter({ provider: 'claude' });
     await adapter.start('bob', {});
     const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'bob.json'), 'utf8'));
@@ -104,12 +105,14 @@ describe('provider launch', () => {
       const result = spawnSync('sh', ['-c', command], { input: JSON.stringify(payload), encoding: 'utf8' });
       expect(result.status).toBe(0);
     };
+    run(settings.hooks.SessionStart[0].hooks[0].command, { session_id: 'conv-1', source: 'startup' });
     run(settings.hooks.Notification[0].hooks[0].command, { notification_type: 'permission_prompt', message: 'Allow Bash?' });
     run(settings.hooks.PreToolUse[0].hooks[0].command, { tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: 'npm test' } });
     run(settings.hooks.PostToolUse[0].hooks[0].command, { tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: 'npm test' } });
     run(settings.hooks.PreToolUse[1].hooks[0].command, { tool_name: 'TodoWrite', tool_input: { todos: [{ content: 'X', status: 'in_progress', activeForm: 'Doing X' }] } });
     const records = readFileSync(join(dir, 'pty-hook-events', 'bob.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as unknown);
     expect(records).toEqual([
+      { type: 'session_start', session_id: 'conv-1', source: 'startup', ts: expect.any(String) },
       { type: 'permission', message: 'Allow Bash?', ts: expect.any(String) },
       { type: 'tool_start', tool: 'Bash', id: 'toolu_1', ts: expect.any(String) },
       { type: 'tool', tool: 'Bash', brief: 'npm test', id: 'toolu_1', ts: expect.any(String) },
@@ -125,12 +128,12 @@ describe('provider launch', () => {
     expect(settings.hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: "'/opt/it'\\''s/orc' stop-check", timeout: 15 }] }]);
   });
 
-  it('gives a read-only scout no tool hooks and no Stop hook', async () => {
+  it('gives a read-only scout its SessionStart hook but no tool hooks and no Stop hook', async () => {
     const { adapter } = await makeAdapter({ provider: 'claude' });
     await adapter.start('scout-1', { execution_mode: 'sandbox', read_only: true });
 
     const settings = JSON.parse(readFileSync(join(dir, 'pty-settings', 'scout-1.json'), 'utf8'));
-    expect(Object.keys(settings.hooks)).toEqual(['Notification']);
+    expect(Object.keys(settings.hooks)).toEqual(['SessionStart', 'Notification']);
   });
 
   it('launches the provider inside the requested working directory when provided', async () => {

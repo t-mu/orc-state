@@ -336,12 +336,13 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
   const cwd = resolveLaunchCwd(config);
   // For claude: write a settings file whose hooks push harness events to the
   // agent's hook-events NDJSON file (drained by the coordinator):
+  //   SessionStart            → `session_start` record: the session's readiness signal (lib/sessionStartReadiness.ts)
   //   Notification            → permission_prompt records (input-block detection)
   //   PostToolUse  `*`        → `tool` records with a short brief
   //   PostToolUseFailure `*`  → the same `tool` record for a failed call (closes its tool_start)
   //   PreToolUse   `*`        → `tool_start` records (a tool call in flight is not idleness)
   //   PreToolUse   to-do tools → `activity` records with the current to-do label
-  //   (the four tool hooks above: task workers only; a read-only scout gets just Notification)
+  //   (the four tool hooks above: task workers only; a read-only scout gets just SessionStart and Notification)
   //   Stop (task workers only) → `orc stop-check` asks the coordinator (not the events file)
   // In sandbox mode, merge in a sandbox config block alongside the hooks.
   let claudeSettingsFile: string | undefined;
@@ -352,7 +353,10 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
     try { unlinkSync(taskLabelsPath(eventsFile)); } catch { /* never created */ }
     const hook = (kind: string) => ({ type: 'command', command: claudeHookCommand(kind, eventsFile) });
     const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
-    const hooks: Record<string, unknown> = { Notification: [{ hooks: [hook('permission')] }] };
+    const hooks: Record<string, unknown> = {
+      SessionStart: [{ hooks: [hook('session_start')] }],
+      Notification: [{ hooks: [hook('permission')] }],
+    };
     // Task workers only (a scout ends after its report; the master is not launched here). Tool
     // hooks feed run activity, which the coordinator drains only for a claimed run, so a read-only
     // scout gets none. The Stop hook asks the coordinator whether the run lets the session end its
@@ -378,7 +382,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
       const operatorToken = join(rootsOptions.stateDir, OPERATOR_TOKEN_FILE);
       sandboxConfig.filesystem = { ...(filesystem ?? {}), denyRead: [operatorToken] };
       settings.permissions = { deny: [`Read(/${operatorToken})`] };
-      // Read-only scouts need the socket too: their report-for-duty goes through the coordinator.
+      // Read-only scouts need the socket too: their lifecycle commands go through the coordinator.
       if (rootsOptions.controlSocket) {
         sandboxConfig.network = claudeSandboxNetwork(rootsOptions.controlSocket, sandboxNetworkOf(config));
       }

@@ -102,6 +102,8 @@ Derived at claim time, never stored:
 
 ## Run Lifecycle
 
+Readiness comes before the run starts: the coordinator sends TASK_START once the worker's session is ready, meaning a `reported_for_duty` event for its current `session_token`. A Claude session's `SessionStart` hook produces it (`payload.source: 'hook'`); Codex and Gemini CLI sessions run `orc report-for-duty` and are nudged with `SESSION_NUDGE`; an `app:` session is ready after its handshake. A session that is not ready within `coordinator.session_ready_timeout_ms` is requeued (`ERR_SESSION_READY_TIMEOUT`). Per provider: [adapters.md → Session readiness](./adapters.md#session-readiness).
+
 | Command | Precondition | Effect |
 |---------|--------------|--------|
 | `orc run-start` | claim `claimed`, agent matches | claim + task → `in_progress` |
@@ -121,7 +123,7 @@ Direct mode: after work-complete the coordinator merges, or requests a finalize 
 - Liveness: each tick probes the session — `tmux:` asks the private tmux server for the pane process; a legacy `pty:` handle from an older orc always probes dead. A dead process goes through one resume-or-requeue decision (`resumeOrRequeue` in `coordinator.ts`, rules in `lib/sessionResume.ts`):
   - Resumed in place when all hold: `sessions.resume` is `auto`; the provider supports resume (Claude CLI, Codex `app:`); a provider conversation id was recorded; the exit was a crash (a signal or a non-zero exit code); the run worktree exists; the run has resumed fewer than 2 times. The claim, `session_id`, worktree, env, `--settings` and MCP isolation are kept; the secret rotates (the old one is rejected); `generation` and `resume_count` go up by 1; `session_resumed` is emitted. The bootstrap is not resent: the worker gets a `SESSION_RESUMED` nudge with its phase and last progress time.
   - Otherwise the session is cleared, the claim expires and the task is requeued, as before. A spent budget or a failed relaunch also emits `session_resume_failed`.
-  - The exit cause is stored in `sessions.exit_reason`: `crash`; `finished` (clean exit after `run-work-complete`); `user_exit` (clean exit before it, e.g. `/exit`); `unknown` (no exit status was observed, e.g. the tmux session was killed, the session was a legacy `pty:` one, or the session was cleared before `report-for-duty`). An `unknown` exit is always requeued.
+  - The exit cause is stored in `sessions.exit_reason`: `crash`; `finished` (clean exit after `run-work-complete`); `user_exit` (clean exit before it, e.g. `/exit`); `unknown` (no exit status was observed, e.g. the tmux session was killed, the session was a legacy `pty:` one, or the session was cleared before it was ready). An `unknown` exit is always requeued.
 - Idle: `worker_stale_soft_ms` / `worker_stale_nudge_ms` / `worker_stale_force_fail_ms`; runs that deliver hook events use `hook_idle_nudge_ms` / `hook_idle_escalate_ms`. A run with a tool call in flight is never stalled (`isStalled`, `lib/runSignals.ts`). A `Stop` hook (`turn_end`) closes tool calls that never reported back. Defaults: [configuration.md](./configuration.md).
 - Progress ≠ liveness. Progress = a phase change (reported or inferred), a `git commit` seen in a hook event, or `run_started`, `review_submitted`, `work_complete`, `finalize_rebase_started`, `ready_to_merge`, `input_requested`, `input_provided`, `input_response`. No progress for `run_no_progress_escalate_ms` (60 min) → one `worker_needs_attention {reason: no_progress}`; new progress re-arms it. Runs awaiting input or in finalization are not checked.
 - Stop hook: a Claude worker's `Stop` is refused while its run is unfinished (`stop_blocked`), at most 3 per run per 10 min and 9 per run.
@@ -172,7 +174,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `input_requested` | Worker | `orc run-input-request` |
 | `input_response` | Master | `orc run-input-respond` / `respond_input` |
 | `agent_online` | Coordinator | session confirmed alive |
-| `reported_for_duty` | Worker | session ready |
+| `reported_for_duty` | Worker (`report-for-duty`) or coordinator (session-start hook) | session ready; `payload`: `session_token`, and from the hook `source: 'hook'` and `provider_conversation_id` |
 | `agent_offline` | Coordinator | session lost, or unclaimed record removed (`reason: worker_record_removed`, `code`) |
 | `agent_marked_dead` | Coordinator | unclaimed worker past the dead TTL; record removed |
 | `agent_registered` | — | in schema, not emitted |

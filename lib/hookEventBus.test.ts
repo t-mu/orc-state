@@ -58,14 +58,26 @@ describe('dispatchHookEvents', () => {
 
   it('ignores unknown types and skips malformed tool/activity records', () => {
     const out = dispatchHookEvents([
-      { type: 'session_start', ts: TS },
+      { type: 'session_pause', ts: TS },
+      { type: 'session_start', session_id: 'c1' },
       { message: 'no type' },
       { type: 'tool', brief: 'missing tool', ts: TS },
       { type: 'tool', tool: 'Bash', ts: 'not-a-date' },
       { type: 'activity', label: '   ', ts: TS },
       { type: 'activity', label: 'no ts' },
     ]);
-    expect(out).toEqual({ permission: [], activity: [] });
+    expect(out).toEqual({ permission: [], activity: [], sessionStart: [] });
+  });
+
+  it('dispatches session_start records, keeping the orc session id only when present', () => {
+    const out = dispatchHookEvents([
+      { type: 'session_start', session_id: 'c1', source: 'startup', orc_session_id: 's1', ts: TS },
+      { type: 'session_start', ts: TS },
+    ]);
+    expect(out.sessionStart).toEqual([
+      { type: 'session_start', session_id: 'c1', source: 'startup', orc_session_id: 's1', ts: TS },
+      { type: 'session_start', session_id: '', source: '', ts: TS },
+    ]);
   });
 
   it('keeps an empty todo label as a clear, but not an empty note', () => {
@@ -107,6 +119,6 @@ describe('drainHookEvents', () => {
     expect(first.permission).toHaveLength(1);
     expect(first.activity).toEqual([{ type: 'tool', tool: 'Read', brief: 'README.md', ts: TS }]);
     expect(existsSync(file)).toBe(false);
-    expect(drainHookEvents('agent-1')).toEqual({ permission: [], activity: [] });
+    expect(drainHookEvents('agent-1')).toEqual({ permission: [], activity: [], sessionStart: [] });
   });
 });

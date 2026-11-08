@@ -148,6 +148,12 @@ describe('handleHook', () => {
     });
   });
 
+  it('records a session start with the Claude session id, its source and the orc session id', () => {
+    expect(handleHook('session_start', { session_id: 'conv-1', source: 'startup', cwd: '/w' }, st(), TS, 'orc-sess').record)
+      .toEqual({ type: 'session_start', session_id: 'conv-1', source: 'startup', orc_session_id: 'orc-sess', ts: TS });
+    expect(handleHook('session_start', {}, st(), TS).record).toEqual({ type: 'session_start', session_id: '', source: '', ts: TS });
+  });
+
   it('ignores unknown kinds', () => {
     expect(handleHook('bogus', { tool_name: 'Bash' }, st(), TS).record).toBeNull();
   });
@@ -163,6 +169,18 @@ describe('runHook / script', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   const lines = () => (existsSync(events) ? readFileSync(events, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as unknown) : []);
+
+  it('stamps a session_start record with ORC_SESSION_ID from the environment', () => {
+    const previous = process.env.ORC_SESSION_ID;
+    process.env.ORC_SESSION_ID = 'orc-sess-9';
+    try {
+      runHook('session_start', events, JSON.stringify({ session_id: 'conv-9', source: 'resume' }), NOW);
+    } finally {
+      if (previous === undefined) delete process.env.ORC_SESSION_ID;
+      else process.env.ORC_SESSION_ID = previous;
+    }
+    expect(lines()).toEqual([{ type: 'session_start', session_id: 'conv-9', source: 'resume', orc_session_id: 'orc-sess-9', ts: TS }]);
+  });
 
   it('keeps task labels across invocations in the sidecar file', () => {
     runHook('tool', events, JSON.stringify({

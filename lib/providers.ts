@@ -6,6 +6,18 @@ import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
 export const PROVIDERS = ['codex', 'claude', 'gemini'] as const;
 export type ProviderName = typeof PROVIDERS[number];
 
+/**
+ * Providers whose terminal CLI orc launches with a session-start hook: the
+ * hook's `session_start` record marks the session ready, so the agent is never
+ * asked to run `orc report-for-duty`. The others (Codex, Gemini) keep
+ * report-for-duty as their readiness signal; see docs/adapters.md.
+ */
+const SESSION_START_HOOK_PROVIDERS: ReadonlySet<string> = new Set<ProviderName>(['claude']);
+
+export function hasSessionStartHook(provider: string | null | undefined): boolean {
+  return typeof provider === 'string' && SESSION_START_HOOK_PROVIDERS.has(provider);
+}
+
 export type ExecutionMode = 'full-access' | 'sandbox';
 export const EXECUTION_MODES: readonly ExecutionMode[] = ['full-access', 'sandbox'] as const;
 
