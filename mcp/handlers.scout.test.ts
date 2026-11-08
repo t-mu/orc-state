@@ -177,6 +177,26 @@ describe('handleRequestScout', () => {
     })).rejects.toThrow('did not report for duty in time');
   });
 
+  it('says a Claude scout\'s session did not become ready, with no control-socket hint', async () => {
+    launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
+      agent.status = 'running';
+      agent.session_handle = createSessionHandle(agent.agent_id);
+      agent.session_token = 'scout-token-4';
+      agent.session_started_at = '2026-01-01T00:00:00.000Z';
+      agent.session_ready_at = null;
+      return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
+    });
+    vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
+    try {
+      const { handleRequestScout } = await import('./handlers.ts');
+      const failure = handleRequestScout(dir, { objective: 'Inspect', provider: 'claude', actor_id: 'master' });
+      await expect(failure).rejects.toThrow('scout session did not become ready in time (no session-start hook record)');
+      await expect(failure).rejects.not.toThrow(/control socket|report for duty/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('in a project, passes the sandbox network opt-in and explains a scout that cannot reach the socket (task 230)', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';

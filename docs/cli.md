@@ -146,7 +146,7 @@ Client for the coordinator's local control API. Fails with "Control daemon is no
 
 | Command | Flags | Notes |
 |---------|-------|-------|
-| `report-for-duty` | `--agent-id=<id>` `--session-id=<id>` | Session ready after bootstrap (`--session-token` is an alias of `--session-id`). |
+| `report-for-duty` | `--agent-id=<id>` `--session-id=<id>` | Session ready after bootstrap, for providers without a session-start hook (Codex, Gemini); a Claude session reports ready through its hook. Accepted from any provider (`--session-token` is an alias of `--session-id`). |
 | `run-start` | `--run-id=<id>` `--agent-id=<id>` | Claim → `in_progress`. |
 | `progress` | `--event=<type>` `--run-id=<id>` `--agent-id=<id>` `[--phase=<name>]` `[--reason=<text>]` `[--note=<text>]` `[--policy=<requeue\|block>]` | Events: see below. `--note` is the activity line shown by `watch` (send with `--event=heartbeat`). |
 | `run-work-complete` | `--run-id=<id>` `--agent-id=<id>` | Implementation, review, rebase done. |

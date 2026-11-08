@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
 import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ProviderName } from './lib/providers.ts';
-import { resolveWorkerProvider } from './lib/providers.ts';
+import { hasSessionStartHook, resolveWorkerProvider } from './lib/providers.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
 // Distributive Omit — preserves discriminated union across all members
@@ -36,7 +36,8 @@ import { appendSequencedEvent, closeAllDatabases, eventIdentity, readEventBatch,
 import { newestTimestamp, shouldRenewFromHookActivity } from './lib/runActivity.ts';
 import { gcOrphanedHookFiles } from './lib/hookFiles.ts';
 import { noProgressEscalationMs } from './lib/runProgress.ts';
-import { drainHookEvents, type PermissionHookEvent } from './lib/hookEventBus.ts';
+import { drainHookEvents, type PermissionHookEvent, type SessionStartHookEvent } from './lib/hookEventBus.ts';
+import { applySessionStart, isAgentSessionReady, sessionStartDecision } from './lib/sessionStartReadiness.ts';
 import { inferPhaseTransitions, phaseInferenceClaims } from './lib/phaseInference.ts';
 import { readRunActivity, writeRunActivity } from './lib/runActivityStore.ts';
 import { RunSignals, type RunHookEvents } from './lib/runSignals.ts';
@@ -386,13 +387,6 @@ async function sendTaskEnvelope(agent: Agent, taskRef: string, runId: string) {
   }
 }
 
-function isAgentSessionReady(agent: Agent | null | undefined) {
-  if (!agent?.session_handle || !agent.session_token || !agent.session_started_at || !agent.session_ready_at) {
-    return false;
-  }
-  return new Date(agent.session_ready_at).getTime() >= new Date(agent.session_started_at).getTime();
-}
-
 function buildReportForDutyNudge(agent: Agent) {
   return [
     'SESSION_NUDGE',
@@ -462,7 +456,8 @@ async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) 
       continue;
     }
 
-    if (ageMs < SESSION_READY_NUDGE_MS || !agent.session_token) continue;
+    // A hook provider's session reports ready by itself (its session-start hook): no nudge.
+    if (ageMs < SESSION_READY_NUDGE_MS || !agent.session_token || hasSessionStartHook(agent.provider)) continue;
     const lastNudgeAt = sessionReadyNudgeAtMs.get(claim.run_id) ?? 0;
     if (nowMs - lastNudgeAt < SESSION_READY_NUDGE_INTERVAL_MS) continue;
 
@@ -1080,12 +1075,21 @@ function activeRunIdsOf(claims: Claim[]): string[] {
  * restart in between drops them; the check then falls back to scanning the
  * session output, as it does for providers without hooks.
  */
-function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): boolean {
+function ingestHookEvents(claims: Claim[], agents: Agent[], nowMs: number = Date.now()): boolean {
   const active = (claims ?? []).filter((claim) => claim.state === 'claimed' || claim.state === 'in_progress');
   const hookEvents = new Map<string, RunHookEvents>();
   for (const claim of active) {
-    hookEvents.set(claim.run_id, { agentId: claim.agent_id, ...drainHookEvents(claim.agent_id) });
+    const drained = drainHookEvents(claim.agent_id);
+    hookEvents.set(claim.run_id, { agentId: claim.agent_id, ...drained });
+    queueSessionStarts(claim.agent_id, drained.sessionStart);
   }
+  // A scout has no claim: drain it only for its session start (it has no tool hooks).
+  for (const agent of agents ?? []) {
+    if (agent.role === 'scout' && agent.status !== 'offline' && !isAgentSessionReady(agent)) {
+      queueSessionStarts(agent.agent_id, drainHookEvents(agent.agent_id).sessionStart);
+    }
+  }
+  applyPendingSessionStarts(nowMs);
   const { hookActivity } = runSignals.ingest([], hookEvents, nowMs);
   const byRun = new Map(active.map((claim) => [claim.run_id, claim]));
   for (const { runId, previousTs, ts } of hookActivity) {
@@ -1102,6 +1106,38 @@ function ingestHookEvents(claims: Claim[], nowMs: number = Date.now()): boolean 
   }
   for (const claim of active) maybeEmitActivityNote(claim, nowMs);
   return hookActivity.length > 0;
+}
+
+/**
+ * Session-start hook records waiting for their launch to be recorded, by agent.
+ * Lost on a coordinator restart: the session then times out and is requeued.
+ */
+const pendingSessionStarts = new Map<string, SessionStartHookEvent>();
+
+function queueSessionStarts(agentId: string, records: SessionStartHookEvent[]): void {
+  const latest = records.at(-1);
+  if (latest) pendingSessionStarts.set(agentId, latest);
+}
+
+/**
+ * Turn each pending session-start record into readiness for the session it
+ * names (lib/sessionStartReadiness.ts). The envelope or scout brief follows
+ * through the usual readiness path; a TUI that is still busy queues it.
+ */
+function applyPendingSessionStarts(nowMs: number): void {
+  for (const [agentId, record] of [...pendingSessionStarts]) {
+    const agent = getAgent(STATE_DIR, agentId);
+    const decision = sessionStartDecision(agent, record);
+    if (decision === 'wait') continue;
+    pendingSessionStarts.delete(agentId);
+    if (decision !== 'apply') continue;
+    try {
+      applySessionStart(STATE_DIR, agent!, record, new Date(nowMs).toISOString());
+      log(`session ${agent!.session_token} of ${agentId} is ready (session-start hook, source=${record.source || 'unknown'})`);
+    } catch (error) {
+      log(`warning: failed to record session start for ${agentId}: ${(error as Error).message}`);
+    }
+  }
 }
 
 /**
@@ -1599,7 +1635,7 @@ async function tick() {
   // Drain hook events before lifecycle events; phases are inferred against the
   // claims as they were before this batch, for runs still active after it.
   const hydratedActivityChanged = hydrateRunSignals(claims);
-  const hookActivityChanged = ingestHookEvents(claims);
+  const hookActivityChanged = ingestHookEvents(claims, agents);
   const claimsBeforeEvents = claims;
   const checkpoint = await processEventCheckpoint(agents, claims, workerPoolConfig);
   ({ agents, claims } = checkpoint);

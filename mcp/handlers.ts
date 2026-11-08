@@ -10,7 +10,7 @@ import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotific
 import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
 import { findTask, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
-import { isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
+import { hasSessionStartHook, isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { readRunActivity } from '../lib/runActivityStore.ts';
@@ -472,7 +472,8 @@ export async function handleRequestScout(stateDir: string, {
   const linkedWorktree = recordedWorktree != null && existsSync(recordedWorktree) ? recordedWorktree : null;
   const workingDirectory = linkedWorktree ?? repoRoot;
 
-  // A scout reports for duty over the control socket, under the same opt-in as workers.
+  // A scout gets the control socket under the same opt-in as workers; a Codex or Gemini
+  // scout reports for duty through it (a Claude scout is made ready by its session-start hook).
   // Resolved before registering, so an invalid setting leaves no scout behind.
   const sandboxNetwork = loadWorkerPoolConfig().sandbox_network;
 
@@ -507,12 +508,13 @@ export async function handleRequestScout(stateDir: string, {
   if (!ready) {
     await adapter.stop(launchResult.session_handle);
     removeAgent(stateDir, scout.agent_id);
-    // A sandboxed project scout that cannot reach the control socket never reports (task 230).
-    const unreachable = sandboxNetwork === 'restricted'
-      && (resolvedProvider === 'codex' || (resolvedProvider === 'claude' && process.platform === 'linux'));
-    const hint = unreachable || (sandboxNetwork === 'open' && resolvedProvider === 'codex')
+    if (hasSessionStartHook(resolvedProvider)) {
+      throw new Error(`Failed to brief scout ${scoutId}: scout session did not become ready in time (no session-start hook record)`);
+    }
+    // A read-only Codex scout in a project cannot reach the control socket, so it never reports (task 230).
+    const hint = resolvedProvider === 'codex' && (sandboxNetwork === 'restricted' || sandboxNetwork === 'open')
       ? `; in a project a sandboxed ${resolvedProvider} scout reports through the control socket, which it cannot reach here`
-        + (resolvedProvider === 'codex' ? ' (request a claude scout)' : ' (set worker_pool.sandbox_network=open)') + ' — see docs/configuration.md → Execution Modes'
+        + ' (request a claude scout) — see docs/configuration.md → Execution Modes'
       : '';
     throw new Error(`Failed to brief scout ${scoutId}: scout did not report for duty in time${hint}`);
   }

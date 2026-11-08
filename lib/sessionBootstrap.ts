@@ -1,5 +1,5 @@
 import { renderTemplate } from './templateRender.ts';
-import { isSupportedProvider, type ProviderName } from './providers.ts';
+import { hasSessionStartHook, isSupportedProvider, type ProviderName } from './providers.ts';
 
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
 const WORKER_BOOTSTRAP_SMOKE_TEMPLATE = 'worker-bootstrap-smoke-v1.txt';
@@ -31,13 +31,34 @@ function phaseCompleteStep(orcBin: string, agentId: string): string {
   ].join('\n');
 }
 
+/**
+ * How the session becomes ready, injected as {{session_ready_step}} and
+ * {{session_ready_rule}}. A provider with a session-start hook reports ready by
+ * itself, so its agent is never told to run report-for-duty; the others are.
+ */
+function sessionReadyVars(provider: string, orcBin: string, agentId: string, sessionId: string, awaiting: string) {
+  if (hasSessionStartHook(provider)) {
+    return {
+      session_ready_step: `This session reports itself ready when it starts (session-start hook); you run no command for that. Wait for the ${awaiting}.`,
+      session_ready_rule: `- Your session reports itself ready (session-start hook): run no command for it, just wait for the ${awaiting}.`,
+    };
+  }
+  const command = `${orcBin} report-for-duty --agent-id=${agentId} --session-id=${sessionId}`;
+  return {
+    session_ready_step: `Before waiting for the ${awaiting}, report that this exact session is ready:\n\n  ${command}`,
+    session_ready_rule: `- First report for duty for this exact session with ${command}.`,
+  };
+}
+
 function renderBootstrap(template: string, provider: string, agentId: string): string {
+  const awaiting = template === SCOUT_BOOTSTRAP_TEMPLATE ? 'SCOUT_BRIEF' : 'TASK_START';
   return renderTemplate(template, {
     agent_id: agentId,
     orc_bin: 'orc',
     provider,
     session_id: 'session-id-unset',
     phase_complete_step: phaseCompleteStep('orc', agentId),
+    ...sessionReadyVars(provider, 'orc', agentId, 'session-id-unset', awaiting),
   });
 }
 
@@ -99,6 +120,7 @@ export function buildSessionBootstrap(
       orc_bin: orcBin,
       provider,
       session_id: sessionId,
+      ...sessionReadyVars(provider, orcBin, agentId, sessionId, 'SCOUT_BRIEF'),
     });
   }
   return renderTemplate(resolveWorkerTemplate(role, options.workerBootstrapProfile ?? 'default'), {
@@ -107,5 +129,6 @@ export function buildSessionBootstrap(
     provider,
     session_id: sessionId,
     phase_complete_step: phaseCompleteStep(orcBin, agentId),
+    ...sessionReadyVars(provider, orcBin, agentId, sessionId, 'TASK_START'),
   });
 }

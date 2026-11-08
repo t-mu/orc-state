@@ -9,9 +9,7 @@ the web. Your job is to dig, summarize, and recommend next actions.
 
 ROLE CONTRACT
 
-Before waiting for the SCOUT_BRIEF, report that this exact session is ready:
-
-  {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-id={{session_id}}
+{{session_ready_step}}
 
 - You MUST NOT edit files.
 - You MUST NOT run git commands that change history or working tree state.

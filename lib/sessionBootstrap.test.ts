@@ -68,7 +68,6 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toContain('assigned worktree');
     expect(rendered).toContain('/tmp/node_modules/.bin/orc run-work-complete');
     expect(rendered).toContain('/tmp/node_modules/.bin/orc run-input-request');
-    expect(rendered).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-id=token-123');
     expect(rendered).toContain('Do not merge to main');
     expect(rendered).not.toContain('git worktree add .worktrees/<run_id>');
   });
@@ -112,6 +111,31 @@ describe('buildSessionBootstrap', () => {
     const rendered = buildSessionBootstrap('bob', 'claude', 'worker', '/custom/orc', 'token');
     expect(rendered).toContain('/custom/orc progress --event=phase_started --phase=complete');
     expect(rendered).not.toContain('{{orc_bin}}');
+  });
+
+  it('never tells a Claude worker or scout to report for duty: its session-start hook does', () => {
+    for (const role of ['worker', 'scout']) {
+      const rendered = buildSessionBootstrap('bob', 'claude', role, '/tmp/node_modules/.bin/orc', 'token-123');
+      expect(rendered, role).not.toContain('report-for-duty');
+      expect(rendered, role).not.toContain('report for duty');
+      expect(rendered, role).toContain('reports itself ready');
+      expect(rendered, role).not.toContain('{{');
+    }
+    expect(getWorkerBootstrap('claude')).not.toContain('report-for-duty');
+    const smoke = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token-123', { workerBootstrapProfile: 'smoke' });
+    expect(smoke).toContain('WORKER_BOOTSTRAP_SMOKE');
+    expect(smoke).not.toContain('report-for-duty');
+    expect(buildSessionBootstrap('bob', 'codex', 'worker', 'orc', 'token-123', { workerBootstrapProfile: 'smoke' }))
+      .toContain('orc report-for-duty --agent-id=bob --session-id=token-123');
+  });
+
+  it('tells a worker of a provider without a session-start hook to report for duty', () => {
+    for (const provider of ['codex', 'gemini']) {
+      const rendered = buildSessionBootstrap('bob', provider, 'worker', '/tmp/node_modules/.bin/orc', 'token-123');
+      expect(rendered, provider).toContain('Before waiting for the TASK_START, report that this exact session is ready');
+      expect(rendered, provider).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-id=token-123');
+      expect(rendered, provider).toContain('- First report for duty for this exact session with /tmp/node_modules/.bin/orc report-for-duty');
+    }
   });
 
   it('uses scout-bootstrap-v1.txt for scout role', () => {

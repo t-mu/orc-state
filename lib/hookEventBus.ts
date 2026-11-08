@@ -48,6 +48,19 @@ export interface TurnEndHookEvent {
   ts: string;
 }
 
+/**
+ * The provider session started (Claude `SessionStart` hook): its readiness
+ * signal. `session_id` is the provider's conversation id; `orc_session_id`, when
+ * present, names the orc session that started (stale records do not match).
+ */
+export interface SessionStartHookEvent {
+  type: 'session_start';
+  session_id: string;
+  source: string;
+  orc_session_id?: string;
+  ts: string;
+}
+
 export type RunActivityHookEvent = ToolHookEvent | ToolStartHookEvent | ActivityHookEvent | TurnEndHookEvent;
 
 export interface DispatchedHookEvents {
@@ -55,6 +68,8 @@ export interface DispatchedHookEvents {
   permission: PermissionHookEvent[];
   /** Feeds the per-run activity store and run liveness. */
   activity: RunActivityHookEvent[];
+  /** Marks the session ready (lib/sessionStartReadiness.ts). */
+  sessionStart: SessionStartHookEvent[];
 }
 
 function validTs(value: unknown): value is string {
@@ -68,7 +83,7 @@ function validTs(value: unknown): value is string {
  * input-block behaviour is unchanged.
  */
 export function dispatchHookEvents(records: Array<Record<string, unknown>>, agentId = ''): DispatchedHookEvents {
-  const out: DispatchedHookEvents = { permission: [], activity: [] };
+  const out: DispatchedHookEvents = { permission: [], activity: [], sessionStart: [] };
   for (const record of records) {
     switch (record.type) {
       case 'permission':
@@ -102,6 +117,19 @@ export function dispatchHookEvents(records: Array<Record<string, unknown>>, agen
           type: 'tool_start',
           tool: record.tool,
           ...(typeof record.id === 'string' && record.id.length > 0 ? { id: record.id } : {}),
+          ts: record.ts,
+        });
+        break;
+      case 'session_start':
+        if (!validTs(record.ts)) {
+          logger.debug(`[hook-events] skipping malformed session_start event for ${agentId}: ${JSON.stringify(record).slice(0, 200)}`);
+          break;
+        }
+        out.sessionStart.push({
+          type: 'session_start',
+          session_id: typeof record.session_id === 'string' ? record.session_id : '',
+          source: typeof record.source === 'string' ? record.source : '',
+          ...(typeof record.orc_session_id === 'string' && record.orc_session_id.length > 0 ? { orc_session_id: record.orc_session_id } : {}),
           ts: record.ts,
         });
         break;

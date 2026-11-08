@@ -1,7 +1,7 @@
 /**
  * Claude Code command hook for orc workers.
  *
- * Usage: node orc-hook.(ts|js) <permission|tool|tool_start|todo> <events-file>
+ * Usage: node orc-hook.(ts|js) <permission|tool|tool_start|todo|session_start> <events-file>
  *
  * Claude Code passes the hook payload as JSON on stdin. The script appends at
  * most one NDJSON record to <events-file> (drained by the coordinator, see
@@ -13,7 +13,10 @@
  * short `brief` (≤ 80 chars) plus, for `Agent`/`Task`, the `subagent_type`;
  * `tool_start` records only the tool name and its `tool_use_id`, so the
  * coordinator can tell a long-running tool call from an idle worker;
- * `activity` records the current to-do label.
+ * `activity` records the current to-do label; `session_start` records carry
+ * Claude's conversation `session_id`, the start `source` and the orc session
+ * id from `ORC_SESSION_ID` (a name, not a credential), so the coordinator can
+ * mark that exact session ready (lib/sessionStartReadiness.ts).
  */
 import { appendFileSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
@@ -128,7 +131,14 @@ export interface HookResult {
  * Pure core: map one hook payload to the record to append (or none).
  * `kind` is the hook the script was installed as.
  */
-export function handleHook(kind: string, payload: Payload, state: TaskState, ts: string): HookResult {
+export function handleHook(kind: string, payload: Payload, state: TaskState, ts: string, orcSessionId = ''): HookResult {
+  if (kind === 'session_start') {
+    const sessionId = clip(str(payload.session_id), BRIEF_MAX);
+    const record: HookRecord = { type: 'session_start', session_id: sessionId, source: clip(str(payload.source), BRIEF_MAX), ts };
+    if (orcSessionId) record.orc_session_id = clip(orcSessionId, BRIEF_MAX);
+    return { record };
+  }
+
   const tool = str(payload.tool_name);
   const input = obj(payload.tool_input);
 
@@ -214,7 +224,8 @@ export function runHook(kind: string, eventsFile: string, stdin: string, now: Da
     const needsState = kind === 'todo' || payload.tool_name === 'TaskCreate';
     const sidecar = taskLabelsPath(eventsFile);
     const empty: TaskState = { labels: {}, active: '' };
-    const { record, state } = handleHook(kind, payload, needsState ? readState(sidecar) : empty, now.toISOString());
+    const { record, state } = handleHook(kind, payload, needsState ? readState(sidecar) : empty, now.toISOString(),
+      process.env.ORC_SESSION_ID ?? '');
     if (state) {
       // Parallel tool calls run hooks concurrently: write-then-rename so a reader never sees a truncated map.
       const tmp = `${sidecar}.${process.pid}.tmp`;

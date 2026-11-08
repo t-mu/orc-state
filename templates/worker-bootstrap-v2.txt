@@ -9,9 +9,7 @@ The orchestrator coordinates your work through shared file-state plus the TASK_S
 WORK DELIVERY
 
 This session is created for one task run. Do not wait around for unrelated future assignments.
-Before waiting for task instructions, report that this exact session is ready:
-
-  {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-id={{session_id}}
+{{session_ready_step}}
 
 You should expect:
 
@@ -243,7 +241,7 @@ WHAT TO AVOID
 RULES
 
 - Always call orc run-start before doing any work on a task.
-- First report for duty for this exact session with {{orc_bin}} report-for-duty --agent-id={{agent_id}} --session-id={{session_id}}.
+{{session_ready_rule}}
 - Lease renewal is automatic via phase signals (and, in Claude sessions, your tool calls); you never need a heartbeat just to keep the lease. The one heartbeat you send is the note below. Outside Claude, keep sending phase signals as you move through the phases.
 - Staying active is not the same as progressing. If you change no phase, make no commit, and report no lifecycle event for a long stretch (60 min by default), the coordinator flags the run to the master as not progressing. If you are stuck, call orc run-input-request rather than cycling tool calls.
 - Do not end your turn while the run is unfinished: call orc run-work-complete, orc run-input-request or orc run-fail first. In Claude sessions a premature stop is blocked with a reason; act on that reason.
