@@ -64,6 +64,7 @@
         "session_reconciled",
         "session_resumed",
         "session_resume_failed",
+        "master_retired",
         "session_started",
         "task_added",
         "task_updated",

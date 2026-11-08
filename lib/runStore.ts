@@ -197,6 +197,39 @@ export function resumeProviderSession(stateDir: string, session: {
   });
 }
 
+/**
+ * Reopen the latest session of `agentId` whose recorded process is the live
+ * one (`processPid`, `processStart`), after it was closed while that process
+ * kept running: its credential authenticates again. Other open sessions of the
+ * agent are superseded, and a `session_reconciled` event records the repair.
+ * Returns the session's id and provider ref, or null when no closed session
+ * matches the live process (a session without a recorded identity never does).
+ */
+export function reopenLiveSession(stateDir: string, {
+  agentId, processPid, processStart, at, reason, actorId = 'human',
+}: {
+  agentId: string; processPid: number; processStart: string; at: string; reason: string; actorId?: string;
+}): { sessionId: string; providerRef: unknown } | null {
+  if (!existsSync(join(stateDir, 'events.db'))) return null;
+  return withEventDbTransaction(stateDir, (db) => {
+    const row = db.prepare(`SELECT session_id, state, transport, provider_ref FROM sessions
+      WHERE agent_id = ? AND process_pid = ? AND process_start = ? ORDER BY rowid DESC LIMIT 1`)
+      .get(agentId, processPid, processStart) as { session_id: string; state: string; transport: string | null; provider_ref: string | null } | undefined;
+    if (!row || row.state !== 'offline') return null;
+    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
+      .run(at, agentId, row.session_id);
+    db.prepare(`UPDATE sessions SET state = 'running', state_reason = NULL, updated_at = ?, owner_id = NULL, owner_expires_at = NULL
+      WHERE session_id = ?`).run(at, row.session_id);
+    appendSequencedEvent(stateDir, {
+      ts: at, event: 'session_reconciled', actor_type: 'human', actor_id: actorId, agent_id: agentId,
+      payload: { session_id: row.session_id, state: 'running', previous_state: 'offline', transport: row.transport, outcome: 'restored', reason },
+    });
+    let providerRef: unknown = null;
+    try { providerRef = row.provider_ref == null ? null : JSON.parse(row.provider_ref); } catch { /* unreadable ref: none */ }
+    return { sessionId: row.session_id, providerRef };
+  });
+}
+
 export function closeProviderSessionsForAgent(stateDir: string, agentId: string, at: string): void {
   if (!existsSync(join(stateDir, 'events.db'))) return;
   withEventDbTransaction(stateDir, (db) => {

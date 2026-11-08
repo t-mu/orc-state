@@ -297,6 +297,19 @@ export interface SessionResumeFailedEvent extends BaseEvent {
   payload: SessionResumePayload & { reason: string };
 }
 
+/** The master went offline and its session closed; `probe` is the failed probe that decided it. */
+export interface MasterRetiredEvent extends BaseEvent {
+  event: 'master_retired';
+  agent_id: string;
+  payload: {
+    session_handle: string | null;
+    session_id: string | null;
+    probe: { alive: boolean; reason: string | null; pid: number | null };
+    consecutive_failures: number;
+    [key: string]: unknown;
+  };
+}
+
 export interface SessionStartFailedEvent extends BaseEvent {
   event: 'session_start_failed';
   run_id: string;
@@ -418,6 +431,7 @@ export type OrcEvent =
   | SessionReconciledEvent
   | SessionResumedEvent
   | SessionResumeFailedEvent
+  | MasterRetiredEvent
   | SessionStartedEvent
   | CoordinatorStartedEvent
   | CoordinatorStoppedEvent

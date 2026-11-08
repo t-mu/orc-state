@@ -61,7 +61,7 @@ import { sessionAuthenticator, startControlServer, type ControlServer } from './
 import {
   IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, currentSessionForAgent, currentSessionOwnerId,
   identityMismatch, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession,
-  retireDeadMaster,
+  retireDeadMaster, newMasterLivenessTracker, type MasterProbe,
 } from './lib/sessionSupervisor.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
@@ -560,10 +560,25 @@ async function markFinalizeBlocked(claim: Claim, workerPoolConfig: WorkerPoolCon
   return true;
 }
 
-/** A master that exited while detached goes offline and loses its credential (v1/master-tmux). */
+/** Consecutive failed probes of the master's session, across ticks. */
+const masterLiveness = newMasterLivenessTracker();
+
+/** The master's session as the adapter sees it; `reason` and `pid` go on `master_retired`. */
+async function probeMaster(master: Agent): Promise<MasterProbe> {
+  const adapter = getAdapter(master.provider);
+  const inspected = await adapterInspectSession(adapter, master.session_handle!);
+  if (inspected) return { alive: inspected.alive, reason: inspected.alive ? null : (inspected.reason ?? 'session not alive'), pid: inspected.pid };
+  const alive = await adapter.heartbeatProbe(master.session_handle!);
+  return { alive, reason: alive ? null : 'heartbeat probe failed', pid: null };
+}
+
+/**
+ * A master that exited while detached goes offline and loses its credential (v1/master-tmux),
+ * after consecutive failed probes and never on the first tick after its start (general/master-liveness-race).
+ */
 async function retireMasterIfDead(agents: Agent[]): Promise<void> {
   try {
-    const retired = await retireDeadMaster(STATE_DIR, agents, (master) => getAdapter(master.provider).heartbeatProbe(master.session_handle!));
+    const retired = await retireDeadMaster(STATE_DIR, agents, probeMaster, { tracker: masterLiveness, graceMs: INTERVAL_MS });
     if (retired) log('master session exited; marked the master offline and closed its session');
   } catch (error) {
     log(`warning: master liveness check failed: ${(error as Error).message}`);

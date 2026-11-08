@@ -7,7 +7,7 @@ import { closeProviderSessionsForAgent, commitClaims, recordProviderSession } fr
 import { CommandDispatcher } from './commandDelivery.ts';
 import {
   classifySession, currentSessionOwnerId, identityMismatch, listSupervisedSessions, reconcileSessions,
-  renewSessionOwnership, retireDeadMaster, setSessionState, type SupervisedSession,
+  newMasterLivenessTracker, renewSessionOwnership, retireDeadMaster, setSessionState, type MasterProbe, type SupervisedSession,
 } from './sessionSupervisor.ts';
 import type { SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
@@ -144,26 +144,71 @@ describe('reconcileSessions', () => {
     expect(await reconcile()).toEqual([expect.objectContaining({ session_id: 'session-master', state: 'offline', outcome: 'exited' })]);
   });
 
-  it('retires a master that exited while detached: offline, session closed (v1/master-tmux)', async () => {
-    seedState(dir, { agents: [{ ...agent('master', 'session-master'), role: 'master' }] });
-    recordProviderSession(dir, {
-      sessionId: 'session-master', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
-      startedAt: '2026-01-01T00:00:00.000Z', transport: 'tmux',
+  describe('master retirement (v1/master-tmux, general/master-liveness-race)', () => {
+    const dead: MasterProbe = { alive: false, reason: 'tmux session not found', pid: null };
+    const alive: MasterProbe = { alive: true, reason: null, pid: 4242 };
+    const startedAt = '2026-01-01T00:00:00.000Z';
+    const startedMs = Date.parse(startedAt);
+    const master = (overrides: Partial<Agent> = {}): Agent => ({
+      ...agent('master', 'session-master'), role: 'master', session_started_at: startedAt, ...overrides,
     });
-    const master = (): Agent => ({ ...agent('master', 'session-master'), role: 'master' });
+    const masterSession = () => listSupervisedSessions(dir).find((row) => row.session_id === 'session-master');
 
-    expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(true))).toBe(false);
-    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master')?.state).toBe('running');
+    beforeEach(() => {
+      seedState(dir, { agents: [master()] });
+      recordProviderSession(dir, {
+        sessionId: 'session-master', runId: null, agentId: 'master', provider: 'claude', providerRef: null,
+        startedAt, transport: 'tmux',
+      });
+    });
 
-    expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(false))).toBe(true);
-    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-master')?.state).toBe('offline');
-    const { listAgents } = await import('./agentRegistry.ts');
-    expect(listAgents(dir).find((a) => a.agent_id === 'master')).toMatchObject({ status: 'offline', session_handle: null });
-    // An offline master or one without a handle is never probed.
-    const probe = vi.fn(() => Promise.resolve(false));
-    expect(await retireDeadMaster(dir, [{ ...master(), status: 'offline' }], probe)).toBe(false);
-    expect(await retireDeadMaster(dir, [{ ...master(), session_handle: null }], probe)).toBe(false);
-    expect(probe).not.toHaveBeenCalled();
+    it('does not retire a master whose probe fails on the first tick after it started', async () => {
+      // The race seen on 2026-11-08: the coordinator's first look at a freshly launched master.
+      const tracker = newMasterLivenessTracker();
+      for (const nowMs of [startedMs + 1_000, startedMs + 8_000]) {
+        expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), { tracker, graceMs: 30_000, nowMs })).toBe(false);
+      }
+      expect(masterSession()?.state).toBe('running');
+      expect(queryEvents(dir, { event_type: 'master_retired' })).toHaveLength(0);
+    });
+
+    it('retires only after consecutive failed probes, and records the probe on master_retired', async () => {
+      const tracker = newMasterLivenessTracker();
+      const later = { tracker, graceMs: 30_000, nowMs: startedMs + 60_000 };
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), later)).toBe(false);
+      expect(masterSession()?.state).toBe('running');
+
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve({ ...dead, reason: 'tmux pane process exited', pid: 77 }), later)).toBe(true);
+      expect(masterSession()?.state).toBe('offline');
+      const { listAgents } = await import('./agentRegistry.ts');
+      expect(listAgents(dir).find((a) => a.agent_id === 'master')).toMatchObject({ status: 'offline', session_handle: null });
+      expect(queryEvents(dir, { event_type: 'master_retired' })).toMatchObject([{
+        agent_id: 'master', actor_type: 'coordinator',
+        payload: {
+          session_handle: 'tmux:master', session_id: 'session-master',
+          probe: { alive: false, reason: 'tmux pane process exited', pid: 77 }, consecutive_failures: 2,
+        },
+      }]);
+    });
+
+    it('starts counting again after a live probe or for a new session', async () => {
+      const tracker = newMasterLivenessTracker();
+      const later = { tracker, graceMs: 30_000, nowMs: startedMs + 60_000 };
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), later)).toBe(false);
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(alive), later)).toBe(false);
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), later)).toBe(false);
+      // A relaunched master is a different session: its first failure is its first.
+      const relaunched = master({ session_started_at: '2026-01-01T00:00:01.000Z' });
+      expect(await retireDeadMaster(dir, [relaunched], () => Promise.resolve(dead), later)).toBe(false);
+      expect(masterSession()?.state).toBe('running');
+    });
+
+    it('never probes an offline master or one without a handle', async () => {
+      const probe = vi.fn(() => Promise.resolve(dead));
+      expect(await retireDeadMaster(dir, [master({ status: 'offline' })], probe, { minFailures: 1 })).toBe(false);
+      expect(await retireDeadMaster(dir, [master({ session_handle: null })], probe, { minFailures: 1 })).toBe(false);
+      expect(probe).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses commands to a recoverable session', () => {

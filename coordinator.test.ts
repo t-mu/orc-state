@@ -1541,6 +1541,45 @@ describe('stale worker removal', () => {
   });
 });
 
+describe('master liveness (general/master-liveness-race)', () => {
+  function seedMaster(startedAt: string) {
+    seedState(dir, {
+      agents: [{
+        agent_id: 'master', provider: 'claude', role: 'master', status: 'running', session_handle: 'tmux:master',
+        session_token: 'session-master', session_started_at: startedAt, registered_at: startedAt, last_heartbeat_at: startedAt,
+      }],
+    });
+  }
+
+  it('keeps a master whose probe fails right after start-session launched it', async () => {
+    seedMaster(new Date().toISOString());
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ heartbeatProbe: vi.fn().mockResolvedValue(false) }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    await tick();
+
+    expect(readAgents(dir).find((a) => a.agent_id === 'master')).toMatchObject({ status: 'running', session_handle: 'tmux:master' });
+    expect(readEvents(dir).filter((event) => event.event === 'master_retired')).toHaveLength(0);
+  });
+
+  it('retires a master after two failed probes in a row, with the probe on master_retired', async () => {
+    seedMaster(new Date(Date.now() - 10 * 60_000).toISOString());
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ heartbeatProbe: vi.fn().mockResolvedValue(false) }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+    expect(readAgents(dir).find((a) => a.agent_id === 'master')).toMatchObject({ status: 'running' });
+
+    await tick();
+    expect(readAgents(dir).find((a) => a.agent_id === 'master')).toMatchObject({ status: 'offline', session_handle: null });
+    expect(readEvents(dir).filter((event) => event.event === 'master_retired')).toMatchObject([{
+      agent_id: 'master',
+      payload: { session_handle: 'tmux:master', probe: { alive: false, reason: 'heartbeat probe failed', pid: null }, consecutive_failures: 2 },
+    }]);
+  });
+});
+
 describe('in-progress stale escalation', () => {
   it('emits worker_needs_attention at soft threshold and nudges at nudge threshold', async () => {
     seedState(dir, {
