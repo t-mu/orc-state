@@ -329,6 +329,8 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | `validateAgents` | function | `agents.json` validator (an authoritative file; projections have no public validator) |
 | `validateEventObject` | function | Event validator (`schemas/event.schema.json` + `lib/eventValidation.ts` rules) |
 | `getWorkerBootstrap`, `getMasterBootstrap` | functions | Package bootstrap templates |
+| `listProjects` | function | `listProjects({ env? })`: every registered project as `ProjectListEntry[]`, read from the registry under the data home |
+| `ProjectListEntry` | type | `{ id, name, target_repo_root, state_dir, control_socket, coordinator_running }`; `control_socket` is the `control.json` path, `null` when the state directory or endpoint is missing or unreadable; `coordinator_running` is `true` when a live coordinator is found by its pid lock or `control.json` (the check `orc start-session` and `orc kill-all` use), independent of `control_socket` |
 | `ControlClientOptions`, `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
 | `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
 | `ControlSnapshot`, `StatusView`, `ControlHealth`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
@@ -362,6 +364,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 
 | Command | Shape |
 |---|---|
+| `orc project list --json` | `listProjects()`: `[{ id, name, target_repo_root, state_dir, control_socket, coordinator_running }]` (without `--json`, the registry records) |
 | `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError }`; `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
 | `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
 | `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok`. `checks.coordinatorCode.warning` is a restart hint (string) when the running coordinator's code is older than the code on disk, else `null`; it never changes `ok` or the exit code |

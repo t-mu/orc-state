@@ -15,7 +15,7 @@ export const USAGE: Record<string, string> = {
   'doctor':            'orc doctor [--json] [--stale-progress-ms=<ms>] [--stale-start-ms=<ms>]',
   'preflight':         'orc preflight [--json]',
   'init':              'orc init [--provider=claude,codex,gemini] [--worker-provider=<name>]',
-  'project':           'orc project add <git-path> [--name=N] | list | select <id> | show | config <list|get|set|unset> [key] [value] [--global] | task <list|show|revisions|create|edit|import|export> [ref|path] | plan <list|show|import|export> [id|path]   (all accept --project=<id>)',
+  'project':           'orc project add <git-path> [--name=N] | list [--json] | select <id> | show | config <list|get|set|unset> [key] [value] [--global] | task <list|show|revisions|create|edit|import|export> [ref|path] | plan <list|show|import|export> [id|path]   (all accept --project=<id>)',
   'runs-active':       'orc runs-active [--json] [--via-control]',
   'events-tail':       'orc events-tail [--n=<count>] [--event=<name>] [--json]',
   'event-cursor':      'orc event-cursor [--consumer=<id>] [--reset-to=<seq>]   (reset requires a stopped coordinator)',

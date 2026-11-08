@@ -26,7 +26,7 @@ orc start-session --provider=claude
 | Command | Notes |
 |---------|-------|
 | `project add <git-path> [--name=N]` | Register a repository; creates its state directory and task store. |
-| `project list` | List registered projects. |
+| `project list` | List registered projects; `--json` adds each control socket and coordinator liveness. |
 | `project select <id>` | Default project outside every Git repository. |
 | `project show` | Print the resolved project. |
 | `project config <list\|get\|set\|unset> [key] [value] [--global]` | Read/write settings. `list` shows effective values; `--global` targets global settings (not combinable with `--project`). Keys: [configuration.md → Settings](configuration.md#settings). |
