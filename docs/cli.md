@@ -31,7 +31,7 @@ orc start-session --provider=claude
 | `project select <id>` | Default project outside every Git repository. |
 | `project show` | Print the resolved project. |
 | `project config <list\|get\|set\|unset> [key] [value] [--global]` | Read/write settings. `list` shows effective values; `--global` targets global settings (not combinable with `--project`). Keys: [configuration.md → Settings](configuration.md#settings). |
-| `project task list` | `[--status=<s>[,<s>]]` `[--feature=<f>]` | List tasks (ref, title, status, revision). With no flag every task is listed, including done ones. `--status` takes the runtime statuses (`todo`, `claimed`, `in_progress`, `done`, `blocked`, `released`, `cancelled`), repeatable or comma-separated; an unknown status is a usage error. `--feature` matches the task's feature ref. |
+| `project task list [--status=<s>[,<s>]] [--feature=<f>]` | List tasks (ref, title, status, revision). With no flag every task is listed, including done ones. `--status` takes the runtime statuses (`todo`, `claimed`, `in_progress`, `done`, `blocked`, `released`, `cancelled`), repeatable or comma-separated, written as `--status=<s>` (a space-separated value is a usage error); an unknown status is a usage error. `--feature` matches the task's feature ref. |
 | `project task show <ref> [--revision=<n>]` | Show a task or one revision. |
 | `project task revisions <ref>` | List revisions. |
 | `project task create [fields]` | Create a task. |

@@ -5,7 +5,7 @@ const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
 const WORKER_BOOTSTRAP_SMOKE_TEMPLATE = 'worker-bootstrap-smoke-v1.txt';
 const SCOUT_BOOTSTRAP_TEMPLATE = 'scout-bootstrap-v1.txt';
 
-const MASTER_BOOTSTRAP_TEMPLATE = 'master-bootstrap-v1.txt';
+export const MASTER_BOOTSTRAP_TEMPLATE = 'master-bootstrap-v1.txt';
 
 function assertProvider(provider: string): ProviderName {
   if (!isSupportedProvider(provider)) {

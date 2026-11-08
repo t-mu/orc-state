@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { cliError, formatErrorMessage, loadClaim } from './shared.ts';
+import { cliError, formatErrorMessage, loadClaim, printJson } from './shared.ts';
 
 const SHARED_PATH = fileURLToPath(new URL('./shared.ts', import.meta.url));
 
@@ -63,6 +63,23 @@ describe('cli/shared.ts', () => {
   });
 
   describe('printJson and exitAfterFlush', () => {
+    it('indents json when stdout is a TTY and compacts it otherwise', () => {
+      const original = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+        printJson({ a: 1 });
+        expect(write).toHaveBeenLastCalledWith('{\n  "a": 1\n}\n');
+
+        Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+        printJson({ a: 1 });
+        expect(write).toHaveBeenLastCalledWith('{"a":1}\n');
+      } finally {
+        if (original) Object.defineProperty(process.stdout, 'isTTY', original);
+        else delete (process.stdout as { isTTY?: boolean }).isTTY;
+      }
+    });
+
     it('prints one compact line when stdout is piped', () => {
       const result = runPiped("printJson({ a: 1, nested: { b: [1, 2] } });");
       expect(result.status).toBe(0);

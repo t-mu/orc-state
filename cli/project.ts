@@ -54,6 +54,7 @@ function taskInput(args: string[], allowed: readonly string[]): Record<string, u
 
 /** `task list` rows, narrowed by `--status=<s>[,<s>]` (repeatable) and `--feature=<f>`; no flags lists every task. */
 function listTaskRows(tasks: ProjectTask[], args: string[]) {
+  if (args.includes('--status')) throw new Error(`--status needs a value: --status=<s>. Usage: ${USAGE['project']}`);
   const statusArgs = args.filter((arg) => arg.startsWith('--status='));
   const statuses = statusArgs.flatMap((arg) => arg.slice('--status='.length).split(',')).map((item) => item.trim()).filter(Boolean);
   if (statusArgs.length > 0 && statuses.length === 0) throw new Error(`--status needs at least one status. Usage: ${USAGE['project']}`);

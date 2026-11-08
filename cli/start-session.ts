@@ -53,7 +53,7 @@ import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../
 import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand } from '../adapters/tmux.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { listSupervisedSessions, MASTER_RETIRE_FAILURES, retireMaster, type MasterProbe } from '../lib/sessionSupervisor.ts';
-import { getMasterBootstrap } from '../lib/sessionBootstrap.ts';
+import { getMasterBootstrap, MASTER_BOOTSTRAP_TEMPLATE } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
 import { findLiveCoordinator } from '../lib/coordinatorLiveness.ts';
 import {
@@ -503,7 +503,7 @@ try {
     console.log('  Master bootstrap loaded via --system-prompt.');
     if (resumable) console.log(`  Resuming conversation ${conversationId}.`);
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
-    console.log('  Bootstrap template: master-bootstrap-v1.txt (sent to the master, not printed here).');
+    console.log(`  Bootstrap template: ${MASTER_BOOTSTRAP_TEMPLATE} (sent to the master, not printed here).`);
   } else if (master.provider === 'codex') {
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
     // Codex forwards the secret by name from its own environment (env_vars), never on its command line.
@@ -515,7 +515,7 @@ try {
     console.log('  MCP server: orchestrator tools available via command-line overrides.');
     console.log('  Master bootstrap loaded via initial prompt.');
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
-    console.log('  Bootstrap template: master-bootstrap-v1.txt (sent to the master, not printed here).');
+    console.log(`  Bootstrap template: ${MASTER_BOOTSTRAP_TEMPLATE} (sent to the master, not printed here).`);
   } else if (master.provider === 'gemini') {
     const mcpConfigPath = writeMcpConfig(masterMcpEnv());
     const bootstrap = getMasterBootstrap(master.provider, master.agent_id);
@@ -523,7 +523,7 @@ try {
     console.log('  MCP server: orchestrator tools available in this session.');
     console.log('  Master bootstrap loaded via --system-instruction.');
     if (masterConfig.model) console.log(`  Model: ${masterConfig.model}`);
-    console.log('  Bootstrap template: master-bootstrap-v1.txt (sent to the master, not printed here).');
+    console.log(`  Bootstrap template: ${MASTER_BOOTSTRAP_TEMPLATE} (sent to the master, not printed here).`);
   } else {
     console.warn(`Unknown provider '${master.provider}' for bootstrap args; starting without bootstrap args.`);
   }

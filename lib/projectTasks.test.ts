@@ -188,6 +188,8 @@ describe('orc project task', () => {
       expect(runProjectCommand(['task', 'list', '--feature=other', flag], registry)).toEqual([]);
       expect(() => runProjectCommand(['task', 'list', '--status=bogus', flag], registry)).toThrow("Unknown status 'bogus'");
       expect(() => runProjectCommand(['task', 'list', '--status=', flag], registry)).toThrow('--status needs at least one status');
+      expect(() => runProjectCommand(['task', 'list', '--status', flag], registry)).toThrow('--status needs a value');
+      expect(() => runProjectCommand(['task', 'list', '--status', 'todo', flag], registry)).toThrow('Usage:');
       expect(() => runProjectCommand(['task', 'revisions', 'app/missing', flag], registry)).toThrow('Task not found');
       expect(readdirSync(repo)).toEqual(['.git']);
     } finally {
