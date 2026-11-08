@@ -13,33 +13,14 @@ import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
-import type { OperatorOp, OperatorRequest } from './operatorMutations.ts';
+import type { OperatorOp, OperatorRequest, OperatorResult } from './operatorMutations.ts';
 import type { ProjectTaskView, TaskAuthoringInput } from './projectTasks.ts';
 import type { TaskImportResult, TaskMarkdownSource } from './taskMarkdown.ts';
-import type { TaskStatus } from '../types/backlog.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 export interface EventRow { seq: number; event: unknown }
+export type { OperatorResult, OperatorResults } from './operatorMutations.ts';
 
-/** `POST /v1/operator` results by `op` (shapes from `lib/operatorMutations.ts`). */
-export interface OperatorResults {
-  'cancel-task':
-    | { cancelled: true; task_ref: string; status: TaskStatus; cancelled_run_id?: string; cancelled_run_count?: number }
-    | { error: 'already_terminal'; task_ref: string; status: TaskStatus };
-  'reset-task': { reset: true; task_ref: string; previous_status: TaskStatus; cancelled_claims: number };
-  'unblock-task': { unblocked: true; task_ref: string };
-  'delegate-task':
-    | { task_ref: string; assigned_to: string }
-    | { warning: 'no_eligible_worker'; task_ref: string; message: string;
-      candidate_diagnostics: Array<{ agent_id: string; reasons: string[]; reason_messages: string[] }> };
-  'respond-input': { ok: true; run_id: string; agent_id: string; responded_by: string };
-  'run-expire': { run_id: string; task_ref: string; expired: true };
-  'run-close': { run_id: string; closed: true; task_ref: string; task_status: TaskStatus | null; branch: string;
-    branch_merged: boolean; worktree_cleaned: boolean };
-  'task-mark-done': { task_ref: string; done: true; previous_status: TaskStatus };
-}
-
-export type OperatorResult<Op extends OperatorOp = OperatorOp> = OperatorResults[Op];
 
 export interface ControlClientOptions {
   /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET). */

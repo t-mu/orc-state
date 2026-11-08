@@ -252,7 +252,7 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 | `GET` | `/v1/tasks`, `/v1/tasks/<ref>`, `/v1/tasks/<ref>/revisions` | master, operator | tasks with `spec_revision`, `content_hash`, `body_markdown`; encode the ref (`app%2Flogin`) |
 | `POST` | `/v1/tasks`, `/v1/tasks/<ref>/revisions`, `/v1/tasks/import` | master, operator | create → `201`; edit needs `expected_revision` (stale → `409`; `status` → `400`); import `{ files: [{ path, text }], strict? }`, atomic, ≤ 32 MiB |
 
-One row per method and full path; `lib/controlRoutes.test.ts` fails when a route the server matches is missing here, or a listed method is not served. **Experimental** routes are outside the semver contract and may change in a minor release.
+One row per method and full path; `lib/controlRoutes.test.ts` fails when a route the server matches is missing here, a listed method is not served, or an unlisted one (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) is served. **Experimental** routes are outside the semver contract and may change in a minor release.
 
 Status codes: no or wrong credential `401`; wrong principal (e.g. a worker on a master route, another run) `403`; missing task/agent `404`; bad input `400`; refused transition `409`; unexpected `500`.
 
@@ -299,7 +299,7 @@ Session identity (schema v8):
 
 ## Public surface (semver)
 
-Everything in this section follows semver from 1.0: a breaking change needs a major release. Anything not listed (other modules under `dist/`, state file layout beyond the schemas, the `orc control` debug command, routes marked **Experimental**) is internal.
+Everything in this section follows semver from 1.0: a breaking change needs a major release. Anything not listed (other modules under `dist/`, state file layout beyond the schemas) is internal, and anything marked **Experimental** may change in a minor release.
 
 ### Package exports
 
@@ -323,8 +323,9 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | `validateEventObject` | function | Event validator (`schemas/event.schema.json` + `lib/eventValidation.ts` rules) |
 | `getWorkerBootstrap`, `getMasterBootstrap` | functions | Package bootstrap templates |
 | `ControlClientOptions`, `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
-| `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView`, `SubmitCommandRequest`, `AckState` | types | Protocol envelope, endpoint descriptor and frames |
-| `ControlSnapshot`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord`, `SemanticMessage`, `SendMessageInput`, `DurableCommand` | types | Route bodies and results (the last three serve experimental routes) |
+| `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
+| `ControlSnapshot`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
+| `SubmitCommandRequest`, `AckState`, `DurableCommand`, `SemanticMessage`, `SendMessageInput` | types | **Experimental**, like the `/v1/commands…` and `/v1/messages…` routes they serve |
 
 ### Control API protocol v1
 
@@ -346,7 +347,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | Inspection | `status`, `watch`, `attach`, `doctor`, `preflight`, `runs-active`, `run-info`, `sessions`, `events-tail`, `events-filter`, `event-cursor`, `waiting-input`, `worker-status`, `terminal`, `memory-status`, `memory-search` |
 | Master / operator | `delegate`, `task-mark-done`, `task-reset`, `task-unblock`, `task-cancel`, `run-expire`, `run-close`, `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`, `pr-diff`, `pr-review`, `pr-merge`, `pr-status` |
 | Worker lifecycle (flags below) | `report-for-duty`, `run-start`, `progress`, `review-submit`, `review-read`, `run-work-complete`, `run-finish`, `run-fail`, `run-input-request`, `memory-wake-up`, `memory-record` |
-| Hooks and debug | `stop-check` (Claude Stop hook), `control` (debug; its `command`/`message` subcommands are experimental), `run-heartbeat` (deprecated no-op) |
+| Hooks and debug | `stop-check` (Claude Stop hook), `control` (debug; its `command`, `ack`, `message`, `messages` and `consume` subcommands are **Experimental**, like the routes they call), `run-heartbeat` (deprecated no-op) |
 
 Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` selects a project for any command.
 
@@ -354,7 +355,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 
 | Command | Shape |
 |---|---|
-| `orc status --json` | `{ project, agents, master, worker_capacity, claims, finalization, failures, recentEvents, eventReadError }` |
+| `orc status --json` | `{ project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, recentEvents, eventReadError }` |
 | `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
 | `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok` |
 | `orc preflight --json` | `{ ok, project, checks, warnings, details }`; exit 1 when not `ok` |

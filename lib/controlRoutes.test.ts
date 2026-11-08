@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { closeAllDatabases, initEventsDb } from './eventLog.ts';
-import { CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, PROTOCOL_HEADER } from './controlProtocol.ts';
+import { closeAllDatabases, initEventsDb, withEventDbTransaction } from './eventLog.ts';
+import { CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, PROTOCOL_HEADER, SESSION_HEADER } from './controlProtocol.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
+import { credentialHash } from './sessionCredentials.ts';
 
 /**
  * The control API routes table in docs/contracts.md is the route contract:
@@ -16,6 +17,8 @@ import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts'
 const repoRoot = join(import.meta.dirname, '..');
 const PARAM = '<>';
 const METHODS = ['GET', 'POST'] as const;
+/** Never documented: probed to prove the server does not serve them either. */
+const OTHER_METHODS = ['PUT', 'PATCH', 'DELETE'] as const;
 
 interface DocRoute { methods: string[]; paths: string[] }
 
@@ -116,7 +119,15 @@ describe('control API routes table (docs/contracts.md)', () => {
     beforeEach(async () => {
       dir = createTempStateDir('orch-control-routes-');
       seedState(dir);
+      // A running master session reads every route and gets past the session checks, so only routing decides.
+      writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+        { agent_id: 'master', provider: 'claude', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+      ] }));
       initEventsDb(dir);
+      withEventDbTransaction(dir, (db) => {
+        db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+          VALUES ('session-master', NULL, 'master', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('secret-master'));
+      });
       initProjectTaskStore(dir);
       server = await startControlServer(dir, { pollMs: 20 });
     });
@@ -133,7 +144,7 @@ describe('control API routes table (docs/contracts.md)', () => {
       const headers = {
         authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8').trim()}`,
         [PROTOCOL_HEADER]: String(CONTROL_PROTOCOL_VERSION),
-        [OPERATOR_HEADER]: readFileSync(join(dir, OPERATOR_TOKEN_FILE), 'utf8').trim(),
+        [SESSION_HEADER]: 'secret-master',
         ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
       };
       return new Promise((resolve, reject) => {
@@ -162,6 +173,9 @@ describe('control API routes table (docs/contracts.md)', () => {
           // A literal path can also match a parameterized one (`/v1/tasks/import` is `/v1/tasks/<ref>` to GET).
           const expected = docs.some((row) => row.methods.includes(method) && row.paths.some((pattern) => matches(pattern, concrete)));
           expect({ method, path, routed: await routed(method, concrete) }).toEqual({ method, path, routed: expected });
+        }
+        for (const method of OTHER_METHODS) {
+          expect({ method, path, routed: await routed(method, concrete) }).toEqual({ method, path, routed: false });
         }
       }
     });
