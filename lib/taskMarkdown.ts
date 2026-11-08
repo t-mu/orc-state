@@ -315,7 +315,7 @@ export function readPlanMarkdownSource(path: string): TaskMarkdownSource {
   const source = resolve(path);
   const buf = readFileSync(source);
   try {
-    return { path: source, text: new TextDecoder('utf-8', { fatal: true }).decode(buf) };
+    return { path: source, text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf) };
   } catch {
     throw new PlanValidationError(`Plan file is not valid UTF-8: ${source}`);
   }

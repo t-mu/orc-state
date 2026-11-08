@@ -237,6 +237,9 @@ describe('plan import from sources', () => {
       expect(() => importPlanMarkdownSources(otherDir, [{ path: 'ok.md', text: plan(10, 'fine') }, invalid])).toThrow();
       expect(initProjectTaskStore(otherDir).getPlan(10)).toBeNull();
       expect(() => importPlanMarkdownSources(otherDir, [{ path: '\ufeffbom.md', text: `\ufeff${plan(12, 'bom')}` }])).toThrow(/BOM/);
+      const bomFile = join(outside, '13-bom.md');
+      writeFileSync(bomFile, `\ufeff${plan(13, 'bom-file')}`);
+      expect(() => importPlanMarkdown(otherDir, bomFile)).toThrow(/BOM/);
     } finally {
       closeProjectTaskStores();
       cleanupTempStateDir(otherDir);
