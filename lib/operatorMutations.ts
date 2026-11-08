@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { listAgents } from './agentRegistry.ts';
+import { getAgent, listAgents } from './agentRegistry.ts';
 import { setRunInputState } from './claimManager.ts';
 import { AGENT_ID_RE, TASK_TYPES } from './constants.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from './dispatchPlanner.ts';
@@ -13,6 +13,7 @@ import { commitClaims } from './runStore.ts';
 import { cleanupRunWorktree, getRunWorktree, runBranchMergedIntoMain } from './runWorktree.ts';
 import { resolveControlPrincipal, requireProjectAuthor, type ControlPrincipal } from './controlPrincipal.ts';
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
+import { launchScoutInBackground, prepareScout, removeScout } from './scouts.ts';
 import { markTaskDoneLocked, markTaskDoneRuntimeOnly } from './taskCompletion.ts';
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from './taskRouting.ts';
@@ -418,11 +419,14 @@ export interface OperatorResults {
   'run-close': { run_id: string; closed: true; task_ref: string; task_status: TaskStatus | null; branch: string;
     branch_merged: boolean; worktree_cleaned: boolean };
   'task-mark-done': { task_ref: string; done: true; previous_status: string };
+  /** Answered at once (`202`); the scout launches in the background and ends in `scout_launched` or `scout_launch_failed`. */
+  'request-scout': { agent_id: string };
+  'remove-scout': { agent_id: string; removed: boolean; reason?: string; stop_warning?: string };
 }
 
 export type OperatorResult<Op extends OperatorOp = OperatorOp> = OperatorResults[Op];
 
-export type OperatorOp = 'cancel-task' | 'reset-task' | 'unblock-task' | 'delegate-task' | 'respond-input' | 'run-expire' | 'run-close' | 'task-mark-done';
+export type OperatorOp = 'cancel-task' | 'reset-task' | 'unblock-task' | 'delegate-task' | 'respond-input' | 'run-expire' | 'run-close' | 'task-mark-done' | 'request-scout' | 'remove-scout';
 
 /** A master or operator mutation sent to the coordinator: `op` plus the same arguments as the MCP tool. */
 export type OperatorRequest = { op: OperatorOp; actor_id?: string } & Record<string, unknown>;
@@ -436,6 +440,8 @@ const OPERATOR_OPS: Readonly<Record<OperatorOp, readonly string[]>> = {
   'run-expire': ['run_id'],
   'run-close': ['run_id', 'reason'],
   'task-mark-done': ['task_ref'],
+  'request-scout': ['objective', 'provider', 'run_id', 'task_ref', 'scope_paths', 'use_web'],
+  'remove-scout': ['agent_id'],
 };
 
 export function parseOperatorRequest(body: Record<string, unknown>): OperatorRequest {
@@ -473,8 +479,16 @@ export function authorizeOperator(stateDir: string, caller: ControlPrincipal | {
   return { actorId: requireProjectAuthor(stateDir, principal, request.actor_id) };
 }
 
-/** Apply an authorized operator mutation; the coordinator calls this, as does a direct fallback. */
-export function applyOperatorMutation(stateDir: string, request: OperatorRequest): OperatorResult {
+/** Ops that wait on a session; every other op is applied synchronously. */
+type AsyncOperatorOp = 'remove-scout';
+
+/**
+ * Apply an authorized operator mutation; the coordinator calls this, as does a direct fallback.
+ * `request-scout` registers the scout and launches it in the background, so it answers at once.
+ */
+export function applyOperatorMutation<Op extends Exclude<OperatorOp, AsyncOperatorOp>>(stateDir: string, request: OperatorRequest & { op: Op }): OperatorResult<Op>;
+export function applyOperatorMutation(stateDir: string, request: OperatorRequest): OperatorResult | Promise<OperatorResult>;
+export function applyOperatorMutation(stateDir: string, request: OperatorRequest): OperatorResult | Promise<OperatorResult> {
   const { op, ...args } = request;
   switch (op) {
     case 'cancel-task': return cancelTask(stateDir, args);
@@ -484,6 +498,13 @@ export function applyOperatorMutation(stateDir: string, request: OperatorRequest
     case 'respond-input': return respondInput(stateDir, args);
     case 'run-expire': return expireRun(stateDir, args.run_id, args.actor_id as string);
     case 'run-close': return closeRun(stateDir, args);
+    case 'request-scout': {
+      const { actor_id: actorId, ...scoutRequest } = args;
+      const prepared = prepareScout(stateDir, scoutRequest, getAgent(stateDir, actorId as string)?.provider ?? null);
+      void launchScoutInBackground(stateDir, prepared, actorId as string);
+      return { agent_id: prepared.scout.agent_id };
+    }
+    case 'remove-scout': return removeScout(stateDir, args.agent_id);
     case 'task-mark-done': {
       const result = markTaskDoneRuntimeOnly(args.task_ref as string, args.actor_id as string, stateDir);
       return { task_ref: args.task_ref as string, done: true, previous_status: result.previousStatus };

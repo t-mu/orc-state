@@ -6,7 +6,7 @@ import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixt
 import { closeAllDatabases, queryEvents } from './eventLog.ts';
 import { closeProjectTaskStores, createProjectTask, initProjectTaskStore } from './projectTasks.ts';
 import { migrateProjectTaskSchema, PROJECT_TASK_SCHEMA_VERSION, RevisionConflictError } from './projectTaskStore.ts';
-import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, parseFrontmatter, readTaskMarkdownSources, renderTaskMarkdown } from './taskMarkdown.ts';
+import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importPlanMarkdownSources, readPlanMarkdownSource, importTaskMarkdown, parseFrontmatter, readTaskMarkdownSources, renderTaskMarkdown } from './taskMarkdown.ts';
 
 let dir: string;
 let outside: string;
@@ -213,6 +213,34 @@ describe('plan documents in project state', () => {
     expect(readFileSync(exported, 'utf8')).toBe(plan);
     writeFileSync(join(outside, 'bad.md'), '---\nplan_id: 4\n---\n# nope\n');
     expect(() => importPlanMarkdown(dir, join(outside, 'bad.md'))).toThrow();
+  });
+});
+
+describe('plan import from sources', () => {
+  const plan = (id: number, name: string) => ['---', `plan_id: ${id}`, `name: ${name}`, `title: ${name}`,
+    'created_at: 2026-10-24T19:49:28Z', 'updated_at: 2026-10-24T19:49:28Z', 'derived_task_refs: []', '---', '',
+    `# ${name}`, '', '## Objective', '', 'Do it.', '', '## Scope', '', '- A.', '', '## Out of Scope', '', '- B.', '',
+    '## Constraints', '', '- C.', '', '## Affected Areas', '', '- `x.ts`.', '', '## Implementation Steps', '', '### Step 1 — Do', '', 'Work.', ''].join('\n');
+
+  it('stores the same plan as the file import and changes nothing when any plan is invalid', () => {
+    const file = join(outside, '9-same.md');
+    writeFileSync(file, plan(9, 'same'));
+    const otherDir = createTempStateDir('orc-plan-src-');
+    seedState(otherDir);
+    initProjectTaskStore(otherDir);
+    try {
+      importPlanMarkdown(dir, file);
+      expect(importPlanMarkdownSources(otherDir, [readPlanMarkdownSource(file)])).toEqual([{ path: file, plan_id: 9, changed: true }]);
+      expect(initProjectTaskStore(otherDir).getPlan(9)).toEqual({ ...initProjectTaskStore(dir).getPlan(9)!, updatedAt: expect.any(String) });
+
+      const invalid = { path: 'bad.md', text: '---\nplan_id: 11\n---\n# nope\n' };
+      expect(() => importPlanMarkdownSources(otherDir, [{ path: 'ok.md', text: plan(10, 'fine') }, invalid])).toThrow();
+      expect(initProjectTaskStore(otherDir).getPlan(10)).toBeNull();
+      expect(() => importPlanMarkdownSources(otherDir, [{ path: '\ufeffbom.md', text: `\ufeff${plan(12, 'bom')}` }])).toThrow(/BOM/);
+    } finally {
+      closeProjectTaskStores();
+      cleanupTempStateDir(otherDir);
+    }
   });
 });
 

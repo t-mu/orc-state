@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { TASK_REF_RE, TASK_TYPES } from './constants.ts';
-import { parsePlan } from './planDocs.ts';
+import { parsePlanText, PlanValidationError } from './planDocs.ts';
 import { createProjectTask, featureRefOf, requireProjectTaskStore, reviseProjectTask, TaskInputError, withTaskAuthoringBatch } from './projectTasks.ts';
 import type { ProjectTask } from './projectTaskStore.ts';
 
@@ -289,17 +289,42 @@ export function exportTaskMarkdown(stateDir: string, destination: string, { refs
 
 // ── Plans ─────────────────────────────────────────────────────────────────
 
+export interface PlanImportResult { path: string; plan_id: number; changed: boolean }
+
+/** Store validated plans' content and metadata in project state, all or none: an invalid plan changes nothing. */
+export function importPlanMarkdownSources(stateDir: string, sources: TaskMarkdownSource[]): PlanImportResult[] {
+  const store = requireProjectTaskStore(stateDir);
+  const plans = sources.map(({ path, text }) => ({ path, text, plan: parsePlanText(text, path) }));
+  const ids = new Set<number>();
+  for (const { plan } of plans) {
+    if (ids.has(plan.planId)) throw new TaskInputError(`Duplicate plan_id in import: ${plan.planId}`);
+    ids.add(plan.planId);
+  }
+  return withTaskAuthoringBatch(stateDir, () => plans.map(({ path, text, plan }): PlanImportResult => ({
+    path, plan_id: plan.planId,
+    changed: store.savePlan({
+      planId: plan.planId, name: plan.name, title: plan.title, bodyMarkdown: text,
+      metadata: { created_at: plan.createdAt, updated_at: plan.updatedAt, derived_task_refs: plan.derivedTaskRefs, steps: plan.steps.map((step) => step.number) },
+      sourcePath: path,
+    }),
+  })));
+}
+
+/** Read a plan file in the caller's process, as `importPlanMarkdownSources` takes it. */
+export function readPlanMarkdownSource(path: string): TaskMarkdownSource {
+  const source = resolve(path);
+  const buf = readFileSync(source);
+  try {
+    return { path: source, text: new TextDecoder('utf-8', { fatal: true }).decode(buf) };
+  } catch {
+    throw new PlanValidationError(`Plan file is not valid UTF-8: ${source}`);
+  }
+}
+
 /** Store a validated plan file's content and metadata in project state. */
 export function importPlanMarkdown(stateDir: string, path: string): { plan_id: number; changed: boolean } {
-  const store = requireProjectTaskStore(stateDir);
-  const source = resolve(path);
-  const plan = parsePlan(source);
-  const changed = store.savePlan({
-    planId: plan.planId, name: plan.name, title: plan.title, bodyMarkdown: readFileSync(source, 'utf8'),
-    metadata: { created_at: plan.createdAt, updated_at: plan.updatedAt, derived_task_refs: plan.derivedTaskRefs, steps: plan.steps.map((step) => step.number) },
-    sourcePath: source,
-  });
-  return { plan_id: plan.planId, changed };
+  const [{ plan_id, changed }] = importPlanMarkdownSources(stateDir, [readPlanMarkdownSource(path)]);
+  return { plan_id, changed };
 }
 
 /** Write a stored plan as readable Markdown; a directory destination receives `<plan_id>-<name>.md`. */

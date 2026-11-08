@@ -80,7 +80,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 | `ORC_CONTROL_API` | Serve the control API (`control.sock`, `control.json`, `control.token`) | on |
 | `ORC_CONTROL_RETRY_MS` | Retry window for worker lifecycle commands while the coordinator is unreachable | `120000` |
 | `ORC_LOG_LEVEL` | `debug`, `info`, `warn`, `error`, `silent` | `warn` |
-| `ORC_SCOUT_READY_TIMEOUT_MS` | How long `request_scout` waits for the scout's session to be ready | `60000` |
+| `ORC_SCOUT_READY_TIMEOUT_MS` | How long the scout launch (the coordinator's, or `request_scout` with no coordinator) waits for the scout's session to be ready | `60000` |
 
 ### Providers and pools
 

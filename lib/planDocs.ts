@@ -231,7 +231,12 @@ function parseStepsSection(body: string): ParsedPlanStep[] {
 }
 
 export function parsePlan(path: string): ParsedPlan {
-  const text = readPlanFileBytes(path);
+  return parsePlanText(readPlanFileBytes(path), path);
+}
+
+/** Parse a plan whose text the caller already read; `path` names it in errors and on the result. */
+export function parsePlanText(text: string, path: string): ParsedPlan {
+  if (text.charCodeAt(0) === 0xfeff) throw new PlanValidationError(`Plan file has UTF-8 BOM prefix (not allowed): ${path}`);
   const { frontmatter, body } = splitFrontmatter(text);
 
   const planIdRaw = parseScalar(frontmatter, 'plan_id')!;

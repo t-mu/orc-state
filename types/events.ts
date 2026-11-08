@@ -310,6 +310,20 @@ export interface MasterRetiredEvent extends BaseEvent {
   };
 }
 
+/** A requested scout's session is up and briefed. */
+export interface ScoutLaunchedEvent extends BaseEvent {
+  event: 'scout_launched';
+  agent_id: string;
+  payload: { requested_by: string; provider: string; working_directory: string; session_handle: string; [key: string]: unknown };
+}
+
+/** A requested scout could not be launched or briefed; it has been removed. `hint` says how to fix it when known. */
+export interface ScoutLaunchFailedEvent extends BaseEvent {
+  event: 'scout_launch_failed';
+  agent_id: string;
+  payload: { requested_by: string; provider: string; reason: string; hint?: string | undefined; [key: string]: unknown };
+}
+
 export interface SessionStartFailedEvent extends BaseEvent {
   event: 'session_start_failed';
   run_id: string;
@@ -428,6 +442,8 @@ export type OrcEvent =
   | AgentOfflineEvent
   | AgentMarkedDeadEvent
   | SessionStartFailedEvent
+  | ScoutLaunchedEvent
+  | ScoutLaunchFailedEvent
   | SessionReconciledEvent
   | SessionResumedEvent
   | SessionResumeFailedEvent

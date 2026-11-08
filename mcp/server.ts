@@ -20,7 +20,7 @@ import { ForbiddenError } from '../lib/domainErrors.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
-import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
+import { routeToCoordinator, submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
 
@@ -122,13 +122,25 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     // and a worker's is refused like its shell.
     return submitOperatorMutation({ op, ...args }, { credential, stateDir, requireProject });
   }
-  if (name === 'request_scout') {
-    // Only the master's session may launch scouts; it acts as itself.
-    return handlers.handleRequestScout(stateDir, { ...args, actor_id: masterForCredential(stateDir, credential!) });
-  }
-  if ((name === 'get_scout_report' || name === 'remove_scout') && credential) {
-    // Scouts are the master's: a worker session cannot read or stop them.
-    masterForCredential(stateDir, credential);
+  if (name === 'request_scout' || name === 'get_scout_report' || name === 'remove_scout') {
+    // Scouts are the master's: a worker session cannot launch, read or stop them. The master acts as itself;
+    // an operator without a session reads and removes them.
+    const actor = credential ? masterForCredential(stateDir, credential) : undefined;
+    const warn = (line: string) => console.error(line);
+    const scoutId = args.agent_id as string;
+    // The coordinator owns the scout's session; it answers a request at once and reports the launch on the event stream.
+    if (name === 'request_scout') {
+      return routeToCoordinator<string | undefined, unknown>(stateDir, name, { credential, warn,
+        remote: (client) => client.operator({ op: 'request-scout', ...args }),
+        authorize: () => actor, direct: (author) => handlers.handleRequestScout(stateDir, { ...args, actor_id: author }) });
+    }
+    if (name === 'get_scout_report') {
+      return routeToCoordinator<undefined, unknown>(stateDir, name, { credential, warn,
+        remote: (client) => client.scoutReport(scoutId), authorize: () => undefined, direct: () => handlers.handleGetScoutReport(stateDir, args) });
+    }
+    return routeToCoordinator<undefined, unknown>(stateDir, name, { credential, warn,
+      remote: (client) => client.operator({ op: 'remove-scout', agent_id: scoutId }),
+      authorize: () => undefined, direct: () => handlers.handleRemoveScout(stateDir, args) });
   }
   // The master acts as itself: the coordinator records the session's agent.
   if (name === 'create_task') {
@@ -166,10 +178,6 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleCreateTask(stateDir, args);
     case 'update_task':
       return handlers.handleUpdateTask(stateDir, args);
-    case 'get_scout_report':
-      return handlers.handleGetScoutReport(stateDir, args);
-    case 'remove_scout':
-      return handlers.handleRemoveScout(stateDir, args);
     case 'get_run':
       return handlers.handleGetRun(stateDir, args);
     case 'list_waiting_input':

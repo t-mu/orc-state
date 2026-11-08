@@ -24,7 +24,9 @@ import { RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
-import { importTaskMarkdownSources, type TaskMarkdownSource } from './taskMarkdown.ts';
+import { importPlanMarkdownSources, importTaskMarkdownSources, type TaskMarkdownSource } from './taskMarkdown.ts';
+import { PlanValidationError } from './planDocs.ts';
+import { readScoutReport } from './scouts.ts';
 import { applyStopCheck } from './stopCheck.ts';
 import { DEFAULT_WAKE_UP_BUDGET, isWakeUpBudget, readMemoryWakeUp, readRunReviews } from './projectReads.ts';
 
@@ -84,7 +86,7 @@ function classify(error: unknown): ControlError {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof NotFoundError) return new ControlError('not_found', message, 404);
   if (error instanceof ConflictError || error instanceof RevisionConflictError) return new ControlError('conflict', message, 409);
-  if (error instanceof InputError || error instanceof TaskInputError) return new ControlError('bad_request', message, 400);
+  if (error instanceof InputError || error instanceof TaskInputError || error instanceof PlanValidationError) return new ControlError('bad_request', message, 400);
   if (error instanceof ForbiddenError) return new ControlError('forbidden', message, 403);
   if (error instanceof UnauthenticatedError) return new ControlError('unauthenticated', message, 401);
   return new ControlError('internal', message, 500);
@@ -124,6 +126,18 @@ async function readBody(req: IncomingMessage, limit = MAX_BODY_BYTES): Promise<R
   } catch {
     throw new ControlError('bad_request', 'Request body must be a JSON object', 400);
   }
+}
+
+/** The `{ path, text }` files an import request carries. */
+function importFiles(body: Record<string, unknown>): TaskMarkdownSource[] {
+  if (!Array.isArray(body.files) || body.files.some((file: unknown) => !file || typeof file !== 'object'
+    || typeof (file as Record<string, unknown>).path !== 'string' || typeof (file as Record<string, unknown>).text !== 'string')) {
+    // An older client sent a coordinator-side path; say which side to update instead of a bare shape error.
+    throw new InputError(typeof body.path === 'string'
+      ? 'This coordinator takes imported specs as text, not a path: the client is older than the coordinator; update orc on the client'
+      : 'files must be a list of { path, text }');
+  }
+  return body.files as TaskMarkdownSource[];
 }
 
 function actorField(body: Record<string, unknown>): string | undefined {
@@ -402,16 +416,10 @@ export async function startControlServer(stateDir: string, options: ControlServe
         const caller = requireProjectReader(principal(req));
         const body = await readBody(req, MAX_IMPORT_BODY_BYTES);
         const actor = requireProjectAuthor(stateDir, caller, actorField(body));
-        if (!Array.isArray(body.files) || body.files.some((file: unknown) => !file || typeof file !== 'object'
-          || typeof (file as Record<string, unknown>).path !== 'string' || typeof (file as Record<string, unknown>).text !== 'string')) {
-          // An older client sent a coordinator-side path; say which side to update instead of a bare shape error.
-          throw new InputError(typeof body.path === 'string'
-            ? 'This coordinator takes imported specs as text, not a path: the client is older than the coordinator; update orc on the client'
-            : 'files must be a list of { path, text }');
-        }
+        const files = importFiles(body);
         if (body.strict !== undefined && typeof body.strict !== 'boolean') throw new InputError('strict must be a boolean');
         assertOpen();
-        return ok({ imported: importTaskMarkdownSources(stateDir, body.files as TaskMarkdownSource[], { strict: body.strict === true, actorId: actor }) });
+        return ok({ imported: importTaskMarkdownSources(stateDir, files, { strict: body.strict === true, actorId: actor }) });
       }
       const match = /^\/v1\/tasks(?:\/([^/]+)(\/revisions)?)?$/.exec(url.pathname);
       if (!match) throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
@@ -442,6 +450,21 @@ export async function startControlServer(stateDir: string, options: ControlServe
       }
       throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
     }
+    if (req.method === 'POST' && url.pathname === '/v1/plans/import') {
+      // Like a task import: authorize first, and the plans arrive as text, so the coordinator never opens a caller's path.
+      const caller = requireProjectReader(principal(req));
+      const body = await readBody(req, MAX_IMPORT_BODY_BYTES);
+      requireProjectAuthor(stateDir, caller, actorField(body));
+      const files = importFiles(body);
+      assertOpen();
+      return ok({ imported: importPlanMarkdownSources(stateDir, files) });
+    }
+    const scoutReport = /^\/v1\/scouts\/([^/]+)\/report$/.exec(url.pathname);
+    if (req.method === 'GET' && scoutReport) {
+      // Scouts are the master's: the master and the operator read them, a worker or scout does not.
+      projectReader(req);
+      return ok(await readScoutReport(stateDir, decodePathSegment(scoutReport[1])));
+    }
     if (req.method === 'POST' && url.pathname === '/v1/lifecycle') {
       const credential = actorCredential(req);
       const request = parseLifecycleRequest(await readBody(req));
@@ -457,7 +480,8 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const request = parseOperatorRequest(await readBody(req));
       assertOpen();
       const { actorId } = authorizeOperator(stateDir, caller, request);
-      return ok(applyOperatorMutation(stateDir, { ...request, actor_id: actorId }));
+      // A scout request is only registered here; its launch continues in the background (202).
+      return ok(await applyOperatorMutation(stateDir, { ...request, actor_id: actorId }), request.op === 'request-scout' ? 202 : 200);
     }
     if (req.method === 'POST' && url.pathname === '/v1/commands') {
       const credential = actorCredential(req);
