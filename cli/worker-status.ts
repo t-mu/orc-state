@@ -8,6 +8,7 @@
 import { STATE_DIR } from '../lib/paths.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
 import { boolFlag } from '../lib/args.ts';
+import { exitAfterFlush, printJson } from './shared.ts';
 
 const asJson = boolFlag('json');
 const agentId = process.argv.slice(2).find((a) => !a.startsWith('-'));
@@ -42,12 +43,12 @@ if (agentId) {
     : null;
 
   if (asJson) {
-    console.log(JSON.stringify({
+    printJson({
       ...agent,
       active_task_ref: activeTaskByAgent.get(agentId) ?? null,
       heartbeat_seconds_ago: heartbeatSec,
-    }, null, 2));
-    process.exit(0);
+    });
+    await exitAfterFlush(0);
   }
 
   console.log(`Agent: ${agent.agent_id}`);
@@ -71,8 +72,8 @@ if (asJson) {
       heartbeat_seconds_ago: heartbeatSec,
     };
   });
-  console.log(JSON.stringify(rows, null, 2));
-  process.exit(0);
+  printJson(rows);
+  await exitAfterFlush(0);
 }
 
 if (workers.length === 0) {

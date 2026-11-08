@@ -3,6 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
+import { stripVTControlCharacters } from 'node:util';
+import { renderBanner } from '../lib/banner.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let root: string;
@@ -41,6 +43,20 @@ describe('cli/status.ts', () => {
     expect(json.master.agent_id).toBe('master');
     expect(json.tasks.total).toBe(1);
     expect(json.claims.total).toBe(1);
+  });
+
+  it('prints compact one-line json and no banner when stdout is piped', () => {
+    seedValidState({ tasks: [{ ref: 'docs/task-1', title: 'Task 1', status: 'todo' }] });
+    const json = runStatus(['--json']);
+    expect(json.status).toBe(0);
+    expect(json.stdout.trimEnd().split('\n')).toHaveLength(1);
+    expect(JSON.parse(json.stdout).tasks.total).toBe(1);
+
+    const text = runStatus([]);
+    expect(text.status).toBe(0);
+    const bannerFirstLine = stripVTControlCharacters(renderBanner().split('\n')[0]);
+    expect(bannerFirstLine.trim().length).toBeGreaterThan(0);
+    expect(stripVTControlCharacters(text.stdout)).not.toContain(bannerFirstLine);
   });
 
   it('survives malformed events log by skipping corrupted rows', () => {

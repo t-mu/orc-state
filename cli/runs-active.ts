@@ -12,7 +12,7 @@ import { readEvents } from '../lib/eventLog.ts';
 import { latestRunActivityDetailMap } from '../lib/runActivity.ts';
 import { readRunActivity as readRunActivitySnapshots } from '../lib/runActivityStore.ts';
 import { boolFlag } from '../lib/args.ts';
-import { cliError, formatErrorMessage } from './shared.ts';
+import { cliError, exitAfterFlush, formatErrorMessage, printJson } from './shared.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { ControlClient } from '../lib/controlClient.ts';
 import { projectActiveRuns, withProjectTaskState, type ActiveRunRow } from '../lib/statusProjection.ts';
@@ -39,8 +39,8 @@ if (boolFlag('via-control')) {
 const project = readProjectDescriptor(STATE_DIR);
 
 if (asJson) {
-  console.log(JSON.stringify({ project: project ? { id: project.id, name: project.name, target_repo_root: project.target_repo_root } : null, total: rows.length, runs: rows, event_read_error: eventReadError || null }, null, 2));
-  process.exit(0);
+  printJson({ project: project ? { id: project.id, name: project.name, target_repo_root: project.target_repo_root } : null, total: rows.length, runs: rows, event_read_error: eventReadError || null });
+  await exitAfterFlush(0);
 }
 
 console.log(formatProjectIdentity(project));

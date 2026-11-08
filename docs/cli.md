@@ -7,6 +7,7 @@
 - `--project=<id>` (or `--project <id>`) selects a registered project for any subcommand, before or after it (not after `--`). Highest precedence; an unknown id is an error; an inherited `ORC_STATE_DIR` is ignored. See [configuration.md → Project selection](configuration.md#project-selection).
 - `orc <subcommand> --help` (or `-h`) prints that subcommand's usage line and never runs it.
 - Commands that show state print the project they act on.
+- Output is for people or for scripts, decided by stdout. On a terminal, `--json` is indented and the `status`/`watch` banner is shown. When stdout is piped or captured, `--json` is one compact line and the banner is omitted. The JSON shape is the same either way. A `--json` result is never cut short when piped.
 
 ## Session management
 
@@ -30,7 +31,7 @@ orc start-session --provider=claude
 | `project select <id>` | Default project outside every Git repository. |
 | `project show` | Print the resolved project. |
 | `project config <list\|get\|set\|unset> [key] [value] [--global]` | Read/write settings. `list` shows effective values; `--global` targets global settings (not combinable with `--project`). Keys: [configuration.md → Settings](configuration.md#settings). |
-| `project task list` | List tasks (ref, title, status, revision). |
+| `project task list [--status=<s>[,<s>]] [--feature=<f>]` | List tasks (ref, title, status, revision). With no flag every task is listed, including done ones. `--status` takes the runtime statuses (`todo`, `claimed`, `in_progress`, `done`, `blocked`, `released`, `cancelled`), repeatable or comma-separated, written as `--status=<s>` (a space-separated value is a usage error); an unknown status is a usage error. `--feature` matches the task's feature ref. |
 | `project task show <ref> [--revision=<n>]` | Show a task or one revision. |
 | `project task revisions <ref>` | List revisions. |
 | `project task create [fields]` | Create a task. |

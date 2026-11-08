@@ -3,6 +3,7 @@
  * cli/preflight.ts
  * Usage: node cli/preflight.ts [--json]
  */
+import { exitAfterFlush, printJson } from './shared.ts';
 import { execSync } from 'node:child_process';
 import { validateStateDir } from '../lib/stateValidation.ts';
 import { ACTIVE_PROJECT, NO_PROJECT_MESSAGE, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
@@ -64,8 +65,8 @@ const result = {
 };
 
 if (asJson) {
-  console.log(JSON.stringify(result, null, 2));
-  process.exit(ok ? 0 : 1);
+  printJson(result);
+  await exitAfterFlush(ok ? 0 : 1);
 }
 
 console.log('Orchestrator Preflight');
