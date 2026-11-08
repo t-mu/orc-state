@@ -266,7 +266,7 @@ export function verifyPackedPackage(root: string): void {
   run(process.execPath, [
     '--input-type=module',
     '-e',
-    "import('./dist/index.js').then((m) => { if (typeof m.createAdapter !== 'function') throw new Error('missing createAdapter export'); console.log('package-export-ok'); })",
+    "import('./dist/index.js').then((m) => { if (typeof m.ControlClient !== 'function') throw new Error('missing ControlClient export'); if (typeof m.createAdapter !== 'function') throw new Error('missing createAdapter export'); console.log('package-export-ok'); })",
   ], root);
 
   const helpOutput = run(process.execPath, [join(root, 'dist', 'cli', 'orc.js'), '--help'], root, { encoding: 'utf8' });

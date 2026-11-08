@@ -231,7 +231,7 @@ describe('local daemon control API', () => {
     await expect(master.createTask({ feature: 'app', ref: 'loop', title: 'Loop', depends_on: ['app/loop'] })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(master.reviseTask('app/named-actor', 0, { priority: 'high' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(master.createTask({ feature: 'app', title: 'Named actor' })).rejects.toMatchObject({ code: 'conflict', status: 409 });
-    await expect(master.reviseTask('app/named-actor', 1, { status: 'done' })).rejects.toMatchObject({ code: 'bad_request', status: 400, message: expect.stringContaining('task-mark-done') });
+    await expect(master.reviseTask('app/named-actor', 1, { status: 'done' } as Record<string, unknown>)).rejects.toMatchObject({ code: 'bad_request', status: 400, message: expect.stringContaining('task-mark-done') });
   });
 
   it('refuses messages to the operator and to a session that is not running with 401', async () => {

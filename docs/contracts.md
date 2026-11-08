@@ -199,7 +199,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 - The coordinator serves HTTP/JSON over the Unix socket in `control.json`. A project coordinator refuses to start without it (`ORC_CONTROL_API=off` or an unservable socket).
 - Every request: `x-orc-protocol: 1` and `Authorization: Bearer <control.token>`.
 - Callers identify with `x-orc-session: <session secret>` or `x-orc-operator: <operator.token>`. Actor and recipient names in a body are never trusted.
-- Responses: `{ protocol_version, ok: true, result }` or `{ protocol_version, ok: false, error: { code, message } }`, `code` ∈ `unsupported_protocol_version|unauthenticated|forbidden|not_found|conflict|bad_request|unavailable|internal`. `unavailable` = daemon stopping, stopped or crashed.
+- Responses: `{ protocol_version, ok: true, result }` or `{ protocol_version, ok: false, error: { code, message } }`, `code` ∈ `unsupported_protocol_version|unauthenticated|forbidden|not_found|conflict|bad_request|unavailable|internal|busy`. `unavailable` = daemon stopping, stopped or crashed; `busy` = retry (the coordinator is sending to the terminal).
 - Snapshot then subscribe: read `/v1/snapshot`, stream `/v1/events/stream?after=<cursor>`; reconnect from the last processed `seq`. An `event: null` frame is a corrupt row; its `seq` still advances.
 
 ### Credentials
@@ -241,14 +241,18 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 | `POST` | `/v1/stop-check` | worker session only | `{ allow, reason? }`; appends `turn_end` first |
 | `POST` | `/v1/lifecycle` | worker session for that run | `{ op, agent_id, run_id?, ... }`; `op`: `run-start`, `run-fail`, `run-finish`, `run-work-complete`, `progress`, `review-submit`, `input-request`, `input-poll`, `input-timeout`, `memory-record`, `report-for-duty`. An offline session may still `input-poll` and repeat `run-finish` on a done run |
 | `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `respond-input` (master only). The master's `actor_id` is ignored |
-| `POST` | `/v1/commands`, `/v1/commands/<id>/ack` | `running` session | enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` → `202`; ACK `accepted\|running\|completed\|failed`. Delivered to `app:` sessions by `CommandDispatcher` |
-| `POST`/`GET` | `/v1/messages`, `/v1/messages/<id>/consume` | `running` session | send `{ run_id, recipient_session_id \| recipient_agent_id, idempotency_key, kind, text }` (exactly one recipient, else `bad_request`; an agent resolves to its running session, else `conflict`) → `202 { message }`; mailbox (`include_consumed=1`); consume. Kinds: `message`, `question`, `review_request` (needs artifact refs), `feedback`, `result` (needs parent id) |
+| `POST` | `/v1/commands` | `running` session | **Experimental.** Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` → `202 { command }`. Delivered to `app:` sessions by `CommandDispatcher` |
+| `POST` | `/v1/commands/<id>/ack` | `running` session | **Experimental.** `{ state }`: `accepted\|running\|completed\|failed` → `{ command }` |
+| `GET`, `POST` | `/v1/messages` | `running` session | **Experimental.** `GET`: mailbox `{ messages }` (`include_consumed=1`). `POST`: send `{ run_id, recipient_session_id \| recipient_agent_id, idempotency_key, kind, text }` (exactly one recipient, else `bad_request`; an agent resolves to its running session, else `conflict`) → `202 { message }`. Kinds: `message`, `question`, `review_request` (needs artifact refs), `feedback`, `result` (needs parent id) |
+| `POST` | `/v1/messages/<id>/consume` | `running` session | **Experimental.** → `{ message }` |
 | `POST` | `/v1/terminals/provider`, `/v1/terminals/shell` | master, operator | `{ run_id }` → `{ terminal }` (tmux provider view / worktree shell outside any sandbox); id `provider:<session_id>` / `shell:<session_id>` of the run's latest session; a run with no session gets `conflict`. A newer session retires the old id |
 | `GET` | `/v1/sessions` | master, operator | `{ sessions: [{ session_id, agent_id, run_id, provider, transport, terminal_id }] }`, running sessions; `terminal_id` (`provider:<session_id>`) is null when there is no live tmux terminal (`app:` sessions) |
 | `GET` | `/v1/terminals/<id>/stream?columns=&rows=&lease_id=` | master, operator | NDJSON `{type:'snapshot',screen,cursor_x,cursor_y,columns,rows}` first, then `{type:'output',data}` (base64 pane bytes) and `{type:'heartbeat'}`, `{type:'exit',reason}` last; no reconnect, the viewer reopens. One `tmux -C` client per viewed terminal, shared by its viewers and stopped with the last. The size is applied for the `lease_id` holder, or the first viewer when no one holds the lease. A `provider:` id opens without a prior `POST`; a session with no terminal gets `not_found` |
-| `POST` | `/v1/terminals/<id>/lease`, `/input`, `/resize` | master, operator (input/resize need the lease) | `acquire\|renew\|release`; `{ lease_id, data }`; `{ lease_id, columns, rows }`. A coordinator send never waits for the lease: it holds a `terminal_send` row in `control_leases` meanwhile, and operator input then gets a retryable `409 busy` |
+| `POST` | `/v1/terminals/<id>/lease`, `/v1/terminals/<id>/input`, `/v1/terminals/<id>/resize` | master, operator (input/resize need the lease) | `acquire\|renew\|release`; `{ lease_id, data }`; `{ lease_id, columns, rows }`. A coordinator send never waits for the lease: it holds a `terminal_send` row in `control_leases` meanwhile, and operator input then gets a retryable `409 busy` |
 | `GET` | `/v1/tasks`, `/v1/tasks/<ref>`, `/v1/tasks/<ref>/revisions` | master, operator | tasks with `spec_revision`, `content_hash`, `body_markdown`; encode the ref (`app%2Flogin`) |
 | `POST` | `/v1/tasks`, `/v1/tasks/<ref>/revisions`, `/v1/tasks/import` | master, operator | create → `201`; edit needs `expected_revision` (stale → `409`; `status` → `400`); import `{ files: [{ path, text }], strict? }`, atomic, ≤ 32 MiB |
+
+One row per method and full path; `lib/controlRoutes.test.ts` fails when a route the server matches is missing here, a listed method is not served, or an unlisted one (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) is served. **Experimental** routes are outside the semver contract and may change in a minor release.
 
 Status codes: no or wrong credential `401`; wrong principal (e.g. a worker on a master route, another run) `403`; missing task/agent `404`; bad input `400`; refused transition `409`; unexpected `500`.
 
@@ -290,6 +294,122 @@ Session identity (schema v8):
 - Every direct write to a session (envelope, nudge, PR review) requires `running` and a matching pid/start; a mismatch moves it to `unknown`.
 - Shutdown stops `app:` sessions and leaves tmux sessions for the next coordinator.
 - `orc sessions` lists them; recovery: [recovery.md](./recovery.md#recoverable-or-unknown-sessions).
+
+---
+
+## Public surface (semver)
+
+Everything in this section follows semver from 1.0: a breaking change needs a major release. Anything not listed (other modules under `dist/`, state file layout beyond the schemas) is internal, and anything marked **Experimental** may change in a minor release.
+
+### Package exports
+
+| Specifier | Resolves to | Why it is public |
+|---|---|---|
+| `orc-state` | `dist/index.js` + `dist/index.d.ts` | The library entry point (below) |
+| `orc-state/schemas/<name>.json` | `dist/schemas/<name>.json` | JSON Schemas of the state files and events, for external validators |
+| `orc` (bin) | `dist/cli/orc.js` | The CLI |
+
+`package-contract.test.ts` fails when `exports` gains another entry or a path stops resolving.
+
+### Root exports (`orc-state`)
+
+| Export | Kind | Contract |
+|---|---|---|
+| `ControlClient` | class | Client for the control API (protocol v1), typed results per route; `streamTerminal` and `subscribe` yield NDJSON frames |
+| `ControlError` | class | `{ code: ControlErrorCode, status, message }` for every refused request |
+| `CONTROL_PROTOCOL_VERSION` | const | `1` |
+| `createAdapter`, `assertAdapterContract` | functions | Provider adapter factory + contract check |
+| `validateAgents` | function | `agents.json` validator (an authoritative file; projections have no public validator) |
+| `validateEventObject` | function | Event validator (`schemas/event.schema.json` + `lib/eventValidation.ts` rules) |
+| `getWorkerBootstrap`, `getMasterBootstrap` | functions | Package bootstrap templates |
+| `ControlClientOptions`, `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
+| `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
+| `ControlSnapshot`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
+| `SubmitCommandRequest`, `AckState`, `DurableCommand`, `SemanticMessage`, `SendMessageInput` | types | **Experimental**, like the `/v1/commands…` and `/v1/messages…` routes they serve |
+
+### Control API protocol v1
+
+| Element | Contract |
+|---|---|
+| Transport | HTTP/JSON over the Unix socket named in `control.json` (`protocol_version: 1`, `transport: "unix"`) |
+| Headers | `x-orc-protocol: 1`; `Authorization: Bearer <control.token>`; `x-orc-session` or `x-orc-operator` |
+| Envelope | `{ protocol_version, ok: true, result }` / `{ protocol_version, ok: false, error: { code, message } }` |
+| Error codes | `unsupported_protocol_version`, `unauthenticated`, `forbidden`, `not_found`, `conflict`, `bad_request`, `unavailable`, `internal`, `busy` |
+| Routes | The [Routes](#routes) table, except rows marked **Experimental** (`/v1/messages…`, `/v1/commands…`) |
+| Event stream frames | `{ type: "event", seq, event }`, `{ type: "heartbeat", cursor }` |
+| Terminal stream frames | `{ type: "snapshot", screen, cursor_x, cursor_y, columns, rows }`, `{ type: "output", data }`, `{ type: "heartbeat" }`, `{ type: "exit", reason }` |
+
+### CLI commands
+
+| Group | Commands |
+|---|---|
+| Session and setup | `start-session`, `init`, `install`, `install-agents`, `install-skills`, `project`, `mcp-server` |
+| Inspection | `status`, `watch`, `attach`, `doctor`, `preflight`, `runs-active`, `run-info`, `sessions`, `events-tail`, `events-filter`, `event-cursor`, `waiting-input`, `worker-status`, `terminal`, `memory-status`, `memory-search` |
+| Master / operator | `delegate`, `task-mark-done`, `task-reset`, `task-unblock`, `task-cancel`, `run-expire`, `run-close`, `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`, `pr-diff`, `pr-review`, `pr-merge`, `pr-status` |
+| Worker lifecycle (flags below) | `report-for-duty`, `run-start`, `progress`, `review-submit`, `review-read`, `run-work-complete`, `run-finish`, `run-fail`, `run-input-request`, `memory-wake-up`, `memory-record` |
+| Hooks and debug | `stop-check` (Claude Stop hook), `control` (debug; its `command`, `ack`, `message`, `messages` and `consume` subcommands are **Experimental**, like the routes they call), `run-heartbeat` (deprecated no-op) |
+
+Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` selects a project for any command.
+
+### CLI `--json` output
+
+| Command | Shape |
+|---|---|
+| `orc status --json` | `{ project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, recentEvents, eventReadError }` |
+| `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
+| `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok` |
+| `orc preflight --json` | `{ ok, project, checks, warnings, details }`; exit 1 when not `ok` |
+| `orc runs-active --json` | `{ project, total, runs, event_read_error }` |
+| `orc run-info <run_id> --json` | the run's claim fields + `task_title`, `worktree_path`, `task_spec_revision_status` |
+| `orc sessions --json` | `{ total, sessions }` |
+| `orc events-tail --json` | `{ total, events }` |
+| `orc events-filter --json` | array of events |
+| `orc review-read --json` | `{ count, reviews }` |
+| `orc waiting-input --json` | array of `{ run_id, agent_id, task_ref, question, waiting_seconds, input_requested_at }` |
+| `orc worker-status --json` | array of agent records + `active_task_ref`, `heartbeat_seconds_ago`; one record when given an `agent_id` |
+
+### Worker lifecycle commands
+
+| Command | Required flags |
+|---|---|
+| `orc report-for-duty` | `--agent-id`, `--session-id` |
+| `orc run-start` | `--run-id`, `--agent-id` |
+| `orc progress` | `--event`, `--run-id`, `--agent-id` (`--phase` for `phase_*`) |
+| `orc review-submit` | `--run-id`, `--agent-id`, `--outcome=approved\|findings`, `--reason` |
+| `orc review-read` | `--run-id` |
+| `orc run-work-complete` | `--run-id`, `--agent-id` |
+| `orc run-finish` | `--run-id`, `--agent-id` |
+| `orc run-fail` | `--run-id`, `--agent-id` (`--policy=requeue\|block`) |
+| `orc run-input-request` | `--run-id`, `--agent-id`, `--question` |
+| `orc memory-wake-up`, `orc memory-record` | `--content` for `memory-record` |
+
+### MCP tools
+
+| Group | Tool names |
+|---|---|
+| Reads | `list_tasks`, `get_task`, `list_agents`, `list_active_runs`, `list_stalled_runs`, `get_run`, `get_status`, `get_agent_workview`, `get_recent_events`, `query_events`, `list_waiting_input`, `list_worktrees`, `get_notifications` |
+| Task authoring and control | `create_task`, `update_task`, `delegate_task`, `cancel_task`, `reset_task`, `unblock_task`, `close_run`, `respond_input` |
+| Scouts | `request_scout`, `get_scout_report`, `remove_scout` |
+| Memory | `memory_wake_up`, `memory_recall`, `memory_search`, `memory_store`, `memory_status` |
+
+### Config keys
+
+| Section | Keys (defaults and meaning: [configuration.md](./configuration.md#settings)) |
+|---|---|
+| top level | `default_provider`, `default_execution_mode` |
+| `master` | `provider`, `model`, `execution_mode` |
+| `worker_pool` | `max_workers`, `provider`, `model`, `provider_models`, `execution_mode`, `runtime`, `sandbox_network` |
+| `sessions` | `resume` |
+| `coordinator` | `mode`, `tick_interval_ms`, `concurrency_limit`, `run_start_timeout_ms`, `session_ready_timeout_ms`, `session_ready_nudge_ms`, `session_ready_nudge_interval_ms`, `run_inactive_nudge_ms`, `run_inactive_nudge_interval_ms`, `worker_stale_soft_ms`, `worker_stale_nudge_ms`, `worker_stale_force_fail_ms`, `hook_idle_nudge_ms`, `hook_idle_escalate_ms`, `run_no_progress_escalate_ms`, `memory_prune_interval_ms`, `merge_strategy`, `pr_provider`, `pr_push_remote`, `pr_finalize_lease_ms` |
+| `leases` | `default_ms`, `finalize_ms` |
+| environment | the `ORC_*` variables in [configuration.md](./configuration.md#environment-variables) |
+
+### Event types
+
+| Contract | Source |
+|---|---|
+| Event names and payloads | the [Events](#events) table and [schemas/event.schema.json](../schemas/event.schema.json); a new event type is a minor change, removing or renaming one is major |
+| Notification events | `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response` |
 
 ---
 

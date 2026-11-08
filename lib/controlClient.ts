@@ -13,11 +13,14 @@ import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
-import type { OperatorRequest } from './operatorMutations.ts';
-import type { TaskMarkdownSource } from './taskMarkdown.ts';
+import type { OperatorOp, OperatorRequest, OperatorResult } from './operatorMutations.ts';
+import type { ProjectTaskView, TaskAuthoringInput } from './projectTasks.ts';
+import type { TaskImportResult, TaskMarkdownSource } from './taskMarkdown.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 export interface EventRow { seq: number; event: unknown }
+export type { OperatorResult, OperatorResults } from './operatorMutations.ts';
+
 
 export interface ControlClientOptions {
   /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET). */
@@ -169,30 +172,30 @@ export class ControlClient {
   }
 
   /** Apply a master (its session) or operator (the operator token) mutation in the coordinator. */
-  operator(request: OperatorRequest): Promise<Record<string, unknown>> {
+  operator<Op extends OperatorOp>(request: OperatorRequest & { op: Op }): Promise<OperatorResult<Op>> {
     return this.call('POST', '/v1/operator', request);
   }
 
-  listTasks(): Promise<{ tasks: Array<Record<string, unknown>> }> {
+  listTasks(): Promise<{ tasks: ProjectTaskView[] }> {
     return this.call('GET', '/v1/tasks');
   }
 
-  getTask(ref: string): Promise<{ task: Record<string, unknown> }> {
+  getTask(ref: string): Promise<{ task: ProjectTaskView }> {
     return this.call('GET', `/v1/tasks/${encodeURIComponent(ref)}`);
   }
 
-  createTask(input: Record<string, unknown>, actorId?: string): Promise<{ task: Record<string, unknown> }> {
+  createTask(input: TaskAuthoringInput, actorId?: string): Promise<{ task: ProjectTaskView }> {
     return this.call('POST', '/v1/tasks', { ...input, ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
   /** Fails with `conflict` when `expectedRevision` is no longer the latest revision. */
-  reviseTask(ref: string, expectedRevision: number, changes: Record<string, unknown>, actorId?: string): Promise<{ task: Record<string, unknown>; changed: boolean }> {
+  reviseTask(ref: string, expectedRevision: number, changes: TaskAuthoringInput, actorId?: string): Promise<{ task: ProjectTaskView; changed: boolean }> {
     return this.call('POST', `/v1/tasks/${encodeURIComponent(ref)}/revisions`, { ...changes, expected_revision: expectedRevision,
       ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 
   /** Sends specs the caller read itself (readTaskMarkdownSources); the coordinator never opens a caller's path. */
-  importTasks(files: TaskMarkdownSource[], strict = false, actorId?: string): Promise<{ imported: unknown[] }> {
+  importTasks(files: TaskMarkdownSource[], strict = false, actorId?: string): Promise<{ imported: TaskImportResult[] }> {
     return this.call('POST', '/v1/tasks/import', { files, strict, ...(actorId === undefined ? {} : { actor_id: actorId }) });
   }
 

@@ -17,7 +17,7 @@ import { markTaskDoneLocked, markTaskDoneRuntimeOnly } from './taskCompletion.ts
 import { findTask, readBacklog, readClaims } from './stateReader.ts';
 import { evaluateTaskEligibility, formatRoutingReasons } from './taskRouting.ts';
 import type { Claim } from '../types/claims.ts';
-import type { Task } from '../types/backlog.ts';
+import type { Task, TaskStatus } from '../types/backlog.ts';
 
 /**
  * Master and operator mutations (task 232): cancel, reset, unblock and
@@ -34,7 +34,7 @@ export function masterActorId(stateDir: string): string {
   return listAgents(stateDir).find((agent) => agent.role === 'master')?.agent_id ?? 'master';
 }
 
-export function delegateTask(stateDir: string, args: Record<string, unknown> = {}) {
+export function delegateTask(stateDir: string, args: Record<string, unknown> = {}): OperatorResults['delegate-task'] {
   const {
     task_ref,
     target_agent_id,
@@ -43,7 +43,7 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
     actor_id = masterActorId(stateDir),
   } = args;
 
-  if (!task_ref) throw new InputError('task_ref is required');
+  if (typeof task_ref !== 'string' || !task_ref) throw new InputError('task_ref is required');
   if (!AGENT_ID_RE.test(actor_id as string)) throw new InputError(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
   if (!TASK_TYPES.includes(task_type as string)) throw new InputError(`Invalid task type: ${String(task_type)}`);
 
@@ -108,7 +108,7 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
     const unblocked = task.status === 'blocked';
     if (unblocked) task.status = 'todo';
     task.updated_at = now;
-    commitBacklog(stateDir, backlog, unblocked ? { [task_ref as string]: { cause: 'unblock', actorId: actor_id as string } } : {});
+    commitBacklog(stateDir, backlog, unblocked ? { [task_ref]: { cause: 'unblock', actorId: actor_id as string } } : {});
 
     appendSequencedEvent(
       stateDir,
@@ -117,7 +117,7 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
         event: 'task_delegated',
         actor_type: actor_id === 'human' ? 'human' : 'agent',
         actor_id: actor_id as string,
-        task_ref: task_ref as string,
+        task_ref: task_ref,
         ...(assignedTarget ? { agent_id: assignedTarget } : {}),
         payload: {
           target_agent_id: assignedTarget ?? null,
@@ -147,14 +147,14 @@ export function delegateTask(stateDir: string, args: Record<string, unknown> = {
   });
 }
 
-export function cancelTask(stateDir: string, args: Record<string, unknown> = {}) {
+export function cancelTask(stateDir: string, args: Record<string, unknown> = {}): OperatorResults['cancel-task'] {
   const {
     task_ref,
     reason = null,
     actor_id = masterActorId(stateDir),
   } = args;
 
-  if (!task_ref) throw new InputError('task_ref is required');
+  if (typeof task_ref !== 'string' || !task_ref) throw new InputError('task_ref is required');
   if (reason != null && typeof reason !== 'string') throw new InputError('reason must be a string');
   if (!AGENT_ID_RE.test(actor_id as string)) throw new InputError(`Invalid actor-id: ${String(actor_id)}. Must match ^[a-z0-9][a-z0-9-]*$.`);
 
@@ -174,11 +174,11 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
       }
     }
 
-    const task = findTask(backlog, task_ref as string);
+    const task = findTask(backlog, task_ref);
     if (!task) throw new NotFoundError(`Task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     if (TERMINAL_STATUSES.has(task.status)) {
-      return { error: 'already_terminal', task_ref, status: task.status };
+      return { error: 'already_terminal' as const, task_ref, status: task.status };
     }
 
     const activeClaims = claims.filter((claim) =>
@@ -195,7 +195,7 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
         actor_type: actor_id === 'human' ? 'human' as const : 'agent' as const,
         actor_id: actor_id as string,
         run_id: removed.run_id,
-        task_ref: task_ref as string,
+        task_ref: task_ref,
         agent_id: removed.agent_id,
         payload: { reason },
       })));
@@ -204,7 +204,7 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
     // Cancellation is its own terminal status.
     task.status = 'cancelled';
     delete task.blocked_reason;
-    commitBacklog(stateDir, backlog, { [task_ref as string]: { cause: 'cancel', actorId: actor_id as string, reason: (reason as string | null) ?? null } });
+    commitBacklog(stateDir, backlog, { [task_ref]: { cause: 'cancel', actorId: actor_id as string, reason: (reason as string | null) ?? null } });
 
     appendSequencedEvent(
       stateDir,
@@ -213,7 +213,7 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
         event: 'task_cancelled',
         actor_type: actor_id === 'human' ? 'human' : 'agent',
         actor_id: actor_id as string,
-        task_ref: task_ref as string,
+        task_ref: task_ref,
         ...(cancelledRuns[0] ? { run_id: cancelledRuns[0].run_id, agent_id: cancelledRuns[0].agent_id } : {}),
         payload: {
           reason,
@@ -224,7 +224,7 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
     );
 
     return {
-      cancelled: true,
+      cancelled: true as const,
       task_ref,
       status: task.status,
       ...(cancelledRuns[0]
@@ -240,8 +240,8 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
 }
 
 /** Reset a task to todo from any status, failing its active runs (an operator recovery). */
-export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}) {
-  if (!task_ref) throw new InputError('task_ref is required');
+export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Record<string, unknown> = {}): OperatorResults['reset-task'] {
+  if (typeof task_ref !== 'string' || !task_ref) throw new InputError('task_ref is required');
   if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) {
     throw new InputError(`Invalid actor_id: ${typeof actor_id === 'string' ? actor_id : '(unknown)'}`);
   }
@@ -250,7 +250,7 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
     const now = new Date().toISOString();
 
     const backlog = readBacklog(stateDir);
-    const task = findTask(backlog, task_ref as string);
+    const task = findTask(backlog, task_ref);
     if (!task) throw new NotFoundError(`task not found: ${typeof task_ref === 'string' ? task_ref : '(unknown)'}`);
 
     const previousStatus = task.status;
@@ -279,14 +279,14 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
       event: 'task_updated',
       actor_type: actor_id === 'human' ? 'human' : 'agent',
       actor_id,
-      task_ref: task_ref as string,
+      task_ref: task_ref,
       payload: { reset: true, previous_status: previousStatus, status: 'todo' },
     }, ...activeClaims.map((claim) => ({
       ts: now, event: 'run_cancelled' as const, actor_type: actor_id === 'human' ? 'human' as const : 'agent' as const, actor_id,
       run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
       payload: { reason: 'manual_reset' },
     }))]);
-    commitBacklog(stateDir, backlog, previousStatus === 'todo' ? {} : { [task_ref as string]: { cause: 'operator_reset', actorId: actor_id } });
+    commitBacklog(stateDir, backlog, previousStatus === 'todo' ? {} : { [task_ref]: { cause: 'operator_reset', actorId: actor_id } });
 
     return {
       reset: true,
@@ -298,7 +298,7 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
 }
 
 /** Return a blocked task to todo (an operator recovery). */
-export function unblockTask(stateDir: string, { task_ref, reason = null, actor_id = 'human' }: Record<string, unknown> = {}) {
+export function unblockTask(stateDir: string, { task_ref, reason = null, actor_id = 'human' }: Record<string, unknown> = {}): OperatorResults['unblock-task'] {
   if (!task_ref || typeof task_ref !== 'string') throw new InputError('task_ref is required');
   if (reason != null && typeof reason !== 'string') throw new InputError('reason must be a string');
   if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) throw new InputError(`Invalid actor_id: ${String(actor_id)}`);
@@ -332,9 +332,9 @@ export function unblockTask(stateDir: string, { task_ref, reason = null, actor_i
 }
 
 /** Answer a worker's input request; the caller has already been authorized as the master. */
-export function respondInput(stateDir: string, { run_id, agent_id, response, actor_id, request_id, record_memory = false }: Record<string, unknown> = {}) {
-  if (!run_id) throw new InputError('run_id is required');
-  if (!agent_id) throw new InputError('agent_id is required');
+export function respondInput(stateDir: string, { run_id, agent_id, response, actor_id, request_id, record_memory = false }: Record<string, unknown> = {}): OperatorResults['respond-input'] {
+  if (typeof run_id !== 'string' || !run_id) throw new InputError('run_id is required');
+  if (typeof agent_id !== 'string' || !agent_id) throw new InputError('agent_id is required');
   if (typeof response !== 'string' || (response).length === 0) {
     throw new InputError('response is required');
   }
@@ -347,21 +347,21 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
   if (request_id != null && typeof request_id !== 'string') throw new InputError('request_id must be a string');
   const inputRequests = queryEvents(stateDir, {
     event_type: 'input_requested',
-    run_id: run_id as string,
-    agent_id: agent_id as string,
+    run_id: run_id,
+    agent_id: agent_id,
   });
   const latestRequest = (request_id
     ? [...inputRequests].reverse().find((event) => (event.payload as Record<string, unknown> | undefined)?.request_id === request_id)
     : inputRequests.at(-1)) as unknown as Record<string, unknown> | undefined ?? null;
   const latestRequestId = request_id ?? (latestRequest?.payload as Record<string, unknown> | undefined)?.request_id;
-  const messageId = bridgeInputResponse(stateDir, run_id as string, agent_id as string, response,
+  const messageId = bridgeInputResponse(stateDir, run_id, agent_id, response,
     typeof latestRequestId === 'string' ? latestRequestId : null);
   if (request_id && !messageId) throw new ConflictError('Input request is not pending for this run');
   // Nothing to answer: an unknown run, or one that never asked. A run that asked and then ended keeps the event-only answer.
   if (!messageId && !latestRequest) throw new ConflictError('Input request is not pending for this run');
 
   try {
-    setRunInputState(stateDir, run_id as string, agent_id as string, { inputState: null });
+    setRunInputState(stateDir, run_id, agent_id, { inputState: null });
   } catch {
     // Allow master replies to be recorded even if the claim just completed.
   }
@@ -371,9 +371,9 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
     event: 'input_response',
     actor_type: effectiveActorId === 'human' ? 'human' : 'agent',
     actor_id: effectiveActorId,
-    run_id: run_id as string,
+    run_id: run_id,
     task_ref: latestRequest?.task_ref as string | undefined,
-    agent_id: agent_id as string,
+    agent_id: agent_id,
     payload: {
       response,
       question: (latestRequest?.payload as Record<string, unknown> | undefined)?.question ?? null,
@@ -389,7 +389,7 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
         wing: wingFromTaskRef((latestRequest?.task_ref as string | undefined) ?? ''),
         hall: 'decisions', room: 'master-input',
         content: `Q: ${typeof question === 'string' ? question : '(unknown)'}\nA: ${response}`,
-        importance: 7, sourceType: 'event', sourceRef: run_id as string,
+        importance: 7, sourceType: 'event', sourceRef: run_id,
       });
     } catch { /* memory system not initialized — silently skip */ }
   }
@@ -401,6 +401,26 @@ export function respondInput(stateDir: string, { run_id, agent_id, response, act
     responded_by: effectiveActorId,
   };
 }
+
+/** `POST /v1/operator` results by `op` (the shapes `applyOperatorMutation` returns). */
+export interface OperatorResults {
+  'cancel-task':
+    | { cancelled: true; task_ref: string; status: TaskStatus; cancelled_run_id?: string; cancelled_run_count?: number; error?: never }
+    | { error: 'already_terminal'; task_ref: string; status: TaskStatus; cancelled?: never };
+  'reset-task': { reset: true; task_ref: string; previous_status: TaskStatus; cancelled_claims: number };
+  'unblock-task': { unblocked: true; task_ref: string };
+  'delegate-task':
+    | { task_ref: string; assigned_to: string; warning?: never; message?: never; candidate_diagnostics?: never }
+    | { warning: 'no_eligible_worker'; task_ref: string; message: string; assigned_to?: never;
+      candidate_diagnostics: Array<{ agent_id: string; reasons: string[]; reason_messages: string[] }> };
+  'respond-input': { ok: true; run_id: string; agent_id: string; responded_by: string };
+  'run-expire': { run_id: string; task_ref: string; expired: true };
+  'run-close': { run_id: string; closed: true; task_ref: string; task_status: TaskStatus | null; branch: string;
+    branch_merged: boolean; worktree_cleaned: boolean };
+  'task-mark-done': { task_ref: string; done: true; previous_status: string };
+}
+
+export type OperatorResult<Op extends OperatorOp = OperatorOp> = OperatorResults[Op];
 
 export type OperatorOp = 'cancel-task' | 'reset-task' | 'unblock-task' | 'delegate-task' | 'respond-input' | 'run-expire' | 'run-close' | 'task-mark-done';
 
@@ -454,25 +474,25 @@ export function authorizeOperator(stateDir: string, caller: ControlPrincipal | {
 }
 
 /** Apply an authorized operator mutation; the coordinator calls this, as does a direct fallback. */
-export function applyOperatorMutation(stateDir: string, request: OperatorRequest): Record<string, unknown> {
+export function applyOperatorMutation(stateDir: string, request: OperatorRequest): OperatorResult {
   const { op, ...args } = request;
   switch (op) {
-    case 'cancel-task': return cancelTask(stateDir, args) as Record<string, unknown>;
+    case 'cancel-task': return cancelTask(stateDir, args);
     case 'reset-task': return resetTask(stateDir, args);
     case 'unblock-task': return unblockTask(stateDir, args);
-    case 'delegate-task': return delegateTask(stateDir, args) as Record<string, unknown>;
+    case 'delegate-task': return delegateTask(stateDir, args);
     case 'respond-input': return respondInput(stateDir, args);
     case 'run-expire': return expireRun(stateDir, args.run_id, args.actor_id as string);
     case 'run-close': return closeRun(stateDir, args);
     case 'task-mark-done': {
       const result = markTaskDoneRuntimeOnly(args.task_ref as string, args.actor_id as string, stateDir);
-      return { task_ref: args.task_ref, done: true, previous_status: result.previousStatus };
+      return { task_ref: args.task_ref as string, done: true, previous_status: result.previousStatus };
     }
   }
 }
 
 /** Force-expire a claim and requeue its task, under the same state lock as the coordinator. */
-export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): Record<string, unknown> {
+export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): OperatorResults['run-expire'] {
   if (typeof runId !== 'string' || !runId) throw new InputError('run_id is required');
   return withLock(join(stateDir, '.lock'), () => {
     const now = new Date().toISOString();
@@ -509,7 +529,7 @@ export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): 
  * worktree is kept, since that cleanup force-removes it. A run that is neither
  * is refused: mark work merged another way done first, or requeue the task.
  */
-export function closeRun(stateDir: string, { run_id, reason = null, actor_id = 'human' }: Record<string, unknown> = {}): Record<string, unknown> {
+export function closeRun(stateDir: string, { run_id, reason = null, actor_id = 'human' }: Record<string, unknown> = {}): OperatorResults['run-close'] {
   if (typeof run_id !== 'string' || !run_id) throw new InputError('run_id is required');
   if (reason != null && typeof reason !== 'string') throw new InputError('reason must be a string');
   if (typeof actor_id !== 'string' || !AGENT_ID_RE.test(actor_id)) throw new InputError(`Invalid actor_id: ${String(actor_id)}`);
