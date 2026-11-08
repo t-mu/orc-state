@@ -236,6 +236,7 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 
 | Method | Path | Caller | Result |
 |--------|------|--------|--------|
+| `GET` | `/v1/health` | any authenticated caller (worker session, master, operator) | `{ version, protocol_version, schema_version, started_at, code_root, code_mtime }`: what the running coordinator loaded. `code_mtime` (ISO) is the newest mtime among its entry module and `lib/` files at startup; `orc doctor` warns when the code on disk is newer |
 | `GET` | `/v1/status?events=<0-200>` | master, operator | The `orc status --json` view (`StatusView`) with `cursor` (highest event seq it read, in one read transaction; continue with `/v1/events/stream?after=cursor`) and `waiting_input` (questions are read just after the event window, so one may be newer than `cursor`). `events` sets `recentEvents` length (default 20, `0` → `[]`); out of range → `400 bad_request`. Reads only events from the latest session boundary, those of active runs, and the recent ones |
 | `GET` | `/v1/snapshot` | master, operator | `{ project, cursor, generated_at, runs, sessions }` from one read transaction; runs carry `task_status`, `spec_revision` |
 | `GET` | `/v1/events?after=&limit=` | master, operator | `{ events: [{ seq, event }], cursor }`, `limit` 1-1000 |
@@ -321,7 +322,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 
 | Export | Kind | Contract |
 |---|---|---|
-| `ControlClient` | class | Client for the control API (protocol v1), typed results per route (`status({ events? })` returns `StatusView`); `streamTerminal` and `subscribe` yield NDJSON frames |
+| `ControlClient` | class | Client for the control API (protocol v1), typed results per route (`status({ events? })` returns `StatusView`, `health()` returns `ControlHealth`); `streamTerminal` and `subscribe` yield NDJSON frames |
 | `ControlError` | class | `{ code: ControlErrorCode, status, message }` for every refused request |
 | `CONTROL_PROTOCOL_VERSION` | const | `1` |
 | `createAdapter`, `assertAdapterContract` | functions | Provider adapter factory + contract check |
@@ -330,7 +331,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | `getWorkerBootstrap`, `getMasterBootstrap` | functions | Package bootstrap templates |
 | `ControlClientOptions`, `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
 | `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
-| `ControlSnapshot`, `StatusView`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
+| `ControlSnapshot`, `StatusView`, `ControlHealth`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
 | `SubmitCommandRequest`, `AckState`, `DurableCommand`, `SemanticMessage`, `SendMessageInput` | types | **Experimental**, like the `/v1/commands…` and `/v1/messages…` routes they serve |
 
 ### Control API protocol v1
@@ -363,7 +364,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 |---|---|
 | `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError }`; `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
 | `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
-| `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok` |
+| `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok`. `checks.coordinatorCode.warning` is a restart hint (string) when the running coordinator's code is older than the code on disk, else `null`; it never changes `ok` or the exit code |
 | `orc preflight --json` | `{ ok, project, checks, warnings, details }`; exit 1 when not `ok` |
 | `orc runs-active --json` | `{ project, total, runs, event_read_error }` |
 | `orc run-info <run_id> --json` | the run's claim fields + `task_title`, `worktree_path`, `task_spec_revision_status` |

@@ -10,6 +10,8 @@ import {
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER, defaultSocketPath,
   type AckState, type ControlEndpoint, type StreamFrame, type SubmitCommandRequest, type TerminalFrame,
 } from './controlProtocol.ts';
+import { captureCodeIdentity, type CodeIdentity } from './codeIdentity.ts';
+import { RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
 import { readEventBatch } from './eventLog.ts';
 import { readProcessStart } from './processIdentity.ts';
 import { readControlSnapshot } from './statusProjection.ts';
@@ -40,6 +42,16 @@ export interface ControlServerOptions {
   pollMs?: number;
   heartbeatMs?: number;
   terminals?: TerminalBroker;
+  /** Package root whose code `/v1/health` reports (default: this package); tests point it at a scratch tree. */
+  codeRoot?: string;
+}
+
+/** `GET /v1/health`: the code and schema the running coordinator has loaded. */
+export interface ControlHealth extends CodeIdentity {
+  version: string;
+  protocol_version: number;
+  schema_version: number;
+  started_at: string;
 }
 
 export interface ControlServer {
@@ -153,6 +165,13 @@ export async function startControlServer(stateDir: string, options: ControlServe
     send: () => Promise.reject(new Error('Command transport is not configured')),
   }, sessionAuthenticator(stateDir));
   const terminals = options.terminals ?? new TerminalBroker(stateDir);
+  const health: ControlHealth = {
+    version: (JSON.parse(readFileSync(new URL(import.meta.url.endsWith('.ts') ? '../package.json' : '../../package.json', import.meta.url), 'utf8')) as { version: string }).version,
+    protocol_version: CONTROL_PROTOCOL_VERSION,
+    schema_version: RUNTIME_SCHEMA_VERSION,
+    started_at: new Date().toISOString(),
+    ...captureCodeIdentity(options.codeRoot),
+  };
   const token = randomBytes(32).toString('hex');
   const tokenDigest = digest(token);
   const operatorToken = randomBytes(32).toString('hex');
@@ -270,6 +289,8 @@ export async function startControlServer(stateDir: string, options: ControlServe
     authenticated(req);
     const url = new URL(req.url ?? '/', 'http://orc.local');
     const ok = (result: unknown, status = 200) => send(res, status, { protocol_version: CONTROL_PROTOCOL_VERSION, ok: true, result });
+    // Any holder of the bearer token may ask what code this coordinator runs: worker, master or operator.
+    if (req.method === 'GET' && url.pathname === '/v1/health') return ok(health);
     if (req.method === 'GET' && url.pathname === '/v1/snapshot') {
       projectReader(req);
       return ok(readControlSnapshot(stateDir));

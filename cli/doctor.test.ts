@@ -9,6 +9,9 @@ import {
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { closeProjectTaskStores, initProjectTaskStore } from '../lib/projectTasks.ts';
 import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, utimesSync } from 'node:fs';
+import { startControlServer } from '../lib/controlServer.ts';
+import { closeAllDatabases, initEventsDb } from '../lib/eventLog.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 
@@ -24,6 +27,41 @@ afterEach(() => {
 });
 
 describe('cli/doctor.ts', () => {
+  it('warns, without failing, when the running coordinator loaded older code than is on disk', async () => {
+    seedCleanState();
+    initEventsDb(dir);
+    const codeRoot = mkdtempSync(join(tmpdir(), 'orch-doctor-code-'));
+    mkdirSync(join(codeRoot, 'lib'));
+    writeFileSync(join(codeRoot, 'coordinator.ts'), '');
+    const server = await startControlServer(dir, { codeRoot });
+    // Async spawn: the server shares this process's event loop.
+    const doctor = () => new Promise<{ code: number | null; json: { ok: boolean; checks: { coordinatorCode: { warning: string | null } } }; text: string }>((resolveRun) => {
+      const run = (args: string[]) => new Promise<{ code: number | null; out: string }>((done) => {
+        const child = spawn(process.execPath, ['cli/doctor.ts', ...args], { cwd: repoRoot, env: { ...process.env, ORC_STATE_DIR: dir } });
+        let out = '';
+        child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString(); });
+        child.on('close', (code) => done({ code, out }));
+      });
+      void Promise.all([run(['--json']), run([])]).then(([j, t]) => resolveRun({ code: j.code, json: JSON.parse(j.out), text: t.out }));
+    });
+    try {
+      const fresh = await doctor();
+      expect(fresh.json.checks.coordinatorCode.warning).toBeNull();
+      const baseline = fresh.code;
+      writeFileSync(join(codeRoot, 'lib', 'touched.ts'), '');
+      const future = Date.now() / 1000 + 3600;
+      utimesSync(join(codeRoot, 'lib', 'touched.ts'), future, future);
+      const stale = await doctor();
+      expect(stale.json.checks.coordinatorCode.warning).toMatch(/^coordinator is running code from .+; restart with orc start-session$/);
+      expect(stale.text).toContain('restart with orc start-session');
+      expect(stale.code).toBe(baseline);
+    } finally {
+      await server.close();
+      closeAllDatabases();
+      rmSync(codeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('reports stale active claims with actionable hint', () => {
     seedState({
       agents: [{ agent_id: 'bob', provider: 'codex', status: 'running', registered_at: '2026-01-01T00:00:00Z' }],

@@ -16,6 +16,8 @@ import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import { coordinatorPidFileProblem } from '../lib/coordinatorLiveness.ts';
+import { ControlClient } from '../lib/controlClient.ts';
+import { staleCodeWarning } from '../lib/codeIdentity.ts';
 import { checkTmux } from '../adapters/tmux.ts';
 import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
@@ -38,6 +40,8 @@ const sandboxControlSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE
 const memoryHealth = validateMemoryDb(STATE_DIR);
 const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
 const coordinatorLock = { problem: coordinatorPidFileProblem(STATE_DIR) };
+// A warning only: never part of `ok`. Null when no coordinator answers or its code is current.
+const coordinatorCode = { warning: await coordinatorCodeWarning() };
 // Every provider terminal session (master and workers) runs in tmux.
 const tmux = checkTmux();
 // Only a registered project runs.
@@ -58,6 +62,7 @@ const checks: Record<string, unknown> = {
   memoryHealth,
   runtimeSchema,
   coordinatorLock,
+  coordinatorCode,
   tmux,
 };
 
@@ -222,6 +227,10 @@ console.log(`coordinator lock: ok=${String(coordinatorLock.problem === null)}`);
 if (coordinatorLock.problem) console.log(`  ${coordinatorLock.problem}`);
 
 console.log('');
+console.log(`coordinator code: ${coordinatorCode.warning ? 'stale' : 'ok'}`);
+if (coordinatorCode.warning) console.log(`  warning: ${coordinatorCode.warning}`);
+
+console.log('');
 console.log(`tmux: ok=${String(tmux.ok)}${tmux.version ? ` version=${tmux.version}` : ''}`);
 if (tmux.problem) console.log(`  error: ${tmux.problem}`);
 
@@ -264,6 +273,14 @@ function checkProviderBinary(provider: string) {
     package: packageName ?? null,
     detail: ok ? '' : (installHint ? `Run: ${installHint}` : `Binary '${binary}' not found on PATH`),
   };
+}
+
+async function coordinatorCodeWarning(): Promise<string | null> {
+  try {
+    return staleCodeWarning(await new ControlClient(STATE_DIR, { timeoutMs: 3_000 }).health());
+  } catch {
+    return null; // no coordinator running, or it predates /v1/health
+  }
 }
 
 function safeRead<T>(read: () => T, fallback: T): T {

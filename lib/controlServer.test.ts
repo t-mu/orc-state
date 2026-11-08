@@ -9,6 +9,8 @@ import { appendSequencedEvent, closeAllDatabases, initEventsDb, readEventBatch, 
 import { commitClaims } from './runStore.ts';
 import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
 import { buildStatus } from './statusView.ts';
+import { RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
+import { ORC_PACKAGE_ROOT } from './paths.ts';
 import { ControlClient, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, PROTOCOL_HEADER, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
@@ -544,6 +546,22 @@ describe('local daemon control API', () => {
     expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/sessions')).status).toBe(401);
     await expect(new ControlClient(dir, { credential: 'session-master' }).snapshot()).resolves.toMatchObject({ runs: expect.any(Array) });
     await expect(new ControlClient(dir).events(0)).resolves.toMatchObject({ events: expect.any(Array) });
+  });
+
+  it('reports the running code and schema over GET /v1/health to an operator, a worker session and the master', async () => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'codex', role: 'master', capabilities: [], status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    const version = (JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as { version: string }).version;
+    const operator = await new ControlClient(dir).health();
+    expect(operator).toEqual({
+      version, protocol_version: CONTROL_PROTOCOL_VERSION, schema_version: RUNTIME_SCHEMA_VERSION,
+      started_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/), code_root: ORC_PACKAGE_ROOT, code_mtime: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+    });
+    expect(await new ControlClient(dir, { credential: 'session-a' }).health()).toEqual(operator);
+    expect(await new ControlClient(dir, { credential: 'session-master' }).health()).toEqual(operator);
+    expect((await rawGet({ 'x-orc-protocol': '1' }, '/v1/health')).status).toBe(401);
   });
 
   it('serves the status view over GET /v1/status with a cursor and a bounded recent-event count', async () => {
