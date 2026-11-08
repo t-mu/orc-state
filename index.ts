@@ -26,7 +26,8 @@ export type { TerminalRecord } from './lib/terminalBroker.ts';
 export type { LifecycleRequest, LifecycleResult } from './lib/workerLifecycle.ts';
 export type { OperatorOp, OperatorRequest } from './lib/operatorMutations.ts';
 export type { ProjectTaskView, TaskAuthoringInput } from './lib/projectTasks.ts';
-export type { TaskImportResult, TaskMarkdownSource } from './lib/taskMarkdown.ts';
+export type { PlanImportResult, TaskImportResult, TaskMarkdownSource } from './lib/taskMarkdown.ts';
+export type { ScoutReportView } from './lib/scouts.ts';
 export type { ReviewSubmittedEvent } from './types/events.ts';
 
 export { createAdapter, assertAdapterContract } from './adapters/index.ts';

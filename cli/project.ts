@@ -6,7 +6,7 @@ import { ProjectRegistry } from '../lib/projectRegistry.ts';
 import { describeProjects } from '../lib/projectList.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { createProjectTask, describeProjectTask, initProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
-import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, importTaskMarkdownSources, readTaskMarkdownSources } from '../lib/taskMarkdown.ts';
+import { exportPlanMarkdown, exportTaskMarkdown, importPlanMarkdown, importTaskMarkdown, importTaskMarkdownSources, readPlanMarkdownSource, readTaskMarkdownSources } from '../lib/taskMarkdown.ts';
 import { isMainModule } from './orc.ts';
 import { submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 import { USAGE } from './usage.ts';
@@ -155,9 +155,19 @@ export function runProjectCommand(args: string[], registry: ProjectRegistry, env
   usage();
 }
 
-/** The CLI's project task writes use the daemon whenever it owns the project. */
+/** The CLI's project task and plan-import writes use the daemon whenever it owns the project. */
 export async function runProjectCommandRouted(args: string[], registry: ProjectRegistry, env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): Promise<unknown> {
   const [action, ...rest] = args;
+  if (action === 'plan' && rest[0] === 'import') {
+    const flags = rest.slice(1);
+    const values = positionals(flags);
+    if (values.length !== 1 || flags.some((arg) => arg.startsWith('--') && !arg.startsWith('--project='))) usage();
+    const stateDir = registry.resolve({ explicitProjectId: option(flags, 'project') ?? null, env, cwd }).stateDir;
+    const source = readPlanMarkdownSource(values[0]);
+    return submitProjectWrite<unknown>(stateDir, 'plan import', undefined,
+      async (client) => { const [{ plan_id, changed }] = (await client.importPlans([source])).imported; return { plan_id, changed }; },
+      () => { initProjectTaskStore(stateDir); return importPlanMarkdown(stateDir, values[0]); });
+  }
   if (action !== 'task') return runProjectCommand(args, registry, env, cwd);
   const [verb, ...flags] = rest;
   if (!['create', 'edit', 'import'].includes(verb)) return runProjectCommand(args, registry, env, cwd);

@@ -97,6 +97,8 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
         'session_resumed',
         'session_resume_failed',
         'master_retired',
+        'scout_launched',
+        'scout_launch_failed',
   ]);
 
   if (eventName && taskEvents.has(eventName)) {
@@ -136,6 +138,10 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
   if (eventName === 'session_reconciled') {
     requirePayloadField(event, 'session_id', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
     requirePayloadField(event, 'state', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+  }
+
+  if (eventName === 'scout_launch_failed') {
+    requirePayloadField(event, 'reason', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
   }
 
   if (eventName === 'master_retired') {

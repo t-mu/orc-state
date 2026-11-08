@@ -3,34 +3,22 @@ import { join } from 'node:path';
 
 import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory, storeDrawer } from '../lib/memoryStore.ts';
 
-import { createAdapter } from '../adapters/index.ts';
-import { TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
-import { appendSequencedEvent, getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
-import { getAgent, listAgents, nextAvailableScoutId, registerAgent, removeAgent } from '../lib/agentRegistry.ts';
+import { getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
+import { getAgent, listAgents } from '../lib/agentRegistry.ts';
 import { findTask, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
-import { hasSessionStartHook, isSupportedProvider, loadWorkerPoolConfig } from '../lib/providers.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { readRunActivity } from '../lib/runActivityStore.ts';
 import { isStalled, runIdleAnchor } from '../lib/runSignals.ts';
 import { selectCurrentActivity, type CurrentActivity } from '../lib/currentActivity.ts';
-import { DEFAULT_SCOUT_READY_TIMEOUT_MS } from '../lib/constants.ts';
-import { launchWorkerSession } from '../lib/workerRuntime.ts';
-import { renderTemplate } from '../lib/templateRender.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, requireProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
 import { TERMINAL_STATUSES, masterActorId } from '../lib/operatorMutations.ts';
+import { extractScoutReport, launchScout, prepareScout, readScoutReport, removeScout } from '../lib/scouts.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
-
-function assertStringArray(value: unknown, field: string) {
-  if (value == null) return;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new Error(`${field} must be an array of strings`);
-  }
-}
 
 function defaultActorId(stateDir: string) {
   return masterActorId(stateDir);
@@ -376,46 +364,6 @@ function readRunWorktreesState(stateDir?: string): RunWorktreesState {
   }
 }
 
-function scopeLines(scopePaths: string[] | undefined) {
-  if (!scopePaths || scopePaths.length === 0) {
-    return '- (none specified — search broadly from working_directory)';
-  }
-  return scopePaths.map((path) => `- ${path}`).join('\n')
-    + '\n\nDo not expand beyond scope_paths unless all listed paths are exhausted with no findings.';
-}
-
-async function waitForScoutReportedForDuty(
-  stateDir: string,
-  agentId: string,
-  sessionToken: string,
-  initialAgent: ReturnType<typeof getAgent> | null = null,
-  timeoutMs = Number(process.env.ORC_SCOUT_READY_TIMEOUT_MS ?? DEFAULT_SCOUT_READY_TIMEOUT_MS),
-) {
-  const initialReady = initialAgent?.session_handle
-    && initialAgent.session_token === sessionToken
-    && initialAgent.session_ready_at
-    && initialAgent.session_started_at
-    && new Date(initialAgent.session_ready_at).getTime() >= new Date(initialAgent.session_started_at).getTime();
-  if (initialReady) {
-    return true;
-  }
-  const startedAt = Date.now();
-  while ((Date.now() - startedAt) < timeoutMs) {
-    const agent = getAgent(stateDir, agentId);
-    if (
-      agent?.session_handle
-      && agent.session_token === sessionToken
-      && agent.session_ready_at
-      && agent.session_started_at
-      && new Date(agent.session_ready_at).getTime() >= new Date(agent.session_started_at).getTime()
-    ) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  return false;
-}
-
 export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } = {}) {
   if (!run_id) throw new Error('run_id is required');
   const claims = readClaims(stateDir).claims;
@@ -434,213 +382,26 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
     task_spec_revision_status: claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot, stateDir) : 'unknown' };
 }
 
-export async function handleRequestScout(stateDir: string, {
-  objective,
-  provider,
-  run_id = null,
-  task_ref = null,
-  scope_paths = [],
-  use_web = false,
-  actor_id = defaultActorId(stateDir),
-}: Record<string, unknown> = {}) {
-  if (typeof objective !== 'string' || objective.trim().length === 0) {
-    throw new Error('objective is required');
-  }
-  if (provider != null && !isSupportedProvider(provider)) {
-    throw new Error(`Invalid provider: ${typeof provider === 'string' ? provider : '(unknown)'}`);
-  }
-  if (run_id != null && typeof run_id !== 'string') throw new Error('run_id must be a string');
-  if (task_ref != null && typeof task_ref !== 'string') throw new Error('task_ref must be a string');
-  assertStringArray(scope_paths, 'scope_paths');
-  if (typeof use_web !== 'boolean') throw new Error('use_web must be a boolean');
+/** Launch a scout and brief it, waiting until it is ready; the coordinator's own path is `request-scout` (lib/scouts.ts). */
+export async function handleRequestScout(stateDir: string, { actor_id = defaultActorId(stateDir), ...request }: Record<string, unknown> = {}) {
   assertActorId(stateDir, actor_id);
-
   const actor = typeof actor_id === 'string' ? getAgent(stateDir, actor_id) : null;
   if (actor_id !== 'human' && actor?.role !== 'master') {
     throw new Error(`request_scout may only be invoked by master or human actors; got role '${actor?.role ?? 'unknown'}'`);
   }
-  const resolvedProvider = (typeof provider === 'string' ? provider : actor?.provider ?? 'codex');
-  const scoutId = nextAvailableScoutId(stateDir);
-  // Scouts start in the target repository.
-  const repoRoot = TARGET_REPO_ROOT;
-  const worktrees = readRunWorktreesState(stateDir);
-  const recordedWorktree = typeof run_id === 'string'
-    ? (worktrees.runs.find((entry) => entry.run_id === run_id)?.worktree_path ?? null)
-    : null;
-  // Scouts launch in their cwd (task 204); a stalled run's worktree may be
-  // gone, which is exactly when a scout is wanted — investigate from the root.
-  const linkedWorktree = recordedWorktree != null && existsSync(recordedWorktree) ? recordedWorktree : null;
-  const workingDirectory = linkedWorktree ?? repoRoot;
-
-  // A scout gets the control socket under the same opt-in as workers; a Codex or Gemini
-  // scout reports for duty through it (a Claude scout is made ready by its session-start hook).
-  // Resolved before registering, so an invalid setting leaves no scout behind.
-  const sandboxNetwork = loadWorkerPoolConfig().sandbox_network;
-
-  const scout = registerAgent(stateDir, {
-    agent_id: scoutId,
-    provider: resolvedProvider,
-    role: 'scout',
-  });
-
-  const adapter = createAdapter(resolvedProvider);
-  const launchResult = await launchWorkerSession(stateDir, scout, {
-    adapter,
-    workingDirectory,
-    repoRoot,
-    ...(sandboxNetwork ? { sandboxNetwork } : {}),
-    emit: (event) => appendSequencedEvent(stateDir, event),
-  });
-  if (!launchResult.ok || !launchResult.session_handle) {
-    removeAgent(stateDir, scout.agent_id);
-    throw new Error(`Failed to launch scout ${scoutId}: ${launchResult.reason ?? 'unknown error'}`);
-  }
-
-  const launchedAt = new Date().toISOString();
-  const launchedScout = getAgent(stateDir, scout.agent_id);
-  const sessionToken = launchedScout?.session_token ?? scout.session_token ?? null;
-  if (!sessionToken) {
-    await adapter.stop(launchResult.session_handle);
-    removeAgent(stateDir, scout.agent_id);
-    throw new Error(`Failed to launch scout ${scoutId}: missing session id after launch`);
-  }
-  const ready = await waitForScoutReportedForDuty(stateDir, scout.agent_id, sessionToken, scout);
-  if (!ready) {
-    await adapter.stop(launchResult.session_handle);
-    removeAgent(stateDir, scout.agent_id);
-    if (hasSessionStartHook(resolvedProvider)) {
-      throw new Error(`Failed to brief scout ${scoutId}: scout session did not become ready in time (no session-start hook record)`);
-    }
-    // A read-only Codex scout in a project cannot reach the control socket, so it never reports (task 230).
-    const hint = resolvedProvider === 'codex' && (sandboxNetwork === 'restricted' || sandboxNetwork === 'open')
-      ? `; in a project a sandboxed ${resolvedProvider} scout reports through the control socket, which it cannot reach here`
-        + ' (request a claude scout) — see docs/configuration.md → Execution Modes'
-      : '';
-    throw new Error(`Failed to brief scout ${scoutId}: scout did not report for duty in time${hint}`);
-  }
-  const contextLines = [
-    typeof run_id === 'string' ? `linked_run_id: ${run_id}` : null,
-    typeof task_ref === 'string' ? `linked_task_ref: ${task_ref}` : null,
-  ].filter(Boolean).join('\n');
-  const brief = renderTemplate('scout-brief-v1.txt', {
-    agent_id: scout.agent_id,
-    provider: scout.provider,
-    objective: objective.trim(),
-    context_lines: contextLines,
-    working_directory: workingDirectory,
-    use_web: use_web ? 'yes' : 'no',
-    scope_paths: scopeLines(scope_paths as string[]),
-  });
-  try {
-    await adapter.send(launchResult.session_handle, brief);
-  } catch (error) {
-    await adapter.stop(launchResult.session_handle);
-    removeAgent(stateDir, scout.agent_id);
-    throw new Error(`Failed to brief scout ${scoutId}: ${(error as Error)?.message ?? 'unknown error'}`);
-  }
-
-  return {
-    agent_id: scout.agent_id,
-    role: 'scout',
-    provider: scout.provider,
-    status: scout.status,
-    objective: objective.trim(),
-    run_id: typeof run_id === 'string' ? run_id : null,
-    task_ref: typeof task_ref === 'string' ? task_ref : null,
-    use_web,
-    scope_paths,
-    working_directory: workingDirectory,
-    launched_at: launchedAt,
-    session_handle: launchResult.session_handle,
-  };
+  return launchScout(stateDir, prepareScout(stateDir, request, actor?.provider ?? null));
 }
 
-/** A scout's report spans a few kilobytes of TUI output; read well past the default 8 KiB tail. */
-const SCOUT_OUTPUT_BYTES = 64 * 1024;
-const MARKER_PREFIX = String.raw`^[^\w\n]*`;
-const REPORT_START = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT[ \t]*$`);
-const REPORT_END = new RegExp(`${MARKER_PREFIX}SCOUT_REPORT_END[ \t]*$`);
-const REPORT_HEADERS = ['findings', 'likely_cause', 'recommended_action'].map((header) => new RegExp(`${MARKER_PREFIX}${header}:`, 'm'));
+export { extractScoutReport };
 
-/** Remove the indentation every non-blank line shares (a TUI indents its output). */
-function dedent(lines: string[]): string {
-  const indent = Math.min(...lines.filter((line) => line.trim()).map((line) => /^[ \t]*/.exec(line)![0].length));
-  return Number.isFinite(indent) ? lines.map((line) => line.slice(indent)).join('\n') : lines.join('\n');
+export function handleGetScoutReport(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
+  return readScoutReport(stateDir, agent_id);
 }
 
-/**
- * Find a scout's final SCOUT_REPORT block in its session output. Markers count
- * only on their own line (a prompt glyph or indentation may precede them), and
- * a block counts only with all three report headers and no `<placeholder>`
- * from the echoed template, so quoted examples and the template are ignored.
- * `truncated` means the last end marker is a real report's whose start fell
- * outside the output read; the echoed template's own end marker (its
- * `<placeholder>` lines just before it) never counts, so a scout whose tail
- * begins inside the template is still `running`.
- */
-export function extractScoutReport(output: string): { report: string | null; truncated: boolean } {
-  let start: number | null = null;
-  let report: string | null = null;
-  let truncated = false;
-  const lines = output.split(/\r?\n/);
-  lines.forEach((line, index) => {
-    if (REPORT_START.test(line)) { start = index; return; }
-    if (!REPORT_END.test(line)) return;
-    if (start === null) {
-      truncated = !lines.slice(Math.max(0, index - 3), index).join('\n').includes('<concrete next step');
-      return;
-    }
-    truncated = false;
-    const block = dedent(lines.slice(start + 1, index)).trim();
-    start = null;
-    if (!block.includes('<what you found') && REPORT_HEADERS.every((header) => header.test(block))) {
-      report = block;
-      truncated = false;
-    }
-  });
-  return { report, truncated: report === null && truncated };
+export function handleRemoveScout(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
+  return removeScout(stateDir, agent_id);
 }
 
-function requireScout(stateDir: string, agentId: unknown) {
-  if (typeof agentId !== 'string' || !agentId) throw new Error('agent_id is required');
-  const agent = getAgent(stateDir, agentId);
-  if (!agent) throw new Error(`Scout not found: ${agentId}`);
-  if (agent.role !== 'scout') throw new Error(`${agentId} is not a scout (role: ${agent.role ?? 'unknown'})`);
-  return agent;
-}
-
-/**
- * Read a scout's report from its session output: `reported` with the block,
- * `truncated` (an end marker without its start, so the report is unreadable),
- * `running`, or `ended` without one.
- */
-export async function handleGetScoutReport(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
-  const scout = requireScout(stateDir, agent_id);
-  const launchedAt = scout.registered_at ?? null;
-  if (!scout.session_handle) return { agent_id: scout.agent_id, status: 'ended', report: null, launched_at: launchedAt };
-  const adapter = createAdapter(scout.provider);
-  const { report, truncated } = extractScoutReport(adapter.getOutputTail(scout.session_handle, SCOUT_OUTPUT_BYTES) ?? '');
-  const status = report ? 'reported' : truncated ? 'truncated'
-    : (await adapter.heartbeatProbe(scout.session_handle)) ? 'running' : 'ended';
-  return { agent_id: scout.agent_id, status, report, launched_at: launchedAt };
-}
-
-/** Stop a scout's session and remove its registration; only scouts, never workers or the master. */
-export async function handleRemoveScout(stateDir: string, { agent_id }: Record<string, unknown> = {}) {
-  // Removing a scout that is already gone is a no-op, so cleanup can always be called.
-  if (typeof agent_id === 'string' && agent_id && !getAgent(stateDir, agent_id)) return { agent_id, removed: false, reason: 'not_found' };
-  const scout = requireScout(stateDir, agent_id);
-  let stopError: string | null = null;
-  if (scout.session_handle) {
-    try {
-      await createAdapter(scout.provider).stop(scout.session_handle);
-    } catch (error) {
-      stopError = (error as Error)?.message ?? String(error);
-    }
-  }
-  removeAgent(stateDir, scout.agent_id);
-  return { agent_id: scout.agent_id, removed: true, ...(stopError ? { stop_warning: stopError } : {}) };
-}
 
 export function handleListWaitingInput(stateDir: string) {
   const claims = readClaims(stateDir).claims;

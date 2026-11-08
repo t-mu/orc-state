@@ -179,6 +179,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `agent_marked_dead` | Coordinator | unclaimed worker past the dead TTL; record removed |
 | `agent_registered` | — | in schema, not emitted |
 | `session_started`, `session_start_failed` | Coordinator | provider session launch |
+| `scout_launched`, `scout_launch_failed` | Coordinator (`request-scout`) | a requested scout is up and briefed (`requested_by`, `provider`, `working_directory`, `session_handle`), or could not be launched or briefed and was removed (`requested_by`, `provider`, `reason`, `hint?`); carry the scout's `agent_id` |
 | `session_reconciled` | Coordinator; `start-session` (master repair) | restart reconciliation (`session_id`, `state`, `outcome`, `reason`); `outcome: restored` when `start-session` reopens a live master's closed session |
 | `master_retired` | Coordinator; `start-session` (attached master ended) | master went offline and its session closed (`session_handle`, `session_id`, `probe: { alive, reason, pid }`, `consecutive_failures`) |
 | `session_resumed`, `session_resume_failed` | Coordinator; `start-session` (master resume) | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
@@ -226,9 +227,11 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | Worker lifecycle: `run-start`, `progress`, `run-work-complete`, `run-fail`, `run-finish`, `run-input-request`, `review-submit`, `report-for-duty` | `POST /v1/lifecycle` with the session secret; must be the run's own session | retried up to 2 min (`ORC_CONTROL_RETRY_MS`), then fail; no direct write |
 | `memory-record` | `POST /v1/lifecycle` | operator shell (no secret) writes directly |
 | Master/operator mutations: `task-cancel`, `task-reset`, `task-unblock`, `delegate`, `run-input-respond`, `run-expire`, `run-close`, `task-mark-done`; MCP `cancel_task`, `reset_task`, `unblock_task`, `delegate_task`, `close_run`, `respond_input` | `POST /v1/operator` | direct write under the state lock after the same authorization; prints `coordinator is not running; applying <op> directly` |
+| Scouts: MCP `request_scout`, `remove_scout` (ops `request-scout`, `remove-scout`), `get_scout_report` | `POST /v1/operator`, `GET /v1/scouts/<agent_id>/report`; `request_scout` returns `{ agent_id }` at once and the coordinator launches and briefs the scout, ending in `scout_launched` or `scout_launch_failed` | direct, same message; `request_scout` then waits for the launch and returns the scout's details (a launch failure is the tool error) |
 | Task authoring: `orc project task create\|edit\|import`, MCP `create_task`/`update_task` | `/v1/tasks…` | direct write, same message |
+| Plan import: `orc project plan import` | `POST /v1/plans/import` | direct write, same message |
 | Reads by a worker: `review-read`, `memory-wake-up` | `GET /v1/runs/<id>/reviews`, `GET /v1/memory/wake-up` | read state directly (read-only for a worker session; fails when no process holds the WAL files) |
-| Always direct: `orc project plan import`, `worker-remove`, `worker-gc`, `kill-all`, `request_scout`, `remove_scout` | — | — |
+| Always direct: `worker-remove`, `worker-gc`, `kill-all` | — | — |
 
 A coordinator that holds the pid lock but does not answer gets a retryable `unavailable`, never a direct write.
 
@@ -245,7 +248,9 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 | `GET` | `/v1/memory/wake-up?wing=&budget=` | any session, operator | `{ initialized, text }`; `budget` 800 |
 | `POST` | `/v1/stop-check` | worker session only | `{ allow, reason? }`; appends `turn_end` first |
 | `POST` | `/v1/lifecycle` | worker session for that run | `{ op, agent_id, run_id?, ... }`; `op`: `run-start`, `run-fail`, `run-finish`, `run-work-complete`, `progress`, `review-submit`, `input-request`, `input-poll`, `input-timeout`, `memory-record`, `report-for-duty`. An offline session may still `input-poll` and repeat `run-finish` on a done run |
-| `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `respond-input` (master only). The master's `actor_id` is ignored |
+| `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `request-scout` (`{ objective, provider?, run_id?, task_ref?, scope_paths?, use_web? }` → `202 { agent_id }`; the launch continues in the background and the outcome is a `scout_launched` or `scout_launch_failed` event), `remove-scout` (`{ agent_id }` → `{ agent_id, removed }`), `respond-input` (master only). The master's `actor_id` is ignored |
+| `POST` | `/v1/plans/import` | master, operator | import `{ files: [{ path, text }] }` → `{ imported: [{ path, plan_id, changed }] }`; atomic (an invalid plan changes nothing), ≤ 32 MiB; stores what `orc project plan import` stores |
+| `GET` | `/v1/scouts/<agent_id>/report` | master, operator | `{ agent_id, status: running\|reported\|truncated\|ended, report, launched_at }`, as MCP `get_scout_report`; an unknown id gets `404`, a non-scout `400` |
 | `POST` | `/v1/commands` | `running` session | **Experimental.** Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` → `202 { command }`. Delivered to `app:` sessions by `CommandDispatcher` |
 | `POST` | `/v1/commands/<id>/ack` | `running` session | **Experimental.** `{ state }`: `accepted\|running\|completed\|failed` → `{ command }` |
 | `GET`, `POST` | `/v1/messages` | `running` session | **Experimental.** `GET`: mailbox `{ messages }` (`include_consumed=1`). `POST`: send `{ run_id, recipient_session_id \| recipient_agent_id, idempotency_key, kind, text }` (exactly one recipient, else `bad_request`; an agent resolves to its running session, else `conflict`) → `202 { message }`. Kinds: `message`, `question`, `review_request` (needs artifact refs), `feedback`, `result` (needs parent id) |
@@ -322,7 +327,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 
 | Export | Kind | Contract |
 |---|---|---|
-| `ControlClient` | class | Client for the control API (protocol v1), typed results per route (`status({ events? })` returns `StatusView`, `health()` returns `ControlHealth`); `streamTerminal` and `subscribe` yield NDJSON frames |
+| `ControlClient` | class | Client for the control API (protocol v1), typed results per route (`status({ events? })` returns `StatusView`, `health()` returns `ControlHealth`; `importPlans(files)` and `scoutReport(agentId)` serve the plan and scout routes; scouts are requested and removed with `operator({ op: 'request-scout' \| 'remove-scout', ... })`); `streamTerminal` and `subscribe` yield NDJSON frames |
 | `ControlError` | class | `{ code: ControlErrorCode, status, message }` for every refused request |
 | `CONTROL_PROTOCOL_VERSION` | const | `1` |
 | `createAdapter`, `assertAdapterContract` | functions | Provider adapter factory + contract check |
@@ -333,7 +338,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | `ProjectListEntry` | type | `{ id, name, target_repo_root, state_dir, control_socket, coordinator_running }`; `control_socket` is the `control.json` path, `null` when the state directory or endpoint is missing or unreadable; `coordinator_running` is `true` when a live coordinator is found by its pid lock or `control.json` (the check `orc start-session` and `orc kill-all` use), independent of `control_socket` |
 | `ControlClientOptions`, `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
 | `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
-| `ControlSnapshot`, `StatusView`, `ControlHealth`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
+| `ControlSnapshot`, `StatusView`, `ControlHealth`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `PlanImportResult`, `ScoutReportView`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
 | `SubmitCommandRequest`, `AckState`, `DurableCommand`, `SemanticMessage`, `SendMessageInput` | types | **Experimental**, like the `/v1/commands…` and `/v1/messages…` routes they serve |
 
 ### Control API protocol v1

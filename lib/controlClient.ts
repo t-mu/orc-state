@@ -17,7 +17,8 @@ import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
 import type { OperatorOp, OperatorRequest, OperatorResult } from './operatorMutations.ts';
 import type { ProjectTaskView, TaskAuthoringInput } from './projectTasks.ts';
-import type { TaskImportResult, TaskMarkdownSource } from './taskMarkdown.ts';
+import type { PlanImportResult, TaskImportResult, TaskMarkdownSource } from './taskMarkdown.ts';
+import type { ScoutReportView } from './scouts.ts';
 import type { ReviewSubmittedEvent } from '../types/events.ts';
 
 export interface EventRow { seq: number; event: unknown }
@@ -207,6 +208,16 @@ export class ControlClient {
   /** Sends specs the caller read itself (readTaskMarkdownSources); the coordinator never opens a caller's path. */
   importTasks(files: TaskMarkdownSource[], strict = false, actorId?: string): Promise<{ imported: TaskImportResult[] }> {
     return this.call('POST', '/v1/tasks/import', { files, strict, ...(actorId === undefined ? {} : { actor_id: actorId }) });
+  }
+
+  /** Sends plans the caller read itself (readPlanMarkdownSource); all are stored or none. */
+  importPlans(files: TaskMarkdownSource[], actorId?: string): Promise<{ imported: PlanImportResult[] }> {
+    return this.call('POST', '/v1/plans/import', { files, ...(actorId === undefined ? {} : { actor_id: actorId }) });
+  }
+
+  /** A scout's report (`GET /v1/scouts/<agent_id>/report`); master or operator only. */
+  scoutReport(agentId: string): Promise<ScoutReportView> {
+    return this.call('GET', `/v1/scouts/${encodeURIComponent(agentId)}/report`);
   }
 
   openTerminal(kind: 'provider' | 'shell', runId: string): Promise<{ terminal: TerminalRecord }> {
