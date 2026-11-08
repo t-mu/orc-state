@@ -60,6 +60,7 @@ When a TASK_START block arrives:
   2. Call {{orc_bin}} run-start  (always second, immediately after confirming the worktree).
   3. Signal explore phase and read the task markdown at `task_spec_path` for the actual task details:
        {{orc_bin}} progress --event=phase_started --phase=explore --run-id=<run_id> --agent-id={{agent_id}}
+     Explore is read-only: send the implement phase signal before editing any file or running `npm test`.
   3.5. Load relevant memories for this task's domain (non-fatal — skip if unavailable):
        WING=$(echo "<task_ref>" | cut -d'/' -f1)
        {{orc_bin}} memory-wake-up --wing="$WING" 2>/dev/null || true

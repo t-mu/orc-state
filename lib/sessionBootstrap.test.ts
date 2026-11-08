@@ -16,6 +16,13 @@ describe('getWorkerBootstrap', () => {
     expect(rendered).toContain('orc run-start');
   });
 
+  it('states that the explore phase is read-only', () => {
+    const rendered = getWorkerBootstrap('claude');
+    expect(rendered).toContain(
+      'Explore is read-only: send the implement phase signal before editing any file or running `npm test`.',
+    );
+  });
+
   it('throws for unknown provider', () => {
     expect(() => getWorkerBootstrap('unknown')).toThrow('Unsupported bootstrap provider');
   });
