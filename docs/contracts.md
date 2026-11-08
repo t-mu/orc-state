@@ -233,7 +233,7 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 
 | Method | Path | Caller | Result |
 |--------|------|--------|--------|
-| `GET` | `/v1/status?events=<0-200>` | master, operator | The `orc status --json` view (`StatusView`) with `cursor` (highest event seq it read, in one read transaction; continue with `/v1/events/stream?after=cursor`) and `waiting_input`. `events` sets `recentEvents` length (default 20, `0` → `[]`); out of range → `400 bad_request`. Reads only events from the latest session boundary, those of active runs, and the recent ones |
+| `GET` | `/v1/status?events=<0-200>` | master, operator | The `orc status --json` view (`StatusView`) with `cursor` (highest event seq it read, in one read transaction; continue with `/v1/events/stream?after=cursor`) and `waiting_input` (questions are read just after the event window, so one may be newer than `cursor`). `events` sets `recentEvents` length (default 20, `0` → `[]`); out of range → `400 bad_request`. Reads only events from the latest session boundary, those of active runs, and the recent ones |
 | `GET` | `/v1/snapshot` | master, operator | `{ project, cursor, generated_at, runs, sessions }` from one read transaction; runs carry `task_status`, `spec_revision` |
 | `GET` | `/v1/events?after=&limit=` | master, operator | `{ events: [{ seq, event }], cursor }`, `limit` 1-1000 |
 | `GET` | `/v1/events/stream?after=` | master, operator | NDJSON `{type:'event',seq,event}` / `{type:'heartbeat',cursor}` |

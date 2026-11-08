@@ -557,9 +557,9 @@ describe('local daemon control API', () => {
     expect((await master.status({ events: 5 })).recentEvents).toHaveLength(5);
     await expect(master.status({ events: 201 })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(master.status({ events: -1 })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
-    // `orc status --json` prints buildStatus(): the API returns an equal object apart from the cursor and the live events.
-    const { cursor: _a, recentEvents: _b, ...apiRest } = (await master.status()) as unknown as Record<string, unknown>;
-    const { cursor: _c, recentEvents: _d, ...localRest } = JSON.parse(JSON.stringify(buildStatus(dir))) as Record<string, unknown>;
+    // `orc status --json` prints buildStatus(): the API returns an equal object apart from the cursor.
+    const { cursor: _a, ...apiRest } = (await master.status()) as unknown as Record<string, unknown>;
+    const { cursor: _c, ...localRest } = JSON.parse(JSON.stringify(buildStatus(dir))) as Record<string, unknown>;
     expect(apiRest).toEqual(localRest);
     const refused = await cli('cli/status.ts', '--json', '--events=201');
     expect(refused.code).toBe(1);

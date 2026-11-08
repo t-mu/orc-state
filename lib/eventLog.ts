@@ -437,7 +437,8 @@ export interface StatusEventWindow {
 /**
  * Read what the status view needs in one read transaction: the latest session
  * boundary via the partial index, events from that seq, the earlier history of
- * `runIds`, and the newest `recentLimit` events. Independent of total log size.
+ * `runIds`, and the newest `recentLimit` events. Independent of total log size once a `session_started` exists; before that
+ * the session window is the whole log.
  */
 export function readStatusEvents(stateDir: string, runIds: string[], recentLimit: number): StatusEventWindow {
   if (!Number.isInteger(recentLimit) || recentLimit < 0) throw new Error('recentLimit must be a non-negative integer');
