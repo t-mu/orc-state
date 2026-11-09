@@ -266,8 +266,8 @@ const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
 // Consecutive dead probes of each active run's worker session, and the last verdict.
 const workerLiveness = new Map<string, LivenessTracker & { verdict: LivenessVerdict }>();
-// Non-running sessions already escalated, by `<session_id>|<state>|<updated_at>`.
-const sessionNotRunningNotified = new Set<string>();
+// Per active run, the non-running session stretch already escalated: `<session_id>|<state>|<updated_at>`.
+const sessionNotRunningNotified = new Map<string, string>();
 const runNudgeCount = new Map<string, number>();
 const runLastPhase = new Map<string, string>();
 // Per-run activity signals (lib/runSignals.ts): durable and hook activity,
@@ -1479,11 +1479,13 @@ async function enforceInProgressLifecycle(
       let sessionAlive = false;
       let blockingPrompt: string | null = null;
       if (agent.session_handle && agent.status !== 'offline') {
-        // This tick's probe (probeActiveWorkerSessions): a session is dead for remediation only
-        // once that check has counted enough dead probes in a row, never on one failed probe.
-        const liveness = workerLiveness.get(claim.run_id);
-        sessionAlive = (liveness?.failures ?? 0) < CONSECUTIVE_DEAD_PROBES;
-        blockingPrompt = liveness?.verdict === 'alive' ? detectBlockingPromptQuestion(getAdapter(agent.provider), agent.session_handle) : null;
+        // probeActiveWorkerSessions, earlier in the tick, is the only dead-session path for a run
+        // with a session: it resumes or requeues after CONSECUTIVE_DEAD_PROBES dead probes in a row.
+        // So session_dead acts only on an offline or handle-less agent, never on one failed probe.
+        sessionAlive = true;
+        blockingPrompt = workerLiveness.get(claim.run_id)?.verdict === 'alive'
+          ? detectBlockingPromptQuestion(getAdapter(agent.provider), agent.session_handle)
+          : null;
       }
 
       const signals: RemediationSignals = {
@@ -1760,8 +1762,10 @@ async function probeActiveWorkerSessions(
   const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
   const active = (claims ?? []).filter((claim) => ['claimed', 'in_progress'].includes(claim.state));
   const activeRunIds = new Set(active.map((claim) => claim.run_id));
-  for (const runId of workerLiveness.keys()) {
-    if (!activeRunIds.has(runId)) workerLiveness.delete(runId);
+  for (const runs of [workerLiveness, sessionNotRunningNotified]) {
+    for (const runId of runs.keys()) {
+      if (!activeRunIds.has(runId)) runs.delete(runId);
+    }
   }
   // Each agent's current session: the newest non-offline row (currentSessionForAgent, one read for all).
   const sessionByAgent = new Map<string, SupervisedSession>();
@@ -1821,8 +1825,8 @@ function escalateSessionNotRunning(claim: Claim, session: SupervisedSession, now
   const sinceMs = Date.parse(session.updated_at);
   if (!Number.isFinite(sinceMs) || nowMs - sinceMs < SESSION_OWNER_TTL_MS) return;
   const key = `${session.session_id}|${session.state}|${session.updated_at}`;
-  if (sessionNotRunningNotified.has(key)) return;
-  sessionNotRunningNotified.add(key);
+  if (sessionNotRunningNotified.get(claim.run_id) === key) return;
+  sessionNotRunningNotified.set(claim.run_id, key);
   emit({
     event: 'worker_needs_attention',
     actor_type: 'coordinator',
