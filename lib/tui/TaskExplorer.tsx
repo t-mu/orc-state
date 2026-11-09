@@ -162,7 +162,7 @@ export function TaskExplorer({ projects, initialProjectId, createClient, rows, c
   const listRows = rows === undefined ? shown.length : Math.max(1, rows - 6);
   const start = windowStart(selectedIndex, shown.length, listRows);
   const visible = shown.slice(start, start + listRows);
-  const statusWidth = Math.max(0, ...visible.map(task => task.status.length));
+  const statusWidth = Math.max(0, ...shown.map(task => task.status.length));
 
   return (
     <Box flexDirection="column">
