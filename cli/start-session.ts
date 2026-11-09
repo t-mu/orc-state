@@ -74,6 +74,7 @@ import {
   stopSessionsForReset,
 } from '../lib/sessionState.ts';
 import { createAdapter } from '../adapters/index.ts';
+import { sessionCapabilities } from '../lib/sessionCapabilities.ts';
 
 function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): string {
   return fileURLToPath(new URL(
@@ -462,13 +463,16 @@ console.log('  Check status:       orc status');
 console.log('  Recovery/debug:     orc terminal / orc worker-remove / orc worker-gc');
 
 /**
- * The Claude conversation a dead master left behind (recorded on its session),
- * resumed under the same session id. A newly registered master starts fresh.
+ * The conversation a dead master left behind (recorded on its session),
+ * resumed under the same session id where the provider's CLI can (Claude).
+ * A newly registered master starts fresh.
  */
-let resumable = !freshMaster && master.provider === 'claude'
+const masterCapabilities = sessionCapabilities(master.provider, 'tmux');
+const masterNamesConversation = masterCapabilities.conversation_id === 'orc';
+let resumable = !freshMaster && masterNamesConversation && masterCapabilities.resume
   ? listSupervisedSessions(STATE_DIR).filter((row) => row.agent_id === master.agent_id && row.provider_conversation_id).at(-1) ?? null
   : null;
-let conversationId = master.provider === 'claude' ? (resumable?.provider_conversation_id ?? randomUUID()) : null;
+let conversationId = masterNamesConversation ? (resumable?.provider_conversation_id ?? randomUUID()) : null;
 /** Claude's own flags naming the conversation: resume the recorded one, or fix the id of a new one. */
 const conversationArgs = () => {
   if (!conversationId) return [];

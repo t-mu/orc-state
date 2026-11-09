@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3';
 import { tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
 import { ControlError, type SessionTerminalView, type TerminalWriter } from './controlProtocol.ts';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
+import { sessionCapabilities } from './sessionCapabilities.ts';
 import { getRunWorktree } from './runWorktree.ts';
 import {
   TerminalStreams, TmuxControlParser,
@@ -446,16 +447,17 @@ export class TerminalBroker {
     const now = Date.now();
     return withEventDb(this.stateDir, (db) => {
       const rows = db.prepare(`SELECT session_id, agent_id, run_id, provider, transport, state, state_reason FROM sessions
-        WHERE state <> 'offline' ORDER BY rowid`).all() as Array<Omit<SessionTerminalView, 'terminal_id' | 'writer'>>;
+        WHERE state <> 'offline' ORDER BY rowid`).all() as Array<Omit<SessionTerminalView, 'terminal_id' | 'writer' | 'capabilities'>>;
       const leases = db.prepare("SELECT resource_id, owner_id, expires_at FROM control_leases WHERE resource_type = 'terminal'")
         .all() as Array<TerminalWriter & { resource_id: string }>;
       return rows.map((row) => {
         const handle = `tmux:${row.agent_id}`;
         const candidate = { session_id: row.session_id, run_id: row.run_id, kind: 'provider', handle } as TerminalRecord;
-        const streamable = row.transport === 'tmux' && row.run_id != null && this.isCurrent(db, candidate);
+        const capabilities = sessionCapabilities(row.provider, row.transport);
+        const streamable = capabilities.attach && row.run_id != null && this.isCurrent(db, candidate);
         const terminalId = streamable ? `provider:${row.session_id}` : null;
         const lease = leases.find((entry) => entry.resource_id === terminalId && Date.parse(entry.expires_at) > now);
-        return { ...row, terminal_id: terminalId, writer: lease ? { owner_id: lease.owner_id, expires_at: lease.expires_at } : null };
+        return { ...row, terminal_id: terminalId, writer: lease ? { owner_id: lease.owner_id, expires_at: lease.expires_at } : null, capabilities };
       });
     }).map((view) => (view.terminal_id && !this.driver.alive(`tmux:${view.agent_id}`) ? { ...view, terminal_id: null, writer: null } : view));
   }

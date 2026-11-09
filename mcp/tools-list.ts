@@ -74,7 +74,7 @@ export const TOOLS = [
   },
   {
     name: 'get_status',
-    description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, project). An active task with a running claim carries current_activity: {text, source: note|todo|tool, ts} or null.',
+    description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, project). An active task with a running claim carries current_activity: {text, source: note|todo|tool, ts} or null. An agent with a session carries its capabilities {resume, conversation_id, attach, terminal_input, readiness_hook, can_be_master}.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -29,7 +29,10 @@ describe('orc sessions', () => {
     expect(text).toContain('s-live worker-a state=recoverable transport=pty pid=42');
     expect(text).toContain('reason: stop it with orc worker-remove');
     expect(text).not.toContain('s-old');
-    const all = JSON.parse(run('--all', '--json').stdout) as { total: number };
+    const all = JSON.parse(run('--all', '--json').stdout) as { total: number; sessions: Array<{ session_id: string; capabilities: Record<string, unknown> }> };
     expect(all.total).toBe(2);
+    // A legacy pty session can do nothing; a Claude tmux session resumes and attaches.
+    expect(all.sessions.find((s) => s.session_id === 's-live')?.capabilities).toMatchObject({ resume: false, attach: false });
+    expect(all.sessions.find((s) => s.session_id === 's-old')?.capabilities).toMatchObject({ resume: true, attach: true, conversation_id: 'orc' });
   });
 });

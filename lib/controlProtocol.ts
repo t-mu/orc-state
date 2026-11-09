@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OrcEvent } from '../types/events.ts';
 import type { SchemaSupport } from './schemaCompat.ts';
+import type { SessionCapabilities } from './sessionCapabilities.ts';
 
 /**
  * Local daemon control protocol. HTTP/JSON over a Unix domain socket is the
@@ -101,6 +102,8 @@ export interface SessionTerminalView {
   state_reason: string | null;
   terminal_id: string | null;
   writer: TerminalWriter | null;
+  /** What the session's provider and transport support (lib/sessionCapabilities.ts). */
+  capabilities: SessionCapabilities;
 }
 
 export interface SubmitCommandRequest {

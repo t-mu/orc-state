@@ -7,6 +7,7 @@ import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { getLastNotificationSeq } from '../lib/eventLog.ts';
 import { queryEventsPage } from '../lib/eventQuery.ts';
 import { listAgents } from '../lib/agentRegistry.ts';
+import { sessionCapabilities, transportOfHandle } from '../lib/sessionCapabilities.ts';
 import { findTask, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
@@ -198,6 +199,8 @@ export async function handleGetStatus(stateDir: string, { include_done_count = f
       status: agent.status,
       provider: agent.provider,
       active_task_ref: activeClaimsByAgent.get(agent.agent_id) ?? null,
+      // Only for an agent with a session (keeps the response compact).
+      ...(agent.session_handle ? { capabilities: sessionCapabilities(agent.provider, transportOfHandle(agent.session_handle)) } : {}),
     })),
     task_counts: taskCounts,
     active_tasks: activeTasks,

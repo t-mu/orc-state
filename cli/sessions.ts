@@ -11,13 +11,14 @@ import { USAGE } from './usage.ts';
 import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { listSupervisedSessions } from '../lib/sessionSupervisor.ts';
+import { sessionCapabilities } from '../lib/sessionCapabilities.ts';
 
 const { values } = parseCommandArgsOrExit(USAGE['sessions'], { all: { type: 'boolean' }, json: { type: 'boolean' } });
 requireProjectScope();
 const sessions = listSupervisedSessions(STATE_DIR, values.all ? undefined : ['running', 'recoverable', 'unknown']);
 
 if (values.json) {
-  printJson({ total: sessions.length, sessions });
+  printJson({ total: sessions.length, sessions: sessions.map((s) => ({ ...s, capabilities: sessionCapabilities(s.provider, s.transport) })) });
   await exitAfterFlush(0);
 }
 
