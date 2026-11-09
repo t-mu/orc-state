@@ -122,10 +122,10 @@ describe.skipIf(!hasTmux)('tmux session transport', () => {
     const terminal = broker.provider('run-1');
     const human = broker.acquire(terminal.terminal_id, 'human');
     const sending = adapter.send(started.session_handle, 'PING');
-    expect(() => broker.input(terminal.terminal_id, human.lease_id, 'x')).toThrow(expect.objectContaining({ code: 'busy' }));
+    await expect(broker.input(terminal.terminal_id, human.lease_id, 'x')).rejects.toMatchObject({ code: 'busy' });
     await sending;
     await waitFor(() => (adapter.getOutputTail(started.session_handle) ?? '').includes('FIXTURE_PONG'));
-    expect(() => broker.input(terminal.terminal_id, human.lease_id, 'x')).not.toThrow();
+    await expect(broker.input(terminal.terminal_id, human.lease_id, 'x')).resolves.toBeUndefined();
     broker.release(terminal.terminal_id, human.lease_id);
   }, 20_000);
 

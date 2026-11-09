@@ -1,10 +1,10 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
-import { ControlError, type SessionTerminalView } from './controlProtocol.ts';
+import { ControlError, type SessionTerminalView, type TerminalWriter } from './controlProtocol.ts';
 import { withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { getRunWorktree } from './runWorktree.ts';
 import {
@@ -38,7 +38,8 @@ export const COORDINATOR_SEND_RESOURCE = 'terminal_send';
 export interface TerminalDriver extends TerminalSource {
   startShell(handle: string, cwd: string, logPath: string): boolean;
   alive(handle: string): boolean;
-  input(handle: string, data: string): void;
+  /** Called outside any database transaction; resolves once the terminal has the input. */
+  input(handle: string, data: string): Promise<void>;
   resize(handle: string, columns: number, rows: number): void;
   stop(handle: string): void;
 }
@@ -47,24 +48,78 @@ function shellName(runId: string): string {
   return `orc-shell-${createHash('sha256').update(runId).digest('hex').slice(0, 20)}`;
 }
 
+const SPECIAL_KEYS: Record<string, string> = {
+  '\r': 'Enter', '\n': 'Enter', '\t': 'Tab', '\x1b': 'Escape', '\x7f': 'BSpace', '\x1b[Z': 'BTab',
+  '\x1b[A': 'Up', '\x1b[B': 'Down', '\x1b[C': 'Right', '\x1b[D': 'Left',
+  '\x1b[H': 'Home', '\x1b[F': 'End', '\x1b[2~': 'Insert', '\x1b[3~': 'Delete',
+  '\x1b[5~': 'PageUp', '\x1b[6~': 'PageDown',
+  '\x1bOP': 'F1', '\x1bOQ': 'F2', '\x1bOR': 'F3', '\x1bOS': 'F4',
+  '\x1b[15~': 'F5', '\x1b[17~': 'F6', '\x1b[18~': 'F7', '\x1b[19~': 'F8',
+  '\x1b[20~': 'F9', '\x1b[21~': 'F10', '\x1b[23~': 'F11', '\x1b[24~': 'F12',
+};
+/** CSI final byte of an xterm `\x1b[1;<mod><final>` key. */
+const MODIFIED_FINAL: Record<string, string> = { A: 'Up', B: 'Down', C: 'Right', D: 'Left', H: 'Home', F: 'End', P: 'F1', Q: 'F2', R: 'F3', S: 'F4' };
+/** Number of an xterm `\x1b[<n>;<mod>~` key. */
+const MODIFIED_TILDE: Record<string, string> = {
+  2: 'Insert', 3: 'Delete', 5: 'PageUp', 6: 'PageDown', 15: 'F5', 17: 'F6', 18: 'F7', 19: 'F8', 20: 'F9', 21: 'F10', 23: 'F11', 24: 'F12',
+};
+
+function controlKey(part: string): string | undefined {
+  if (SPECIAL_KEYS[part]) return SPECIAL_KEYS[part];
+  const code = part.length === 1 ? part.charCodeAt(0) : -1;
+  return code >= 1 && code <= 26 ? `C-${String.fromCharCode(96 + code)}`
+    : code === 0 ? 'C-Space' : code === 28 ? 'C-\\' : code === 29 ? 'C-]'
+      : code === 30 ? 'C-^' : code === 31 ? 'C-_' : undefined;
+}
+
+/** tmux name of an xterm modified key (`\x1b[1;5D` → `C-Left`), or of Alt plus a key (`\x1bx` → `M-x`). */
+function modifiedKey(part: string): string | undefined {
+  const csi = /^\x1b\[(\d+);([2-8])([A-Z~])$/.exec(part);
+  if (csi) {
+    const base = csi[3] === '~' ? MODIFIED_TILDE[csi[1]] : csi[1] === '1' ? MODIFIED_FINAL[csi[3]] : undefined;
+    if (!base) return undefined;
+    const mask = Number(csi[2]) - 1;
+    return `${mask & 4 ? 'C-' : ''}${mask & 2 ? 'M-' : ''}${mask & 1 ? 'S-' : ''}${base}`;
+  }
+  if (part.length !== 2 || part[0] !== '\x1b') return undefined;
+  const key = part[1] === ' ' ? 'Space' : controlKey(part[1]) ?? (part[1] >= '!' && part[1] <= '~' ? part[1] : undefined);
+  return key ? `M-${key}` : undefined;
+}
+
 export function terminalInputTokens(data: string): Array<{ key?: string; text?: string }> {
-  const special: Record<string, string> = {
-    '\r': 'Enter', '\n': 'Enter', '\t': 'Tab', '\x1b': 'Escape', '\x7f': 'BSpace',
-    '\x1b[A': 'Up', '\x1b[B': 'Down', '\x1b[C': 'Right', '\x1b[D': 'Left',
-    '\x1b[H': 'Home', '\x1b[F': 'End', '\x1b[2~': 'Insert', '\x1b[3~': 'Delete',
-    '\x1b[5~': 'PageUp', '\x1b[6~': 'PageDown',
-    '\x1bOP': 'F1', '\x1bOQ': 'F2', '\x1bOR': 'F3', '\x1bOS': 'F4',
-    '\x1b[15~': 'F5', '\x1b[17~': 'F6', '\x1b[18~': 'F7', '\x1b[19~': 'F8',
-    '\x1b[20~': 'F9', '\x1b[21~': 'F10', '\x1b[23~': 'F11', '\x1b[24~': 'F12',
-  };
-  return data.split(/(\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO[A-Za-z]|\x1b.|[\x00-\x1f\x7f])/g)
+  return data.split(/(\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO[A-Za-z]|\x1b[\s\S]|[\x00-\x1f\x7f])/g)
     .filter(Boolean).map((part) => {
-      const code = part.length === 1 ? part.charCodeAt(0) : -1;
-      const key = special[part] ?? (code >= 1 && code <= 26 ? `C-${String.fromCharCode(96 + code)}`
-        : code === 0 ? 'C-Space' : code === 28 ? 'C-\\' : code === 29 ? 'C-]'
-          : code === 30 ? 'C-^' : code === 31 ? 'C-_' : undefined);
+      const key = controlKey(part) ?? modifiedKey(part);
       return key ? { key } : { text: part };
     });
+}
+
+/** A tmux config-syntax word that tmux reads back literally. */
+function tmuxQuote(arg: string): string {
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The tmux commands, one per line, that send `data` to `target`: runs of keys
+ * as one `send-keys`, text pasted (bracketed) through `buffer`. Fed to
+ * `tmux source-file -`, so any size takes one spawn and runs as one command
+ * list, which nothing another tmux client sends can split.
+ */
+export function terminalInputScript(target: string, buffer: string, data: string): string {
+  const lines: string[] = [];
+  let keys: string[] = [];
+  const flush = (): void => {
+    if (keys.length) lines.push(['send-keys', '-t', tmuxQuote(target), ...keys].join(' '));
+    keys = [];
+  };
+  for (const token of terminalInputTokens(data)) {
+    if (token.key) { keys.push(tmuxQuote(token.key)); continue; }
+    flush();
+    lines.push(`set-buffer -b ${tmuxQuote(buffer)} -- ${tmuxQuote(token.text!)}`,
+      `paste-buffer -d -p -b ${tmuxQuote(buffer)} -t ${tmuxQuote(target)}`);
+  }
+  flush();
+  return `${lines.join('\n')}\n`;
 }
 
 /** The same private tmux server as the provider adapter, with distinct shell names. */
@@ -158,16 +213,19 @@ export class TmuxTerminalDriver implements TerminalDriver {
     };
   }
 
-  input(handle: string, data: string): void {
-    if (!data) return;
-    for (const token of terminalInputTokens(data)) {
-      if (token.key) this.run(['send-keys', '-t', this.target(handle), token.key]);
-      else {
-        const buffer = `${this.name(handle)}-input`;
-        this.run(['load-buffer', '-b', buffer, '-'], token.text);
-        this.run(['paste-buffer', '-d', '-p', '-b', buffer, '-t', this.target(handle)]);
-      }
-    }
+  /** One asynchronous tmux spawn per call, whatever the input holds; the commands go over stdin. */
+  input(handle: string, data: string): Promise<void> {
+    if (!data) return Promise.resolve();
+    const script = terminalInputScript(this.target(handle), `${this.name(handle)}-input`, data);
+    return new Promise((resolve, reject) => {
+      const child = execFile(process.env.ORC_TMUX_BIN ?? 'tmux', ['-L', tmuxSocketName(this.stateDir), 'source-file', '-'],
+        { timeout: 10_000 }, (error, _stdout, stderr) => {
+          if (error) reject(new Error(`tmux input failed: ${String(stderr).trim() || error.message}`));
+          else resolve();
+        });
+      child.stdin?.on('error', () => { /* the exit callback reports the failure */ });
+      child.stdin?.end(script);
+    });
   }
 
   resize(handle: string, columns: number, rows: number): void {
@@ -180,6 +238,16 @@ export class TmuxTerminalDriver implements TerminalDriver {
 }
 
 const DEFAULT_LEASE_MS = 30_000;
+
+/**
+ * A lease id carries its term (`t<ttl_ms>-<uuid>`) so renew and input extend
+ * it by that term, across restarts and without a schema change; an id without
+ * one gets the default.
+ */
+function leaseTtl(leaseId: string): number {
+  const ttl = /^t(\d+)-/.exec(leaseId);
+  return ttl ? Number(ttl[1]) : DEFAULT_LEASE_MS;
+}
 
 export interface StreamOptions { columns?: number; rows?: number; leaseId?: string }
 
@@ -290,7 +358,11 @@ export class TerminalBroker {
     catch (error) { if (started) this.driver.stop(handle); throw error; }
   }
 
-  acquire(terminalId: string, ownerId: string, ttlMs = DEFAULT_LEASE_MS): { lease_id: string; expires_at: string } {
+  /**
+   * The exclusive writer lease, for `ttlMs` from now and from each renew or
+   * input. `takeover` replaces a live lease (the old holder then gets `forbidden`).
+   */
+  acquire(terminalId: string, ownerId: string, ttlMs = DEFAULT_LEASE_MS, options: { takeover?: boolean } = {}): { lease_id: string; expires_at: string } {
     if (typeof ownerId !== 'string' || !ownerId || ownerId.length > 200) throw new ControlError('bad_request', 'owner_id is required', 400);
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1000 || ttlMs > 120_000) throw new ControlError('bad_request', 'ttl_ms must be 1000–120000', 400);
     const terminal = this.row(terminalId);
@@ -303,8 +375,10 @@ export class TerminalBroker {
       const now = Date.now();
       const current = db.prepare("SELECT lease_id, owner_id, expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
         .get(terminalId) as { lease_id: string; owner_id: string; expires_at: string } | undefined;
-      if (current && Date.parse(current.expires_at) > now) throw new ControlError('conflict', 'Terminal already has a writer', 409);
-      const leaseId = randomUUID();
+      if (current && Date.parse(current.expires_at) > now && !options.takeover) {
+        throw new ControlError('conflict', `Terminal already has a writer (${current.owner_id} until ${current.expires_at}); the operator can take it over`, 409);
+      }
+      const leaseId = `t${ttlMs}-${randomUUID()}`;
       const expiresAt = new Date(now + ttlMs).toISOString();
       db.prepare(`INSERT INTO control_leases (resource_type, resource_id, lease_id, owner_id, expires_at)
         VALUES ('terminal', ?, ?, ?, ?) ON CONFLICT (resource_type, resource_id) DO UPDATE SET
@@ -329,20 +403,28 @@ export class TerminalBroker {
       }
       const result = action(terminal, db);
       db.prepare("UPDATE control_leases SET expires_at = ? WHERE resource_type = 'terminal' AND resource_id = ?")
-        .run(new Date(Date.now() + DEFAULT_LEASE_MS).toISOString(), terminalId);
+        .run(new Date(Date.now() + leaseTtl(leaseId)).toISOString(), terminalId);
       return result;
     });
   }
 
   renew(terminalId: string, leaseId: string): void { this.withLease(terminalId, leaseId, () => undefined); }
-  input(terminalId: string, leaseId: string, data: string): void {
+  /**
+   * Checks the lease in a short transaction, then sends after it commits, so a
+   * large paste holds no database lock and does not block the coordinator. One
+   * request reaches tmux as one command list, so a coordinator send lands
+   * before or after it, never inside. Callers send one request at a time:
+   * concurrent requests may arrive out of order.
+   */
+  async input(terminalId: string, leaseId: string, data: string): Promise<void> {
     if (typeof data !== 'string' || data.length > 8192) throw new ControlError('bad_request', 'data must be at most 8192 characters', 400);
-    this.withLease(terminalId, leaseId, (terminal, db) => {
+    const terminal = this.withLease(terminalId, leaseId, (current, db) => {
       const send = db.prepare('SELECT expires_at FROM control_leases WHERE resource_type = ? AND resource_id = ?')
         .get(COORDINATOR_SEND_RESOURCE, terminalId) as { expires_at: string } | undefined;
       if (send && Date.parse(send.expires_at) > Date.now()) throw new ControlError('busy', 'The coordinator is sending to this terminal; retry shortly', 409);
-      this.driver.input(terminal.handle, data);
+      return current;
     });
+    await this.driver.input(terminal.handle, data);
   }
   resize(terminalId: string, leaseId: string, columns: number, rows: number): void {
     validateSize(columns, rows);
@@ -355,18 +437,26 @@ export class TerminalBroker {
     if (!removed) throw new ControlError('forbidden', 'Valid terminal writer lease required', 403);
   }
 
-  /** Running sessions; `terminal_id` names the ones that have a live provider terminal to stream. */
+  /**
+   * Running sessions; `terminal_id` names the ones that have a live provider
+   * terminal to stream, `writer` who holds its input lease (null when nobody does).
+   */
   sessions(): SessionTerminalView[] {
+    const now = Date.now();
     return withEventDb(this.stateDir, (db) => {
       const rows = db.prepare(`SELECT session_id, agent_id, run_id, provider, transport FROM sessions
-        WHERE state = 'running' ORDER BY rowid`).all() as Array<Omit<SessionTerminalView, 'terminal_id'>>;
+        WHERE state = 'running' ORDER BY rowid`).all() as Array<Omit<SessionTerminalView, 'terminal_id' | 'writer'>>;
+      const leases = db.prepare("SELECT resource_id, owner_id, expires_at FROM control_leases WHERE resource_type = 'terminal'")
+        .all() as Array<TerminalWriter & { resource_id: string }>;
       return rows.map((row) => {
         const handle = `tmux:${row.agent_id}`;
         const candidate = { session_id: row.session_id, run_id: row.run_id, kind: 'provider', handle } as TerminalRecord;
         const streamable = row.transport === 'tmux' && row.run_id != null && this.isCurrent(db, candidate);
-        return { ...row, terminal_id: streamable ? `provider:${row.session_id}` : null };
+        const terminalId = streamable ? `provider:${row.session_id}` : null;
+        const lease = leases.find((entry) => entry.resource_id === terminalId && Date.parse(entry.expires_at) > now);
+        return { ...row, terminal_id: terminalId, writer: lease ? { owner_id: lease.owner_id, expires_at: lease.expires_at } : null };
       });
-    }).map((view) => (view.terminal_id && !this.driver.alive(`tmux:${view.agent_id}`) ? { ...view, terminal_id: null } : view));
+    }).map((view) => (view.terminal_id && !this.driver.alive(`tmux:${view.agent_id}`) ? { ...view, terminal_id: null, writer: null } : view));
   }
 
   /**

@@ -546,6 +546,8 @@ describe('local daemon control API', () => {
     expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/terminals/term-1/stream')).status).toBe(401);
     expect((await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}` }, '/v1/sessions')).status).toBe(401);
     await expect(new ControlClient(dir, { credential: 'session-master' }).snapshot()).resolves.toMatchObject({ runs: expect.any(Array) });
+    // Taking a terminal from its writer is the operator's alone.
+    await expect(new ControlClient(dir, { credential: 'session-master' }).acquireTerminal('term-1', 'master', { takeover: true })).rejects.toMatchObject(forbidden);
     await expect(new ControlClient(dir).events(0)).resolves.toMatchObject({ events: expect.any(Array) });
   });
 

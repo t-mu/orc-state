@@ -1,16 +1,16 @@
-import { execFile } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFile, spawnSync } from 'node:child_process';
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { request, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { closeAllDatabases, initEventsDb, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
 import { CONTROL_TOKEN_FILE, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, type TerminalFrame } from './controlProtocol.ts';
-import { TerminalBroker, TmuxTerminalDriver, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
+import { TerminalBroker, TmuxTerminalDriver, terminalInputScript, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
 import type { TerminalConnection, TerminalSnapshot } from './terminalHost.ts';
 
 const exec = promisify(execFile);
@@ -41,6 +41,8 @@ class FakeDriver implements TerminalDriver {
   live = new Set(['tmux:worker-a']);
   connections: FakeConnection[] = [];
   writes: Array<{ handle: string; data: string }> = [];
+  /** Whether the event DB was inside a transaction, and the lease expiry, when each input was sent. */
+  sends: Array<{ inTransaction: boolean; expiresAt: string | undefined }> = [];
   sizes: Array<{ handle: string; columns: number; rows: number }> = [];
   logs = new Map<string, string>();
   startShell(handle: string, cwd: string, logPath: string): boolean {
@@ -60,7 +62,12 @@ class FakeDriver implements TerminalDriver {
     this.connections.push(connection);
     return connection;
   }
-  input(handle: string, data: string): void {
+  async input(handle: string, data: string): Promise<void> {
+    this.sends.push(withEventDb(dir, (db) => ({
+      inTransaction: db.inTransaction,
+      expiresAt: (db.prepare("SELECT expires_at FROM control_leases WHERE resource_type = 'terminal'").get() as { expires_at: string } | undefined)?.expires_at,
+    })));
+    await Promise.resolve();
     this.writes.push({ handle, data });
     const log = this.logs.get(handle);
     if (log) appendFileSync(log, data);
@@ -168,6 +175,86 @@ describe('terminal broker', () => {
       { key: 'Up' }, { key: 'F1' }, { key: 'F5' }, { key: 'Enter' },
     ]);
   });
+  it('sends xterm modifier sequences and Alt-keys as tmux keys, not pasted text', () => {
+    expect(terminalInputTokens('\x1b[Z')).toEqual([{ key: 'BTab' }]);
+    expect(terminalInputTokens('\x1b[1;5D\x1b[1;3C\x1b[1;2A\x1b[1;6H\x1b[3;7~\x1b[1;5P')).toEqual([
+      { key: 'C-Left' }, { key: 'M-Right' }, { key: 'S-Up' }, { key: 'C-S-Home' }, { key: 'C-M-Delete' }, { key: 'C-F1' },
+    ]);
+    expect(terminalInputTokens('\x1bx\x1b \x1b\r\x1b\x7f\x1b;')).toEqual([
+      { key: 'M-x' }, { key: 'M-Space' }, { key: 'M-Enter' }, { key: 'M-BSpace' }, { key: 'M-;' },
+    ]);
+    // A sequence with no tmux key is still pasted.
+    expect(terminalInputTokens('\x1b[?1;2c')).toEqual([{ text: '\x1b[?1;2c' }]);
+  });
+
+  it('writes one tmux command per line, joining keys and quoting every argument', () => {
+    expect(terminalInputScript('=s:', 'buf', "it's $HOME;\r\x1b[Z\x1b;")).toBe([
+      "set-buffer -b 'buf' -- 'it'\\''s $HOME;'",
+      "paste-buffer -d -p -b 'buf' -t '=s:'",
+      "send-keys -t '=s:' 'Enter' 'BTab' 'M-;'",
+    ].join('\n') + '\n');
+  });
+
+  it('sends an 8192-character paste in one tmux spawn', async () => {
+    const tmux = join(dir, 'fake-tmux');
+    const log = join(dir, 'fake-tmux.log');
+    writeFileSync(tmux, `#!/bin/sh\necho "$*" >> '${log}'\ncat > /dev/null\n`);
+    chmodSync(tmux, 0o755);
+    const previous = process.env.ORC_TMUX_BIN;
+    process.env.ORC_TMUX_BIN = tmux;
+    try {
+      await new TmuxTerminalDriver(dir).input('shell:run-a', 'echo hi;\r'.repeat(8192 / 9) + 'x'.repeat(8192 % 9));
+    } finally {
+      if (previous === undefined) delete process.env.ORC_TMUX_BIN;
+      else process.env.ORC_TMUX_BIN = previous;
+    }
+    expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([expect.stringMatching(/ source-file -$/)]);
+  });
+
+  it('sends input after the lease transaction commits, with the lease already extended', async () => {
+    const client = new ControlClient(dir);
+    const id = (await client.openTerminal('provider', 'run-a')).terminal.terminal_id;
+    const lease = await client.acquireTerminal(id, 'writer');
+    await client.inputTerminal(id, lease.lease_id, 'y'.repeat(8192));
+    expect(driver.sends).toHaveLength(1);
+    expect(driver.sends[0].inTransaction).toBe(false);
+    expect(Date.parse(driver.sends[0].expiresAt!)).toBeGreaterThanOrEqual(Date.parse(lease.expires_at));
+    expect(driver.writes).toEqual([{ handle: 'tmux:worker-a', data: 'y'.repeat(8192) }]);
+  });
+
+  it('extends a lease by its own ttl_ms on input and renew', async () => {
+    const id = broker.provider('run-a').terminal_id;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const lease = broker.acquire(id, 'writer', 120_000);
+      vi.setSystemTime(Date.now() + 10_000);
+      await broker.input(id, lease.lease_id, 'k');
+      vi.setSystemTime(Date.now() + 60_000);
+      expect(() => broker.renew(id, lease.lease_id)).not.toThrow();
+      vi.setSystemTime(Date.now() + 119_000);
+      await expect(broker.input(id, lease.lease_id, 'k')).resolves.toBeUndefined();
+      vi.setSystemTime(Date.now() + 121_000);
+      expect(() => broker.renew(id, lease.lease_id)).toThrow(expect.objectContaining({ code: 'forbidden' }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the writer in /v1/sessions and lets an operator take the lease over', async () => {
+    const client = new ControlClient(dir);
+    const id = (await client.openTerminal('provider', 'run-a')).terminal.terminal_id;
+    const first = await client.acquireTerminal(id, 'tui:1', { ttlMs: 60_000 });
+    expect((await client.sessions()).sessions[0].writer).toEqual({ owner_id: 'tui:1', expires_at: first.expires_at });
+    await expect(client.acquireTerminal(id, 'cli:2')).rejects.toMatchObject({ code: 'conflict', message: expect.stringContaining('tui:1') });
+    const second = await client.acquireTerminal(id, 'cli:2', { takeover: true });
+    expect((await client.sessions()).sessions[0].writer).toEqual({ owner_id: 'cli:2', expires_at: second.expires_at });
+    await expect(client.inputTerminal(id, first.lease_id, 'x')).rejects.toMatchObject({ code: 'forbidden' });
+    await client.inputTerminal(id, second.lease_id, 'y');
+    expect(driver.writes).toEqual([{ handle: 'tmux:worker-a', data: 'y' }]);
+    await client.releaseTerminal(id, second.lease_id);
+    expect((await client.sessions()).sessions[0].writer).toBeNull();
+  });
+
   it('lets another process view a provider without acquiring input or ending the session', async () => {
     const observer = new ControlClient(dir);
     const terminal = (await observer.openTerminal('provider', 'run-a')).terminal;
@@ -364,8 +451,8 @@ describe('terminal broker', () => {
   it('lists sessions with their terminals; an app session has none to stream', async () => {
     const client = new ControlClient(dir);
     expect((await client.sessions()).sessions).toEqual([
-      { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', provider: 'claude', transport: 'tmux', terminal_id: 'provider:session-a' },
-      { session_id: 'session-b', agent_id: 'worker-b', run_id: 'run-b', provider: 'codex', transport: 'app-server', terminal_id: null },
+      { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', provider: 'claude', transport: 'tmux', terminal_id: 'provider:session-a', writer: null },
+      { session_id: 'session-b', agent_id: 'worker-b', run_id: 'run-b', provider: 'codex', transport: 'app-server', terminal_id: null, writer: null },
     ]);
     await expect(openStream(client, 'provider:session-b').next(1)).rejects.toMatchObject({ code: 'not_found' });
     await expect(openStream(client, 'provider:no-such-session').next(1)).rejects.toMatchObject({ code: 'not_found' });
@@ -390,6 +477,31 @@ describe('terminal broker', () => {
   });
 });
 
+const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
+
+describe.skipIf(!hasTmux)('real tmux terminal input', () => {
+  it('delivers an 8192-character multi-line or non-ASCII paste, beyond the tmux command-line limit', async () => {
+    const real = new TmuxTerminalDriver(dir);
+    const handle = 'shell:paste-run';
+    const out = join(dir, 'pasted.txt');
+    real.startShell(handle, worktree, join(dir, 'paste.log'));
+    try {
+      // Raw mode, no echo: the shell's cat copies every byte it gets.
+      await real.input(handle, `stty raw -echo; cat > '${out}'\r`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const lines = "a;'$x\r".repeat(8192 / 8);
+      await real.input(handle, lines);
+      await real.input(handle, 'é'.repeat(8192));
+      const expected = Buffer.byteLength(lines) + Buffer.byteLength('é'.repeat(8192));
+      await waitFor(() => { try { return readFileSync(out).length >= expected; } catch { return false; } });
+      const text = readFileSync(out, 'utf8').replace(/\x1b\[20[01]~/g, '');
+      expect(text).toBe(lines + 'é'.repeat(8192));
+    } finally {
+      real.stop(handle);
+    }
+  }, 20_000);
+});
+
 describe.runIf(process.env.RUN_TMUX_SMOKE === '1')('real tmux terminal smoke', () => {
   it('keeps a shell attached across driver instances, resizes it, and stops only that shell', async () => {
     const real = new TmuxTerminalDriver(dir);
@@ -399,7 +511,7 @@ describe.runIf(process.env.RUN_TMUX_SMOKE === '1')('real tmux terminal smoke', (
     try {
       expect(real.alive(handle)).toBe(true);
       real.resize(handle, 110, 32);
-      real.input(handle, 'pwd\r');
+      await real.input(handle, 'pwd\r');
       await new Promise((resolve) => setTimeout(resolve, 250));
       expect(new TmuxTerminalDriver(dir).snapshot(handle).screen).toContain(worktree);
     } finally {

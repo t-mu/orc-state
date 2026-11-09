@@ -21,7 +21,7 @@ export const USAGE: Record<string, string> = {
   'events-tail':       'orc events-tail [--n=<count>] [--event=<name>] [--json]',
   'event-cursor':      'orc event-cursor [--consumer=<id>] [--reset-to=<seq>]   (reset requires a stopped coordinator)',
   'control':           'orc control snapshot | events [--after=<seq>] [--limit=<n>] [--follow] [--max-events=<n>] | command ... | ack <command_id> --state=<state> | message ... | messages ... | consume <message_id>',
-  'terminal':          'orc terminal <provider|shell> <run_id> [--write] [--once]',
+  'terminal':          'orc terminal <provider|shell> <run_id> [--write [--takeover]] [--once]',
   'sessions':          'orc sessions [--all] [--json]',
   'run-start':         'orc run-start --run-id=<id> --agent-id=<id>',
   'report-for-duty':   'orc report-for-duty --agent-id=<id> --session-id=<id>',
