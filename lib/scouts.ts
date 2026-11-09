@@ -166,7 +166,7 @@ export async function launchScout(stateDir: string, prepared: PreparedScout) {
   if (!await waitForScoutReady(stateDir, scout.agent_id, sessionToken, scout)) {
     await adapter.stop(launchResult.session_handle);
     removeAgent(stateDir, scout.agent_id);
-    if (hasSessionStartHook(scout.provider)) {
+    if (hasSessionStartHook(scout.provider, 'sandbox')) {
       throw new ScoutLaunchError(`Failed to brief scout ${scout.agent_id}: scout session did not become ready in time (no session-start hook record)`);
     }
     // A read-only Codex scout in a project cannot reach the control socket, so it never reports (task 230).

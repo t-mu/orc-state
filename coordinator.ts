@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
 import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ProviderName } from './lib/providers.ts';
-import { hasSessionStartHook, resolveWorkerProvider } from './lib/providers.ts';
+import { hasSessionStartHook, resolveWorkerProvider, type ExecutionMode } from './lib/providers.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
 // Distributive Omit — preserves discriminated union across all members
@@ -41,6 +41,7 @@ import { gcOrphanedHookFiles } from './lib/hookFiles.ts';
 import { noProgressEscalationMs } from './lib/runProgress.ts';
 import { drainHookEvents, type PermissionHookEvent, type SessionStartHookEvent } from './lib/hookEventBus.ts';
 import { applySessionStart, isAgentSessionReady, sessionStartDecision } from './lib/sessionStartReadiness.ts';
+import { deletePendingSessionStart, listPendingSessionStarts, savePendingSessionStart, type PendingSessionStart } from './lib/pendingSessionStarts.ts';
 import { inferPhaseTransitions, phaseInferenceClaims } from './lib/phaseInference.ts';
 import { readRunActivity, writeRunActivity } from './lib/runActivityStore.ts';
 import { RunSignals, type RunHookEvents } from './lib/runSignals.ts';
@@ -412,6 +413,9 @@ async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) 
   const nowMs = Date.now();
   const byAgent = new Map(agents.map((agent) => [agent.agent_id, agent]));
   const nudgeWork = [];
+  // Workers launch in the worker pool's execution mode, which decides whether a Codex session has its hook.
+  let executionMode: ExecutionMode | null = null;
+  const workerExecutionMode = (): ExecutionMode => (executionMode ??= loadWorkerPoolConfig().execution_mode);
 
   for (const claim of claims ?? []) {
     if (claim.state !== 'claimed') {
@@ -466,7 +470,7 @@ async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) 
     }
 
     // A hook provider's session reports ready by itself (its session-start hook): no nudge.
-    if (ageMs < SESSION_READY_NUDGE_MS || !agent.session_token || hasSessionStartHook(agent.provider)) continue;
+    if (ageMs < SESSION_READY_NUDGE_MS || !agent.session_token || hasSessionStartHook(agent.provider, workerExecutionMode())) continue;
     const lastNudgeAt = sessionReadyNudgeAtMs.get(claim.run_id) ?? 0;
     if (nowMs - lastNudgeAt < SESSION_READY_NUDGE_INTERVAL_MS) continue;
 
@@ -1112,12 +1116,12 @@ function ingestHookEvents(claims: Claim[], agents: Agent[], nowMs: number = Date
   for (const claim of active) {
     const drained = drainHookEvents(claim.agent_id);
     hookEvents.set(claim.run_id, { agentId: claim.agent_id, ...drained });
-    queueSessionStarts(claim.agent_id, drained.sessionStart);
+    queueSessionStarts(claim.agent_id, drained.sessionStart, nowMs);
   }
   // A scout has no claim: drain it only for its session start (it has no tool hooks).
   for (const agent of agents ?? []) {
     if (agent.role === 'scout' && agent.status !== 'offline' && !isAgentSessionReady(agent)) {
-      queueSessionStarts(agent.agent_id, drainHookEvents(agent.agent_id).sessionStart);
+      queueSessionStarts(agent.agent_id, drainHookEvents(agent.agent_id).sessionStart, nowMs);
     }
   }
   applyPendingSessionStarts(nowMs);
@@ -1140,31 +1144,45 @@ function ingestHookEvents(claims: Claim[], agents: Agent[], nowMs: number = Date
 }
 
 /**
- * Session-start hook records waiting for their launch to be recorded, by agent.
- * Lost on a coordinator restart: the session then times out and is requeued.
+ * Keep each agent's latest drained session-start record in the runtime store
+ * (lib/pendingSessionStarts.ts) until it applies: a coordinator restarted while
+ * a session was starting picks it up from there.
  */
-const pendingSessionStarts = new Map<string, SessionStartHookEvent>();
-
-function queueSessionStarts(agentId: string, records: SessionStartHookEvent[]): void {
+function queueSessionStarts(agentId: string, records: SessionStartHookEvent[], nowMs: number): void {
   const latest = records.at(-1);
-  if (latest) pendingSessionStarts.set(agentId, latest);
+  if (!latest) return;
+  try {
+    savePendingSessionStart(STATE_DIR, agentId, latest, new Date(nowMs).toISOString());
+  } catch (error) {
+    log(`warning: failed to keep the session-start record of ${agentId}: ${(error as Error).message}`);
+  }
 }
 
 /**
  * Turn each pending session-start record into readiness for the session it
  * names (lib/sessionStartReadiness.ts). The envelope or scout brief follows
- * through the usual readiness path; a TUI that is still busy queues it.
+ * through the usual readiness path; a TUI that is still busy queues it. A
+ * record still waiting for its launch after the readiness timeout is dropped:
+ * that session has timed out (or never got recorded).
  */
 function applyPendingSessionStarts(nowMs: number): void {
-  for (const [agentId, record] of [...pendingSessionStarts]) {
+  let pending: PendingSessionStart[];
+  try {
+    pending = listPendingSessionStarts(STATE_DIR);
+  } catch (error) {
+    log(`warning: failed to read pending session starts: ${(error as Error).message}`);
+    return;
+  }
+  for (const { agentId, record, receivedAt } of pending) {
     const agent = getAgent(STATE_DIR, agentId);
     const decision = sessionStartDecision(agent, record);
-    if (decision === 'wait') continue;
-    pendingSessionStarts.delete(agentId);
-    if (decision !== 'apply') continue;
+    if (decision === 'wait' && nowMs - Date.parse(receivedAt) < SESSION_READY_TIMEOUT_MS) continue;
     try {
-      applySessionStart(STATE_DIR, agent!, record, new Date(nowMs).toISOString());
-      log(`session ${agent!.session_token} of ${agentId} is ready (session-start hook, source=${record.source || 'unknown'})`);
+      if (decision === 'apply') {
+        applySessionStart(STATE_DIR, agent!, record, new Date(nowMs).toISOString());
+        log(`session ${agent!.session_token} of ${agentId} is ready (session-start hook, source=${record.source || 'unknown'})`);
+      }
+      deletePendingSessionStart(STATE_DIR, agentId);
     } catch (error) {
       log(`warning: failed to record session start for ${agentId}: ${(error as Error).message}`);
     }

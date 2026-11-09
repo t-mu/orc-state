@@ -117,7 +117,7 @@ describe('migration under a live coordinator', () => {
     eventsDbAtVersion8();
     await startFakeCoordinator({ events: { version: 8, min_compatible: 8 }, runtime: { version: 5, min_compatible: 5 } });
     const objects = sqliteObjects('events.db');
-    expect(() => initEventsDb(dir)).toThrow(/events\.db needs migration from schema 8 to 9.*orc coordinator restart/);
+    expect(() => initEventsDb(dir)).toThrow(/events\.db needs migration from schema 8 to 10.*orc coordinator restart/);
     expect(userVersion('events.db')).toBe(8);
     // No table or index was created or dropped under the coordinator either.
     expect(sqliteObjects('events.db')).toEqual(objects);
@@ -194,21 +194,28 @@ describe('coordinatorSchemaProblems', () => {
   it('flags each database the coordinator cannot read, falling back to schema_version for an older coordinator', () => {
     const old = { events: { version: 8, min_compatible: 8 }, runtime: { version: 5, min_compatible: 5 } };
     expect(coordinatorSchemaProblems({ schema_version: 8, schemas: old }, current)).toEqual([
-      'running coordinator supports events.db schema 8, but the database is at schema 9 (needs code of schema 9 or newer); run orc coordinator restart',
+      'running coordinator supports events.db schema 8, but the database is at schema 10 (needs code of schema 9 or newer); run orc coordinator restart',
       'running coordinator supports runtime.db schema 5, but the database is at schema 6 (needs code of schema 6 or newer); run orc coordinator restart',
     ]);
     expect(coordinatorSchemaProblems({ schema_version: 8 }, current)).toEqual([
-      'running coordinator supports events.db schema 8, but the database is at schema 9 (needs code of schema 9 or newer); run orc coordinator restart',
+      'running coordinator supports events.db schema 8, but the database is at schema 10 (needs code of schema 9 or newer); run orc coordinator restart',
     ]);
   });
 
   it('flags a pending migration the running coordinator blocks, and not one it can read', () => {
     const notMigrated = { events: { version: 8, min_compatible: 8 }, runtime: { version: 5, min_compatible: 5 } };
     expect(coordinatorSchemaProblems({ schema_version: 8 }, notMigrated, current)).toEqual([
-      'events.db needs migration from schema 8 to 9, which the running coordinator (schema 8) cannot read, so orc refuses to migrate it; run orc coordinator restart',
+      'events.db needs migration from schema 8 to 10, which the running coordinator (schema 8) cannot read, so orc refuses to migrate it; run orc coordinator restart',
       'runtime.db needs migration from schema 5 to 6, which the running coordinator (schema 5) cannot read, so orc refuses to migrate it; run orc coordinator restart',
     ]);
     expect(coordinatorSchemaProblems({ schema_version: 9, schemas: current }, notMigrated, current)).toEqual([]);
     expect(coordinatorSchemaProblems({ schema_version: 9, schemas: current }, current, current)).toEqual([]);
+  });
+
+  it('lets a schema 9 coordinator run on (and under) events.db schema 10: the pending_session_starts table is additive', () => {
+    const v9 = { events: { version: 9, min_compatible: 9 }, runtime: current.runtime };
+    expect(RUNTIME_SCHEMA).toEqual({ version: 10, min_compatible: 9 });
+    expect(coordinatorSchemaProblems({ schema_version: 9, schemas: v9 }, current)).toEqual([]);
+    expect(coordinatorSchemaProblems({ schema_version: 9, schemas: v9 }, v9, current)).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@
  *
  * State written to STATE_DIR:
  *   pty-settings/{agentId}.json — Claude settings (hooks, sandbox) per session
+ *   (Codex gets its SessionStart hook as `-c` launch args, see codexSessionStartHookArgs)
  *   (pty-logs/ and pty-hook-events/ are created here and written by the
  *   session and its hooks; the directory names predate the tmux-only runtime.)
  *
@@ -22,7 +23,7 @@ import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath } from '../lib/paths.ts';
 import { resolveOrcBin, shellEscape } from '../lib/orcBin.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import type { SandboxNetwork } from '../lib/providers.ts';
+import { hasSessionStartHook, type SandboxNetwork } from '../lib/providers.ts';
 import { OPERATOR_TOKEN_FILE } from '../lib/controlProtocol.ts';
 import { taskLabelsPath } from '../hooks/orc-hook.ts';
 import { fileURLToPath } from 'node:url';
@@ -33,14 +34,32 @@ const PROVIDER_BINARIES: Record<string, string> = {
   gemini: 'gemini',
 };
 
-/** The shipped Claude hook script (compiled to dist/hooks/orc-hook.js by the build). */
-const CLAUDE_HOOK_SCRIPT = fileURLToPath(new URL('../hooks/orc-hook.ts', import.meta.url));
+/** The shipped provider hook script (compiled to dist/hooks/orc-hook.js by the build). */
+const HOOK_SCRIPT = fileURLToPath(new URL('../hooks/orc-hook.ts', import.meta.url));
 /** PreToolUse matcher for the to-do tools whose current item labels a run. */
 export const CLAUDE_TODO_TOOL_MATCHER = 'TodoWrite|TaskCreate|TaskUpdate';
 
-/** Shell command for one Claude hook: `node <script> <kind> <events-file>`. */
+/** Shell command for one provider hook: `node <script> <kind> <events-file>`. */
 export function claudeHookCommand(kind: string, eventsFile: string): string {
-  return `node ${JSON.stringify(CLAUDE_HOOK_SCRIPT)} ${kind} ${JSON.stringify(eventsFile)}`;
+  return `node ${JSON.stringify(HOOK_SCRIPT)} ${kind} ${JSON.stringify(eventsFile)}`;
+}
+
+/**
+ * Codex launch args for the session's readiness hook. Codex 0.163 reads hooks
+ * from a `hooks` config table, which a `-c` override sets for this launch only,
+ * so nothing is written to the user's Codex home or the worktree. A hook runs
+ * only once trusted, and trust is persisted per hook in the user's config, so
+ * `--dangerously-bypass-hook-trust` runs it without that. The TUI fires
+ * SessionStart when its first prompt (the bootstrap) starts the thread, before
+ * the model runs; the payload carries `session_id` and `source` like Claude's.
+ * The bypass covers the whole invocation (the user's and the repository's
+ * `hooks.json` too, and hooks run outside the Codex sandbox), so only a
+ * `full-access` launch gets these args. Needs Codex 0.163 or newer.
+ * The value is TOML: JSON string escaping is valid TOML basic-string escaping.
+ */
+export function codexSessionStartHookArgs(eventsFile: string): string[] {
+  const command = JSON.stringify(claudeHookCommand('session_start', eventsFile));
+  return ['--dangerously-bypass-hook-trust', '-c', `hooks.SessionStart=[{hooks=[{type="command",command=${command}}]}]`];
 }
 
 const STARTUP_DELAY_MS   = 1500;     // wait for CLI to initialise before sending bootstrap
@@ -271,7 +290,7 @@ function stringConfig(config: Record<string, unknown>, key: string): string | nu
   return typeof value === 'string' && value ? value : null;
 }
 
-function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: string, claudeSettingsPath?: string) {
+function buildStartArgs(provider: string, agentId: string, config: Record<string, unknown>, cwd: string, claudeSettingsPath?: string) {
   // Mirrors ExecutionMode from lib/providers.ts (added by task 117). Default is
   // 'full-access' for backward compatibility when field is absent.
   const executionMode = typeof config.execution_mode === 'string' ? config.execution_mode : 'full-access';
@@ -293,6 +312,10 @@ function buildStartArgs(provider: string, config: Record<string, unknown>, cwd: 
     }
     // Enable multi-agent support so Codex workers can spawn sub-agent reviewers.
     args.push('--enable', 'multi_agent', ...isolatedMcpArgs('codex'));
+    // The readiness hook needs the trust bypass, which must not reach a sandboxed session (hasSessionStartHook).
+    if (hasSessionStartHook('codex', executionMode === 'sandbox' ? 'sandbox' : 'full-access')) {
+      args.push(...codexSessionStartHookArgs(hookEventPath(agentId)));
+    }
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;
@@ -392,7 +415,7 @@ export function prepareProviderLaunch(provider: string, agentId: string, config:
     writeFileSync(claudeSettingsFile, JSON.stringify(settings));
   }
 
-  const spawnArgs = buildStartArgs(provider, config, cwd, claudeSettingsFile);
+  const spawnArgs = buildStartArgs(provider, agentId, config, cwd, claudeSettingsFile);
 
   // Strip parent provider/session control env vars so nested worker
   // sessions start cleanly instead of inheriting the parent CLI sandbox

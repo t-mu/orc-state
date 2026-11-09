@@ -30,6 +30,13 @@ function binaryMatcher(name: string) {
  * runStartupDialogs. `spawnSpy` records what the terminal would run and
  * `session.write` every keystroke sent to it.
  */
+/** The Codex SessionStart hook args a launch of `agentId` carries (codexSessionStartHookArgs). */
+async function codexHook(agentId: string): Promise<string[]> {
+  const { codexSessionStartHookArgs } = await import('./providerLaunch.ts');
+  const { hookEventPath } = await import('../lib/paths.ts');
+  return codexSessionStartHookArgs(hookEventPath(agentId));
+}
+
 async function makeAdapter({ provider = 'claude' }: { provider?: string } = {}) {
   const { prepareProviderLaunch, runStartupDialogs } = await import('./providerLaunch.ts');
   const spawnSpy = vi.fn();
@@ -118,6 +125,39 @@ describe('provider launch', () => {
       { type: 'tool', tool: 'Bash', brief: 'npm test', id: 'toolu_1', ts: expect.any(String) },
       { type: 'activity', label: 'Doing X', source: 'todo', ts: expect.any(String) },
     ]);
+  });
+
+  it('gives a full-access codex session its SessionStart hook as launch args, whose command appends the readiness record', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('cx', { execution_mode: 'full-access', system_prompt: 'SCOUT' });
+    const args = spawnSpy.mock.calls[0][1] as string[];
+    const at = args.indexOf('--dangerously-bypass-hook-trust');
+    expect(at).toBeGreaterThan(-1);
+    expect(args[at + 1]).toBe('-c');
+    const match = /^hooks\.SessionStart=\[\{hooks=\[\{type="command",command=(".*")\}\]\}\]$/.exec(args[at + 2]);
+    expect(match).not.toBeNull();
+    // The prompt stays last: Codex fires SessionStart when it starts the thread.
+    expect(args.at(-1)).toBe('SCOUT');
+    // Nothing is written for Codex: no settings file.
+    expect(existsSync(join(dir, 'pty-settings', 'cx.json'))).toBe(false);
+    const command = JSON.parse(match![1]) as string;
+    // The payload shape Codex 0.163 sends on stdin.
+    const payload = { session_id: 'thread-1', hook_event_name: 'SessionStart', source: 'startup', cwd: dir, model: 'm', permission_mode: 'default' };
+    const result = spawnSync('sh', ['-c', command], { input: JSON.stringify(payload), encoding: 'utf8', env: { ...process.env, ORC_SESSION_ID: 'orc-session-1' } });
+    expect(result.status).toBe(0);
+    const records = readFileSync(join(dir, 'pty-hook-events', 'cx.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as unknown);
+    expect(records).toEqual([{ type: 'session_start', session_id: 'thread-1', source: 'startup', orc_session_id: 'orc-session-1', ts: expect.any(String) }]);
+  });
+
+  it('gives a sandboxed codex session (workers and scouts) no hook and no trust bypass', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('cw', { execution_mode: 'sandbox', system_prompt: 'BOOT' });
+    await adapter.start('cs', { execution_mode: 'sandbox', read_only: true, system_prompt: 'SCOUT' });
+    for (const call of spawnSpy.mock.calls) {
+      const args = call[1] as string[];
+      expect(args).not.toContain('--dangerously-bypass-hook-trust');
+      expect(args.some((arg) => arg.startsWith('hooks.'))).toBe(false);
+    }
   });
 
   it('gives a claude task worker a Stop hook that runs `orc stop-check` from its ORC_BIN', async () => {
@@ -260,7 +300,7 @@ describe('provider launch', () => {
   it('uses provider binary mapping for codex and gemini', async () => {
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', { execution_mode: 'full-access' });
-    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}'], expect.any(Object));
+    expect(codex.spawnSpy).toHaveBeenCalledWith(binaryMatcher('codex'), ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', ...await codexHook('c')], expect.any(Object));
 
     vi.resetModules();
     const gemini = await makeAdapter({ provider: 'gemini' });
@@ -274,7 +314,7 @@ describe('provider launch', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', 'BOOTSTRAP TEXT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', ...await codexHook('codex-worker'), 'BOOTSTRAP TEXT'],
       expect.any(Object),
     );
     expect(session.write).toHaveBeenNthCalledWith(1, '\r');
@@ -287,7 +327,7 @@ describe('provider launch', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       binaryMatcher('codex'),
-      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', 'SCOUT'],
+      ['--dangerously-bypass-approvals-and-sandbox', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', ...await codexHook('scout-1'), 'SCOUT'],
       expect.any(Object),
     );
     expect(session.write).toHaveBeenNthCalledWith(1, '\r');

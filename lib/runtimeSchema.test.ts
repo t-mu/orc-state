@@ -31,7 +31,7 @@ describe('runtime schema migration', () => {
     try {
       db.pragma('foreign_keys = ON');
       const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
-      for (const name of ['events', 'schema_migrations', 'runs', 'sessions', 'commands', 'messages', 'input_requests', 'offsets', 'control_leases', 'terminals']) {
+      for (const name of ['events', 'schema_migrations', 'runs', 'sessions', 'commands', 'messages', 'input_requests', 'offsets', 'control_leases', 'terminals', 'pending_session_starts']) {
         expect(names.has(name)).toBe(true);
       }
       db.prepare("INSERT INTO runs (run_id, task_ref, state, created_at, updated_at) VALUES ('run-1', 'project/task', 'claimed', 'now', 'now')").run();
@@ -48,7 +48,7 @@ describe('runtime schema migration', () => {
     initEventsDb(dir);
     const repeated = new Database(join(dir, 'events.db'), { readonly: true });
     try {
-      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 9 });
+      expect(repeated.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 10 });
     } finally {
       repeated.close();
     }
@@ -118,9 +118,9 @@ describe('runtime schema migration', () => {
       db.prepare("INSERT INTO commands (command_id, run_id, session_id, actor_id, recipient_id, idempotency_key, kind, payload, state, created_at) VALUES ('cmd-old', 'run-old', 'session-old', 'master', 'agent-old', 'key-old', 'send', '{}', 'queued', 'now')").run();
       db.prepare("INSERT INTO control_leases (resource_type, resource_id, lease_id, session_id, owner_id, expires_at) VALUES ('run', 'run-old', 'lease-old', 'session-old', 'agent-old', 'later')").run();
       migrateRuntimeSchema(db);
-      expect(db.pragma('user_version', { simple: true })).toBe(9);
+      expect(db.pragma('user_version', { simple: true })).toBe(10);
       expect(db.prepare('SELECT version, min_compatible FROM schema_migrations ORDER BY version').all())
-        .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9].map((version) => ({ version, min_compatible: version })));
+        .toEqual([...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((version) => ({ version, min_compatible: version })), { version: 10, min_compatible: 9 }]);
       expect((db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name)).toContain('credential_hash');
       expect((db.pragma('table_info(sessions)') as Array<{ name: string }>).map((column) => column.name))
         .toEqual(expect.arrayContaining(['transport', 'process_pid', 'process_start', 'owner_id', 'owner_expires_at', 'state_reason']));
@@ -135,13 +135,13 @@ describe('runtime schema migration', () => {
 
   it('refuses a future version before touching its schema', () => {
     const db = new Database(join(dir, 'events.db'));
-    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 10');
+    db.exec('CREATE TABLE future_marker (id INTEGER PRIMARY KEY); PRAGMA user_version = 11');
     db.close();
-    expect(() => initEventsDb(dir)).toThrow('needs code of schema 10 or newer');
+    expect(() => initEventsDb(dir)).toThrow('needs code of schema 11 or newer');
     const check = new Database(join(dir, 'events.db'), { readonly: true });
     try {
       expect(check.prepare("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeUndefined();
-      expect(check.pragma('user_version', { simple: true })).toBe(10);
+      expect(check.pragma('user_version', { simple: true })).toBe(11);
     } finally {
       check.close();
     }
@@ -149,7 +149,7 @@ describe('runtime schema migration', () => {
     const result = doctor(dir);
     expect(result.status).toBe(1);
     expect((JSON.parse(result.stdout) as { checks: { runtimeSchema: { version: number; ok: boolean } } }).checks.runtimeSchema)
-      .toMatchObject({ version: 10, ok: false });
+      .toMatchObject({ version: 11, ok: false });
   });
 
   it('upgrades a version 7 store with terminal and message rows intact after an interrupted attempt', () => {
@@ -174,7 +174,7 @@ describe('runtime schema migration', () => {
           VALUES ('terminal', 'provider:run-1', 'lease-t', 'operator', '2999-01-01');
       `);
       migrateRuntimeSchema(db);
-      expect(db.pragma('user_version', { simple: true })).toBe(9);
+      expect(db.pragma('user_version', { simple: true })).toBe(10);
       expect(db.prepare('SELECT terminal_id, session_id, run_id, handle, state FROM terminals').all())
         .toEqual([{ terminal_id: 'provider:run-1', session_id: 'session-1', run_id: 'run-1', handle: 'tmux:worker-1', state: 'offline' }]);
       expect(db.prepare("SELECT count(*) AS n FROM control_leases WHERE resource_type = 'terminal'").get()).toEqual({ n: 0 });
@@ -189,7 +189,7 @@ describe('runtime schema migration', () => {
     } finally {
       db.close();
     }
-    expect(inspectRuntimeSchema(dir)).toEqual({ ok: true, version: 9, min_compatible: 9, messages: [] });
+    expect(inspectRuntimeSchema(dir)).toEqual({ ok: true, version: 10, min_compatible: 9, messages: [] });
   });
 
   it('stores terminals and messages for a run-less session and enforces one message recipient', () => {

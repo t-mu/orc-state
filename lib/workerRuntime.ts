@@ -223,7 +223,7 @@ export async function launchWorkerSession(
         agent.role ?? 'worker',
         workerEnv.ORC_BIN ?? 'orc',
         sessionId,
-        { workerBootstrapProfile, ...taskWorkflow },
+        { workerBootstrapProfile, executionMode: effectiveMode, ...taskWorkflow },
       ),
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
@@ -350,7 +350,7 @@ export async function resumeWorkerSession(
       // `thread/resume` is given them again rather than relying on the thread keeping them.
       ...(structured ? {
         system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc',
-          session.session_id, { workerBootstrapProfile: resolveWorkerBootstrapProfile(), ...taskWorkflow }),
+          session.session_id, { workerBootstrapProfile: resolveWorkerBootstrapProfile(), executionMode: executionMode ?? 'full-access', ...taskWorkflow }),
       } : {}),
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory,

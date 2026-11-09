@@ -63,7 +63,7 @@ The tmux adapter writes a Claude settings file whose hooks run `hooks/orc-hook.t
 
 | Hook | Kind | Record |
 |------|------|--------|
-| `SessionStart` | `session_start` | `{type:'session_start', session_id, source, orc_session_id?, ts}`: Claude's conversation id, the start source (`startup`, `resume`, ...) and the orc session id from `ORC_SESSION_ID`. The session's readiness signal ([Session readiness](#session-readiness)) |
+| `SessionStart` | `session_start` | `{type:'session_start', session_id, source, orc_session_id?, ts}`: Claude's conversation id, the start source (`startup`, `resume`, ...) and the orc session id from `ORC_SESSION_ID`. The session's readiness signal ([Session readiness](#session-readiness)); `full-access` Codex sessions run the same kind |
 | `Notification` | `permission` | `{type:'permission', message, ts}` for `permission_prompt` |
 | `PreToolUse` (`*`) | `tool_start` | `{type:'tool_start', tool, id?, ts}` (`id` = `tool_use_id`); the call is in flight (run not stalled) until its `tool` record or a `turn_end`, for up to 1 h. A start without `id` is closed by the next `tool_start` once a later call finished |
 | `PostToolUse` / `PostToolUseFailure` (`*`) | `tool` | `{type:'tool', tool, brief, id?, ts}`; `brief` ≤ 80 chars; `Agent`/`Task` add `subagent_type` (infers the review phase) |
@@ -72,7 +72,7 @@ The tmux adapter writes a Claude settings file whose hooks run `hooks/orc-hook.t
 
 - Scouts get only `SessionStart` and `Notification`. Hook files are drained for runs with an active claim, and for a scout whose session is not ready yet (only its `session_start` record is used).
 - Orphaned hook files are removed at coordinator start and by `orc worker-gc` (`lib/hookFiles.ts`).
-- Codex and Gemini get no hooks, so they keep the `worker_stale_*` thresholds instead of `hook_idle_*` ([configuration.md](./configuration.md)).
+- A `full-access` Codex session gets only `SessionStart` (as `-c` launch args, see [Session readiness](#session-readiness)) and Gemini none, so both keep the `worker_stale_*` thresholds instead of `hook_idle_*` ([configuration.md](./configuration.md)).
 
 ## Session readiness
 
@@ -81,10 +81,10 @@ The coordinator sends TASK_START (or `request_scout` the SCOUT_BRIEF) only once 
 | Provider | Runtime | Readiness signal |
 |----------|---------|------------------|
 | Claude | tmux | `SessionStart` hook. The coordinator drains the `session_start` record, emits `reported_for_duty {source: 'hook'}` and stores `session_id` as `sessions.provider_conversation_id`. The bootstrap never mentions report-for-duty, and no report-for-duty `SESSION_NUDGE` is sent |
-| Codex | tmux | `orc report-for-duty`, which the bootstrap asks for (nudged with `SESSION_NUDGE`). Codex 0.163 has a `SessionStart` hook, but it is configured only through `hooks.json` files (user or project level, subject to hook trust), with no per-launch flag. orc would have to write into the user's Codex home or the worktree, so it does not wire it |
+| Codex | tmux | `full-access` (Codex 0.163 or newer): `SessionStart` hook, passed per launch: `--dangerously-bypass-hook-trust -c 'hooks.SessionStart=[{hooks=[{type="command",command="node <orc-hook> session_start <events-file>"}]}]'` (`codexSessionStartHookArgs`), so nothing is written to the Codex home or the worktree. The TUI fires it when the bootstrap prompt starts the thread, before the model runs. Handled like Claude's record; Codex sessions are not resumed, so the stored conversation id is informational. The trust bypass applies to the whole invocation: hooks from the user's or the repository's `hooks.json` also run, without a trust prompt and outside the Codex sandbox. `sandbox` (every Codex scout): `orc report-for-duty`, which the bootstrap asks for (nudged), because the bypass would let repository hooks escape the sandbox. An older Codex rejects the flag, so the launch fails: upgrade Codex |
 | Codex | `app:` | the app-server protocol handshake (`adapters/codexAppServer.ts`) |
-| Gemini | tmux | `orc report-for-duty` (nudged). orc does not wire a Gemini session-start hook |
+| Gemini | tmux | `orc report-for-duty`, which the bootstrap asks for (nudged with `SESSION_NUDGE`). Gemini CLI documents a `SessionStart` hook, but only in settings files: the per-launch route (`GEMINI_CLI_SYSTEM_SETTINGS_PATH`) would replace the administrator's system settings, and the others write into the user's home or the worktree, so orc does not wire it |
 
-- A record is applied only to the session it names: a different `orc_session_id` is dropped, and so is a record for a session that is already ready (a later `/clear` or compaction). A record that arrives before the launch is recorded waits in memory, so a coordinator restart drops it.
+- A record is applied only to the session it names: a different `orc_session_id` is dropped, and so is a record for a session that is already ready (a later `/clear` or compaction). A record that arrives before the launch is recorded waits in events.db (`pending_session_starts`, one per agent), so a restarted coordinator still applies it; one still waiting after `coordinator.session_ready_timeout_ms` is dropped.
 - The `report-for-duty` op stays accepted for every provider: a session started by an older orc, or one whose hook misfires, still gets dispatched.
 - A session that is not ready after `coordinator.session_ready_timeout_ms` is requeued with `ERR_SESSION_READY_TIMEOUT`, whatever its provider.
