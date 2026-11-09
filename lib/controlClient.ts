@@ -246,8 +246,9 @@ export class ControlClient {
   sessions(): Promise<{ sessions: SessionTerminalView[] }> { return this.call('GET', '/v1/sessions'); }
 
   /**
-   * Yield a terminal's frames: one `snapshot`, then `output`/`heartbeat`, and
-   * `exit` last. Pass the size to have the pane sized (by the lease holder, or
+   * Yield a terminal's frames: one `snapshot`, then `output`/`resize`/`heartbeat`, and
+   * `exit` last (reason `backlog`: the viewer fell too far behind). A stream silent
+   * for `streamIdleMs` fails with `unavailable`. Pass the size to have the pane sized (by the lease holder, or
    * the first viewer when no one holds the lease). No reconnect: reopen after `exit`.
    */
   async *streamTerminal(terminalId: string, options: { leaseId?: string; columns?: number; rows?: number } = {}, signal?: AbortSignal): AsyncGenerator<TerminalFrame> {

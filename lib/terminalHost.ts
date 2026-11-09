@@ -12,9 +12,9 @@ export interface TerminalSnapshot { screen: string; cursor_x: number; cursor_y: 
 /** A live connection to one terminal's output. Callbacks never fire after `stop()`. */
 export interface TerminalConnection {
   onOutput(listener: (data: Buffer) => void): void;
-  /** Fires at most once: the terminal ended or the connection was lost. */
-  /** The pane's size changed (tmux `%layout-change`). */
+  /** The window's size changed (tmux `%layout-change`). */
   onResize(listener: (columns: number, rows: number) => void): void;
+  /** Fires at most once: the terminal ended or the connection was lost. */
   onExit(listener: (reason: string) => void): void;
   stop(): void;
 }
@@ -151,7 +151,11 @@ export class TerminalStreams {
       const frame: TerminalFrame = { type: 'output', data: data.toString('base64') };
       for (const viewer of viewers) viewer.send(frame);
     });
+    let size = '';
     connection.onResize((columns, rows) => {
+      // A layout change that keeps the size is not a resize.
+      if (size === `${columns}x${rows}`) return;
+      size = `${columns}x${rows}`;
       const frame: TerminalFrame = { type: 'resize', columns, rows };
       for (const viewer of viewers) viewer.send(frame);
     });

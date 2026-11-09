@@ -53,7 +53,8 @@
 
 - `lib/terminalHost.ts`: `%output` decoding, the control-line parser, and `TerminalStreams` (one connection per terminal, shared by its viewers). `TmuxTerminalDriver.connect` in `lib/terminalBroker.ts` is the `tmux -C attach-session -f ignore-size` client.
 - Sizing: viewers never send `refresh-client -C`; the lease holder (or the first viewer when no one holds the lease) sizes the pane with `resize-window` (which sets `window-size manual`), first one column short and back so the TUI redraws.
+- Resize: tmux `%layout-change` becomes a `resize` frame (`columns`, `rows`) to every viewer when the size changed; a viewer repaints. `orc terminal` ignores it. Clients ignore frame types and fields they do not know.
 - Exit: `%exit`, a lost client, or the pane found dead (checked every second; a worker pane kept by `remain-on-exit` sends no `%exit`) ends the stream with an `exit` frame.
 - Snapshot overlap: output already queued in the control client's pipe when a viewer's snapshot is taken reaches that viewer after the snapshot, so a few bytes may be applied twice. The redraw that follows the size change, or the TUI's next repaint, corrects the screen.
 - `orc terminal`: a viewer without the lease sizes the pane only when it opens. Later local resizes are sent only by a `--write` viewer.
-- Backpressure: `pause-after` is not used yet; a viewer more than 8 MiB behind is disconnected and reopens.
+- Backpressure: `pause-after` is not used yet; a viewer more than 8 MiB behind gets a final `exit` frame with reason `backlog` and reopens.

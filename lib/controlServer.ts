@@ -249,9 +249,13 @@ export async function startControlServer(stateDir: string, options: ControlServe
     let cursor = after;
     let draining = false;
     let lastWrite = Date.now();
-    const write = (frame: StreamFrame): boolean => { lastWrite = Date.now(); return res.write(`${JSON.stringify(frame)}\n`); };
+    const write = (frame: StreamFrame): boolean => {
+      if (res.writableEnded) return true;
+      lastWrite = Date.now();
+      return res.write(`${JSON.stringify(frame)}\n`);
+    };
     const pump = (): void => {
-      if (draining || res.destroyed) return;
+      if (draining || res.destroyed || res.writableEnded) return;
       try {
         for (;;) {
           const rows = readEventBatch(join(stateDir, 'events.db'), cursor, 500);
