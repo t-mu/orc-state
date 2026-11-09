@@ -1,11 +1,11 @@
 import { checkProjectLayout } from './projectLayoutCheck.ts';
 import { projectDataHome } from './projectRegistry.ts';
 import { projectTaskStoreFor } from './projectTasks.ts';
-import type { ActiveProject } from './projectContext.ts';
+import type { ActiveProject, ProjectSelectedBy } from './projectContext.ts';
 
 export interface ProjectHealth {
   ok: boolean;
-  project: { id: string; name: string; target_repo_root: string; state_dir: string; source: ActiveProject['source'] };
+  project: { id: string; name: string; target_repo_root: string; state_dir: string; source: ActiveProject['source']; selected_by: ProjectSelectedBy };
   errors: string[];
   warnings: string[];
 }
@@ -29,13 +29,22 @@ export function checkProjectHealth(project: ActiveProject, stateDir: string, { w
   }
   return {
     ok: errors.length === 0,
-    project: { id: project.id, name: project.name, target_repo_root: project.targetRepoRoot, state_dir: stateDir, source: project.source },
+    project: { id: project.id, name: project.name, target_repo_root: project.targetRepoRoot, state_dir: stateDir, source: project.source, selected_by: project.selectedBy },
     errors,
     warnings: layout.warnings,
   };
 }
 
-/** One line naming the project a command acts on. */
-export function formatProjectIdentity(project: { id: string; name: string; target_repo_root: string } | null): string {
-  return project ? `project: ${project.name} (${project.id}) → ${project.target_repo_root}` : 'project: (none selected)';
+/** One line naming the project a command acts on, and how it was selected when known. */
+export function formatProjectIdentity(project: { id: string; name: string; target_repo_root: string; selected_by?: ProjectSelectedBy | undefined } | null): string {
+  if (!project) return 'project: (none selected)';
+  const how = project.selected_by ? ` (selected by ${SELECTED_BY_LABEL[project.selected_by]})` : '';
+  return `project: ${project.name} (${project.id}) → ${project.target_repo_root}${how}`;
 }
+
+const SELECTED_BY_LABEL: Record<ProjectSelectedBy, string> = {
+  flag: '--project',
+  env: 'ORC_PROJECT_ID',
+  cwd: 'current directory',
+  selected: 'orc project select',
+};

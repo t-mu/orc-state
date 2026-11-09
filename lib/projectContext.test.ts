@@ -32,6 +32,24 @@ describe('resolveActiveProject', () => {
     expect(() => resolveActiveProject({ ...env, ORC_PROJECT_ID: 'nope' }, temp)).toThrow('ORC_PROJECT_ID is not a registered project: nope');
   });
 
+  it('records how the project was selected: flag, env, cwd or selected', () => {
+    const registry = new ProjectRegistry(join(temp, 'data'));
+    const a = registry.add(gitRepo('a'));
+    const b = registry.add(gitRepo('b'));
+    registry.select(b.id);
+    registry.close();
+    const env = { ORC_DATA_HOME: join(temp, 'data') };
+    expect(resolveActiveProject({ ...env, ORC_PROJECT_ID: b.id, ORC_PROJECT_FLAG: b.id }, a.canonicalGitRoot)).toMatchObject({ id: b.id, selectedBy: 'flag' });
+    expect(resolveActiveProject({ ...env, ORC_PROJECT_ID: b.id }, a.canonicalGitRoot)).toMatchObject({ id: b.id, selectedBy: 'env' });
+    // A marker left over for another id does not make an inherited ORC_PROJECT_ID a flag.
+    expect(resolveActiveProject({ ...env, ORC_PROJECT_ID: b.id, ORC_PROJECT_FLAG: a.id }, temp)).toMatchObject({ id: b.id, selectedBy: 'env' });
+    expect(resolveActiveProject(env, a.canonicalGitRoot)).toMatchObject({ id: a.id, selectedBy: 'cwd' });
+    expect(resolveActiveProject(env, temp)).toMatchObject({ id: b.id, selectedBy: 'selected' });
+    // The state-directory bridge a worker inherits is env, not flag.
+    writeFileSync(join(a.stateDir, 'project.json'), JSON.stringify({ id: a.id, name: a.name, target_repo_root: a.canonicalGitRoot }));
+    expect(resolveActiveProject({ ...env, ORC_PROJECT_ID: a.id, ORC_STATE_DIR: a.stateDir }, temp)).toMatchObject({ id: a.id, selectedBy: 'env' });
+  });
+
   it('ignores a leftover migration record and legacy files', () => {
     const registry = new ProjectRegistry(join(temp, 'data'));
     const project = registry.add(gitRepo('a'));

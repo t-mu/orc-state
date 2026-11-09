@@ -11,7 +11,7 @@ import type { Claim } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 import { computeWorkerCapacity } from './workerCapacity.ts';
-import { readProjectDescriptor } from './projectContext.ts';
+import { readProjectDescriptor, type ActiveProject, type ProjectSelectedBy } from './projectContext.ts';
 import { formatProjectIdentity } from './projectHealth.ts';
 import { readRunActivity, type RunActivityMap } from './runActivityStore.ts';
 import { isStalled, runIdleAnchor } from './runSignals.ts';
@@ -272,7 +272,8 @@ type FinalizationRun = {
 export type StatusView = {
   /** Highest event seq the view read; continue with `/v1/events/stream?after=cursor`. */
   cursor: number;
-  project: { id: string; name: string; target_repo_root: string } | null;
+  /** `selected_by` is set only by the CLI (`orc status`), for the project it resolved; see withProjectSelection. */
+  project: { id: string; name: string; target_repo_root: string; selected_by?: ProjectSelectedBy } | null;
   agents: {
     total: number; masters: number; workers: number; running: number; idle: number; offline: number;
     list: Agent[];
@@ -306,6 +307,15 @@ export type StatusView = {
   recentEvents: OrcEvent[];
   eventReadError: string;
 };
+
+/**
+ * Stamp `project.selected_by` when the status describes the project this
+ * process resolved (`active`); otherwise the status is returned unchanged.
+ */
+export function withProjectSelection<T extends { project: StatusView['project'] }>(status: T, active: Pick<ActiveProject, 'id' | 'selectedBy'> | null): T {
+  if (!status.project || !active || status.project.id !== active.id) return status;
+  return { ...status, project: { ...status.project, selected_by: active.selectedBy } };
+}
 
 /**
  * Build a structured status object from base state files + recent events.
@@ -558,7 +568,7 @@ export function formatStatus(status: Record<string, unknown>): string {
   const eventReadError = status['eventReadError'] as string;
 
   lines.push('Orchestrator Status');
-  lines.push(formatProjectIdentity(status['project'] as { id: string; name: string; target_repo_root: string } | null ?? null));
+  lines.push(formatProjectIdentity(status['project'] as StatusView['project'] ?? null));
   lines.push('─'.repeat(40));
   const waitingInput = (status['waiting_input'] ?? []) as WaitingInputRow[];
   if (waitingInput.length > 0) {

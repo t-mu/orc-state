@@ -46,11 +46,15 @@ describe('client entry (client.ts)', () => {
       const out = execFileSync(process.execPath, ['--input-type=module', '-e', [
         `const m = await import(${JSON.stringify(join(ROOT, 'client.ts'))});`,
         'console.log(JSON.stringify(m.listProjects()));',
+        // No API picks a project from the cwd or ORC_* environment: the client needs a state directory.
+        "try { new m.ControlClient(''); console.log('implicit'); } catch (e) { console.log(e.name); }",
       ].join('\n')], {
         cwd: '/', encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
         env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: temp, ORC_PROJECT_ID: 'bogus', ORC_DATA_HOME: dataHome, ORC_CONTROL_SOCKET: join(temp, 'x.sock') },
       });
-      expect(JSON.parse(out)).toEqual([]);
+      const [projects, client] = out.trim().split('\n');
+      expect(JSON.parse(projects)).toEqual([]);
+      expect(client).toBe('TypeError');
       expect(existsSync(marker)).toBe(false);
       expect(readdirSync(temp).sort()).toEqual(['bin']);
     } finally {

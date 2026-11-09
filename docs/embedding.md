@@ -23,7 +23,7 @@ for (const project of listProjects()) {
 
 - `listProjects({ env? })` reads `registry.db` read-only from the data home (`ORC_DATA_HOME` or the platform default); it creates nothing and returns `[]` when there is no registry.
 - Each entry has `repo_present` (the checkout still exists) and `control_socket`, which is non-null only while the coordinator runs: a stopped coordinator leaves a stale `control.json` that the entry hides.
-- `new ControlClient(state_dir)` finds the socket and bearer token in the state directory; `{ socketPath }` overrides the socket only. The client never reads `ORC_CONTROL_SOCKET`.
+- `new ControlClient(state_dir)` finds the socket and bearer token in the state directory; `{ socketPath }` overrides the socket only. The client never reads `ORC_CONTROL_SOCKET`. `state_dir` must be absolute (a `TypeError` otherwise), so an empty or relative path cannot resolve against the app's working directory.
 - Check `health()` (`version`, `build_id`) against the installed package after an upgrade. `health()` works whatever protocol version the client speaks and reports the coordinator's `protocol_versions: [min, max]`; any other call to a coordinator outside the client's range fails with `ControlError('unsupported_protocol_version')` naming both ranges.
 
 ## Cancellation and timeouts
@@ -49,6 +49,10 @@ const status = await client.status({}, { signal: abort.signal, timeoutMs: 2_000 
 ## Keying workers
 
 Key a worker's work by `run_id`. Agent names are reused across runs, and one `session_id` survives a resume (only `generation` goes up), so a view keyed by either mixes different runs or misses a restart. `session_id` + `generation` identify one live process; run events carry both in `payload` when the run has a session. Details: [contracts.md → Events](contracts.md#events).
+
+## Always name the project
+
+An app launched from a Dock or launcher has an unrelated working directory and an inherited environment, so it must never let orc pick a project for it. Nothing in `orc-state/client` selects one: `listProjects()` lists them all and `ControlClient` talks to the state directory it is given. Use the `state_dir` from `listProjects()` for the client and `--project=<id>` for every `orc` process. `orc status --json` reports `project.selected_by`; anything other than `flag` in a CLI call the app made means it forgot `--project`.
 
 ## Passing `--project`
 

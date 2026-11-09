@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
-import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus } from './statusView.ts';
+import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus, withProjectSelection } from './statusView.ts';
+import { formatProjectIdentity } from './projectHealth.ts';
 import { writeRunActivity } from './runActivityStore.ts';
 import * as eventLog from './eventLog.ts';
 import { listWaitingInput } from './waitingInput.ts';
@@ -867,5 +868,21 @@ describe('formatAgentStatus', () => {
     expect(output).toContain('Agent Status: agent-01');
     expect(output).toContain('orch/task-1');
     expect(output).toContain('orch/task-2');
+  });
+});
+
+describe('withProjectSelection', () => {
+  const project = { id: 'p1', name: 'one', target_repo_root: '/repo' };
+  it('stamps selected_by only for the project this process resolved', () => {
+    expect(withProjectSelection({ project }, { id: 'p1', selectedBy: 'cwd' }).project).toEqual({ ...project, selected_by: 'cwd' });
+    expect(withProjectSelection({ project }, { id: 'p2', selectedBy: 'cwd' }).project).toEqual(project);
+    expect(withProjectSelection({ project }, null).project).toEqual(project);
+    expect(withProjectSelection({ project: null }, { id: 'p1', selectedBy: 'env' }).project).toBeNull();
+  });
+
+  it('formats the selection in the project line', () => {
+    expect(formatProjectIdentity({ ...project, selected_by: 'flag' })).toBe('project: one (p1) → /repo (selected by --project)');
+    expect(formatProjectIdentity({ ...project, selected_by: 'selected' })).toBe('project: one (p1) → /repo (selected by orc project select)');
+    expect(formatProjectIdentity(project)).toBe('project: one (p1) → /repo');
   });
 });

@@ -25,7 +25,7 @@ First match wins:
 3. The current directory's canonical Git root (worktrees and symlinks resolve to the owning repository).
 4. `orc project select <id>`, only outside every Git repository.
 
-An unknown or ambiguous match is an error. Switching projects writes no repository file and leaves provider logins untouched. `status`, `watch`, `doctor` and `preflight` print `project: <name> (<id>) → <target root>` (JSON: a `project` object).
+An unknown or ambiguous match is an error. Switching projects writes no repository file and leaves provider logins untouched. `status`, `watch`, `doctor` and `preflight` print `project: <name> (<id>) → <target root>` (JSON: a `project` object). `status`, `doctor` and `preflight` add how the project was chosen: `(selected by --project | ORC_PROJECT_ID | current directory | orc project select)`, and in JSON `project.selected_by`: `flag`, `env`, `cwd` or `selected`. The `orc` dispatcher marks `--project` by setting `ORC_PROJECT_FLAG` to the id beside `ORC_PROJECT_ID` (and drops an inherited one when the flag is absent).
 
 ### Project tasks
 
@@ -74,6 +74,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 |----------|-------------|---------|
 | `ORC_DATA_HOME` | Registry and `projects/<id>` directory; empty counts as unset | Platform data dir |
 | `ORC_PROJECT_ID` | Select a registered project | — |
+| `ORC_PROJECT_FLAG` | Set by `orc` with `--project` (the same id); marks the selection as `flag`. Not for operators | — |
 | `ORC_STATE_DIR` | Set for launched sessions: resolves the project from `project.json` without the registry. Selects no project on its own | Project state dir |
 | `ORC_WORKTREES_DIR` | Run worktree directory | `<state>/worktrees` |
 | `ORC_TMUX_BIN` | tmux binary (≥ 3.2). The master and every worker run in tmux, so sessions survive a coordinator restart; `orc doctor` and `orc start-session` fail when it is missing or older | `tmux` |

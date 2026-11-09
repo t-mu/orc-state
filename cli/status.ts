@@ -11,10 +11,10 @@
  * --interval-ms Polling interval in ms (default 5000). Only relevant with --watch.
  */
 import { parseCommandArgsOrExit } from '../lib/args.ts';
-import { buildAgentStatus, buildStatus, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS } from '../lib/statusView.ts';
+import { buildAgentStatus, buildStatus as buildStatusView, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS, withProjectSelection } from '../lib/statusView.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
-import { STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, STATE_DIR } from '../lib/paths.ts';
 import { coordinatorSummary } from '../lib/coordinatorProcess.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
 import { exitAfterFlush, formatErrorMessage, printJson, requireProjectScope } from './shared.ts';
@@ -55,6 +55,9 @@ if (mine && !agentId) {
   console.error(`--mine requires --agent-id\nUsage: ${USAGE['status']}`);
   process.exit(1);
 }
+
+// The status names the project and how this command selected it.
+const buildStatus = (...args: Parameters<typeof buildStatusView>) => withProjectSelection(buildStatusView(...args), ACTIVE_PROJECT);
 
 function printValidationWarnings(warnings: string[]) {
   if (warnings.length === 0) return;
