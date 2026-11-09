@@ -40,8 +40,13 @@ describe('decideStopCheck', () => {
     });
   });
 
-  it('blocks a claimed run that has not started, naming the phase unknown', () => {
-    const decision = decide(claim({ state: 'claimed' }));
+  it('allows a stop while the run is claimed and no task envelope was sent', () => {
+    expect(decide(claim({ state: 'claimed' }))).toEqual({ allow: true });
+    expect(decide(claim({ state: 'claimed', task_envelope_sent_at: null }))).toEqual({ allow: true });
+  });
+
+  it('blocks a claimed run that has not started once the envelope was sent, naming the phase unknown', () => {
+    const decision = decide(claim({ state: 'claimed', task_envelope_sent_at: '2026-10-31T11:00:00.500Z' }));
     expect(decision.allow).toBe(false);
     expect(decision.phase).toBeNull();
     expect(decision.reason).toContain('(phase unknown)');
