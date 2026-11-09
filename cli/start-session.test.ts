@@ -666,6 +666,32 @@ describe('cli/start-session.ts', () => {
       expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(false);
     });
 
+    it('--restart-stale restarts a coordinator whose health reports no build id', async () => {
+      seedState();
+      const legacy = await startFakeCoordinator(); // own process: the restart kills it
+      const codeRoot = join(dir, 'code');
+      mkdirSync(codeRoot);
+      writeFileSync(join(codeRoot, 'build-id'), 'new\n');
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: legacy.pid, started_at: '2026-01-01T00:00:00.000Z' }));
+      vi.doMock('../lib/controlClient.ts', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('../lib/controlClient.ts')>();
+        class LegacyClient { health() { return Promise.resolve({ code_root: codeRoot, code_mtime: new Date(0).toISOString() }); } }
+        return { ...actual, ControlClient: LegacyClient };
+      });
+      const spawnMock = makeSpawnMock({ writeCoordinatorPid: true });
+      mockSpawn(spawnMock);
+      mockBinaryCheck(true);
+      try {
+        setEnv(dir);
+        process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master', '--restart-stale'];
+        await import('./start-session.ts');
+        expect(spawnMock.mock.calls.some(([, args]) => (args ?? []).some((a: string) => String(a).endsWith('coordinator.ts')))).toBe(true);
+      } finally {
+        vi.doUnmock('../lib/controlClient.ts');
+        await legacy.stop();
+      }
+    });
+
     it('reports a live coordinator recorded only in control.json as running and does not spawn another', async () => {
       seedState();
       writeEndpoint(fakeCoordinator.pid, readProcessStart(fakeCoordinator.pid));

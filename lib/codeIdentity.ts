@@ -71,7 +71,7 @@ export function captureCodeIdentity(codeRoot: string = ORC_PACKAGE_ROOT): CodeId
 }
 
 /**
- * The restart warning when the code on disk differs from what the coordinator loaded; null when current or unknowable.
+ * The restart warning when the code on disk differs from what the coordinator loaded; null when current or unknowable (no build id on disk).
  * Built code is judged by `version` and `build_id` (npm normalises tarball mtimes, so they say nothing there);
  * a source checkout also by file mtimes, since uncommitted edits do not change its build id.
  */
@@ -83,6 +83,10 @@ export function staleCodeWarning(running: CodeIdentity & { version?: string }): 
   const diskBuild = readBuildId(running.code_root);
   if (running.build_id && diskBuild && running.build_id !== diskBuild) {
     return `coordinator is running build ${running.build_id}, disk has ${diskBuild}; restart with orc start-session --restart-stale`;
+  }
+  // A coordinator started before health carried identity reports neither; it is older than any build on disk.
+  if (diskBuild && !running.build_id && !running.version) {
+    return 'coordinator reports no build id (older than this build); restart with orc start-session --restart-stale';
   }
   if (!isSourceCheckout(running.code_root)) return null;
   const onDisk = newestCodeMtimeMs(running.code_root);
