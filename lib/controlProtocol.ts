@@ -69,7 +69,13 @@ export type TerminalFrame =
   | { type: 'exit'; reason: string }
   | { type: 'heartbeat' };
 
-/** A running session in `GET /v1/sessions`; `terminal_id` is null when it has no streamable terminal (`app:` sessions). */
+/** The current holder of a terminal's writer lease. */
+export interface TerminalWriter { owner_id: string; expires_at: string }
+
+/**
+ * A running session in `GET /v1/sessions`; `terminal_id` is null when it has no
+ * streamable terminal (`app:` sessions), `writer` when nobody holds its input lease.
+ */
 export interface SessionTerminalView {
   session_id: string;
   agent_id: string;
@@ -77,6 +83,7 @@ export interface SessionTerminalView {
   provider: string;
   transport: string | null;
   terminal_id: string | null;
+  writer: TerminalWriter | null;
 }
 
 export interface SubmitCommandRequest {

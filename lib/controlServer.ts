@@ -409,14 +409,17 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (req.method === 'POST' && action !== 'stream') {
         const body = await readBody(req);
         if (action === 'lease') {
-          if (body.action === 'acquire') return ok(terminals.acquire(terminalId, body.owner_id as string, body.ttl_ms === undefined ? undefined : Number(body.ttl_ms)));
+          if (body.action === 'acquire' || body.action === 'takeover') {
+            return ok(terminals.acquire(terminalId, body.owner_id as string, body.ttl_ms === undefined ? undefined : Number(body.ttl_ms),
+              { takeover: body.action === 'takeover' }));
+          }
           if (typeof body.lease_id !== 'string') throw new ControlError('bad_request', 'lease_id is required', 400);
           if (body.action === 'renew') { terminals.renew(terminalId, body.lease_id); return ok({}); }
           if (body.action === 'release') { terminals.release(terminalId, body.lease_id); return ok({}); }
           throw new ControlError('bad_request', 'Invalid lease action', 400);
         }
         if (typeof body.lease_id !== 'string') throw new ControlError('bad_request', 'lease_id is required', 400);
-        if (action === 'input') { terminals.input(terminalId, body.lease_id, body.data as string); return ok({}); }
+        if (action === 'input') { await terminals.input(terminalId, body.lease_id, body.data as string); return ok({}); }
         if (action === 'resize') { terminals.resize(terminalId, body.lease_id, Number(body.columns), Number(body.rows)); return ok({}); }
       }
     }
