@@ -121,6 +121,7 @@ function render(): boolean {
       } else {
         process.stdout.write(`${JSON.stringify(buildStatus(STATE_DIR, { events }))}\n`);
       }
+      printValidationWarnings(warnings);
       return true;
     }
     if (clearScreen) process.stdout.write('\x1b[2J\x1b[H');
