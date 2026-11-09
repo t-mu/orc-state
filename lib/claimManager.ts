@@ -1,6 +1,7 @@
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
 import { withLock, lockPath } from './lock.ts';
 import { DEFAULT_LEASE_MS } from './constants.ts';
+import { randomBytes } from 'node:crypto';
 import { commitClaims } from './runStore.ts';
 import { readJson, findTask } from './stateReader.ts';
 import type { ClaimsState } from '../types/claims.ts';
@@ -34,7 +35,7 @@ function resetClaimVolatileFields(claim: import('../types/claims.ts').Claim): vo
 
 function makeRunId(): string {
   const ts   = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-  const rand = Math.random().toString(16).slice(2, 6);
+  const rand = randomBytes(8).toString('hex');
   return `run-${ts}-${rand}`;
 }
 

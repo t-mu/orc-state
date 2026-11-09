@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { claimTask, expireStaleLeases, finishRun, startRun } from './claimManager.ts';
-import { closeAllDatabases, queryEvents } from './eventLog.ts';
+import { closeAllDatabases, queryEvents, withEventDbTransaction } from './eventLog.ts';
 import { assertRunMayFinish, closeProjectTaskStores, commitBacklog, createProjectTask, initProjectTaskStore } from './projectTasks.ts';
 import { reconcileState } from './reconcile.ts';
 import { commitClaims } from './runStore.ts';
@@ -178,7 +178,8 @@ describe('project status authority', () => {
 
   it('reconciles a task left active without an operational claim', () => {
     const { run_id } = claimTask(dir, 'app/base', 'worker-a');
-    commitClaims(dir, { version: '1', claims: [] });
+    // Simulate a lost claim row: commitClaims never deletes runs.
+    withEventDbTransaction(dir, (db) => { db.prepare('DELETE FROM runs WHERE run_id = ?').run(run_id); });
     reconcileState(dir);
     expect(task('app/base').status).toBe('todo');
     expect(transitions('app/base').at(-1)).toMatchObject({ cause: 'failure_requeue', reason: 'reconcile_missing_claim' });

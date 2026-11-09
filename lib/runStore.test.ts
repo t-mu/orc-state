@@ -59,6 +59,18 @@ describe('SQLite run authority', () => {
       .toEqual(['run-legacy']);
   });
 
+  it('keeps runs missing from a shorter list and refuses to rewrite a run for another task', () => {
+    seedState(dir);
+    initEventsDb(dir);
+    commitClaims(dir, { version: '1', claims: [makeClaim('run-a'), makeClaim('run-b', 'orch/task-2')] });
+    commitClaims(dir, { version: '1', claims: [makeClaim('run-a')] });
+    expect(readClaims(dir).claims.map((claim) => claim.run_id)).toEqual(['run-a', 'run-b']);
+    expect((JSON.parse(readFileSync(join(dir, 'claims.json'), 'utf8')) as { claims: Claim[] }).claims.map((claim) => claim.run_id))
+      .toEqual(['run-a', 'run-b']);
+    expect(() => commitClaims(dir, { version: '1', claims: [makeClaim('run-a', 'orch/other')] })).toThrow('refusing to overwrite');
+    expect(readClaims(dir).claims.find((claim) => claim.run_id === 'run-a')?.task_ref).toBe('orch/task-1');
+  });
+
   it('rolls back a run write when its event fails validation', () => {
     seedState(dir);
     initEventsDb(dir);

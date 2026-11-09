@@ -15,11 +15,15 @@ function rawClaims(stateDir: string): ClaimsState {
 }
 
 function upsertClaim(db: Database.Database, claim: Claim): void {
+  const existing = db.prepare('SELECT task_ref, agent_id FROM runs WHERE run_id = ?').get(claim.run_id) as
+    { task_ref: string; agent_id: string } | undefined;
+  if (existing && (existing.task_ref !== claim.task_ref || existing.agent_id !== claim.agent_id)) {
+    throw new Error(`Run ${claim.run_id} belongs to ${existing.task_ref}/${existing.agent_id}; refusing to overwrite it with ${claim.task_ref}/${claim.agent_id}`);
+  }
   db.prepare(`
     INSERT INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at, claim_json)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(run_id) DO UPDATE SET
-      task_ref = excluded.task_ref, agent_id = excluded.agent_id,
       state = excluded.state, updated_at = excluded.updated_at,
       claim_json = excluded.claim_json
   `).run(
@@ -95,18 +99,15 @@ export function readAuthoritativeClaims(stateDir: string): ClaimsState | null {
 
 /** Commit claim state and lifecycle events together, then refresh legacy JSON. */
 export function commitClaims(stateDir: string, state: ClaimsState, events: OrcEventInput[] = []): void {
-  withEventDbTransaction(stateDir, (db) => {
+  const stored = withEventDbTransaction(stateDir, (db) => {
     importLegacyClaims(db, stateDir);
-    const desired = new Set(state.claims.map((claim) => claim.run_id));
-    const existing = db.prepare('SELECT run_id FROM runs').all() as Array<{ run_id: string }>;
-    const remove = db.prepare('DELETE FROM runs WHERE run_id = ?');
-    for (const row of existing) if (!desired.has(row.run_id)) remove.run(row.run_id);
     for (const claim of state.claims) upsertClaim(db, claim);
     db.prepare("INSERT OR IGNORE INTO runtime_cutovers (name, imported_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
       .run(CUTOVER_NAME);
     for (const event of events) appendSequencedEvent(stateDir, event);
+    return readRows(db);
   });
-  projectClaims(stateDir, state);
+  projectClaims(stateDir, stored);
 }
 
 /** Persist the provider session identity separately from its agent and run. */
