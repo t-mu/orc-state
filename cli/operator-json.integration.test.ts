@@ -139,8 +139,48 @@ describe('orc coordinator', { timeout: 60_000 }, () => {
     expect(out(started).pid).not.toBe(2_000_000_000);
   });
 
+  it('restarts a running coordinator in one command, keeping tasks', () => {
+    const first = out(orc(['coordinator', 'start', '--json'])).pid;
+    const restarted = orc(['coordinator', 'restart', '--json']);
+    expect(restarted.status).toBe(0);
+    const info = out(restarted);
+    expect(info).toMatchObject({ action: 'restart', changed: true, running: true, previous_pid: first });
+    expect(info.pid).toBeGreaterThan(0);
+    expect(info.pid).not.toBe(first);
+    expect(() => process.kill(first, 0)).toThrow();
+    expect(out(orc(['coordinator', 'status', '--json']))).toMatchObject({ running: true, pid: info.pid });
+    expect(out(orc(['project', 'task', 'show', 'app/doomed'])).status).toBe('todo');
+  });
+
+  it('restart with none running starts one', () => {
+    const restarted = orc(['coordinator', 'restart', '--json']);
+    expect(restarted.status).toBe(0);
+    expect(out(restarted)).toMatchObject({ action: 'restart', changed: true, running: true, previous_pid: null });
+    expect(out(restarted).pid).toBeGreaterThan(0);
+    const text = orc(['coordinator', 'restart']);
+    expect(text.status).toBe(0);
+    expect(text.stdout).toMatch(/Coordinator restarted \(was PID \d+\)/);
+  });
+
+  it('restart refuses a coordinator whose pid lock records no started_at, and starts nothing', () => {
+    const stateDir = (JSON.parse(orc(['project', 'show']).stdout) as { stateDir: string }).stateDir;
+    const fake = join(temp, 'coordinator.js');
+    writeFileSync(fake, 'setInterval(() => {}, 1000);\n');
+    const holder = spawn(process.execPath, [fake], { stdio: 'ignore' });
+    try {
+      writeFileSync(join(stateDir, 'coordinator.pid'), JSON.stringify({ pid: holder.pid }));
+      const result = orc(['coordinator', 'restart', '--json']);
+      expect(result.status).toBe(1);
+      expect(out(result).error.code).toBe('conflict');
+      expect(() => process.kill(holder.pid!, 0)).not.toThrow();
+      expect(out(orc(['coordinator', 'status', '--json']))).toMatchObject({ running: true, pid: holder.pid });
+    } finally {
+      holder.kill();
+    }
+  });
+
   it('rejects an unknown action with usage', () => {
-    const result = orc(['coordinator', 'restart']);
+    const result = orc(['coordinator', 'reboot']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Usage: orc coordinator');
   });

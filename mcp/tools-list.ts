@@ -439,6 +439,15 @@ export const TOOLS = [
     },
   },
   {
+    name: 'restart_coordinator',
+    description: 'Restart the coordinator (e.g. after npm run build): stops the running one and starts a new, detached one that outlives this MCP server; with none running it just starts one. Tasks, claims, agents, worktrees and worker sessions are left alone; the new coordinator adopts live worker sessions. Same as orc coordinator restart --json: returns { action: "restart", changed, running, pid, version, socket, started_at, stale, previous_pid }. A coordinator that does not stop or does not come up is a tool error.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'list_worktrees',
     description: 'List all registered run worktrees with agent, task, and path information.',
     inputSchema: {

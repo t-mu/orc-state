@@ -5,7 +5,7 @@
  * asking a state-changing command for help can never execute it.
  */
 export const USAGE: Record<string, string> = {
-  'coordinator':       'orc coordinator <start|stop|status> [--json]   (the coordinator only: no master; stop keeps tasks and worktrees)',
+  'coordinator':       'orc coordinator <start|stop|restart|status> [--json]   (the coordinator only: no master; stop/restart keep tasks and worktrees)',
   'start-session':     'orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset] [--restart-stale]',
   'status':            'orc status [--json [--events=<0-200>]] [--mine --agent-id=<id>] [--watch|-w [--interval-ms=<ms>] [--once]]',
   'watch':             'orc watch [--interval-ms=<ms>] [--once]',

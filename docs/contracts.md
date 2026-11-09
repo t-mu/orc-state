@@ -417,7 +417,7 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 | `orc worker-remove <id> --json` | `{ worker_id, removed: true, session_stopped }`; refusals are `not_found` (unknown worker) or `conflict` (master, scout, active claim) |
 | `orc worker-gc --json` | `{ removed_workers, removed_hook_files }` |
 | `orc kill-all --json` | `{ coordinator: 'stopped'\|'already_stopped'\|'not_running'\|'signal_failed', coordinator_pid, sessions_stopped, agents_cleared, agents_kept, tasks_reset, claims_cancelled, runs_kept, worktrees_removed }` |
-| `orc coordinator start\|stop\|status --json` | `{ action, changed, running, pid, version, socket, started_at, stale }`. `pid` is `null` when not running; `version`, `started_at` and `stale` (a restart hint, as `checks.coordinatorCode.warning`) come from the coordinator's `/v1/health` and are `null` when it does not answer; `socket` is the control socket path; `changed` is true when `start` started it or `stop` stopped it. `start` and `stop` exit 75 (`unavailable`) when the coordinator does not appear or stop within 2 s. `stop` never changes tasks, claims, agents or worktrees |
+| `orc coordinator start\|stop\|restart\|status --json` (MCP `restart_coordinator` returns the `restart` shape) | `{ action, changed, running, pid, version, socket, started_at, stale }`, plus `previous_pid` for `restart` (the stopped coordinator's pid, `null` when none ran). `pid` is `null` when not running; `version`, `started_at` and `stale` (a restart hint, as `checks.coordinatorCode.warning`) come from the coordinator's `/v1/health` and are `null` when it does not answer; `socket` is the control socket path; `changed` is true when `start` started it, `stop` stopped it, or `restart` ran. `start`, `stop` and `restart` exit 75 (`unavailable`) when the coordinator does not appear or stop within 2 s; `stop` and `restart` exit 1 (`conflict`) when `coordinator.pid` records no `started_at`. `stop` and `restart` never change tasks, claims, agents or worktrees |
 
 #### `orc project …` output
 
@@ -444,6 +444,7 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 |---|---|
 | Reads | `list_tasks`, `get_task`, `list_agents`, `list_active_runs`, `list_stalled_runs`, `get_run`, `get_status`, `get_agent_workview`, `get_recent_events`, `query_events`, `list_waiting_input`, `list_worktrees`, `get_notifications` |
 | Task authoring and control | `create_task`, `update_task`, `delegate_task`, `cancel_task`, `reset_task`, `unblock_task`, `close_run`, `respond_input` |
+| Coordinator | `restart_coordinator` (master secret; checked against the state, not sent to the coordinator it replaces) |
 | Scouts | `request_scout`, `get_scout_report`, `remove_scout` |
 | Memory | `memory_wake_up`, `memory_recall`, `memory_search`, `memory_store`, `memory_status` |
 
