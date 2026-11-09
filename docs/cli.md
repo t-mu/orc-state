@@ -52,7 +52,7 @@ orc start-session --provider=claude
 | Command | Flags | Notes |
 |---------|-------|-------|
 | `status` | `[--json [--events=<0-200>]]` `[--mine --agent-id=<id>]` `[--watch\|-w [--interval-ms=<ms>] [--once]]` | Agents, tasks, claims, capacity. With `--json`, `--once`/`--watch` print one compact JSON document per line (NDJSON); screen-clear codes are written only to a TTY. |
-| `watch` | `[--interval-ms=<ms>]` `[--once]` | Live TUI; plain refresh without a TTY. |
+| `watch` | `[--interval-ms=<ms>]` `[--once]` | Live TUI; plain refresh without a TTY. The TUI fits its output to the terminal height (re-fitted on resize): it drops the sprites, then collapses phases, then the banner, and cuts the run, event and scout lists with a `+N more` line. |
 | `doctor` | `[--json]` `[--stale-progress-ms=<ms>]` `[--stale-start-ms=<ms>]` | Full health check: state files, provider binaries, stale workers, orphaned claims, invariants, sandbox deps, memory store, `events.db` schema (`checks.runtimeSchema`), and a restart warning when the running coordinator's code is older than the code on disk (`checks.coordinatorCode`; never fails `doctor`). Stale thresholds default to 20 min / 5 min. |
 | `preflight` | `[--json]` | Fast environment check before `start-session`. |
 
