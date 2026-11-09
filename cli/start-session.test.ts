@@ -1004,7 +1004,7 @@ describe('cli/start-session.ts', () => {
       expect(providerCall![1]).toContain('--system-prompt');
       const promptIndex = providerCall![1].indexOf('--system-prompt');
       const bootstrapText = providerCall![1][promptIndex + 1];
-      expect(bootstrapText).toContain('MASTER_BOOTSTRAP v2');
+      expect(bootstrapText).toContain('MASTER_BOOTSTRAP v3');
       expect(bootstrapText).toContain('agent_id: master');
       expect(bootstrapText).toContain('provider: claude');
       expect(bootstrapText).not.toContain('{{agent_id}}');
@@ -1504,7 +1504,7 @@ describe('cli/start-session.ts', () => {
       expect(args).toContain(`mcp_servers.orchestrator.env={ORC_PROJECT_ID="test-project", ORC_STATE_DIR=${JSON.stringify(dir)}}`);
       expect(args).toContain('mcp_servers.orchestrator.env_vars=["ORC_MASTER_SECRET"]');
       expect(args.join(' ')).not.toMatch(/ORC_MASTER_SECRET=/);
-      expect(args.at(-1)).toContain('MASTER_BOOTSTRAP v2');
+      expect(args.at(-1)).toContain('MASTER_BOOTSTRAP v3');
       expect(providerCall![2]).toEqual(expect.objectContaining({ cwd: checkoutRoot }));
     });
 
@@ -1574,7 +1574,7 @@ describe('cli/start-session.ts', () => {
       expect(lines.join('\n')).toContain('MCP server: orchestrator tools available');
       expect(lines.join('\n')).toContain('Master bootstrap loaded via --system-prompt.');
       // The bootstrap goes to the master as its system prompt; the terminal gets one line naming it.
-      expect(lines.join('\n')).not.toContain('MASTER_BOOTSTRAP v2');
+      expect(lines.join('\n')).not.toContain('MASTER_BOOTSTRAP v3');
       expect(lines.join('\n')).toContain('Bootstrap template: master-bootstrap-v1.txt');
 
       // fresh state for codex branch

@@ -36,14 +36,47 @@ describe('renderTemplate', () => {
     expect(rendered).not.toContain('{{provider}}');
   });
 
-  it('documents every MCP tool in master bootstrap template', () => {
+  it('names only MCP tools that exist', () => {
     const rendered = renderTemplate('master-bootstrap-v1.txt', {
       agent_id: 'master',
       provider: 'claude',
     });
-    for (const tool of TOOLS) {
-      expect(rendered, `bootstrap should mention tool ${tool.name}`).toContain(tool.name);
-    }
+    const toolNames = new Set(TOOLS.map((tool) => tool.name));
+    // Snake_case identifiers the bootstrap uses that are not tools: event types and payload fields.
+    const nonTools = new Set([
+      'agent_id', 'after_seq', 'body_markdown', 'event_type', 'has_more', 'idle_ms', 'input_requested', 'input_response',
+      'last_notification_seq', 'last_seq', 'no_progress', 'notifications_only', 'permission_prompt',
+      'phase_started', 'provider_interactive_prompt', 'remediation_policy', 'run_cancelled', 'run_failed',
+      'run_finished', 'session_not_running', 'waiting_input', 'worker_needs_attention',
+    ]);
+    const mentioned = [...new Set(rendered.match(/\b[a-z]+(?:_[a-z]+)+\b/g))];
+    expect(mentioned.filter((name) => toolNames.has(name)).length).toBeGreaterThan(10);
+    expect(mentioned.filter((name) => !toolNames.has(name) && !nonTools.has(name))).toEqual([]);
+  });
+
+  it('keeps the master bootstrap within 6 KB without restating tool parameters', () => {
+    const rendered = renderTemplate('master-bootstrap-v1.txt', {
+      agent_id: 'master',
+      provider: 'claude',
+    });
+    expect(Buffer.byteLength(rendered)).toBeLessThanOrEqual(6 * 1024);
+    // Signatures like create_task(title, body_markdown?, ...) belong to tools-list.ts.
+    expect(rendered).not.toMatch(/\b[a-z_]+\([a-z_]+\?/);
+    expect(rendered).not.toContain('Returns {');
+  });
+
+  it('batches successful runs and explains provider permission prompts', () => {
+    const rendered = renderTemplate('master-bootstrap-v1.txt', {
+      agent_id: 'master',
+      provider: 'claude',
+    });
+    expect(rendered).not.toContain('1) Ignore');
+    expect(rendered).toContain('together in one short summary');
+    expect(rendered).toContain('remediation_policy:permission_prompt');
+    expect(rendered).toContain('orc attach <agent_id> --write');
+    expect(rendered).toContain('list_runs(state="waiting_input")');
+    expect(rendered).toContain('restart_coordinator');
+    expect(rendered).toContain('coordinator.stale');
   });
 
   it('keeps master bootstrap MCP-first without CLI command instructions', () => {

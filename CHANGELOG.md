@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The master bootstrap (`MASTER_BOOTSTRAP v3`) is rewritten as workflow guidance only (under 5 KB, was 15 KB): tools are named, not restated; successful runs are reported together instead of one prompt each; it covers provider permission prompts, workers waiting in `orc run-input-request`, and rebuilding plus `restart_coordinator` after orc changes.
 - **CLI output**: operator commands and `orc coordinator start|stop|status` return JSON with `--json` (one compact line when piped); commands that read project state parse arguments strictly (unknown flag → exit 1) and fail loudly when no project resolves.
 - Cancelled runs are kept as failed rows, and run ids cannot collide.
 - A worker is torn down only after consecutive dead probes, not one.
