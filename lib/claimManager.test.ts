@@ -12,6 +12,8 @@ import {
   finishRun,
   setRunFinalizationState,
   setRunInputState,
+  setPrRef,
+  setPrCreatedAt,
   expireStaleLeases,
   expireStaleLeasesDetailed,
   requeueBackoffMs,
@@ -524,6 +526,97 @@ describe('setRunFinalizationState', () => {
     const claim = readClaims(dir).claims.find((candidate) => candidate.run_id === run_id);
     expect(claim!.finalization_state).toBe('finalize_rebase_in_progress');
     expect(claim!.finalization_retry_count).toBe(1);
+  });
+});
+
+describe('finalization_changed events', () => {
+  it('emits one event per finalization change, including blocked_finalize with its reason', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'awaiting_finalize' });
+    setRunFinalizationState(dir, run_id, 'agent-01', {
+      finalizationState: 'blocked_finalize',
+      blockedReason: 'merge conflict on main',
+    });
+
+    const events = readEvents(dir).filter((e) => e.event === 'finalization_changed');
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      run_id, task_ref: 'orch/init', agent_id: 'agent-01', actor_type: 'coordinator',
+      payload: {
+        from: 'awaiting_finalize', to: 'blocked_finalize', retry_count: 0,
+        blocked_reason: 'merge conflict on main', pr_ref: null, pr_created_at: null,
+      },
+    });
+  });
+
+  it('reports a retry-count change and skips a write that changes nothing', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'finalize_rebase_requested' });
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'finalize_rebase_requested' });
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'finalize_rebase_requested', retryCountDelta: 1 });
+
+    expect(readEvents(dir).filter((e) => e.event === 'finalization_changed').map((e) => e.payload)).toEqual([
+      expect.objectContaining({ from: null, to: 'finalize_rebase_requested', retry_count: 0 }),
+      expect.objectContaining({ from: 'finalize_rebase_requested', to: 'finalize_rebase_requested', retry_count: 1 }),
+    ]);
+  });
+
+  it('carries the PR fields recorded before the change', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    setPrRef(dir, run_id, 'https://example.test/pr/7');
+    setPrCreatedAt(dir, run_id, '2026-01-02T00:00:00.000Z');
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'pr_created' });
+
+    expect(readEvents(dir).find((e) => e.event === 'finalization_changed').payload).toMatchObject({
+      to: 'pr_created', pr_ref: 'https://example.test/pr/7', pr_created_at: '2026-01-02T00:00:00.000Z',
+    });
+  });
+});
+
+describe('failure outcome in run_failed and claim_expired', () => {
+  it('reports task_status blocked on the fifth failed attempt', () => {
+    seed(dir);
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+      startRun(dir, run_id, 'agent-01');
+      finishRun(dir, run_id, 'agent-01', { success: false, failureReason: `attempt ${attempt}` });
+    }
+    const failed = readEvents(dir).filter((e) => e.event === 'run_failed');
+    expect(failed).toHaveLength(5);
+    expect(failed[3].payload).toMatchObject({ policy: 'requeue', task_status: 'todo', attempt_count: 4, blocked_reason: null });
+    expect(failed[3].payload.requeue_eligible_after).toEqual(expect.any(String));
+    expect(failed[4].payload).toMatchObject({
+      policy: 'requeue', task_status: 'blocked', attempt_count: 5,
+      blocked_reason: 'max_attempts_exceeded: failed 5 times',
+    });
+  });
+
+  it('reports the block reason of a run failed with policy block', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01', { success: false, failureReason: 'spec is contradictory', policy: 'block' });
+    expect(readEvents(dir).find((e) => e.event === 'run_failed').payload).toMatchObject({
+      policy: 'block', task_status: 'blocked', blocked_reason: 'spec is contradictory',
+    });
+  });
+
+  it('gives lease-expiry claim_expired the agent_id and the resulting task fields', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01', { leaseDurationMs: -1000 });
+    expireStaleLeases(dir);
+    const ev = readEvents(dir).find((e) => e.event === 'claim_expired');
+    expect(ev).toMatchObject({ run_id, agent_id: 'agent-01' });
+    expect(ev.payload).toEqual({
+      policy: 'requeue', code: 'ERR_LEASE_EXPIRED', reason: 'ERR_LEASE_EXPIRED',
+      task_status: 'todo', attempt_count: 1, requeue_eligible_after: expect.any(String), blocked_reason: null,
+    });
   });
 });
 

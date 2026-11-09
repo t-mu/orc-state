@@ -314,4 +314,52 @@ describe('validateEventObject', () => {
     expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'bored', idle_ms: 1000 } })))
       .toContain('payload.reason must be "stale" or "no_progress"');
   });
+
+  describe('claim_expired', () => {
+    const fields = { actor_type: 'coordinator', actor_id: 'coordinator', run_id: 'run-1', task_ref: 'orch/a' };
+    const payload = { policy: 'requeue', code: 'ERR_LEASE_EXPIRED', reason: 'ERR_LEASE_EXPIRED', task_status: 'todo', attempt_count: 1, requeue_eligible_after: null, blocked_reason: null };
+
+    it('accepts the unified payload with agent_id', () => {
+      expect(validateEventObject(base('claim_expired', { ...fields, agent_id: 'worker-01', payload }))).toEqual([]);
+    });
+
+    it('rejects a claim_expired without agent_id', () => {
+      expect(validateEventObject(base('claim_expired', { ...fields, payload })))
+        .toContain('agent_id is required and must be a valid agent_id');
+    });
+
+    it('accepts a stored claim_expired of the older shapes (no agent_id, no code)', () => {
+      expect(validateEventObject(base('claim_expired', { ...fields, payload: { policy: 'requeue', code: 'ERR_LEASE_EXPIRED' } }), { stored: true })).toEqual([]);
+      expect(validateEventObject(base('claim_expired', { ...fields, agent_id: 'worker-01', payload: { reason: 'manual_expire', policy: 'requeue' } }), { stored: true })).toEqual([]);
+    });
+
+    it('rejects an empty code and mistyped task fields', () => {
+      const errors = validateEventObject(base('claim_expired', {
+        ...fields, agent_id: 'worker-01', payload: { policy: 'requeue', code: '', task_status: 3, attempt_count: -1 },
+      }));
+      expect(errors).toContain('payload.code must be a non-empty string');
+      expect(errors).toContain('payload.task_status must be a string or null');
+      expect(errors).toContain('payload.attempt_count must be a non-negative integer or null');
+    });
+  });
+
+  describe('finalization_changed', () => {
+    const fields = { actor_type: 'coordinator', actor_id: 'coordinator', run_id: 'run-1', task_ref: 'orch/a', agent_id: 'worker-01' };
+    const payload = { from: 'awaiting_finalize', to: 'blocked_finalize', retry_count: 2, blocked_reason: 'conflict', pr_ref: null, pr_created_at: null };
+
+    it('accepts a valid change', () => {
+      expect(validateEventObject(base('finalization_changed', { ...fields, payload }))).toEqual([]);
+      expect(validateEventObject(base('finalization_changed', { ...fields, payload: { ...payload, from: null } }))).toEqual([]);
+    });
+
+    it('rejects unknown states, a bad retry_count and a missing run identity', () => {
+      const errors = validateEventObject(base('finalization_changed', {
+        actor_type: 'coordinator', actor_id: 'coordinator', payload: { ...payload, to: 'merged', retry_count: -1 },
+      }));
+      expect(errors).toContain('run_id is required');
+      expect(errors).toContain('agent_id is required and must be a valid agent_id');
+      expect(errors.some((error) => error.startsWith('payload.to must be null or one of'))).toBe(true);
+      expect(errors).toContain('payload.retry_count must be a non-negative integer');
+    });
+  });
 });

@@ -33,6 +33,7 @@
         "work_complete",
         "finalize_rebase_started",
         "ready_to_merge",
+        "finalization_changed",
         "phase_started",
         "phase_finished",
         "run_finished",

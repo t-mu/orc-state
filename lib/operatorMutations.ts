@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { getAgent, listAgents } from './agentRegistry.ts';
-import { setRunInputState } from './claimManager.ts';
+import { failureTaskOutcome, setRunInputState } from './claimManager.ts';
 import { AGENT_ID_RE, TASK_TYPES } from './constants.ts';
 import { describeAutoTargetFailure, selectAutoTarget } from './dispatchPlanner.ts';
 import { appendSequencedEvent, queryEvents } from './eventLog.ts';
@@ -196,7 +196,15 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
         claim.finalization_blocked_reason = null;
       }
       cancelledRuns = activeClaims;
-      commitClaims(stateDir, claimsData, activeClaims.map((removed) => ({
+    }
+
+    // Cancellation is its own terminal status.
+    task.status = 'cancelled';
+    delete task.blocked_reason;
+    // runtime.db (task status) commits before events.db (run rows + events); reconcile repairs a crash between them.
+    commitBacklog(stateDir, backlog, { [task_ref]: { cause: 'cancel', actorId: actor_id as string, runId: cancelledRuns[0]?.run_id ?? null, reason: (reason as string | null) ?? null } });
+    if (cancelledRuns.length > 0) {
+      commitClaims(stateDir, claimsData, cancelledRuns.map((removed) => ({
         ts: now,
         event: 'run_cancelled' as const,
         actor_type: actor_id === 'human' ? 'human' as const : 'agent' as const,
@@ -207,11 +215,6 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
         payload: { reason },
       })));
     }
-
-    // Cancellation is its own terminal status.
-    task.status = 'cancelled';
-    delete task.blocked_reason;
-    commitBacklog(stateDir, backlog, { [task_ref]: { cause: 'cancel', actorId: actor_id as string, runId: cancelledRuns[0]?.run_id ?? null, reason: (reason as string | null) ?? null } });
 
     appendSequencedEvent(
       stateDir,
@@ -282,6 +285,8 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
       c.finalization_blocked_reason = null;
     }
 
+    // runtime.db (task status) commits before events.db (run rows + events); reconcile repairs a crash between them.
+    commitBacklog(stateDir, backlog, previousStatus === 'todo' ? {} : { [task_ref]: { cause: 'operator_reset', actorId: actor_id } });
     commitClaims(stateDir, claimsState, [{
       ts: now,
       event: 'task_updated',
@@ -294,7 +299,6 @@ export function resetTask(stateDir: string, { task_ref, actor_id = 'human' }: Re
       run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
       payload: { reason: 'manual_reset' },
     }))]);
-    commitBacklog(stateDir, backlog, previousStatus === 'todo' ? {} : { [task_ref]: { cause: 'operator_reset', actorId: actor_id } });
 
     return {
       reset: true,
@@ -539,9 +543,12 @@ export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): 
     claim.finalization_blocked_reason = null;
     task.status = 'todo';
     task.updated_at = now;
-    commitClaims(stateDir, claimsState, [{ ts: now, event: 'claim_expired', actor_type: actorId === 'human' ? 'human' : 'agent', actor_id: actorId,
-      run_id: runId, task_ref: claim.task_ref, agent_id: claim.agent_id, payload: { reason: 'manual_expire', policy: 'requeue' } }]);
+    // runtime.db (task status) commits before events.db (run row + event); reconcile repairs a crash between them.
     commitBacklog(stateDir, backlog, { [claim.task_ref]: { cause: 'failure_requeue', runId, actorId, reason: 'manual_expire' } });
+    // Same payload shape as lease expiry (lib/claimLeaseManager.ts).
+    commitClaims(stateDir, claimsState, [{ ts: now, event: 'claim_expired', actor_type: actorId === 'human' ? 'human' : 'agent', actor_id: actorId,
+      run_id: runId, task_ref: claim.task_ref, agent_id: claim.agent_id,
+      payload: { policy: 'requeue', code: 'ERR_MANUAL_EXPIRE', reason: 'manual_expire', ...failureTaskOutcome(task) } }]);
     return { run_id: runId, task_ref: claim.task_ref, expired: true };
   });
 }

@@ -43,6 +43,11 @@ const FINALIZATION_STATUS_BY_EVENT: Record<string, Set<string>> = {
   ready_to_merge: new Set(['ready_to_merge']),
 };
 
+const FINALIZATION_STATES = new Set([
+  'awaiting_finalize', 'finalize_rebase_requested', 'finalize_rebase_in_progress', 'ready_to_merge',
+  'blocked_finalize', 'pr_created', 'pr_review_in_progress', 'pr_merged', 'pr_failed',
+]);
+
 function requireRunId(event: unknown, errors: string[]): void {
   const e = event as { run_id?: unknown } | null;
   if (!e?.run_id || typeof e.run_id !== 'string') {
@@ -57,7 +62,7 @@ function requireAgentId(event: unknown, errors: string[]): void {
   }
 }
 
-function validateCoreEventInvariants(event: unknown, errors: string[]): void {
+function validateCoreEventInvariants(event: unknown, errors: string[], stored: boolean): void {
   const e = event as { event?: string; agent_id?: string; run_id?: string; payload?: Record<string, unknown> } | null;
   const eventName = e?.event;
   const taskEvents = new Set(['task_added', 'task_updated', 'task_cancelled', 'task_delegated', 'task_dispatch_blocked']);
@@ -69,6 +74,7 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     'work_complete',
     'finalize_rebase_started',
     'ready_to_merge',
+    'finalization_changed',
     'run_finished',
     'run_failed',
     'run_cancelled',
@@ -109,8 +115,14 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     requireRunId(event, errors);
   }
 
+  // claim_expired gained a required agent_id; rows stored before that stay readable.
+  if (eventName === 'claim_expired' && !stored) {
+    requireAgentId(event, errors);
+  }
+
   if (eventName && new Set([
     'claim_created',
+    'finalization_changed',
     'task_envelope_sent',
     'run_started',
     'work_complete',
@@ -240,6 +252,40 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
       'must be requeue or block',
       errors,
     );
+    // The resulting task fields are optional (events written before they existed lack them) but typed when present.
+    const payload = (e as { payload?: Record<string, unknown> } | null)?.payload ?? {};
+    for (const key of ['task_status', 'requeue_eligible_after', 'blocked_reason']) {
+      if (payload[key] !== undefined && payload[key] !== null && typeof payload[key] !== 'string') {
+        errors.push(`payload.${key} must be a string or null`);
+      }
+    }
+    if (payload.attempt_count !== undefined && payload.attempt_count !== null
+      && !(Number.isInteger(payload.attempt_count) && (payload.attempt_count as number) >= 0)) {
+      errors.push('payload.attempt_count must be a non-negative integer or null');
+    }
+  }
+
+  if (eventName === 'claim_expired') {
+    const code = (e as { payload?: Record<string, unknown> } | null)?.payload?.code;
+    if (code !== undefined && !(typeof code === 'string' && code.length > 0)) {
+      errors.push('payload.code must be a non-empty string');
+    }
+  }
+
+  if (eventName === 'finalization_changed') {
+    for (const key of ['from', 'to']) {
+      requirePayloadField(
+        event,
+        key,
+        (v) => v === null || (typeof v === 'string' && FINALIZATION_STATES.has(v)),
+        `must be null or one of: ${Array.from(FINALIZATION_STATES).join(', ')}`,
+        errors,
+      );
+    }
+    requirePayloadField(event, 'retry_count', (v) => Number.isInteger(v) && (v as number) >= 0, 'must be a non-negative integer', errors);
+    for (const key of ['blocked_reason', 'pr_ref', 'pr_created_at']) {
+      requirePayloadField(event, key, (v) => v === null || typeof v === 'string', 'must be a string or null', errors);
+    }
   }
 
   if (eventName === 'task_updated') {
@@ -403,10 +449,12 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
 /**
  * Validate one event object against schema + event-specific payload contract.
  * Returns an array of human-readable errors (empty when valid).
+ * `stored: true` checks a row read back from events.db: a rule added after the
+ * row was written (a `claim_expired` without `agent_id`) does not reject it.
  */
-export function validateEventObject(event: unknown): string[] {
+export function validateEventObject(event: unknown, { stored = false }: { stored?: boolean } = {}): string[] {
   const ok = validateSchema(event);
   const errors = ok ? [] : formatAjvErrors(validateSchema.errors as AjvError[] | null);
-  validateCoreEventInvariants(event, errors);
+  validateCoreEventInvariants(event, errors, stored);
   return errors;
 }

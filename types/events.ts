@@ -52,12 +52,24 @@ export interface ClaimCreatedEvent extends BaseEvent {
   payload: { lease_expires_at: string; [key: string]: unknown };
 }
 
+/**
+ * The task a failed run left behind (`run_failed`, `claim_expired`): `task_status` is the
+ * resulting status (`todo` when requeued, `blocked` after a block or the fifth attempt);
+ * `blocked_reason` is set only for a blocked task. Null fields mean the task was not found.
+ */
+export interface FailureTaskOutcome {
+  task_status: string | null;
+  attempt_count: number | null;
+  requeue_eligible_after: string | null;
+  blocked_reason: string | null;
+}
+
 export interface ClaimExpiredEvent extends BaseEvent {
   event: 'claim_expired';
   run_id: string;
   task_ref: string;
-  agent_id?: string;
-  payload: { policy: FailurePolicy; [key: string]: unknown };
+  agent_id: string;
+  payload: { policy: FailurePolicy; code: string; reason: string; [key: string]: unknown } & Partial<FailureTaskOutcome>;
 }
 
 // ── Run lifecycle events ─────────────────────────────────────────────────────
@@ -115,7 +127,24 @@ export interface RunFailedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { policy: FailurePolicy; reason?: string | null | undefined; code?: string | undefined; [key: string]: unknown };
+  payload: { policy: FailurePolicy; reason?: string | null | undefined; code?: string | undefined; [key: string]: unknown } & Partial<FailureTaskOutcome>;
+}
+
+/** One change of a run's finalization fields (`setRunFinalizationState`), committed with the claim. */
+export interface FinalizationChangedEvent extends BaseEvent {
+  event: 'finalization_changed';
+  run_id: string;
+  task_ref: string;
+  agent_id: string;
+  payload: {
+    from: string | null;
+    to: string | null;
+    retry_count: number;
+    blocked_reason: string | null;
+    pr_ref: string | null;
+    pr_created_at: string | null;
+    [key: string]: unknown;
+  };
 }
 
 export interface RunCancelledEvent extends BaseEvent {
@@ -425,6 +454,7 @@ export type OrcEvent =
   | ReadyToMergeEvent
   | RunFinishedEvent
   | RunFailedEvent
+  | FinalizationChangedEvent
   | RunCancelledEvent
   | CommandLifecycleEvent
   | PhaseStartedEvent

@@ -313,7 +313,7 @@ function parseEventRow(row: { payload: string }, index: number, { validate = fal
   try {
     const event = ensureEventIdentity(JSON.parse(row.payload) as OrcEvent, { createIfMissing: false });
     if (validate) {
-      const validationErrors = validateEventObject(event);
+      const validationErrors = validateEventObject(event, { stored: true });
       if (validationErrors.length > 0) {
         logger.error(`[eventLog] skipping invalid event at row ${index + 1}: ${validationErrors.join('; ')}`);
         return null;

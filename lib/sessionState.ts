@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { withLock } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent } from './eventLog.ts';
-import { readBacklog, readClaims } from './stateReader.ts';
+import { findTask, readBacklog, readClaims } from './stateReader.ts';
+import { failureTaskOutcome } from './claimLeaseManager.ts';
 import { closeProviderSessionsForAgent, commitClaims, restoreProviderSessionsForAgents } from './runStore.ts';
 import type { Backlog, Task } from '../types/backlog.ts';
 import type { AgentsState, Agent } from '../types/agents.ts';
@@ -157,7 +158,7 @@ export function resetVolatileRuntimeStateForSession(
     const events: OrcEventInput[] = failedClaims.map((claim) => ({
       ts: now, event: 'run_failed', actor_type: 'human', actor_id: 'human',
       run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
-      payload: { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
+      payload: { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue', ...failureTaskOutcome(findTask(backlog, claim.task_ref)) },
     }));
     commitClaims(stateDir, claims, events);
     for (const agent of snapshot.agents.agents) {
