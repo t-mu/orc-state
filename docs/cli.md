@@ -182,4 +182,4 @@ Require `coordinator.pr_provider` (`orc project config set coordinator.pr_provid
 | Command | Notes |
 |---------|-------|
 | `mcp-server` | stdio MCP server; started by `start-session`. |
-| `stop-check` | Claude task workers' `Stop` hook (reads hook JSON on stdin). Blocks the turn end while the run is unfinished (no `run-work-complete`, no pending input, not finalizing): max 3 blocks per 10 min, 9 per run, each a `stop_blocked` event. Also closes unfinished tool calls. Always exits 0; fails open. |
+| `stop-check` | Claude task workers' `Stop` hook (reads hook JSON on stdin). Blocks the turn end while the run is unfinished (no `run-work-complete`, no pending input, not finalizing, and `TASK_START` already sent; a stop before it is allowed): max 3 blocks per 10 min, 9 per run, each a `stop_blocked` event. Also closes unfinished tool calls. Always exits 0; fails open. |

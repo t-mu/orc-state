@@ -80,6 +80,8 @@ export function decideStopCheck(input: StopDecisionInput): StopDecision {
   // Any finalization state follows the work-complete handoff: awaiting finalize, a requested or
   // running finalize rebase, a PR wait, or a blocked finalization.
   if (claim.finalization_state) return { allow: true };
+  // Before TASK_START is sent a worker has no task to finish; the envelope wakes it.
+  if (claim.state === 'claimed' && !claim.task_envelope_sent_at) return { allow: true };
   if (claim.input_state === 'awaiting_input') return { allow: true };
 
   const handoff = latest(events, ['work_complete', 'ready_to_merge']);
