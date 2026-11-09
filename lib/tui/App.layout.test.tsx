@@ -4,12 +4,25 @@ import { render, type Instance } from 'ink';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.tsx';
 import { renderSpriteMap } from './sprites.ts';
+import type { TuiWatchSource } from './status.ts';
 
 const { mockBuildStatus } = vi.hoisted(() => ({ mockBuildStatus: vi.fn() }));
 
-vi.mock('../statusView.ts', () => ({
-  buildStatus: mockBuildStatus,
-}));
+/** A watcher with one project at /tmp/state: running with `mockBuildStatus()`, or stopped without a status when it throws. */
+const source: TuiWatchSource = {
+  projects: () => {
+    const project = {
+      id: 'p1', name: 'demo', target_repo_root: '/repo', state_dir: '/tmp/state',
+      repo_present: true, control_socket: null, coordinator_running: true,
+    };
+    try {
+      return [{ project, connection: 'running', error: null, status: mockBuildStatus(), cursor: 0 }];
+    } catch {
+      return [{ project: { ...project, coordinator_running: false }, connection: 'stopped', error: null, status: null, cursor: null }];
+    }
+  },
+  onUpdate: () => () => {},
+};
 
 /** A terminal of fixed size that records the frames Ink writes. */
 class FakeStdout extends EventEmitter {
@@ -133,7 +146,7 @@ function busyStatus({ scouts = 3, runs = 2, events = 30 } = {}) {
 let instance: Instance | null = null;
 
 function renderApp(stdout: FakeStdout): Instance {
-  instance = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={60_000} />, {
+  instance = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={60_000} />, {
     stdout: stdout as unknown as NodeJS.WriteStream,
     stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
     debug: true,

@@ -3,71 +3,151 @@
  * cli/watch.ts
  * Usage:
  *   node cli/watch.ts [--interval-ms=5000] [--once]
+ *
+ * Every view is built from orc-state/client: a ProjectWatcher over every
+ * registered project, never the state files. The project this command runs
+ * for is shown in full; without a running coordinator it is shown as stopped.
  */
+import { basename } from 'node:path';
 import { render } from 'ink';
 import { createElement } from 'react';
+import { ProjectWatcher, type ProjectListEntry, type ProjectWatchState, type ProjectWatchUpdate } from '../client.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatStatus } from '../lib/colorStatus.ts';
-import { STATE_DIR } from '../lib/paths.ts';
-import { buildStatus } from '../lib/statusView.ts';
-import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
+import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
+import { describeProjects, listProjects } from '../lib/projectList.ts';
 import { cliError, formatErrorMessage } from './shared.ts';
+
+/** What `orc watch` reads: the client's `ProjectWatcher` (tests inject a fake). */
+export interface WatchSource {
+  start(): void;
+  stop(): Promise<void>;
+  projects(): ProjectWatchState[];
+  onUpdate(listener: (update: ProjectWatchUpdate) => void): () => void;
+}
 
 export interface WatchOptions {
   intervalMs: number;
   once: boolean;
+  /** State directory of the project shown in full. */
   stateDir: string;
+  /** The watcher; a `ProjectWatcher` over the registry (plus `stateDir` when unregistered) by default. */
+  source?: WatchSource;
+  /** How long `--once` waits for the project's first connection to settle (default 5000 ms). */
+  settleTimeoutMs?: number;
 }
 
 const once = boolFlag('once');
 const intervalMs = intFlag('interval-ms', 5000);
 
-export function renderPlainSnapshot({ intervalMs, stateDir }: Pick<WatchOptions, 'intervalMs' | 'stateDir'>): boolean {
-  const { fatal, warnings } = partitionValidationErrors(validateStateDir(stateDir));
-  if (fatal.length > 0) {
-    console.error('State validation failed:');
-    for (const error of fatal) console.error(`  - ${error}`);
-    return false;
+/**
+ * The registered projects, plus `stateDir` itself when no registered project
+ * owns it (an `ORC_STATE_DIR` without a registry), so it is still watched.
+ */
+export function watchedProjectList(stateDir: string, list: () => ProjectListEntry[] = () => listProjects()): () => ProjectListEntry[] {
+  return () => {
+    const listed = list();
+    if (listed.some(entry => entry.state_dir === stateDir)) return listed;
+    const [own] = describeProjects({
+      list: () => [{ id: `unregistered:${stateDir}`, name: basename(stateDir), canonicalGitRoot: TARGET_REPO_ROOT, stateDir, createdAt: '' }],
+    });
+    return [...listed, own];
+  };
+}
+
+export function createWatchSource(stateDir: string): WatchSource {
+  return new ProjectWatcher({ listProjects: watchedProjectList(stateDir) });
+}
+
+function currentProject(source: WatchSource, stateDir: string): ProjectWatchState | null {
+  return source.projects().find(state => state.project.state_dir === stateDir) ?? null;
+}
+
+/** The first connect has settled: the project is not `connecting`, and a `running` project has its status. */
+function settled(state: ProjectWatchState | null): boolean {
+  if (!state) return true;
+  if (state.connection === 'connecting') return false;
+  return state.connection !== 'running' || state.status !== null;
+}
+
+/** Resolve once the project's first connection has settled, or after `timeoutMs`. */
+export function waitForSettled(source: WatchSource, stateDir: string, timeoutMs: number): Promise<void> {
+  if (settled(currentProject(source, stateDir))) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    const unsubscribe = source.onUpdate(() => {
+      if (settled(currentProject(source, stateDir))) done();
+    });
+  });
+}
+
+function connectionLine(state: ProjectWatchState): string {
+  const label = state.connection === 'stopped' ? 'stopped (coordinator not running)' : state.connection;
+  return `coordinator: ${state.error ? `${label}: ${state.error}` : label}`;
+}
+
+/** The plain snapshot of `stateDir`'s project; false when it cannot be shown (not watched, unreachable, incompatible). */
+export function renderPlainSnapshot(source: WatchSource, { intervalMs, stateDir }: Pick<WatchOptions, 'intervalMs' | 'stateDir'>): boolean {
+  const state = currentProject(source, stateDir);
+  process.stdout.write('\x1b[2J\x1b[H');
+  if (process.stdout.isTTY) console.log(renderBanner());
+
+  let ok: boolean;
+  if (!state) {
+    console.log(`project: not watched (${stateDir})`);
+    ok = false;
+  } else {
+    ok = state.connection === 'running' || state.connection === 'stopped';
+    if (state.status && state.connection === 'running') {
+      // The status names the project itself (`Orchestrator Status`, then the project line).
+      console.log(colorFormatStatus(state.status));
+      console.log('');
+      console.log(connectionLine(state));
+    } else {
+      const { project } = state;
+      console.log(`project: ${project.name} (${project.id}) → ${project.target_repo_root}`);
+      console.log(connectionLine(state));
+    }
   }
 
-  try {
-    const status = buildStatus(stateDir);
-    process.stdout.write('\x1b[2J\x1b[H');
-    if (process.stdout.isTTY) console.log(renderBanner());
-    console.log(colorFormatStatus(status));
-    if (warnings.length > 0) {
-      console.log('');
-      console.log('State validation warnings:');
-      for (const warning of warnings) console.log(`  - ${warning}`);
-    }
-  } catch (err) {
-    console.error(`buildStatus error (may be transient): ${formatErrorMessage(err)}`);
-    return false;
+  const others = source.projects().filter(other => other.project.state_dir !== stateDir);
+  if (others.length > 0) {
+    console.log('');
+    console.log(`Other projects (${others.length}):`);
+    for (const other of others) console.log(`  ${other.project.name.padEnd(24)} ${other.connection}`);
   }
 
   console.log('');
   console.log(`watch interval: ${intervalMs}ms`);
   console.log(`updated at: ${new Date().toISOString()}`);
-  return true;
+  return ok;
 }
 
-export function runFallbackWatch(options: WatchOptions): number | null {
+export async function runFallbackWatch(options: WatchOptions): Promise<number | null> {
+  const source = options.source ?? createWatchSource(options.stateDir);
+  source.start();
+  await waitForSettled(source, options.stateDir, options.settleTimeoutMs ?? 5000);
+
   if (options.once) {
-    return renderPlainSnapshot(options) ? 0 : 1;
+    const ok = renderPlainSnapshot(source, options);
+    await source.stop();
+    return ok ? 0 : 1;
   }
 
-  if (!renderPlainSnapshot(options)) {
-    return 1;
-  }
-
+  renderPlainSnapshot(source, options);
   const timer = setInterval(() => {
-    renderPlainSnapshot(options);
+    renderPlainSnapshot(source, options);
   }, options.intervalMs);
 
   const shutdown = () => {
     clearInterval(timer);
-    process.exit(0);
+    void source.stop().finally(() => process.exit(0));
   };
 
   process.on('SIGINT', shutdown);
@@ -95,7 +175,12 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
     return 1;
   }
 
+  const source = options.source ?? createWatchSource(options.stateDir);
+  source.start();
+  if (options.once) await waitForSettled(source, options.stateDir, options.settleTimeoutMs ?? 5000);
+
   const instance = render(createElement(App, {
+    source,
     stateDir: options.stateDir,
     sprites,
     intervalMs: options.intervalMs,
@@ -104,11 +189,10 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
   if (options.once) {
     await waitForFirstFrame();
     instance.unmount();
-    await instance.waitUntilExit();
-    return 0;
   }
 
   await instance.waitUntilExit();
+  await source.stop();
   return 0;
 }
 
