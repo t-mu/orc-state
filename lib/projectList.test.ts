@@ -97,6 +97,15 @@ describe('listProjects', () => {
     }
   });
 
+  it('reads a WAL registry with no writer open, adding nothing but its WAL files', () => {
+    const project = registry.add(gitRepo('wal'));
+    registry.close();
+    expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })).toMatchObject([{ id: project.id, name: 'wal' }]);
+    expect(readdirSync(dataHome).filter((name) => !['registry.db', 'registry.db-shm', 'registry.db-wal', 'projects'].includes(name))).toEqual([]);
+    registry = new ProjectRegistry(dataHome);
+    expect(registry.list()).toEqual([project]);
+  });
+
   it('throws a typed error for a newer registry schema', () => {
     const newer = join(temp, 'newer');
     mkdirSync(newer);

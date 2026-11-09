@@ -58,7 +58,8 @@ export function describeProjects(registry: { list(): ProjectRecord[] }): Project
 
 /**
  * The registered projects, read from registry.db opened read-only: no
- * directory, file, table or migration is created. Loading node:sqlite is
+ * table or migration is created, nor the data home or registry.db (SQLite
+ * may still create the WAL's -shm/-wal files beside a WAL registry). Loading node:sqlite is
  * deferred to the first call (it prints an ExperimentalWarning on Node 24).
  */
 function readRegistry(path: string): ProjectRecord[] {
