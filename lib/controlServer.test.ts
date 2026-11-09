@@ -539,6 +539,8 @@ describe('local daemon control API', () => {
     await expect(take(worker.subscribe(0), 1)).rejects.toMatchObject(forbidden);
     await expect(worker.openTerminal('shell', 'run-a')).rejects.toMatchObject(forbidden);
     await expect(worker.openTerminal('provider', 'run-b')).rejects.toMatchObject(forbidden);
+    await expect(worker.openAgentTerminal('master')).rejects.toMatchObject(forbidden);
+    await expect(worker.openAgentTerminal('worker-a')).rejects.toMatchObject(forbidden);
     await expect(take(worker.streamTerminal('term-1'), 1)).rejects.toMatchObject(forbidden);
     await expect(worker.sessions()).rejects.toMatchObject(forbidden);
     await expect(worker.acquireTerminal('term-1', 'worker-a')).rejects.toMatchObject(forbidden);
