@@ -83,6 +83,28 @@ describe('project task SQLite schema', () => {
     expect(() => store.transition('feature/3', 'migration_import', 'blocked')).toThrow();
   });
 
+  it('migrates a released task to done and rejects released afterwards', () => {
+    const db = new Database(':memory:');
+    try {
+      migrateProjectTaskSchema(db, 4);
+      db.prepare("INSERT INTO tasks (ref, title, created_at, updated_at) VALUES ('feature/1','First','now','now')").run();
+      db.prepare("INSERT INTO tasks (ref, title, created_at, updated_at) VALUES ('feature/2','Second','now','now')").run();
+      db.prepare("INSERT INTO task_transitions (task_ref, from_status, to_status, cause, created_at) VALUES ('feature/1','todo','released','migration_import','now')").run();
+      expect(db.prepare("SELECT status FROM tasks WHERE ref = 'feature/1'").get()).toEqual({ status: 'released' });
+      migrateProjectTaskSchema(db);
+      expect(db.pragma('user_version', { simple: true })).toBe(PROJECT_TASK_SCHEMA_VERSION);
+      expect(db.prepare('SELECT ref, status FROM tasks ORDER BY ref').all()).toEqual([{ ref: 'feature/1', status: 'done' }, { ref: 'feature/2', status: 'todo' }]);
+      expect(db.pragma('foreign_key_check')).toEqual([]);
+      expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
+      expect(() => db.prepare("UPDATE tasks SET status = 'released' WHERE ref = 'feature/2'").run()).toThrow();
+      expect(() => db.prepare("INSERT INTO task_transitions (task_ref, from_status, to_status, cause, created_at) VALUES ('feature/2','todo','released','migration_import','now')").run()).toThrow('invalid task transition');
+      expect(() => db.prepare("INSERT INTO task_transitions (task_ref, from_status, to_status, cause, created_at) VALUES ('feature/1','done','released','post_merge_release','now')").run()).toThrow('invalid task transition');
+      // The rebuilt table keeps its guards.
+      expect(() => db.prepare("UPDATE tasks SET status = 'blocked' WHERE ref = 'feature/2'").run()).toThrow('requires a transition');
+      expect(() => db.prepare("UPDATE tasks SET ref = 'x' WHERE ref = 'feature/2'").run()).toThrow('immutable');
+    } finally { db.close(); }
+  });
+
   it('pins runs to revisions and prevents two active claims for one task', () => {
     store.createTask({ ref: 'feature/1', title: 'First', bodyMarkdown: '# First' });
     store.withDatabase((db) => {
@@ -103,8 +125,8 @@ describe('project task SQLite schema', () => {
     try {
       expect(db.pragma('user_version', { simple: true })).toBe(PROJECT_TASK_SCHEMA_VERSION);
       migrateProjectTaskSchema(db);
-      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 4 });
-      db.pragma('user_version = 5');
+      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 5 });
+      db.pragma('user_version = 6');
       expect(() => migrateProjectTaskSchema(db)).toThrow('newer');
     } finally { db.close(); }
     const broken = new Database(join(dir, 'broken.db'));

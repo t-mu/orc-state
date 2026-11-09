@@ -46,7 +46,7 @@ export function selectProject(
 }
 
 export type TaskTransitionCause =
-  | 'claim' | 'run_start' | 'merge_succeeded' | 'post_merge_release'
+  | 'claim' | 'run_start' | 'merge_succeeded'
   | 'failure_requeue' | 'failure_block' | 'manual_block' | 'unblock'
   | 'operator_reset' | 'cancel' | 'migration_import';
 
@@ -56,15 +56,14 @@ export function canTransitionTaskStatus(from: TaskStatus, to: TaskStatus, cause:
     case 'claim': return from === 'todo' && to === 'claimed';
     case 'run_start': return from === 'claimed' && to === 'in_progress';
     case 'merge_succeeded': return from === 'in_progress' && to === 'done';
-    case 'post_merge_release': return from === 'done' && to === 'released';
     case 'failure_requeue': return (from === 'claimed' || from === 'in_progress') && to === 'todo';
     case 'failure_block': return (from === 'claimed' || from === 'in_progress') && to === 'blocked';
     case 'manual_block': return from === 'todo' && to === 'blocked';
     case 'unblock': return from === 'blocked' && to === 'todo';
     case 'operator_reset': return from !== 'todo' && to === 'todo';
-    case 'cancel': return !['done', 'released', 'cancelled'].includes(from) && to === 'cancelled';
+    case 'cancel': return !['done', 'cancelled'].includes(from) && to === 'cancelled';
     // Only as a migrated task's first transition; the store enforces that.
-    case 'migration_import': return from === 'todo' && ['blocked', 'done', 'released', 'cancelled'].includes(to);
+    case 'migration_import': return from === 'todo' && ['blocked', 'done', 'cancelled'].includes(to);
   }
 }
 
@@ -76,7 +75,7 @@ export function deriveDependencyReadiness(
   if (task.status !== 'todo') return { kind: 'status_not_todo', waitingOn: [] };
   const waitingOn = [...new Set(task.dependsOn)].filter((ref) => {
     const status = statusByRef.get(ref);
-    return status !== 'done' && status !== 'released';
+    return status !== 'done';
   });
   return waitingOn.length === 0
     ? { kind: 'ready', waitingOn }

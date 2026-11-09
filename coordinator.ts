@@ -1893,7 +1893,7 @@ function nextSpawnableTask(
   const doneSet = new Set<string>();
   for (const feature of (b?.features ?? [])) {
     for (const task of (feature.tasks ?? [])) {
-      if (task.status === 'done' || task.status === 'released') doneSet.add(task.ref);
+      if (task.status === 'done') doneSet.add(task.ref);
     }
   }
   const now = new Date();

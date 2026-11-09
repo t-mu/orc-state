@@ -80,14 +80,6 @@ describe('cli/task-mark-done.ts', () => {
     expect(result.stderr).toContain('cannot transition to done from status blocked');
   });
 
-  it('rejects completion from released', () => {
-    seedBacklogTask('released');
-
-    const result = runCli(['docs/task-1']);
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('cannot transition to done from status released');
-  });
 });
 
 function runCli(args: string[], { cwd = dir }: { cwd?: string } = {}) {

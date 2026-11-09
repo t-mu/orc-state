@@ -185,7 +185,7 @@ afterEach(() => {
 
 describe('mcp read handlers', () => {
   it('handleListTasks returns non-terminal tasks by default and supports status/feature filters', () => {
-    // Default excludes done/released to keep payload small.
+    // Default excludes done to keep payload small.
     const all = handleListTasks(dir);
     expect(all).toHaveLength(2);
     expect(all.map((task) => task.ref)).toEqual(['infra/blocked-one', 'project/todo-one']);
@@ -201,6 +201,7 @@ describe('mcp read handlers', () => {
     const done = handleListTasks(dir, { status: 'done' });
     expect(done.map((task) => task.ref)).toEqual(['project/done-one']);
 
+    expect(() => handleListTasks(dir, { status: 'released' })).toThrow('Invalid status: released');
     const todo = handleListTasks(dir, { status: 'todo' });
     expect(todo.map((task) => task.ref)).toEqual(['project/todo-one']);
 
@@ -425,18 +426,18 @@ describe('mcp read handlers', () => {
     });
     expect((status.active_tasks as Array<Record<string, unknown>>).every((task) =>
       ['ref', 'title', 'status', 'feature_ref', 'owner'].every((key) => Object.hasOwn(task, key)))).toBe(true);
-    expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done' || task.status === 'released')).toBe(false);
+    expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done')).toBe(false);
     expect(status.last_notification_seq).toBe(0);
     expect(status.stalled_runs).toBe(2);
     expect(status.project).toMatchObject({ id: TEST_PROJECT_ID });
   });
 
-  it('handleGetStatus includes done and released counts when include_done_count=true', () => {
+  it('handleGetStatus includes done and cancelled counts when include_done_count=true', () => {
     seedTasks([
       {
-        ref: 'project/released-one',
-        title: 'Released one',
-        status: 'released',
+        ref: 'project/done-two',
+        title: 'Done two',
+        status: 'done',
         task_type: 'implementation',
         planning_state: 'ready_for_dispatch',
         delegated_by: 'master',
@@ -454,8 +455,8 @@ describe('mcp read handlers', () => {
     ]);
 
     const status = handleGetStatus(dir, { include_done_count: true });
-    expect((status.task_counts as Record<string, unknown>).done).toBe(1);
-    expect((status.task_counts as Record<string, unknown>).released).toBe(1);
+    expect((status.task_counts as Record<string, unknown>).done).toBe(2);
+    expect((status.task_counts as Record<string, unknown>).released).toBeUndefined();
     expect((status.task_counts as Record<string, unknown>).cancelled).toBe(1);
   });
 

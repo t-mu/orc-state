@@ -50,7 +50,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 
 | Schema | Enums |
 |--------|-------|
-| [backlog.schema.json](../schemas/backlog.schema.json) | `status`: `todo\|claimed\|in_progress\|blocked\|done\|released\|cancelled`; `task_type`: `implementation\|refactor`; `priority`: `low\|normal\|high\|critical`; `planning_state`: `ready_for_dispatch\|archived`; `review_level`: `none\|light\|full`; `merge_strategy`: `direct\|pr`; `required_provider`: `codex\|claude\|gemini` |
+| [backlog.schema.json](../schemas/backlog.schema.json) | `status`: `todo\|claimed\|in_progress\|blocked\|done\|cancelled`; `task_type`: `implementation\|refactor`; `priority`: `low\|normal\|high\|critical`; `planning_state`: `ready_for_dispatch\|archived`; `review_level`: `none\|light\|full`; `merge_strategy`: `direct\|pr`; `required_provider`: `codex\|claude\|gemini` |
 | [agents.schema.json](../schemas/agents.schema.json) | `status`: `idle\|running\|offline\|dead` (`dead` is never set; such records are removed); `role`: `worker\|reviewer\|master\|scout`; `provider`: `codex\|claude\|gemini\|human` |
 | [claims.schema.json](../schemas/claims.schema.json) | `state`: `claimed\|in_progress\|done\|failed`; `finalization_state`: `awaiting_finalize\|finalize_rebase_requested\|finalize_rebase_in_progress\|ready_to_merge\|blocked_finalize\|pr_created\|pr_review_in_progress\|pr_merged\|pr_failed\|null`; `input_state`: `awaiting_input\|null` |
 | [event.schema.json](../schemas/event.schema.json) | see **Events** |
@@ -63,7 +63,7 @@ Task refs: `<feature>/<slug>`. Run ids: `run-<timestamp>-<16 hex>` (64 random bi
 ## Task Lifecycle
 
 ```
-todo → claimed → in_progress → done → released
+todo → claimed → in_progress → done
           ↓           ↓
          todo (requeue) / blocked
 todo/claimed/in_progress/blocked → cancelled
@@ -74,7 +74,6 @@ todo/claimed/in_progress/blocked → cancelled
 | `todo → claimed` | Coordinator atomically verifies readiness and creates a run pinned to the latest revision |
 | `claimed → in_progress` | Worker `orc run-start` |
 | `in_progress → done` | Coordinator after a confirmed merge (`merge_succeeded`), once. `run-work-complete` changes only the run's finalization state. Recovery: `orc task-mark-done` |
-| `done → released` | Coordinator post-merge release. Both satisfy dependencies |
 | `claimed/in_progress → todo` | Failed run requeued (`run-fail` default policy, lease expiry, dead session not resumed); counts an attempt and sets `requeue_eligible_after` |
 | `claimed/in_progress → blocked` | `run-fail --policy=block` (reason required), or 5 failed attempts |
 | `blocked → todo` | Operator `orc task-unblock` / master `unblock_task` |
@@ -91,7 +90,7 @@ todo/claimed/in_progress/blocked → cancelled
 
 Derived at claim time, never stored:
 
-- `status == todo`, every `depends_on` ref `done`/`released` in the same project
+- `status == todo`, every `depends_on` ref `done` in the same project
 - `requeue_eligible_after` null or past
 - `planning_state` absent or `ready_for_dispatch`
 - `owner` absent or the claiming agent
@@ -109,7 +108,7 @@ Readiness comes before the run starts: the coordinator sends TASK_START once the
 | `orc run-start` | claim `claimed`, agent matches | claim + task → `in_progress` |
 | `orc progress --event=<e>` | claim `in_progress` (`phase_*` need `--phase`; `blocked`/`need_input` need `--reason`) | event recorded |
 | `orc run-work-complete` | claim `in_progress`, `finalization_state` null or `finalize_rebase_in_progress` | `work_complete` (→ `awaiting_finalize`) or `ready_to_merge` (after a finalize rebase) |
-| `orc run-finish` | claim `in_progress`, task `done`/`released` (refused before the merge) | claim → `done` |
+| `orc run-finish` | claim `in_progress`, task `done` (refused before the merge) | claim → `done` |
 | `orc run-fail [--policy=requeue\|block]` | claim `claimed`/`in_progress` | claim → `failed`; task requeued or blocked |
 | `orc run-input-request` | claim `in_progress` | `input_state → awaiting_input`; blocks until `run-input-respond` |
 

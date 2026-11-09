@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The task status `released` and the `post_merge_release` transition are removed; nothing ever set them. `done` is the single terminal success status. `runtime.db` migrates to schema version 5, which rewrites any `released` task to `done`. `list_tasks` and `orc project task list --status` no longer accept `released`.
+
 ## [1.0.0] - 2026-11-08
 
 ### Breaking

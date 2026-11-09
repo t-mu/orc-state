@@ -7,7 +7,7 @@ import type { TaskTransitionCause } from './projectContract.ts';
 import { openReadOnlyDatabase, shouldOpenReadOnly } from './sqliteReadOnly.ts';
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
 
-export const PROJECT_TASK_SCHEMA_VERSION = 4;
+export const PROJECT_TASK_SCHEMA_VERSION = 5;
 
 const REQUIRED_TABLES = ['schema_migrations', 'tasks', 'task_spec_revisions', 'task_dependencies', 'task_transitions', 'task_runs', 'task_imports', 'plan_documents'];
 
@@ -208,6 +208,80 @@ export function migrateProjectTaskSchema(db: Database.Database, targetVersion = 
       db.pragma('user_version = 4');
     }).immediate();
   }
+  if (targetVersion >= 5 && (db.pragma('user_version', { simple: true }) as number) === 4) {
+    // SQLite cannot alter a CHECK constraint, so tasks is rebuilt; foreign keys must be off for that (a no-op inside a transaction).
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`
+          -- 'released' was never set by anything: it becomes 'done', the single terminal success status.
+          -- Past task_transitions rows are immutable and keep their history.
+          CREATE TABLE tasks_new (
+            ref TEXT PRIMARY KEY CHECK (length(trim(ref)) > 0),
+            title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+            priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','critical')),
+            required_provider TEXT CHECK (required_provider IS NULL OR required_provider IN ('codex','claude','gemini')),
+            status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','claimed','in_progress','blocked','done','cancelled')),
+            attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+            blocked_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            owner TEXT,
+            planning_state TEXT CHECK (planning_state IS NULL OR planning_state IN ('ready_for_dispatch','archived')),
+            delegated_by TEXT,
+            task_type TEXT CHECK (task_type IS NULL OR task_type IN ('implementation','refactor')),
+            requeue_eligible_after TEXT
+          );
+          INSERT INTO tasks_new (ref, title, priority, required_provider, status, attempt_count, blocked_reason, created_at, updated_at,
+              owner, planning_state, delegated_by, task_type, requeue_eligible_after)
+            SELECT ref, title, priority, required_provider, CASE WHEN status = 'released' THEN 'done' ELSE status END, attempt_count,
+              blocked_reason, created_at, updated_at, owner, planning_state, delegated_by, task_type, requeue_eligible_after FROM tasks;
+          -- Triggers that name tasks would make the rename fail while it is missing.
+          DROP TRIGGER transitions_apply;
+          DROP TRIGGER transitions_validate;
+          DROP TABLE tasks;
+          ALTER TABLE tasks_new RENAME TO tasks;
+          CREATE INDEX tasks_status_priority_idx ON tasks(status, priority, created_at);
+          CREATE TRIGGER tasks_ref_immutable BEFORE UPDATE OF ref ON tasks BEGIN SELECT RAISE(ABORT, 'task ref is immutable'); END;
+          CREATE TRIGGER tasks_status_guard BEFORE UPDATE OF status ON tasks
+            WHEN OLD.status <> NEW.status AND NOT EXISTS (
+              SELECT 1 FROM task_transitions WHERE task_ref = OLD.ref
+                AND from_status = OLD.status AND to_status = NEW.status
+                AND transition_id = (SELECT MAX(transition_id) FROM task_transitions WHERE task_ref = OLD.ref)
+            ) BEGIN SELECT RAISE(ABORT, 'task status requires a transition'); END;
+          CREATE TRIGGER transitions_apply AFTER INSERT ON task_transitions BEGIN
+            UPDATE tasks SET status = NEW.to_status,
+              blocked_reason = CASE WHEN NEW.to_status = 'blocked' THEN NEW.reason ELSE NULL END,
+              updated_at = NEW.created_at WHERE ref = NEW.task_ref;
+          END;
+          CREATE TRIGGER transitions_validate BEFORE INSERT ON task_transitions BEGIN
+            SELECT CASE WHEN (SELECT status FROM tasks WHERE ref = NEW.task_ref) <> NEW.from_status
+              THEN RAISE(ABORT, 'stale task status') END;
+            SELECT CASE WHEN NOT (
+              (NEW.cause = 'claim' AND NEW.from_status = 'todo' AND NEW.to_status = 'claimed') OR
+              (NEW.cause = 'run_start' AND NEW.from_status = 'claimed' AND NEW.to_status = 'in_progress') OR
+              (NEW.cause = 'merge_succeeded' AND NEW.from_status = 'in_progress' AND NEW.to_status = 'done') OR
+              (NEW.cause = 'failure_requeue' AND NEW.from_status IN ('claimed','in_progress') AND NEW.to_status = 'todo') OR
+              (NEW.cause = 'failure_block' AND NEW.from_status IN ('claimed','in_progress') AND NEW.to_status = 'blocked') OR
+              (NEW.cause = 'manual_block' AND NEW.from_status = 'todo' AND NEW.to_status = 'blocked') OR
+              (NEW.cause = 'unblock' AND NEW.from_status = 'blocked' AND NEW.to_status = 'todo') OR
+              (NEW.cause = 'operator_reset' AND NEW.from_status <> 'todo' AND NEW.to_status = 'todo') OR
+              (NEW.cause = 'cancel' AND NEW.from_status IN ('todo','claimed','in_progress','blocked') AND NEW.to_status = 'cancelled') OR
+              (NEW.cause = 'migration_import' AND NEW.from_status = 'todo' AND NEW.to_status IN ('blocked','done','cancelled')
+                AND NOT EXISTS (SELECT 1 FROM task_transitions WHERE task_ref = NEW.task_ref))
+            ) THEN RAISE(ABORT, 'invalid task transition') END;
+          END;
+          INSERT INTO schema_migrations (version, name, applied_at)
+            VALUES (5, 'drop_released_status', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+        `);
+        const broken = db.pragma('foreign_key_check') as unknown[];
+        if (broken.length > 0) throw new Error('runtime.db foreign key check failed after dropping the released status');
+        db.pragma('user_version = 5');
+      }).immediate();
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  }
   if (targetVersion < PROJECT_TASK_SCHEMA_VERSION) return;
   const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
   for (const name of REQUIRED_TABLES) if (!names.has(name)) throw new Error(`runtime.db missing table ${name}`);
@@ -219,6 +293,8 @@ export function migrateProjectTaskSchema(db: Database.Database, targetVersion = 
   if (v3?.name !== 'sqlite_lifecycle') throw new Error('runtime.db missing lifecycle migration');
   const v4 = db.prepare('SELECT name FROM schema_migrations WHERE version = 4').get() as { name: string } | undefined;
   if (v4?.name !== 'migration_import') throw new Error('runtime.db missing migration import migration');
+  const v5 = db.prepare('SELECT name FROM schema_migrations WHERE version = 5').get() as { name: string } | undefined;
+  if (v5?.name !== 'drop_released_status') throw new Error('runtime.db missing drop released status migration');
 }
 
 export interface TaskSpecInput {
@@ -545,7 +621,7 @@ export class ProjectTaskStore {
 
   /**
    * Atomically claim a task: verify it is `todo`, unowned or owned by the
-   * agent, and that every dependency is done or released in this project;
+   * agent, and that every dependency is done in this project;
    * record the claim transition; and bind the run to the latest revision.
    */
   claimTask(ref: string, runId: string, agentId: string): TaskSpecRevision {
@@ -557,7 +633,7 @@ export class ProjectTaskStore {
         throw new Error(`Task ${ref} is reserved for agent "${task.dispatch.owner}" - claiming agent "${agentId}" is not the owner`);
       }
       const waiting = (this.db.prepare(`SELECT d.depends_on_ref FROM task_dependencies d LEFT JOIN tasks t ON t.ref = d.depends_on_ref
-        WHERE d.task_ref = ? AND (t.status IS NULL OR t.status NOT IN ('done','released')) ORDER BY d.depends_on_ref`).all(ref) as Array<{ depends_on_ref: string }>)
+        WHERE d.task_ref = ? AND (t.status IS NULL OR t.status NOT IN ('done')) ORDER BY d.depends_on_ref`).all(ref) as Array<{ depends_on_ref: string }>)
         .map((row) => row.depends_on_ref);
       if (waiting.length > 0) throw new Error(`Task ${ref} is waiting for dependencies: ${waiting.join(', ')}`);
       this.applyTransition(ref, { cause: 'claim', to: 'claimed', runId, actorId: agentId });

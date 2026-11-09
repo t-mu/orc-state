@@ -19,8 +19,8 @@
   "definitions": {
     "TaskStatus": {
       "type": "string",
-      "enum": ["todo", "claimed", "in_progress", "blocked", "done", "released", "cancelled"],
-      "description": "Lifecycle state of a task. 'released' is final and immutable."
+      "enum": ["todo", "claimed", "in_progress", "blocked", "done", "cancelled"],
+      "description": "Lifecycle state of a task. 'done' and 'cancelled' are final."
     },
     "TaskRef": {
       "type": "string",
@@ -71,7 +71,7 @@
         "depends_on": {
           "type": "array",
           "items": { "$ref": "#/definitions/TaskRef" },
-          "description": "task_refs that must reach 'done' or 'released' before this task can be claimed."
+          "description": "task_refs that must reach 'done' before this task can be claimed."
         },
         "acceptance_criteria": {
           "type": "array",

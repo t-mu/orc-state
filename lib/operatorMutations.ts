@@ -28,7 +28,7 @@ import type { Task, TaskStatus } from '../types/backlog.ts';
  */
 
 /** Task statuses no lifecycle transition leaves (other than an operator reset). */
-export const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'released', 'cancelled']);
+export const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'cancelled']);
 
 /** The registered master's agent id, the default actor of master tools. */
 export function masterActorId(stateDir: string): string {
@@ -556,7 +556,7 @@ export function expireRun(stateDir: string, runId: unknown, actorId = 'human'): 
 /**
  * Close a run whose work already reached `main` by hand (docs/recovery.md,
  * Finalization Failure): the claim is non-terminal while its task is
- * done/released or its branch is merged into main. Records the claim as done,
+ * done or its branch is merged into main. Records the claim as done,
  * emits `run_finished` and, when the branch is merged, marks its task done and
  * cleans the run worktree
  * and branch the way the coordinator does after a merge; an unmerged branch's
@@ -587,7 +587,7 @@ export function closeRun(stateDir: string, { run_id, reason = null, actor_id = '
     if (!claim) throw new NotFoundError(`run not found: ${run_id}`);
     if (claim.state === 'done' || claim.state === 'failed') throw new ConflictError(`run is already terminal (state: ${claim.state}): ${run_id}`);
     const taskStatus = findTask(readBacklog(stateDir), claim.task_ref)?.status ?? null;
-    const taskDone = taskStatus === 'done' || taskStatus === 'released';
+    const taskDone = taskStatus === 'done';
     if (!taskDone && !branchMerged) {
       throw new ConflictError(`run ${run_id} is not merged: task ${claim.task_ref} is ${taskStatus ?? 'missing'} and branch ${branch} is not merged into main. `
         + `If its work reached main another way (squash, rebase or fast-forward), run orc task-mark-done ${claim.task_ref} and then orc run-close ${run_id}; `

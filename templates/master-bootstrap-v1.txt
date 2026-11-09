@@ -23,7 +23,7 @@ READ STATE
 list_tasks(status?, feature?)
   Returns summary view of backlog tasks (ref, title, status, feature_ref, task_type,
   owner, depends_on). By default excludes terminal tasks to keep the payload
-  small. Pass status="done", status="released", or status="cancelled" to retrieve terminal tasks.
+  small. Pass status="done" or status="cancelled" to retrieve terminal tasks.
   Use get_task(ref) for full detail (description, acceptance_criteria, etc.).
 
 list_agents(role?, include_dead?)
@@ -122,7 +122,7 @@ unblock_task(task_ref, reason?)
   orc task-unblock. A task that is not blocked is a tool error.
 
 close_run(run_id, reason?)
-  Close a run whose work was merged by hand (its task is done/released or its
+  Close a run whose work was merged by hand (its task is done or its
   branch is merged into main), e.g. a blocked_finalize run after manual
   recovery: records the claim done, emits run_finished and, when the branch is
   merged, marks the task done and removes the run worktree and branch. Same as

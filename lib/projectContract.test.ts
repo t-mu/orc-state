@@ -33,17 +33,16 @@ describe('project selection contract', () => {
 });
 
 describe('task lifecycle contract', () => {
-  it('allows the claim, start, merge, and release sequence', () => {
+  it('allows the claim, start, and merge sequence', () => {
     expect(canTransitionTaskStatus('todo', 'claimed', 'claim')).toBe(true);
     expect(canTransitionTaskStatus('claimed', 'in_progress', 'run_start')).toBe(true);
     expect(canTransitionTaskStatus('in_progress', 'done', 'merge_succeeded')).toBe(true);
-    expect(canTransitionTaskStatus('done', 'released', 'post_merge_release')).toBe(true);
   });
 
   it('does not complete work before merge or reopen completed work without an operator reset', () => {
     expect(canTransitionTaskStatus('in_progress', 'done', 'run_start')).toBe(false);
     expect(canTransitionTaskStatus('done', 'todo', 'failure_requeue')).toBe(false);
-    expect(canTransitionTaskStatus('released', 'todo', 'operator_reset')).toBe(true);
+    expect(canTransitionTaskStatus('done', 'todo', 'operator_reset')).toBe(true);
   });
 
   it('keeps blocking, unblocking, and failure policy explicit', () => {
@@ -56,9 +55,9 @@ describe('task lifecycle contract', () => {
 });
 
 describe('derived dependency readiness', () => {
-  it('accepts done and released dependencies without storing a new task status', () => {
+  it('accepts done dependencies without storing a new task status', () => {
     const task = { status: 'todo' as const, dependsOn: ['task-a', 'task-b'] };
-    expect(deriveDependencyReadiness(task, new Map([['task-a', 'done'], ['task-b', 'released']])))
+    expect(deriveDependencyReadiness(task, new Map([['task-a', 'done'], ['task-b', 'done']])))
       .toEqual({ kind: 'ready', waitingOn: [] });
     expect(task.status).toBe('todo');
   });
