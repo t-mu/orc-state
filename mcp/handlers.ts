@@ -294,14 +294,6 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
   };
 }
 
-export function handleReadBacklog(stateDir: string) {
-  return JSON.stringify(readBacklog(stateDir), null, 2);
-}
-
-export function handleReadAgents(stateDir: string) {
-  return readFileSync(join(stateDir, 'agents.json'), 'utf8');
-}
-
 export function handleCreateTask(stateDir: string, args: Record<string, unknown> = {}) {
   // Project tasks are database-only: no Markdown spec is required or written. A missing database fails.
   requireProjectTaskStore(stateDir);

@@ -2,10 +2,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
-import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { TOOLS } from './tools-list.ts';
-import { asToolResult, invokeTool, isExpectedToolError, readResource, validateToolArguments } from './server.ts';
+import { asToolResult, invokeTool, isExpectedToolError, validateToolArguments } from './server.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { RevisionConflictError } from '../lib/projectTaskStore.ts';
 import { initEventsDb, withEventDbTransaction, closeAllDatabases } from '../lib/eventLog.ts';
@@ -186,14 +185,6 @@ describe('orchestrator mcp server foundation', () => {
     expect(validateToolArguments('query_events', { limit: 100 })).toEqual({ ok: true });
     expect(validateToolArguments('query_events', { limit: 101 })).toMatchObject({ ok: false, error: expect.stringContaining('/limit must be <= 100') });
     expect(asToolResult({ events: [], last_seq: 0, has_more: false }, { compact: true }).content[0].text).toBe('{"events":[],"last_seq":0,"has_more":false}');
-  });
-
-  it('reads supported resources and throws for unknown resource uri', () => {
-    const backlog = readResource(stateDir, 'orchestrator://state/backlog');
-    const agents = readResource(stateDir, 'orchestrator://state/agents');
-    expect(backlog.contents[0].mimeType).toBe('application/json');
-    expect(agents.contents[0].mimeType).toBe('application/json');
-    expect(() => readResource(stateDir, 'orchestrator://state/unknown')).toThrow(McpError);
   });
 
   it('validates tool arguments against declared input schemas', () => {
