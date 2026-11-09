@@ -106,10 +106,13 @@ export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitPro
   ].join('\n');
 }
 
-/** The dashboard pane's script: `orc watch` for the project, restarted if it exits. */
+/**
+ * The dashboard pane's script: `orc watch` for the project, restarted if it
+ * exits. TMUX stays set: it is how `orc watch` knows it runs in the cockpit
+ * (`insideCockpit`), so Enter opens agent tabs.
+ */
 export function dashboardPaneScript(project: Pick<CockpitProject, 'env'>, watchCommand: string[]): string {
   return [
-    'unset TMUX',
     ...Object.entries(project.env).map(([key, value]) => `export ${key}=${shellQuote(value)}`),
     'while :; do',
     `  ${watchCommand.map(shellQuote).join(' ')}`,

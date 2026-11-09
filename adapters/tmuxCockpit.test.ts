@@ -75,6 +75,8 @@ describe('dashboardPaneScript', () => {
     expect(script).toContain("export ORC_STATE_DIR='/state/p 1'");
     expect(script).toContain("'/usr/bin/node' '/orc/cli/orc.js' 'watch'");
     expect(script).toMatch(/while :; do[\s\S]*done$/);
+    // TMUX tells orc watch it runs in the cockpit, so Enter opens agent tabs.
+    expect(script).not.toContain('unset TMUX');
     expect(parsesAsShell(script)).toBe(true);
   });
 });
