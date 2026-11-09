@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildDashboardModel, computeDashboardLayout, mergeFeed, notificationEntries,
+  buildDashboardModel, buildDashboardProject, computeDashboardLayout, mergeFeed, notificationEntries,
   type DashboardFeedEntry, type DashboardModel, type DashboardProject,
 } from './dashboard.ts';
 
@@ -10,7 +10,7 @@ function entry(key: string, ts: string | null, seq: number | null = null): Dashb
 
 function projectWith(agents: number): DashboardProject {
   return {
-    project_id: 'p', state_dir: '/state/p', name: 'p', current: true, connection: 'running', error: null, stale: false,
+    project_id: 'p', name: 'p', state_dir: '/state/p', target_repo_root: '/repo/p', current: true, connection: 'running', error: null, stale: false,
     agents: Array.from({ length: agents }, (_, i) => ({
       key: `p/a${i}`, agent_id: `a${i}`, role: 'worker', task_ref: null, state: 'in_progress', phase: null, activity: null, attention: null,
     })),
@@ -48,6 +48,23 @@ describe('notification feed', () => {
   it('says so when there is no project or the registry is unreadable', () => {
     expect(buildDashboardModel([], '/s', [], null).notice).toBe('no registered projects');
     expect(buildDashboardModel([], '/s', [], 'EACCES').notice).toBe('registry error: EACCES');
+  });
+});
+
+describe('buildDashboardProject', () => {
+  it('lists the master as a selectable agent, with the project paths an opened terminal needs', () => {
+    const view = {
+      project_id: 'p', name: 'p', target_repo_root: '/repo/p', state_dir: '/state/p', connection: 'running' as const, error: null, stale: false,
+      status: {
+        master: { agent_id: 'master', status: 'running' },
+        worker_capacity: { slots: [] }, claims: { active: [] }, waiting_input: [],
+      } as never,
+    };
+    const project = buildDashboardProject(view, true);
+    expect(project.agents).toEqual([{
+      key: 'p/master', agent_id: 'master', role: 'master', task_ref: null, state: 'running', phase: null, activity: null, attention: null,
+    }]);
+    expect([project.state_dir, project.target_repo_root]).toEqual(['/state/p', '/repo/p']);
   });
 });
 

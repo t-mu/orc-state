@@ -8,7 +8,7 @@ import { startControlServer } from '../lib/controlServer.ts';
 import { closeAllDatabases } from '../lib/eventLog.ts';
 import { buildStatus } from '../lib/statusView.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { runFallbackWatch, watchedProjectList, type WatchSource } from './watch.ts';
+import { agentTab, cockpitOpener, runFallbackWatch, watchedProjectList, type CockpitTabs, type WatchSource } from './watch.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -193,3 +193,39 @@ function runCli(args: string[]) {
     encoding: 'utf8',
   });
 }
+
+describe('cockpit agent terminals', () => {
+  const orc = ['/usr/bin/node', '/orc/cli/orc.ts'];
+  const registered = { project_id: 'p-1', name: 'app', state_dir: '/state/p-1', target_repo_root: '/repo/app' };
+  const agent = (agent_id: string, role = 'worker') => ({
+    key: `p-1/${agent_id}`, agent_id, role, task_ref: null, state: 'running', phase: null, activity: null, attention: null,
+  });
+  const project = { ...registered, current: true, connection: 'running' as const, error: null, stale: false, agents: [], attention: { permission_prompt: 0, question: 0, stalled: 0, no_progress: 0 }, attentionTotal: 0 };
+
+  it('streams the agent with input for its project: --project for a registered one, ORC_STATE_DIR otherwise', () => {
+    expect(agentTab({ agent_id: 'w1' }, registered, orc)).toEqual({
+      projectId: 'p-1', projectName: 'app', agentId: 'w1', root: '/repo/app',
+      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], env: {},
+    });
+    const unregistered = { ...registered, project_id: 'unregistered:/state/x', state_dir: '/state/x' };
+    expect(agentTab({ agent_id: 'w1' }, unregistered, orc)).toMatchObject({
+      command: [...orc, 'terminal', 'w1', '--write'], env: { ORC_STATE_DIR: '/state/x' },
+    });
+  });
+
+  it('opens or switches to a worker\'s tab, and sends a master to its project tab without opening a stream', () => {
+    const openAgentTab = vi.fn<CockpitTabs['openAgentTab']>(() => 'opened');
+    const switchToMasterTab = vi.fn<CockpitTabs['switchToMasterTab']>(() => true);
+    const open = cockpitOpener(orc, { openAgentTab, switchToMasterTab });
+    expect(open(agent('w1'), project)).toBe('opened w1 in a new tab');
+    expect(openAgentTab).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'w1', projectId: 'p-1' }));
+    openAgentTab.mockReturnValue('switched');
+    expect(open(agent('w1'), project)).toBe("switched to w1's tab");
+
+    expect(open(agent('master', 'master'), project)).toBe("switched to app's master");
+    expect(switchToMasterTab).toHaveBeenCalledWith('p-1');
+    expect(openAgentTab).toHaveBeenCalledTimes(2);
+    switchToMasterTab.mockReturnValue(false);
+    expect(() => open(agent('master', 'master'), project)).toThrow('app has no cockpit tab; run orc start-session in it');
+  });
+});

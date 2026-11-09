@@ -85,6 +85,8 @@ export interface TuiStatus {
     waiting_for_capacity: number;
     slots: TuiSlot[];
   };
+  /** The project's master (`orc status`'s `master`), null without one. */
+  master?: { agent_id: string; status: string } | null;
   scouts: TuiScout[];
   tasks: {
     counts: Record<string, number>;

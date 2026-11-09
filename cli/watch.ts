@@ -10,15 +10,19 @@
  * runs for is listed first; without a running coordinator it is shown as stopped.
  */
 import { basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { ProjectWatcher, type ProjectListEntry, type ProjectWatchState, type ProjectWatchUpdate } from '../client.ts';
+import { insideCockpit, openAgentTab, switchToMasterTab, type CockpitAgentTab } from '../adapters/tmuxCockpit.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { describeProjects, listProjects } from '../lib/projectList.ts';
 import { cliError } from './shared.ts';
+import type { AgentOpener } from '../lib/tui/App.tsx';
+import type { DashboardAgent, DashboardProject } from '../lib/tui/dashboard.ts';
 
 /** What `orc watch` reads: the client's `ProjectWatcher` (tests inject a fake). */
 export interface WatchSource {
@@ -37,6 +41,8 @@ export interface WatchOptions {
   source?: WatchSource;
   /** How long `--once` waits for the project's first connection to settle (default 5000 ms). */
   settleTimeoutMs?: number;
+  /** Enter on an agent: open or switch to its terminal (set inside the cockpit). */
+  onOpen?: AgentOpener;
 }
 
 const once = boolFlag('once');
@@ -59,6 +65,43 @@ export function watchedProjectList(stateDir: string, list: () => ProjectListEntr
 
 export function createWatchSource(stateDir: string): WatchSource {
   return new ProjectWatcher({ listProjects: watchedProjectList(stateDir) });
+}
+
+/** Ids `watchedProjectList` gives a state directory no registered project owns. */
+const UNREGISTERED_PREFIX = 'unregistered:';
+
+/**
+ * The cockpit tab of `agent`'s live terminal: `orc terminal <agent_id> --write`
+ * for its project (`--project=<id>`, or `ORC_STATE_DIR` for an unregistered one).
+ */
+export function agentTab(agent: Pick<DashboardAgent, 'agent_id'>, project: Pick<DashboardProject, 'project_id' | 'name' | 'state_dir' | 'target_repo_root'>, orc: string[]): CockpitAgentTab {
+  const unregistered = project.project_id.startsWith(UNREGISTERED_PREFIX);
+  return {
+    projectId: project.project_id,
+    projectName: project.name,
+    agentId: agent.agent_id,
+    root: project.target_repo_root,
+    command: [...orc, 'terminal', agent.agent_id, '--write', ...(unregistered ? [] : [`--project=${project.project_id}`])],
+    env: unregistered ? { ORC_STATE_DIR: project.state_dir } : {},
+  };
+}
+
+export interface CockpitTabs {
+  openAgentTab: (tab: CockpitAgentTab) => 'opened' | 'switched';
+  switchToMasterTab: (projectId: string) => boolean;
+}
+
+/** Enter in the cockpit: a master switches to its project's tab, any other agent to its own tab (opened on first use). */
+export function cockpitOpener(orc: string[], tabs: CockpitTabs = { openAgentTab, switchToMasterTab }): AgentOpener {
+  return (agent, project) => {
+    if (agent.role === 'master') {
+      if (!tabs.switchToMasterTab(project.project_id)) throw new Error(`${project.name} has no cockpit tab; run orc start-session in it`);
+      return `switched to ${project.name}'s master`;
+    }
+    return tabs.openAgentTab(agentTab(agent, project, orc)) === 'opened'
+      ? `opened ${agent.agent_id} in a new tab`
+      : `switched to ${agent.agent_id}'s tab`;
+  };
 }
 
 function currentProject(source: WatchSource, stateDir: string): ProjectWatchState | null {
@@ -185,6 +228,7 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
     source,
     stateDir: options.stateDir,
     intervalMs: options.intervalMs,
+    ...(options.onOpen ? { onOpen: options.onOpen } : {}),
   }));
 
   if (options.once) {
@@ -212,6 +256,9 @@ export async function main(): Promise<number | null> {
 
   if (!process.stdout.isTTY) {
     return runFallbackWatch(options);
+  }
+  if (insideCockpit()) {
+    options.onOpen = cockpitOpener([process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))]);
   }
 
   return runTtyWatch(options);

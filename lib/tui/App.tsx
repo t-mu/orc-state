@@ -20,9 +20,22 @@ export interface AppProps {
   intervalMs?: number;
   /** The read-only task client of a project (`t` opens the task explorer); a `ControlClient` by default. */
   createTaskClient?: (stateDir: string) => TuiTaskClient;
+  /**
+   * Enter on the selected agent: opens its terminal (in the cockpit, a tab) or
+   * switches to it, and returns the line the footer shows. Without it, Enter does nothing.
+   */
+  onOpen?: AgentOpener;
 }
 
 const defaultTaskClient = (stateDir: string): TuiTaskClient => new ControlClient(stateDir);
+
+/** Opens or switches to `agent`'s terminal; returns what happened, for the footer. A throw is shown as the error. */
+export type AgentOpener = (agent: DashboardAgent, project: DashboardProject) => string;
+
+/** The key bindings line; each at most 40 columns, the side pane's width. */
+export const KEYS_HINT = '↑↓ select · Enter terminal · t tasks';
+/** Outside the cockpit Enter has nothing to open into. */
+export const KEYS_HINT_STANDALONE = '↑↓ select · t tasks (Enter: cockpit)';
 
 const CONNECTION_COLOR: Record<TuiProjectView['connection'], string> = {
   running: 'green',
@@ -108,8 +121,11 @@ function useDashboardModel(source: TuiWatchSource, stateDir: string, intervalMs:
   return model;
 }
 
-/** The selected agent's key, moved with ↑/↓ (or k/j); follows the agent when the list reorders. */
-function useSelection(agents: DashboardAgent[], isActive: boolean): string | null {
+/**
+ * The selected agent's key, moved with ↑/↓ (or k/j); follows the agent when
+ * the list reorders. Enter calls `onEnter` with the selected agent.
+ */
+function useSelection(agents: DashboardAgent[], isActive: boolean, onEnter: (agent: DashboardAgent) => void): string | null {
   const { isRawModeSupported } = useStdin();
   const [selected, setSelected] = useState<string | null>(null);
   const index = Math.max(0, agents.findIndex(agent => agent.key === selected));
@@ -117,6 +133,10 @@ function useSelection(agents: DashboardAgent[], isActive: boolean): string | nul
 
   useInput((input, key) => {
     if (agents.length === 0) return;
+    if (key.return) {
+      onEnter(agents[index]);
+      return;
+    }
     let next = index;
     if (key.upArrow || input === 'k') next = Math.max(0, index - 1);
     else if (key.downArrow || input === 'j') next = Math.min(agents.length - 1, index + 1);
@@ -137,13 +157,28 @@ function useView(): 'dashboard' | 'tasks' {
   return view;
 }
 
-export function App({ source, stateDir, intervalMs = 3000, createTaskClient = defaultTaskClient }: AppProps) {
+export function App({ source, stateDir, intervalMs = 3000, createTaskClient = defaultTaskClient, onOpen }: AppProps) {
   const model = useDashboardModel(source, stateDir, intervalMs);
   const { rows, columns } = useTerminalSize();
   const view = useView();
-  const layout = useMemo(() => computeDashboardLayout(model, rows), [model, rows]);
+  const { isRawModeSupported } = useStdin();
+  // The footer (key bindings, or what Enter did) only where keys are read.
+  const footer = isRawModeSupported === true;
+  const layout = useMemo(() => computeDashboardLayout(model, rows == null || !footer ? rows : rows - 1), [model, rows, footer]);
   const agents = useMemo(() => dashboardAgents(model), [model]);
-  const selected = useSelection(agents, view === 'dashboard');
+  // What Enter did, shown while that agent stays selected.
+  const [result, setResult] = useState<{ key: string; text: string; error: boolean } | null>(null);
+  const selected = useSelection(agents, view === 'dashboard', (agent) => {
+    if (!onOpen) return;
+    const project = model.projects.find(candidate => candidate.agents.includes(agent));
+    if (!project) return;
+    try {
+      setResult({ key: agent.key, text: onOpen(agent, project), error: false });
+    } catch (error) {
+      setResult({ key: agent.key, text: `${agent.agent_id}: ${(error as Error).message}`, error: true });
+    }
+  });
+  const shownResult = result && result.key === selected ? result : null;
   const needYou = model.projects.reduce((sum, project) => sum + project.attentionTotal, 0);
 
   if (view === 'tasks') {
@@ -177,6 +212,11 @@ export function App({ source, stateDir, intervalMs = 3000, createTaskClient = de
       ))}
       <Text> </Text>
       <Feed feed={model.feed} maxLines={layout.feedLines} />
+      {footer
+        ? shownResult
+          ? <Text color={shownResult.error ? 'red' : 'green'} wrap="truncate">{shownResult.text}</Text>
+          : <Text dimColor wrap="truncate">{onOpen ? KEYS_HINT : KEYS_HINT_STANDALONE}</Text>
+        : null}
     </Box>
   );
 }

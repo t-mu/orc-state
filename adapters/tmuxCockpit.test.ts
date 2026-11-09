@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_PREFIX, COCKPIT_SOCKET, cockpitAttachCommand, cockpitServerEnv, cockpitServerOptions, dashboardPaneScript,
-  insideCockpit, masterKey, masterPaneScript, terminalHasTrueColor, windowLayoutCommands,
+  COCKPIT_PREFIX, COCKPIT_SOCKET, agentTabScript, agentWindowName, cockpitAttachCommand, cockpitServerEnv, cockpitServerOptions, dashboardPaneScript,
+  insideCockpit, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands,
 } from './tmuxCockpit.ts';
 
 const originalBin = process.env.ORC_TMUX_BIN;
@@ -137,5 +137,47 @@ describe('cockpitAttachCommand / insideCockpit', () => {
 describe('terminalHasTrueColor', () => {
   it.each([['truecolor', true], ['24bit', true], ['256', false], [undefined, false]])('COLORTERM=%s → %s', (value, expected) => {
     expect(terminalHasTrueColor(value === undefined ? {} : { COLORTERM: value })).toBe(expected);
+  });
+});
+
+describe('agent tabs', () => {
+  it('names a tab after its project and agent', () => {
+    expect(agentWindowName("Bob's app", 'grisly-moor')).toBe("Bob's app/grisly-moor");
+  });
+
+  it('switches to the agent\'s existing tab instead of opening another', () => {
+    const windows = [
+      { windowId: '@1', projectId: 'p-1', agentProjectId: '', agentId: '' },
+      { windowId: '@4', projectId: '', agentProjectId: 'p-1', agentId: 'w1' },
+      { windowId: '@2', projectId: 'p-2', agentProjectId: '', agentId: '' },
+      { windowId: '@5', projectId: '', agentProjectId: 'p-2', agentId: 'w1' },
+    ];
+    expect(planAgentTab(windows, 'p-1', 'w1')).toEqual({ action: 'switch', windowId: '@4' });
+    expect(planAgentTab(windows, 'p-2', 'w1')).toEqual({ action: 'switch', windowId: '@5' });
+  });
+
+  it('opens a new tab after its project\'s last tab, or at the end for a project without one', () => {
+    const windows = [
+      { windowId: '@1', projectId: 'p-1', agentProjectId: '', agentId: '' },
+      { windowId: '@4', projectId: '', agentProjectId: 'p-1', agentId: 'w1' },
+      { windowId: '@2', projectId: 'p-2', agentProjectId: '', agentId: '' },
+    ];
+    expect(planAgentTab(windows, 'p-1', 'w2')).toEqual({ action: 'open', after: '@4' });
+    expect(planAgentTab(windows, 'p-2', 'w2')).toEqual({ action: 'open', after: '@2' });
+    expect(planAgentTab(windows, 'p-3', 'w2')).toEqual({ action: 'open', after: null });
+  });
+
+  it('runs the stream with ORC_* and TMUX unset first, then says when it ended and waits to close or reconnect', () => {
+    const script = agentTabScript({
+      agentId: 'w1', projectName: "Bob's app", command: ['/usr/bin/node', '/orc/cli/orc.ts', 'terminal', 'w1', '--write', '--project=p-1'],
+      env: { ORC_STATE_DIR: '/state/p 1' },
+    });
+    expect(parsesAsShell(script)).toBe(true);
+    const lines = script.split('\n');
+    expect(lines[0]).toBe('unset TMUX ORC_PROJECT_ID ORC_STATE_DIR ORC_CONTROL_SOCKET ORC_PROJECT_FLAG');
+    expect(lines[1]).toBe("export ORC_STATE_DIR='/state/p 1'");
+    expect(script).toContain("'/usr/bin/node' '/orc/cli/orc.ts' 'terminal' 'w1' '--write' '--project=p-1'");
+    expect(script).toContain("The terminal of w1 (Bob'\\''s app) is closed");
+    expect(script).toContain('[ "$answer" = r ] || exit 0');
   });
 });

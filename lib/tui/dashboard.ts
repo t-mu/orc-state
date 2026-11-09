@@ -58,8 +58,9 @@ export interface DashboardAgent {
 export interface DashboardProject {
   project_id: string;
   name: string;
-  /** The project's state directory (the task explorer's client reads it). */
+  /** The project's state directory (the task explorer's client reads it) and checkout, for opening an agent's terminal. */
   state_dir: string;
+  target_repo_root: string;
   /** The project this dashboard was started for. */
   current: boolean;
   connection: ProjectConnectionState;
@@ -103,7 +104,14 @@ function attentionRank(agent: DashboardAgent): number {
 
 export function buildDashboardProject(view: TuiProjectView, current: boolean): DashboardProject {
   const slots = view.status ? buildWorkerSlotViewModels(view.status) : [];
-  const agents = slots.map((slot): DashboardAgent => ({
+  const master = view.status?.master;
+  const masterRow: DashboardAgent[] = master
+    ? [{
+        key: `${view.project_id}/${master.agent_id}`, agent_id: master.agent_id, role: 'master',
+        task_ref: null, state: master.status, phase: null, activity: null, attention: null,
+      }]
+    : [];
+  const agents = masterRow.concat(slots.map((slot): DashboardAgent => ({
     key: `${view.project_id}/${slot.slot_id}`,
     agent_id: slot.slot_id,
     role: slot.role,
@@ -114,15 +122,16 @@ export function buildDashboardProject(view: TuiProjectView, current: boolean): D
     attention: slot.attention
       ? { kind: slot.attention.kind, detail: slot.attention.detail?.replace(/\s+/g, ' ').trim() || null }
       : null,
-  }));
+  })));
   // Array.prototype.sort is stable: equal ranks keep the status order.
   agents.sort((a, b) => attentionRank(a) - attentionRank(b));
   const attention = emptyCounts();
   for (const agent of agents) if (agent.attention) attention[agent.attention.kind] += 1;
   return {
     project_id: view.project_id,
-    state_dir: view.state_dir,
     name: view.name,
+    state_dir: view.state_dir,
+    target_repo_root: view.target_repo_root,
     current,
     connection: view.connection,
     error: view.error,

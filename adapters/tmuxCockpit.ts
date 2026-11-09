@@ -281,3 +281,118 @@ export function insideCockpit(env: NodeJS.ProcessEnv = process.env): boolean {
   const socket = env.TMUX?.split(',')[0];
   return !!socket && socket === tmuxSocketPath(COCKPIT_SOCKET);
 }
+
+// ── Agent tabs ───────────────────────────────────────────────────────────────
+// A worker's or scout's live terminal opens in a tab of its own, next to its
+// project's tab: `orc terminal <agent_id> --write`, a control-API stream, so
+// opening it never attaches a tmux client to the agent's server (no resize on
+// attach; only the lease holder sizes the pane, as docs/terminal-streaming.md says).
+
+/** Window options naming the agent a tab streams. */
+const AGENT_PROJECT_OPTION = '@orc_agent_project';
+const AGENT_ID_OPTION = '@orc_agent_id';
+
+export interface CockpitAgentTab {
+  projectId: string;
+  projectName: string;
+  agentId: string;
+  /** Where the tab's shell starts. */
+  root: string;
+  /** What the tab runs: `orc terminal <agent_id> --write` for the agent's project. */
+  command: string[];
+  /** The environment that selects the project for orc; ORC_* inherited from elsewhere is unset first. */
+  env: Record<string, string>;
+}
+
+/** An agent tab's window name: `<project>/<agent_id>`. Tabs are found by their window options, never by name. */
+export function agentWindowName(projectName: string, agentId: string): string {
+  return `${projectName}/${agentId}`;
+}
+
+/**
+ * An agent tab's script: run the stream; when it ends (the agent's session
+ * ended, the stream fell behind, or Ctrl-] Ctrl-] detached), say so and wait:
+ * Enter closes the tab, `r` reconnects. Closing the tab only ends the stream;
+ * the agent's session keeps running.
+ */
+export function agentTabScript(tab: Pick<CockpitAgentTab, 'agentId' | 'projectName' | 'command' | 'env'>): string {
+  const ended = `The terminal of ${tab.agentId} (${tab.projectName}) is closed`;
+  return [
+    `unset TMUX ${PER_PROJECT_ENV.filter((key) => key.startsWith('ORC_')).join(' ')}`,
+    ...Object.entries(tab.env).map(([key, value]) => `export ${key}=${shellQuote(value)}`),
+    'while :; do',
+    '  clear',
+    `  ${tab.command.map(shellQuote).join(' ')}`,
+    '  code=$?',
+    `  printf '\\n%s (exit %s).\\n%s\\n' ${shellQuote(ended)} "$code" ${shellQuote('Closing this tab never stops the agent. Enter: close the tab · r Enter: reconnect')}`,
+    '  read -r answer || exit 0',
+    '  [ "$answer" = r ] || exit 0',
+    'done',
+  ].join('\n');
+}
+
+export interface CockpitTabWindow {
+  windowId: string;
+  /** The project tab's project (`@orc_project_id`), empty on an agent tab. */
+  projectId: string;
+  /** The agent tab's project and agent, empty on a project tab. */
+  agentProjectId: string;
+  agentId: string;
+}
+
+export type AgentTabPlan =
+  | { action: 'switch'; windowId: string }
+  /** `after`: the window to insert the new tab after (the project's last tab), null to append. */
+  | { action: 'open'; after: string | null };
+
+/** Open-vs-switch: the agent's existing tab, else a new one after its project's last tab (windows in index order). */
+export function planAgentTab(windows: CockpitTabWindow[], projectId: string, agentId: string): AgentTabPlan {
+  const existing = windows.find((window) => window.agentProjectId === projectId && window.agentId === agentId);
+  if (existing) return { action: 'switch', windowId: existing.windowId };
+  const own = windows.filter((window) => window.projectId === projectId || window.agentProjectId === projectId);
+  return { action: 'open', after: own.at(-1)?.windowId ?? null };
+}
+
+function tabWindows(): CockpitTabWindow[] {
+  // tmux prints a tab in a format as `_`, so fields split on spaces; the project id goes last because an
+  // unregistered one is a path, which may hold spaces. A window has either a project or an agent's project.
+  const out = cockpitTmuxOrThrow(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F',
+    `#{window_id} [#{${AGENT_ID_OPTION}}] #{${PROJECT_OPTION}}#{${AGENT_PROJECT_OPTION}}`]);
+  return out.split('\n').filter(Boolean).map((line) => {
+    const match = /^(\S+) \[(\S*)\] (.*)$/.exec(line);
+    const [, windowId = '', agentId = '', project = ''] = match ?? [];
+    return agentId
+      ? { windowId, projectId: '', agentProjectId: project, agentId }
+      : { windowId, projectId: project, agentProjectId: '', agentId: '' };
+  });
+}
+
+/**
+ * Switches the cockpit to `tab`'s agent tab, opening it first when the agent
+ * has none (so one tab, and one stream, per agent).
+ */
+export function openAgentTab(tab: CockpitAgentTab): 'opened' | 'switched' {
+  const plan = planAgentTab(tabWindows(), tab.projectId, tab.agentId);
+  if (plan.action === 'switch') {
+    cockpitTmuxOrThrow(['select-window', '-t', plan.windowId]);
+    return 'switched';
+  }
+  const where = plan.after ? ['-a', '-t', plan.after] : ['-t', `=${COCKPIT_SESSION}:`];
+  const windowId = cockpitTmuxOrThrow(['new-window', '-d', ...where, '-n', agentWindowName(tab.projectName, tab.agentId),
+    '-c', tab.root, '-P', '-F', '#{window_id}', '/bin/sh', '-c', agentTabScript(tab)]).trim();
+  if (!windowId.startsWith('@')) throw new Error(`unexpected tmux output '${windowId}'`);
+  cockpitTmuxOrThrow(commandList([
+    ['set-option', '-w', '-t', windowId, AGENT_PROJECT_OPTION, tab.projectId],
+    ['set-option', '-w', '-t', windowId, AGENT_ID_OPTION, tab.agentId],
+    ['select-window', '-t', windowId],
+  ]));
+  return 'opened';
+}
+
+/** Switches the cockpit to `projectId`'s tab, its master pane focused; false when the project has no tab. */
+export function switchToMasterTab(projectId: string): boolean {
+  const window = cockpitWindows().find((candidate) => candidate.projectId === projectId);
+  if (!window) return false;
+  cockpitTmuxOrThrow(commandList(focusCommands(window.windowId, window.masterPane)));
+  return true;
+}
