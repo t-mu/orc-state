@@ -14,7 +14,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
-import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
+import { ACTIVE_PROJECT, assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { masterForCredential, type OperatorOp } from '../lib/operatorMutations.ts';
 import { ForbiddenError } from '../lib/domainErrors.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
@@ -104,12 +104,14 @@ const MASTER_WRITE_TOOLS: Readonly<Record<string, string>> = {
   create_task: 'orc project task create', update_task: 'orc project task edit',
   cancel_task: 'orc task-cancel', reset_task: 'orc task-reset', unblock_task: 'orc task-unblock', delegate_task: 'orc delegate',
   close_run: 'orc run-close',
+  restart_coordinator: 'orc coordinator restart',
   memory_store: 'orc memory-record',
 };
 const MASTER_ONLY_TOOLS: ReadonlySet<string> = new Set(['respond_input', 'request_scout', 'remove_scout']);
 
 export function invokeTool(stateDir: string, name: string, args: Record<string, unknown> = {},
-  { credential = clientCredential(process.env), requireProject = assertProjectMode }: { credential?: string | null; requireProject?: () => void } = {}) {
+  { credential = clientCredential(process.env), requireProject = assertProjectMode, projectId = () => ACTIVE_PROJECT!.id }:
+  { credential?: string | null; requireProject?: () => void; projectId?: () => string } = {}) {
   // startServer refuses a non-project state directory, so every tool runs in a registered project.
   if (!credential && (Object.hasOwn(MASTER_WRITE_TOOLS, name) || MASTER_ONLY_TOOLS.has(name))) {
     const instead = MASTER_WRITE_TOOLS[name];
@@ -141,6 +143,11 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     return routeToCoordinator<undefined, unknown>(stateDir, name, { credential, warn,
       remote: (client) => client.operator({ op: 'remove-scout', agent_id: scoutId }),
       authorize: () => undefined, direct: () => handlers.handleRemoveScout(stateDir, args) });
+  }
+  if (name === 'restart_coordinator') {
+    // Not routed through the coordinator it replaces: the master's credential is checked here, against the state.
+    masterForCredential(stateDir, credential!);
+    return handlers.handleRestartCoordinator(stateDir, projectId());
   }
   // The master acts as itself: the coordinator records the session's agent.
   if (name === 'create_task') {

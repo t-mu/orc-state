@@ -11,6 +11,7 @@ import { RevisionConflictError } from '../lib/projectTaskStore.ts';
 import { initEventsDb, withEventDbTransaction, closeAllDatabases } from '../lib/eventLog.ts';
 import { credentialHash } from '../lib/sessionCredentials.ts';
 import { commitClaims } from '../lib/runStore.ts';
+import { startFakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
 
 let stateDir: string;
 
@@ -87,6 +88,47 @@ describe('orchestrator mcp server foundation', () => {
       }
     } finally {
       closeAllDatabases();
+    }
+  });
+
+  it('restart_coordinator needs the master: no credential and a worker credential are refused before anything is stopped', async () => {
+    expect(TOOLS.map((tool) => tool.name)).toContain('restart_coordinator');
+    expect(() => invokeTool(stateDir, 'restart_coordinator', {}, { credential: null, requireProject: () => {} }))
+      .toThrow(/master session.*orc coordinator restart/);
+    initEventsDb(stateDir);
+    commitClaims(stateDir, { version: '1', claims: [{ run_id: 'run-a', task_ref: 'project/x', agent_id: 'worker-a', state: 'in_progress',
+      claimed_at: '2026-01-01T00:00:00.000Z', started_at: '2026-01-01T00:00:01.000Z', lease_expires_at: '2099-01-01T00:00:00.000Z' }] });
+    withEventDbTransaction(stateDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-a', 'run-a', 'worker-a', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('worker-secret')));
+    writeFileSync(joinPath('agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'claude', role: 'master', status: 'idle', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'worker-a', provider: 'claude', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    try {
+      const projectId = () => { throw new Error('must not reach the restart'); };
+      await expect(Promise.resolve().then(() => invokeTool(stateDir, 'restart_coordinator', {}, { credential: 'worker-secret', requireProject: () => {}, projectId })))
+        .rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    } finally {
+      closeAllDatabases();
+    }
+  });
+
+  it('restart_coordinator as the master reports a refused stop as a tool error and leaves the coordinator running', async () => {
+    const fake = await startFakeCoordinator();
+    initEventsDb(stateDir);
+    withEventDbTransaction(stateDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-master', NULL, 'master', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('master-secret')));
+    writeFileSync(joinPath('coordinator.pid'), JSON.stringify({ pid: fake.pid }));
+    try {
+      const failure = await Promise.resolve()
+        .then(() => invokeTool(stateDir, 'restart_coordinator', {}, { credential: 'master-secret', requireProject: () => {}, projectId: () => 'p1' }))
+        .catch((err: unknown) => err);
+      expect(failure).toMatchObject({ code: 'conflict' });
+      expect(isExpectedToolError(failure)).toBe(true);
+      expect(() => process.kill(fake.pid, 0)).not.toThrow();
+    } finally {
+      closeAllDatabases();
+      await fake.stop();
     }
   });
 

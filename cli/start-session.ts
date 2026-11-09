@@ -59,10 +59,12 @@ import { getMasterBootstrap, MASTER_BOOTSTRAP_TEMPLATE } from '../lib/sessionBoo
 import { formatErrorMessage } from './shared.ts';
 import {
   coordinatorStatus as coordinatorStatusOf,
-  spawnCoordinator as spawnCoordinatorProcess,
-  stopCoordinator as stopCoordinatorProcess,
+  restartCoordinator,
+  startCoordinatorIfStopped,
+  stopRunningCoordinator,
 } from '../lib/coordinatorProcess.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
+import { ControlError } from '../lib/controlProtocol.ts';
 import { staleCodeWarning } from '../lib/codeIdentity.ts';
 import {
   appendSessionStartedEvent,
@@ -97,8 +99,16 @@ async function staleCoordinatorWarning(): Promise<string | null> {
   }
 }
 
-const spawnCoordinator = () => spawnCoordinatorProcess(STATE_DIR, ACTIVE_PROJECT!.id);
-const stopCoordinator = (pid: number) => stopCoordinatorProcess(STATE_DIR, pid);
+/** Stop the running coordinator; false (with the reason printed) when it is still running. */
+async function stopCoordinator(): Promise<boolean> {
+  try {
+    await stopRunningCoordinator(STATE_DIR);
+    return true;
+  } catch (err) {
+    console.warn(`Warning: ${formatErrorMessage(err)}`);
+    return false;
+  }
+}
 
 /** How child processes find this session's state: the project identity. */
 function orcStateEnv(): Record<string, string> {
@@ -211,16 +221,21 @@ async function ensureCoordinatorRunning() {
     console.warn(`Warning: ${stale}`);
     if (!boolFlag('restart-stale') || !pid) return;
     console.log(`Restarting stale coordinator (PID ${pid})...`);
-    if (!await stopCoordinator(pid)) {
-      console.warn(`Coordinator PID ${pid} is still running; continuing with it.`);
-      return;
-    }
   }
   try {
-    const newPid = await spawnCoordinator();
-    console.log(newPid ? `✓ Coordinator running  (PID ${newPid})` : '  Coordinator spawned (PID confirmation pending)');
+    const restarted = running
+      ? await restartCoordinator(STATE_DIR, ACTIVE_PROJECT!.id)
+      : await startCoordinatorIfStopped(STATE_DIR, ACTIVE_PROJECT!.id);
+    console.log(`✓ Coordinator running  (PID ${restarted.pid})`);
   } catch (err) {
-    console.warn(`Warning: coordinator failed to start: ${formatErrorMessage(err)}. Master session continues without coordinator.`);
+    if (coordinatorStatus().running) {
+      console.warn(`Warning: coordinator did not restart: ${formatErrorMessage(err)}. Master session continues with the running coordinator.`);
+    } else if (err instanceof ControlError && err.code === 'unavailable') {
+      // The detached coordinator may still come up after the 2 s wait.
+      console.log('  Coordinator spawned (PID confirmation pending; check orc coordinator status)');
+    } else {
+      console.warn(`Warning: coordinator failed to start: ${formatErrorMessage(err)}. Master session continues without coordinator.`);
+    }
   }
 }
 
@@ -331,7 +346,7 @@ if (coordinatorAction === 'cancel') {
 
 if ((coordinatorAction === 'terminate' || resetRuntimeState) && coordinatorRunning && coordinatorPid) {
   console.log(`Stopping running coordinator (PID ${coordinatorPid})...`);
-  const stopped = await stopCoordinator(coordinatorPid);
+  const stopped = await stopCoordinator();
   if (!stopped && resetRuntimeState) {
     // Resetting under a live coordinator would race its ticks for the same runs.
     console.error(`Coordinator PID ${coordinatorPid} is still running; not resetting. Stop it (orc kill-all) and retry.`);

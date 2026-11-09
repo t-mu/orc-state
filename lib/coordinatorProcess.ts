@@ -3,6 +3,11 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findLiveCoordinator } from './coordinatorLiveness.ts';
+import { ControlClient, controlSocketFromEnv } from './controlClient.ts';
+import { ControlError, defaultSocketPath } from './controlProtocol.ts';
+import { staleCodeWarning } from './codeIdentity.ts';
+import { stripNestedProviderEnv } from './providerChildEnv.ts';
+import { ensureStateInitialized } from './stateInit.ts';
 
 /** The coordinator entry point beside this build: `coordinator.ts` from a checkout, `coordinator.js` from `dist/`. */
 export function coordinatorScriptPath(): string {
@@ -44,7 +49,8 @@ export function coordinatorStatus(stateDir: string): { running: boolean; pid: nu
 /** Start a detached coordinator for the project and wait up to 2 s for it to be live (a stale pid lock does not count); null when it did not appear. */
 export async function spawnCoordinator(stateDir: string, projectId: string): Promise<number | null> {
   const child = spawn(process.execPath, [coordinatorScriptPath()], {
-    env: { ...process.env, ORC_PROJECT_ID: projectId, ORC_STATE_DIR: stateDir },
+    // A coordinator spawned from a session (the master's MCP server) must not inherit that session's secret.
+    env: { ...stripNestedProviderEnv(process.env), ORC_PROJECT_ID: projectId, ORC_STATE_DIR: stateDir },
     detached: true,
     stdio: 'ignore',
   });
@@ -93,4 +99,63 @@ export async function stopCoordinator(stateDir: string, pid: number): Promise<bo
     }
   }
   return false;
+}
+
+/** What `orc coordinator` and `restart_coordinator` report. `version`, `started_at` and `stale` come from the running coordinator's control API, when it answers. */
+export interface CoordinatorDescription {
+  running: boolean;
+  pid: number | null;
+  version: string | null;
+  socket: string | null;
+  started_at: string | null;
+  stale: string | null;
+}
+
+export async function describeCoordinator(stateDir: string, socketPath: string | null = controlSocketFromEnv()): Promise<CoordinatorDescription> {
+  const { running, pid } = coordinatorStatus(stateDir);
+  if (!running) return { running, pid: null, version: null, socket: null, started_at: null, stale: null };
+  const socket = socketPath ?? defaultSocketPath(stateDir);
+  try {
+    const health = await new ControlClient(stateDir, { timeoutMs: 3_000, socketPath }).health();
+    return { running, pid, version: health.version, socket, started_at: health.started_at, stale: staleCodeWarning(health) };
+  } catch {
+    // Starting up, or a coordinator that predates /v1/health: the pid is still true.
+    return { running, pid, version: null, socket, started_at: null, stale: null };
+  }
+}
+
+/**
+ * Stop the running coordinator, if any; the pid it stopped, or null when none ran.
+ * Throws `conflict` for a pid lock without started_at (never signalled: a permanent refusal) and `unavailable` when it does not stop.
+ */
+export async function stopRunningCoordinator(stateDir: string): Promise<number | null> {
+  const { running, pid } = coordinatorStatus(stateDir);
+  if (!running || pid === null) return null;
+  if (findLiveCoordinator(stateDir)?.source === 'pid_file' && !readCoordinatorPidRecord(stateDir)?.started_at) {
+    throw new ControlError('conflict', `coordinator.pid names PID ${pid} but records no started_at, so orc will not signal it; stop that process by hand`, 409);
+  }
+  if (!await stopCoordinator(stateDir, pid)) {
+    throw new ControlError('unavailable', `coordinator PID ${pid} is still running; retry, or use orc kill-all`, 503);
+  }
+  return pid;
+}
+
+/** Start a coordinator unless one runs; its pid and whether this call started it. Throws `unavailable` when it does not come up. */
+export async function startCoordinatorIfStopped(stateDir: string, projectId: string): Promise<{ pid: number; started: boolean }> {
+  const { running, pid } = coordinatorStatus(stateDir);
+  if (running && pid !== null) return { pid, started: false };
+  ensureStateInitialized(stateDir);
+  const spawned = await spawnCoordinator(stateDir, projectId);
+  if (spawned === null) throw new ControlError('unavailable', 'coordinator did not come up within 2 s; check orc status, then retry', 503);
+  return { pid: spawned, started: true };
+}
+
+/**
+ * Stop the running coordinator (as stopRunningCoordinator) and start a new, detached one; with none running, just start one.
+ * Tasks, claims, agents, worktrees and worker sessions are left alone: the new coordinator adopts live sessions on start.
+ */
+export async function restartCoordinator(stateDir: string, projectId: string): Promise<{ previous_pid: number | null; pid: number }> {
+  const previous_pid = await stopRunningCoordinator(stateDir);
+  const { pid } = await startCoordinatorIfStopped(stateDir, projectId);
+  return { previous_pid, pid };
 }

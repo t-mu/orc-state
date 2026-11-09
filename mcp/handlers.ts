@@ -18,6 +18,7 @@ import { createProjectTask, describeProjectTask, projectTaskStoreFor, requirePro
 import { TERMINAL_STATUSES, masterActorId } from '../lib/operatorMutations.ts';
 import { extractScoutReport, launchScout, prepareScout, readScoutReport, removeScout } from '../lib/scouts.ts';
 import { listWaitingInput } from '../lib/waitingInput.ts';
+import { describeCoordinator, restartCoordinator } from '../lib/coordinatorProcess.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -402,6 +403,12 @@ export function handleRemoveScout(stateDir: string, { agent_id }: Record<string,
   return removeScout(stateDir, agent_id);
 }
 
+
+/** Same as `orc coordinator restart --json`: the new coordinator is detached, so it outlives this MCP server. */
+export async function handleRestartCoordinator(stateDir: string, projectId: string) {
+  const { previous_pid } = await restartCoordinator(stateDir, projectId);
+  return { action: 'restart', changed: true, ...await describeCoordinator(stateDir), previous_pid };
+}
 
 export function handleListWaitingInput(stateDir: string) {
   return listWaitingInput(stateDir, readClaims(stateDir).claims);
