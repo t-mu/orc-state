@@ -40,6 +40,8 @@ export interface LayoutInput {
   hasEventError: boolean;
   /** Runs waiting for an input response; any adds the header's waiting line. */
   waitingCount?: number;
+  /** Header rows beyond identity and counts: the coordinator line and the other-projects line. */
+  headerExtraLines?: number;
 }
 
 export interface Layout {
@@ -73,8 +75,8 @@ function gridHeight(input: LayoutInput, detail: SlotDetail): number {
 }
 
 function headerHeight(input: LayoutInput, showBanner: boolean): number {
-  // identity + counts + waiting line + marginBottom
-  return (showBanner ? input.bannerLines : 0) + 3 + ((input.waitingCount ?? 0) > 0 ? 1 : 0);
+  // identity + counts + waiting line + extra lines + marginBottom
+  return (showBanner ? input.bannerLines : 0) + 3 + ((input.waitingCount ?? 0) > 0 ? 1 : 0) + (input.headerExtraLines ?? 0);
 }
 
 /** Item lines a list wants: one per item, or one "(none)" line. */

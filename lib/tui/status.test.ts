@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildPhases, buildWorkerSlotViewModels } from './status.ts';
+import type { ProjectWatchState, StatusView } from '../../client.ts';
+import { buildPhases, buildProjectViews, buildWorkerSlotViewModels, describeConnection, selectProjectView } from './status.ts';
 import type { TuiStatus } from './status.ts';
 
 describe('buildPhases', () => {
@@ -211,7 +212,19 @@ describe('buildWorkerSlotViewModels — phases', () => {
       },
     });
     expect(vms[0].current_activity).toEqual(activity);
+    expect(vms[0].activity_label).toBe('Running npm test');
     expect(buildWorkerSlotViewModels(baseStatus)[0].current_activity).toBeNull();
+    expect(buildWorkerSlotViewModels(baseStatus)[0].activity_label).toBeNull();
+  });
+
+  it('carries the slot attention from the status view', () => {
+    const attention = { kind: 'question' as const, run_id: 'run-1', since: '2026-01-01T00:00:00Z', detail: 'Use v2?', request_id: 'req-1' };
+    const vms = buildWorkerSlotViewModels({
+      ...baseStatus,
+      worker_capacity: { ...baseStatus.worker_capacity, slots: [{ ...liveSlot, attention }] },
+    });
+    expect(vms[0].attention).toEqual(attention);
+    expect(buildWorkerSlotViewModels(baseStatus)[0].attention).toBeNull();
   });
 
   it('marks the slot whose run waits for input, with the question on one line', () => {
@@ -265,5 +278,41 @@ describe('buildWorkerSlotViewModels — phases', () => {
     expect(vms[0].phases[0]).toMatchObject({ name: 'explore', state: 'done' });
     expect(vms[0].phases[1]).toMatchObject({ name: 'implement', state: 'active' });
     expect(vms[0].phases[2]).toMatchObject({ name: 'review', state: 'pending' });
+  });
+});
+
+describe('project views from the watcher', () => {
+  const project = (id: string, stateDir: string) => ({
+    id, name: `name-${id}`, target_repo_root: `/repo/${id}`, state_dir: stateDir,
+    repo_present: true, control_socket: null, coordinator_running: true,
+  });
+  const status = { cursor: 3, project: { id: 'a', name: 'name-a', target_repo_root: '/repo/a' } } as unknown as StatusView;
+  const states: ProjectWatchState[] = [
+    { project: project('a', '/state/a'), connection: 'running', error: null, status, cursor: 3 },
+    { project: project('b', '/state/b'), connection: 'stopped', error: null, status, cursor: 3 },
+    { project: project('c', '/state/c'), connection: 'unreachable', error: 'connect ECONNREFUSED', status: null, cursor: null },
+  ];
+
+  it('builds one view per watched project, marking a kept status of a not-running project stale', () => {
+    const views = buildProjectViews(states);
+    expect(views.map((v) => [v.project_id, v.name, v.state_dir, v.connection, v.stale])).toEqual([
+      ['a', 'name-a', '/state/a', 'running', false],
+      ['b', 'name-b', '/state/b', 'stopped', true],
+      ['c', 'name-c', '/state/c', 'unreachable', false],
+    ]);
+    expect(views[0].status).toBe(status);
+    expect(views[2].status).toBeNull();
+  });
+
+  it('selects the project by state directory', () => {
+    const views = buildProjectViews(states);
+    expect(selectProjectView(views, '/state/b')?.project_id).toBe('b');
+    expect(selectProjectView(views, '/state/none')).toBeNull();
+  });
+
+  it('describes the connection, with the error when there is one', () => {
+    expect(describeConnection({ connection: 'running', error: null })).toBe('running');
+    expect(describeConnection({ connection: 'stopped', error: null })).toBe('stopped (coordinator not running)');
+    expect(describeConnection({ connection: 'unreachable', error: 'connect ECONNREFUSED' })).toBe('unreachable: connect ECONNREFUSED');
   });
 });

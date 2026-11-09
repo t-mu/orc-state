@@ -1,17 +1,31 @@
-import React from 'react';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from 'ink-testing-library';
 import { App } from './App.tsx';
 import type { SpriteMap } from './sprites.ts';
+import type { ProjectWatchUpdate } from '../../client.ts';
+import { emptyTuiStatus, type TuiWatchSource } from './status.ts';
 
 const { mockBuildStatus, mockBanner } = vi.hoisted(() => ({
   mockBuildStatus: vi.fn(),
   mockBanner: vi.fn(() => 'ORC-STATE'),
 }));
 
-vi.mock('../statusView.ts', () => ({
-  buildStatus: mockBuildStatus,
-}));
+/** A watcher with one project at /tmp/state: running with `mockBuildStatus()`, or stopped without a status when it throws. */
+const source: TuiWatchSource = {
+  projects: () => {
+    const project = {
+      id: 'p1', name: 'demo', target_repo_root: '/repo', state_dir: '/tmp/state',
+      repo_present: true, control_socket: null, coordinator_running: true,
+    };
+    try {
+      return [{ project, connection: 'running', error: null, status: mockBuildStatus(), cursor: 0 }];
+    } catch {
+      return [{ project: { ...project, coordinator_running: false }, connection: 'stopped', error: null, status: null, cursor: null }];
+    }
+  },
+  onUpdate: () => () => {},
+};
 
 vi.mock('../banner.ts', () => ({
   renderBanner: mockBanner,
@@ -36,16 +50,65 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  it('renders without crashing when buildStatus throws for a missing state dir', () => {
+  it('shows a project whose coordinator is stopped as stopped, with the empty dashboard', () => {
     mockBuildStatus.mockImplementation(() => {
-      throw new Error('missing state');
+      throw new Error('no coordinator');
     });
 
-    const app = render(<App stateDir="/tmp/nonexistent-orc" sprites={sprites} intervalMs={1000} />);
+    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const frame = app.lastFrame() ?? '';
 
-    expect(app.lastFrame()).toContain('ORC-STATE');
-    expect(app.lastFrame()).toContain('Live Workers');
-    expect(app.lastFrame()).toContain('Recent Events');
+    expect(frame).toContain('ORC-STATE');
+    expect(frame).toContain('project: demo (p1) → /repo');
+    expect(frame).toContain('coordinator: stopped (coordinator not running)');
+    expect(frame).toContain('Live Workers');
+    expect(frame).toContain('Recent Events');
+  });
+
+  it('says so when the state directory belongs to no watched project', () => {
+    mockBuildStatus.mockReturnValue(emptyTuiStatus());
+
+    const frame = render(<App source={source} stateDir="/tmp/other" sprites={sprites} intervalMs={1000} />).lastFrame() ?? '';
+
+    expect(frame).toContain('project: (none selected)');
+    expect(frame).toContain('project not registered: /tmp/other');
+  });
+
+  it('re-renders on a watcher update and lists the other projects with their connection', async () => {
+    let listener: ((update: ProjectWatchUpdate) => void) | null = null;
+    const project = (id: string, stateDir: string) => ({
+      id, name: id, target_repo_root: `/repo/${id}`, state_dir: stateDir,
+      repo_present: true, control_socket: null, coordinator_running: true,
+    });
+    let todo = 1;
+    const live: TuiWatchSource = {
+      projects: () => [
+        { project: project('alpha', '/tmp/state'), connection: 'running', error: null, status: { ...emptyTuiStatus(), tasks: { counts: { todo }, total: todo } } as never, cursor: 1 },
+        { project: project('beta', '/tmp/beta'), connection: 'unreachable', error: 'connect ECONNREFUSED', status: null, cursor: null },
+      ],
+      onUpdate: (fn) => {
+        listener = fn;
+        return () => { listener = null; };
+      },
+    };
+
+    const app = render(<App source={live} stateDir="/tmp/state" sprites={sprites} intervalMs={60_000} />);
+    expect(app.lastFrame()).toContain('coordinator: running');
+    expect(app.lastFrame()).toContain('other projects: beta unreachable');
+    expect(app.lastFrame()).toContain('todo: 1');
+
+    todo = 4;
+    await act(async () => {
+      listener?.({ type: 'event', project_id: 'alpha', row: { seq: 2 } as never });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(app.lastFrame()).toContain('todo: 4');
+
+    await act(async () => {
+      app.unmount();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(listener).toBeNull();
   });
 
   it('renders only live registered workers without phantom slot placeholders', () => {
@@ -107,7 +170,7 @@ describe('App', () => {
       eventReadError: '',
     });
 
-    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
     const frame = app.lastFrame() ?? '';
 
     // Only the registered live worker appears — no phantom orc-N placeholders
@@ -202,7 +265,7 @@ describe('App', () => {
         eventReadError: '',
       });
 
-    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -235,7 +298,7 @@ describe('App', () => {
       eventReadError: '',
     });
 
-    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
     const frame = app.lastFrame() ?? '';
 
     expect(frame).toContain('orc-1 run_started 111-fix-package-json');
@@ -267,7 +330,7 @@ describe('App', () => {
     };
     mockBuildStatus.mockReturnValue(status);
 
-    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
     const frame = app.lastFrame() ?? '';
 
     expect(frame).toContain('1 WAITING FOR INPUT');
@@ -278,7 +341,7 @@ describe('App', () => {
 
     cleanup();
     mockBuildStatus.mockReturnValue({ ...status, waiting_input: [] });
-    const quiet = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />).lastFrame() ?? '';
+    const quiet = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />).lastFrame() ?? '';
     expect(quiet).not.toContain('NEEDS INPUT');
     expect(quiet).not.toContain('WAITING FOR INPUT');
   });
@@ -335,7 +398,7 @@ describe('App', () => {
       eventReadError: '',
     });
 
-    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
     const frame = app.lastFrame() ?? '';
 
     expect(frame).toContain('activity: 12s');

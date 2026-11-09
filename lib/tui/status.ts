@@ -1,6 +1,12 @@
-import { buildStatus } from '../statusView.ts';
+import type { ProjectConnectionState, ProjectWatchState, ProjectWatchUpdate, SlotSummary, StatusView } from '../../client.ts';
 import type { SpriteState } from './sprites.ts';
-import type { CurrentActivity } from '../currentActivity.ts';
+
+// lib/tui renders only data obtained through orc-state/client (see boundary.test.ts).
+
+/** A run's current activity line (`StatusView` claims carry it). */
+export type CurrentActivity = NonNullable<StatusView['claims']['active'][number]['current_activity']>;
+/** What an agent's run needs from a human (`SlotSummary.attention`). */
+export type TuiAttention = NonNullable<SlotSummary['attention']>;
 
 export interface TuiSlot {
   agent_id: string;
@@ -14,6 +20,7 @@ export interface TuiSlot {
   active_task_ref: string | null;
   last_status_change_at: string | null;
   last_heartbeat_at: string | null;
+  attention?: TuiAttention | null;
 }
 
 export interface TuiScout {
@@ -118,6 +125,10 @@ export interface WorkerSlotViewModel {
   current_phase: string | null;
   phases: PhaseEntry[];
   current_activity: CurrentActivity | null;
+  /** The activity text alone (`current_activity.text`), null without one. */
+  activity_label: string | null;
+  /** What the slot's run needs from a human, null when nothing. */
+  attention: TuiAttention | null;
   age_seconds: number | null;
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
@@ -197,12 +208,50 @@ export function emptyTuiStatus(): TuiStatus {
   };
 }
 
-export function loadTuiStatus(stateDir: string): TuiStatus {
-  try {
-    return buildStatus(stateDir) as unknown as TuiStatus;
-  } catch {
-    return emptyTuiStatus();
-  }
+/** One watched project as the TUI shows it. */
+export interface TuiProjectView {
+  project_id: string;
+  name: string;
+  target_repo_root: string;
+  state_dir: string;
+  connection: ProjectConnectionState;
+  /** Why the project is `unreachable` or `incompatible` (null otherwise). */
+  error: string | null;
+  /** The latest status; kept, possibly stale, while the project is not `running`. */
+  status: TuiStatus | null;
+  /** True when `status` is from an earlier connection (the project is not `running`). */
+  stale: boolean;
+}
+
+/** The view model of every project the watcher reports, in its order. */
+export function buildProjectViews(states: ProjectWatchState[]): TuiProjectView[] {
+  return states.map((state) => ({
+    project_id: state.project.id,
+    name: state.project.name,
+    target_repo_root: state.project.target_repo_root,
+    state_dir: state.project.state_dir,
+    connection: state.connection,
+    error: state.error,
+    status: state.status as unknown as TuiStatus | null,
+    stale: state.status != null && state.connection !== 'running',
+  }));
+}
+
+/** The project whose state directory is `stateDir` (the one `orc watch` was started for), or null. */
+export function selectProjectView(views: TuiProjectView[], stateDir: string): TuiProjectView | null {
+  return views.find((view) => view.state_dir === stateDir) ?? null;
+}
+
+/** What the TUI reads from a project watcher (`ProjectWatcher` from orc-state/client). */
+export interface TuiWatchSource {
+  projects(): ProjectWatchState[];
+  onUpdate(listener: (update: ProjectWatchUpdate) => void): () => void;
+}
+
+/** One line describing a project's connection: `running`, `stopped`, `unreachable: <why>`. */
+export function describeConnection(view: Pick<TuiProjectView, 'connection' | 'error'>): string {
+  const label = view.connection === 'stopped' ? 'stopped (coordinator not running)' : view.connection;
+  return view.error ? `${label}: ${view.error}` : label;
 }
 
 export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewModel[] {
@@ -235,6 +284,8 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       current_phase: claim?.current_phase ?? null,
       phases: phaseHistory.length > 0 ? buildPhases(phaseHistory, heartbeat_seconds, runState) : [],
       current_activity: claim?.current_activity ?? null,
+      activity_label: claim?.current_activity?.text ?? null,
+      attention: slot.attention ?? null,
       age_seconds: claim?.age_seconds ?? null,
       activity_seconds: claim?.activity_seconds ?? null,
       heartbeat_seconds,
