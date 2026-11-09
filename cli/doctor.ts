@@ -17,7 +17,7 @@ import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
 import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
 import { coordinatorPidFileProblem } from '../lib/coordinatorLiveness.ts';
-import { ControlClient } from '../lib/controlClient.ts';
+import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { staleCodeWarning } from '../lib/codeIdentity.ts';
 import { checkTmux } from '../adapters/tmux.ts';
 import type { Agent } from '../types/agents.ts';
@@ -278,7 +278,7 @@ function checkProviderBinary(provider: string) {
 
 async function coordinatorCodeWarning(): Promise<string | null> {
   try {
-    return staleCodeWarning(await new ControlClient(STATE_DIR, { timeoutMs: 3_000 }).health());
+    return staleCodeWarning(await new ControlClient(STATE_DIR, { timeoutMs: 3_000, socketPath: controlSocketFromEnv() }).health());
   } catch {
     return null; // no coordinator running, or it predates /v1/health
   }

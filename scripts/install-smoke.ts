@@ -16,7 +16,8 @@
  *   5. ./node_modules/.bin/orc --help   — verify binary resolves and runs
  *   6. ./node_modules/.bin/orc doctor   — verify CLI commands execute
  *   7. import ControlClient from the package root; internal subpaths stay unexported
- *   8. cleanup
+ *   8. import orc-state/client with a bogus ORC_PROJECT_ID and call listProjects
+ *   9. cleanup
  *
  * This is stronger than pack-smoke (which symlinks repo node_modules) because
  * it validates that the tarball's declared dependencies are actually sufficient
@@ -111,6 +112,18 @@ function main(): void {
       "console.log('public-api-ok');",
     ].join('\n')], tmpProject, env);
     if (!imported.includes('public-api-ok')) throw new Error(`public API import failed: ${imported}`);
+
+    console.log('7. importing the client entry outside any project...');
+    // A bogus project id would make the root entry throw at import; the client entry must not care.
+    const clientEnv: NodeJS.ProcessEnv = { ...env, ORC_PROJECT_ID: 'bogus', ORC_DATA_HOME: join(tmpProject, 'orc-data') };
+    const client = runWithEnv(process.execPath, ['--input-type=module', '-e', [
+      "const { ControlClient, listProjects } = await import('orc-state/client');",
+      "if (typeof ControlClient !== 'function') throw new Error('ControlClient is not exported from orc-state/client');",
+      'const projects = listProjects();',
+      "if (!Array.isArray(projects) || projects.length !== 0) throw new Error(`listProjects returned ${JSON.stringify(projects)}`);",
+      "console.log('client-entry-ok');",
+    ].join('\n')], tmpProject, clientEnv);
+    if (!client.includes('client-entry-ok')) throw new Error(`client entry import failed: ${client}`);
 
     console.log('install smoke ok');
   } finally {
