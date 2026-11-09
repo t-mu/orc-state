@@ -74,6 +74,15 @@ describe('code identity', () => {
       expect(staleCodeWarning({ ...running, version: '1.1.0' })).toBeNull();
     });
 
+    it('warns when the coordinator reports no identity at all, but not when the disk has none either', () => {
+      touch('coordinator.js', normalised);
+      const legacy = { code_root: root, code_mtime: new Date(normalised * 1000).toISOString(), build_id: null };
+      expect(staleCodeWarning(legacy)).toBeNull(); // disk side unknowable
+      build('abc');
+      expect(staleCodeWarning(legacy)).toBe('coordinator reports no build id (older than this build); restart with orc start-session --restart-stale');
+      expect(staleCodeWarning({ ...legacy, build_id: 'abc' })).toBeNull();
+    });
+
     it('does not use mtimes for built code', () => {
       touch('coordinator.js', normalised);
       build('same');
