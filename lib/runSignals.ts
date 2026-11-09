@@ -143,7 +143,8 @@ function workerNotes(events: OrcEvent[]): Map<string, { agentId: string; notes: 
 }
 
 /** An inferred phase's evidence time (`payload.evidence_ts`), else the event's own `ts`. */
-function phaseEvidenceTs(event: OrcEvent): string {
+/** A phase event's evidence time (`payload.evidence_ts` when valid, else its `ts`). */
+export function phaseEvidenceTs(event: Pick<OrcEvent, 'ts'>): string {
   const evidenceTs = (event as { payload?: { evidence_ts?: unknown } }).payload?.evidence_ts;
   return typeof evidenceTs === 'string' && Number.isFinite(Date.parse(evidenceTs)) ? evidenceTs : event.ts;
 }

@@ -13,6 +13,17 @@ const T0 = Date.parse('2026-10-31T12:00:00.000Z');
 const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();
 
 describe('applyHookActivity', () => {
+  it('keeps the newest git commit as last_commit_ts after later tool calls', () => {
+    const snap = applyHookActivity(undefined, 'run-1', 'w1', [
+      { type: 'tool', tool: 'Bash', brief: 'git commit -m "feat: x"', ts: at(0) },
+      { type: 'tool', tool: 'Bash', brief: 'npm test', ts: at(1000) },
+    ], T0 + 5000);
+    expect(snap).toMatchObject({ last_tool_brief: 'npm test', last_commit_ts: at(0) });
+    // A late, older commit record does not move it back.
+    const later = applyHookActivity(snap, 'run-1', 'w1', [{ type: 'tool', tool: 'Bash', brief: 'git commit --amend', ts: at(-1000) }], T0 + 5000);
+    expect(later.last_commit_ts).toBe(at(0));
+  });
+
   it('labels a run from tool calls while it has no todo/note label', () => {
     const snap = applyHookActivity(undefined, 'run-1', 'w1', [
       { type: 'tool', tool: 'Bash', brief: 'npm test', ts: at(0) },
