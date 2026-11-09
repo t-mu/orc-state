@@ -518,7 +518,8 @@ export function nextSeq(logPath: string): number {
 }
 
 /**
- * Query events with SQL filters. Used by the query_events MCP tool.
+ * Query events with SQL filters, for internal readers and tests. MCP query_events and
+ * `orc events` page through queryEventPage (lib/eventQuery.ts) instead.
  */
 export function queryEvents(
   stateDir: string,
@@ -587,17 +588,54 @@ const NOTIFICATION_EVENT_TYPES = [
   'input_response',
 ] as const;
 
+export interface EventPageFilter {
+  run_id?: string;
+  agent_id?: string;
+  task_ref?: string;
+  event_type?: string;
+  notifications_only?: boolean;
+  fts_query?: string;
+}
+
+export interface EventPage {
+  events: OrcEvent[];
+  last_seq: number;
+  has_more: boolean;
+}
+
 /**
- * Query notification-class events with seq > afterSeq, ordered by seq ASC.
- * Returns at most 200 results.
+ * One page of matching events, ascending by seq. With afterSeq: the oldest
+ * `limit` events after it, has_more when newer ones remain. Without: the newest
+ * `limit` events, last_seq the newest matching seq, has_more when older ones remain.
+ * last_seq comes from the SQLite seq, so a cursor moves past corrupted rows.
  */
-export function queryNotificationEvents(stateDir: string, afterSeq: number): OrcEvent[] {
+export function queryEventPage(stateDir: string, filter: EventPageFilter, afterSeq: number | null, limit: number): EventPage {
   const db = getDb(stateDir);
-  const placeholders = NOTIFICATION_EVENT_TYPES.map(() => '?').join(', ');
-  const rows = db.prepare(
-    `SELECT payload FROM events WHERE event IN (${placeholders}) AND seq > ? ORDER BY seq ASC LIMIT 200`,
-  ).all(...NOTIFICATION_EVENT_TYPES, afterSeq) as Array<{ payload: string }>;
-  return rows.flatMap((row, i) => { const e = parseEventRow(row, i); return e ? [e] : []; });
+  const fts = filter.fts_query != null;
+  const col = (name: string) => (fts ? `e.${name}` : name);
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (fts) { conditions.push('events_fts MATCH ?'); params.push(filter.fts_query); }
+  if (filter.run_id != null) { conditions.push(`${col('run_id')} = ?`); params.push(filter.run_id); }
+  if (filter.agent_id != null) { conditions.push(`${col('agent_id')} = ?`); params.push(filter.agent_id); }
+  if (filter.task_ref != null) { conditions.push(`${col('task_ref')} = ?`); params.push(filter.task_ref); }
+  if (filter.event_type != null) { conditions.push(`${col('event')} = ?`); params.push(filter.event_type); }
+  if (filter.notifications_only) {
+    conditions.push(`${col('event')} IN (${NOTIFICATION_EVENT_TYPES.map(() => '?').join(', ')})`);
+    params.push(...NOTIFICATION_EVENT_TYPES);
+  }
+  if (afterSeq != null) { conditions.push(`${col('seq')} > ?`); params.push(afterSeq); }
+  const from = fts ? 'events e JOIN events_fts ON events_fts.rowid = e.seq' : 'events';
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const direction = afterSeq != null ? 'ASC' : 'DESC';
+  const rows = db.prepare(`SELECT ${col('seq')} AS seq, ${col('payload')} AS payload FROM ${from} ${where} ORDER BY ${col('seq')} ${direction} LIMIT ?`)
+    .all(...params, limit + 1) as Array<{ seq: number; payload: string }>;
+  const has_more = rows.length > limit;
+  const page = rows.slice(0, limit);
+  if (afterSeq == null) page.reverse();
+  const events = page.flatMap((row, i) => { const e = parseEventRow(row, i); return e ? [e] : []; });
+  const last_seq = page.length > 0 ? page[page.length - 1].seq : (afterSeq ?? 0);
+  return { events, last_seq, has_more };
 }
 
 /**

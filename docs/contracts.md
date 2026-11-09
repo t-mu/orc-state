@@ -199,7 +199,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 - Task outcome fields on `run_failed` and `claim_expired`: `task_status` (resulting status: `todo` when requeued, `blocked` after `--policy=block` or the fifth attempt, unchanged when an operator already moved the task), `attempt_count`, `requeue_eligible_after`, `blocked_reason` (only when `blocked`). `policy` is what was asked for; `task_status` is what happened. Events written before these fields existed lack them, and a stored `claim_expired` from before `agent_id` was required still reads back (the rule applies on append).
 - A terminal run event (`run_finished`, `run_failed`, `run_cancelled`, `claim_expired`) also clears the run's finalization fields; no `finalization_changed` is emitted for that.
 - Lease renewals are snapshot-only: a renewal without a `heartbeat` event (coordinator phase-signal or PID-probe renewal, finalize lease) changes `lease_expires_at` with no event; read it from `/v1/snapshot`.
-- Query: `orc events-tail`, MCP `query_events` (filters `run_id`, `agent_id`, `event_type`, `after_seq`, free text; ≤ 500 rows).
+- Query: `orc events --json` and MCP `query_events` share one handler and return `{ events, last_seq, has_more }`. Filters: `run_id`, `agent_id`, `task_ref`, `event_type`, `notifications_only`, `fts_query` (FTS5). `limit` defaults to 25, max 100 (larger is an error). With `after_seq`: the oldest `limit` matching events after it, ascending; `last_seq` is the highest seq returned (`after_seq` when empty), `has_more` when more follow. Without: the newest `limit` matching events, ascending; `last_seq` is the newest matching seq (0 when none), `has_more` when older ones exist. Events are compact (`event_id`, `actor_type`, `actor_id` dropped; `input_response` loses `payload.question`) unless `verbose`. A master starts its notification cursor at `get_status.last_notification_seq`.
 
 ---
 
@@ -383,7 +383,7 @@ Importing it has no side effects: no project resolution, registry access, git ca
 | Group | Commands |
 |---|---|
 | Session and setup | `start-session`, `init`, `install`, `install-agents`, `install-skills`, `project`, `mcp-server` |
-| Inspection | `status`, `watch`, `attach`, `doctor`, `preflight`, `runs-active`, `run-info`, `sessions`, `events-tail`, `events-filter`, `event-cursor`, `waiting-input`, `worker-status`, `terminal`, `memory-status`, `memory-search` |
+| Inspection | `status`, `watch`, `attach`, `doctor`, `preflight`, `runs-active`, `run-info`, `sessions`, `events`, `event-cursor`, `waiting-input`, `worker-status`, `terminal`, `memory-status`, `memory-search` |
 | Master / operator | `delegate`, `task-mark-done`, `task-reset`, `task-unblock`, `task-cancel`, `run-expire`, `run-close`, `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`, `pr-diff`, `pr-review`, `pr-merge`, `pr-status` |
 | Worker lifecycle (flags below) | `report-for-duty`, `run-start`, `progress`, `review-submit`, `review-read`, `run-work-complete`, `run-finish`, `run-fail`, `run-input-request`, `memory-wake-up`, `memory-record` |
 | Hooks and debug | `stop-check` (Claude Stop hook), `control` (debug; its `command`, `ack`, `message`, `messages` and `consume` subcommands are **Experimental**, like the routes they call), `run-heartbeat` (deprecated no-op) |
@@ -402,8 +402,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 | `orc runs-active --json` | `{ project, total, runs, event_read_error }` |
 | `orc run-info <run_id> --json` | the run's claim fields + `task_title`, `worktree_path`, `task_spec_revision_status` |
 | `orc sessions --json` | `{ total, sessions }` |
-| `orc events-tail --json` | `{ total, events }` |
-| `orc events-filter --json` | array of events |
+| `orc events --json` | `{ events, last_seq, has_more }` (same as MCP `query_events`) |
 | `orc review-read --json` | `{ count, reviews }` |
 | `orc waiting-input --json` | array of `{ run_id, agent_id, task_ref, question, request_id, waiting_seconds, input_requested_at }` |
 | `orc worker-status --json` | array of agent records + `active_task_ref`, `heartbeat_seconds_ago`; one record when given an `agent_id` |
@@ -442,7 +441,7 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 
 | Group | Tool names |
 |---|---|
-| Reads | `list_tasks`, `get_task`, `list_agents`, `list_active_runs`, `list_stalled_runs`, `get_run`, `get_status`, `get_agent_workview`, `get_recent_events`, `query_events`, `list_waiting_input`, `list_worktrees`, `get_notifications` |
+| Reads | `list_tasks`, `get_task`, `list_agents`, `list_active_runs`, `list_stalled_runs`, `get_run`, `get_status`, `get_agent_workview`, `query_events`, `list_waiting_input`, `list_worktrees` |
 | Task authoring and control | `create_task`, `update_task`, `delegate_task`, `cancel_task`, `reset_task`, `unblock_task`, `close_run`, `respond_input` |
 | Coordinator | `restart_coordinator` (master secret; checked against the state, not sent to the coordinator it replaces) |
 | Scouts | `request_scout`, `get_scout_report`, `remove_scout` |

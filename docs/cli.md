@@ -8,7 +8,7 @@
 - `orc <subcommand> --help` (or `-h`) prints that subcommand's usage line and never runs it.
 - Commands that show state print the project they act on.
 - Output is for people or for scripts, decided by stdout. On a terminal, `--json` is indented and the `status`/`watch` banner is shown (by `watch` only when it fits). When stdout is piped or captured, `--json` is one compact line and the banner is omitted. The JSON shape is the same either way. A `--json` result is never cut short when piped.
-- Argument parsing is strict for the commands that read project state (`status`, `runs-active`, `run-info`, `review-read`, `worker-status`, `waiting-input`, `sessions`, `events-tail`, `events-filter`) and for `task-cancel`, `task-reset` and `worker-remove`: `--x=v` and `--x v` both work, an unknown flag or surplus argument is a usage error (exit 1), and a flag's value is never taken as the positional target.
+- Argument parsing is strict for the commands that read project state (`status`, `runs-active`, `run-info`, `review-read`, `worker-status`, `waiting-input`, `sessions`, `events`) and for `task-cancel`, `task-reset` and `worker-remove`: `--x=v` and `--x v` both work, an unknown flag or surplus argument is a usage error (exit 1), and a flag's value is never taken as the positional target.
 - Project-scoped read commands exit 1 with the no-project message when no project resolves, instead of returning empty results.
 
 ## Session management
@@ -115,8 +115,7 @@ Plan Markdown format: [plan-template.md](plan-template.md).
 | `runs-active` | `[--json]` `[--via-control]` | In-progress/claimed runs with idle/age; JSON rows carry `stalled`. |
 | `run-info <run_id>` | `[--json]` | Claim state, task, worktree, idle time. |
 | `waiting-input` | `[--json]` | Live runs (claimed or in progress) waiting for input, with `request_id` in `--json`. |
-| `events-tail` | `[--n=<count>]` `[--event=<name>]` `[--json]` | Last N events. |
-| `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--after=<seq>]` `[--json]` | Query events; `--after` keeps events with a greater `seq`. |
+| `events` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--task-ref=<ref>]` `[--event=<type>]` `[--notifications]` `[--after=<seq>]` `[--limit=<1-100>]` `[--fts=<query>]` `[--verbose]` `[--json]` `[--follow [--max-events=<n>]]` | One page of events, same handler and JSON as MCP `query_events`: `{ events, last_seq, has_more }`. Without `--after`, the newest `--limit` (default 25) matching events; with it, the oldest events after that `seq` (pass `last_seq` back to page on). `--notifications` keeps the notification class. Events are compact (no `event_id`, `actor_type`, `actor_id`; `input_response` without its `question`) unless `--verbose`. `--follow` prints the first page, then each new matching event as it arrives (one JSON line each with `--json`), stopping after `--max-events` when given. |
 | `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` | Show a consumer offset; reset replays events after `<seq>` (coordinator must be stopped). |
 
 ### `orc control`

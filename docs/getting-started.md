@@ -60,7 +60,7 @@ Automatic: each tick the coordinator claims an eligible `todo` task, creates a w
 ```bash
 orc status                 # one-shot summary
 orc watch                  # live dashboard
-orc events-tail            # recent events
+orc events                 # recent events
 orc attach <agent-id>      # worker's tmux terminal, read-only (--write for input, Ctrl-b d detaches)
 orc doctor                 # health check
 ```

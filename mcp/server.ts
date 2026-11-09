@@ -50,12 +50,12 @@ const TOOL_VALIDATORS = new Map(
   TOOLS.map((tool) => [tool.name, ajv.compile(tool.inputSchema)]),
 );
 
-/** A payload that reports an `error` (cancel_task's already_terminal, a memory failure) is a tool error too. */
-export function asToolResult(payload: unknown) {
+/** A payload that reports an `error` (cancel_task's already_terminal, a memory failure) is a tool error too. Event pages are compact JSON. */
+export function asToolResult(payload: unknown, { compact = false }: { compact?: boolean } = {}) {
   const failed = typeof payload === 'object' && payload !== null && typeof (payload as { error?: unknown }).error === 'string';
   return {
     ...(failed ? { isError: true } : {}),
-    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(payload, null, compact ? undefined : 2) }],
   };
 }
 
@@ -175,8 +175,6 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleListStalledRuns(stateDir, args);
     case 'get_task':
       return handlers.handleGetTask(stateDir, args);
-    case 'get_recent_events':
-      return handlers.handleGetRecentEvents(stateDir, args);
     case 'get_status':
       return handlers.handleGetStatus(stateDir, args);
     case 'get_agent_workview':
@@ -193,8 +191,6 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleQueryEvents(stateDir, args);
     case 'list_worktrees':
       return handlers.handleListWorktrees(stateDir);
-    case 'get_notifications':
-      return handlers.handleGetNotifications(stateDir, args);
     case 'memory_wake_up':
       return handlers.handleMemoryWakeUp(stateDir, args);
     case 'memory_recall':
@@ -235,7 +231,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     const payload = await invokeTool(STATE_DIR, name, args);
-    return asToolResult(payload);
+    return asToolResult(payload, { compact: name === 'query_events' });
   } catch (err) {
     if (err instanceof McpError) throw err;
     if (isExpectedToolError(err)) {

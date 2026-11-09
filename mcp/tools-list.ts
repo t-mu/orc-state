@@ -77,30 +77,6 @@ export const TOOLS = [
     },
   },
   {
-    name: 'get_recent_events',
-    description: 'Return the most recent events from the SQLite events database. run_id is filtered server-side; agent_id matches both the agent_id column and the actor_id payload field.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: {
-          type: 'integer',
-          minimum: 0,
-          maximum: 200,
-          description: 'Max events to return (default: 20, max: 200)',
-        },
-        agent_id: {
-          type: 'string',
-          description: 'Filter to events where agent_id or actor_id matches this value',
-        },
-        run_id: {
-          type: 'string',
-          description: 'Filter to events where run_id matches this value',
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'get_status',
     description: 'Return compact aggregate status (agents, task counts, active tasks, last_notification_seq, stalled runs, project). An active task with a running claim carries current_activity: {text, source: note|todo|tool, ts} or null.',
     inputSchema: {
@@ -259,7 +235,7 @@ export const TOOLS = [
   },
   {
     name: 'request_scout',
-    description: 'Launch an on-demand investigation-only scout session. Scouts inspect code, logs, git history, runtime state, and optionally the web, then report findings without editing files or mutating orchestrator state. With the coordinator running this returns { agent_id } at once and the coordinator launches and briefs the scout: a scout_launched or scout_launch_failed event (get_recent_events) says how it went, and get_scout_report is `ended` if the launch failed. With no coordinator it waits for the launch and returns the scout\'s details.',
+    description: 'Launch an on-demand investigation-only scout session. Scouts inspect code, logs, git history, runtime state, and optionally the web, then report findings without editing files or mutating orchestrator state. With the coordinator running this returns { agent_id } at once and the coordinator launches and briefs the scout: a scout_launched or scout_launch_failed event (query_events) says how it went, and get_scout_report is `ended` if the launch failed. With no coordinator it waits for the launch and returns the scout\'s details.',
     inputSchema: {
       type: 'object',
       required: ['objective'],
@@ -362,37 +338,22 @@ export const TOOLS = [
   },
   {
     name: 'query_events',
-    description: 'Query the SQLite events database with optional filters. Returns last `limit` matching events.',
+    description: 'Read the event log, one page at a time. Returns { events, last_seq, has_more } (same as orc events --json). With after_seq: the oldest `limit` matching events after it, ascending; pass last_seq back as after_seq to page forward without gaps; has_more means more follow. Without after_seq: the newest `limit` matching events (ascending), last_seq = the newest matching seq, has_more means older ones exist. Events are compact (no event_id, actor_type, actor_id; input_response without the repeated question) unless verbose is true. To poll notifications, start from get_status.last_notification_seq and call with notifications_only: true, after_seq: <cursor>.',
     inputSchema: {
       type: 'object',
       properties: {
-        run_id: {
-          type: 'string',
-          description: 'Filter by run_id',
+        run_id: { type: 'string', description: 'Filter by run_id' },
+        agent_id: { type: 'string', description: 'Filter by agent_id' },
+        task_ref: { type: 'string', description: 'Filter by task_ref' },
+        event_type: { type: 'string', description: 'Filter by event type' },
+        notifications_only: {
+          type: 'boolean',
+          description: 'Only notification-class events: run_finished, run_failed, run_cancelled, worker_needs_attention, input_requested, input_response',
         },
-        agent_id: {
-          type: 'string',
-          description: 'Filter by agent_id',
-        },
-        event_type: {
-          type: 'string',
-          description: 'Filter by event type',
-        },
-        after_seq: {
-          type: 'integer',
-          minimum: 0,
-          description: 'Only return events with seq > after_seq',
-        },
-        limit: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 500,
-          description: 'Maximum events to return (default: 50, max: 500)',
-        },
-        fts_query: {
-          type: 'string',
-          description: 'Full-text search query (FTS5 syntax) to match against event payloads',
-        },
+        after_seq: { type: 'integer', minimum: 0, description: 'Cursor: return events with seq > after_seq, oldest first' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Events per page (default 25, max 100)' },
+        fts_query: { type: 'string', description: 'Full-text search query (FTS5 syntax) over event payloads' },
+        verbose: { type: 'boolean', description: 'Return the full event shape (event_id, actor_type, actor_id, full input_response payload)' },
       },
       additionalProperties: false,
     },
@@ -453,21 +414,6 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'get_notifications',
-    description: 'Poll for notification-class events (task completions, failures, cancellations, input requests) using a cursor. Returns events and a last_seq cursor for the next call. On startup, call with no after_seq to catch up on any missed events.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        after_seq: {
-          type: 'integer',
-          minimum: 0,
-          description: 'Return events with seq > after_seq. Omit (or pass 0) on first call to retrieve all notification events.',
-        },
-      },
       additionalProperties: false,
     },
   },

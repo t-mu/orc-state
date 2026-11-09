@@ -52,7 +52,7 @@ describe('cli/orc.ts', () => {
     expect(result.stdout).not.toContain('task-create');
     expect(result.stdout).toContain('worker-gc');
     expect(result.stdout).not.toMatch(/register-worker|start-worker-session|deregister|worker-clearall/);
-    expect(result.stdout).toContain('events-tail');
+    expect(result.stdout).toMatch(/^\s+events$/m);
     expect(result.stdout).toContain('install-agents');
     expect(result.stdout.indexOf('Blessed workflow commands:')).toBeLessThan(result.stdout.indexOf('Recovery / debug commands:'));
     expect(result.stdout.indexOf('Recovery / debug commands:')).toBeLessThan(result.stdout.indexOf('Supported inspection commands:'));
@@ -85,7 +85,7 @@ describe('cli/orc.ts', () => {
 
   it('dispatches documented inspection commands', () => {
     const stateDir = createTempStateDir('orc-dispatch-');
-    const result = spawnSync('node', ['cli/orc.ts', 'events-tail'], {
+    const result = spawnSync('node', ['cli/orc.ts', 'events'], {
       cwd: repoRoot,
       encoding: 'utf8',
       env: { ...process.env, ...bridgeProjectEnv(stateDir) },

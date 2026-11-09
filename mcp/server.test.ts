@@ -42,7 +42,7 @@ describe('orchestrator mcp server foundation', () => {
     expect(names).toContain('list_active_runs');
     expect(names).toContain('list_stalled_runs');
     expect(names).toContain('get_task');
-    expect(names).toContain('get_recent_events');
+    expect(names).toContain('query_events');
     expect(names).toContain('get_status');
     expect(names).toContain('get_agent_workview');
     expect(names).toContain('create_task');
@@ -164,6 +164,12 @@ describe('orchestrator mcp server foundation', () => {
     expect(JSON.parse(asToolResult({ error: 'already_terminal', task_ref: 'orch/t' }).content[0].text)).toEqual({ error: 'already_terminal', task_ref: 'orch/t' });
     expect(asToolResult({ cancelled: true })).not.toHaveProperty('isError');
     expect(asToolResult([{ error: 'x' }])).not.toHaveProperty('isError');
+  });
+
+  it('bounds query_events limit at the schema and keeps event pages compact', () => {
+    expect(validateToolArguments('query_events', { limit: 100 })).toEqual({ ok: true });
+    expect(validateToolArguments('query_events', { limit: 101 })).toMatchObject({ ok: false, error: expect.stringContaining('/limit must be <= 100') });
+    expect(asToolResult({ events: [], last_seq: 0, has_more: false }, { compact: true }).content[0].text).toBe('{"events":[],"last_seq":0,"has_more":false}');
   });
 
   it('reads supported resources and throws for unknown resource uri', () => {

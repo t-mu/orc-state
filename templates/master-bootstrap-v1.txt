@@ -40,13 +40,10 @@ list_stalled_runs(stale_after_ms?)
 get_task(task_ref)
   Returns one task or { error: "not_found" }.
 
-get_recent_events(limit?)
-  Returns recent events from the SQLite events database. Default 20, max 200.
-
 get_status(include_done_count?)
   Returns compact aggregate status (agents, task_counts, active_tasks,
   last_notification_seq, stalled_runs, project).
-  Use last_notification_seq to bootstrap your get_notifications cursor on startup.
+  last_notification_seq is your notification cursor on startup (see NOTIFICATIONS).
 
 get_agent_workview(agent_id)
   Returns a compact actionable work summary for one agent:
@@ -61,17 +58,16 @@ get_run(run_id)
 list_waiting_input()
   Returns all claims currently awaiting worker input, with question text and wait time.
 
-query_events(run_id?, agent_id?, event_type?, after_seq?, limit?, fts_query?)
-  Query the SQLite events database with optional AND-combined filters.
-  Default limit 50, max 500.
+query_events(run_id?, agent_id?, task_ref?, event_type?, notifications_only?, after_seq?, limit?, fts_query?, verbose?)
+  Read the event log one page at a time; filters are AND-combined.
+  Returns { events, last_seq, has_more }. limit: default 25, max 100.
+  With after_seq: the oldest events after it; pass last_seq back to page forward.
+  Without after_seq: the newest events; has_more means older ones exist.
+  Events are compact (no event_id/actor fields) unless verbose: true.
   fts_query: full-text search against event payloads (FTS5 syntax).
 
 list_worktrees()
   List all registered run worktrees with agent, task, path, and branch information.
-
-get_notifications(after_seq?)
-  Poll for notification-class events using a cursor. Returns { notifications, last_seq }.
-  Pass last_seq back as after_seq on the next call to receive only new events.
 
 WRITE STATE
 
@@ -148,17 +144,17 @@ remove_scout(agent_id)
 
 NOTIFICATIONS
 
-Notifications use cursor polling via get_notifications(after_seq?). There are
-no push-injected [ORCHESTRATOR] blocks — poll the event store directly.
+Notifications use cursor polling via query_events(notifications_only=true, after_seq=<cursor>).
+There are no push-injected [ORCHESTRATOR] blocks — poll the event store directly.
 
 On startup:
-  Call get_notifications() with no after_seq to catch up on any missed events.
-  Store the returned last_seq as your cursor.
+  Take last_notification_seq from get_status as the cursor; do not replay history.
 
 After any significant pause or user interaction:
-  Call get_notifications(after_seq=<last_seq>) and update your cursor.
+  Call query_events(notifications_only=true, after_seq=<cursor>) and set the cursor
+  to the returned last_seq. While has_more is true, call again with the new cursor.
 
-For each event in the returned notifications list:
+For each returned event:
 
   run_finished / run_failed / run_cancelled:
     Surface to the user: task ref, worker ID, success/failure.
@@ -187,10 +183,8 @@ For each event in the returned notifications list:
   input_response:
     Informational — no action required unless you need to track responses.
 
-get_notifications response shape:
-  { notifications: OrcEvent[], last_seq: number }
-  last_seq is the highest seq returned (or the after_seq passed in if empty).
-  Always pass last_seq back as after_seq on the next call.
+With after_seq, last_seq is the highest seq returned (or the after_seq passed in
+if empty). Always pass last_seq back as after_seq on the next call.
 
 RESOURCES
 
@@ -256,10 +250,10 @@ Monitoring active work:
 2. get_agent_workview(agent_id) to inspect one worker's next action.
 3. list_active_runs() to see in-progress claims.
 4. list_stalled_runs() to detect stuck workers.
-5. get_recent_events() for coordinator activity.
+5. query_events() for recent coordinator activity.
 
 Workers follow five phases: explore → implement → review → complete → finalize.
-Phase progress is visible via get_recent_events() or query_events(event_type="phase_started").
+Phase progress is visible via query_events(event_type="phase_started", run_id=...).
 A worker stuck in "implement" may need different help than one stuck in "review" —
 use phase context to diagnose stalls before intervening.
 

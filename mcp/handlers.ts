@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory, storeDrawer } from '../lib/memoryStore.ts';
 
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
-import { getLastNotificationSeq, queryEvents, queryNotificationEvents } from '../lib/eventLog.ts';
+import { getLastNotificationSeq } from '../lib/eventLog.ts';
+import { queryEventsPage } from '../lib/eventQuery.ts';
 import { getAgent, listAgents } from '../lib/agentRegistry.ts';
 import { findTask, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
@@ -151,30 +152,6 @@ export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unkno
   const task = findTask(backlog, task_ref as string);
   if (!task) return { error: 'not_found', task_ref };
   return task;
-}
-
-export function handleGetRecentEvents(
-  stateDir: string,
-  { limit = 20, agent_id, run_id }: { limit?: unknown; agent_id?: unknown; run_id?: unknown } = {},
-) {
-  if (!Number.isInteger(limit) || (limit as number) < 0) {
-    throw new Error('limit must be a non-negative integer');
-  }
-  if (agent_id !== undefined && typeof agent_id !== 'string') {
-    throw new Error('agent_id must be a string');
-  }
-  if (run_id !== undefined && typeof run_id !== 'string') {
-    throw new Error('run_id must be a string');
-  }
-  const cap = Math.min(limit as number, 200);
-  if (cap === 0) return [];
-  let events = queryEvents(stateDir, { ...(run_id !== undefined ? { run_id } : {}), limit: cap, order: 'desc' }).reverse();
-  if (agent_id) {
-    events = events.filter(
-      (e) => (e as unknown as Record<string, unknown>).agent_id === agent_id || e.actor_id === agent_id,
-    );
-  }
-  return events;
 }
 
 export function handleGetStatus(stateDir: string, { include_done_count = false }: { include_done_count?: unknown } = {}) {
@@ -414,23 +391,9 @@ export function handleListWaitingInput(stateDir: string) {
   return listWaitingInput(stateDir, readClaims(stateDir).claims);
 }
 
-export function handleQueryEvents(
-  stateDir: string,
-  { run_id, agent_id, event_type, after_seq, limit = 50, fts_query }: Record<string, unknown> = {},
-) {
-  const opts: Parameters<typeof queryEvents>[1] = {
-    limit: Number.isInteger(limit) ? (limit as number) : 50,
-  };
-  if (typeof run_id === 'string') opts.run_id = run_id;
-  if (typeof agent_id === 'string') opts.agent_id = agent_id;
-  if (typeof event_type === 'string') opts.event_type = event_type;
-  if (typeof after_seq === 'number') opts.after_seq = after_seq;
-  if (typeof fts_query === 'string') opts.fts_query = fts_query;
-  try {
-    return queryEvents(stateDir, opts);
-  } catch (err) {
-    return { error: `query_events failed: ${err instanceof Error ? err.message : String(err)}` };
-  }
+/** Same handler and result as `orc events --json`. */
+export function handleQueryEvents(stateDir: string, args: Record<string, unknown> = {}) {
+  return queryEventsPage(stateDir, args);
 }
 
 export function handleListWorktrees(stateDir: string) {
@@ -455,18 +418,6 @@ export function handleListWorktrees(stateDir: string) {
       task_title: task?.title ?? null,
     };
   });
-}
-
-export function handleGetNotifications(stateDir: string, { after_seq }: { after_seq?: unknown } = {}) {
-  const afterSeq = after_seq == null ? 0 : (after_seq as number);
-  if (!Number.isInteger(afterSeq) || afterSeq < 0) {
-    throw new Error('after_seq must be a non-negative integer');
-  }
-  const notifications = queryNotificationEvents(stateDir, afterSeq);
-  const lastSeq = notifications.length > 0
-    ? (notifications[notifications.length - 1].seq ?? afterSeq)
-    : afterSeq;
-  return { notifications, last_seq: lastSeq };
 }
 
 /** "Not initialized" only when the state directory is missing; any other failure keeps its own text. */
