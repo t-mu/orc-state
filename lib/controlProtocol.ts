@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OrcEvent } from '../types/events.ts';
 import type { SchemaSupport } from './schemaCompat.ts';
@@ -126,18 +126,35 @@ export class ControlError extends Error {
   }
 }
 
+export interface SocketPathOptions {
+  platform?: NodeJS.Platform;
+  homeDir?: string;
+  tmpDir?: string;
+}
+
+const SOCKET_PATH_MAX_BYTES = 100;
+
 /**
- * Unix socket paths are limited to ~104 bytes; long state dirs fall back to a
- * per-user 0700 directory under tmpdir so another user cannot pre-create the path.
+ * Unix socket paths are limited to ~104 bytes; a long state dir falls back to a
+ * per-user 0700 directory so another user cannot pre-create the path. On macOS
+ * that directory is `~/.orc/run`, because `tmpdir()` there is a per-session
+ * `/var/folders/...` path the OS cleans; `tmpdir()` is used only when the home
+ * path is itself too long. Other platforms use `<tmpdir>/orc-control-<uid>`.
  */
-export function defaultSocketPath(stateDir: string): string {
+export function defaultSocketPath(stateDir: string, options: SocketPathOptions = {}): string {
   const preferred = join(stateDir, 'control.sock');
-  if (Buffer.byteLength(preferred) <= 100) return preferred;
-  const dir = join(tmpdir(), `orc-control-${process.getuid?.() ?? 'user'}`);
+  if (Buffer.byteLength(preferred) <= SOCKET_PATH_MAX_BYTES) return preferred;
+  const name = `${createHash('sha256').update(stateDir).digest('hex').slice(0, 16)}.sock`;
+  const tmpFallback = join(options.tmpDir ?? tmpdir(), `orc-control-${process.getuid?.() ?? 'user'}`);
+  let dir = tmpFallback;
+  if ((options.platform ?? process.platform) === 'darwin') {
+    const stable = join(options.homeDir ?? homedir(), '.orc', 'run');
+    if (Buffer.byteLength(join(stable, name)) <= SOCKET_PATH_MAX_BYTES) dir = stable;
+  }
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stat = lstatSync(dir);
   if (!stat.isDirectory() || (process.getuid && stat.uid !== process.getuid()) || (stat.mode & 0o077) !== 0) {
     throw new Error(`Control socket directory ${dir} must be a private directory owned by the current user`);
   }
-  return join(dir, `${createHash('sha256').update(stateDir).digest('hex').slice(0, 16)}.sock`);
+  return join(dir, name);
 }

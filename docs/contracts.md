@@ -32,7 +32,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | `coordinator.pid` | Coordinator pid lock (pid + process start + `schemas`, the schema range it supports) |
 | `control.json` | Control API descriptor (protocol version, transport, socket path, daemon pid, `schemas`) |
 | `control.token` | Control API bearer token, `0600`, rotated on each daemon start |
-| `control.sock` | Control API Unix socket, `0600` (under the OS temp dir when the path is too long) |
+| `control.sock` | Control API Unix socket, `0600` (when the path is too long: `~/.orc/run/` on macOS, else the OS temp dir) |
 | `operator.token` | Operator token, rewritten on every coordinator start |
 | `run-worktrees.json` | Run → worktree/branch mapping |
 | `worktrees/<run_id>/` | Run worktrees (git worktrees of the target repo; `ORC_WORKTREES_DIR` overrides) |

@@ -64,6 +64,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 - Worker lifecycle commands go to the coordinator over `ORC_CONTROL_SOCKET`, authenticated by the session's `ORC_SESSION_SECRET`; workers never write the state directory.
 - The master acts with `ORC_MASTER_SECRET`; operator shells with `<state>/operator.token`.
 - A project coordinator requires the control API (refuses `ORC_CONTROL_API=off`).
+- Socket path: `<state>/control.sock`. When that exceeds the Unix socket path limit (~104 bytes) it moves to a per-user `0700` directory: `~/.orc/run/` on macOS (whose `$TMPDIR` is OS-cleaned and differs between GUI and shell sessions), `$TMPDIR/orc-control-<uid>/` elsewhere or when the home path is too long too. `control.json` records the real path.
 - A secret is only as private as the sandbox: `full-access` workers can read other processes' environments.
 
 ## Environment variables
