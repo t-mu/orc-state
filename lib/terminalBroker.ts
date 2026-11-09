@@ -126,6 +126,7 @@ export class TmuxTerminalDriver implements TerminalDriver {
       { env, stdio: ['pipe', 'pipe', 'ignore'] });
     const parser = new TmuxControlParser();
     const outputs: Array<(data: Buffer) => void> = [];
+    const resizes: Array<(columns: number, rows: number) => void> = [];
     const exits: Array<(reason: string) => void> = [];
     let done = false;
     const exit = (reason: string): void => {
@@ -137,6 +138,7 @@ export class TmuxTerminalDriver implements TerminalDriver {
       for (const event of parser.push(chunk)) {
         if (done) return;
         if (event.type === 'output') for (const listener of outputs) listener(event.data);
+        else if (event.type === 'resize') for (const listener of resizes) listener(event.columns, event.rows);
         else exit(event.reason);
       }
     });
@@ -145,6 +147,7 @@ export class TmuxTerminalDriver implements TerminalDriver {
     child.on('close', () => exit('control client closed'));
     return {
       onOutput: (listener) => { outputs.push(listener); },
+      onResize: (listener) => { resizes.push(listener); },
       onExit: (listener) => { exits.push(listener); },
       stop: () => {
         if (done && child.exitCode !== null) return;

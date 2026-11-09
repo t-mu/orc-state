@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
@@ -686,6 +686,32 @@ describe('local daemon control API', () => {
     expect(frames.map((line) => JSON.parse(line) as { type: string; cursor: number })).toEqual([
       { type: 'heartbeat', cursor: cursor + 650 }, { type: 'heartbeat', cursor: cursor + 650 },
     ]);
+  });
+
+  it('fails a stalled event stream with unavailable and ends one the daemon closes', async () => {
+    await server.close();
+    server = await startControlServer(dir, { pollMs: 20, heartbeatMs: 60_000 });
+    // Only the opening heartbeat arrives, so the idle timeout is what ends the wait.
+    await expect(take(new ControlClient(dir, { streamIdleMs: 150 }).subscribe(0), 1_000_000))
+      .rejects.toMatchObject({ code: 'unavailable' });
+
+    const stream = new ControlClient(dir, { streamIdleMs: 3_000 }).subscribe(Number.MAX_SAFE_INTEGER);
+    const ended = take(stream, 1);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await server.close();
+    await expect(ended).resolves.toEqual([]);
+    server = await startControlServer(dir, { pollMs: 20 });
+  });
+
+  it('gives a ControlError, not SyntaxError, for a non-JSON error body on stream open', async () => {
+    const socket = join(dir, 'fake.sock');
+    const fake = createServer((_req, res) => { res.writeHead(502); res.end('<html>bad gateway</html>'); });
+    await new Promise<void>((resolve) => fake.listen(socket, resolve));
+    try {
+      await expect(take(new ControlClient(dir, { socketPath: socket }).subscribe(0), 1)).rejects.toBeInstanceOf(ControlError);
+    } finally {
+      await new Promise((resolve) => fake.close(resolve));
+    }
   });
 
   it('rejects derived legacy credentials and maps unknown commands to not_found', async () => {

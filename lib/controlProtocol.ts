@@ -44,20 +44,28 @@ export type ControlResponse<T> =
   | { protocol_version: number; ok: true; result: T }
   | { protocol_version: number; ok: false; error: ControlErrorBody };
 
-/** One NDJSON line on `/v1/events/stream`. A null event is a skipped invalid row. */
+/**
+ * One NDJSON line on `/v1/events/stream`. A null event is a skipped invalid row.
+ * `closed` is the last frame when the daemon ends the stream on purpose (shutdown).
+ * Clients ignore frame types and fields they do not know.
+ */
 export type StreamFrame =
   | { type: 'event'; seq: number; event: unknown }
-  | { type: 'heartbeat'; cursor: number };
+  | { type: 'heartbeat'; cursor: number }
+  | { type: 'closed'; reason: string };
 
 /**
  * One NDJSON line on `/v1/terminals/<id>/stream`. A viewer gets one `snapshot`
  * (the visible screen with its escapes, `capture-pane -e -p`) before any
  * `output`; `data` is base64 of raw pane bytes (a UTF-8 character may span two
- * frames). `exit` is the last frame; the viewer reopens to see the terminal again.
+ * frames). `resize` reports the pane's new size: repaint. `exit` is the last frame
+ * (`reason: 'backlog'` when the viewer was dropped for reading too slowly); the
+ * viewer reopens to see the terminal again. Clients ignore frame types and fields they do not know.
  */
 export type TerminalFrame =
   | { type: 'snapshot'; screen: string; cursor_x: number; cursor_y: number; columns: number; rows: number }
   | { type: 'output'; data: string }
+  | { type: 'resize'; columns: number; rows: number }
   | { type: 'exit'; reason: string }
   | { type: 'heartbeat' };
 
