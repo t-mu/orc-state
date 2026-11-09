@@ -170,10 +170,11 @@ describe('launchScout', () => {
 
     await expect(launch({
       objective: 'Inspect readiness failure',
+      provider: 'gemini',
     })).rejects.toThrow('did not report for duty in time');
   });
 
-  it('says a Claude scout\'s session did not become ready, with no control-socket hint', async () => {
+  it.each(['claude', 'codex'])('says a %s scout\'s session did not become ready, with no control-socket hint', async (provider) => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
       agent.session_handle = createSessionHandle(agent.agent_id);
@@ -184,7 +185,7 @@ describe('launchScout', () => {
     });
     vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
     try {
-      const failure = launch({ objective: 'Inspect', provider: 'claude' });
+      const failure = launch({ objective: 'Inspect', provider });
       await expect(failure).rejects.toThrow('scout session did not become ready in time (no session-start hook record)');
       await expect(failure).rejects.not.toThrow(/control socket|report for duty/);
     } finally {
@@ -192,7 +193,7 @@ describe('launchScout', () => {
     }
   });
 
-  it('in a project, passes the sandbox network opt-in and explains a scout that cannot reach the socket (task 230)', async () => {
+  it('in a project, passes the sandbox network opt-in to the scout launch (task 230)', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
       agent.session_handle = createSessionHandle(agent.agent_id);
@@ -207,9 +208,10 @@ describe('launchScout', () => {
     }));
     vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
     try {
-      // The master is a Codex session, so the scout is a Codex scout: read-only, no network setting.
+      // The master is a Codex session, so the scout is a Codex scout: read-only, no network, but its
+      // session-start hook makes it ready without the socket, so a missing record is all there is to say.
       await expect(launch({ objective: 'Inspect' }))
-        .rejects.toThrow(/did not report for duty in time; in a project a sandboxed codex scout .* \(request a claude scout\)/);
+        .rejects.toThrow('scout session did not become ready in time (no session-start hook record)');
       expect(launchWorkerSessionMock.mock.calls[0][2]).toMatchObject({ sandboxNetwork: 'restricted' });
     } finally {
       vi.unstubAllEnvs();

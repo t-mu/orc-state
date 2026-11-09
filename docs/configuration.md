@@ -280,7 +280,7 @@ These override keys were not verified against a live Codex sandbox. If sandboxed
 
 - Scouts launch with `read_only: true`: Codex sandbox → `read-only`; Claude sandbox → no `allowWrite`.
 - In `full-access`, `read_only` has no effect.
-- A read-only Codex scout has no network, so it cannot report for duty in a project; request a `claude` scout, whose session-start hook reports it ready without the control socket.
+- A read-only Codex scout has no network, but its session-start hook reports it ready without the control socket, as a Claude scout's does ([adapters.md → Session readiness](./adapters.md#session-readiness)).
 
 ### Linux prerequisites (Claude sandbox)
 

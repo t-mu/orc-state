@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { assertMigrationAllowed, codeSupportsSchema, readSchemaRange, type SchemaRange } from './schemaCompat.ts';
 
-export const RUNTIME_SCHEMA_VERSION = 9;
+export const RUNTIME_SCHEMA_VERSION = 10;
 /** The schema this code writes, and the oldest code that can read it (`lib/schemaCompat.ts`). Raise `min_compatible` with any change older code cannot read. */
 export const RUNTIME_SCHEMA: SchemaRange = { version: RUNTIME_SCHEMA_VERSION, min_compatible: 9 };
 
@@ -11,11 +11,12 @@ export const RUNTIME_SCHEMA: SchemaRange = { version: RUNTIME_SCHEMA_VERSION, mi
 const MIGRATION_NAMES = [
   'initial_operational_tables', 'run_authority_cutover', 'durable_command_delivery', 'session_supervision',
   'terminal_broker', 'semantic_message_routing', 'session_credentials', 'session_identity', 'schema_compat_range',
+  'pending_session_starts',
 ] as const;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
-  'input_requests', 'offsets', 'control_leases', 'runtime_cutovers', 'terminals',
+  'input_requests', 'offsets', 'control_leases', 'runtime_cutovers', 'terminals', 'pending_session_starts',
 ] as const;
 
 /** A zero-version database is the legacy event-only store; a newer one is supported when it records this code as compatible. */
@@ -362,6 +363,28 @@ export function migrateRuntimeSchema(db: Database.Database, options: { stateDir?
         VALUES (9, 'schema_compat_range', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ${RUNTIME_SCHEMA.min_compatible});
       `);
       db.pragma('user_version = 9');
+    }).immediate();
+  }
+  currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (currentVersion === 9) {
+    db.transaction(() => {
+      if ((db.pragma('user_version', { simple: true }) as number) !== 9) return;
+      // Session-start hook records that arrived before their launch was recorded
+      // (lib/pendingSessionStarts.ts), kept across a coordinator restart. Additive:
+      // older code ignores the table, so min_compatible stays.
+      db.exec(`
+        CREATE TABLE pending_session_starts (
+          agent_id TEXT PRIMARY KEY,
+          provider_session_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          orc_session_id TEXT,
+          hook_ts TEXT NOT NULL,
+          received_at TEXT NOT NULL
+        );
+        INSERT INTO schema_migrations (version, name, applied_at, min_compatible)
+        VALUES (10, 'pending_session_starts', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ${RUNTIME_SCHEMA.min_compatible});
+      `);
+      db.pragma('user_version = 10');
     }).immediate();
   }
   const health = inspectRuntimeSchemaDb(db);

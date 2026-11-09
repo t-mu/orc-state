@@ -995,16 +995,16 @@ describe('worker session lifecycle', () => {
       expect(readEvents(dir).some((e) => e.event === 'reported_for_duty')).toBe(false);
     });
 
-    it('sends no report-for-duty nudge to a Claude session', async () => {
-      seedAwaitingSession('claude', 30_000);
+    it.each(['claude', 'codex'])('sends no report-for-duty nudge to a %s session', async (provider) => {
+      seedAwaitingSession(provider, 30_000);
       const send = vi.fn().mockResolvedValue('');
       vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send, stop: vi.fn() }));
       await tickWith();
       expect(send).not.toHaveBeenCalled();
     });
 
-    it('nudges a Codex session to report for duty', async () => {
-      seedAwaitingSession('codex', 30_000);
+    it('nudges a Gemini session to report for duty', async () => {
+      seedAwaitingSession('gemini', 30_000);
       const send = vi.fn().mockResolvedValue('');
       vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send, stop: vi.fn() }));
       await tickWith();
@@ -1013,8 +1013,8 @@ describe('worker session lifecycle', () => {
       expect(send.mock.calls[0][1]).toContain('report-for-duty --agent-id=worker-01 --session-id=session-token-1');
     });
 
-    it('still dispatches a Codex worker through report-for-duty', async () => {
-      seedAwaitingSession('codex');
+    it('still dispatches a Gemini worker through report-for-duty', async () => {
+      seedAwaitingSession('gemini');
       const send = vi.fn().mockResolvedValue('');
       vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send, stop: vi.fn() }));
       const { processTerminalRunEvents } = await import('./coordinator.ts');
@@ -1067,6 +1067,67 @@ describe('worker session lifecycle', () => {
       seedScout({ status: 'offline' });
       vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
       await tickWith();
+      expect(readEvents(dir).some((e) => e.event === 'reported_for_duty')).toBe(false);
+    });
+
+    function seedStartingScout(provider: string) {
+      // The launch is still running: the hook fired, but no session is recorded on the agent yet.
+      seedState(dir, {
+        agents: [{
+          agent_id: 'scout-1', provider, role: 'scout', status: 'running',
+          session_handle: null, session_token: null, session_started_at: null, session_ready_at: null,
+          provider_ref: null, registered_at: new Date().toISOString(),
+        }],
+      });
+      mkdirSync(join(dir, 'pty-hook-events'), { recursive: true });
+      appendFileSync(join(dir, 'pty-hook-events', 'scout-1.ndjson'),
+        `${JSON.stringify({ type: 'session_start', session_id: 'thread-1', source: 'startup', orc_session_id: 'scout-token-1', ts: new Date().toISOString() })}\n`);
+    }
+
+    async function recordScoutLaunch() {
+      const { updateAgentRuntime } = await import('./lib/agentRegistry.ts');
+      updateAgentRuntime(dir, 'scout-1', {
+        session_handle: 'tmux:scout-1', session_token: 'scout-token-1', session_started_at: new Date().toISOString(),
+      });
+    }
+
+    it('applies a session-start record drained before the launch was recorded after a coordinator restart', async () => {
+      seedStartingScout('codex');
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
+
+      await tickWith();
+      // Drained from the hook file and kept in the runtime store, not applied yet.
+      expect(existsSync(join(dir, 'pty-hook-events', 'scout-1.ndjson'))).toBe(false);
+      expect(readEvents(dir).some((e) => e.event === 'reported_for_duty')).toBe(false);
+      const { listPendingSessionStarts } = await import('./lib/pendingSessionStarts.ts');
+      expect(listPendingSessionStarts(dir).map((p) => p.agentId)).toEqual(['scout-1']);
+
+      // A fresh coordinator module: nothing carried over in memory.
+      vi.resetModules();
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
+      await recordScoutLaunch();
+      await tickWith();
+
+      const ready = readEvents(dir).find((e) => e.event === 'reported_for_duty');
+      expect(ready).toMatchObject({ agent_id: 'scout-1' });
+      expect(ready!.payload).toEqual({ session_token: 'scout-token-1', source: 'hook', provider_conversation_id: 'thread-1' });
+      expect(readAgents(dir).find((a) => a.agent_id === 'scout-1')?.session_ready_at).toBeTruthy();
+      const store = await import('./lib/pendingSessionStarts.ts');
+      expect(store.listPendingSessionStarts(dir)).toEqual([]);
+    });
+
+    it('drops a pending session-start record whose launch is not recorded within the readiness timeout', async () => {
+      seedStartingScout('claude');
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
+      await tickWith(['--session-ready-timeout-ms=60000']);
+      const { listPendingSessionStarts, savePendingSessionStart } = await import('./lib/pendingSessionStarts.ts');
+      const [pending] = listPendingSessionStarts(dir);
+      expect(pending).toBeTruthy();
+      savePendingSessionStart(dir, 'scout-1', pending.record, new Date(Date.now() - 61_000).toISOString());
+
+      await tickWith(['--session-ready-timeout-ms=60000']);
+
+      expect(listPendingSessionStarts(dir)).toEqual([]);
       expect(readEvents(dir).some((e) => e.event === 'reported_for_duty')).toBe(false);
     });
 

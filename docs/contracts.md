@@ -13,7 +13,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | File | Format | Contents |
 |------|--------|----------|
 | `runtime.db` | SQLite | Project task store: `tasks`, `task_spec_revisions`, `task_dependencies`, `task_transitions`, `task_runs`, `task_imports`, `plan_documents` |
-| `events.db` | SQLite (WAL), schema v8 | Append-only `events` (+ FTS index) and operational tables: `runs` (authoritative claims), `sessions`, `commands`, `messages`, `input_requests`, `offsets`, `control_leases`, `terminals` |
+| `events.db` | SQLite (WAL), schema v10 | Append-only `events` (+ FTS index) and operational tables: `runs` (authoritative claims), `sessions`, `commands`, `messages`, `input_requests`, `offsets`, `control_leases`, `terminals`, `pending_session_starts` (session-start hook records waiting for their launch to be recorded) |
 | `memory.db` | SQLite (FTS5) | Agent memory drawers; independent of the operational stores |
 | `agents.json` | JSON | Agent registry; session fields are overlaid from `events.db` `sessions` |
 
@@ -102,7 +102,7 @@ Derived at claim time, never stored:
 
 ## Run Lifecycle
 
-Readiness comes before the run starts: the coordinator sends TASK_START once the worker's session is ready, meaning a `reported_for_duty` event for its current `session_token`. A Claude session's `SessionStart` hook produces it (`payload.source: 'hook'`); Codex and Gemini CLI sessions run `orc report-for-duty` and are nudged with `SESSION_NUDGE`; an `app:` session is ready after its handshake. A session that is not ready within `coordinator.session_ready_timeout_ms` is requeued (`ERR_SESSION_READY_TIMEOUT`). Per provider: [adapters.md → Session readiness](./adapters.md#session-readiness).
+Readiness comes before the run starts: the coordinator sends TASK_START once the worker's session is ready, meaning a `reported_for_duty` event for its current `session_token`. A Claude or Codex CLI session's `SessionStart` hook produces it (`payload.source: 'hook'`); Gemini CLI sessions run `orc report-for-duty` and are nudged with `SESSION_NUDGE`; an `app:` session is ready after its handshake. A session that is not ready within `coordinator.session_ready_timeout_ms` is requeued (`ERR_SESSION_READY_TIMEOUT`). Per provider: [adapters.md → Session readiness](./adapters.md#session-readiness).
 
 | Command | Precondition | Effect |
 |---------|--------------|--------|

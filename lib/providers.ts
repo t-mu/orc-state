@@ -7,12 +7,14 @@ export const PROVIDERS = ['codex', 'claude', 'gemini'] as const;
 export type ProviderName = typeof PROVIDERS[number];
 
 /**
- * Providers whose terminal CLI orc launches with a session-start hook: the
- * hook's `session_start` record marks the session ready, so the agent is never
- * asked to run `orc report-for-duty`. The others (Codex, Gemini) keep
- * report-for-duty as their readiness signal; see docs/adapters.md.
+ * Providers whose terminal CLI orc launches with a session-start hook (Claude
+ * through its settings file, Codex through `-c hooks.SessionStart`): the hook's
+ * `session_start` record marks the session ready, so the agent is never asked
+ * to run `orc report-for-duty`. Gemini keeps report-for-duty as its readiness
+ * signal; see docs/adapters.md. (Codex `app:` sessions are ready from their
+ * protocol handshake, so they need no command either.)
  */
-const SESSION_START_HOOK_PROVIDERS: ReadonlySet<string> = new Set<ProviderName>(['claude']);
+const SESSION_START_HOOK_PROVIDERS: ReadonlySet<string> = new Set<ProviderName>(['claude', 'codex']);
 
 export function hasSessionStartHook(provider: string | null | undefined): boolean {
   return typeof provider === 'string' && SESSION_START_HOOK_PROVIDERS.has(provider);
