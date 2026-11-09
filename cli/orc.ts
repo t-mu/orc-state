@@ -236,6 +236,9 @@ export function main(argv: string[]): number {
   return result.status ?? 1;
 }
 
+// PROJECT_FLAG_ENV in lib/projectContext.ts; not imported, so the dispatcher stays free of the registry module.
+const PROJECT_FLAG_ENV = 'ORC_PROJECT_FLAG';
+
 /**
  * The subcommand's environment. `--project` is the highest-precedence selector:
  * it becomes the child's ORC_PROJECT_ID, and ORC_PROJECT_FLAG records that it
@@ -244,9 +247,6 @@ export function main(argv: string[]): number {
  * Without the flag an inherited ORC_PROJECT_FLAG is dropped, so an inherited
  * ORC_PROJECT_ID reports `selected_by: env`.
  */
-// PROJECT_FLAG_ENV in lib/projectContext.ts; not imported, so the dispatcher stays free of the registry module.
-const PROJECT_FLAG_ENV = 'ORC_PROJECT_FLAG';
-
 export function childEnv(env: NodeJS.ProcessEnv, projectId: string | null): NodeJS.ProcessEnv {
   if (projectId) return { ...env, ORC_PROJECT_ID: projectId, [PROJECT_FLAG_ENV]: projectId, ORC_STATE_DIR: '' };
   const { [PROJECT_FLAG_ENV]: _flag, ...rest } = env;
