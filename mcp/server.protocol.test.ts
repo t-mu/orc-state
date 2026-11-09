@@ -212,22 +212,9 @@ describe('mcp stdio protocol', () => {
     expect(() => JSON.parse(content[0].text as string)).not.toThrow();
   });
 
-  it('supports resources/list and resources/read over JSON-RPC', async () => {
-    const listResult = await sendRequest('resources/list', {}) as Record<string, unknown>;
-    const uris = (listResult.resources as Array<Record<string, unknown>>).map((resource) => resource.uri);
-    expect(uris).toContain('orchestrator://state/backlog');
-    expect(uris).toContain('orchestrator://state/agents');
-
-    const readResult = await sendRequest('resources/read', { uri: 'orchestrator://state/backlog' }) as Record<string, unknown>;
-    const contents = readResult.contents as Array<Record<string, unknown>>;
-    expect(contents[0].mimeType).toBe('application/json');
-    const backlog = JSON.parse(contents[0].text as string);
-    expect(backlog.features[0].ref).toBe('project');
-  });
-
-  it('returns InvalidParams for unknown resources/read uri', async () => {
-    await expect(sendRequest('resources/read', { uri: 'orchestrator://state/unknown' })).rejects.toMatchObject({
-      code: -32602,
+  it('does not advertise resources over JSON-RPC', async () => {
+    await expect(sendRequest('resources/list', {})).rejects.toMatchObject({
+      code: -32601,
     });
   });
 

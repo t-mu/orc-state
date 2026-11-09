@@ -12,8 +12,6 @@ import {
   handleListAgents,
   handleListRuns,
   handleListTasks,
-  handleReadAgents,
-  handleReadBacklog,
   handleCreateTask,
   handleUpdateTask,
   handleGetRun,
@@ -592,13 +590,6 @@ describe('mcp read handlers', () => {
     expect(() => handleListAgents(dir, { include_dead: 'yes' })).toThrow(/include_dead must be a boolean/);
     expect(() => handleQueryEvents(dir, { limit: -1 })).toThrow(/limit/);
     await expect(handleGetStatus(dir, { include_done_count: 'yes' })).rejects.toThrow(/include_done_count must be a boolean/);
-  });
-
-  it('handleReadBacklog and handleReadAgents return valid json text', () => {
-    const backlog = JSON.parse(handleReadBacklog(dir));
-    const agents = JSON.parse(handleReadAgents(dir));
-    expect(backlog.features).toHaveLength(2);
-    expect(agents.agents).toHaveLength(3);
   });
 
   it('handleCreateTask and handleUpdateTask refuse a state directory without a project task store', () => {

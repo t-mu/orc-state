@@ -7,10 +7,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ErrorCode,
-  ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
-  ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { createOrchestratorAjv } from '../lib/ajvFactory.ts';
@@ -27,23 +25,8 @@ import { TOOLS } from './tools-list.ts';
 
 const server = new Server(
   { name: 'orchestrator', version: '0.1.0' },
-  { capabilities: { tools: {}, resources: {} } },
+  { capabilities: { tools: {} } },
 );
-
-const RESOURCES = [
-  {
-    uri: 'orchestrator://state/backlog',
-    name: 'Backlog',
-    description: 'Full backlog.json with all features and tasks. In a registered project it is a read-only projection of the task store: change tasks with create_task/update_task and the lifecycle tools, never by editing it.',
-    mimeType: 'application/json',
-  },
-  {
-    uri: 'orchestrator://state/agents',
-    name: 'Agents',
-    description: 'Registered agents and runtime status',
-    mimeType: 'application/json',
-  },
-];
 
 const ajv = createOrchestratorAjv();
 const TOOL_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
@@ -206,20 +189,6 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
   }
 }
 
-export function readResource(stateDir: string, uri: string) {
-  if (uri === 'orchestrator://state/backlog') {
-    return {
-      contents: [{ uri, mimeType: 'application/json', text: handlers.handleReadBacklog(stateDir) }],
-    };
-  }
-  if (uri === 'orchestrator://state/agents') {
-    return {
-      contents: [{ uri, mimeType: 'application/json', text: handlers.handleReadAgents(stateDir) }],
-    };
-  }
-  throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
-}
-
 server.setRequestHandler(ListToolsRequestSchema, () => Promise.resolve({ tools: TOOLS }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -241,10 +210,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new McpError(ErrorCode.InternalError, 'Internal MCP tool execution failure');
   }
 });
-
-server.setRequestHandler(ListResourcesRequestSchema, () => Promise.resolve({ resources: RESOURCES }));
-
-server.setRequestHandler(ReadResourceRequestSchema, (request) => Promise.resolve(readResource(STATE_DIR, request.params.uri)));
 
 function isEntryPoint() {
   if (!process.argv[1]) return false;
