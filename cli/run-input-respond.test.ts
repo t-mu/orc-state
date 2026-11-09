@@ -100,12 +100,17 @@ describe('cli/run-input-respond.ts durable request', () => {
     expect(runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A']).status).toBe(0);
   });
 
-  it('refuses a shell without the master session, and ignores a session id', () => {
+  it('answers from an operator shell without the master session, and ignores a session id', () => {
     for (const env of [{ ORC_MASTER_SECRET: '' }, { ORC_MASTER_SECRET: '', ORC_SESSION_ID: 'session-master', ORC_SESSION_TOKEN: 'session-master' }]) {
-      const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A'], env);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain('requires the master session');
+      const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A', '--request-id=req-1'], env);
+      expect(result.status).toBe(0);
     }
+  });
+
+  it('refuses a stale request id', () => {
+    const result = runCli(['--run-id=run-1', '--agent-id=worker-1', '--response=A', '--request-id=req-old'], { ORC_MASTER_SECRET: '' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('not pending');
   });
 });
 

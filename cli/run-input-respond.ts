@@ -4,7 +4,8 @@
  * Usage: orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text> [--actor-id=<id>] [--request-id=<id>]
  *
  * Answer a worker's input request, as the running master session (its
- * ORC_MASTER_SECRET). The project's running coordinator applies it.
+ * ORC_MASTER_SECRET) or from an operator shell. The project's running
+ * coordinator applies it.
  */
 import { flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
@@ -13,7 +14,7 @@ import { USAGE } from './usage.ts';
 const runId = flag('run-id');
 const agentId = flag('agent-id');
 const response = flag('response');
-// Without --actor-id: the master session.
+// Without --actor-id: the master session, or `human` for the operator.
 const actorId = flag('actor-id');
 const requestedId = flag('request-id');
 

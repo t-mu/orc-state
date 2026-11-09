@@ -1088,14 +1088,15 @@ describe('handleListWaitingInput', () => {
         event: 'input_requested',
         run_id: 'run-waiting',
         agent_id: 'orc-1',
-        payload: { question: 'Should I proceed?' },
+        payload: { question: 'Should I proceed?', request_id: 'req-9' },
       }),
     ]);
 
-    const result = handleListWaitingInput(dir) as Array<Record<string, unknown>>;
+    const result = handleListWaitingInput(dir);
     expect(result).toHaveLength(1);
     expect(result[0].run_id).toBe('run-waiting');
     expect(result[0].question).toBe('Should I proceed?');
+    expect(result[0].request_id).toBe('req-9');
     expect(result[0].input_requested_at).toBe('2026-01-01T00:05:00.000Z');
   });
 });

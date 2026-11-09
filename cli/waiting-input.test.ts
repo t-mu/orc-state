@@ -92,6 +92,7 @@ describe('cli/waiting-input.ts', () => {
     const result = runCli([]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('what should I do?');
+    expect(JSON.parse(runCli(['--json']).stdout)).toEqual([expect.objectContaining({ run_id: 'run-4', request_id: 'req-xyz' })]);
   });
 
   it('returns empty json array when no runs are waiting', () => {

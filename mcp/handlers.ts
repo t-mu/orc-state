@@ -17,6 +17,7 @@ import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, requireProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
 import { TERMINAL_STATUSES, masterActorId } from '../lib/operatorMutations.ts';
 import { extractScoutReport, launchScout, prepareScout, readScoutReport, removeScout } from '../lib/scouts.ts';
+import { listWaitingInput } from '../lib/waitingInput.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -404,35 +405,7 @@ export function handleRemoveScout(stateDir: string, { agent_id }: Record<string,
 
 
 export function handleListWaitingInput(stateDir: string) {
-  const claims = readClaims(stateDir).claims;
-  const waiting = claims.filter((c) => c.input_state === 'awaiting_input');
-
-  const inputRequestedEvents = queryEvents(stateDir, { event_type: 'input_requested' });
-  const questionMap = new Map<string, { question: string | null; ts: string | null }>();
-  for (const ev of inputRequestedEvents) {
-    const record = ev as unknown as Record<string, unknown>;
-    if (typeof record.run_id === 'string') {
-      const payload = record.payload as Record<string, unknown> | undefined;
-      questionMap.set(record.run_id, {
-        question: typeof payload?.question === 'string' ? payload.question : null,
-        ts: typeof ev.ts === 'string' ? ev.ts : null,
-      });
-    }
-  }
-
-  const now = Date.now();
-  return waiting.map((c) => {
-    const info = questionMap.get(c.run_id) ?? { question: null, ts: null };
-    const waitingSec = info.ts ? Math.round((now - new Date(info.ts).getTime()) / 1000) : null;
-    return {
-      run_id: c.run_id,
-      agent_id: c.agent_id,
-      task_ref: c.task_ref,
-      question: info.question,
-      waiting_seconds: waitingSec,
-      input_requested_at: info.ts,
-    };
-  });
+  return listWaitingInput(stateDir, readClaims(stateDir).claims);
 }
 
 export function handleQueryEvents(

@@ -94,7 +94,7 @@ Authorization (canonical: [contracts.md → Local Control API](contracts.md#loca
 
 - The commands above, `run-input-respond` and `project task create|edit|import` are applied by the running coordinator over its control API, as the operator.
 - No coordinator: applied directly with `coordinator is not running; applying <op> directly`. Coordinator alive but API not answering: retryable error.
-- A shell inside a worker session (`ORC_SESSION_SECRET`) is refused; `run-input-respond` needs the master's `ORC_MASTER_SECRET`.
+- A shell inside a worker session (`ORC_SESSION_SECRET`) is refused.
 - `--actor-id` must be `human` or a registered agent; default is the caller (`human` for the operator); ignored with the master's session.
 
 ## Plans
@@ -107,7 +107,7 @@ Plan Markdown format: [plan-template.md](plan-template.md).
 |---------|-------|-------|
 | `runs-active` | `[--json]` `[--via-control]` | In-progress/claimed runs with idle/age; JSON rows carry `stalled`. |
 | `run-info <run_id>` | `[--json]` | Claim state, task, worktree, idle time. |
-| `waiting-input` | `[--json]` | Runs waiting for master input. |
+| `waiting-input` | `[--json]` | Runs waiting for input, with `request_id` in `--json`. |
 | `events-tail` | `[--n=<count>]` `[--event=<name>]` `[--json]` | Last N events. |
 | `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--json]` | Query events. |
 | `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` | Show a consumer offset; reset replays events after `<seq>` (coordinator must be stopped). |
@@ -154,7 +154,7 @@ Client for the coordinator's local control API. Fails with "Control daemon is no
 | `run-finish` | `--run-id=<id>` `--agent-id=<id>` | Terminal success. |
 | `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=<requeue\|block>]` | Terminal failure; default `requeue`. |
 | `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` `[--poll-ms=<ms>]` | Blocking question to the master. |
-| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` | Master answers (needs `ORC_MASTER_SECRET`). |
+| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` | Answer a pending input request, as master or operator; `--request-id` targets one request (a stale id → conflict). |
 | `run-heartbeat` | — | Deprecated no-op; leases renew automatically. |
 
 `progress --event` values (`lib/progressValidation.ts`): `run_started`, `heartbeat`, `phase_started`, `phase_finished` (need `--phase`), `review_submitted`, `work_complete`, `finalize_rebase_started`, `ready_to_merge`, `run_finished`, `run_failed`, `blocked`, `need_input` (need `--reason`), `input_provided`, `unblocked`.
