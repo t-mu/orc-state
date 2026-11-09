@@ -62,7 +62,8 @@ export interface ProjectWatcherOptions {
 
 interface Watched {
   state: ProjectWatchState;
-  client: ProjectWatchClient;
+  /** Null when `createClient` threw for the project: it stays `unreachable` with that error. */
+  client: ProjectWatchClient | null;
   abort: AbortController;
   loop: Promise<void> | null;
   attempt: number;
@@ -116,6 +117,10 @@ export class ProjectWatcher {
   private readonly listeners = new Set<(update: ProjectWatchUpdate) => void>();
   private running = false;
   private registryTimer: unknown = null;
+  /** Message of the last registry error reported; cleared by a successful read. */
+  private lastRegistryError: string | null = null;
+  /** Removed projects whose loops are still ending; `stop()` waits for them. */
+  private readonly retiring = new Set<Promise<void>>();
 
   constructor(options: ProjectWatcherOptions = {}) {
     this.list = options.listProjects ?? (() => listProjects());
@@ -158,7 +163,7 @@ export class ProjectWatcher {
     this.registryTimer = null;
     const ending = [...this.watched.values()].map((w) => this.retire(w));
     this.watched.clear();
-    await Promise.all(ending);
+    await Promise.all([...ending, ...this.retiring]);
   }
 
   private emit(update: ProjectWatchUpdate): void {
@@ -169,8 +174,11 @@ export class ProjectWatcher {
 
   private pollRegistry(): void {
     if (!this.running) return;
-    this.refreshRegistry();
-    this.registryTimer = this.timers.setTimeout(() => this.pollRegistry(), this.registryPollMs);
+    try {
+      this.refreshRegistry();
+    } finally {
+      if (this.running) this.registryTimer = this.timers.setTimeout(() => this.pollRegistry(), this.registryPollMs);
+    }
   }
 
   /** Re-read the registry: add, update and remove projects. A registry error keeps the current set. */
@@ -180,9 +188,15 @@ export class ProjectWatcher {
     try {
       entries = this.list();
     } catch (error) {
-      this.emit({ type: 'registry_error', error: error instanceof Error ? error : new Error(String(error)) });
+      const reported = error instanceof Error ? error : new Error(String(error));
+      // A persistent error (e.g. RegistrySchemaError until orc-state is upgraded) is reported once.
+      if (reported.message !== this.lastRegistryError) {
+        this.lastRegistryError = reported.message;
+        this.emit({ type: 'registry_error', error: reported });
+      }
       return;
     }
+    this.lastRegistryError = null;
     const seen = new Set<string>();
     for (const entry of entries) {
       seen.add(entry.id);
@@ -201,20 +215,28 @@ export class ProjectWatcher {
   }
 
   private add(entry: ProjectListEntry): void {
+    let client: ProjectWatchClient | null = null;
+    let clientError: string | null = null;
+    try { client = this.createClient(entry); } catch (error) { clientError = message(error); }
     const w: Watched = {
-      state: { project: entry, connection: entry.coordinator_running ? 'connecting' : 'stopped', error: null, status: null, cursor: null },
-      client: this.createClient(entry),
+      state: {
+        project: entry, connection: client ? (entry.coordinator_running ? 'connecting' : 'stopped') : 'unreachable',
+        error: clientError, status: null, cursor: null,
+      },
+      client,
       abort: new AbortController(),
       loop: null, attempt: 0, timer: null, wake: null, statusTimer: null, refreshing: null, statusDirty: false,
     };
     this.watched.set(entry.id, w);
     this.emit({ type: 'added', project_id: entry.id, state: { ...w.state } });
-    w.loop = this.run(w);
+    if (client) w.loop = this.run(w, client);
   }
 
   private remove(w: Watched): void {
     this.watched.delete(w.state.project.id);
-    void this.retire(w);
+    const ending = this.retire(w);
+    this.retiring.add(ending);
+    void ending.finally(() => this.retiring.delete(ending));
     this.emit({ type: 'removed', project_id: w.state.project.id });
   }
 
@@ -257,7 +279,7 @@ export class ProjectWatcher {
     return Math.min(this.maxBackoffMs, this.initialBackoffMs * 2 ** Math.min(attempt, 30));
   }
 
-  private async run(w: Watched): Promise<void> {
+  private async run(w: Watched, client: ProjectWatchClient): Promise<void> {
     while (this.active(w)) {
       if (!w.state.project.coordinator_running) {
         this.setConnection(w, 'stopped', null);
@@ -267,7 +289,7 @@ export class ProjectWatcher {
       }
       let failure: string;
       try {
-        await this.connect(w);
+        await this.connect(w, client);
         failure = 'The coordinator closed the event stream';
       } catch (error) {
         if (!this.active(w)) break;
@@ -289,15 +311,15 @@ export class ProjectWatcher {
   }
 
   /** Connect, then deliver events until the stream ends (resolves) or fails (throws). */
-  private async connect(w: Watched): Promise<void> {
+  private async connect(w: Watched, client: ProjectWatchClient): Promise<void> {
     const call: CallOptions = { signal: w.abort.signal };
-    const health = await w.client.health(call);
+    const health = await client.health(call);
     const theirs = protocolOverlaps(health);
     if (theirs) {
       throw new ControlError('unsupported_protocol_version',
         `The coordinator supports control protocol versions [${theirs.join(', ')}]; this client supports [${CONTROL_PROTOCOL_VERSIONS.join(', ')}]`, 400);
     }
-    const status = await w.client.status(this.statusEvents === undefined ? {} : { events: this.statusEvents }, call);
+    const status = await client.status(this.statusEvents === undefined ? {} : { events: this.statusEvents }, call);
     if (!this.active(w)) return;
     // First connect starts at the view's cursor; a reconnect resumes from the last delivered seq.
     w.state.cursor ??= status.cursor;
@@ -305,7 +327,7 @@ export class ProjectWatcher {
     w.state.status = status;
     this.setConnection(w, 'running', null);
     this.emit({ type: 'status', project_id: w.state.project.id, status });
-    for await (const row of w.client.subscribe(w.state.cursor, call)) {
+    for await (const row of client.subscribe(w.state.cursor, call)) {
       if (!this.active(w)) return;
       if (row.seq <= w.state.cursor) continue;
       w.state.cursor = row.seq;
@@ -325,11 +347,13 @@ export class ProjectWatcher {
   }
 
   private async refreshStatus(w: Watched): Promise<void> {
+    const { client } = w;
     try {
+      if (!client) return;
       do {
         w.statusDirty = false;
         try {
-          const status = await w.client.status(this.statusEvents === undefined ? {} : { events: this.statusEvents }, { signal: w.abort.signal });
+          const status = await client.status(this.statusEvents === undefined ? {} : { events: this.statusEvents }, { signal: w.abort.signal });
           if (!this.active(w) || w.state.connection !== 'running') return;
           w.state.status = status;
           this.emit({ type: 'status', project_id: w.state.project.id, status });

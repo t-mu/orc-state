@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ControlClient } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE } from './controlProtocol.ts';
 import type { ProjectListEntry } from './projectList.ts';
 import { ProjectWatcher, type ProjectWatchUpdate } from './projectWatcher.ts';
@@ -61,6 +62,11 @@ class FakeCoordinator {
       protocol_version: CONTROL_PROTOCOL_VERSION, transport: 'unix', path: this.socket, pid: process.pid, started_at: new Date().toISOString(),
     }));
     this.server = server;
+  }
+
+  /** Cut every open stream without a `closed` frame (a crash or a dropped connection); the server stays up. */
+  cut(): void {
+    for (const s of this.streams) s.res.destroy();
   }
 
   /** Shut down as the daemon does: a `closed` frame on every stream, then close (the stale control.json stays). */
@@ -168,6 +174,23 @@ describe('ProjectWatcher', () => {
     expect(states.at(-1)).toBe('running');
   });
 
+  it('reconnects after a cut stream and resumes from the last cursor without duplicates or gaps', async () => {
+    const a = await coordinator();
+    const { watcher: w, updates } = watch([project('a', a)]);
+    await until(() => connection(w, 'a') === 'running');
+    a.append(2);
+    await until(() => seqs(updates, 'a').length === 2);
+    a.cut();
+    a.append(2);
+    await until(() => seqs(updates, 'a').length === 4);
+    a.append(1);
+    await until(() => seqs(updates, 'a').length === 5);
+    expect(seqs(updates, 'a')).toEqual([1, 2, 3, 4, 5]);
+    expect(a.streamOpens).toEqual([0, 2]);
+    expect(updates).toContainEqual(expect.objectContaining({ type: 'connection', project_id: 'a', connection: 'unreachable' }));
+    expect(connection(w, 'a')).toBe('running');
+  });
+
   it('reports unreachable while a running coordinator does not answer, then reconnects', async () => {
     const a = await coordinator();
     await a.stop();
@@ -227,8 +250,40 @@ describe('ProjectWatcher', () => {
     await until(() => connection(w, 'a') === 'running');
     broken = true;
     await until(() => errors.length > 0);
-    expect(errors[0]).toBe('newer schema');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // A persistent error is reported once, not on every poll; a new one after recovery is reported again.
+    expect(errors).toEqual(['newer schema']);
+    broken = false;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    broken = true;
+    await until(() => errors.length === 2);
     expect(connection(w, 'a')).toBe('running');
+  });
+
+  it('a project whose client cannot be created is unreachable and does not stop the registry poll', async () => {
+    const a = await coordinator();
+    const registry = [project('bad', a)];
+    const w = new ProjectWatcher({
+      listProjects: () => registry.map((entry) => entry()),
+      createClient: (entry) => { if (entry.id === 'bad') throw new TypeError('bad state_dir'); return new ControlClient(entry.state_dir); },
+      registryPollMs: 10,
+    });
+    watcher = w;
+    w.start();
+    expect(w.projects()[0]).toMatchObject({ connection: 'unreachable', error: 'bad state_dir' });
+    registry.push(project('a', a));
+    await until(() => connection(w, 'a') === 'running');
+  });
+
+  it('stop waits for a project removed just before it', async () => {
+    const a = await coordinator();
+    const registry = [project('a', a)];
+    const { watcher: w } = watch(registry);
+    await until(() => connection(w, 'a') === 'running');
+    registry.pop();
+    await until(() => w.projects().length === 0);
+    await w.stop();
+    await until(() => (a as unknown as { streams: Set<unknown> }).streams.size === 0);
   });
 
   it('stop closes every stream and timer', async () => {
