@@ -45,15 +45,15 @@ Optional (all present on the composite):
 |------------------------------|------------|-------|
 | `<agent>.sock` | Codex | the listening socket |
 | `<agent>.exit` | the `sh` wrapper that launches Codex | the exit code, or 128 + signal; absent while it runs or when `stop` signalled the whole group |
-| `<agent>.turn.json` | the adapter, at each turn start | `{turn_id, command_id}`: the command that started the latest turn |
+| `<agent>.turn.json` | the adapter, at each turn start and end | `{turn_id, command_id, finished}`: the command that started the latest turn, and whether its end was reported |
 
-The session's recorded PID and `process_start` are the wrapper's; `stop` signals its process group (SIGTERM, SIGKILL after 5 s).
+The session's recorded PID and `process_start` are the wrapper's; `stop` checks them, then signals the process group (SIGTERM, SIGKILL after 5 s if the group is still alive). A connection that closes while the process runs on is logged, not reported as an exit.
 
 On start the coordinator adopts each live `app:` session (`adoptSession`, through session reconciliation):
 
 1. The recorded PID and start time must still match. Otherwise the session is reported dead with the reason: `app-server exited (<code or signal>) while no coordinator was attached`, `PID <pid> now belongs to another process`, or `process <pid> is gone`.
 2. It connects to the socket, initializes, and resumes the recorded thread (`thread/resume`). Codex cannot list the turns of a thread whose history is not written yet (`list_turns is not supported yet`, just after a turn starts), so the paginated resume falls back to a full one.
-3. It reads the thread's last turn. A running turn keeps the session busy, and its events carry the command id from `<agent>.turn.json` (or the turn's `clientUserMessageId`). A turn that finished while no coordinator was attached is reported now, so its command's ACK advances.
+3. It reads the thread's last turn. A running turn keeps the session busy, and its events carry the command id from `<agent>.turn.json` (or the turn's `clientUserMessageId`). A turn that finished while no coordinator was attached (not marked `finished`) is reported now, so its command's ACK advances; a turn already reported is not reported again.
 
 A live app-server that cannot be reattached (no recorded thread, socket or protocol failure) is stopped, so it does not keep working unsupervised. A dead or stopped session takes the dead-session path: resumed on its thread after a crash, otherwise requeued ([configuration.md → Session Resume](./configuration.md#session-resume)).
 

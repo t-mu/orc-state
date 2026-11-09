@@ -135,18 +135,19 @@ function exitPath(agentId: string): string { return join(appServerDir(), `${agen
 /** The latest turn and the command that started it, for a coordinator that adopts the session later. */
 function turnPath(agentId: string): string { return join(appServerDir(), `${agentId}.turn.json`); }
 
-function persistTurn(agentId: string, turnId: string, commandId: string | undefined): void {
+function persistTurn(agentId: string, turnId: string, commandId: string | undefined, finished: boolean): void {
   try {
     const path = turnPath(agentId);
-    writeFileSync(`${path}.tmp`, `${JSON.stringify({ turn_id: turnId, command_id: commandId ?? null })}\n`);
+    writeFileSync(`${path}.tmp`, `${JSON.stringify({ turn_id: turnId, command_id: commandId ?? null, finished })}\n`);
     renameSync(`${path}.tmp`, path);
   } catch { /* best effort: the provider's own record (clientUserMessageId) is the fallback */ }
 }
 
-function persistedTurn(agentId: string): { turn_id: string; command_id: string | null } | null {
+function persistedTurn(agentId: string): { turn_id: string; command_id: string | null; finished: boolean } | null {
   try {
-    const parsed = JSON.parse(readFileSync(turnPath(agentId), 'utf8')) as { turn_id?: unknown; command_id?: unknown };
-    return typeof parsed.turn_id === 'string' ? { turn_id: parsed.turn_id, command_id: typeof parsed.command_id === 'string' ? parsed.command_id : null } : null;
+    const parsed = JSON.parse(readFileSync(turnPath(agentId), 'utf8')) as { turn_id?: unknown; command_id?: unknown; finished?: unknown };
+    if (typeof parsed.turn_id !== 'string') return null;
+    return { turn_id: parsed.turn_id, command_id: typeof parsed.command_id === 'string' ? parsed.command_id : null, finished: parsed.finished === true };
   } catch {
     return null;
   }
@@ -255,7 +256,7 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
   function claimTurn(session: CodexSession, turnId: string): void {
     if (session.turnCommands.has(turnId) || !session.submitting) return;
     session.turnCommands.set(turnId, session.submitting.commandId);
-    persistTurn(session.agentId, turnId, session.submitting.commandId);
+    persistTurn(session.agentId, turnId, session.submitting.commandId, session.finishedTurns.has(turnId));
   }
 
   function onNotification(session: CodexSession, method: string, params: Record<string, unknown>): void {
@@ -273,6 +274,9 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
       claimTurn(session, turnId);
       session.finishedTurns.add(turnId);
       if (session.activeTurnId === turnId) session.activeTurnId = null;
+      // Reported now: a coordinator that adopts the session later must not report it again.
+      const recorded = persistedTurn(session.agentId);
+      if (!recorded || recorded.turn_id === turnId) persistTurn(session.agentId, turnId, session.turnCommands.get(turnId), true);
       const status = typeof turn?.status === 'string' ? turn.status : 'unknown';
       const type: RuntimeEventType = status === 'completed' ? 'turn_completed' : status === 'interrupted' ? 'turn_interrupted' : 'turn_failed';
       appendLog(session.agentId, `\n[turn ${status} ${turnId}]\n`);
@@ -379,6 +383,11 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     while (!status && Date.now() < deadline && isPidAlive(session.pid)) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       status = readAppServerExit(session.agentId);
+    }
+    if (!status && isPidAlive(session.pid)) {
+      // Not an exit: the process runs on without this connection. It reads as not alive here; `stop` still ends it.
+      appendLog(session.agentId, '\n[app-server connection closed; the process is still running]\n');
+      return;
     }
     appendLog(session.agentId, `\n[app-server exited ${status ? describeExit(status) : '(status unknown)'}]\n`);
     emit(session, 'session_exited', 'process/exit', { code: status?.code ?? null, signal: status?.signal ?? null });
@@ -487,7 +496,8 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
    * The provider keeps the turns; the command that started the last one is
    * the persisted turn record (`<agent>.turn.json`), or the turn's user
    * message `clientId` (`clientUserMessageId`). A turn that finished while no
-   * coordinator was attached is reported now, so its command's ACK advances;
+   * coordinator was attached (the record is not marked `finished`) is
+   * reported now, so its command's ACK advances;
    * a running one keeps the session busy. Codex cannot list the turns of a
    * thread whose history is not written yet (`list_turns is not supported
    * yet` just after a turn starts), so the full resume is the fallback.
@@ -513,10 +523,14 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     const items = Array.isArray(last.items) ? last.items as Array<{ type?: unknown; clientId?: unknown }> : [];
     const clientId = items.find((item) => item.type === 'userMessage' && typeof item.clientId === 'string')?.clientId as string | undefined;
     session.turnCommands.set(last.id, (persisted?.turn_id === last.id ? persisted.command_id : null) ?? clientId);
+    // A turn/completed in the same chunk as the RPC answer was handled before this continuation.
+    if (session.finishedTurns.has(last.id)) return;
     if (last.status === 'inProgress') {
       session.activeTurnId = last.id;
       return;
     }
+    // Already reported by the coordinator that saw it finish.
+    if (persisted?.turn_id === last.id && persisted.finished) return;
     onNotification(session, 'turn/completed', { threadId: session.threadId, turn: { id: last.id, status: last.status } });
   }
 
@@ -608,15 +622,21 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     return { pid: record.process_pid, processStart: record.process_start };
   }
 
-  /** SIGTERM the wrapper's process group (wrapper and provider), then SIGKILL it after a grace period. */
+  /**
+   * SIGTERM the wrapper's process group (wrapper and provider), then SIGKILL
+   * it after a grace period. The wrapper's identity is checked once, before
+   * signalling; the wrapper dies at once on SIGTERM, so the wait follows the
+   * group, which lives as long as the provider does.
+   */
   async function signalGroup(pid: number, processStart: string | null): Promise<void> {
-    const same = () => (processStart ? isSameProcess({ pid, start: processStart }) : isPidAlive(pid));
-    const kill = (signal: NodeJS.Signals) => { try { process.kill(-pid, signal); } catch { /* group already gone */ } };
-    if (pid <= 0 || !same()) return;
+    if (pid <= 0 || !(processStart ? isSameProcess({ pid, start: processStart }) : isPidAlive(pid))) return;
+    const kill = (signal: NodeJS.Signals | 0): boolean => {
+      try { process.kill(-pid, signal); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+    };
     kill('SIGTERM');
     const deadline = Date.now() + STOP_GRACE_MS;
-    while (same() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
-    if (same()) kill('SIGKILL');
+    while (kill(0) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+    if (kill(0)) kill('SIGKILL');
   }
 
   async function stop(sessionHandle: string): Promise<void> {

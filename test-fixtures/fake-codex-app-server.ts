@@ -19,6 +19,7 @@
  *                               FAKE_THREAD_INSTRUCTIONS = the thread's developerInstructions)
  *   FAKE_CODEX_TURN_HOLD_MS     keep each turn running this long before completing
  *   FAKE_CODEX_NOISE=1          send a non-JSON text frame before the first protocol frame
+ *   FAKE_CODEX_IGNORE_SIGTERM=1 ignore SIGTERM (stop must escalate to SIGKILL)
  *   FAKE_CODEX_NO_LIST_TURNS=1  like Codex 0.163 just after a turn starts: thread/turns/list and
  *                               thread/resume with excludeTurns fail ("list_turns is not supported yet"),
  *                               and a full thread/resume returns the turns without their user message
@@ -221,4 +222,8 @@ if (!listen.startsWith('unix://')) {
 const socketFile = listen.slice('unix://'.length);
 rmSync(socketFile, { force: true });
 createServer(onConnection).listen(socketFile);
-process.on('SIGTERM', () => { rmSync(socketFile, { force: true }); process.exit(143); });
+process.on('SIGTERM', () => {
+  if (env.FAKE_CODEX_IGNORE_SIGTERM === '1') { record({ kind: 'sigterm_ignored' }); return; }
+  rmSync(socketFile, { force: true });
+  process.exit(143);
+});

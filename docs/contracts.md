@@ -43,6 +43,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do labels by id + active id |
 | `pty-logs/<agent_id>.log` | tmux output capture (output tails); `pty-` directory names are kept for compatibility |
 | `pty-settings/<agent_id>.json` | Per-session provider settings (hooks, sandbox); name kept for compatibility |
+| `app-server/<agent_id>.{sock,exit,turn.json}` | Codex app-server session: its listening socket (a symlink when the path is too long), the exit status its wrapper writes, and the latest turn with the command that started it; see [adapters.md](./adapters.md#codex-app-server-sessions) |
 | `mcp-config.json` | Master MCP config written by `orc start-session` (references `${ORC_MASTER_SECRET}`, never its value) |
 | `.lock` | Advisory lock serializing JSON state writes |
 
@@ -126,7 +127,7 @@ Direct mode: after work-complete the coordinator merges, or requests a finalize 
 - Idle: `worker_stale_soft_ms` / `worker_stale_nudge_ms` / `worker_stale_force_fail_ms`; runs that deliver hook events use `hook_idle_nudge_ms` / `hook_idle_escalate_ms`. A run with a tool call in flight is never stalled (`isStalled`, `lib/runSignals.ts`). A `Stop` hook (`turn_end`) closes tool calls that never reported back. Defaults: [configuration.md](./configuration.md).
 - Progress ≠ liveness. Progress = a phase change (reported or inferred), a `git commit` seen in a hook event, or `run_started`, `review_submitted`, `work_complete`, `finalize_rebase_started`, `ready_to_merge`, `input_requested`, `input_provided`, `input_response`. No progress for `run_no_progress_escalate_ms` (60 min) → one `worker_needs_attention {reason: no_progress}`; new progress re-arms it. Runs awaiting input or in finalization are not checked.
 - Stop hook: a Claude worker's `Stop` is refused while its run is unfinished (`stop_blocked`), at most 3 per run per 10 min and 9 per run.
-- Coordinator restart: tmux sessions are adopted, unwritable sessions become `recoverable`, `app:` sessions end and their runs are requeued.
+- Coordinator restart: tmux sessions are adopted, unwritable sessions become `recoverable`. Live `app:` (Codex app-server) sessions are adopted after the PID + start-time check, reconnected and their thread reattached; an `app:` session that cannot be adopted is reconciled `exited` with the reason, then resumed (after a crash) or requeued ([adapters.md → Codex app-server sessions](./adapters.md#codex-app-server-sessions)).
 
 ### Phase inference
 

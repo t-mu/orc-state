@@ -5,7 +5,7 @@ import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateH
 import type { RuntimeEvent } from './runtime.ts';
 
 const fixtureBin = resolve(import.meta.dirname, '..', 'test-fixtures', 'bin');
-const FAKE_KEYS = ['FAKE_CODEX_NO_LIST_TURNS', 'FAKE_CODEX_ACCOUNT', 'FAKE_CODEX_SPLIT_FRAMES', 'FAKE_CODEX_STARTED_FIRST', 'FAKE_CODEX_LATE_ITEM',
+const FAKE_KEYS = ['FAKE_CODEX_IGNORE_SIGTERM', 'FAKE_CODEX_NO_LIST_TURNS', 'FAKE_CODEX_ACCOUNT', 'FAKE_CODEX_SPLIT_FRAMES', 'FAKE_CODEX_STARTED_FIRST', 'FAKE_CODEX_LATE_ITEM',
   'FAKE_CODEX_APPROVAL', 'FAKE_CODEX_TURN_STATUS', 'FAKE_CODEX_TURN_HOLD_MS', 'FAKE_CODEX_NOISE', 'FAKE_CODEX_TURN_SCRIPT'];
 
 let dir: string;
@@ -257,6 +257,17 @@ describe('codex app-server runtime: turns and ACKs', () => {
     await expect(adapter.heartbeatProbe(session_handle)).resolves.toBe(false);
   });
 
+  it('escalates to SIGKILL when the provider ignores SIGTERM', async () => {
+    process.env.FAKE_CODEX_IGNORE_SIGTERM = '1';
+    const { adapter } = await loadAdapter();
+    const { session_handle } = await startSession(adapter);
+    const pid = providerPid();
+    await adapter.stop(session_handle);
+    const { isPidAlive } = await import('../lib/processIdentity.ts');
+    expect(records().some((entry) => entry.kind === 'sigterm_ignored')).toBe(true);
+    await waitFor(() => !isPidAlive(pid), 2000);
+  }, 15_000);
+
   it('does not claim sessions it did not launch', async () => {
     const { adapter } = await loadAdapter();
     expect(adapter.inspectSession('app:someone-else')).toMatchObject({ alive: false, writable: false, reason: expect.stringContaining('not attached to this process') });
@@ -351,19 +362,36 @@ describe('codex app-server runtime: adoption after a coordinator restart', () =>
   });
 
   it('reports a turn that finished while no coordinator was attached', async () => {
+    process.env.FAKE_CODEX_TURN_HOLD_MS = '200';
     const { adapter } = await loadAdapter();
     const { session_handle } = await launchAndDetach(adapter);
+    await adapter.submit(session_handle, 'work', { commandId: 'cmd-offline' });
     adapter.detach(session_handle);
-    // Another client drives a turn to the end while no coordinator listens (the provider keeps the turn).
-    const driver = await loadAdapter();
-    await driver.adapter.adoptSession(session_handle);
-    await driver.adapter.submit(session_handle, 'work', { commandId: 'cmd-offline' });
-    await waitFor(() => driver.events.some((event) => event.type === 'turn_completed'));
-    driver.adapter.detach(session_handle);
+    // The turn ends with no client attached; only the provider knows.
+    await new Promise((resolve) => setTimeout(resolve, 600));
 
     const { next, events } = await restartedAdapter();
     await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: true, writable: true });
     expect(events.filter((event) => event.type === 'turn_completed')).toEqual([expect.objectContaining({ turn_id: 'turn-1', command_id: 'cmd-offline' })]);
+    expect(next.turnActive(session_handle)).toBe(false);
+
+    // Reported once: a further restart does not report it again.
+    next.detach(session_handle);
+    const again = await restartedAdapter();
+    await again.next.adoptSession(session_handle);
+    expect(again.events.filter((event) => event.type.startsWith('turn_'))).toEqual([]);
+  });
+
+  it('does not report again a turn the previous coordinator already saw finish', async () => {
+    const { adapter, events } = await loadAdapter();
+    const { session_handle } = await launchAndDetach(adapter);
+    await adapter.submit(session_handle, 'work', { commandId: 'cmd-seen' });
+    await waitFor(() => events.some((event) => event.type === 'turn_completed'));
+    adapter.detach(session_handle);
+
+    const { next, events: adopted } = await restartedAdapter();
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: true, writable: true });
+    expect(adopted.filter((event) => event.type.startsWith('turn_'))).toEqual([]);
     expect(next.turnActive(session_handle)).toBe(false);
   });
 

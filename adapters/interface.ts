@@ -183,7 +183,8 @@ export async function adapterAdoptSession(adapter: unknown, sessionHandle: strin
   try {
     return await adopt.call(adapter, sessionHandle);
   } catch (error) {
-    return { transport: 'app-server', alive: false, writable: false, pid: null, processStart: null, reason: (error as Error).message };
+    const transport = sessionHandle.startsWith('app:') ? 'app-server' : sessionHandle.startsWith('tmux:') ? 'tmux' : 'legacy';
+    return { transport, alive: false, writable: false, pid: null, processStart: null, reason: (error as Error).message };
   }
 }
 
