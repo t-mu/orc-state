@@ -81,7 +81,7 @@ todo/claimed/in_progress/blocked → cancelled
 | `non-todo → todo` | Operator `orc task-reset` / master `reset_task`, including a done or cancelled task |
 | `todo/claimed/in_progress/blocked → cancelled` | Master `cancel_task` / operator `orc task-cancel` |
 
-- Every status change is a `task_transitions` row (cause, run, actor) written in the same transaction as the task and run binding; the `events.db` event follows, and startup reconciliation repairs a crash between them.
+- Every status change is a `task_transitions` row (cause, run, actor) written in the same transaction as the task and run binding. `runtime.db` commits first; the `events.db` run row and event follow in every path that writes both, and startup reconciliation repairs a crash between them. A snapshot's task `status` may therefore be ahead of its `cursor` for a moment.
 - Infrastructure failures (dispatch, session start, run-start timeout) do not count an attempt.
 - A run that ends after its task was reset or cancelled leaves the task alone.
 - Status is never edited through a spec or `update_task`; imports never apply status.
@@ -155,7 +155,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | Event | Emitter | Note |
 |-------|---------|------|
 | `claim_created` | Coordinator | Task claimed for a worker |
-| `claim_expired` | Coordinator / operator | Lease or input timeout, dead session, `orc run-expire` |
+| `claim_expired` | Coordinator / operator | Lease or input timeout, dead session, `orc run-expire`; always carries `agent_id`; payload `policy`, `code` (`ERR_LEASE_EXPIRED`, `ERR_INPUT_TIMEOUT`, `ERR_MANUAL_EXPIRE`), `reason`, plus the task outcome fields below |
 | `task_envelope_sent` | Coordinator | TASK_START delivered |
 | `run_started` | Worker | `orc run-start` |
 | `heartbeat` | Worker | `orc progress --event=heartbeat [--note]`; `payload.note` feeds `orc watch` |
@@ -166,7 +166,8 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `finalize_rebase_started` | Worker | after `finalize_rebase_requested` |
 | `ready_to_merge` | Worker | `run-work-complete` after a finalize rebase |
 | `run_finished` | Worker | `orc run-finish` |
-| `run_failed` | Worker | `orc run-fail` |
+| `run_failed` | Worker | `orc run-fail`; payload `policy`, `reason?`, `code?`, plus the task outcome fields below |
+| `finalization_changed` | Coordinator | a run's finalization fields changed (`setRunFinalizationState`), same transaction as the run row; payload `from`, `to`, `retry_count`, `blocked_reason`, `pr_ref`, `pr_created_at`; a write that changes nothing emits none |
 | `run_cancelled` | Coordinator / operator | cancel, reset, `kill-all` |
 | `blocked`, `unblocked` | Worker | only via `orc progress` |
 | `need_input` | Coordinator / Worker | run-start or in-progress nudge sent; validates `run-input-request` |
@@ -194,6 +195,9 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `stop_blocked` | Coordinator | `Stop` hook refused (`phase`, `count`, `stop_hook_active`) |
 
 - Notification events (master polling): `run_finished`, `run_failed`, `run_cancelled`, `worker_needs_attention`, `input_requested`, `input_response`.
+- Task outcome fields on `run_failed` and `claim_expired`: `task_status` (resulting status: `todo` when requeued, `blocked` after `--policy=block` or the fifth attempt, unchanged when an operator already moved the task), `attempt_count`, `requeue_eligible_after`, `blocked_reason` (only when `blocked`). `policy` is what was asked for; `task_status` is what happened. Events written before these fields existed lack them.
+- A terminal run event (`run_finished`, `run_failed`, `run_cancelled`, `claim_expired`) also clears the run's finalization fields; no `finalization_changed` is emitted for that.
+- Lease renewals are snapshot-only: a renewal without a `heartbeat` event (coordinator phase-signal or PID-probe renewal, finalize lease) changes `lease_expires_at` with no event; read it from `/v1/snapshot`.
 - Query: `orc events-tail`, MCP `query_events` (filters `run_id`, `agent_id`, `event_type`, `after_seq`, free text; ≤ 500 rows).
 
 ---

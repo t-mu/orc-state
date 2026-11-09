@@ -122,8 +122,8 @@ describe('resetVolatileRuntimeStateForSession', () => {
     const beforeEvents = queryEvents(dir, {});
     expect(beforeEvents.map((event) => event.event)).toEqual(['run_failed', 'run_failed']);
     expect(beforeEvents.map((event) => event.payload)).toEqual([
-      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
-      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue' },
+      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue', task_status: 'todo', attempt_count: 0, requeue_eligible_after: null, blocked_reason: null },
+      { reason: 'session_reset', code: 'ERR_SESSION_RESET', policy: 'requeue', task_status: 'todo', attempt_count: 0, requeue_eligible_after: null, blocked_reason: null },
     ]);
 
     const seq = appendSessionStartedEvent(dir, result);

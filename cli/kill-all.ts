@@ -149,6 +149,8 @@ withLock(join(STATE_DIR, '.lock'), () => {
     }
   }
 
+  // runtime.db (task status) commits before events.db (run rows + events); reconcile repairs a crash between them.
+  commitBacklog(STATE_DIR, backlog, changes);
   commitClaims(STATE_DIR, claimsState, [{
         ts: now,
         event: 'coordinator_stopped',
@@ -159,7 +161,6 @@ withLock(join(STATE_DIR, '.lock'), () => {
         ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: 'human',
         ...run, payload: { reason: 'kill_all' },
       }))]);
-  commitBacklog(STATE_DIR, backlog, changes);
 
   console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)${keptRunIds.size ? `, kept ${keptRunIds.size} run(s) of kept sessions` : ''}`);
 });

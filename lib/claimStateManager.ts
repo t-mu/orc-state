@@ -95,10 +95,33 @@ export function setRunFinalizationState(
       throw new Error('blockedReason must be a string or null');
     }
 
+    const from = claim.finalization_state ?? null;
+    const previousRetryCount = claim.finalization_retry_count ?? 0;
+    const previousBlockedReason = claim.finalization_blocked_reason ?? null;
     claim.finalization_state = finalizationState ?? null;
-    claim.finalization_retry_count = Math.max(0, (claim.finalization_retry_count ?? 0) + retryCountDelta);
+    claim.finalization_retry_count = Math.max(0, previousRetryCount + retryCountDelta);
     claim.finalization_blocked_reason = blockedReason;
-    commitClaims(stateDir, claims);
+    const changed = claim.finalization_state !== from
+      || claim.finalization_retry_count !== previousRetryCount
+      || claim.finalization_blocked_reason !== previousBlockedReason;
+    // The event commits in the same events.db transaction as the claim, so a stream reader sees every change.
+    commitClaims(stateDir, claims, changed ? [{
+      ts: new Date().toISOString(),
+      event: 'finalization_changed',
+      actor_type: 'coordinator',
+      actor_id: 'coordinator',
+      run_id: runId,
+      task_ref: claim.task_ref,
+      agent_id: agentId,
+      payload: {
+        from,
+        to: claim.finalization_state,
+        retry_count: claim.finalization_retry_count,
+        blocked_reason: claim.finalization_blocked_reason,
+        pr_ref: claim.pr_ref ?? null,
+        pr_created_at: claim.pr_created_at ?? null,
+      },
+    }] : []);
 
     return claim;
   });

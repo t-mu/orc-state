@@ -4,7 +4,8 @@ import { commitBacklog, type TaskStatusChange } from './projectTasks.ts';
 import { commitClaims } from './runStore.ts';
 import { readJson, findTask } from './stateReader.ts';
 import type { Claim, ClaimsState } from '../types/claims.ts';
-import type { Backlog } from '../types/backlog.ts';
+import type { Backlog, Task } from '../types/backlog.ts';
+import type { FailureTaskOutcome, FailurePolicy } from '../types/events.ts';
 
 const MAX_ATTEMPTS = 5;
 const BACKOFF_BASE_MS = 30_000;
@@ -12,6 +13,21 @@ const BACKOFF_MAX_MS  = 600_000;
 
 export function requeueBackoffMs(attemptCount: number): number {
   return Math.min(BACKOFF_BASE_MS * Math.pow(2, attemptCount - 1), BACKOFF_MAX_MS);
+}
+
+/**
+ * The task fields a failed run left behind, carried by `run_failed` and `claim_expired`
+ * so a stream reader learns whether the task was requeued or blocked.
+ * `blockedReason` is the reason recorded with a block; it is reported only for a blocked task.
+ */
+export function failureTaskOutcome(task: Task | null | undefined, blockedReason: string | null = null): FailureTaskOutcome {
+  const blocked = task?.status === 'blocked';
+  return {
+    task_status: task?.status ?? null,
+    attempt_count: task ? (task.attempt_count ?? 0) : null,
+    requeue_eligible_after: task?.requeue_eligible_after ?? null,
+    blocked_reason: blocked ? (blockedReason ?? task.blocked_reason ?? null) : null,
+  };
 }
 
 /** Fields that only mean something while a run is active; a failed claim drops them. */
@@ -33,7 +49,7 @@ function _expireLeasesCore(
   const claims  = readJson(stateDir, 'claims.json') as ClaimsState;
   const backlog = readJson(stateDir, 'backlog.json') as Backlog;
   const now     = new Date();
-  const expired: Array<{ run_id: string; task_ref: string; agent_id: string; code: string }> = [];
+  const expired: Array<{ run_id: string; task_ref: string; agent_id: string; code: string; outcome: FailureTaskOutcome }> = [];
   const changes: Record<string, TaskStatusChange> = {};
 
   for (const claim of claims.claims) {
@@ -58,8 +74,6 @@ function _expireLeasesCore(
     claim.finished_at = now.toISOString();
     if (code === 'ERR_INPUT_TIMEOUT') claim.failure_reason = 'ERR_INPUT_TIMEOUT';
     resetClaimVolatileFields(claim);
-    expired.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id, code });
-
     const task = findTask(backlog, claim.task_ref);
     // In project SQLite a task an operator already moved off this run keeps its status.
     if (task && ['claimed', 'in_progress'].includes(task.status)) {
@@ -81,18 +95,24 @@ function _expireLeasesCore(
         runId: claim.run_id, actorId, reason: task.blocked_reason ?? code,
       };
     }
+    expired.push({
+      run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id, code,
+      outcome: failureTaskOutcome(task, changes[claim.task_ref]?.reason ?? null),
+    });
   }
 
   if (expired.length > 0) {
-    commitClaims(stateDir, claims, expired.map(({ run_id, task_ref, code }) => ({
+    // runtime.db (task status) commits before events.db (run row + event); reconcile repairs a crash between them.
+    commitBacklog(stateDir, backlog, changes);
+    commitClaims(stateDir, claims, expired.map(({ run_id, task_ref, agent_id, code, outcome }) => ({
         ts: now.toISOString(), event: 'claim_expired',
         actor_type: 'coordinator', actor_id: actorId,
-        run_id, task_ref, payload: { policy: policy as import('../types/events.ts').FailurePolicy, code },
+        run_id, task_ref, agent_id,
+        payload: { policy: policy as FailurePolicy, code, reason: code, ...outcome },
       })));
-    commitBacklog(stateDir, backlog, changes);
   }
 
-  return expired;
+  return expired.map(({ run_id, task_ref, agent_id }) => ({ run_id, task_ref, agent_id }));
 }
 
 /**

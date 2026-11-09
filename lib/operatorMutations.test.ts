@@ -132,6 +132,19 @@ describe('applyOperatorMutation (task 232)', () => {
   });
 });
 
+describe('run-expire', () => {
+  it('emits claim_expired in the lease-expiry shape, with agent_id and the requeued task', () => {
+    applyOperatorMutation(dir, { op: 'run-expire', run_id: 'run-a', actor_id: 'human' });
+    expect(status('orch/active')).toBe('todo');
+    const [event] = queryEvents(dir, { event_type: 'claim_expired' });
+    expect(event).toMatchObject({ run_id: 'run-a', task_ref: 'orch/active', agent_id: 'worker-a', actor_id: 'human' });
+    expect(event.payload).toEqual({
+      policy: 'requeue', code: 'ERR_MANUAL_EXPIRE', reason: 'manual_expire',
+      task_status: 'todo', attempt_count: 0, requeue_eligible_after: null, blocked_reason: null,
+    });
+  });
+});
+
 describe('cancel-task keeps its runs', () => {
   it('leaves the cancelled run as a failed row and names it in task_cancelled', () => {
     applyOperatorMutation(dir, { op: 'cancel-task', task_ref: 'orch/active', actor_id: 'human' });

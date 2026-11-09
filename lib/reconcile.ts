@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { withLock } from './lock.ts';
-import { readJson } from './stateReader.ts';
+import { findTask, readJson } from './stateReader.ts';
+import { failureTaskOutcome } from './claimLeaseManager.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ClaimsState, Claim } from '../types/claims.ts';
 import type { OrcEventInput } from '../types/events.ts';
@@ -103,7 +104,7 @@ export function reconcileState(stateDir: string): void {
       const events: OrcEventInput[] = failedClaims.map(({ claim, reason }) => ({
         ts: now, event: 'run_failed', actor_type: 'coordinator', actor_id: 'reconcile',
         run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id,
-        payload: { reason, code: 'ERR_RECONCILE', policy: 'requeue' },
+        payload: { reason, code: 'ERR_RECONCILE', policy: 'requeue', ...failureTaskOutcome(findTask(backlog, claim.task_ref)) },
       }));
       commitClaims(stateDir, claims, events);
     }

@@ -7,13 +7,13 @@ import { readJson, findTask } from './stateReader.ts';
 import type { ClaimsState } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import type { ActorType, OrcEventInput } from '../types/events.ts';
-import { requeueBackoffMs as _requeueBackoffMs } from './claimLeaseManager.ts';
+import { requeueBackoffMs as _requeueBackoffMs, failureTaskOutcome } from './claimLeaseManager.ts';
 import { writeRunRevisionSnapshot } from './documentIndex.ts';
 import { commitBacklog, refreshBacklogProjection, requireProjectTaskStore } from './projectTasks.ts';
 
 const MAX_ATTEMPTS = 5; // auto-block a task after this many dispatch+fail cycles
 
-export { requeueBackoffMs } from './claimLeaseManager.ts';
+export { requeueBackoffMs, failureTaskOutcome } from './claimLeaseManager.ts';
 export { expireStaleLeases, expireStaleLeasesDetailed } from './claimLeaseManager.ts';
 export { markTaskEnvelopeSent, setRunFinalizationState, setRunInputState, setRunSessionStartRetryState, setEscalationNotified, setPrRef, setPrCreatedAt } from './claimStateManager.ts';
 
@@ -141,12 +141,13 @@ export function startRun(
     const task    = findTask(backlog, claim.task_ref);
     if (task) task.status = 'in_progress';
 
+    // runtime.db (task status) commits before events.db (run row + event); reconcile repairs a crash between them.
+    if (task) commitBacklog(stateDir, backlog, { [claim.task_ref]: { cause: 'run_start', runId, actorId: actorId ?? agentId } });
     commitClaims(stateDir, claims, emitEvent ? [{
         ts: at, event: 'run_started',
         actor_type: actorType, actor_id: actorId ?? agentId,
         run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
       }] : []);
-    if (task) commitBacklog(stateDir, backlog, { [claim.task_ref]: { cause: 'run_start', runId, actorId: actorId ?? agentId } });
   });
 }
 
@@ -299,6 +300,9 @@ export function finishRun(
       }
     }
 
+    const statusChanged = Boolean(task) && task!.status !== previousStatus;
+    const transitionReason = task?.blocked_reason ?? failureReason ?? (policy === 'block' ? 'run failed with block policy' : null);
+
     const events: OrcEventInput[] = [];
     if (emitEvent) {
       if (success) {
@@ -313,16 +317,20 @@ export function finishRun(
           ts: at, event: 'run_failed',
           actor_type: 'agent', actor_id: agentId,
           run_id: runId, task_ref: claim.task_ref, agent_id: agentId,
-          payload: { reason: failureReason ?? undefined, code: failureCode ?? undefined, policy: policy as import('../types/events.ts').FailurePolicy },
+          payload: {
+            reason: failureReason ?? undefined, code: failureCode ?? undefined, policy: policy as import('../types/events.ts').FailurePolicy,
+            ...failureTaskOutcome(found, statusChanged ? transitionReason : null),
+          },
         });
       }
     }
-    commitClaims(stateDir, claims, events);
+    // runtime.db (task status) commits before events.db (run row + event); reconcile repairs a crash between them.
     if (task) {
       const cause = task.status === 'done' ? 'merge_succeeded' : task.status === 'blocked' ? 'failure_block' : 'failure_requeue';
-      commitBacklog(stateDir, backlog, task.status === previousStatus ? {} : {
-        [claim.task_ref]: { cause, runId, actorId: agentId, reason: task.blocked_reason ?? failureReason ?? (policy === 'block' ? 'run failed with block policy' : null) },
-      });
+      commitBacklog(stateDir, backlog, statusChanged ? {
+        [claim.task_ref]: { cause, runId, actorId: agentId, reason: transitionReason },
+      } : {});
     }
+    commitClaims(stateDir, claims, events);
   });
 }
