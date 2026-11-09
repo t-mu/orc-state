@@ -12,7 +12,10 @@ import { detectLifecycleIssues, type LifecycleIssue } from './lifecycleDiagnosti
 import { claimedRunStartupAnchor } from './runActivity.ts';
 import { getOrphanedClaims } from './claimDiagnostics.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from './sandboxDeps.ts';
-import { inspectRuntimeSchema } from './runtimeSchema.ts';
+import { inspectRuntimeSchema, RUNTIME_SCHEMA } from './runtimeSchema.ts';
+import { PROJECT_TASK_SCHEMA } from './projectTaskStore.ts';
+import { coordinatorSchemaProblems, inspectSchemaRange, type SchemaRange } from './schemaCompat.ts';
+import type { ControlHealth } from './controlServer.ts';
 import { coordinatorPidFileProblem } from './coordinatorLiveness.ts';
 import { ControlClient, controlSocketFromEnv } from './controlClient.ts';
 import { staleCodeWarning } from './codeIdentity.ts';
@@ -53,6 +56,12 @@ export interface DoctorChecks {
   coordinatorLock: { problem: string | null };
   /** A warning only: never part of `ok`. Null when no coordinator answers or its code is current. */
   coordinatorCode: { warning: string | null };
+  /** Each database the running coordinator's schema support does not cover; `coordinator` is null when none answers. */
+  coordinatorSchema: {
+    ok: boolean; problems: string[];
+    coordinator: Pick<ControlHealth, 'schema_version'> & Partial<Pick<ControlHealth, 'schemas'>> | null;
+    databases: { events: SchemaRange | null; runtime: SchemaRange | null };
+  };
   tmux: ReturnType<typeof checkTmux>;
 }
 
@@ -85,7 +94,9 @@ export async function runDoctor(stateDir: string, options: DoctorOptions = {}): 
   const memoryHealth = validateMemoryDb(stateDir);
   const runtimeSchema = inspectRuntimeSchema(stateDir);
   const coordinatorLock = { problem: coordinatorPidFileProblem(stateDir) };
-  const coordinatorCode = { warning: await coordinatorCodeWarning(stateDir) };
+  const health = await coordinatorHealth(stateDir);
+  const coordinatorCode = { warning: health ? staleCodeWarning(health) : null };
+  const coordinatorSchema = checkCoordinatorSchema(stateDir, health);
   // Every provider terminal session (master and workers) runs in tmux.
   const tmux = checkTmux();
 
@@ -118,6 +129,7 @@ export async function runDoctor(stateDir: string, options: DoctorOptions = {}): 
     runtimeSchema,
     coordinatorLock,
     coordinatorCode,
+    coordinatorSchema,
     tmux,
   };
 
@@ -165,6 +177,7 @@ export function doctorCheckList(checks: DoctorChecks): DoctorCheck[] {
     { name: 'coordinator_lock', ok: checks.coordinatorLock.problem === null, detail: checks.coordinatorLock.problem ?? '' },
     // A warning only: it never fails the doctor.
     { name: 'coordinator_code', ok: true, detail: checks.coordinatorCode.warning ?? '' },
+    { name: 'coordinator_schema', ok: checks.coordinatorSchema.ok, detail: checks.coordinatorSchema.problems.join('; ') },
     { name: 'tmux', ok: checks.tmux.ok, detail: checks.tmux.problem ?? '' },
   ].map((check) => ({ ...check, detail: check.detail.replace(/\s*\n\s*/g, ' ') }));
 }
@@ -220,12 +233,21 @@ function checkProviderBinary(provider: string): ProviderBinaryCheck {
   };
 }
 
-async function coordinatorCodeWarning(stateDir: string): Promise<string | null> {
+async function coordinatorHealth(stateDir: string): Promise<ControlHealth | null> {
   try {
-    return staleCodeWarning(await new ControlClient(stateDir, { timeoutMs: 3_000, socketPath: controlSocketFromEnv() }).health());
+    return await new ControlClient(stateDir, { timeoutMs: 3_000, socketPath: controlSocketFromEnv() }).health();
   } catch {
     return null; // no coordinator running, or it predates /v1/health
   }
+}
+
+/** The running coordinator's schema support against the databases on disk, and the migrations it blocks. */
+function checkCoordinatorSchema(stateDir: string, health: Partial<ControlHealth> | null): DoctorChecks['coordinatorSchema'] {
+  const databases = { events: inspectSchemaRange(stateDir, 'events'), runtime: inspectSchemaRange(stateDir, 'runtime') };
+  if (typeof health?.schema_version !== 'number') return { ok: true, problems: [], coordinator: null, databases };
+  const coordinator = { schema_version: health.schema_version, ...(health.schemas ? { schemas: health.schemas } : {}) };
+  const problems = coordinatorSchemaProblems(coordinator, databases, { events: RUNTIME_SCHEMA, runtime: PROJECT_TASK_SCHEMA });
+  return { ok: problems.length === 0, problems, coordinator, databases };
 }
 
 function safeRead<T>(read: () => T, fallback: T): T {

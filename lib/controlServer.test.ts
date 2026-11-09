@@ -9,7 +9,7 @@ import { appendSequencedEvent, closeAllDatabases, initEventsDb, readEventBatch, 
 import { commitClaims } from './runStore.ts';
 import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './commandDelivery.ts';
 import { buildStatus } from './statusView.ts';
-import { RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
+import { RUNTIME_SCHEMA, RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
 import { ORC_PACKAGE_ROOT } from './paths.ts';
 import { ControlClient, controlSocketFromEnv, type EventRow } from './controlClient.ts';
 import { readBuildId } from './codeIdentity.ts';
@@ -17,7 +17,7 @@ import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, Co
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import Database from 'better-sqlite3';
 import { closeProjectTaskStores, initProjectTaskStore } from './projectTasks.ts';
-import { ProjectTaskStore } from './projectTaskStore.ts';
+import { PROJECT_TASK_SCHEMA, ProjectTaskStore } from './projectTaskStore.ts';
 import { credentialHash } from './sessionCredentials.ts';
 import { closeMemoryDb, storeDrawer } from './memoryStore.ts';
 import type { Claim } from '../types/claims.ts';
@@ -561,9 +561,12 @@ describe('local daemon control API', () => {
     const operator = await new ControlClient(dir).health();
     expect(operator).toEqual({
       version, protocol_version: CONTROL_PROTOCOL_VERSION, protocol_versions: [1, CONTROL_PROTOCOL_VERSION], schema_version: RUNTIME_SCHEMA_VERSION,
+      schemas: { events: RUNTIME_SCHEMA, runtime: PROJECT_TASK_SCHEMA },
       started_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/), code_root: ORC_PACKAGE_ROOT, code_mtime: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
       build_id: readBuildId(ORC_PACKAGE_ROOT),
     });
+    // The control endpoint records the same schema range for a CLI that checks it before migrating.
+    expect(JSON.parse(readFileSync(join(dir, 'control.json'), 'utf8')).schemas).toEqual(operator.schemas);
     expect(await new ControlClient(dir, { credential: 'session-a' }).health()).toEqual(operator);
     expect(await new ControlClient(dir, { credential: 'session-master' }).health()).toEqual(operator);
     expect((await rawGet({ 'x-orc-protocol': '1' }, '/v1/health')).status).toBe(401);

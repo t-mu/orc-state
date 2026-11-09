@@ -5,7 +5,8 @@ import Database from 'better-sqlite3';
 import { RUN_SESSION_EVENTS, validateEventObject } from './eventValidation.ts';
 import type { OrcEvent, OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
-import { assertSupportedRuntimeSchemaVersion, migrateRuntimeSchema } from './runtimeSchema.ts';
+import { assertSupportedRuntimeSchemaVersion, migrateRuntimeSchema, RUNTIME_SCHEMA } from './runtimeSchema.ts';
+import { assertMigrationAllowed } from './schemaCompat.ts';
 import { openReadOnlyDatabase, shouldOpenReadOnly } from './sqliteReadOnly.ts';
 
 // Module-level singleton: one DB connection per stateDir.
@@ -20,6 +21,8 @@ function getDb(stateDir: string): Database.Database {
   try {
     db.pragma('busy_timeout = 10000');
     assertSupportedRuntimeSchemaVersion(db);
+    // Before any DDL below: a refused upgrade must leave the database as the live coordinator knows it.
+    assertMigrationAllowed(stateDir, 'events', db.pragma('user_version', { simple: true }) as number, RUNTIME_SCHEMA);
     db.pragma('journal_mode = WAL');
 
     db.exec(`
@@ -56,7 +59,7 @@ function getDb(stateDir: string): Database.Database {
       WHERE event = 'phase_started' AND json_valid(payload);
     `);
 
-    migrateRuntimeSchema(db);
+    migrateRuntimeSchema(db, { stateDir });
     migrateJsonlIfNeeded(db, stateDir);
     _dbs.set(stateDir, db);
     return db;

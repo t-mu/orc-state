@@ -11,7 +11,8 @@ import {
   type AckState, type ControlEndpoint, type StreamFrame, type SubmitCommandRequest, type TerminalFrame,
 } from './controlProtocol.ts';
 import { captureCodeIdentity, type CodeIdentity } from './codeIdentity.ts';
-import { RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
+import { RUNTIME_SCHEMA, RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
+import type { SchemaSupport } from './schemaCompat.ts';
 import { readEventBatch, type EventBatchFilter } from './eventLog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 import { readBacklog, readClaims, findTask } from './stateReader.ts';
@@ -24,7 +25,7 @@ import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
 import { resolveControlPrincipal, requirePrincipal, requireProjectAuthor, requireProjectReader, type ControlPrincipal, type SessionPrincipal } from './controlPrincipal.ts';
 import { ConflictError, ForbiddenError, InputError, NotFoundError, UnauthenticatedError } from './domainErrors.ts';
-import { RevisionConflictError } from './projectTaskStore.ts';
+import { PROJECT_TASK_SCHEMA, RevisionConflictError } from './projectTaskStore.ts';
 import { createProjectTask, describeProjectTask, describeProjectTaskSummary, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
@@ -60,8 +61,16 @@ export interface ControlHealth extends CodeIdentity {
   protocol_version: number;
   /** `[min, max]` protocol versions this coordinator accepts in the protocol header. */
   protocol_versions: readonly [number, number];
+  /** The events.db schema this coordinator writes (`schemas.events.version`). */
   schema_version: number;
+  /** Per database: the schema this coordinator writes and the oldest code that can read it. */
+  schemas: SchemaSupport;
   started_at: string;
+}
+
+/** The schemas this code writes, as a coordinator records them in its pid lock, control endpoint and `/v1/health`. */
+export function codeSchemaSupport(): SchemaSupport {
+  return { events: { ...RUNTIME_SCHEMA }, runtime: { ...PROJECT_TASK_SCHEMA } };
 }
 
 export interface ControlServer {
@@ -200,6 +209,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     protocol_version: CONTROL_PROTOCOL_VERSION,
     protocol_versions: CONTROL_PROTOCOL_VERSIONS,
     schema_version: RUNTIME_SCHEMA_VERSION,
+    schemas: codeSchemaSupport(),
     started_at: new Date().toISOString(),
     ...captureCodeIdentity(options.codeRoot),
   };
@@ -610,6 +620,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
   const endpoint: ControlEndpoint = {
     protocol_version: CONTROL_PROTOCOL_VERSION, transport: 'unix', path: socketPath,
     pid: process.pid, started_at: new Date().toISOString(), process_start: readProcessStart(process.pid),
+    schemas: codeSchemaSupport(),
   };
   const endpointPath = join(stateDir, CONTROL_ENDPOINT_FILE);
   atomicWriteJson(endpointPath, endpoint);

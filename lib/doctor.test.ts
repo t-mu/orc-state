@@ -4,6 +4,12 @@ import { resolve } from 'node:path';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { doctorCheckList, runDoctor, type DoctorChecks } from './doctor.ts';
 import { handleDoctor } from '../mcp/handlers.ts';
+import Database from 'better-sqlite3';
+import { join } from 'node:path';
+import { closeAllDatabases, initEventsDb } from './eventLog.ts';
+import { startControlServer } from './controlServer.ts';
+import { PROJECT_TASK_SCHEMA, ProjectTaskStore } from './projectTaskStore.ts';
+import { RUNTIME_SCHEMA } from './runtimeSchema.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -28,6 +34,7 @@ function healthyChecks(): DoctorChecks {
     runtimeSchema: { ok: true, version: 1, messages: [] } as unknown as DoctorChecks['runtimeSchema'],
     coordinatorLock: { problem: null },
     coordinatorCode: { warning: null },
+    coordinatorSchema: { ok: true, problems: [], coordinator: null, databases: { events: null, runtime: null } },
     tmux: { ok: true, version: '3.4', problem: null } as unknown as DoctorChecks['tmux'],
   };
 }
@@ -54,6 +61,7 @@ describe('doctorCheckList', () => {
       ['memory_health', (c) => { c.memoryHealth = { ok: false, messages: ['fts broken'] } as unknown as DoctorChecks['memoryHealth']; }],
       ['runtime_schema', (c) => { c.runtimeSchema = { ok: false, version: 0, messages: ['old'] } as unknown as DoctorChecks['runtimeSchema']; }],
       ['coordinator_lock', (c) => { c.coordinatorLock = { problem: 'stale pid file' }; }],
+      ['coordinator_schema', (c) => { c.coordinatorSchema = { ...c.coordinatorSchema, ok: false, problems: ['running coordinator supports events.db schema 8'] }; }],
       ['tmux', (c) => { c.tmux = { ok: false, version: null, problem: 'tmux not found' } as unknown as DoctorChecks['tmux']; }],
       ['project_selection', (c) => { c.projectSelection = { ok: false, message: 'no project' }; }],
       ['project', (c) => { c.project = { ok: false, errors: ['layout'], warnings: [] } as unknown as DoctorChecks['project']; }],
@@ -95,5 +103,39 @@ describe('runDoctor', () => {
     expect(cli.status).toBe(cliReport.ok ? 0 : 1);
     expect(mcp.ok).toBe(mcp.checks.every((check) => check.ok));
     expect(Object.keys(mcp).sort()).toEqual(['checks', 'ok']);
+  });
+
+  it('reports the running coordinator\'s schema range and flags a database it cannot read', async () => {
+    seedState(dir);
+    new ProjectTaskStore(dir).close();
+    initEventsDb(dir);
+    const server = await startControlServer(dir, { pollMs: 20 });
+    try {
+      const healthy = (await runDoctor(dir, { project: null })).checks.coordinatorSchema;
+      expect(healthy).toEqual({
+        ok: true, problems: [],
+        coordinator: { schema_version: RUNTIME_SCHEMA.version, schemas: { events: RUNTIME_SCHEMA, runtime: PROJECT_TASK_SCHEMA } },
+        databases: { events: RUNTIME_SCHEMA, runtime: PROJECT_TASK_SCHEMA },
+      });
+
+      // Newer code migrated events.db under this coordinator to a schema it cannot read.
+      closeAllDatabases();
+      const db = new Database(join(dir, 'events.db'));
+      const future = RUNTIME_SCHEMA.version + 1;
+      db.prepare("INSERT INTO schema_migrations (version, name, applied_at, min_compatible) VALUES (?, 'future', 'now', ?)").run(future, future);
+      db.pragma(`user_version = ${future}`);
+      db.close();
+      const report = await runDoctor(dir, { project: null });
+      expect(report.checks.coordinatorSchema.ok).toBe(false);
+      expect(report.checks.coordinatorSchema.databases.events).toEqual({ version: future, min_compatible: future });
+      expect(doctorCheckList(report.checks).find((check) => check.name === 'coordinator_schema')).toEqual({
+        name: 'coordinator_schema', ok: false,
+        detail: `running coordinator supports events.db schema ${RUNTIME_SCHEMA.version}, but the database is at schema ${future} (needs code of schema ${future} or newer); run orc coordinator restart`,
+      });
+      expect(report.ok).toBe(false);
+    } finally {
+      await server.close();
+      closeAllDatabases();
+    }
   });
 });

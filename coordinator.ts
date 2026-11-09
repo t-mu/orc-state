@@ -61,7 +61,7 @@ import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
 import { advanceEventOffset, initializeEventOffset, readEventOffset, wasEventOffsetReset } from './lib/eventOffsets.ts';
 import { recordAgentActivity } from './lib/agentActivity.ts';
-import { sessionAuthenticator, startControlServer, type ControlServer } from './lib/controlServer.ts';
+import { codeSchemaSupport, sessionAuthenticator, startControlServer, type ControlServer } from './lib/controlServer.ts';
 import {
   IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, currentSessionForAgent, currentSessionOwnerId,
   identityMismatch, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession,
@@ -2408,7 +2408,9 @@ const COORDINATOR_PID_FILE = join(STATE_DIR, 'coordinator.pid');
 
 function acquireCoordinatorLock() {
   const lockFlags = constants.O_EXCL | constants.O_CREAT | constants.O_WRONLY;
-  const record: CoordinatorPidRecord = { pid: process.pid, started_at: new Date().toISOString(), process_start: readProcessStart(process.pid) };
+  const record: CoordinatorPidRecord = {
+    pid: process.pid, started_at: new Date().toISOString(), process_start: readProcessStart(process.pid), schemas: codeSchemaSupport(),
+  };
   const payload = JSON.stringify(record);
 
   for (let attempt = 0; attempt < 4; attempt += 1) {

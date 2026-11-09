@@ -1,8 +1,13 @@
 import { closeSync, constants, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import type { SchemaSupport } from './schemaCompat.ts';
 import { isCoordinatorLockHeld, type CoordinatorLock } from './coordinatorLiveness.ts';
 
 /** What a coordinator wrote into its pid lock when it acquired it. */
-export interface CoordinatorPidRecord { pid: number; started_at: string; process_start: string | null }
+export interface CoordinatorPidRecord {
+  pid: number; started_at: string; process_start: string | null;
+  /** The schemas this coordinator supports, read by a newer binary before it migrates (`lib/schemaCompat.ts`). */
+  schemas?: SchemaSupport;
+}
 
 type ReadResult = { state: 'missing' } | { state: 'present'; lock: CoordinatorLock | null };
 
