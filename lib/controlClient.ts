@@ -23,10 +23,10 @@ import type { PlanImportResult, TaskImportResult, TaskMarkdownSource } from './t
 import type { ScoutReportView } from './scouts.ts';
 import type { OrcEvent, ReviewSubmittedEvent } from '../types/events.ts';
 
-/** `event` is null for a corrupt row; its `seq` still advances the cursor. */
 /** `GET /v1/runs/<run_id>`: the claim with its task title, worktree and live session (null when none runs). */
 export type RunDetail = Claim & { task_title: string | null; worktree_path: string | null; session: SessionTerminalView | null };
 
+/** `event` is null for a corrupt row; its `seq` still advances the cursor. */
 export interface EventRow { seq: number; event: OrcEvent | null }
 
 /** Narrow `GET /v1/events` to one run, agent or event type. */

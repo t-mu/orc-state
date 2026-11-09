@@ -1,8 +1,8 @@
-import type { OrcEvent } from '../types/events.ts';
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { OrcEvent } from '../types/events.ts';
 
 /**
  * Local daemon control protocol. HTTP/JSON over a Unix domain socket is the
