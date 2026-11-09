@@ -451,9 +451,12 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (url.pathname.startsWith('/v1/terminals/') || url.pathname === '/v1/sessions') projectReader(req);
     if (req.method === 'GET' && url.pathname === '/v1/sessions') return ok({ sessions: terminals.sessions() });
     if (req.method === 'POST' && url.pathname === '/v1/terminals/provider') {
+      // By run (a worker's session) or by agent (any agent's running session, the master and scouts included).
       const body = await readBody(req);
-      if (typeof body.run_id !== 'string' || !body.run_id) throw new ControlError('bad_request', 'run_id is required', 400);
-      return ok({ terminal: terminals.provider(body.run_id) });
+      const given = (['run_id', 'agent_id'] as const).filter((key) => body[key] !== undefined);
+      const value = body[given[0]];
+      if (given.length !== 1 || typeof value !== 'string' || !value) throw new ControlError('bad_request', 'Exactly one of run_id or agent_id is required', 400);
+      return ok({ terminal: given[0] === 'agent_id' ? terminals.providerForAgent(value) : terminals.provider(value) });
     }
     if (req.method === 'POST' && url.pathname === '/v1/terminals/shell') {
       const body = await readBody(req);

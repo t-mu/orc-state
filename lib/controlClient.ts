@@ -429,6 +429,14 @@ export class ControlClient {
     return this.call('POST', `/v1/terminals/${kind}`, { run_id: runId }, options);
   }
 
+  /**
+   * The provider terminal of an agent's running session, by agent id: a worker,
+   * a scout or the master. Stream, lease and input it by its `terminal_id` as any other.
+   */
+  openAgentTerminal(agentId: string, options: CallOptions = {}): Promise<{ terminal: TerminalRecord }> {
+    return this.call('POST', '/v1/terminals/provider', { agent_id: agentId }, options);
+  }
+
   /** Running sessions; `terminal_id` is null for one with no terminal to stream (`app:` sessions). */
   sessions(options: CallOptions = {}): Promise<{ sessions: SessionTerminalView[] }> { return this.call('GET', '/v1/sessions', undefined, options); }
 

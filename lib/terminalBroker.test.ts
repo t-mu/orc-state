@@ -13,6 +13,7 @@ import { CONTROL_TOKEN_FILE, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, type Terminal
 import { TerminalBroker, TmuxTerminalDriver, terminalInputScript, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
 import type { TerminalConnection, TerminalSnapshot } from './terminalHost.ts';
 import { sessionCapabilities } from './sessionCapabilities.ts';
+import { credentialHash } from './sessionCredentials.ts';
 
 const exec = promisify(execFile);
 const repoRoot = join(import.meta.dirname, '..');
@@ -532,5 +533,122 @@ describe.runIf(process.env.RUN_TMUX_SMOKE === '1')('real tmux terminal smoke', (
       real.stop(handle);
     }
     expect(real.alive(handle)).toBe(false);
+  });
+});
+
+describe('provider terminals by agent id', () => {
+  /** The master and a scout: tmux sessions with no run; the master authenticates with its session credential. */
+  beforeEach(() => {
+    writeFileSync(join(dir, 'agents.json'), JSON.stringify({ version: '1', agents: [
+      { agent_id: 'master', provider: 'claude', role: 'master', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'scout-1', provider: 'claude', role: 'scout', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+      { agent_id: 'worker-a', provider: 'claude', role: 'worker', capabilities: [], status: 'running', registered_at: '2026-01-01T00:00:00.000Z' },
+    ] }));
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, started_at, updated_at, credential_hash)
+        VALUES ('session-master', NULL, 'master', 'claude', 'running', 'tmux', '2026-01-01', '2026-01-01', ?),
+          ('session-scout', NULL, 'scout-1', 'claude', 'running', 'tmux', '2026-01-01', '2026-01-01', ?)`)
+        .run(credentialHash('secret-master'), credentialHash('secret-scout'));
+      db.prepare("UPDATE sessions SET credential_hash = ? WHERE session_id = 'session-a'").run(credentialHash('secret-a'));
+    });
+    driver.live.add('tmux:master');
+    driver.live.add('tmux:scout-1');
+  });
+
+  it('opens the master terminal for the master and the operator, streams it, and takes input under the lease', async () => {
+    const master = new ControlClient(dir, { credential: 'secret-master' });
+    const terminal = (await master.openAgentTerminal('master')).terminal;
+    expect(terminal).toMatchObject({ terminal_id: 'provider:session-master', session_id: 'session-master', run_id: null, kind: 'provider', handle: 'tmux:master', worktree_path: '' });
+    expect((await new ControlClient(dir).openAgentTerminal('master')).terminal.terminal_id).toBe('provider:session-master');
+    const view = openStream(master, terminal.terminal_id);
+    expect((await view.next(1))[0]).toMatchObject({ type: 'snapshot', screen: 'screen:tmux:master\n' });
+    await view.close();
+    // Neither opening nor streaming without a size resizes the pane.
+    expect(driver.sizes).toEqual([]);
+    await expect(master.inputTerminal(terminal.terminal_id, 'no-lease', 'x')).rejects.toMatchObject({ code: 'forbidden' });
+    const lease = await master.acquireTerminal(terminal.terminal_id, 'desktop');
+    await master.inputTerminal(terminal.terminal_id, lease.lease_id, 'hi\r');
+    expect(driver.writes).toEqual([{ handle: 'tmux:master', data: 'hi\r' }]);
+    await master.releaseTerminal(terminal.terminal_id, lease.lease_id);
+    expect((await master.sessions()).sessions.find((session) => session.agent_id === 'master')?.terminal_id).toBe('provider:session-master');
+  });
+
+  it('opens a worker and a scout terminal by agent id; the worker one is its run terminal', async () => {
+    const client = new ControlClient(dir);
+    const worker = (await client.openAgentTerminal('worker-a')).terminal;
+    expect(worker).toMatchObject({ terminal_id: 'provider:session-a', run_id: 'run-a', worktree_path: worktree });
+    expect((await client.openTerminal('provider', 'run-a')).terminal.terminal_id).toBe(worker.terminal_id);
+    const scout = (await client.openAgentTerminal('scout-1')).terminal;
+    expect(scout).toMatchObject({ terminal_id: 'provider:session-scout', run_id: null, handle: 'tmux:scout-1' });
+    const lease = await client.acquireTerminal(scout.terminal_id, 'operator');
+    await client.inputTerminal(scout.terminal_id, lease.lease_id, 'y');
+    const view = openStream(client, scout.terminal_id);
+    expect((await view.next(1))[0]).toMatchObject({ type: 'snapshot', screen: 'screen:tmux:scout-1\n' });
+    await view.close();
+    expect(driver.writes).toEqual([{ handle: 'tmux:scout-1', data: 'y' }]);
+    expect(driver.sizes).toEqual([]);
+  });
+
+  it('answers not_found for an unknown or offline agent, conflict for an app session, and 403 to worker and scout callers', async () => {
+    for (const credential of ['secret-a', 'secret-scout']) {
+      await expect(new ControlClient(dir, { credential }).openAgentTerminal('master')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+    }
+    const client = new ControlClient(dir);
+    await expect(client.openAgentTerminal('nobody')).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    await expect(client.openAgentTerminal('worker-b')).rejects.toMatchObject({ code: 'conflict' });
+    const scout = (await client.openAgentTerminal('scout-1')).terminal;
+    const lease = await client.acquireTerminal(scout.terminal_id, 'operator');
+    withEventDbTransaction(dir, (db) => db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-scout'").run());
+    await expect(client.openAgentTerminal('scout-1')).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    await expect(openStream(client, scout.terminal_id).next(1)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(client.inputTerminal(scout.terminal_id, lease.lease_id, 'x')).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await client.sessions()).sessions.map((session) => session.agent_id)).not.toContain('scout-1');
+    // A live session whose pane is gone is unavailable, as for a run.
+    driver.live.delete('tmux:master');
+    await expect(client.openAgentTerminal('master')).rejects.toMatchObject({ code: 'unavailable' });
+    expect(driver.writes).toEqual([]);
+  });
+
+  it('retires the old master terminal id when the master gets a new session', async () => {
+    const client = new ControlClient(dir);
+    const old = (await client.openAgentTerminal('master')).terminal;
+    const lease = await client.acquireTerminal(old.terminal_id, 'old-writer');
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'session-master'").run();
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, started_at, updated_at)
+        VALUES ('session-master-2', NULL, 'master', 'claude', 'running', 'tmux', '2026-01-02', '2026-01-02')`).run();
+    });
+    await expect(client.inputTerminal(old.terminal_id, lease.lease_id, 'x')).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(openStream(client, old.terminal_id).next(1)).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await client.openAgentTerminal('master')).terminal.terminal_id).toBe('provider:session-master-2');
+    broker.reconcile();
+    expect(terminalState(old.terminal_id)).toBe('offline');
+  });
+
+  it('rejects a body with both or neither of run_id and agent_id', async () => {
+    const post = (body: unknown) => new Promise<number>((resolve, reject) => {
+      const req = request({
+        socketPath: server.endpoint.path, method: 'POST', path: '/v1/terminals/provider',
+        headers: { 'content-type': 'application/json', 'x-orc-protocol': '1', [OPERATOR_HEADER]: readFileSync(join(dir, OPERATOR_TOKEN_FILE), 'utf8').trim(),
+          authorization: `Bearer ${readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8').trim()}` },
+      }, (res: IncomingMessage) => { res.resume(); resolve(res.statusCode ?? 0); });
+      req.on('error', reject);
+      req.end(JSON.stringify(body));
+    });
+    expect(await post({ run_id: 'run-a', agent_id: 'worker-a' })).toBe(400);
+    expect(await post({})).toBe(400);
+    expect(await post({ agent_id: '' })).toBe(400);
+    expect(await post({ agent_id: 'master' })).toBe(200);
+  });
+
+  it('orc terminal <agent_id> streams the master; orc terminal provider <run_id> still works', async () => {
+    const env = { ...process.env, ORC_STATE_DIR: dir };
+    const byAgent = await exec(process.execPath, ['cli/terminal.ts', 'master', '--once'], { cwd: repoRoot, env, encoding: 'utf8' });
+    expect(byAgent.stdout).toContain('screen:tmux:master');
+    const byRun = await exec(process.execPath, ['cli/terminal.ts', 'provider', 'run-a', '--once'], { cwd: repoRoot, env, encoding: 'utf8' });
+    expect(byRun.stdout).toContain('screen:tmux:worker-a');
+    await expect(exec(process.execPath, ['cli/terminal.ts', 'provider', '--once'], { cwd: repoRoot, env, encoding: 'utf8' }))
+      .rejects.toMatchObject({ stderr: expect.stringContaining('Usage: orc terminal <agent_id>') });
+    expect(driver.sizes).toEqual([]);
   });
 });

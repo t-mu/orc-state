@@ -21,7 +21,7 @@ export const USAGE: Record<string, string> = {
   'events':            'orc events [--run-id=<id>] [--agent-id=<id>] [--task-ref=<ref>] [--event=<type>] [--notifications] [--after=<seq>] [--limit=<1-100>] [--fts=<query>] [--verbose] [--json] [--follow [--max-events=<n>]]',
   'event-cursor':      'orc event-cursor [--consumer=<id>] [--reset-to=<seq>]   (reset requires a stopped coordinator)',
   'control':           'orc control snapshot | events [--after=<seq>] [--limit=<n>] [--follow] [--max-events=<n>] | command --run-id=<id> --recipient-session=<id> --kind=<kind> --idempotency-key=<key> [--payload=<json>] [--credential=<secret>] | ack <command_id> --state=<accepted|running|completed|failed> [--credential=<secret>] | message --run-id=<id> (--recipient-session=<id>|--recipient-agent=<id>) --kind=<kind> --text=<text> --idempotency-key=<key> [--artifact-ref=<ref>] [--parent-message=<id>] | messages [--include-consumed] | consume <message_id>',
-  'terminal':          'orc terminal <provider|shell> <run_id> [--write [--takeover]] [--once]',
+  'terminal':          'orc terminal <agent_id> | <provider|shell> <run_id> [--write [--takeover]] [--once]',
   'sessions':          'orc sessions [--all] [--json]',
   'run-start':         'orc run-start --run-id=<id> --agent-id=<id>',
   'report-for-duty':   'orc report-for-duty --agent-id=<id> --session-id=<id>   (--session-token is an alias of --session-id)',

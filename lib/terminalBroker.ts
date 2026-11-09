@@ -14,7 +14,11 @@ import {
 } from './terminalHost.ts';
 
 export type TerminalKind = 'provider' | 'shell';
-/** Ids are `<kind>:<session_id>`; rows from before schema 8 keep their `<kind>:<run_id>` id. */
+/**
+ * Ids are `<kind>:<session_id>`; rows from before schema 8 keep their `<kind>:<run_id>` id.
+ * A provider terminal of a session with no run (the master, a scout) has a null
+ * `run_id` and an empty `worktree_path`.
+ */
 export interface TerminalRecord {
   terminal_id: string;
   session_id: string | null;
@@ -286,9 +290,15 @@ export class TerminalBroker {
     return row;
   }
 
+  /**
+   * A terminal of a run is current while the run is active; a provider terminal
+   * with no run (the master, a scout) while its session is the agent's running one.
+   */
   private isCurrent(db: Database.Database, terminal: TerminalRecord): boolean {
-    const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(terminal.run_id) as { state: string } | undefined;
-    if (!run || !['claimed', 'in_progress'].includes(run.state)) return false;
+    if (terminal.run_id != null) {
+      const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(terminal.run_id) as { state: string } | undefined;
+      if (!run || !['claimed', 'in_progress'].includes(run.state)) return false;
+    } else if (terminal.kind !== 'provider') return false;
     // Pre-v8 rows have no session and are never current; a newer session retires the old id.
     if (terminal.session_id == null) return false;
     if (terminal.kind === 'shell') {
@@ -299,8 +309,9 @@ export class TerminalBroker {
     const agentId = terminal.handle.startsWith('tmux:') ? terminal.handle.slice(5) : '';
     if (!agentId) return false;
     const session = db.prepare(`SELECT session_id, run_id, state, transport FROM sessions WHERE agent_id = ?
-      ORDER BY rowid DESC LIMIT 1`).get(agentId) as { session_id: string; run_id: string; state: string; transport: string | null } | undefined;
-    return session?.run_id === terminal.run_id && session.state === 'running' && session.transport === 'tmux'
+      ORDER BY rowid DESC LIMIT 1`).get(agentId) as { session_id: string; run_id: string | null; state: string; transport: string | null } | undefined;
+    return session !== undefined && (session.run_id ?? null) === (terminal.run_id ?? null)
+      && session.state === 'running' && session.transport === 'tmux'
       && terminal.session_id === session.session_id;
   }
 
@@ -309,15 +320,17 @@ export class TerminalBroker {
       && this.driver.alive(terminal.handle);
   }
 
-  private save(runId: string, sessionId: string, kind: TerminalKind, handle: string, logPath: string): TerminalRecord {
-    const path = this.worktree(runId);
+  private save(runId: string | null, sessionId: string, kind: TerminalKind, handle: string, logPath: string): TerminalRecord {
+    const path = runId === null ? '' : this.worktree(runId);
     const terminalId = `${kind}:${sessionId}`;
     const now = new Date().toISOString();
     return withEventDbTransaction(this.stateDir, (db) => {
-      const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(runId) as { state: string } | undefined;
-      if (!run || !['claimed', 'in_progress'].includes(run.state)) throw new ControlError('conflict', 'Run is not active', 409);
+      if (runId !== null) {
+        const run = db.prepare('SELECT state FROM runs WHERE run_id = ?').get(runId) as { state: string } | undefined;
+        if (!run || !['claimed', 'in_progress'].includes(run.state)) throw new ControlError('conflict', 'Run is not active', 409);
+      }
       if (kind === 'provider' && !this.isCurrent(db, { session_id: sessionId, run_id: runId, kind, handle } as TerminalRecord))
-        throw new ControlError('conflict', 'Provider session no longer belongs to this run', 409);
+        throw new ControlError('conflict', runId === null ? 'Provider session is no longer current' : 'Provider session no longer belongs to this run', 409);
       db.prepare(`INSERT INTO terminals (terminal_id, session_id, run_id, kind, handle, worktree_path, log_path, state, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
         ON CONFLICT (terminal_id) DO UPDATE SET handle = excluded.handle, worktree_path = excluded.worktree_path,
@@ -331,12 +344,29 @@ export class TerminalBroker {
     const session = withEventDb(this.stateDir, (db) => db.prepare(`SELECT session_id, agent_id, transport FROM sessions
       WHERE run_id = ? AND state = 'running' ORDER BY rowid DESC LIMIT 1`).get(runId) as { session_id: string; agent_id: string; transport: string | null } | undefined);
     if (!session || session.transport !== 'tmux') throw new ControlError('conflict', 'Run has no tmux provider terminal', 409);
-    const handle = `tmux:${session.agent_id}`;
-    const candidate = { session_id: session.session_id, run_id: runId, kind: 'provider', handle } as TerminalRecord;
+    return this.openProvider(runId, session.session_id, session.agent_id);
+  }
+
+  /**
+   * The provider terminal of an agent's running session: a worker's (bound to
+   * its run, as `provider(run_id)`), or the master's or a scout's, which have no
+   * run. An unknown agent or one with no running session is `not_found`.
+   */
+  providerForAgent(agentId: string): TerminalRecord {
+    const session = withEventDb(this.stateDir, (db) => db.prepare(`SELECT session_id, run_id, state, transport FROM sessions
+      WHERE agent_id = ? ORDER BY rowid DESC LIMIT 1`).get(agentId) as { session_id: string; run_id: string | null; state: string; transport: string | null } | undefined);
+    if (!session || session.state !== 'running') throw new ControlError('not_found', `Agent ${agentId} has no running session`, 404);
+    if (session.transport !== 'tmux') throw new ControlError('conflict', `Agent ${agentId} has no tmux provider terminal`, 409);
+    return this.openProvider(session.run_id, session.session_id, agentId);
+  }
+
+  private openProvider(runId: string | null, sessionId: string, agentId: string): TerminalRecord {
+    const handle = `tmux:${agentId}`;
+    const candidate = { session_id: sessionId, run_id: runId, kind: 'provider', handle } as TerminalRecord;
     if (!withEventDb(this.stateDir, (db) => this.isCurrent(db, candidate)))
-      throw new ControlError('conflict', 'Provider session no longer belongs to this run', 409);
+      throw new ControlError('conflict', runId === null ? 'Provider session is no longer current' : 'Provider session no longer belongs to this run', 409);
     if (!this.driver.alive(handle)) throw new ControlError('unavailable', 'Provider terminal is not running', 503);
-    return this.save(runId, session.session_id, 'provider', handle, join(this.stateDir, 'pty-logs', `${session.agent_id}.log`));
+    return this.save(runId, sessionId, 'provider', handle, join(this.stateDir, 'pty-logs', `${agentId}.log`));
   }
 
   shell(runId: string): TerminalRecord {
@@ -454,7 +484,7 @@ export class TerminalBroker {
         const handle = `tmux:${row.agent_id}`;
         const candidate = { session_id: row.session_id, run_id: row.run_id, kind: 'provider', handle } as TerminalRecord;
         const capabilities = sessionCapabilities(row.provider, row.transport);
-        const streamable = capabilities.attach && row.run_id != null && this.isCurrent(db, candidate);
+        const streamable = capabilities.attach && this.isCurrent(db, candidate);
         const terminalId = streamable ? `provider:${row.session_id}` : null;
         const lease = leases.find((entry) => entry.resource_id === terminalId && Date.parse(entry.expires_at) > now);
         return { ...row, terminal_id: terminalId, writer: lease ? { owner_id: lease.owner_id, expires_at: lease.expires_at } : null, capabilities };
@@ -463,16 +493,16 @@ export class TerminalBroker {
   }
 
   /**
-   * The terminal a stream opens. A provider id resolves through its session, so
-   * listing sessions is enough to open one; a session without a tmux terminal
-   * (an `app:` session) is `not_found`.
+   * The terminal a stream opens. A provider id resolves through its session (a
+   * run's, or the agent's own when it has no run), so listing sessions is enough
+   * to open one; a session without a tmux terminal (an `app:` session) is `not_found`.
    */
   private streamTarget(terminalId: string): TerminalRecord {
     if (terminalId.startsWith('provider:')) {
-      const session = withEventDb(this.stateDir, (db) => db.prepare('SELECT run_id, transport FROM sessions WHERE session_id = ?')
-        .get(terminalId.slice('provider:'.length)) as { run_id: string | null; transport: string | null } | undefined);
-      if (!session || session.transport !== 'tmux' || !session.run_id) throw new ControlError('not_found', `Terminal ${terminalId} not found`, 404);
-      const terminal = this.provider(session.run_id);
+      const session = withEventDb(this.stateDir, (db) => db.prepare('SELECT run_id, agent_id, transport FROM sessions WHERE session_id = ?')
+        .get(terminalId.slice('provider:'.length)) as { run_id: string | null; agent_id: string; transport: string | null } | undefined);
+      if (!session || session.transport !== 'tmux') throw new ControlError('not_found', `Terminal ${terminalId} not found`, 404);
+      const terminal = session.run_id ? this.provider(session.run_id) : this.providerForAgent(session.agent_id);
       if (terminal.terminal_id !== terminalId) throw new ControlError('unavailable', 'Terminal session is no longer current', 503);
       return terminal;
     }

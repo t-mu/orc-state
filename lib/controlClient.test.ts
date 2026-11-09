@@ -77,6 +77,7 @@ const METHODS: Array<[string, (client: ControlClient, options: CallOptions) => P
   ['importPlans', (c, o) => c.importPlans([], undefined, o)],
   ['scoutReport', (c, o) => c.scoutReport('s', o)],
   ['openTerminal', (c, o) => c.openTerminal('provider', 'r', o)],
+  ['openAgentTerminal', (c, o) => c.openAgentTerminal('a', o)],
   ['sessions', (c, o) => c.sessions(o)],
   ['acquireTerminal', (c, o) => c.acquireTerminal('t', 'me', {}, o)],
   ['renewTerminal', (c, o) => c.renewTerminal('t', 'l', o)],
@@ -162,6 +163,19 @@ describe('ControlClient error bodies', () => {
     await expect(drainAll(new ControlClient(dir).subscribe(0))).rejects.toMatchObject({ code: 'internal', status: 404, message: expect.stringContaining('not here') });
     handler = (_req, res) => { res.writeHead(503); res.end('down'); };
     await expect(drainAll(new ControlClient(dir).subscribe(0))).rejects.toMatchObject({ code: 'unavailable', status: 503 });
+  });
+});
+
+describe('ControlClient agent terminals', () => {
+  it('opens a provider terminal by agent id with POST /v1/terminals/provider { agent_id }', async () => {
+    let seen: { method?: string | undefined; url?: string | undefined; body?: unknown } = {};
+    handler = (req, res, body) => {
+      seen = { method: req.method, url: req.url, body: JSON.parse(body) };
+      json(res, 200, okBody({ terminal: { terminal_id: 'provider:session-master', run_id: null } }));
+    };
+    await expect(new ControlClient(dir).openAgentTerminal('master')).resolves
+      .toEqual({ terminal: { terminal_id: 'provider:session-master', run_id: null } });
+    expect(seen).toEqual({ method: 'POST', url: '/v1/terminals/provider', body: { agent_id: 'master' } });
   });
 });
 

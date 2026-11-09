@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-/** Stream a provider terminal or an independent worktree shell. Input needs --write; --takeover takes the lease from its holder. */
+/**
+ * Stream a provider terminal (by run, or by agent id: a worker, a scout or the master) or an
+ * independent worktree shell. Input needs --write; --takeover takes the lease from its holder.
+ */
 import { randomUUID } from 'node:crypto';
 import { boolFlag } from '../lib/args.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
@@ -10,8 +13,9 @@ import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
 import { USAGE } from './usage.ts';
 
-const [kind, runId] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
-if ((kind !== 'provider' && kind !== 'shell') || !runId) {
+const positional = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
+const byRun = positional[0] === 'provider' || positional[0] === 'shell';
+if (byRun ? positional.length !== 2 : positional.length !== 1) {
   console.error(`Usage: ${USAGE['terminal']}`);
   process.exit(1);
 }
@@ -63,7 +67,9 @@ async function sendInput(lease: string, data: string): Promise<void> {
 }
 
 try {
-  terminalId = (await client.openTerminal(kind, runId)).terminal.terminal_id;
+  terminalId = (byRun
+    ? await client.openTerminal(positional[0] as 'provider' | 'shell', positional[1])
+    : await client.openAgentTerminal(positional[0])).terminal.terminal_id;
   if (writable) {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('--write requires a terminal');
     leaseId = (await client.acquireTerminal(terminalId, `cli:${process.pid}:${randomUUID()}`, { takeover: boolFlag('takeover') })).lease_id;
