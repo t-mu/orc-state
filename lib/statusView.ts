@@ -1,5 +1,5 @@
 import { listCoordinatorAgents } from './agentRegistry.ts';
-import { readStatusEvents } from './eventLog.ts';
+import { readEventCursor, readStatusEvents } from './eventLog.ts';
 import { listWaitingInput, type WaitingInputRow } from './waitingInput.ts';
 import type { OrcEvent } from '../types/events.ts';
 import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap, runPhaseHistory } from './runActivity.ts';
@@ -292,6 +292,15 @@ export function buildStatus(
   if (!Number.isInteger(events) || events < MIN_STATUS_EVENTS || events > MAX_STATUS_EVENTS) {
     throw new RangeError(`events must be an integer from ${MIN_STATUS_EVENTS} to ${MAX_STATUS_EVENTS}`);
   }
+  // Cursor first: an event committed while the state below is read has seq > cursor, so a subscriber
+  // resuming from it gets a harmless duplicate instead of missing the change.
+  let cursor = 0;
+  let eventReadError = '';
+  try {
+    cursor = readEventCursor(stateDir);
+  } catch (error) {
+    eventReadError = (error as Error).message;
+  }
   const claimsFile = readJson(stateDir, 'claims.json') as { claims?: Claim[] };
   const backlogFile = readJson(stateDir, 'backlog.json') as Backlog;
   const workerPoolConfig = loadWorkerPoolConfig({ env: process.env, settings });
@@ -306,14 +315,12 @@ export function buildStatus(
   const awaitingRunStarted = activeClaims.filter((c) => c.state === 'claimed').length;
   const inProgressRuns = activeClaims.filter((c) => c.state === 'in_progress').length;
 
-  let cursor = 0;
   let recentEvents: OrcEvent[] = [];
   let sessionEvents: OrcEvent[] = [];
   let allEvents: OrcEvent[] = [];
-  let eventReadError = '';
   try {
-    const window = readStatusEvents(stateDir, activeClaims.map((c) => c.run_id), events);
-    cursor = window.cursor;
+    if (eventReadError) throw new Error(eventReadError);
+    const window = readStatusEvents(stateDir, activeClaims.map((c) => c.run_id), events, cursor);
     recentEvents = window.recentEvents;
     sessionEvents = window.sessionEvents;
     // Run history from before the session boundary still feeds each active run's activity and phases.

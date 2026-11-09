@@ -768,6 +768,26 @@ describe('buildStatus event window', () => {
     expect(s.claims.active[0]).toMatchObject({ current_phase: 'implement', last_activity_event: 'heartbeat' });
   });
 
+  it('reads the cursor before the state, so an event committed in between is after the cursor', () => {
+    writeState();
+    writeEvents([{ event: 'heartbeat', agent_id: 'orc-1', payload: {} }]);
+    const realCursor = eventLog.readEventCursor;
+    const spy = vi.spyOn(eventLog, 'readEventCursor').mockImplementation((stateDir: string) => {
+      const cursor = realCursor(stateDir);
+      // A concurrent writer commits right after the cursor read, before claims/backlog/agents are read.
+      eventLog.appendEvent(join(stateDir, 'events.jsonl'), {
+        seq: 2, ts: '2026-01-01T00:00:01Z', event: 'heartbeat', agent_id: 'orc-1', actor_type: 'coordinator', actor_id: 'coordinator', payload: {},
+      } as Parameters<typeof eventLog.appendEvent>[1]);
+      return cursor;
+    });
+    const s = buildStatus(dir, { settings }) as unknown as StatusResult & { cursor: number };
+    spy.mockRestore();
+    expect((s as unknown as { eventReadError: string }).eventReadError).toBe('');
+    expect(s.cursor).toBe(1);
+    expect(s.recentEvents.map((e) => e.seq)).toEqual([1]);
+    expect(eventLog.readEventsSince(join(dir, 'events.jsonl'), s.cursor).map((e) => e.seq)).toEqual([2]);
+  });
+
   it('bounds recentEvents with the events option and rejects out-of-range counts', () => {
     writeState();
     writeEvents(Array.from({ length: 30 }, () => ({ event: 'heartbeat', agent_id: 'orc-1', payload: {} })));
