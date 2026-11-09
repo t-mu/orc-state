@@ -32,7 +32,7 @@ export function nextEligibleTaskFromBacklog(
 
   for (const feature of (b?.features ?? [])) {
     for (const task of (feature.tasks ?? [])) {
-      if (task.status === 'done' || task.status === 'released') doneSet.add(task.ref);
+      if (task.status === 'done') doneSet.add(task.ref);
     }
   }
 

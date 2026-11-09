@@ -39,10 +39,10 @@ The worker's provider comes from the task's `required_provider` or the configure
 ## Data flow
 
 1. Task authored (`create_task`, `orc project task create|import`) → immutable revision in `runtime.db`, projected to `backlog.json`.
-2. Eligibility is derived each tick: `todo`, dependencies `done`/`released`, plus the rules in [contracts.md → Task Lifecycle](./contracts.md#task-lifecycle).
+2. Eligibility is derived each tick: `todo`, dependencies `done`, plus the rules in [contracts.md → Task Lifecycle](./contracts.md#task-lifecycle).
 3. Capacity = `max_workers` − agents with an active claim. When > 0 the coordinator registers a worker, creates a run in `events.db` `runs` pinned to the latest revision, creates the worktree and launches the session.
 4. The worker runs the phased workflow; lifecycle events go to the coordinator over the control API and land in `events.db`.
-5. `run-work-complete` → the coordinator merges (direct) or drives the PR flow, records `done`, then `released`, and removes the worktree.
+5. `run-work-complete` → the coordinator merges (direct) or drives the PR flow, records `done` and removes the worktree.
 
 ## Two roots
 

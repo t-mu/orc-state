@@ -67,7 +67,7 @@ function _expireLeasesCore(
 
     // A merged project task is in its finalize window: its run succeeded, so the lease must not fail it.
     const taskStatus = findTask(backlog, claim.task_ref)?.status;
-    if (taskStatus === 'done' || taskStatus === 'released') continue;
+    if (taskStatus === 'done') continue;
 
     const code = claim.input_state === 'awaiting_input' ? 'ERR_INPUT_TIMEOUT' : 'ERR_LEASE_EXPIRED';
     claim.state       = 'failed';

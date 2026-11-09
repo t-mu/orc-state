@@ -3,7 +3,7 @@
  * cli/run-close.ts
  * Usage: orc run-close <run_id> [--reason=<text>] [--actor-id=<id>]
  *
- * Close a run whose work was merged by hand (the task is done/released or its
+ * Close a run whose work was merged by hand (the task is done or its
  * branch is merged into main): record the claim done, emit run_finished and
  * clean the run worktree and branch. In a registered project the running
  * coordinator applies it.

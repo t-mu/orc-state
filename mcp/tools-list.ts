@@ -1,13 +1,13 @@
 export const TOOLS = [
   {
     name: 'list_tasks',
-    description: 'List backlog tasks (summary view: ref, title, status, feature_ref, task_type, priority, owner, depends_on). By default excludes terminal tasks — pass status="done", "released", or "cancelled" to retrieve them. Use get_task(ref) for full detail including description and acceptance_criteria.',
+    description: 'List backlog tasks (summary view: ref, title, status, feature_ref, task_type, priority, owner, depends_on). By default excludes terminal tasks — pass status="done" or "cancelled" to retrieve them. Use get_task(ref) for full detail including description and acceptance_criteria.',
     inputSchema: {
       type: 'object',
       properties: {
         status: {
           type: 'string',
-          enum: ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'released', 'cancelled'],
+          enum: ['todo', 'claimed', 'in_progress', 'done', 'blocked', 'cancelled'],
           description: 'Filter by task status',
         },
         feature: {
@@ -108,7 +108,7 @@ export const TOOLS = [
       properties: {
         include_done_count: {
           type: 'boolean',
-          description: 'Include terminal task counts, including done/released/cancelled (default: false)',
+          description: 'Include terminal task counts, including done/cancelled (default: false)',
         },
       },
       additionalProperties: false,
@@ -145,7 +145,7 @@ export const TOOLS = [
         body_markdown: { type: 'string', description: 'Full Markdown instructions delivered to the worker.' },
         description: { type: 'string' },
         acceptance_criteria: { type: 'array', items: { type: 'string' }, description: 'Parsed from body_markdown when omitted.' },
-        depends_on: { type: 'array', items: { type: 'string' }, description: 'Refs that must be done or released first.' },
+        depends_on: { type: 'array', items: { type: 'string' }, description: 'Refs that must be done first.' },
         review_level: { type: 'string', enum: ['none', 'light', 'full'] },
         merge_strategy: { type: 'string', enum: ['direct', 'pr'] },
         task_type: {
@@ -296,7 +296,7 @@ export const TOOLS = [
   },
   {
     name: 'cancel_task',
-    description: 'Cancel a task regardless of current non-terminal state. The task becomes cancelled. Active runs are cancelled and removed. A done, released or cancelled task returns { error: "already_terminal", task_ref, status } as a tool error.',
+    description: 'Cancel a task regardless of current non-terminal state. The task becomes cancelled. Active runs are cancelled and removed. A done or cancelled task returns { error: "already_terminal", task_ref, status } as a tool error.',
     inputSchema: {
       type: 'object',
       required: ['task_ref'],
@@ -427,7 +427,7 @@ export const TOOLS = [
   },
   {
     name: 'close_run',
-    description: 'Close a run whose work was merged by hand (docs/recovery.md, Finalization Failure): its task is done/released or its branch is merged into main. Records the claim done, emits run_finished { closed_by, reason, manual: true } and, when the branch is merged, marks the task done and removes the run worktree and branch. Same logic as orc run-close. worktree_cleaned: false means the claim is closed but the worktree and branch remain (check list_worktrees). A run whose task is not done and whose branch is not merged (a squash, rebase or fast-forward merge does not count) is a tool error: if its work reached main, have the operator run orc task-mark-done, then close_run; otherwise requeue it with reset_task.',
+    description: 'Close a run whose work was merged by hand (docs/recovery.md, Finalization Failure): its task is done or its branch is merged into main. Records the claim done, emits run_finished { closed_by, reason, manual: true } and, when the branch is merged, marks the task done and removes the run worktree and branch. Same logic as orc run-close. worktree_cleaned: false means the claim is closed but the worktree and branch remain (check list_worktrees). A run whose task is not done and whose branch is not merged (a squash, rebase or fast-forward merge does not count) is a tool error: if its work reached main, have the operator run orc task-mark-done, then close_run; otherwise requeue it with reset_task.',
     inputSchema: {
       type: 'object',
       required: ['run_id'],

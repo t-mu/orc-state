@@ -46,7 +46,7 @@ describe('nextEligibleTaskFromBacklog', () => {
     expect(nextEligibleTaskFromBacklog(backlog(tasks), { agent_id: 'worker-02', role: 'worker' } as Agent)).toBe('docs/a');
   });
 
-  it('enforces dependencies done/released', () => {
+  it('enforces dependencies done', () => {
     const taskRef = nextEligibleTaskFromBacklog(backlog([
       { ref: 'docs/base', title: 'Base', status: 'done' },
       { ref: 'docs/dep', title: 'Dep', status: 'todo', depends_on: ['docs/base'] },

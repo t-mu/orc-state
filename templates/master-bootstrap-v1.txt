@@ -122,7 +122,7 @@ unblock_task(task_ref, reason?)
   orc task-unblock. A task that is not blocked is a tool error.
 
 close_run(run_id, reason?)
-  Close a run whose work was merged by hand (its task is done/released or its
+  Close a run whose work was merged by hand (its task is done or its
   branch is merged into main), e.g. a blocked_finalize run after manual
   recovery: records the claim done, emits run_finished and, when the branch is
   merged, marks the task done and removes the run worktree and branch. Same as

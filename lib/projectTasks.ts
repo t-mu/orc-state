@@ -200,7 +200,7 @@ export function restoreBacklogStatuses(stateDir: string, backlog: Backlog, claim
 export function assertRunMayFinish(stateDir: string, taskRef: string): void {
   const store = projectTaskStoreFor(stateDir);
   const status = store?.getTask(taskRef)?.status;
-  if (store && status !== 'done' && status !== 'released') {
+  if (store && status !== 'done') {
     throw new ConflictError(`run-finish for ${taskRef} must wait until the coordinator records the merge (task status: ${status ?? 'missing'}); run run-work-complete and wait for FINALIZE_SUCCESS`);
   }
 }

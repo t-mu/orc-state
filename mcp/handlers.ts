@@ -69,7 +69,7 @@ export function handleListTasks(stateDir: string, { status, feature }: { status?
     tasks = tasks.filter((task) => task.status === status);
   } else {
     // Exclude terminal statuses by default to keep payload small.
-    // Use status="done", "released", or "cancelled" to retrieve terminal tasks explicitly.
+    // Use status="done" or "cancelled" to retrieve terminal tasks explicitly.
     tasks = tasks.filter((task) => !TERMINAL_STATUSES.has(task.status));
   }
   if (feature) tasks = tasks.filter((task) => task.feature_ref === feature);
@@ -207,7 +207,6 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
 
   if (include_done_count) {
     taskCounts.done = 0;
-    taskCounts.released = 0;
     taskCounts.cancelled = 0;
   }
 
@@ -270,7 +269,7 @@ export function handleGetAgentWorkview(stateDir: string, { agent_id }: { agent_i
   const doneSet = new Set(
     backlog.features.flatMap((feature) =>
       feature.tasks
-        .filter((task) => task.status === 'done' || task.status === 'released')
+        .filter((task) => task.status === 'done')
         .map((task) => task.ref),
     ),
   );

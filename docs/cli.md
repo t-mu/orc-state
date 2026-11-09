@@ -33,7 +33,7 @@ orc start-session --provider=claude
 | `project select <id>` | Default project outside every Git repository. |
 | `project show` | Print the resolved project. |
 | `project config <list\|get\|set\|unset> [key] [value] [--global]` | Read/write settings. `list` shows effective values; `--global` targets global settings (not combinable with `--project`). Keys: [configuration.md → Settings](configuration.md#settings). |
-| `project task list [--status=<s>[,<s>]] [--feature=<f>]` | List tasks (ref, title, status, revision). With no flag every task is listed, including done ones. `--status` takes the runtime statuses (`todo`, `claimed`, `in_progress`, `done`, `blocked`, `released`, `cancelled`), repeatable or comma-separated, written as `--status=<s>` (a space-separated value is a usage error); an unknown status is a usage error. `--feature` matches the task's feature ref. |
+| `project task list [--status=<s>[,<s>]] [--feature=<f>]` | List tasks (ref, title, status, revision). With no flag every task is listed, including done ones. `--status` takes the runtime statuses (`todo`, `claimed`, `in_progress`, `done`, `blocked`, `cancelled`), repeatable or comma-separated, written as `--status=<s>` (a space-separated value is a usage error); an unknown status is a usage error. `--feature` matches the task's feature ref. |
 | `project task show <ref> [--revision=<n>]` | Show a task or one revision. |
 | `project task revisions <ref>` | List revisions. |
 | `project task create [fields]` | Create a task. |
@@ -85,12 +85,12 @@ Under each active run, `watch` and `status` print a `└` activity line: a note 
 | `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` `[--actor-id=<id>]` | Force dispatch (normal dispatch is automatic). Refuses a target with an active run. |
 | `task-reset <task_ref>` | `[--actor-id=<id>]` | Any status → `todo`; cancels active claims (`run_cancelled` per run), clears requeue backoff. |
 | `task-unblock <task_ref>` | `[--reason=<text>]` `[--actor-id=<id>]` | `blocked` → `todo`. |
-| `task-cancel <task_ref>` | `[--reason=<text>]` `[--actor-id=<id>]` | → `cancelled`, ends any active run. Exits 1 if already done/released/cancelled. |
+| `task-cancel <task_ref>` | `[--reason=<text>]` `[--actor-id=<id>]` | → `cancelled`, ends any active run. Exits 1 if already done/cancelled. |
 | `task-mark-done <task_ref>` | `[--actor-id=<id>]` | Recovery: mark done in runtime state (the coordinator does this after merge). |
 | `run-expire <run_id>` | — | Force-expire a claim and requeue the task. |
 | `run-close <run_id>` | `[--reason=<text>]` `[--actor-id=<id>]` | Close a run merged by hand (see below). MCP: `close_run`. |
 
-`run-close` requires a non-terminal claim whose task is `done`/`released` or whose branch is merged into `main` (an ancestor of `main`, not on its first-parent history). It records the claim `done`, emits `run_finished {closed_by, reason, manual: true}`, and for a merged branch marks the task `done` and removes the worktree and branch. For squash/rebase/fast-forward merges run `task-mark-done` first; otherwise use `run-expire` or `task-reset`.
+`run-close` requires a non-terminal claim whose task is `done` or whose branch is merged into `main` (an ancestor of `main`, not on its first-parent history). It records the claim `done`, emits `run_finished {closed_by, reason, manual: true}`, and for a merged branch marks the task `done` and removes the worktree and branch. For squash/rebase/fast-forward merges run `task-mark-done` first; otherwise use `run-expire` or `task-reset`.
 
 Authorization (canonical: [contracts.md → Local Control API](contracts.md#local-control-api)):
 

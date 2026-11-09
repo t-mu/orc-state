@@ -6,7 +6,7 @@ import { STATE_DIR } from './paths.ts';
 import { commitBacklog, requireProjectTaskStore } from './projectTasks.ts';
 import { ConflictError, NotFoundError } from './domainErrors.ts';
 
-const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'released', 'cancelled']);
+const NON_COMPLETABLE_STATUSES = new Set(['blocked', 'cancelled']);
 
 export function markTaskDoneRuntimeOnly(
   taskRef: string,
