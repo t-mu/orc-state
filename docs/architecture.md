@@ -31,6 +31,7 @@ orc start-session
 |------|---------|------|
 | Coordinator | background Node process (`orc start-session`) | dispatch, session liveness probes (tmux pane), lease expiry and requeue, phase inference, merge, the control API |
 | Master | provider session in orc's tmux server; `orc start-session` attaches to it | task authoring (`create_task`), monitoring (`orc status`, `orc watch`), answering input requests, scouts; never implements |
+| Cockpit | tmux session on a per-user server of its own (`tmux -L orc-cockpit`), opened by `orc start-session` | one tab per project (a nested attach to its master, plus the `orc watch` dashboard) and one per opened agent terminal (`orc terminal`); holds no state, closing it stops nothing |
 | Worker | headless session, one per run, random orc-themed name | its worktree; reports through `orc run-*` / `orc progress`; never merges or removes its worktree |
 | Scout | ephemeral read-only session launched by the master | a `SCOUT_REPORT`; no state or file writes |
 

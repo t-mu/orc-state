@@ -28,15 +28,37 @@ orc start-session
 ```
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
-- **Master**: your interactive session. It runs in orc's private tmux server and `start-session` attaches this terminal to it.
+- **Master**: your interactive session. It runs in orc's private tmux server.
+- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), with one tab per project: the master's pane, focused, and the dashboard (`orc watch`) beside it.
 
-`start-session` creates the master or reattaches to it (tmux is required):
+### Getting around
 
-- Detach with `Ctrl-b d`, or close the terminal. The master keeps running and its MCP tools keep working.
-- Run `orc start-session` again to reattach to the same master. A live master is reattached with no prompts and no state reset.
-- If the master process has died, `start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.
-- It works from inside your own tmux session too, as a nested client.
-- `orc kill-all` stops the master and revokes its credential.
+The cockpit claims one key, its prefix `Ctrl-]`. Every other key, `Ctrl-b` included, reaches the focused pane, and the mouse behaves as in a plain terminal.
+
+| Keys | Does |
+|---|---|
+| `Ctrl-] o` | switch between the master and the dashboard pane |
+| `Ctrl-] n` / `Ctrl-] p` | next / previous tab (project tabs and agent tabs) |
+| `Ctrl-] d` | detach |
+| `Ctrl-] &` | close the current tab; never stops its master or agent |
+| `Ctrl-]` `Ctrl-]` | send `Ctrl-]` to the pane |
+
+In the dashboard pane:
+
+- `↑`/`↓` select an agent. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`), with the question below it, and is listed first.
+- Enter on a worker or scout opens its live terminal in a tab next to the project's tab (`orc terminal <agent_id> --write`), or switches to that tab. Closing the tab ends only the stream; the agent keeps running. Enter on a master switches to its project's tab.
+- `t` opens the task explorer: the project's tasks and their specs, read-only.
+
+The dashboard only shows a question. Answer it through the master, or with `orc run-input-respond`.
+
+### Detach and reattach
+
+- Detach with `Ctrl-] d`, the master's `Ctrl-b d`, or by closing the terminal. The cockpit, the master, the workers and the coordinator keep running, and the master's MCP tools keep working.
+- Run `orc start-session` again to reattach. A live master is reattached with no prompts and no state reset.
+- Run it in another registered project to add that project's tab to the same cockpit. From a shell inside the cockpit it only switches to the tab.
+- If the master process has died, its pane says so and waits; `orc start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.
+- `orc start-session --no-cockpit` attaches straight to the master instead. It also works from inside your own tmux session, as a nested client.
+- `tmux -L orc-cockpit kill-server` closes the cockpit without stopping anything; `orc kill-all` stops the master and revokes its credential.
 
 Providers come from the project settings (`orc project config list`); a task's `required_provider` overrides the worker provider.
 
@@ -57,11 +79,13 @@ Automatic: each tick the coordinator claims an eligible `todo` task, creates a w
 
 ## Monitor
 
+The cockpit's dashboard is the live view. From any other shell:
+
 ```bash
 orc status                 # one-shot summary
-orc watch                  # live dashboard
+orc watch                  # the cockpit dashboard on its own (Enter opens terminals only in the cockpit)
 orc events                 # recent events
-orc attach <agent-id>      # worker's tmux terminal, read-only (--write for input, Ctrl-b d detaches)
+orc terminal <agent-id>    # an agent's live terminal, read-only (--write for input)
 orc doctor                 # health check
 ```
 
