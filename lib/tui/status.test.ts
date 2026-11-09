@@ -214,6 +214,27 @@ describe('buildWorkerSlotViewModels — phases', () => {
     expect(buildWorkerSlotViewModels(baseStatus)[0].current_activity).toBeNull();
   });
 
+  it('marks the slot whose run waits for input, with the question on one line', () => {
+    const claim = {
+      run_id: 'run-1', task_ref: 't/1', agent_id: 'orc-1', state: 'in_progress', age_seconds: 1, idle_seconds: 1,
+      activity_seconds: 1, heartbeat_seconds: 1, current_phase: 'implement',
+    };
+    const vms = buildWorkerSlotViewModels({
+      ...baseStatus,
+      claims: { ...baseStatus.claims, active: [claim] },
+      waiting_input: [{ run_id: 'run-1', agent_id: 'orc-1', task_ref: 't/1', question: 'Which\n  schema?', waiting_seconds: 42 }],
+    });
+    expect(vms[0].waiting_input).toEqual({ waiting_seconds: 42, question: 'Which schema?' });
+
+    // A waiting row for another run leaves this slot alone.
+    const other = buildWorkerSlotViewModels({
+      ...baseStatus,
+      claims: { ...baseStatus.claims, active: [claim] },
+      waiting_input: [{ run_id: 'run-old', agent_id: 'orc-1', task_ref: 't/0', question: 'q', waiting_seconds: 1 }],
+    });
+    expect(other[0].waiting_input).toBeNull();
+  });
+
   it('builds phases from claim phase_history', () => {
     const status: TuiStatus = {
       ...baseStatus,

@@ -78,11 +78,26 @@ describe('computeLayout', () => {
   });
 });
 
+describe('computeLayout — waiting input', () => {
+  it('budgets the header waiting line and the slot indicator rows', () => {
+    const base = input({ rows: 52 });
+    const waiting = input({ rows: 52, waitingCount: 1, slots: [{ phaseLines: 6, waitingLines: 2 }, { phaseLines: 6 }] });
+    const lines = (l: ReturnType<typeof computeLayout>) => l.maxRunLines + l.maxEventLines + l.maxScoutLines;
+    // One header line plus two slot rows (the tallest slot in the row sets its height).
+    expect(lines(computeLayout(base)) - lines(computeLayout(waiting))).toBe(3);
+  });
+});
+
 describe('slotHeight', () => {
   it('counts border, text lines, sprite and phases', () => {
     expect(slotHeight({ phaseLines: 6 }, 'full', 8)).toBe(21);
     expect(slotHeight({ phaseLines: 6 }, 'compact', 8)).toBe(13);
     expect(slotHeight({ phaseLines: 6 }, 'minimal', 8)).toBe(8);
+  });
+
+  it('adds the NEEDS INPUT rows at every detail', () => {
+    expect(slotHeight({ phaseLines: 6, waitingLines: 2 }, 'full', 8)).toBe(23);
+    expect(slotHeight({ phaseLines: 6, waitingLines: 2 }, 'minimal', 8)).toBe(10);
   });
 });
 

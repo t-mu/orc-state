@@ -56,6 +56,8 @@ orc start-session --provider=claude
 | `doctor` | `[--json]` `[--stale-progress-ms=<ms>]` `[--stale-start-ms=<ms>]` | Full health check: state files, provider binaries, stale workers, orphaned claims, invariants, sandbox deps, memory store, `events.db` schema (`checks.runtimeSchema`), and a restart warning when the running coordinator's code is older than the code on disk (`checks.coordinatorCode`; never fails `doctor`). Stale thresholds default to 20 min / 5 min. |
 | `preflight` | `[--json]` | Fast environment check before `start-session`. |
 
+When a live run (claimed or in progress) waits for an input response, `status` and the plain `watch` print a `Waiting for input (N)` section under the title: agent, task, wait time, the question (truncated) and how to answer (`orc run-input-respond …` or ask master). The section is left out when nothing waits. The `watch` TUI adds a yellow `N WAITING FOR INPUT` header line with the same answer hint, and a `NEEDS INPUT` badge, wait time and question on the worker's slot. Finished claims that still carry `awaiting_input` (legacy runs) are not listed here, by `waiting-input` or by MCP `list_waiting_input`.
+
 Under each active run, `watch` and `status` print a `└` activity line: a note younger than 5 min, else the current to-do item, else the last tool call; dimmed after 2 min. MCP `get_status` / `get_agent_workview` return it as `current_activity`.
 
 ## Setup
@@ -112,7 +114,7 @@ Plan Markdown format: [plan-template.md](plan-template.md).
 |---------|-------|-------|
 | `runs-active` | `[--json]` `[--via-control]` | In-progress/claimed runs with idle/age; JSON rows carry `stalled`. |
 | `run-info <run_id>` | `[--json]` | Claim state, task, worktree, idle time. |
-| `waiting-input` | `[--json]` | Runs waiting for input, with `request_id` in `--json`. |
+| `waiting-input` | `[--json]` | Live runs (claimed or in progress) waiting for input, with `request_id` in `--json`. |
 | `events-tail` | `[--n=<count>]` `[--event=<name>]` `[--json]` | Last N events. |
 | `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--after=<seq>]` `[--json]` | Query events; `--after` keeps events with a greater `seq`. |
 | `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` | Show a consumer offset; reset replays events after `<seq>` (coordinator must be stopped). |

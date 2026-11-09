@@ -65,6 +65,14 @@ export interface TuiRecentEvent {
   agent_id?: string | null;
 }
 
+export interface TuiWaitingInput {
+  run_id: string;
+  agent_id: string;
+  task_ref: string;
+  question: string | null;
+  waiting_seconds: number | null;
+}
+
 export interface TuiStatus {
   project?: { id: string; name: string; target_repo_root: string } | null;
   worker_capacity: {
@@ -94,6 +102,7 @@ export interface TuiStatus {
     startup: TuiFailureEntry[];
     lifecycle: TuiFailureEntry[];
   };
+  waiting_input?: TuiWaitingInput[];
   recentEvents: TuiRecentEvent[];
   eventReadError: string;
 }
@@ -113,6 +122,8 @@ export interface WorkerSlotViewModel {
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
   sprite_state: SpriteState;
+  /** Set while the slot's run waits for an input response; the question is collapsed to one line. */
+  waiting_input: { waiting_seconds: number | null; question: string | null } | null;
 }
 
 const CANONICAL_PHASES = ['explore', 'implement', 'review', 'complete', 'finalize'] as const;
@@ -180,6 +191,7 @@ export function emptyTuiStatus(): TuiStatus {
       startup: [],
       lifecycle: [],
     },
+    waiting_input: [],
     recentEvents: [],
     eventReadError: '',
   };
@@ -200,6 +212,8 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       .map(claim => [claim.agent_id, claim]),
   );
 
+  const waitingByRunId = new Map((status.waiting_input ?? []).map(row => [row.run_id, row]));
+
   const viewModels: WorkerSlotViewModel[] = [];
 
   // Iterate over live registered workers only — no synthetic orc-N placeholder slots.
@@ -209,6 +223,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
     const runState = claim?.state ?? null;
     const heartbeat_seconds = claim?.heartbeat_seconds ?? null;
     const phaseHistory = claim?.phase_history ?? [];
+    const waiting = claim ? waitingByRunId.get(claim.run_id) ?? null : null;
     viewModels.push({
       slot_id: slot.agent_id,
       role: slot.role,
@@ -224,6 +239,9 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       activity_seconds: claim?.activity_seconds ?? null,
       heartbeat_seconds,
       sprite_state: runStateToSpriteState(runState),
+      waiting_input: waiting
+        ? { waiting_seconds: waiting.waiting_seconds, question: waiting.question?.replace(/\s+/g, ' ').trim() || null }
+        : null,
     });
   }
 
