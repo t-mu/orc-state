@@ -231,13 +231,26 @@ export function main(argv: string[]): number {
   }
 
   const scriptPath = resolveScript(script);
-  // `--project` is the highest-precedence selector: it becomes the child's ORC_PROJECT_ID.
-  // An inherited state-dir bridge (a worker's ORC_STATE_DIR) belongs to another project and must not redirect it.
-  const env = selector.projectId
-    ? { ...process.env, ORC_PROJECT_ID: selector.projectId, ORC_STATE_DIR: '' }
-    : process.env;
+  const env = childEnv(process.env, selector.projectId);
   const result = spawnSync(process.execPath, buildNodeArgs(subcommand, scriptPath, rest), { stdio: 'inherit', env });
   return result.status ?? 1;
+}
+
+// PROJECT_FLAG_ENV in lib/projectContext.ts; not imported, so the dispatcher stays free of the registry module.
+const PROJECT_FLAG_ENV = 'ORC_PROJECT_FLAG';
+
+/**
+ * The subcommand's environment. `--project` is the highest-precedence selector:
+ * it becomes the child's ORC_PROJECT_ID, and ORC_PROJECT_FLAG records that it
+ * came from the flag (`selected_by: flag`). An inherited state-dir bridge (a
+ * worker's ORC_STATE_DIR) belongs to another project and must not redirect it.
+ * Without the flag an inherited ORC_PROJECT_FLAG is dropped, so an inherited
+ * ORC_PROJECT_ID reports `selected_by: env`.
+ */
+export function childEnv(env: NodeJS.ProcessEnv, projectId: string | null): NodeJS.ProcessEnv {
+  if (projectId) return { ...env, ORC_PROJECT_ID: projectId, [PROJECT_FLAG_ENV]: projectId, ORC_STATE_DIR: '' };
+  const { [PROJECT_FLAG_ENV]: _flag, ...rest } = env;
+  return rest;
 }
 
 export function isMainModule(argvEntry: string | undefined, moduleUrl: string): boolean {

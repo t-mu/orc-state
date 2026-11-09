@@ -123,7 +123,7 @@ describe('global project registry', () => {
     expect(registry.effectiveSettings(project.id, {}, {})).toEqual({});
     expect(registry.settings(project.id)['coordinator.run_inactive_escalate_ms']).toBe(900000);
     const env = { ORC_DATA_HOME: join(temp, 'data') };
-    const settings = projectConfigObject({ id: project.id, name: project.name, stateDir: project.stateDir, targetRepoRoot: project.canonicalGitRoot, source: 'environment' }, env);
+    const settings = projectConfigObject({ id: project.id, name: project.name, stateDir: project.stateDir, targetRepoRoot: project.canonicalGitRoot, source: 'environment', selectedBy: 'env' }, env);
     expect(settings.coordinator).toEqual({ run_inactive_escalate_ms: 900000, session_start_retry_delay_ms: 30000 });
     const coordinator = loadCoordinatorConfig({ settings });
     expect(coordinator).toEqual(DEFAULT_COORDINATOR_CONFIG);

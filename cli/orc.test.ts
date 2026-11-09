@@ -4,12 +4,18 @@ import { readFileSync, symlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
 import { bridgeProjectEnv, cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateHelpers.ts';
-import { buildNodeArgs, COMMANDS, isMainModule, readVersion } from './orc.ts';
+import { buildNodeArgs, childEnv, COMMANDS, isMainModule, readVersion } from './orc.ts';
 import { USAGE, wantsHelp } from './usage.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 
 describe('cli/orc.ts', () => {
+  it('marks --project as the selector in the child env and drops an inherited marker otherwise', () => {
+    const inherited = { PATH: '/bin', ORC_PROJECT_ID: 'a', ORC_STATE_DIR: '/state/a', ORC_PROJECT_FLAG: 'a' };
+    expect(childEnv(inherited, 'b')).toEqual({ PATH: '/bin', ORC_PROJECT_ID: 'b', ORC_PROJECT_FLAG: 'b', ORC_STATE_DIR: '' });
+    expect(childEnv(inherited, null)).toEqual({ PATH: '/bin', ORC_PROJECT_ID: 'a', ORC_STATE_DIR: '/state/a' });
+  });
+
   it('has a usage synopsis for every subcommand', () => {
     expect(Object.keys(USAGE).sort()).toEqual(Object.keys(COMMANDS).sort());
   });

@@ -17,7 +17,18 @@ export interface ActiveProject {
   stateDir: string;
   targetRepoRoot: string;
   source: 'environment' | 'cwd' | 'selected';
+  /** How the project was chosen: `--project`, an inherited `ORC_PROJECT_ID`, the cwd's repository, or `orc project select`. */
+  selectedBy: ProjectSelectedBy;
 }
+
+export type ProjectSelectedBy = 'flag' | 'env' | 'cwd' | 'selected';
+
+/**
+ * Set by the `orc` dispatcher to the `--project` id it turned into
+ * `ORC_PROJECT_ID` (and cleared otherwise), so the child can report the
+ * selection as `flag` rather than `env`.
+ */
+export const PROJECT_FLAG_ENV = 'ORC_PROJECT_FLAG';
 
 export function readProjectDescriptor(stateDir: string): { id: string; name: string; target_repo_root: string } | null {
   try {
@@ -30,8 +41,8 @@ export function readProjectDescriptor(stateDir: string): { id: string; name: str
   }
 }
 
-function toActive(record: ProjectRecord, source: ActiveProject['source']): ActiveProject {
-  return { id: record.id, name: record.name, stateDir: record.stateDir, targetRepoRoot: record.canonicalGitRoot, source };
+function toActive(record: ProjectRecord, source: ActiveProject['source'], selectedBy: ProjectSelectedBy): ActiveProject {
+  return { id: record.id, name: record.name, stateDir: record.stateDir, targetRepoRoot: record.canonicalGitRoot, source, selectedBy };
 }
 
 function withRegistry<T>(env: NodeJS.ProcessEnv, operation: (registry: ProjectRegistry) => T): T {
@@ -59,15 +70,16 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
   const registryFile = join(projectDataHome(env), 'registry.db');
   const explicitId = env.ORC_PROJECT_ID?.trim();
   if (explicitId) {
+    const selectedBy: ProjectSelectedBy = env[PROJECT_FLAG_ENV]?.trim() === explicitId ? 'flag' : 'env';
     const bridge = env.ORC_STATE_DIR?.trim();
     const descriptor = bridge ? readProjectDescriptor(resolve(bridge)) : null;
     if (bridge && descriptor?.id === explicitId) {
-      return { id: descriptor.id, name: descriptor.name, stateDir: resolve(bridge), targetRepoRoot: descriptor.target_repo_root, source: 'environment' };
+      return { id: descriptor.id, name: descriptor.name, stateDir: resolve(bridge), targetRepoRoot: descriptor.target_repo_root, source: 'environment', selectedBy };
     }
     if (!existsSync(registryFile)) throw new Error(`ORC_PROJECT_ID=${explicitId} but no project registry exists at ${registryFile}`);
     const record = withRegistry(env, (registry) => registry.get(explicitId));
     if (!record) throw new Error(`ORC_PROJECT_ID is not a registered project: ${explicitId}`);
-    return toActive(record, 'environment');
+    return toActive(record, 'environment', selectedBy);
   }
   if (!existsSync(registryFile)) return null;
   let gitRoot: string | null;
@@ -87,11 +99,11 @@ export function resolveActiveProject(env: NodeJS.ProcessEnv = process.env, cwd =
     if (gitRoot == null) {
       const selected = registry.selectedId();
       const record = selected ? registry.get(selected) : null;
-      return record ? toActive(record, 'selected') : null;
+      return record ? toActive(record, 'selected', 'selected') : null;
     }
     const matches = registry.list().filter((project) => project.canonicalGitRoot === gitRoot);
     if (matches.length > 1) throw new Error(`Git repository matches multiple projects: ${gitRoot}; pass --project`);
-    return matches.length === 1 ? toActive(matches[0], 'cwd') : null;
+    return matches.length === 1 ? toActive(matches[0], 'cwd', 'cwd') : null;
   });
 }
 

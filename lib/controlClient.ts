@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
   CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_PROTOCOL_VERSIONS, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
@@ -184,7 +184,15 @@ export class ControlClient {
   private readonly socketPath: string | null;
   /** Tail of each terminal's input queue: inputs to one terminal are sent one at a time, in call order. */
   private readonly inputQueues = new Map<string, Promise<unknown>>();
+  /**
+   * `stateDir` names the project explicitly (`state_dir` from listProjects): it
+   * must be an absolute path, so the client never falls back to the process's
+   * cwd or environment to pick a project.
+   */
   constructor(stateDir: string, options: ControlClientOptions = {}) {
+    if (typeof stateDir !== 'string' || !isAbsolute(stateDir)) {
+      throw new TypeError(`ControlClient needs the project's absolute state directory (state_dir from listProjects), got ${JSON.stringify(stateDir)}`);
+    }
     this.stateDir = stateDir;
     this.credential = options.credential ?? null;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;

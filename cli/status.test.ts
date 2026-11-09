@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
+import { createTempStateDir, cleanupTempStateDir, seedState, TEST_PROJECT_ID } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
 import { stripVTControlCharacters } from 'node:util';
 import { renderBanner } from '../lib/banner.ts';
@@ -22,6 +22,20 @@ afterEach(() => {
 });
 
 describe('cli/status.ts', () => {
+  it('reports how the project was selected: env for an inherited ORC_PROJECT_ID, flag for --project', () => {
+    seedValidState({});
+    const env = { ORC_PROJECT_ID: TEST_PROJECT_ID };
+    const json = JSON.parse(runStatus(['--json'], env).stdout);
+    expect(json.project).toMatchObject({ id: TEST_PROJECT_ID, selected_by: 'env' });
+    const flagged = JSON.parse(runStatus(['--json'], { ...env, ORC_PROJECT_FLAG: TEST_PROJECT_ID }).stdout);
+    expect(flagged.project).toMatchObject({ id: TEST_PROJECT_ID, selected_by: 'flag' });
+    const human = runStatus([], env);
+    expect(human.status).toBe(0);
+    expect(stripVTControlCharacters(human.stdout)).toContain('(selected by ORC_PROJECT_ID)');
+    // A bare state directory (no resolved project) carries no selected_by.
+    expect(JSON.parse(runStatus(['--json']).stdout).project).not.toHaveProperty('selected_by');
+  });
+
   it('prints json status with agent/task/claim counts', () => {
     seedValidState({
       agents: [
@@ -272,10 +286,10 @@ describe('cli/status.ts', () => {
   });
 });
 
-function runStatus(args: string[]) {
+function runStatus(args: string[], extraEnv: Record<string, string> = {}) {
   return spawnSync('node', ['cli/status.ts', ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ORC_STATE_DIR: dir, ORC_MAX_WORKERS: '2', ORC_WORKER_PROVIDER: 'codex' },
+    env: { ...process.env, ORC_STATE_DIR: dir, ORC_MAX_WORKERS: '2', ORC_WORKER_PROVIDER: 'codex', ...extraEnv },
     encoding: 'utf8',
   });
 }

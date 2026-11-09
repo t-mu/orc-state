@@ -282,3 +282,12 @@ describe('ControlClient protocol negotiation', () => {
     await expect(new ControlClient(dir).snapshot()).resolves.toEqual({ runs: [] });
   });
 });
+
+describe('ControlClient project selection', () => {
+  it('requires an absolute state directory instead of resolving one from the cwd', () => {
+    for (const stateDir of ['', '.', 'state', undefined as unknown as string]) {
+      expect(() => new ControlClient(stateDir)).toThrow(TypeError);
+    }
+    expect(() => new ControlClient('/abs/state')).not.toThrow();
+  });
+});
