@@ -12,7 +12,7 @@
  */
 export { ControlClient } from './lib/controlClient.ts';
 export type { ControlHealth } from './lib/controlServer.ts';
-export type { ControlClientOptions, EventFilter, EventRow, OperatorResult, OperatorResults, RunDetail } from './lib/controlClient.ts';
+export type { CallOptions, ControlClientOptions, EventFilter, EventRow, OperatorResult, OperatorResults, RunDetail } from './lib/controlClient.ts';
 export { CONTROL_PROTOCOL_VERSION, ControlError } from './lib/controlProtocol.ts';
 export type {
   AckState, ControlEndpoint, ControlErrorBody, ControlErrorCode, ControlResponse,

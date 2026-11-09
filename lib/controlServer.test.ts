@@ -369,6 +369,7 @@ describe('local daemon control API', () => {
     expect(noVersion.body.error?.code).toBe('unsupported_protocol_version');
     const future = await rawGet({ authorization: `Bearer ${token}`, 'x-orc-protocol': '2' });
     expect(future.body.error?.code).toBe('unsupported_protocol_version');
+    expect((future.body.error as { message?: string } | undefined)?.message).toContain(`[1, ${CONTROL_PROTOCOL_VERSION}]`);
     for (const authorization of [undefined, 'Bearer wrong', token]) {
       const result = await rawGet({ 'x-orc-protocol': '1', ...(authorization ? { authorization } : {}) });
       expect(result.status).toBe(401);
@@ -559,13 +560,20 @@ describe('local daemon control API', () => {
     const version = (JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as { version: string }).version;
     const operator = await new ControlClient(dir).health();
     expect(operator).toEqual({
-      version, protocol_version: CONTROL_PROTOCOL_VERSION, schema_version: RUNTIME_SCHEMA_VERSION,
+      version, protocol_version: CONTROL_PROTOCOL_VERSION, protocol_versions: [1, CONTROL_PROTOCOL_VERSION], schema_version: RUNTIME_SCHEMA_VERSION,
       started_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/), code_root: ORC_PACKAGE_ROOT, code_mtime: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
       build_id: readBuildId(ORC_PACKAGE_ROOT),
     });
     expect(await new ControlClient(dir, { credential: 'session-a' }).health()).toEqual(operator);
     expect(await new ControlClient(dir, { credential: 'session-master' }).health()).toEqual(operator);
     expect((await rawGet({ 'x-orc-protocol': '1' }, '/v1/health')).status).toBe(401);
+    // Health needs no protocol header (any value is ignored), so a client of another version can read the range.
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    for (const header of [{}, { 'x-orc-protocol': '99' }]) {
+      const bare = await rawGet({ authorization: `Bearer ${token}`, ...header }, '/v1/health') as { status: number; body: { ok: boolean; result?: unknown } };
+      expect(bare.status).toBe(200);
+      expect(bare.body.result).toMatchObject({ protocol_versions: [1, CONTROL_PROTOCOL_VERSION] });
+    }
   });
 
   it('connects to the descriptor socket unless socketPath is passed; ORC_CONTROL_SOCKET is ignored', async () => {

@@ -10,6 +10,11 @@ import type { OrcEvent } from '../types/events.ts';
  * host-to-container choice deferred by Task 195 can add another one.
  */
 export const CONTROL_PROTOCOL_VERSION = 1;
+/**
+ * The protocol versions this build speaks, `[min, max]`; the client sends the max
+ * (`CONTROL_PROTOCOL_VERSION`) and `/v1/health` reports the coordinator's range.
+ */
+export const CONTROL_PROTOCOL_VERSIONS: readonly [number, number] = [1, CONTROL_PROTOCOL_VERSION];
 export const PROTOCOL_HEADER = 'x-orc-protocol';
 export const SESSION_HEADER = 'x-orc-session';
 /** A caller without a session acts as the operator by presenting the operator token (tasks 232, 231). */
@@ -37,7 +42,11 @@ export type ControlErrorCode =
   | 'unsupported_protocol_version' | 'unauthenticated' | 'forbidden'
   | 'not_found' | 'conflict' | 'bad_request' | 'unavailable' | 'internal'
   /** Retryable: the coordinator is sending to the terminal right now. */
-  | 'busy';
+  | 'busy'
+  /** Client-side only: the caller's AbortSignal fired; the request was destroyed. */
+  | 'aborted'
+  /** Client-side only: no answer within the call's timeout; the coordinator may still have applied it, so never retry blindly. */
+  | 'timeout';
 
 export interface ControlErrorBody { code: ControlErrorCode; message: string }
 

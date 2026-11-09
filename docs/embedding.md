@@ -24,7 +24,27 @@ for (const project of listProjects()) {
 - `listProjects({ env? })` reads `registry.db` read-only from the data home (`ORC_DATA_HOME` or the platform default); it creates nothing and returns `[]` when there is no registry.
 - Each entry has `repo_present` (the checkout still exists) and `control_socket`, which is non-null only while the coordinator runs: a stopped coordinator leaves a stale `control.json` that the entry hides.
 - `new ControlClient(state_dir)` finds the socket and bearer token in the state directory; `{ socketPath }` overrides the socket only. The client never reads `ORC_CONTROL_SOCKET`.
-- Check `health()` (`version`, `build_id`) against the installed package after an upgrade.
+- Check `health()` (`version`, `build_id`) against the installed package after an upgrade. `health()` works whatever protocol version the client speaks and reports the coordinator's `protocol_versions: [min, max]`; any other call to a coordinator outside the client's range fails with `ControlError('unsupported_protocol_version')` naming both ranges.
+
+## Cancellation and timeouts
+
+Every `ControlClient` method takes `{ signal?, timeoutMs? }` as its last argument:
+
+```ts
+const abort = new AbortController();
+const status = await client.status({}, { signal: abort.signal, timeoutMs: 2_000 });
+```
+
+| Call | Default timeout |
+|---|---|
+| Any request | The client's `timeoutMs` (10 s; set it in `new ControlClient(dir, { timeoutMs })`) |
+| `importTasks`, `importPlans` | At least 5 min: bodies up to 32 MiB |
+| `subscribe`, `streamTerminal` | None once open (a stream silent for `streamIdleMs`, 30 s, fails with `unavailable`); `timeoutMs` bounds only opening it, default `streamIdleMs` |
+
+- Abort destroys the request and rejects with `ControlError` code `aborted`; a stream ends without an error instead. `timeoutMs: 0` disables the timeout.
+- A timeout rejects with code `timeout`. The coordinator may already have applied the request, so retry only reads or idempotent calls.
+- An error response that is not JSON (a proxy page, an empty body) is a `ControlError` (code `internal`) with the HTTP status and a short excerpt, never a `SyntaxError`.
+- `inputTerminal` calls on one client to one terminal are sent one at a time in call order. A retried input (after `busy`) joins the back of the queue, so queue nothing else until the retry settles ([terminal-streaming.md](terminal-streaming.md)).
 
 ## Passing `--project`
 
