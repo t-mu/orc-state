@@ -232,7 +232,12 @@ function bodyLines(model: DashboardModel, detail: AgentDetail, maxAgents: number
   return lines + 1;
 }
 
-/** How much of the dashboard fits `rows` (undefined: no TTY, show everything). */
+/**
+ * How much of the dashboard fits `rows` (undefined: no TTY, show everything).
+ * Agents collapse, then each project's list is cut (agents needing attention
+ * sort first, so they go last). Projects themselves are never cut: with more
+ * project rows than the terminal has, the frame can still reach `rows`.
+ */
 export function computeDashboardLayout(model: DashboardModel, rows: number | undefined): DashboardLayout {
   const feedWanted = 1 + Math.max(1, model.feed.length);
   if (rows == null) return { detail: 'full', maxAgentsPerProject: Infinity, feedLines: model.feed.length };
