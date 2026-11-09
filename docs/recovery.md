@@ -35,7 +35,7 @@ orc doctor
 |---------|-------|-----|
 | `No registered project here…` | `orc project list` | `orc project add <git-path>`; outside a repo `orc project select <id>` or `--project=<id>` |
 | `target repository is not a git repository` (doctor) | `git -C <path> rev-parse` | `git init` and commit, then `orc project add`, `orc init` |
-| Coordinator not running | `orc status`, `orc doctor` | `orc start-session`. tmux sessions are adopted, `app:` runs are requeued, legacy `pty:` sessions (from an older orc) are cleared and their runs requeued |
+| Coordinator not running | `orc status`, `orc doctor` | `orc start-session` keeps runtime state: tmux sessions are adopted (`session_reconciled` outcome `adopted`, runs stay `in_progress`), `app:` runs are requeued, legacy `pty:` sessions (from an older orc) are cleared and their runs requeued. To discard the runs instead: `orc start-session --reset` stops every worker session and requeues their tasks |
 | `orc doctor` reports a live coordinator whose `coordinator.pid` is missing or wrong | `orc doctor` | `orc kill-all` finds it via `control.json`, then `orc start-session` |
 | Repeated `session_start_failed` | `orc events-tail --event=session_start_failed`, [Providers](#providers) | fix install/auth; the task is requeued after the retries; `orc task-reset <ref>` if it stays stuck |
 | `session_resume_failed`, or a worker that keeps crashing and resuming | `orc events-tail --event=session_resumed`, `orc events-tail --event=session_resume_failed` | Each run resumes at most twice, then is requeued. To stop resuming: `orc project config set sessions.resume off` (read at each decision), or start the coordinator with `ORC_SESSIONS_RESUME=off`. A dead worker pane stays in tmux (`remain-on-exit`) until the coordinator stops the session. [Session Resume](configuration.md#session-resume) |
@@ -116,4 +116,8 @@ orc kill-all [--keep-sessions]
 orc start-session
 ```
 
-`kill-all` stops the coordinator, stops every agent session (skipped with `--keep-sessions`), clears `agents.json`, resets `claimed`/`in_progress` tasks to `todo`, cancels their claims (`run_cancelled`, reason `kill_all`) and **removes every run worktree** in `run-worktrees.json`. Unmerged work is lost: merge or copy it first.
+`kill-all` stops the coordinator, stops every agent session, clears `agents.json`, resets `claimed`/`in_progress` tasks to `todo`, cancels their claims (`run_cancelled`, reason `kill_all`) and **removes every run worktree** in `run-worktrees.json`. Unmerged work is lost: merge or copy it first.
+
+`--keep-sessions` stops the coordinator but leaves agent sessions running; their agent records, session rows, active runs and worktrees are kept, so `orc start-session` adopts them (a session that already exited is reconciled `exited` and its run resumed or requeued). Everything else is reset as above.
+
+`orc start-session --reset` is the reset without `kill-all`: it stops the coordinator and every worker session, fails their runs (`session_reset`) and requeues the tasks; worktrees stay. It refuses while a master runs (exit the master first), while the coordinator cannot be stopped, or when a worker session cannot be stopped (`orc kill-all` then). If the master then fails to start, the reset stands.

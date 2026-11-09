@@ -8,9 +8,9 @@
  * Usage:
  *   orc-kill-all [--keep-sessions]
  *
- * --keep-sessions  Skip calling adapter.stop() for each agent; only clear the
- *                  registry. Useful when sessions are already dead but the
- *                  registry is stale.
+ * --keep-sessions  Leave every agent session running and adoptable: its agent
+ *                  record, session row, run and worktree are kept, so the next
+ *                  `orc start-session` adopts it. Everything else is reset.
  */
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join }                     from 'node:path';
@@ -95,63 +95,74 @@ if (!keepSessions) {
   }
 }
 
-// ── Step 3: Clear agent registry ───────────────────────────────────────────
+// ── Step 3–4: Clear the agent registry, cancel active claims ───────────────
+// Under the state lock. With --keep-sessions, an agent with a session keeps its
+// record, its session row and its active run, so the next coordinator adopts it.
 
-if (existsSync(join(STATE_DIR, 'agents.json'))) {
-  for (const agent of agents) closeProviderSessionsForAgent(STATE_DIR, agent.agent_id, new Date().toISOString());
-  atomicWriteJson(join(STATE_DIR, 'agents.json'), { version: '1', agents: [] });
-}
-console.log(`✓ Cleared ${agents.length} agent(s)`);
+const keptAgentIds = new Set(keepSessions ? liveAgents.map((agent) => agent.agent_id) : []);
+const keptRunIds = new Set<string>();
 
-// ── Step 4: Cancel all active claims and requeue tasks ─────────────────────
+withLock(join(STATE_DIR, '.lock'), () => {
+  const now = new Date().toISOString();
+  if (existsSync(join(STATE_DIR, 'agents.json'))) {
+    for (const agent of agents) {
+      if (!keptAgentIds.has(agent.agent_id)) closeProviderSessionsForAgent(STATE_DIR, agent.agent_id, now);
+    }
+    atomicWriteJson(join(STATE_DIR, 'agents.json'), {
+      version: '1', agents: listAgents(STATE_DIR).filter((agent) => keptAgentIds.has(agent.agent_id)),
+    });
+  }
+  console.log(`✓ Cleared ${agents.length - keptAgentIds.size} agent(s)${keptAgentIds.size ? `, kept ${keptAgentIds.size} with a live session` : ''}`);
 
-if (existsSync(join(STATE_DIR, 'backlog.json')) && existsSync(join(STATE_DIR, 'claims.json'))) {
-  withLock(join(STATE_DIR, '.lock'), () => {
-    const now = new Date().toISOString();
-    const backlog = readBacklog(STATE_DIR);
-    const claimsState = readClaims(STATE_DIR);
+  if (!existsSync(join(STATE_DIR, 'backlog.json')) || !existsSync(join(STATE_DIR, 'claims.json'))) return;
+  const backlog = readBacklog(STATE_DIR);
+  const claimsState = readClaims(STATE_DIR);
 
-    let resetCount = 0;
-    const changes: Record<string, { cause: 'operator_reset'; actorId: string; reason: string }> = {};
-    for (const feature of backlog.features ?? []) {
-      for (const task of feature.tasks ?? []) {
-        if (task.status === 'claimed' || task.status === 'in_progress') {
-          task.status = 'todo';
-          delete task.blocked_reason;
-          task.updated_at = now;
-          changes[task.ref] = { cause: 'operator_reset', actorId: 'human', reason: 'kill_all' };
-          resetCount++;
-        }
+  let cancelledClaims = 0;
+  const cancelledRuns: Array<{ run_id: string; task_ref: string; agent_id: string }> = [];
+  const keptTaskRefs = new Set<string>();
+  for (const claim of claimsState.claims ?? []) {
+    if (claim.state !== 'claimed' && claim.state !== 'in_progress') continue;
+    if (keptAgentIds.has(claim.agent_id)) {
+      keptRunIds.add(claim.run_id);
+      keptTaskRefs.add(claim.task_ref);
+      continue;
+    }
+    claim.state = 'failed';
+    claim.failure_reason = 'kill_all';
+    claim.finished_at = now;
+    cancelledClaims++;
+    cancelledRuns.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id });
+  }
+
+  let resetCount = 0;
+  const changes: Record<string, { cause: 'operator_reset'; actorId: string; reason: string }> = {};
+  for (const feature of backlog.features ?? []) {
+    for (const task of feature.tasks ?? []) {
+      if ((task.status === 'claimed' || task.status === 'in_progress') && !keptTaskRefs.has(task.ref)) {
+        task.status = 'todo';
+        delete task.blocked_reason;
+        task.updated_at = now;
+        changes[task.ref] = { cause: 'operator_reset', actorId: 'human', reason: 'kill_all' };
+        resetCount++;
       }
     }
+  }
 
-    let cancelledClaims = 0;
-    const cancelledRuns: Array<{ run_id: string; task_ref: string; agent_id: string }> = [];
-    for (const claim of claimsState.claims ?? []) {
-      if (claim.state === 'claimed' || claim.state === 'in_progress') {
-        claim.state = 'failed';
-        claim.failure_reason = 'kill_all';
-        claim.finished_at = now;
-        cancelledClaims++;
-        cancelledRuns.push({ run_id: claim.run_id, task_ref: claim.task_ref, agent_id: claim.agent_id });
-      }
-    }
+  commitClaims(STATE_DIR, claimsState, [{
+        ts: now,
+        event: 'coordinator_stopped',
+        actor_type: 'human',
+        actor_id: 'human',
+        payload: { tasks_reset: resetCount, claims_cancelled: cancelledClaims },
+      }, ...cancelledRuns.map((run) => ({
+        ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: 'human',
+        ...run, payload: { reason: 'kill_all' },
+      }))]);
+  commitBacklog(STATE_DIR, backlog, changes);
 
-    commitClaims(STATE_DIR, claimsState, [{
-          ts: now,
-          event: 'coordinator_stopped',
-          actor_type: 'human',
-          actor_id: 'human',
-          payload: { tasks_reset: resetCount, claims_cancelled: cancelledClaims },
-        }, ...cancelledRuns.map((run) => ({
-          ts: now, event: 'run_cancelled' as const, actor_type: 'human' as const, actor_id: 'human',
-          ...run, payload: { reason: 'kill_all' },
-        }))]);
-    commitBacklog(STATE_DIR, backlog, changes);
-
-    console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)`);
-  });
-}
+  console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)${keptRunIds.size ? `, kept ${keptRunIds.size} run(s) of kept sessions` : ''}`);
+});
 
 // ── Step 5: Remove all run worktrees ────────────────────────────────────────
 
@@ -164,6 +175,7 @@ if (existsSync(RUN_WORKTREES_FILE)) {
 
   let removedWorktrees = 0;
   for (const entry of runs) {
+    if (keptRunIds.has(entry.run_id)) continue;
     try {
       cleanupRunWorktree(STATE_DIR, entry.run_id);
       removedWorktrees++;
@@ -172,7 +184,9 @@ if (existsSync(RUN_WORKTREES_FILE)) {
     }
   }
 
-  // Clear the registry regardless of individual cleanup results.
-  atomicWriteJson(RUN_WORKTREES_FILE, { version: '1', runs: [] });
+  // Clear the registry regardless of individual cleanup results; kept runs keep their entries.
+  withLock(join(STATE_DIR, '.lock'), () => {
+    atomicWriteJson(RUN_WORKTREES_FILE, { version: '1', runs: runs.filter((entry) => keptRunIds.has(entry.run_id)) });
+  });
   console.log(`✓ Removed ${removedWorktrees} run worktree(s)`);
 }

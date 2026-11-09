@@ -53,12 +53,24 @@ export async function promptProvider(
   }).catch(onCancel);
 }
 
-export async function promptCoordinatorAction(coordinatorPid: number | null): Promise<string> {
+/**
+ * The coordinator action for `orc start-session`. Runtime state (runs, agents,
+ * sessions) is kept unless `reset` is chosen: a coordinator that starts on kept
+ * state adopts the live sessions. `reset` (or the `--reset` flag) stops the
+ * running coordinator and every worker session and fails their runs.
+ */
+export type CoordinatorAction = 'reuse' | 'terminate' | 'start' | 'reset' | 'cancel';
+
+export async function promptCoordinatorAction(
+  coordinatorPid: number | null,
+  { reset = false }: { reset?: boolean } = {},
+): Promise<CoordinatorAction> {
   if (coordinatorPid) {
     logger.warn(`\nCoordinator is already running (PID ${coordinatorPid}).`);
+    if (reset) return 'reset';
     if (!isInteractive()) return 'reuse';
     const { select } = await getPromptModule();
-    return select({
+    return select<CoordinatorAction>({
       message: 'Coordinator action',
       choices: [
         {
@@ -69,7 +81,12 @@ export async function promptCoordinatorAction(coordinatorPid: number | null): Pr
         {
           value: 'terminate',
           name: 'Terminate and restart coordinator',
-          description: 'Stop current process and start a fresh one',
+          description: 'Stop current process and start a fresh one; runs and live sessions are kept and adopted',
+        },
+        {
+          value: 'reset',
+          name: 'Start fresh (reset)',
+          description: 'Stop the coordinator and every worker session; fail and requeue their runs',
         },
         {
           value: 'cancel',
@@ -81,15 +98,21 @@ export async function promptCoordinatorAction(coordinatorPid: number | null): Pr
   }
 
   logger.warn('\nCoordinator is not running.');
+  if (reset) return 'reset';
   if (!isInteractive()) return 'start';
   const { select } = await getPromptModule();
-  return select({
+  return select<CoordinatorAction>({
     message: 'Coordinator action',
     choices: [
       {
         value: 'start',
         name: 'Start coordinator',
-        description: 'Launch a new coordinator process',
+        description: 'Launch a new coordinator; runs are kept and live worker sessions adopted',
+      },
+      {
+        value: 'reset',
+        name: 'Start fresh (reset)',
+        description: 'Stop every worker session, fail and requeue their runs, then launch a new coordinator',
       },
       {
         value: 'cancel',
