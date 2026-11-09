@@ -42,13 +42,16 @@ describe('renderTemplate', () => {
       provider: 'claude',
     });
     const toolNames = new Set(TOOLS.map((tool) => tool.name));
-    // Every tool is <verb>_<noun>; event types and payload fields use other prefixes.
-    const verbs = new Set(TOOLS.map((tool) => tool.name.split('_')[0]));
-    const mentioned = [...rendered.matchAll(/\b([a-z]+)_[a-z_]*[a-z]\b/g)]
-      .filter((match) => verbs.has(match[1]))
-      .map((match) => match[0]);
-    expect(mentioned.length).toBeGreaterThan(10);
-    expect(mentioned.filter((name) => !toolNames.has(name))).toEqual([]);
+    // Snake_case identifiers the bootstrap uses that are not tools: event types and payload fields.
+    const nonTools = new Set([
+      'agent_id', 'after_seq', 'body_markdown', 'event_type', 'has_more', 'idle_ms', 'input_requested', 'input_response',
+      'last_notification_seq', 'last_seq', 'no_progress', 'notifications_only', 'permission_prompt',
+      'phase_started', 'provider_interactive_prompt', 'remediation_policy', 'run_cancelled', 'run_failed',
+      'run_finished', 'session_not_running', 'waiting_input', 'worker_needs_attention',
+    ]);
+    const mentioned = [...new Set(rendered.match(/\b[a-z]+(?:_[a-z]+)+\b/g))];
+    expect(mentioned.filter((name) => toolNames.has(name)).length).toBeGreaterThan(10);
+    expect(mentioned.filter((name) => !toolNames.has(name) && !nonTools.has(name))).toEqual([]);
   });
 
   it('keeps the master bootstrap within 6 KB without restating tool parameters', () => {

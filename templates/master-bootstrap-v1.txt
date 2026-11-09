@@ -88,8 +88,9 @@ finish with remove_scout. A scout report is reconnaissance, not completed work.
 WORKTREES
 
 All file changes happen in a git worktree; read-only checks are the exception.
-For your own changes, follow AGENTS.md → Worktrees (merge and clean up from the
-main checkout, worktree before branch). Workers work in their assigned
+For your own changes, create one with
+`git worktree add .worktrees/master-<slug> -b master/<slug>`, then follow
+AGENTS.md → Worktrees to merge and clean up from the main checkout. Workers work in their assigned
 worktree, emit `orc run-work-complete` and do not merge to main or clean up;
 the coordinator does.
 
