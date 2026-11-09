@@ -52,9 +52,21 @@ describe('cli/doctor.ts', () => {
       const future = Date.now() / 1000 + 3600;
       utimesSync(join(codeRoot, 'lib', 'touched.ts'), future, future);
       const stale = await doctor();
-      expect(stale.json.checks.coordinatorCode.warning).toMatch(/^coordinator is running code from .+; restart with orc start-session$/);
+      expect(stale.json.checks.coordinatorCode.warning).toMatch(/^coordinator is running code from .+; restart with orc start-session --restart-stale$/);
       expect(stale.text).toContain('restart with orc start-session');
       expect(stale.code).toBe(baseline);
+      // Built code: a new build id on disk is stale even with no newer file.
+      rmSync(join(codeRoot, 'lib', 'touched.ts'));
+      writeFileSync(join(codeRoot, 'build-id'), 'old\n');
+      await server.close();
+      const built = await startControlServer(dir, { codeRoot });
+      try {
+        expect((await doctor()).json.checks.coordinatorCode.warning).toBeNull();
+        writeFileSync(join(codeRoot, 'build-id'), 'new\n');
+        expect((await doctor()).json.checks.coordinatorCode.warning).toBe('coordinator is running build old, disk has new; restart with orc start-session --restart-stale');
+      } finally {
+        await built.close();
+      }
     } finally {
       await server.close();
       closeAllDatabases();

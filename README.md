@@ -37,7 +37,7 @@ orc start-session                   # coordinator + master session
 - Run `orc start-session` again to reattach to the same master.
 - `orc kill-all` stops the coordinator and the master, resets active tasks and removes run worktrees.
 
-Details: [Getting started](./docs/getting-started.md). Upgrading from 0.3: [clean break](./docs/getting-started.md#upgrading-from-03).
+Details: [Getting started](./docs/getting-started.md). Upgrading with a coordinator running: [restart it](./docs/getting-started.md#upgrading-while-a-coordinator-runs). Upgrading from 0.3: [clean break](./docs/getting-started.md#upgrading-from-03).
 
 ## How it works
 

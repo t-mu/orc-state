@@ -65,6 +65,17 @@ orc attach <agent-id>      # worker's tmux terminal, read-only (--write for inpu
 orc doctor                 # health check
 ```
 
+## Upgrading while a coordinator runs
+
+A coordinator keeps the code it started with. After `npm i -g orc-state@next` or `npm run build`, it is out of date until restarted:
+
+| Step | Command |
+|---|---|
+| See it | `orc doctor` warns when the running coordinator's `version` or `build_id` (from `/v1/health`) differs from the code on disk |
+| Restart | `orc start-session --restart-stale` (runs and live sessions are kept and adopted) |
+
+Without `--restart-stale`, `orc start-session` reuses the running coordinator and prints the same warning. An app checks `version`/`build_id` from `/v1/health` against the installed package.
+
 ## Upgrading from 0.3
 
 1.0 cannot migrate 0.3 state. Start the project again:
