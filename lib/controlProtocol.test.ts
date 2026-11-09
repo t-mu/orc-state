@@ -41,7 +41,8 @@ describe('defaultSocketPath', () => {
 
   it('keeps the tmpdir fallback on Linux', () => {
     const path = defaultSocketPath(longStateDir, { platform: 'linux', homeDir: home, tmpDir: tmp });
-    expect(path).toMatch(new RegExp(`^${tmp}/orc-control-[^/]+/[0-9a-f]{16}\\.sock$`));
+    expect(path.startsWith(join(tmp, 'orc-control-'))).toBe(true);
+    expect(path).toMatch(/\/orc-control-[^/]+\/[0-9a-f]{16}\.sock$/);
     expect(statSync(join(path, '..')).mode & 0o777).toBe(0o700);
   });
 });
