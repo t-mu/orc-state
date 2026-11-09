@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryEvents } from '../lib/eventLog.ts';
 
 import {
-  handleGetRecentEvents,
   handleGetAgentWorkview,
   handleGetStatus,
   handleGetTask,
@@ -22,7 +21,6 @@ import {
   handleListWaitingInput,
   handleQueryEvents,
   handleListWorktrees,
-  handleGetNotifications,
   handleMemoryWakeUp,
   handleMemoryRecall,
   handleMemorySearch,
@@ -316,94 +314,6 @@ describe('mcp read handlers', () => {
     expect(missing).toEqual({ error: 'not_found', task_ref: 'project/missing' });
   });
 
-  it('handleGetRecentEvents caps limit and skips malformed lines', () => {
-    // With 3 valid events (seq 1, 2, 3) and limit 2, returns the most recent 2 in ascending order.
-    const events = handleGetRecentEvents(dir, { limit: 2 });
-    expect(events).toHaveLength(2);
-    expect(events[0].seq).toBe(2);
-    expect(events[1].seq).toBe(3);
-
-    const capped = handleGetRecentEvents(dir, { limit: 999 });
-    expect(capped).toHaveLength(3);
-
-    const none = handleGetRecentEvents(dir, { limit: 0 });
-    expect(none).toEqual([]);
-  });
-
-  it('handleGetRecentEvents returns the most recent N events in chronological order', () => {
-    // Overwrite the default seed with 60 events; migration will import them all.
-    const lines = Array.from({ length: 60 }, (_, idx) =>
-      JSON.stringify({ seq: idx + 1, event_id: `evt-${idx + 1}-hb`, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }));
-    writeFileSync(join(dir, 'events.jsonl'), `${lines.join('\n')}\n`, 'utf8');
-
-    const events = handleGetRecentEvents(dir, { limit: 50 });
-    expect(events).toHaveLength(50);
-    // Should be the 50 highest-seq events (11..60), returned in ascending order.
-    expect(events[0].seq).toBe(11);
-    expect(events[49].seq).toBe(60);
-  });
-
-  it('handleGetRecentEvents returns highest-seq events when there are more than limit', () => {
-    // Seed 5 events; requesting limit 3 should return seq 3, 4, 5 — not seq 1, 2, 3.
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
-      JSON.stringify({ seq: 2, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
-      JSON.stringify({ seq: 3, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
-      JSON.stringify({ seq: 4, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:03.000Z' }),
-      JSON.stringify({ seq: 5, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', ts: '2026-01-01T00:00:04.000Z' }),
-    ]);
-    const events = handleGetRecentEvents(dir, { limit: 3 });
-    expect(events).toHaveLength(3);
-    expect(events[0].seq).toBe(3);
-    expect(events[1].seq).toBe(4);
-    expect(events[2].seq).toBe(5);
-  });
-
-  it('handleGetRecentEvents returns empty list when events file is missing', () => {
-    rmSync(join(dir, 'events.jsonl'), { force: true });
-    expect(handleGetRecentEvents(dir)).toEqual([]);
-  });
-
-  it('handleGetRecentEvents filters by agent_id', () => {
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
-      JSON.stringify({ seq: 2, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-2', agent_id: 'orc-2', ts: '2026-01-01T00:00:01.000Z' }),
-      JSON.stringify({ seq: 3, event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
-    ]);
-    const events = handleGetRecentEvents(dir, { limit: 20, agent_id: 'orc-1' });
-    expect(events).toHaveLength(2);
-    expect(events.every((e) => (e as unknown as Record<string, unknown>).agent_id === 'orc-1')).toBe(true);
-  });
-
-  it('handleGetRecentEvents filters by run_id', () => {
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event: 'run_started', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-aaa', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
-      JSON.stringify({ seq: 2, event: 'run_started', actor_type: 'agent', actor_id: 'orc-2', run_id: 'run-bbb', agent_id: 'orc-2', ts: '2026-01-01T00:00:01.000Z' }),
-      JSON.stringify({ seq: 3, event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-aaa', agent_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
-    ]);
-    const events = handleGetRecentEvents(dir, { limit: 20, run_id: 'run-aaa' });
-    expect(events).toHaveLength(2);
-    expect(events.every((e) => (e as unknown as Record<string, unknown>).run_id === 'run-aaa')).toBe(true);
-  });
-
-  it('handleGetRecentEvents includes events matched only by actor_id when agent_id filter is set', () => {
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event: 'run_started', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:00.000Z' }),
-      // No agent_id field — matched only via actor_id
-      JSON.stringify({ seq: 2, event: 'task_delegated', actor_type: 'master', actor_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
-      JSON.stringify({ seq: 3, event: 'run_started', actor_type: 'agent', actor_id: 'orc-2', agent_id: 'orc-2', ts: '2026-01-01T00:00:02.000Z' }),
-    ]);
-    const events = handleGetRecentEvents(dir, { agent_id: 'orc-1' });
-    expect(events).toHaveLength(2);
-    const seqs = events.map((e) => e.seq).sort();
-    expect(seqs).toEqual([1, 2]);
-  });
-
-  it('handleGetRecentEvents throws on invalid agent_id or run_id type', () => {
-    expect(() => handleGetRecentEvents(dir, { agent_id: 123 as unknown as string })).toThrow(/agent_id/);
-    expect(() => handleGetRecentEvents(dir, { run_id: 123 as unknown as string })).toThrow(/run_id/);
-  });
-
   it('handleGetStatus names the registered project a state directory belongs to', () => {
     writeFileSync(join(dir, 'project.json'), JSON.stringify({ id: 'p-1', name: 'demo', target_repo_root: '/tmp/demo' }));
     expect(handleGetStatus(dir).project).toEqual({ id: 'p-1', name: 'demo', target_repo_root: '/tmp/demo' });
@@ -633,7 +543,7 @@ describe('mcp read handlers', () => {
     expect(() => handleListAgents(dir, { role: 'invalid' })).toThrow(/Invalid role/);
     expect(() => handleListAgents(dir, { include_dead: 'yes' })).toThrow(/include_dead must be a boolean/);
     expect(() => handleListStalledRuns(dir, { stale_after_ms: -1 })).toThrow(/stale_after_ms/);
-    expect(() => handleGetRecentEvents(dir, { limit: -1 })).toThrow(/limit/);
+    expect(() => handleQueryEvents(dir, { limit: -1 })).toThrow(/limit/);
     expect(() => handleGetStatus(dir, { include_done_count: 'yes' })).toThrow(/include_done_count must be a boolean/);
   });
 
@@ -1118,43 +1028,44 @@ describe('handleListWaitingInput', () => {
 });
 
 describe('handleQueryEvents', () => {
-  it('returns all events when no filters applied', () => {
-    const result = handleQueryEvents(dir);
-    expect(result).toHaveLength(3); // 3 valid lines (1 malformed excluded)
+  type Page = { events: Array<Record<string, unknown>>; last_seq: number; has_more: boolean };
+
+  it('returns the newest page, skipping malformed rows', () => {
+    const result = handleQueryEvents(dir) as Page;
+    expect(result.events).toHaveLength(3); // 3 valid lines (1 malformed excluded)
+    expect(result.has_more).toBe(false);
   });
 
-  it('filters by event_type', () => {
-    const result = handleQueryEvents(dir, { event_type: 'run_started' });
-    expect(result).toHaveLength(1);
-    expect(((result as unknown[])[0] as Record<string, unknown>).event).toBe('run_started');
+  it('filters by event_type and after_seq', () => {
+    expect((handleQueryEvents(dir, { event_type: 'run_started' }) as Page).events.map((e) => e.event)).toEqual(['run_started']);
+    const after = handleQueryEvents(dir, { after_seq: 2 }) as Page;
+    expect(after.events.map((e) => e.seq)).toEqual([3]);
+    expect(after.last_seq).toBe(3);
   });
 
-  it('filters by after_seq', () => {
-    const result = handleQueryEvents(dir, { after_seq: 2 });
-    expect(result).toHaveLength(1);
-    expect(((result as unknown[])[0] as Record<string, unknown>).seq).toBe(3);
+  it('pages with limit', () => {
+    const page = handleQueryEvents(dir, { limit: 1 }) as Page;
+    expect(page.events).toHaveLength(1);
+    expect(page.has_more).toBe(true);
   });
 
-  it('respects limit cap', () => {
-    const result = handleQueryEvents(dir, { limit: 1 });
-    expect(result).toHaveLength(1);
+  it('rejects a malformed fts_query', () => {
+    expect(() => handleQueryEvents(dir, { fts_query: '"unclosed' })).toThrow(/invalid fts_query/);
   });
 
-  it('filters by fts_query', () => {
-    const result = handleQueryEvents(dir, { fts_query: 'run_started' });
-    expect(result).toHaveLength(1);
-    expect(((result as unknown[])[0] as Record<string, unknown>).event).toBe('run_started');
+  it('notifications_only drops non-notification events', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 1, event_id: 'e1', event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
+      JSON.stringify({ seq: 2, event_id: 'e2', event: 'run_cancelled', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:03.000Z' }),
+    ]);
+    const page = handleQueryEvents(dir, { notifications_only: true }) as Page;
+    expect(page.events.map((e) => e.event)).toEqual(['run_cancelled']);
+    expect(page.last_seq).toBe(2);
   });
 
-  it('returns error object for malformed fts_query', () => {
-    const result = handleQueryEvents(dir, { fts_query: '"unclosed' }) as { error: string };
-    expect(result).toHaveProperty('error');
-    expect(result.error).toMatch(/query_events failed/);
-  });
-
-  it('returns empty array when no events file exists', () => {
+  it('returns an empty page when no events file exists', () => {
     rmSync(join(dir, 'events.jsonl'));
-    expect(handleQueryEvents(dir)).toEqual([]);
+    expect(handleQueryEvents(dir)).toEqual({ events: [], last_seq: 0, has_more: false });
   });
 });
 
@@ -1216,68 +1127,6 @@ describe('handleListWorktrees', () => {
     expect(result[0].task_ref).toBe('project/todo-one');
     expect(result[0].path).toBe('/repo/.worktrees/run-1');
     expect(result[0].task_title).toBe('Todo one');
-  });
-});
-
-describe('handleGetNotifications', () => {
-  it('returns empty notifications and last_seq=0 when no notification events exist', () => {
-    const result = handleGetNotifications(dir);
-    expect(result.notifications).toEqual([]);
-    expect(result.last_seq).toBe(0);
-  });
-
-  it('returns notification events after seeding them', () => {
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event_id: 'e1', event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
-      JSON.stringify({ seq: 2, event_id: 'e2', event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:02.000Z' }),
-      JSON.stringify({ seq: 3, event_id: 'e3', event: 'run_failed', actor_type: 'agent', actor_id: 'orc-2', run_id: 'run-2', task_ref: 'project/todo-one', agent_id: 'orc-2', ts: '2026-01-01T00:00:03.000Z', payload: { policy: 'requeue' } }),
-      JSON.stringify({ seq: 4, event_id: 'e4', event: 'input_requested', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:04.000Z', payload: { question: 'yes?' } }),
-    ]);
-
-    const result = handleGetNotifications(dir);
-    expect(result.notifications).toHaveLength(3);
-    expect(result.notifications.map((e) => e.event)).toEqual(['run_finished', 'run_failed', 'input_requested']);
-    expect(result.last_seq).toBe(4);
-  });
-
-  it('respects after_seq cursor', () => {
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event_id: 'e1', event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
-      JSON.stringify({ seq: 2, event_id: 'e2', event: 'run_failed', actor_type: 'agent', actor_id: 'orc-2', run_id: 'run-2', task_ref: 'project/todo-one', agent_id: 'orc-2', ts: '2026-01-01T00:00:02.000Z', payload: { policy: 'requeue' } }),
-    ]);
-
-    const result = handleGetNotifications(dir, { after_seq: 1 });
-    expect(result.notifications).toHaveLength(1);
-    expect(result.notifications[0].event).toBe('run_failed');
-    expect(result.last_seq).toBe(2);
-  });
-
-  it('returns last_seq equal to after_seq when no new events exist', () => {
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event_id: 'e1', event: 'run_finished', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
-    ]);
-
-    const result = handleGetNotifications(dir, { after_seq: 5 });
-    expect(result.notifications).toHaveLength(0);
-    expect(result.last_seq).toBe(5);
-  });
-
-  it('throws on invalid after_seq', () => {
-    expect(() => handleGetNotifications(dir, { after_seq: -1 })).toThrow(/after_seq/);
-    expect(() => handleGetNotifications(dir, { after_seq: 1.5 })).toThrow(/after_seq/);
-  });
-
-  it('excludes non-notification events', () => {
-    seedEventsLines([
-      JSON.stringify({ seq: 1, event_id: 'e1', event: 'heartbeat', actor_type: 'agent', actor_id: 'orc-1', agent_id: 'orc-1', ts: '2026-01-01T00:00:01.000Z' }),
-      JSON.stringify({ seq: 2, event_id: 'e2', event: 'task_added', actor_type: 'agent', actor_id: 'master', ts: '2026-01-01T00:00:02.000Z', task_ref: 'project/todo-one' }),
-      JSON.stringify({ seq: 3, event_id: 'e3', event: 'run_cancelled', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', ts: '2026-01-01T00:00:03.000Z' }),
-    ]);
-
-    const result = handleGetNotifications(dir);
-    expect(result.notifications).toHaveLength(1);
-    expect(result.notifications[0].event).toBe('run_cancelled');
-    expect(result.last_seq).toBe(3);
   });
 });
 

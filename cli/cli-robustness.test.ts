@@ -38,8 +38,7 @@ describe('unknown flags are usage errors', () => {
     ['cli/worker-status.ts', ['--bogus'], 'Usage: orc worker-status'],
     ['cli/remove-worker.ts', ['worker-1', '--bogus'], 'Usage: orc worker-remove'],
     ['cli/run-info.ts', ['run-1', '--bogus'], 'Usage: orc run-info'],
-    ['cli/events-filter.ts', ['--bogus'], 'Usage: orc events-filter'],
-    ['cli/events-tail.ts', ['--bogus'], 'Usage: orc events-tail'],
+    ['cli/events.ts', ['--bogus'], 'Usage: orc events'],
   ])('%s %j', (script, args, usage) => {
     const result = run(script, args);
     expect(result.status).toBe(1);
@@ -58,8 +57,7 @@ describe('project-scoped reads fail outside a project', () => {
     ['cli/worker-status.ts', []],
     ['cli/waiting-input.ts', ['--json']],
     ['cli/sessions.ts', ['--json']],
-    ['cli/events-tail.ts', ['--json']],
-    ['cli/events-filter.ts', ['--json']],
+    ['cli/events.ts', ['--json']],
     ['cli/run-info.ts', ['run-1']],
     ['cli/status.ts', ['--json']],
   ])('%s', (script, args) => {
@@ -76,26 +74,42 @@ describe('project-scoped reads fail outside a project', () => {
   });
 });
 
-describe('events-filter --after and events-tail on a missing database', () => {
-  it('--after keeps only events with a greater seq', () => {
+describe('orc events', () => {
+  const page = (args: string[]) => {
+    const result = run('cli/events.ts', [...args, '--json']);
+    expect(result.status, result.stderr).toBe(0);
+    return JSON.parse(result.stdout) as { events: Array<{ seq: number; run_id: string }>; last_seq: number; has_more: boolean };
+  };
+
+  it('--after pages forward oldest-first; no cursor returns the newest page', () => {
     seedEvents(5);
-    const result = run('cli/events-filter.ts', ['--after=3', '--json']);
+    expect(page(['--after=1', '--limit=2'])).toMatchObject({ last_seq: 3, has_more: true, events: [{ seq: 2 }, { seq: 3 }] });
+    expect(page(['--limit=2'])).toMatchObject({ last_seq: 5, has_more: true, events: [{ seq: 4 }, { seq: 5 }] });
+    expect(page(['--run-id=run-2']).events.map((e) => e.seq)).toEqual([3]);
+  });
+
+  it('prints compact events unless --verbose', () => {
+    seedEvents(1);
+    expect(page([]).events[0]).not.toHaveProperty('actor_id');
+    expect(page(['--verbose']).events[0]).toHaveProperty('actor_id', 'w');
+  });
+
+  it('--follow prints new events as JSON lines up to --max-events', () => {
+    seedEvents(3);
+    const result = run('cli/events.ts', ['--after=0', '--follow', '--max-events=2', '--json']);
     expect(result.status).toBe(0);
-    expect((JSON.parse(result.stdout) as Array<{ seq: number }>).map((e) => e.seq)).toEqual([4, 5]);
+    expect(result.stdout.trim().split('\n').map((line) => (JSON.parse(line) as { seq: number }).seq)).toEqual([1, 2]);
   });
 
-  it('rejects non-numeric --after and --last', () => {
-    expect(run('cli/events-filter.ts', ['--after=x']).status).toBe(1);
-    expect(run('cli/events-filter.ts', ['--last=x']).status).toBe(1);
+  it('rejects bad --after and out-of-range --limit', () => {
+    expect(run('cli/events.ts', ['--after=x']).status).toBe(1);
+    const tooMany = run('cli/events.ts', ['--limit=101']);
+    expect(tooMany.status).toBe(1);
+    expect(tooMany.stderr).toMatch(/limit must be an integer from 1 to 100/);
   });
 
-  it('both commands report an empty log without creating the database', () => {
-    const tail = run('cli/events-tail.ts', ['--json']);
-    expect(tail.status).toBe(0);
-    expect(JSON.parse(tail.stdout)).toEqual({ total: 0, events: [] });
-    const filter = run('cli/events-filter.ts', ['--json']);
-    expect(filter.status).toBe(0);
-    expect(JSON.parse(filter.stdout)).toEqual([]);
+  it('reports an empty log without creating the database', () => {
+    expect(page([])).toEqual({ events: [], last_seq: 0, has_more: false });
     expect(existsSync(join(dir, 'events.db'))).toBe(false);
   });
 });
