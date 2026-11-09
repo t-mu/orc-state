@@ -5,7 +5,7 @@ import { isSameProcess, readProcessStart } from './processIdentity.ts';
 import type { LivenessVerdict, SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
 import { updateAgentRuntime } from './agentRegistry.ts';
-import { closeProviderSessionsForAgent } from './runStore.ts';
+import { closeProviderSessionsForAgent, writeSessionRow } from './runStore.ts';
 
 /**
  * Session states (Task 202). Only `running` sessions accept commands.
@@ -86,22 +86,25 @@ export function setSessionState(
     const nextOwner = options.ownerId ?? session.owner_id;
     if (session.state === state && session.state_reason === reason && session.owner_id === nextOwner) return false;
     const now = new Date();
-    db.prepare(`UPDATE sessions SET state = ?, state_reason = ?, updated_at = ?, owner_id = ?, owner_expires_at = ?
-      WHERE session_id = ?`).run(state, reason, now.toISOString(), nextOwner,
-      options.ownerId ? new Date(now.getTime() + (options.ownerTtlMs ?? SESSION_OWNER_TTL_MS)).toISOString() : null, sessionId);
-    const run = session.run_id
-      ? db.prepare('SELECT task_ref FROM runs WHERE run_id = ?').get(session.run_id) as { task_ref: string } | undefined
-      : undefined;
-    appendSequencedEvent(stateDir, {
-      ts: now.toISOString(), event: 'session_reconciled', actor_type: 'coordinator', actor_id: 'coordinator',
-      agent_id: session.agent_id,
-      ...(session.run_id ? { run_id: session.run_id } : {}),
-      ...(run ? { task_ref: run.task_ref } : {}),
-      payload: {
-        session_id: sessionId, state, previous_state: session.state, transport: session.transport,
-        ...(options.outcome ? { outcome: options.outcome } : {}),
-        ...(reason ? { reason } : {}),
+    const at = now.toISOString();
+    writeSessionRow(db, stateDir, sessionId, {
+      set: {
+        state, state_reason: reason, owner_id: nextOwner,
+        owner_expires_at: options.ownerId ? new Date(now.getTime() + (options.ownerTtlMs ?? SESSION_OWNER_TTL_MS)).toISOString() : null,
       },
+      at,
+      event: ({ after, taskRef }) => ({
+        ts: at, event: 'session_reconciled', actor_type: 'coordinator', actor_id: 'coordinator',
+        agent_id: session.agent_id,
+        ...(session.run_id ? { run_id: session.run_id } : {}),
+        ...(taskRef ? { task_ref: taskRef } : {}),
+        payload: {
+          session_id: sessionId, state, previous_state: session.state, transport: session.transport,
+          ...(options.outcome ? { outcome: options.outcome } : {}),
+          ...(reason ? { reason } : {}),
+          generation: after.generation,
+        },
+      }),
     });
     return true;
   });
@@ -127,7 +130,10 @@ export function identityMismatch(session: SupervisedSession, inspection: Session
   return !(session.process_start.startsWith('ps:') && isSameProcess({ pid: session.process_pid, start: session.process_start }));
 }
 
-/** Extend this owner's lease on the running sessions it supervises. */
+/**
+ * Extend this owner's lease on the running sessions it supervises. The one
+ * session-row write without an event: it changes no state and runs every tick.
+ */
 export function renewSessionOwnership(stateDir: string, owner: string, ttlMs: number): number {
   if (!existsSync(join(stateDir, 'events.db'))) return 0;
   return withEventDbTransaction(stateDir, (db) => db.prepare(`UPDATE sessions SET owner_expires_at = ?

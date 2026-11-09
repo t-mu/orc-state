@@ -438,14 +438,15 @@ export class TerminalBroker {
   }
 
   /**
-   * Running sessions; `terminal_id` names the ones that have a live provider
-   * terminal to stream, `writer` who holds its input lease (null when nobody does).
+   * Every session that is not offline (running, recoverable, unknown), with its
+   * `state` and `state_reason`; `terminal_id` names the ones that have a live
+   * provider terminal to stream, `writer` who holds its input lease (null when nobody does).
    */
   sessions(): SessionTerminalView[] {
     const now = Date.now();
     return withEventDb(this.stateDir, (db) => {
-      const rows = db.prepare(`SELECT session_id, agent_id, run_id, provider, transport FROM sessions
-        WHERE state = 'running' ORDER BY rowid`).all() as Array<Omit<SessionTerminalView, 'terminal_id' | 'writer'>>;
+      const rows = db.prepare(`SELECT session_id, agent_id, run_id, provider, transport, state, state_reason FROM sessions
+        WHERE state <> 'offline' ORDER BY rowid`).all() as Array<Omit<SessionTerminalView, 'terminal_id' | 'writer'>>;
       const leases = db.prepare("SELECT resource_id, owner_id, expires_at FROM control_leases WHERE resource_type = 'terminal'")
         .all() as Array<TerminalWriter & { resource_id: string }>;
       return rows.map((row) => {

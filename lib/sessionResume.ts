@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import type Database from 'better-sqlite3';
 import { join } from 'node:path';
 import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eventLog.ts';
+import { writeSessionRow } from './runStore.ts';
 import type { SessionExitStatus } from '../adapters/interface.ts';
 import type { SessionResumeMode } from './providers.ts';
 import type { SessionExitReason, SupervisedSession } from './sessionSupervisor.ts';
@@ -93,22 +94,25 @@ export function latestRunSession(stateDir: string, agentId: string, runId: strin
 export function recordSessionExit(stateDir: string, sessionId: string, exitReason: SessionExitReason): void {
   if (!hasEventDb(stateDir)) return;
   withEventDbTransaction(stateDir, (db) => {
-    db.prepare(`UPDATE sessions SET exit_reason = ?, state = 'offline', state_reason = ?, updated_at = ?
-      WHERE session_id = ?`).run(exitReason, `session process exited (${exitReason})`, new Date().toISOString(), sessionId);
+    const reason = `session process exited (${exitReason})`;
+    writeSessionRow(db, stateDir, sessionId, {
+      set: { exit_reason: exitReason, state: 'offline', state_reason: reason }, at: new Date().toISOString(), reason,
+    });
   });
 }
 
 /**
- * Start a resume attempt: in one statement the old secret's hash is replaced
- * by the new one (so the old secret is rejected from here on), the generation
- * and resume count increase. A failed attempt still counts against the budget.
+ * Start a resume attempt: in one write the old secret's hash is replaced by
+ * the new one (so the old secret is rejected from here on), the generation and
+ * resume count increase. A failed attempt still counts against the budget.
  */
 export function beginSessionResume(stateDir: string, sessionId: string, credentialHash: string): { generation: number; resume_count: number } | null {
   return withEventDbTransaction(stateDir, (db) => {
-    const changed = db.prepare(`UPDATE sessions SET credential_hash = ?, generation = generation + 1,
-      resume_count = resume_count + 1, updated_at = ? WHERE session_id = ?`)
-      .run(credentialHash, new Date().toISOString(), sessionId).changes;
-    if (changed === 0) return null;
+    const after = writeSessionRow(db, stateDir, sessionId, {
+      set: { credential_hash: credentialHash }, increment: ['generation', 'resume_count'],
+      at: new Date().toISOString(), reason: 'resume started',
+    });
+    if (!after) return null;
     return db.prepare('SELECT generation, resume_count FROM sessions WHERE session_id = ?').get(sessionId) as { generation: number; resume_count: number };
   });
 }
@@ -142,18 +146,22 @@ export function completeSessionResume(stateDir: string, session: SupervisedSessi
 }): void {
   withEventDbTransaction(stateDir, (db) => {
     const now = new Date().toISOString();
-    db.prepare(`UPDATE sessions SET state = 'running', state_reason = NULL, exit_reason = NULL, provider_ref = ?,
-      transport = ?, process_pid = ?, process_start = ?, owner_id = ?, owner_expires_at = ?,
-      provider_conversation_id = COALESCE(?, provider_conversation_id), updated_at = ? WHERE session_id = ?`)
-      .run(launched.providerRef == null ? null : JSON.stringify(launched.providerRef), launched.transport, launched.processPid,
-        launched.processStart, launched.ownerId, launched.ownerExpiresAt, launched.conversationId, now, session.session_id);
-    const taskRef = taskRefOf(db, session.run_id);
-    appendSequencedEvent(stateDir, {
-      ts: now, event: 'session_resumed', actor_type: 'coordinator', actor_id: 'coordinator',
-      agent_id: session.agent_id,
-      ...(session.run_id ? { run_id: session.run_id } : {}),
-      ...(taskRef ? { task_ref: taskRef } : {}),
-      payload: { ...resumePayload(session, launched.generation, launched.conversationId ?? session.provider_conversation_id), reason: launched.reason },
+    writeSessionRow(db, stateDir, session.session_id, {
+      set: {
+        state: 'running', state_reason: null, exit_reason: null,
+        provider_ref: launched.providerRef == null ? null : JSON.stringify(launched.providerRef),
+        transport: launched.transport, process_pid: launched.processPid, process_start: launched.processStart,
+        owner_id: launched.ownerId, owner_expires_at: launched.ownerExpiresAt,
+        ...(launched.conversationId != null ? { provider_conversation_id: launched.conversationId } : {}),
+      },
+      at: now,
+      event: ({ taskRef }) => ({
+        ts: now, event: 'session_resumed', actor_type: 'coordinator', actor_id: 'coordinator',
+        agent_id: session.agent_id,
+        ...(session.run_id ? { run_id: session.run_id } : {}),
+        ...(taskRef ? { task_ref: taskRef } : {}),
+        payload: { ...resumePayload(session, launched.generation, launched.conversationId ?? session.provider_conversation_id), reason: launched.reason },
+      }),
     });
   });
 }

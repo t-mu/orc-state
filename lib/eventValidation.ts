@@ -99,6 +99,8 @@ function validateCoreEventInvariants(event: unknown, errors: string[], stored: b
         'agent_offline',
         'agent_marked_dead',
         'session_start_failed',
+        'session_opened',
+        'session_state_changed',
         'session_reconciled',
         'session_resumed',
         'session_resume_failed',
@@ -150,6 +152,21 @@ function validateCoreEventInvariants(event: unknown, errors: string[], stored: b
   if (eventName === 'session_reconciled') {
     requirePayloadField(event, 'session_id', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
     requirePayloadField(event, 'state', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+  }
+
+  if (eventName === 'session_opened' || eventName === 'session_state_changed') {
+    const nonEmpty = (v: unknown) => typeof v === 'string' && v.length > 0;
+    requirePayloadField(event, 'session_id', nonEmpty, 'must be a non-empty string', errors);
+    requirePayloadField(event, 'agent_id', nonEmpty, 'must be a non-empty string', errors);
+    requirePayloadField(event, 'generation', (v) => Number.isInteger(v) && (v as number) >= 0, 'must be a non-negative integer', errors);
+    requirePayloadField(event, 'run_id', (v) => v === undefined || nonEmpty(v), 'must be a non-empty string when present', errors);
+    if (eventName === 'session_opened') {
+      requirePayloadField(event, 'state', nonEmpty, 'must be a non-empty string', errors);
+    } else {
+      requirePayloadField(event, 'from', nonEmpty, 'must be a non-empty string', errors);
+      requirePayloadField(event, 'to', nonEmpty, 'must be a non-empty string', errors);
+      requirePayloadField(event, 'reason', (v) => v === undefined || nonEmpty(v), 'must be a non-empty string when present', errors);
+    }
   }
 
   if (eventName === 'scout_launch_failed') {

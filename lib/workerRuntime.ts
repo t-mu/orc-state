@@ -151,6 +151,7 @@ interface Adapter {
     runtime?: WorkerRuntime;
     env: Record<string, string>;
   }): Promise<{ session_handle: string; provider_ref: unknown }>;
+  stop(sessionHandle: string): Promise<void>;
 }
 
 function resolveWorkerBootstrapProfile(env: NodeJS.ProcessEnv = process.env): WorkerBootstrapProfile {
@@ -246,7 +247,7 @@ export async function launchWorkerSession(
       last_status_change_at: nowIso,
     };
     const ref = (provider_ref ?? {}) as { transport?: unknown; pid?: unknown; process_start?: unknown; thread_id?: unknown };
-    recordProviderSession(stateDir, {
+    const recorded = recordProviderSession(stateDir, {
       sessionId,
       runId,
       agentId: agent.agent_id,
@@ -261,6 +262,11 @@ export async function launchWorkerSession(
       credentialHash: credentialHash(sessionSecret),
       providerConversationId: conversationId ?? (typeof ref.thread_id === 'string' ? ref.thread_id : null),
     });
+    if (!recorded) {
+      // The run is gone (cancelled during the launch): no row means no credential, so the session must not live on.
+      try { await adapter.stop(session_handle); } catch { /* best effort: the launch fails either way */ }
+      throw new Error(`run ${runId} no longer exists; stopped the session started for it`);
+    }
     updateAgentRuntime(stateDir, agent.agent_id, updates);
     syncAgentRuntime(agent, updates);
     emit({

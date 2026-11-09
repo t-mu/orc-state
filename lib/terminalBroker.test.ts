@@ -451,8 +451,8 @@ describe('terminal broker', () => {
   it('lists sessions with their terminals; an app session has none to stream', async () => {
     const client = new ControlClient(dir);
     expect((await client.sessions()).sessions).toEqual([
-      { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', provider: 'claude', transport: 'tmux', terminal_id: 'provider:session-a', writer: null },
-      { session_id: 'session-b', agent_id: 'worker-b', run_id: 'run-b', provider: 'codex', transport: 'app-server', terminal_id: null, writer: null },
+      { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', provider: 'claude', transport: 'tmux', state: 'running', state_reason: null, terminal_id: 'provider:session-a', writer: null },
+      { session_id: 'session-b', agent_id: 'worker-b', run_id: 'run-b', provider: 'codex', transport: 'app-server', state: 'running', state_reason: null, terminal_id: null, writer: null },
     ]);
     await expect(openStream(client, 'provider:session-b').next(1)).rejects.toMatchObject({ code: 'not_found' });
     await expect(openStream(client, 'provider:no-such-session').next(1)).rejects.toMatchObject({ code: 'not_found' });
@@ -462,6 +462,17 @@ describe('terminal broker', () => {
     await view.close();
     driver.live.delete('tmux:worker-a');
     expect((await client.sessions()).sessions[0].terminal_id).toBeNull();
+  });
+
+  it('lists recoverable and unknown sessions with their reason and leaves offline ones out', async () => {
+    withEventDbTransaction(dir, (db) => {
+      db.prepare("UPDATE sessions SET state = 'recoverable', state_reason = 'not writable by this coordinator' WHERE session_id = 'session-a'").run();
+      db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'session closed' WHERE session_id = 'session-b'").run();
+    });
+    const { sessions } = await new ControlClient(dir).sessions();
+    expect(sessions).toEqual([expect.objectContaining({
+      session_id: 'session-a', state: 'recoverable', state_reason: 'not writable by this coordinator',
+    })]);
   });
 
   it('refuses operator input with a retryable busy while the coordinator sends', async () => {

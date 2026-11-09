@@ -6,8 +6,14 @@ import Database from 'better-sqlite3';
 import { cleanupTempStateDir, createTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { claimTask } from './claimManager.ts';
 import { closeAllDatabases, initEventsDb, queryEvents } from './eventLog.ts';
-import { readClaims } from './stateReader.ts';
-import { closeProviderSessionsForAgent, commitClaims, recordProviderSession, refreshClaimsProjection } from './runStore.ts';
+import { readAgents, readClaims } from './stateReader.ts';
+import {
+  closeProviderSessionsForAgent, commitClaims, recordProviderSession, refreshClaimsProjection,
+  restoreProviderSessionsForAgents, resumeProviderSession,
+} from './runStore.ts';
+import { beginSessionResume, completeSessionResume, recordSessionExit } from './sessionResume.ts';
+import { listSupervisedSessions, setSessionState } from './sessionSupervisor.ts';
+import type { Agent } from '../types/agents.ts';
 import type { Claim } from '../types/claims.ts';
 import type { OrcEventInput } from '../types/events.ts';
 
@@ -193,5 +199,98 @@ describe('SQLite run authority', () => {
     } finally {
       check.close();
     }
+  });
+});
+
+describe('session row events', () => {
+  let runId: string;
+  const sessionEvents = () => queryEvents(dir, {}).filter((event) => event.event.startsWith('session_'));
+  const since = (seq: number) => sessionEvents().filter((event) => event.seq > seq);
+  const lastSeq = () => sessionEvents().at(-1)?.seq ?? 0;
+  const record = (sessionId: string, at: string) => recordProviderSession(dir, {
+    sessionId, runId, agentId: 'worker-1', provider: 'claude', providerRef: null, startedAt: at, transport: 'tmux',
+  });
+  const agent = (overrides: Partial<Agent> = {}): Agent => ({
+    agent_id: 'worker-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:worker-1',
+    session_token: 'session-1', registered_at: '2026-01-01T00:00:00Z', ...overrides,
+  });
+
+  beforeEach(() => {
+    seedState(dir, { tasks: [{ ref: 'orch/task-1', title: 'Task 1', status: 'todo' }], agents: [agent()] });
+    runId = claimTask(dir, 'orch/task-1', 'worker-1').run_id;
+  });
+
+  it('opens a session with session_opened and supersedes the previous one with one state change', () => {
+    record('session-1', '2026-01-01T00:00:00.000Z');
+    expect(sessionEvents().map((event) => [event.event, event.payload])).toEqual([
+      ['session_opened', { session_id: 'session-1', agent_id: 'worker-1', run_id: runId, state: 'running', transport: 'tmux', generation: 0 }],
+    ]);
+    const seq = lastSeq();
+    record('session-2', '2026-01-01T00:01:00.000Z');
+    expect(since(seq).map((event) => [event.event, event.payload])).toEqual([
+      ['session_state_changed', {
+        session_id: 'session-1', agent_id: 'worker-1', run_id: runId, from: 'running', to: 'offline',
+        reason: 'superseded by a new session', generation: 0,
+      }],
+      ['session_opened', { session_id: 'session-2', agent_id: 'worker-1', run_id: runId, state: 'running', transport: 'tmux', generation: 0 }],
+    ]);
+    expect(since(seq).every((event) => (event as { task_ref?: string }).task_ref === 'orch/task-1')).toBe(true);
+  });
+
+  it('writes nothing when the run is gone', () => {
+    expect(recordProviderSession(dir, {
+      sessionId: 'session-x', runId: 'run-missing', agentId: 'worker-1', provider: 'claude', providerRef: null, startedAt: '2026-01-01T00:00:00.000Z',
+    })).toBe(false);
+    expect(sessionEvents()).toEqual([]);
+    expect(listSupervisedSessions(dir)).toEqual([]);
+  });
+
+  it('records close, exit, resume start and resume completion with exactly one event each', () => {
+    record('session-1', '2026-01-01T00:00:00.000Z');
+    const steps: Array<[string, () => void, string, Record<string, unknown>]> = [
+      ['exit', () => recordSessionExit(dir, 'session-1', 'crash'), 'session_state_changed',
+        { from: 'running', to: 'offline', reason: 'session process exited (crash)', generation: 0 }],
+      ['resume start', () => { beginSessionResume(dir, 'session-1', 'hash-2'); }, 'session_state_changed',
+        { from: 'offline', to: 'offline', reason: 'resume started', generation: 1 }],
+      ['resume complete', () => completeSessionResume(dir, listSupervisedSessions(dir)[0], {
+        generation: 1, providerRef: null, transport: 'tmux', processPid: 2, processStart: 'proc:2',
+        ownerId: 'pid:1:x', ownerExpiresAt: '2099-01-01T00:00:00.000Z', conversationId: null, reason: 'pty_pid_dead',
+      }), 'session_resumed', { generation: 1, reason: 'pty_pid_dead' }],
+      ['close', () => closeProviderSessionsForAgent(dir, 'worker-1', '2026-01-01T00:05:00.000Z'), 'session_state_changed',
+        { from: 'running', to: 'offline', reason: 'session closed', generation: 1 }],
+      ['restore', () => restoreProviderSessionsForAgents(dir, [agent()], '2026-01-01T00:06:00.000Z'), 'session_state_changed',
+        { from: 'offline', to: 'running', reason: 'session reset rolled back', generation: 1 }],
+      ['reconcile', () => { setSessionState(dir, 'session-1', 'recoverable', 'not writable'); }, 'session_reconciled',
+        { state: 'recoverable', previous_state: 'running', generation: 1 }],
+    ];
+    for (const [name, write, event, payload] of steps) {
+      const seq = lastSeq();
+      write();
+      const emitted = since(seq);
+      expect(emitted.map((entry) => entry.event), name).toEqual([event]);
+      expect(emitted[0].payload, name).toMatchObject({ session_id: 'session-1', ...payload });
+    }
+  });
+
+  it('records a master resume as session_resumed and supersedes its other sessions', () => {
+    recordProviderSession(dir, { sessionId: 'master-1', runId: null, agentId: 'master', provider: 'claude', providerRef: null, startedAt: '2026-01-01T00:00:00.000Z' });
+    recordProviderSession(dir, { sessionId: 'master-2', runId: null, agentId: 'master', provider: 'claude', providerRef: null, startedAt: '2026-01-01T00:01:00.000Z' });
+    const seq = lastSeq();
+    expect(resumeProviderSession(dir, {
+      sessionId: 'master-1', providerRef: null, at: '2026-01-01T00:02:00.000Z', transport: 'tmux', processPid: 3, processStart: 'proc:3', credentialHash: 'h',
+    })).toBe(1);
+    expect(since(seq).map((event) => [event.event, (event.payload as { session_id?: string }).session_id])).toEqual([
+      ['session_state_changed', 'master-2'], ['session_resumed', 'master-1'],
+    ]);
+  });
+
+  it('reports the session row state through readAgents: an offline row takes a running agent offline', () => {
+    record('session-1', '2026-01-01T00:00:00.000Z');
+    expect(readAgents(dir).agents[0]).toMatchObject({ status: 'running', session_token: 'session-1', session_handle: 'tmux:worker-1' });
+    setSessionState(dir, 'session-1', 'recoverable', 'not writable');
+    expect(readAgents(dir).agents[0]).toMatchObject({ status: 'running', session_token: 'session-1' });
+    recordSessionExit(dir, 'session-1', 'crash');
+    // The handle stays: it names the dead pane cleanup still has to stop.
+    expect(readAgents(dir).agents[0]).toMatchObject({ status: 'offline', session_token: null, session_handle: 'tmux:worker-1' });
   });
 });
