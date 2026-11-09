@@ -27,6 +27,7 @@ import {
 } from './handlers.ts';
 import { cancelTask, delegateTask, resetTask, respondInput } from '../lib/operatorMutations.ts';
 import { writeRunActivity } from '../lib/runActivityStore.ts';
+import { startControlServer } from '../lib/controlServer.ts';
 
 let dir: string;
 
@@ -357,6 +358,26 @@ describe('mcp read handlers', () => {
     expect(status.last_notification_seq).toBe(0);
     expect(status.stalled_runs).toBe(1);
     expect(status.project).toMatchObject({ id: TEST_PROJECT_ID });
+  });
+
+  it('handleGetStatus reports a running coordinator with the pid, version and start time from its health', async () => {
+    const control = await startControlServer(dir);
+    // This test process stands in for the coordinator process; health comes from the real control server.
+    vi.resetModules();
+    vi.doMock('../lib/coordinatorLiveness.ts', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../lib/coordinatorLiveness.ts')>(),
+      findLiveCoordinator: () => ({ pid: process.pid, source: 'pid_file' }),
+    }));
+    try {
+      const fresh = await import('./handlers.ts');
+      expect((await fresh.handleGetStatus(dir)).coordinator).toEqual({
+        running: true, pid: process.pid, version: expect.any(String), started_at: expect.any(String), stale: null,
+      });
+    } finally {
+      vi.doUnmock('../lib/coordinatorLiveness.ts');
+      vi.resetModules();
+      await control.close();
+    }
   });
 
   it('handleGetStatus counts live runs waiting for input, not legacy finished claims', async () => {

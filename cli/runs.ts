@@ -23,7 +23,8 @@ const { values } = parseCommandArgsOrExit(USAGE['runs'], {
 requireProjectScope();
 
 const STATES: Record<string, RunListState> = { active: 'active', stalled: 'stalled', 'waiting-input': 'waiting_input' };
-const state = STATES[values.state ?? 'active'];
+const stateArg = values.state ?? 'active';
+const state = Object.hasOwn(STATES, stateArg) ? STATES[stateArg] : undefined;
 if (!state) usageError('--state must be active, stalled or waiting-input');
 const staleRaw = values['stale-after-ms'];
 if (staleRaw !== undefined && (!/^\d+$/.test(staleRaw) || !Number.isSafeInteger(Number(staleRaw)))) {

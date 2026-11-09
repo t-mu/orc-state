@@ -643,6 +643,8 @@ describe('local daemon control API', () => {
   it('refuses a bad state on GET /v1/runs and a worker session reading every run', async () => {
     await expect(new ControlClient(dir, { credential: 'session-master' }).runs({ state: 'done' as never }))
       .rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    await expect(new ControlClient(dir, { credential: 'session-master' }).runs({ stale_after_ms: 99999999999999999999 }))
+      .rejects.toMatchObject({ code: 'bad_request', status: 400 });
     await expect(new ControlClient(dir, { credential: 'session-a' }).runs()).rejects.toMatchObject({ status: 403 });
   });
 

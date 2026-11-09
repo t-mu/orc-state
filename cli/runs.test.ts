@@ -81,6 +81,7 @@ describe('cli/runs.ts', () => {
     const badState = runCli(['--state=done']);
     expect(badState.status).toBe(1);
     expect(badState.stderr).toContain('--state must be active, stalled or waiting-input');
+    expect(runCli(['--state=constructor']).stderr).toContain('--state must be active, stalled or waiting-input');
     const badStale = runCli(['--stale-after-ms=-5']);
     expect(badStale.status).toBe(1);
     expect(badStale.stderr).toContain('--stale-after-ms must be a non-negative integer');
