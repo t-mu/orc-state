@@ -312,7 +312,16 @@ describe('validateEventObject', () => {
     expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'no_progress', idle_ms: 1000, no_progress_ms: 1 } })))
       .toContain('payload.progress_at must be an ISO timestamp');
     expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'bored', idle_ms: 1000 } })))
-      .toContain('payload.reason must be "stale" or "no_progress"');
+      .toContain('payload.reason must be "stale", "no_progress" or "session_not_running"');
+  });
+
+  it('accepts session_not_running worker_needs_attention events without idle_ms', () => {
+    const fields = { actor_type: 'coordinator', actor_id: 'coordinator', run_id: 'run-1', task_ref: 'docs/task-1', agent_id: 'worker-01' };
+    expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: {
+      reason: 'session_not_running', session_id: 'sess-1', session_state: 'recoverable', not_running_ms: 120_000, state_reason: 'not writable',
+    } }))).toEqual([]);
+    expect(validateEventObject(base('worker_needs_attention', { ...fields, payload: { reason: 'session_not_running', session_id: 'sess-1' } })))
+      .toEqual(expect.arrayContaining(['payload.session_state must be a non-empty string', 'payload.not_running_ms must be a non-negative integer']));
   });
 
   describe('claim_expired', () => {

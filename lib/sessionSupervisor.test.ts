@@ -7,7 +7,7 @@ import { closeProviderSessionsForAgent, commitClaims, recordProviderSession } fr
 import { CommandDispatcher } from './commandDelivery.ts';
 import {
   classifySession, currentSessionOwnerId, identityMismatch, listSupervisedSessions, reconcileSessions,
-  newMasterLivenessTracker, renewSessionOwnership, retireDeadMaster, setSessionState, type MasterProbe, type SupervisedSession,
+  newLivenessTracker, countDeadProbe, renewSessionOwnership, retireDeadMaster, setSessionState, type MasterProbe, type SupervisedSession,
 } from './sessionSupervisor.ts';
 import type { SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
@@ -164,7 +164,7 @@ describe('reconcileSessions', () => {
 
     it('does not retire a master whose probe fails on the first tick after it started', async () => {
       // The race seen on 2026-11-08: the coordinator's first look at a freshly launched master.
-      const tracker = newMasterLivenessTracker();
+      const tracker = newLivenessTracker();
       for (const nowMs of [startedMs + 1_000, startedMs + 8_000]) {
         expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), { tracker, graceMs: 30_000, nowMs })).toBe(false);
       }
@@ -173,7 +173,7 @@ describe('reconcileSessions', () => {
     });
 
     it('retires only after consecutive failed probes, and records the probe on master_retired', async () => {
-      const tracker = newMasterLivenessTracker();
+      const tracker = newLivenessTracker();
       const later = { tracker, graceMs: 30_000, nowMs: startedMs + 60_000 };
       expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), later)).toBe(false);
       expect(masterSession()?.state).toBe('running');
@@ -192,7 +192,7 @@ describe('reconcileSessions', () => {
     });
 
     it('starts counting again after a live probe or for a new session', async () => {
-      const tracker = newMasterLivenessTracker();
+      const tracker = newLivenessTracker();
       const later = { tracker, graceMs: 30_000, nowMs: startedMs + 60_000 };
       expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), later)).toBe(false);
       expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(alive), later)).toBe(false);
@@ -201,6 +201,21 @@ describe('reconcileSessions', () => {
       const relaunched = master({ session_started_at: '2026-01-01T00:00:01.000Z' });
       expect(await retireDeadMaster(dir, [relaunched], () => Promise.resolve(dead), later)).toBe(false);
       expect(masterSession()?.state).toBe('running');
+    });
+
+    it('neither counts nor resets on an indeterminate probe', async () => {
+      const tracker = newLivenessTracker();
+      const later = { tracker, graceMs: 30_000, nowMs: startedMs + 60_000 };
+      const indeterminate = { alive: false, reason: 'tmux probe failed: spawnSync tmux ETIMEDOUT', pid: null, indeterminate: true };
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(indeterminate), later)).toBe(false);
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(indeterminate), later)).toBe(false);
+      expect(tracker.failures).toBe(0);
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), later)).toBe(false);
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(indeterminate), later)).toBe(false);
+      expect(tracker.failures).toBe(1);
+      expect(await retireDeadMaster(dir, [master()], () => Promise.resolve(dead), later)).toBe(true);
+      expect(queryEvents(dir, { event_type: 'master_retired' })).toMatchObject([{ payload: { consecutive_failures: 2 } }]);
+      expect((queryEvents(dir, { event_type: 'master_retired' })[0].payload as { probe: object }).probe).not.toHaveProperty('indeterminate');
     });
 
     it('never probes an offline master or one without a handle', async () => {
@@ -281,5 +296,18 @@ describe('legacy pty: sessions with real processes', () => {
       if (previousStateDir === undefined) delete process.env.ORC_STATE_DIR;
       else process.env.ORC_STATE_DIR = previousStateDir;
     }
+  });
+});
+
+describe('countDeadProbe', () => {
+  it('adds dead probes, resets on alive, ignores indeterminate, and restarts for a new key', () => {
+    const tracker = newLivenessTracker();
+    expect(countDeadProbe(tracker, 'a', 'dead')).toBe(1);
+    expect(countDeadProbe(tracker, 'a', 'indeterminate')).toBe(1);
+    expect(countDeadProbe(tracker, 'a', 'dead')).toBe(2);
+    expect(countDeadProbe(tracker, 'a', 'alive')).toBe(0);
+    expect(countDeadProbe(tracker, 'a', 'dead')).toBe(1);
+    expect(countDeadProbe(tracker, 'b', 'dead')).toBe(1);
+    expect(countDeadProbe(tracker, 'c', 'indeterminate')).toBe(0);
   });
 });

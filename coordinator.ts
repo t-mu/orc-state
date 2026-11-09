@@ -27,7 +27,10 @@ import { expireStaleLeasesDetailed, claimTask, finishRun, heartbeat, renewLeaseO
 import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorkerName, removeAgent } from './lib/agentRegistry.ts';
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter } from './adapters/index.ts';
-import { adapterDetectInputBlock, adapterExitStatus, adapterInspectSession, adapterOwnsSession, adapterSurvivesCoordinatorExit } from './adapters/interface.ts';
+import {
+  adapterDetectInputBlock, adapterExitStatus, adapterInspectSession, adapterOwnsSession, adapterProbeLiveness, adapterSurvivesCoordinatorExit,
+  type LivenessVerdict,
+} from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
 import { checkTmux, removeDeadTmuxSocket } from './adapters/tmux.ts';
 import { CapabilityRefusal, isStructuredSession, type RuntimeEvent, type RuntimeEventType } from './adapters/runtime.ts';
@@ -61,7 +64,8 @@ import { sessionAuthenticator, startControlServer, type ControlServer } from './
 import {
   IDENTITY_MISMATCH_REASON, SESSION_OWNER_TTL_MS, currentSessionForAgent, currentSessionOwnerId,
   identityMismatch, reconcileSessions, renewSessionOwnership, setSessionState, type SupervisedSession,
-  retireDeadMaster, newMasterLivenessTracker, type MasterProbe,
+  retireDeadMaster, newLivenessTracker, countDeadProbe, listSupervisedSessions, CONSECUTIVE_DEAD_PROBES,
+  type LivenessTracker, type MasterProbe,
 } from './lib/sessionSupervisor.ts';
 import { storeDrawer, wingFromTaskRef, pruneExpiredMemories, pruneByCapacity } from './lib/memoryStore.ts';
 import { fileURLToPath } from 'node:url';
@@ -260,6 +264,10 @@ let controlServer: ControlServer | null = null;
 const runStartNudgeAtMs = new Map<string, number>();
 const sessionReadyNudgeAtMs = new Map<string, number>();
 const runInactiveNudgeAtMs = new Map<string, number>();
+// Consecutive dead probes of each active run's worker session, and the last verdict.
+const workerLiveness = new Map<string, LivenessTracker & { verdict: LivenessVerdict }>();
+// Per active run, the non-running session stretch already escalated: `<session_id>|<state>|<updated_at>`.
+const sessionNotRunningNotified = new Map<string, string>();
 const runNudgeCount = new Map<string, number>();
 const runLastPhase = new Map<string, string>();
 // Per-run activity signals (lib/runSignals.ts): durable and hook activity,
@@ -560,16 +568,16 @@ async function markFinalizeBlocked(claim: Claim, workerPoolConfig: WorkerPoolCon
   return true;
 }
 
-/** Consecutive failed probes of the master's session, across ticks. */
-const masterLiveness = newMasterLivenessTracker();
+/** Consecutive dead probes of the master's session, across ticks. */
+const masterLiveness = newLivenessTracker();
 
 /** The master's session as the adapter sees it; `reason` and `pid` go on `master_retired`. */
 async function probeMaster(master: Agent): Promise<MasterProbe> {
-  const adapter = getAdapter(master.provider);
-  const inspected = await adapterInspectSession(adapter, master.session_handle!);
-  if (inspected) return { alive: inspected.alive, reason: inspected.alive ? null : (inspected.reason ?? 'session not alive'), pid: inspected.pid };
-  const alive = await adapter.heartbeatProbe(master.session_handle!);
-  return { alive, reason: alive ? null : 'heartbeat probe failed', pid: null };
+  const probe = await adapterProbeLiveness(getAdapter(master.provider), master.session_handle!);
+  return {
+    alive: probe.verdict === 'alive', reason: probe.reason, pid: probe.pid,
+    ...(probe.verdict === 'indeterminate' ? { indeterminate: true } : {}),
+  };
 }
 
 /**
@@ -1471,9 +1479,13 @@ async function enforceInProgressLifecycle(
       let sessionAlive = false;
       let blockingPrompt: string | null = null;
       if (agent.session_handle && agent.status !== 'offline') {
-        const adapter = getAdapter(agent.provider);
-        sessionAlive = await adapter.heartbeatProbe(agent.session_handle);
-        blockingPrompt = sessionAlive ? detectBlockingPromptQuestion(adapter, agent.session_handle) : null;
+        // probeActiveWorkerSessions, earlier in the tick, is the only dead-session path for a run
+        // with a session: it resumes or requeues after CONSECUTIVE_DEAD_PROBES dead probes in a row.
+        // So session_dead acts only on an offline or handle-less agent, never on one failed probe.
+        sessionAlive = true;
+        blockingPrompt = workerLiveness.get(claim.run_id)?.verdict === 'alive'
+          ? detectBlockingPromptQuestion(getAdapter(agent.provider), agent.session_handle)
+          : null;
       }
 
       const signals: RemediationSignals = {
@@ -1734,45 +1746,100 @@ async function processEventCheckpoint(
   return { agents, claims, activityChanged };
 }
 
+/**
+ * Probe each active run's worker session. A run is resumed or requeued only
+ * after CONSECUTIVE_DEAD_PROBES dead probes in a row; an indeterminate probe
+ * (tmux error or timeout) neither counts nor resets. The lease is renewed only
+ * while the session is `running`: a `recoverable` or `unknown` session holding
+ * a run gets no renewals and, after SESSION_OWNER_TTL_MS in that state, one
+ * `worker_needs_attention {reason: session_not_running}`.
+ */
 async function probeActiveWorkerSessions(
   agents: Agent[],
   claims: Claim[],
   workerPoolConfig: WorkerPoolConfig,
 ): Promise<{ agents: Agent[]; claims: Claim[] }> {
   const byAgent = new Map(agents.map((a) => [a.agent_id, a]));
+  const active = (claims ?? []).filter((claim) => ['claimed', 'in_progress'].includes(claim.state));
+  const activeRunIds = new Set(active.map((claim) => claim.run_id));
+  for (const runs of [workerLiveness, sessionNotRunningNotified]) {
+    for (const runId of runs.keys()) {
+      if (!activeRunIds.has(runId)) runs.delete(runId);
+    }
+  }
+  // Each agent's current session: the newest non-offline row (currentSessionForAgent, one read for all).
+  const sessionByAgent = new Map<string, SupervisedSession>();
+  for (const session of listSupervisedSessions(STATE_DIR)) {
+    if (session.state !== 'offline') sessionByAgent.set(session.agent_id, session);
+  }
+  const nowMs = Date.now();
   let cleaned = false;
 
-  for (const claim of claims ?? []) {
-    if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-
+  for (const claim of active) {
     const agent = byAgent.get(claim.agent_id);
     if (!agent?.session_handle || agent.status === 'offline') continue;
 
-    const adapter = getAdapter(agent.provider);
-    const alive = await adapter.heartbeatProbe(agent.session_handle);
-    if (alive) {
-      // Extend lease_expires_at for in_progress runs — PID is confirmed alive,
-      // prevent lease expiry during long phases (e.g. >30min implementation)
-      // where no phase events fire. Do NOT update last_heartbeat_at — that
-      // tracks real worker activity for staleness detection.
-      // Skip claimed runs (still in dispatch handshake).
-      if (claim.state === 'in_progress') {
-        try {
-          renewLeaseOnly(STATE_DIR, claim.run_id, { leaseDurationMs: LEASE_CONFIG.default_ms });
-        } catch { /* claim may have transitioned — safe to ignore */ }
-      }
+    const probe = await adapterProbeLiveness(getAdapter(agent.provider), agent.session_handle);
+    const tracker = workerLiveness.get(claim.run_id) ?? { ...newLivenessTracker(), verdict: probe.verdict };
+    tracker.verdict = probe.verdict;
+    workerLiveness.set(claim.run_id, tracker);
+    const deadProbes = countDeadProbe(tracker, `${agent.session_handle}|${agent.session_token ?? ''}`, probe.verdict);
+
+    if (probe.verdict === 'dead' && deadProbes >= CONSECUTIVE_DEAD_PROBES) {
+      log(`worker ${claim.agent_id} session process dead (${deadProbes} probes in a row: ${probe.reason}) — resuming or requeueing run ${claim.run_id} (${claim.task_ref})`);
+      workerLiveness.delete(claim.run_id);
+      await resumeOrRequeue(claim, agent, { reason: 'pty_pid_dead: PTY session exited unexpectedly', code: 'ERR_PTY_DEAD' });
+      cleaned = true;
+      continue;
+    }
+    if (probe.verdict !== 'alive') {
+      log(`worker ${claim.agent_id} probe ${probe.verdict} for run ${claim.run_id} (${deadProbes}/${CONSECUTIVE_DEAD_PROBES} dead in a row): ${probe.reason}`);
       continue;
     }
 
-    log(`worker ${claim.agent_id} session process dead — resuming or requeueing run ${claim.run_id} (${claim.task_ref})`);
-    await resumeOrRequeue(claim, agent, { reason: 'pty_pid_dead: PTY session exited unexpectedly', code: 'ERR_PTY_DEAD' });
-    cleaned = true;
+    const session = sessionByAgent.get(claim.agent_id);
+    if (session && session.state !== 'running') {
+      escalateSessionNotRunning(claim, session, nowMs);
+      continue;
+    }
+    // Extend lease_expires_at for in_progress runs — PID is confirmed alive,
+    // prevent lease expiry during long phases (e.g. >30min implementation)
+    // where no phase events fire. Do NOT update last_heartbeat_at — that
+    // tracks real worker activity for staleness detection.
+    // Skip claimed runs (still in dispatch handshake).
+    if (claim.state === 'in_progress') {
+      try {
+        renewLeaseOnly(STATE_DIR, claim.run_id, { leaseDurationMs: LEASE_CONFIG.default_ms });
+      } catch { /* claim may have transitioned — safe to ignore */ }
+    }
   }
 
   if (cleaned) {
     ({ agents, claims } = reloadTickState(workerPoolConfig));
   }
   return { agents, claims };
+}
+
+/** One `worker_needs_attention` per stretch a run's session spends out of `running`, after SESSION_OWNER_TTL_MS. */
+function escalateSessionNotRunning(claim: Claim, session: SupervisedSession, nowMs: number): void {
+  const sinceMs = Date.parse(session.updated_at);
+  if (!Number.isFinite(sinceMs) || nowMs - sinceMs < SESSION_OWNER_TTL_MS) return;
+  const key = `${session.session_id}|${session.state}|${session.updated_at}`;
+  if (sessionNotRunningNotified.get(claim.run_id) === key) return;
+  sessionNotRunningNotified.set(claim.run_id, key);
+  emit({
+    event: 'worker_needs_attention',
+    actor_type: 'coordinator',
+    actor_id: 'coordinator',
+    run_id: claim.run_id,
+    task_ref: claim.task_ref,
+    agent_id: claim.agent_id,
+    payload: {
+      reason: 'session_not_running', session_id: session.session_id, session_state: session.state,
+      not_running_ms: nowMs - sinceMs, ...(session.state_reason ? { state_reason: session.state_reason } : {}),
+    },
+  });
+  log(`escalated run ${claim.run_id} (${claim.agent_id}): session ${session.session_id} is ${session.state}; its lease is not renewed`);
 }
 
 async function expireAndCleanupStaleLeases(

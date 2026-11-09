@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import { isSameProcess, readProcessStart } from './processIdentity.ts';
-import type { SessionInspection } from '../adapters/interface.ts';
+import type { LivenessVerdict, SessionInspection } from '../adapters/interface.ts';
 import type { Agent } from '../types/agents.ts';
 import { updateAgentRuntime } from './agentRegistry.ts';
 import { closeProviderSessionsForAgent } from './runStore.ts';
@@ -209,22 +209,45 @@ export interface MasterProbe {
   alive: boolean;
   reason: string | null;
   pid: number | null;
+  /** The probe could not tell (tmux error or timeout); never counted, never recorded. */
+  indeterminate?: boolean;
 }
 
-/** Failed probes in a row, one per coordinator tick, before a master is retired. */
-export const MASTER_RETIRE_FAILURES = 2;
+/**
+ * Dead probes in a row, one per coordinator tick, before a session is treated
+ * as exited: a master is retired, a worker's run resumed or requeued.
+ */
+export const CONSECUTIVE_DEAD_PROBES = 2;
+
+/** Failed probes in a row before a master is retired. */
+export const MASTER_RETIRE_FAILURES = CONSECUTIVE_DEAD_PROBES;
 
 /**
- * Consecutive failed probes of one master session, kept by the coordinator
- * across ticks. A new session (handle, token or start time) starts at zero.
+ * Consecutive dead probes of one session, kept by the coordinator across
+ * ticks. A new session `key` starts at zero.
  */
-export interface MasterLivenessTracker {
+export interface LivenessTracker {
   key: string | null;
   failures: number;
 }
 
-export function newMasterLivenessTracker(): MasterLivenessTracker {
+export function newLivenessTracker(): LivenessTracker {
   return { key: null, failures: 0 };
+}
+
+/**
+ * Count one probe of the session identified by `key` and return the dead
+ * probes in a row: dead adds one, alive resets to zero, indeterminate neither
+ * counts nor resets.
+ */
+export function countDeadProbe(tracker: LivenessTracker, key: string, verdict: LivenessVerdict): number {
+  if (tracker.key !== key) {
+    tracker.key = key;
+    tracker.failures = 0;
+  }
+  if (verdict === 'alive') tracker.failures = 0;
+  else if (verdict === 'dead') tracker.failures += 1;
+  return tracker.failures;
 }
 
 function masterSessionKey(master: Agent): string {
@@ -263,7 +286,8 @@ export function retireMaster(
  * each coordinator tick, rather than by an attached terminal: a master whose
  * session is gone goes offline and its session closes, so its credential
  * stops authenticating. One failed probe is not enough: the master is retired
- * only after `minFailures` failed probes in a row, and a failure within
+ * only after `minFailures` dead probes in a row (`countDeadProbe`: an
+ * indeterminate probe neither counts nor resets), and a failure within
  * `graceMs` of the session's start (the first tick after `orc start-session`)
  * is not counted. Returns whether a master was retired.
  */
@@ -272,11 +296,11 @@ export async function retireDeadMaster(
   agents: Agent[],
   probe: (agent: Agent) => Promise<MasterProbe>,
   {
-    tracker = newMasterLivenessTracker(),
+    tracker = newLivenessTracker(),
     graceMs = 0,
     minFailures = MASTER_RETIRE_FAILURES,
     nowMs = Date.now(),
-  }: { tracker?: MasterLivenessTracker; graceMs?: number; minFailures?: number; nowMs?: number } = {},
+  }: { tracker?: LivenessTracker; graceMs?: number; minFailures?: number; nowMs?: number } = {},
 ): Promise<boolean> {
   const master = agents.find((agent) => agent.role === 'master');
   if (!master?.session_handle || master.status === 'offline') {
@@ -284,21 +308,15 @@ export async function retireDeadMaster(
     tracker.failures = 0;
     return false;
   }
-  const key = masterSessionKey(master);
-  if (tracker.key !== key) {
-    tracker.key = key;
-    tracker.failures = 0;
-  }
   const result = await probe(master);
-  if (result.alive) {
-    tracker.failures = 0;
-    return false;
-  }
+  const verdict: LivenessVerdict = result.alive ? 'alive' : result.indeterminate ? 'indeterminate' : 'dead';
   const startedMs = master.session_started_at ? Date.parse(master.session_started_at) : Number.NaN;
-  if (Number.isFinite(startedMs) && nowMs - startedMs < graceMs) return false;
-  tracker.failures += 1;
-  if (tracker.failures < minFailures) return false;
-  retireMaster(stateDir, master, { probe: result, consecutiveFailures: tracker.failures, actor: 'coordinator' });
+  if (verdict === 'dead' && Number.isFinite(startedMs) && nowMs - startedMs < graceMs) return false;
+  const failures = countDeadProbe(tracker, masterSessionKey(master), verdict);
+  if (verdict !== 'dead' || failures < minFailures) return false;
+  retireMaster(stateDir, master, {
+    probe: { alive: false, reason: result.reason, pid: result.pid }, consecutiveFailures: failures, actor: 'coordinator',
+  });
   tracker.key = null;
   tracker.failures = 0;
   return true;

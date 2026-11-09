@@ -32,7 +32,9 @@
  *
  * heartbeatProbe(sessionHandle) → Promise<boolean>
  *   Return true if the session is alive and reachable.
- *   Returns false (not throw) on any failure.
+ *   Returns false (not throw) on any failure. The coordinator's liveness check
+ *   prefers `inspectSession`, which can also report a probe that could not
+ *   tell (`indeterminate`); see adapterProbeLiveness.
  *
  * stop(sessionHandle) → Promise<void>
  *   Tear down the session and release associated resources (e.g. clear
@@ -56,6 +58,38 @@ export interface SessionInspection {
   pid: number | null;
   processStart: string | null;
   reason?: string;
+  /**
+   * True when the inspection itself failed (a transport error or timeout), so
+   * `alive: false` is not evidence that the session exited.
+   */
+  indeterminate?: boolean;
+}
+
+/** One liveness probe: `indeterminate` means the probe could not tell. */
+export type LivenessVerdict = 'alive' | 'dead' | 'indeterminate';
+
+export interface LivenessProbe {
+  verdict: LivenessVerdict;
+  reason: string | null;
+  pid: number | null;
+}
+
+/**
+ * Probe a session's liveness, from `inspectSession` when the adapter has it,
+ * else from `heartbeatProbe` (false is dead; a throw is indeterminate).
+ */
+export async function adapterProbeLiveness(adapter: AdapterInterface, sessionHandle: string): Promise<LivenessProbe> {
+  const inspected = await adapterInspectSession(adapter, sessionHandle);
+  if (inspected) {
+    const verdict: LivenessVerdict = inspected.alive ? 'alive' : inspected.indeterminate ? 'indeterminate' : 'dead';
+    return { verdict, reason: inspected.alive ? null : (inspected.reason ?? 'session not alive'), pid: inspected.pid };
+  }
+  try {
+    const alive = await adapter.heartbeatProbe(sessionHandle);
+    return { verdict: alive ? 'alive' : 'dead', reason: alive ? null : 'heartbeat probe failed', pid: null };
+  } catch (error) {
+    return { verdict: 'indeterminate', reason: `heartbeat probe error: ${(error as Error).message}`, pid: null };
+  }
 }
 
 /**

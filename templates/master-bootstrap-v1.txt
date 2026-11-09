@@ -166,6 +166,12 @@ For each event in the returned notifications list:
     phase looks the same as a loop, so check its recent activity before acting.
     Offer: wait / requeue (reset_task, which cancels its run) / cancel (cancel_task) / intervene.
     When the cause is unclear, request_scout(...) with the linked run/task first.
+    reason session_not_running (no idle_ms): the run's session is recoverable or unknown
+    (alive, but this coordinator cannot write to it or cannot confirm its identity).
+    Surface payload.session_id, session_state, not_running_ms and state_reason. Its lease is
+    no longer renewed, so a worker that sends no lifecycle or phase signals is requeued when
+    the lease expires. Offer: wait for it to finish / reset_task (then `orc worker-remove
+    <agent_id>`) / inspect with `orc sessions`. See docs/recovery.md, Recoverable or Unknown Sessions.
 
   input_requested:
     Surface the question to the user.

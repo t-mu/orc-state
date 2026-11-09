@@ -306,11 +306,142 @@ describe('worker session lifecycle', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     const claim = readClaims(dir).find((c) => c.run_id === 'run-pty-dead')!;
     expect(claim).toBeDefined();
     expect(claim.state).toBe('failed');
     expect(readAgents(dir).find((a) => a.agent_id === 'worker-01')).toBeUndefined();
+  });
+
+  describe('probe hysteresis (general/probe-hysteresis)', () => {
+    const RUN_ID = 'run-probe';
+    function seedRun({ leaseExpiresAt = new Date(Date.now() + 60_000).toISOString() }: { leaseExpiresAt?: string } = {}) {
+      const now = new Date().toISOString();
+      seedState(dir, {
+        agents: [{
+          agent_id: 'worker-01', provider: 'claude', role: 'worker', status: 'running',
+          session_handle: 'tmux:worker-01', session_token: 'sess-p', provider_ref: null, registered_at: now,
+        }],
+        tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+        claims: [{
+          run_id: RUN_ID, task_ref: 'proj/fix-bug', agent_id: 'worker-01', state: 'in_progress',
+          claimed_at: now, task_envelope_sent_at: now, lease_expires_at: leaseExpiresAt, last_heartbeat_at: now,
+          started_at: now, finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
+          input_state: null, input_requested_at: null, session_start_retry_count: 0, session_start_retry_next_at: null,
+          session_start_last_error: null,
+        }],
+      });
+    }
+    async function seedSession(state: string, updatedAt: string) {
+      const { initEventsDb, withEventDbTransaction } = await import('./lib/eventLog.ts');
+      const { commitClaims } = await import('./lib/runStore.ts');
+      initEventsDb(dir);
+      commitClaims(dir, { version: '1', claims: readClaims(dir) as never });
+      withEventDbTransaction(dir, (db) => {
+        db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, transport, process_pid, process_start, state_reason)
+          VALUES ('sess-p', ?, 'worker-01', 'claude', ?, ?, ?, 'tmux', 4545, 'proc:45', 'not writable by this coordinator')`).run(RUN_ID, state, updatedAt, updatedAt);
+      });
+    }
+    const claimState = () => readClaims(dir).find((c) => c.run_id === RUN_ID)!.state;
+    const notRunningAlerts = () => readEvents(dir).filter((e) => e.event === 'worker_needs_attention'
+      && (e.payload as Record<string, unknown>).reason === 'session_not_running');
+
+    it('requeues only on the second dead probe in a row; a live probe in between starts the count again', async () => {
+      seedRun();
+      const verdicts = [false, true, false, false];
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+        heartbeatProbe: vi.fn().mockImplementation(() => Promise.resolve(verdicts.shift() ?? false)),
+        stop: vi.fn().mockResolvedValue(undefined),
+      }));
+
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      expect(claimState()).toBe('in_progress');
+      await tick();
+      await tick();
+      expect(claimState()).toBe('in_progress');
+      await tick();
+      expect(claimState()).toBe('failed');
+    });
+
+    it('never requeues on indeterminate probes (tmux error or timeout, or a probe that throws)', async () => {
+      seedRun();
+      const inspections = [
+        { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, indeterminate: true, reason: 'tmux probe failed: spawnSync tmux ETIMEDOUT' },
+        { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, reason: 'tmux session not found' },
+        { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, indeterminate: true, reason: 'tmux probe failed: exit 1' },
+        { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, indeterminate: true, reason: 'tmux probe failed: exit 1' },
+      ];
+      const stop = vi.fn().mockResolvedValue(undefined);
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+        inspectSession: vi.fn().mockImplementation(() => inspections.shift()),
+        heartbeatProbe: vi.fn().mockRejectedValue(new Error('tmux unavailable')),
+        stop,
+      }));
+
+      const { tick } = await import('./coordinator.ts');
+      for (let i = 0; i < 4; i += 1) await tick();
+
+      expect(claimState()).toBe('in_progress');
+      expect(stop).not.toHaveBeenCalled();
+      expect(readEvents(dir).some((e) => e.event === 'remediation_applied' || e.event === 'claim_expired')).toBe(false);
+    });
+
+    it('treats a heartbeat probe that throws as indeterminate', async () => {
+      seedRun();
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({
+        heartbeatProbe: vi.fn().mockRejectedValue(new Error('tmux unavailable')),
+      }));
+
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      await tick();
+      await tick();
+
+      expect(claimState()).toBe('in_progress');
+    });
+
+    it('stops renewing the lease of a recoverable session and escalates it once after the TTL', async () => {
+      const nearExpiry = new Date(Date.now() + 5_000).toISOString();
+      seedRun({ leaseExpiresAt: nearExpiry });
+      await seedSession('recoverable', new Date(Date.now() - 5 * 60_000).toISOString());
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ heartbeatProbe: vi.fn().mockResolvedValue(true) }));
+
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+      await tick();
+
+      expect(readClaims(dir).find((c) => c.run_id === RUN_ID)!.lease_expires_at).toBe(nearExpiry);
+      expect(notRunningAlerts()).toMatchObject([{
+        run_id: RUN_ID, agent_id: 'worker-01',
+        payload: { reason: 'session_not_running', session_id: 'sess-p', session_state: 'recoverable', state_reason: 'not writable by this coordinator' },
+      }]);
+    });
+
+    it('does not escalate a session that left running within the TTL', async () => {
+      seedRun();
+      await seedSession('unknown', new Date(Date.now() - 10_000).toISOString());
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ heartbeatProbe: vi.fn().mockResolvedValue(true) }));
+
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+
+      expect(notRunningAlerts()).toHaveLength(0);
+    });
+
+    it('keeps renewing the lease of a running session', async () => {
+      const nearExpiry = new Date(Date.now() + 5_000).toISOString();
+      seedRun({ leaseExpiresAt: nearExpiry });
+      await seedSession('running', new Date(Date.now() - 5 * 60_000).toISOString());
+      vi.doMock('./adapters/index.ts', () => makeAdapterMock({ heartbeatProbe: vi.fn().mockResolvedValue(true) }));
+
+      const { tick } = await import('./coordinator.ts');
+      await tick();
+
+      expect(new Date(readClaims(dir).find((c) => c.run_id === RUN_ID)!.lease_expires_at as string).getTime()).toBeGreaterThan(Date.now() + 60_000);
+      expect(notRunningAlerts()).toHaveLength(0);
+    });
   });
 
   it('treats a legacy pty: session from an older orc as dead through the real adapter, without throwing', async () => {
@@ -330,8 +461,10 @@ describe('worker session lifecycle', () => {
       }],
     });
     // No adapter mock: the real router sends pty: handles to its offline adapter, never to tmux.
+    vi.doUnmock('./adapters/index.ts');
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     const claim = readClaims(dir).find((c) => c.run_id === 'run-legacy-pty')!;
     expect(claim.state).toBe('failed');
@@ -1267,6 +1400,7 @@ describe('worker session lifecycle', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     // Ephemeral worker removed entirely — not just reset to idle
     const workers = readAgents(dir).filter((a) => a.role === 'worker');
@@ -5715,10 +5849,8 @@ describe('dead worker session resume (v1/run-resume)', () => {
   }
 
   function crashedAdapter(exit: { code: number | null; signal: number | null } | null, start = vi.fn()
-    .mockResolvedValue({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } }),
-  { aliveForFirstProbe = false }: { aliveForFirstProbe?: boolean } = {}) {
+    .mockResolvedValue({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } })) {
     let alive = false;
-    let probes = 0;
     start.mockImplementation(() => {
       alive = true;
       return Promise.resolve({ session_handle: 'tmux:worker-r', provider_ref: { transport: 'tmux', pid: 5151, process_start: 'proc:51' } });
@@ -5726,8 +5858,8 @@ describe('dead worker session resume (v1/run-resume)', () => {
     const send = vi.fn().mockResolvedValue('');
     const stop = vi.fn().mockResolvedValue(undefined);
     vi.doMock('./adapters/index.ts', () => makeAdapterMock({
-      heartbeatProbe: vi.fn().mockImplementation(() => Promise.resolve(alive || (aliveForFirstProbe && probes++ === 0))),
-      exitStatus: vi.fn().mockImplementation(() => (alive || (aliveForFirstProbe && probes === 0) ? null : exit)),
+      heartbeatProbe: vi.fn().mockImplementation(() => Promise.resolve(alive)),
+      exitStatus: vi.fn().mockImplementation(() => (alive ? null : exit)),
       start, send, stop,
     }));
     return { start, send, stop };
@@ -5744,6 +5876,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).toHaveBeenCalledOnce();
     const [agentId, config] = start.mock.calls[0] as [string, Record<string, unknown>];
@@ -5784,6 +5917,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).not.toHaveBeenCalled();
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
@@ -5797,6 +5931,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).not.toHaveBeenCalled();
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
@@ -5813,6 +5948,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).toHaveBeenCalledOnce();
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
@@ -5826,6 +5962,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).not.toHaveBeenCalled();
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
@@ -5838,23 +5975,25 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).not.toHaveBeenCalled();
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
   });
 
-  it('resumes a dead session found by the session_dead remediation, and reports the resume', async () => {
+  it('does not let the session_dead remediation act on a single failed probe', async () => {
     await seedCrashedWorker();
-    // The tick's liveness probe still sees it alive; the remediation probe sees it dead.
-    const { start } = crashedAdapter({ code: null, signal: 9 }, undefined, { aliveForFirstProbe: true });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
 
     const { tick } = await import('./coordinator.ts');
     await tick();
 
-    expect(start).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
     expect(readClaims(dir).find((c) => c.run_id === RUN)).toMatchObject({ state: 'in_progress', agent_id: 'worker-r' });
-    const remediation = readEvents(dir).filter((e) => e.event === 'remediation_applied');
-    expect(remediation).toEqual([expect.objectContaining({ payload: expect.objectContaining({ policy_id: 'session_dead', action: 'resume' }) })]);
+    expect(readEvents(dir).some((e) => e.event === 'remediation_applied' || e.event === 'session_resumed')).toBe(false);
+
+    await tick();
+    expect(start).toHaveBeenCalledOnce();
     expect(readEvents(dir).some((e) => e.event === 'session_resumed')).toBe(true);
   });
 
@@ -5876,6 +6015,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).toHaveBeenCalledOnce();
     const config = start.mock.calls[0][1] as Record<string, unknown>;
@@ -5892,6 +6032,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
     try {
       const { tick } = await import('./coordinator.ts');
       await tick();
+      await tick(); // a run is resumed or requeued on the second dead probe in a row
     } finally {
       delete process.env.ORC_SESSIONS_RESUME;
     }
@@ -5906,6 +6047,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
 
     const { tick } = await import('./coordinator.ts');
     await tick();
+    await tick(); // a run is resumed or requeued on the second dead probe in a row
 
     expect(start).not.toHaveBeenCalled();
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');

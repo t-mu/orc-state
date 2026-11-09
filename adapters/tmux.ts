@@ -203,11 +203,27 @@ function parseHandle(sessionHandle: unknown): string {
   return s.slice(5);
 }
 
+/**
+ * tmux errors that prove the session is gone: no server (no socket, a socket
+ * nobody listens on, or a server that exited mid-request) or no such session.
+ * Any other failure says nothing about it.
+ */
+const SESSION_GONE_STDERR = /no server running|server exited unexpectedly|error connecting to .*\((No such file or directory|Connection refused)\)|can't find (session|window|pane)/;
+
+/**
+ * Pure: the inspection for a `display-message` that did not succeed. A spawn
+ * error or timeout, or an unrecognised tmux error, is indeterminate, not dead.
+ */
+export function failedInspection(result: { error?: Error | null; status: number | null; stderr?: string | null }): SessionInspection {
+  const base = { transport: 'tmux' as const, alive: false, writable: false, pid: null, processStart: null };
+  if (!result.error && SESSION_GONE_STDERR.test(result.stderr ?? '')) return { ...base, reason: 'tmux session not found' };
+  const detail = result.error?.message ?? ((result.stderr ?? '').trim() || `exit ${result.status}`);
+  return { ...base, indeterminate: true, reason: `tmux probe failed: ${detail}` };
+}
+
 function inspect(agentId: string): SessionInspection {
   const result = tmux(['display-message', '-p', '-t', target(agentId), '#{pane_pid} #{pane_dead}']);
-  if (result.error || result.status !== 0) {
-    return { transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, reason: 'tmux session not found' };
-  }
+  if (result.error || result.status !== 0) return failedInspection(result);
   const [pidText, dead] = result.stdout.trim().split(' ');
   const pid = Number(pidText);
   const processStart = Number.isSafeInteger(pid) && pid > 0 ? readProcessStart(pid) : null;
