@@ -6,7 +6,7 @@
  */
 export const USAGE: Record<string, string> = {
   'coordinator':       'orc coordinator <start|stop|restart|status> [--json]   (the coordinator only: no master; stop/restart keep tasks and worktrees)',
-  'start-session':     'orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset] [--restart-stale]',
+  'start-session':     'orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset] [--restart-stale] [--no-cockpit]',
   'status':            'orc status [--json [--events=<0-200>]] [--mine --agent-id=<id>] [--watch|-w [--interval-ms=<ms>] [--once]]',
   'watch':             'orc watch [--interval-ms=<ms>] [--once]',
   'attach':            'orc attach <agent_id|run_id> [--write]',

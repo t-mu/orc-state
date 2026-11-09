@@ -7,7 +7,7 @@
  * background process.
  *
  * Usage:
- *   orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset] [--restart-stale]
+ *   orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset] [--restart-stale] [--no-cockpit]
  *
  * All flags are optional. Missing values trigger interactive prompts in a TTY;
  * in non-TTY / CI mode they must be supplied as flags.
@@ -19,10 +19,13 @@
  *      choice) stops every worker session and fails their runs instead
  *   2. Reuse/replace/register the master
  *   3. Start the master provider CLI in a tmux session (resuming its Claude
- *      conversation when one is recorded) and attach this terminal to it
+ *      conversation when one is recorded)
+ *   4. Open the cockpit (adapters/tmuxCockpit.ts) on this project's master and
+ *      attach this terminal to it; `--no-cockpit` attaches to the master directly
  *
- * Detaching (Ctrl-b d) or closing the terminal leaves the master running; its
- * credential is revoked when the master exits or by `orc kill-all`.
+ * Detaching (Ctrl-] d or the master's Ctrl-b d) or closing the terminal leaves the
+ * cockpit and the master running; the master's credential is revoked when it
+ * exits or by `orc kill-all`.
  */
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -52,7 +55,10 @@ import {
   printManagedWorkerNotice,
 } from '../lib/prompts.ts';
 import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
-import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand } from '../adapters/tmux.ts';
+import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand, tmuxBinary, tmuxSessionTarget } from '../adapters/tmux.ts';
+import {
+  COCKPIT_KEYS, cockpitAttachCommand, ensureCockpitWindow, insideCockpit, terminalHasTrueColor,
+} from '../adapters/tmuxCockpit.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { listSupervisedSessions, MASTER_RETIRE_FAILURES, retireMaster, type MasterProbe } from '../lib/sessionSupervisor.ts';
 import { getMasterBootstrap, MASTER_BOOTSTRAP_TEMPLATE } from '../lib/sessionBootstrap.ts';
@@ -247,22 +253,73 @@ async function ensureCoordinatorRunning() {
  * Returns once the client detaches or the master exits.
  */
 function attachMaster(agent: NonNullable<typeof master>, sessionName: string) {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log(`\nMaster '${agent.agent_id}' is running in orc's tmux server. Run orc start-session from a terminal to attach.`);
-    return;
-  }
   console.log(`\nAttaching to master '${agent.agent_id}' — Ctrl-b d detaches; the master keeps running.`);
   const { TMUX: _tmux, ...env } = process.env;
   const { command, args } = tmuxAttachCommand(sessionName, { write: true, providerRef: agent.provider_ref });
   const result = spawnSync(command, args, { stdio: 'inherit', env });
   if (result.error) console.error(`Could not run ${command}: ${result.error.message}`);
+  afterClientExit(agent, sessionName, {
+    detached: '\nDetached. The master keeps running; run orc start-session to reattach.',
+    ended: '\nMaster session ended. Coordinator continues running in the background.',
+  });
+}
+
+/**
+ * Open the cockpit on this project's master: create it or add this project's
+ * tab, then attach this terminal to it (from a shell inside the cockpit, only
+ * switch to the tab). Returns false, with a warning, when the cockpit could not
+ * be set up, so the caller attaches to the master directly.
+ */
+function openCockpit(agent: NonNullable<typeof master>, sessionName: string): boolean {
+  const project = ACTIVE_PROJECT!;
+  const { socket, session } = tmuxSessionTarget(sessionName, agent.provider_ref);
+  try {
+    ensureCockpitWindow({
+      project: { id: project.id, name: project.name, root: resolveInvocationCwd(), env: orcStateEnv() },
+      master: { agentId: agent.agent_id, socket, session },
+      watchCommand: [process.execPath, runtimeModulePath('./orc.ts', './orc.js'), 'watch'],
+      options: { tmux: tmuxBinary(), trueColor: terminalHasTrueColor() },
+      size: { columns: process.stdout.columns, rows: process.stdout.rows },
+    });
+  } catch (error) {
+    console.warn(`Warning: could not open the cockpit (${formatErrorMessage(error)}); attaching to the master directly.`);
+    return false;
+  }
+  if (insideCockpit()) {
+    console.log(`\nSwitched the cockpit to ${project.name}.`);
+    return true;
+  }
+  console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${COCKPIT_KEYS}.`);
+  const { TMUX: _tmux, ...env } = process.env;
+  const { command, args } = cockpitAttachCommand();
+  const result = spawnSync(command, args, { stdio: 'inherit', env });
+  if (result.error) console.error(`Could not run ${command}: ${result.error.message}`);
+  afterClientExit(agent, sessionName, {
+    detached: '\nDetached. The cockpit and the master keep running; run orc start-session to reattach.',
+    ended: '\nMaster session ended. The cockpit and the coordinator keep running; run orc start-session to restart the master.',
+  });
+  return true;
+}
+
+/** Attach this terminal to the master: in the cockpit unless `--no-cockpit`; without a TTY, only say where it runs. */
+function openMaster(agent: NonNullable<typeof master>, sessionName: string) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.log(`\nMaster '${agent.agent_id}' is running in orc's tmux server. Run orc start-session from a terminal to attach.`);
+    return;
+  }
+  if (!boolFlag('no-cockpit') && openCockpit(agent, sessionName)) return;
+  attachMaster(agent, sessionName);
+}
+
+/** After the terminal's client returns: a master still running was detached from; one that ended is retired. */
+function afterClientExit(agent: NonNullable<typeof master>, sessionName: string, messages: { detached: string; ended: string }) {
   const exit = confirmMasterExit(sessionName);
   if (!exit) {
-    console.log('\nDetached. The master keeps running; run orc start-session to reattach.');
+    console.log(messages.detached);
     return;
   }
   markMasterOffline(agent.agent_id, sessionName, exit);
-  console.log('\nMaster session ended. Coordinator continues running in the background.');
+  console.log(messages.ended);
 }
 
 /** Wait between the probes that confirm the master's exit. */
@@ -323,7 +380,7 @@ if (master && liveMasterSession) {
   }
   console.log(`✓ Master '${master.agent_id}' is already running`);
   await ensureCoordinatorRunning();
-  attachMaster(master, liveMasterSession);
+  openMaster(master, liveMasterSession);
   process.exit(0);
 }
 
@@ -593,4 +650,4 @@ try {
 
 // Coordinator spawn deferred to here — the master started and its state is committed.
 await ensureCoordinatorRunning();
-attachMaster(master, masterSessionName);
+openMaster(master, masterSessionName);
