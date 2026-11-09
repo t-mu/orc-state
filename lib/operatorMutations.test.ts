@@ -8,10 +8,10 @@ import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
 import { submitOperatorMutation } from './operatorDispatch.ts';
-import { submitProjectWrite } from './projectWriteDispatch.ts';
+import { COORDINATOR_REQUIRED, submitProjectWrite } from './projectWriteDispatch.ts';
 import { ControlError } from './controlProtocol.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
-import { readBacklog, readClaims } from './stateReader.ts';
+import { readAgents, readBacklog, readClaims } from './stateReader.ts';
 import { invokeTool } from '../mcp/server.ts';
 import { credentialHash } from './sessionCredentials.ts';
 import { PROJECT_DESCRIPTOR } from './projectRegistry.ts';
@@ -318,6 +318,14 @@ describe('submitOperatorMutation without a coordinator (task 232)', () => {
       .resolves.toEqual({ unblocked: true, task_ref: 'orch/blocked' });
     expect(warn).toHaveBeenCalledWith('coordinator is not running; applying unblock-task directly');
     expect(status('orch/blocked')).toBe('todo');
+  });
+
+  it('refuses a scout request: only the coordinator launches and supervises a scout session', async () => {
+    const warn = vi.fn();
+    await expect(submitOperatorMutation({ op: 'request-scout', objective: 'look' }, { env: {}, requireProject: inProject, stateDir: dir, warn }))
+      .rejects.toMatchObject({ code: 'unavailable', message: COORDINATOR_REQUIRED });
+    expect(warn).not.toHaveBeenCalled();
+    expect(readAgents(dir).agents.some((agent) => agent.role === 'scout')).toBe(false);
   });
 
   it('leaves the write to a live coordinator whose control API is not answering', async () => {

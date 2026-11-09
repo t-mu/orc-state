@@ -36,6 +36,7 @@ export async function submitOperatorMutation(
     remote: (client) => client.operator(request),
     // The direct path applies the coordinator's own rule, so a worker session cannot use it either.
     authorize: () => authorizeOperator(stateDir, resolveControlPrincipal(stateDir, credential, credential === null), request).actorId,
-    direct: (actorId) => applyOperatorMutation(stateDir, { ...request, actor_id: actorId }),
+    // A scout launched here would run unsupervised, so a scout request needs the coordinator.
+    direct: request.op === 'request-scout' ? undefined : (actorId) => applyOperatorMutation(stateDir, { ...request, actor_id: actorId }),
   });
 }

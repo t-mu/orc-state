@@ -114,11 +114,11 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
     const actor = credential ? masterForCredential(stateDir, credential) : undefined;
     const warn = (line: string) => console.error(line);
     const scoutId = args.agent_id as string;
-    // The coordinator owns the scout's session; it answers a request at once and reports the launch on the event stream.
+    // The coordinator launches and supervises the scout's session; it answers a request at once and reports the
+    // launch on the event stream. Without a coordinator the request is refused: nothing would supervise the session.
     if (name === 'request_scout') {
       return routeToCoordinator<string | undefined, unknown>(stateDir, name, { credential, warn,
-        remote: (client) => client.operator({ op: 'request-scout', ...args }),
-        authorize: () => actor, direct: (author) => handlers.handleRequestScout(stateDir, { ...args, actor_id: author }) });
+        remote: (client) => client.operator({ op: 'request-scout', ...args }), authorize: () => actor });
     }
     if (name === 'get_scout_report') {
       return routeToCoordinator<undefined, unknown>(stateDir, name, { credential, warn,

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const createSessionHandle = (agentId: string) => `tmux:${agentId}`;
-import { TARGET_REPO_ROOT } from '../lib/paths.ts';
+import { TARGET_REPO_ROOT } from './paths.ts';
 
 const sendMock = vi.fn();
 const launchWorkerSessionMock = vi.fn();
@@ -19,7 +19,7 @@ vi.mock('../adapters/index.ts', () => ({
   })),
 }));
 
-vi.mock('../lib/workerRuntime.ts', () => ({
+vi.mock('./workerRuntime.ts', () => ({
   launchWorkerSession: launchWorkerSessionMock,
 }));
 
@@ -27,7 +27,7 @@ let dir: string;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dir = createTempStateDir('orc-mcp-scout-test-');
+  dir = createTempStateDir('orc-scout-launch-test-');
   process.env.ORC_SCOUT_READY_TIMEOUT_MS = '25';
   seedProjectTasks(dir, []);
   writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [] }, null, 2));
@@ -57,7 +57,13 @@ afterEach(() => {
 
 const runWorktree = () => join(dir, 'run-1-worktree');
 
-describe('handleRequestScout', () => {
+/** The coordinator's launch: prepare as a Codex master's request, then launch and brief (lib/operatorMutations.ts). */
+async function launch(request: Record<string, unknown>) {
+  const { launchScout, prepareScout } = await import('./scouts.ts');
+  return launchScout(dir, prepareScout(dir, request, 'codex'));
+}
+
+describe('launchScout', () => {
   it('registers a scout, launches a session, and sends the scout brief', async () => {
     launchWorkerSessionMock.mockImplementation((_stateDir, agent) => {
       agent.status = 'running';
@@ -68,14 +74,12 @@ describe('handleRequestScout', () => {
       return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
 
-    const { handleRequestScout } = await import('./handlers.ts');
-    const result = await handleRequestScout(dir, {
+    const result = await launch({
       objective: 'Inspect why run-1 is stalled in implement phase',
       run_id: 'run-1',
       task_ref: 'project/investigate-stall',
       scope_paths: ['src/coordinator.ts', 'logs/worker.log'],
       use_web: false,
-      actor_id: 'master',
     });
 
     const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
@@ -107,10 +111,8 @@ describe('handleRequestScout', () => {
       return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
 
-    const { handleRequestScout } = await import('./handlers.ts');
-    const result = await handleRequestScout(dir, {
+    const result = await launch({
       objective: 'Inspect recent coordinator failures',
-      actor_id: 'master',
     });
 
     expect(launchWorkerSessionMock).toHaveBeenCalledWith(
@@ -132,11 +134,9 @@ describe('handleRequestScout', () => {
       return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
 
-    const { handleRequestScout } = await import('./handlers.ts');
-    const result = await handleRequestScout(dir, {
+    const result = await launch({
       objective: 'Inspect why run-1 lost its worktree',
       run_id: 'run-1',
-      actor_id: 'master',
     });
 
     expect(launchWorkerSessionMock).toHaveBeenCalledWith(
@@ -150,10 +150,8 @@ describe('handleRequestScout', () => {
   it('removes the scout agent when launch fails', async () => {
     launchWorkerSessionMock.mockResolvedValue({ ok: false, reason: 'spawn failed' });
 
-    const { handleRequestScout } = await import('./handlers.ts');
-    await expect(handleRequestScout(dir, {
+    await expect(launch({
       objective: 'Inspect failed launch handling',
-      actor_id: 'master',
     })).rejects.toThrow('Failed to launch scout scout-1');
 
     const agents = JSON.parse(readFileSync(join(dir, 'agents.json'), 'utf8')).agents;
@@ -170,10 +168,8 @@ describe('handleRequestScout', () => {
       return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
 
-    const { handleRequestScout } = await import('./handlers.ts');
-    await expect(handleRequestScout(dir, {
+    await expect(launch({
       objective: 'Inspect readiness failure',
-      actor_id: 'master',
     })).rejects.toThrow('did not report for duty in time');
   });
 
@@ -188,8 +184,7 @@ describe('handleRequestScout', () => {
     });
     vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
     try {
-      const { handleRequestScout } = await import('./handlers.ts');
-      const failure = handleRequestScout(dir, { objective: 'Inspect', provider: 'claude', actor_id: 'master' });
+        const failure = launch({ objective: 'Inspect', provider: 'claude' });
       await expect(failure).rejects.toThrow('scout session did not become ready in time (no session-start hook record)');
       await expect(failure).rejects.not.toThrow(/control socket|report for duty/);
     } finally {
@@ -207,50 +202,19 @@ describe('handleRequestScout', () => {
       return Promise.resolve({ ok: true, session_handle: createSessionHandle(agent.agent_id), provider_ref: { provider: agent.provider } });
     });
     vi.resetModules();
-    vi.doMock('../lib/paths.ts', async (importOriginal) => ({
-      ...await importOriginal<typeof import('../lib/paths.ts')>(), ACTIVE_PROJECT: { id: 'p1', stateDir: dir },
+    vi.doMock('./paths.ts', async (importOriginal) => ({
+      ...await importOriginal<typeof import('./paths.ts')>(), ACTIVE_PROJECT: { id: 'p1', stateDir: dir },
     }));
     vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
     try {
-      const { handleRequestScout } = await import('./handlers.ts');
-      // The master is a Codex session, so the scout is a Codex scout: read-only, no network setting.
-      await expect(handleRequestScout(dir, { objective: 'Inspect', actor_id: 'master' }))
+        // The master is a Codex session, so the scout is a Codex scout: read-only, no network setting.
+      await expect(launch({ objective: 'Inspect' }))
         .rejects.toThrow(/did not report for duty in time; in a project a sandboxed codex scout .* \(request a claude scout\)/);
       expect(launchWorkerSessionMock.mock.calls[0][2]).toMatchObject({ sandboxNetwork: 'restricted' });
     } finally {
       vi.unstubAllEnvs();
-      vi.doUnmock('../lib/paths.ts');
+      vi.doUnmock('./paths.ts');
       vi.resetModules();
     }
-  });
-
-  it('rejects non-master non-human actors', async () => {
-    writeFileSync(join(dir, 'agents.json'), JSON.stringify({
-      version: '1',
-      agents: [
-        {
-          agent_id: 'master',
-          provider: 'codex',
-          role: 'master',
-          status: 'running',
-          session_handle: 'tmux:master',
-          registered_at: '2026-01-01T00:00:00.000Z',
-        },
-        {
-          agent_id: 'orc-1',
-          provider: 'codex',
-          role: 'worker',
-          status: 'running',
-          session_handle: 'tmux:orc-1',
-          registered_at: '2026-01-01T00:00:00.000Z',
-        },
-      ],
-    }, null, 2));
-
-    const { handleRequestScout } = await import('./handlers.ts');
-    await expect(handleRequestScout(dir, {
-      objective: 'Workers should not request scouts directly',
-      actor_id: 'orc-1',
-    })).rejects.toThrow(/may only be invoked by master or human actors/);
   });
 });
