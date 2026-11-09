@@ -356,6 +356,9 @@ const RUN_STATE_FOR_CAUSE: Partial<Record<TaskTransitionCause, string>> = {
   merge_succeeded: 'finished', failure_requeue: 'failed', failure_block: 'failed', operator_reset: 'cancelled', cancel: 'cancelled',
 };
 
+/** A revision without its spec text. */
+export type TaskRevisionSummary = Omit<TaskSpecRevision, 'bodyMarkdown'>;
+
 export interface TaskSpecRevision {
   taskRef: string;
   revision: number;
@@ -539,7 +542,7 @@ export class ProjectTaskStore {
     };
   }
 
-  listRevisions(ref: string): Array<Omit<TaskSpecRevision, 'bodyMarkdown'>> {
+  listRevisions(ref: string): TaskRevisionSummary[] {
     return (this.db.prepare('SELECT revision FROM task_spec_revisions WHERE task_ref = ? ORDER BY revision').all(ref) as Array<{ revision: number }>)
       .map(({ revision }) => {
         const { bodyMarkdown: _body, ...rest } = this.getRevision(ref, revision)!;

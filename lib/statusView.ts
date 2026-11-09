@@ -191,10 +191,35 @@ export function buildActiveClaimMetrics(
   });
 }
 
+/** One worker slot in `StatusView.worker_capacity.slots`. */
+export interface SlotSummary {
+  agent_id: string;
+  role: Agent['role'];
+  provider: string;
+  model: string | null;
+  status: Agent['status'];
+  session_handle: string | null;
+  slot_state: string;
+  active_run_id: string | null;
+  active_task_ref: string | null;
+  last_status_change_at: string | null;
+  last_heartbeat_at: string | null;
+}
+
+/** One scout in `StatusView.scouts`. */
+export interface ScoutSummary {
+  agent_id: string;
+  provider: string;
+  model: string | null;
+  status: Agent['status'];
+  session_handle: string | null;
+  launched_at: string | null;
+}
+
 export function buildSlotSummary(
   workerSlots: Agent[],
   activeClaimByAgentId: Map<string, ReturnType<typeof buildActiveClaimMetrics>[number]>,
-) {
+): SlotSummary[] {
   const slotDetails = workerSlots.map((slot) => {
     const activeClaim = activeClaimByAgentId.get(slot.agent_id) ?? null;
     return {
@@ -215,7 +240,7 @@ export function buildSlotSummary(
 }
 
 /** Scouts are ad-hoc sessions, not capacity: list each one by id and state. */
-export function buildScoutList(scoutAgents: Agent[]) {
+export function buildScoutList(scoutAgents: Agent[]): ScoutSummary[] {
   return scoutAgents.map((agent) => ({
     agent_id: agent.agent_id,
     provider: agent.provider,
@@ -259,12 +284,12 @@ export type StatusView = {
   worker_capacity: {
     configured_slots: number; provider: string; model: string | null | undefined;
     used_slots: number; available_slots: number; warming_slots: number; unavailable_slots: number;
-    slots: ReturnType<typeof buildSlotSummary>;
+    slots: SlotSummary[];
     dispatch_ready_tasks: DispatchReadyTask[];
     dispatch_ready_count: number;
     waiting_for_capacity: number;
   };
-  scouts: ReturnType<typeof buildScoutList>;
+  scouts: ScoutSummary[];
   tasks: TaskCounts;
   claims: {
     active: ActiveClaimView[]; total: number; awaiting_run_started: number; in_progress: number; stalled: number;

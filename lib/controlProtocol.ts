@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { OrcEvent } from '../types/events.ts';
 
 /**
  * Local daemon control protocol. HTTP/JSON over a Unix domain socket is the
@@ -50,7 +51,7 @@ export type ControlResponse<T> =
  * Clients ignore frame types and fields they do not know.
  */
 export type StreamFrame =
-  | { type: 'event'; seq: number; event: unknown }
+  | { type: 'event'; seq: number; event: OrcEvent | null }
   | { type: 'heartbeat'; cursor: number }
   | { type: 'closed'; reason: string };
 
