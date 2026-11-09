@@ -369,12 +369,19 @@ export interface EventBatchRow {
  * consumer can advance beyond them without scanning the same corruption
  * forever. The SQLite seq, rather than a payload-supplied value, is authoritative.
  */
-export function readEventBatch(logPath: string, afterSeq: number, limit: number): EventBatchRow[] {
+export interface EventBatchFilter { run_id?: string; agent_id?: string; event_type?: string }
+
+export function readEventBatch(logPath: string, afterSeq: number, limit: number, filter: EventBatchFilter = {}): EventBatchRow[] {
   if (!Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error('afterSeq must be a non-negative safe integer');
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error('limit must be between 1 and 1000');
   const db = getDb(dirname(logPath));
-  const rows = db.prepare('SELECT seq, payload FROM events WHERE seq > ? ORDER BY seq LIMIT ?')
-    .all(afterSeq, limit) as Array<{ seq: number; payload: string }>;
+  const conditions = ['seq > ?'];
+  const params: Array<string | number> = [afterSeq];
+  if (filter.run_id !== undefined) { conditions.push('run_id = ?'); params.push(filter.run_id); }
+  if (filter.agent_id !== undefined) { conditions.push('agent_id = ?'); params.push(filter.agent_id); }
+  if (filter.event_type !== undefined) { conditions.push('event = ?'); params.push(filter.event_type); }
+  const rows = db.prepare(`SELECT seq, payload FROM events WHERE ${conditions.join(' AND ')} ORDER BY seq LIMIT ?`)
+    .all(...params, limit) as Array<{ seq: number; payload: string }>;
   return rows.map((row, index) => {
     const event = parseEventRow(row, index, { validate: true });
     if (event && event.seq !== row.seq) {

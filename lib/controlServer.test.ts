@@ -663,6 +663,61 @@ describe('local daemon control API', () => {
     expect(negative.body.error?.code).toBe('bad_request');
   });
 
+  it('filters events by run, agent and event type', async () => {
+    const client = new ControlClient(dir);
+    const { cursor } = await client.snapshot();
+    heartbeats(2);
+    appendSequencedEvent(dir, {
+      ts: new Date().toISOString(), event: 'heartbeat', actor_type: 'agent', actor_id: 'worker-b',
+      run_id: 'run-b', task_ref: 'orch/task-b', agent_id: 'worker-b', payload: {},
+    });
+    appendSequencedEvent(dir, {
+      ts: new Date().toISOString(), event: 'run_started', actor_type: 'agent', actor_id: 'worker-b',
+      run_id: 'run-b', task_ref: 'orch/task-b', agent_id: 'worker-b', payload: {},
+    });
+    const runIds = (rows: EventRow[]) => rows.map((row) => (row.event as { run_id?: string }).run_id);
+    expect(runIds((await client.events(cursor, 100, { runId: 'run-a' })).events)).toEqual(['run-a', 'run-a']);
+    expect(runIds((await client.events(cursor, 100, { runId: 'run-b' })).events)).toEqual(['run-b', 'run-b']);
+    expect((await client.events(cursor, 100, { runId: 'run-b', eventType: 'run_started' })).events).toHaveLength(1);
+    expect((await client.events(cursor, 100, { agentId: 'worker-a' })).events).toHaveLength(2);
+    expect((await client.events(cursor, 100, { runId: 'run-a', agentId: 'worker-b' })).events).toEqual([]);
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    const empty = await rawGet({ 'x-orc-protocol': '1', authorization: `Bearer ${token}`, ...operator() }, '/v1/events?run_id=');
+    expect(empty.body.error?.code).toBe('bad_request');
+  });
+
+  it('serves one run\'s detail over GET /v1/runs/<run_id> and 404s an unknown id', async () => {
+    const client = new ControlClient(dir);
+    const { run } = await client.run('run-a');
+    expect(run).toMatchObject({ run_id: 'run-a', task_ref: 'orch/task-a', agent_id: 'worker-a', state: 'in_progress',
+      worktree_path: null, session: { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a' } });
+    expect(run).toHaveProperty('task_title');
+    await expect(client.run('run-missing')).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    await expect(new ControlClient(dir, { credential: 'session-a' }).run('run-a')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
+  });
+
+  it('lists tasks by status and as a summary without body_markdown, and lists a task\'s revisions', async () => {
+    const master = new ControlClient(dir, { credential: 'secret-master' });
+    initProjectTaskStore(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare('UPDATE sessions SET credential_hash = ? WHERE session_id = ?').run(credentialHash('secret-master'), 'session-master');
+    });
+    await master.createTask({ feature: 'app', title: 'Listed task', body_markdown: '# Listed task\n\nBody.\n' });
+    await master.reviseTask('app/listed-task', 1, { priority: 'high' });
+    const summary = (await master.listTasks({ fields: 'summary' })).tasks;
+    expect(summary.map((task) => task.ref)).toEqual(['app/listed-task']);
+    expect(summary[0]).not.toHaveProperty('body_markdown');
+    expect(summary[0]).toMatchObject({ content_hash: expect.any(String), spec_revision: 2 });
+    expect((await master.listTasks()).tasks[0]).toHaveProperty('body_markdown');
+    expect((await master.listTasks({ status: 'todo' })).tasks).toHaveLength(1);
+    expect((await master.listTasks({ status: 'done' })).tasks).toEqual([]);
+    await expect(master.listTasks({ status: 'bogus' })).rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    const { revisions } = await master.taskRevisions('app/listed-task');
+    expect(revisions.map((revision) => revision.revision)).toEqual([1, 2]);
+    expect(revisions[0]).not.toHaveProperty('bodyMarkdown');
+    await expect(master.taskRevisions('app/missing')).rejects.toMatchObject({ code: 'not_found', status: 404 });
+  });
+
   it('streams more than one read batch in order and sends heartbeats', async () => {
     await server.close();
     server = await startControlServer(dir, { pollMs: 20, heartbeatMs: 20 });

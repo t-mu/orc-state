@@ -457,6 +457,14 @@ export function reviseProjectTask(
 /** API view of a project task, including the revision an editor must pass back. */
 export type ProjectTaskView = Task & { feature_ref: string; content_hash: string; body_markdown: string };
 
+/** The list view without the (large) spec text. */
+export type ProjectTaskSummary = Omit<ProjectTaskView, 'body_markdown'>;
+
+export function describeProjectTaskSummary(task: ProjectTask): ProjectTaskSummary {
+  const { body_markdown: _body, ...summary } = describeProjectTask(task);
+  return summary;
+}
+
 export function describeProjectTask(task: ProjectTask): ProjectTaskView {
   return {
     ...projectTaskToBacklogTask(task),

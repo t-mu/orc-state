@@ -16,12 +16,21 @@ import type { StatusView } from './statusView.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
 import type { OperatorOp, OperatorRequest, OperatorResult } from './operatorMutations.ts';
-import type { ProjectTaskView, TaskAuthoringInput } from './projectTasks.ts';
+import type { ProjectTaskSummary, ProjectTaskView, TaskAuthoringInput } from './projectTasks.ts';
+import type { TaskRevisionSummary } from './projectTaskStore.ts';
+import type { Claim } from '../types/claims.ts';
 import type { PlanImportResult, TaskImportResult, TaskMarkdownSource } from './taskMarkdown.ts';
 import type { ScoutReportView } from './scouts.ts';
-import type { ReviewSubmittedEvent } from '../types/events.ts';
+import type { OrcEvent, ReviewSubmittedEvent } from '../types/events.ts';
 
-export interface EventRow { seq: number; event: unknown }
+/** `event` is null for a corrupt row; its `seq` still advances the cursor. */
+/** `GET /v1/runs/<run_id>`: the claim with its task title, worktree and live session (null when none runs). */
+export type RunDetail = Claim & { task_title: string | null; worktree_path: string | null; session: SessionTerminalView | null };
+
+export interface EventRow { seq: number; event: OrcEvent | null }
+
+/** Narrow `GET /v1/events` to one run, agent or event type. */
+export interface EventFilter { runId?: string; agentId?: string; eventType?: string }
 export type { OperatorResult, OperatorResults } from './operatorMutations.ts';
 
 
@@ -165,8 +174,17 @@ export class ControlClient {
     return this.call('POST', `/v1/messages/${encodeURIComponent(messageId)}/consume`);
   }
 
-  events(after: number, limit = 100): Promise<{ events: EventRow[]; cursor: number }> {
-    return this.call('GET', `/v1/events?after=${after}&limit=${limit}`);
+  events(after: number, limit = 100, filter: EventFilter = {}): Promise<{ events: EventRow[]; cursor: number }> {
+    const query = new URLSearchParams({ after: String(after), limit: String(limit) });
+    if (filter.runId !== undefined) query.set('run_id', filter.runId);
+    if (filter.agentId !== undefined) query.set('agent_id', filter.agentId);
+    if (filter.eventType !== undefined) query.set('event_type', filter.eventType);
+    return this.call('GET', `/v1/events?${query}`);
+  }
+
+  /** One run: its claim plus task title, worktree path and live session (`GET /v1/runs/<run_id>`); unknown id → `not_found`. */
+  run(runId: string): Promise<{ run: RunDetail }> {
+    return this.call('GET', `/v1/runs/${encodeURIComponent(runId)}`);
   }
 
   submitCommand(input: SubmitCommandRequest): Promise<{ command: DurableCommand }> {
@@ -205,12 +223,23 @@ export class ControlClient {
     return this.call('POST', '/v1/operator', request);
   }
 
-  listTasks(): Promise<{ tasks: ProjectTaskView[] }> {
-    return this.call('GET', '/v1/tasks');
+  /** `fields: 'summary'` omits `body_markdown`; `status` keeps one task status. */
+  listTasks(opts: { status?: string; fields: 'summary' }): Promise<{ tasks: ProjectTaskSummary[] }>;
+  listTasks(opts?: { status?: string }): Promise<{ tasks: ProjectTaskView[] }>;
+  listTasks(opts: { status?: string; fields?: 'summary' } = {}): Promise<{ tasks: ProjectTaskView[] | ProjectTaskSummary[] }> {
+    const query = new URLSearchParams();
+    if (opts.status !== undefined) query.set('status', opts.status);
+    if (opts.fields !== undefined) query.set('fields', opts.fields);
+    return this.call('GET', `/v1/tasks${query.size ? `?${query}` : ''}`);
   }
 
   getTask(ref: string): Promise<{ task: ProjectTaskView }> {
     return this.call('GET', `/v1/tasks/${encodeURIComponent(ref)}`);
+  }
+
+  /** Every revision of a task, oldest first, without the bodies (`GET /v1/tasks/<ref>/revisions`). */
+  taskRevisions(ref: string): Promise<{ revisions: TaskRevisionSummary[] }> {
+    return this.call('GET', `/v1/tasks/${encodeURIComponent(ref)}/revisions`);
   }
 
   createTask(input: TaskAuthoringInput, actorId?: string): Promise<{ task: ProjectTaskView }> {

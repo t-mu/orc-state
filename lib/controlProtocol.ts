@@ -1,3 +1,4 @@
+import type { OrcEvent } from '../types/events.ts';
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,7 +51,7 @@ export type ControlResponse<T> =
  * Clients ignore frame types and fields they do not know.
  */
 export type StreamFrame =
-  | { type: 'event'; seq: number; event: unknown }
+  | { type: 'event'; seq: number; event: OrcEvent | null }
   | { type: 'heartbeat'; cursor: number }
   | { type: 'closed'; reason: string };
 

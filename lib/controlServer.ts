@@ -12,7 +12,10 @@ import {
 } from './controlProtocol.ts';
 import { captureCodeIdentity, type CodeIdentity } from './codeIdentity.ts';
 import { RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
-import { readEventBatch } from './eventLog.ts';
+import { readEventBatch, type EventBatchFilter } from './eventLog.ts';
+import type { RunWorktreesState } from '../types/run-worktrees.ts';
+import { readBacklog, readClaims, findTask } from './stateReader.ts';
+import { TASK_STATUSES } from './constants.ts';
 import { readProcessStart } from './processIdentity.ts';
 import { readControlSnapshot } from './statusProjection.ts';
 import { buildStatus, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS } from './statusView.ts';
@@ -21,7 +24,7 @@ import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from
 import { resolveControlPrincipal, requirePrincipal, requireProjectAuthor, requireProjectReader, type ControlPrincipal, type SessionPrincipal } from './controlPrincipal.ts';
 import { ConflictError, ForbiddenError, InputError, NotFoundError, UnauthenticatedError } from './domainErrors.ts';
 import { RevisionConflictError } from './projectTaskStore.ts';
-import { createProjectTask, describeProjectTask, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
+import { createProjectTask, describeProjectTask, describeProjectTaskSummary, projectTaskStoreFor, reviseProjectTask, TaskInputError } from './projectTasks.ts';
 import { applyLifecycle, authorizeLifecycle, parseLifecycleRequest } from './workerLifecycle.ts';
 import { applyOperatorMutation, authorizeOperator, parseOperatorRequest } from './operatorMutations.ts';
 import { importPlanMarkdownSources, importTaskMarkdownSources, type TaskMarkdownSource } from './taskMarkdown.ts';
@@ -144,6 +147,14 @@ function importFiles(body: Record<string, unknown>): TaskMarkdownSource[] {
 function actorField(body: Record<string, unknown>): string | undefined {
   if (body.actor_id !== undefined && typeof body.actor_id !== 'string') throw new InputError('actor_id must be a string');
   return body.actor_id;
+}
+
+function readRunWorktreesFile(stateDir: string): RunWorktreesState {
+  try {
+    return JSON.parse(readFileSync(join(stateDir, 'run-worktrees.json'), 'utf8')) as RunWorktreesState;
+  } catch {
+    return { version: '1', runs: [] };
+  }
 }
 
 function optionalIntParam(url: URL, name: string): number | undefined {
@@ -355,8 +366,28 @@ export async function startControlServer(stateDir: string, options: ControlServe
       const after = seqParam(url, 'after');
       const limit = Number(url.searchParams.get('limit') ?? '100');
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new ControlError('bad_request', 'limit must be between 1 and 1000', 400);
-      const rows = readEventBatch(join(stateDir, 'events.db'), after, limit);
+      const filter: EventBatchFilter = {};
+      for (const name of ['run_id', 'agent_id', 'event_type'] as const) {
+        const value = url.searchParams.get(name);
+        if (value === '') throw new ControlError('bad_request', `${name} must not be empty`, 400);
+        if (value !== null) filter[name] = value;
+      }
+      const rows = readEventBatch(join(stateDir, 'events.db'), after, limit, filter);
       return ok({ events: rows, cursor: rows.at(-1)?.seq ?? after });
+    }
+    const runDetail = /^\/v1\/runs\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'GET' && runDetail) {
+      projectReader(req);
+      const runId = decodePathSegment(runDetail[1]);
+      const claim = readClaims(stateDir).claims.find((entry) => entry.run_id === runId);
+      if (!claim) throw new NotFoundError(`Run not found: ${runId}`);
+      const worktree = readRunWorktreesFile(stateDir).runs.find((entry) => entry.run_id === runId);
+      return ok({ run: {
+        ...claim,
+        task_title: findTask(readBacklog(stateDir), claim.task_ref)?.title ?? null,
+        worktree_path: worktree?.worktree_path ?? null,
+        session: terminals.sessions().find((session) => session.run_id === runId) ?? null,
+      } });
     }
     const reviews = /^\/v1\/runs\/([^/]+)\/reviews$/.exec(url.pathname);
     if (req.method === 'GET' && reviews) {
@@ -443,7 +474,14 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (!match) throw new ControlError('not_found', `No route for ${req.method} ${url.pathname}`, 404);
       const ref = match[1] === undefined ? null : decodePathSegment(match[1]);
       if (req.method === 'GET') projectReader(req);
-      if (req.method === 'GET' && ref === null) return ok({ tasks: store.listTasks().map(describeProjectTask) });
+      if (req.method === 'GET' && ref === null) {
+        const status = url.searchParams.get('status');
+        if (status !== null && !TASK_STATUSES.includes(status)) throw new ControlError('bad_request', `status must be one of ${TASK_STATUSES.join(', ')}`, 400);
+        const fields = url.searchParams.get('fields');
+        if (fields !== null && fields !== 'summary') throw new ControlError('bad_request', "fields must be 'summary'", 400);
+        const tasks = store.listTasks().filter((task) => status === null || task.status === status);
+        return ok({ tasks: tasks.map(fields === 'summary' ? describeProjectTaskSummary : describeProjectTask) });
+      }
       if (req.method === 'GET' && !match[2]) {
         const task = store.getTask(ref!);
         if (!task) throw new NotFoundError(`Task not found: ${ref}`);
