@@ -63,6 +63,24 @@ export function markTaskEnvelopeSent(
   });
 }
 
+/**
+ * Legal finalization moves (a write to the same state, e.g. a retry bump, is always legal).
+ * `ready_to_merge → finalize_rebase_requested` is the merge-failure path.
+ * Documented in docs/contracts.md → Invariants 6.
+ */
+export const FINALIZATION_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
+  none: ['awaiting_finalize'],
+  awaiting_finalize: ['finalize_rebase_requested', 'pr_created', 'blocked_finalize', 'pr_failed'],
+  finalize_rebase_requested: ['finalize_rebase_in_progress', 'blocked_finalize', 'pr_failed'],
+  finalize_rebase_in_progress: ['ready_to_merge', 'finalize_rebase_requested', 'blocked_finalize', 'pr_failed'],
+  ready_to_merge: ['finalize_rebase_requested', 'blocked_finalize', 'pr_failed'],
+  blocked_finalize: [],
+  pr_created: ['pr_review_in_progress', 'finalize_rebase_requested', 'blocked_finalize', 'pr_failed'],
+  pr_review_in_progress: ['pr_merged', 'finalize_rebase_requested', 'blocked_finalize', 'pr_failed'],
+  pr_merged: [],
+  pr_failed: [],
+};
+
 export function setRunFinalizationState(
   stateDir: string,
   runId: string,
@@ -96,6 +114,10 @@ export function setRunFinalizationState(
     }
 
     const from = claim.finalization_state ?? null;
+    const to = finalizationState ?? null;
+    if (to !== from && !FINALIZATION_TRANSITIONS[from ?? 'none']?.includes(to ?? '')) {
+      throw new Error(`Illegal finalization transition for ${runId}: ${String(from)} → ${String(to)}`);
+    }
     const previousRetryCount = claim.finalization_retry_count ?? 0;
     const previousBlockedReason = claim.finalization_blocked_reason ?? null;
     claim.finalization_state = finalizationState ?? null;

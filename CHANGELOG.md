@@ -7,17 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- The task status `released` and the `post_merge_release` transition are removed; nothing ever set them. `done` is the single terminal success status. `runtime.db` migrates to schema version 5, which rewrites any `released` task to `done`. `list_tasks` and `orc project task list --status` no longer accept `released`.
+- `phase_started` and `phase_finished` events need a top-level `phase` of `explore`, `implement`, `review`, `complete` or `finalize`; `orc progress` rejects any other `--phase`. Events already stored without one stay readable.
+- `setRunFinalizationState` rejects a move outside the documented finalization graph ([contracts.md → Invariants](docs/contracts.md#invariants)); `finalization_state` is not strictly forward-only (`ready_to_merge → finalize_rebase_requested` after a failed merge).
+- `orc start-session` adopts live worker sessions instead of resetting runtime state. `--reset` is the explicit fresh start and is refused while a master runs.
+
 ### Added
 
-- Every session-row write emits one event: `session_opened` for a new session, `session_state_changed` (`from`, `to`, `reason`, `generation`) for a close, supersede, exit, resume start or reset rollback. Lease renewal emits none.
+- **`orc-state/client` entry**: a side-effect-free import for apps and TUIs with `ControlClient`, `ControlError`, `listProjects`, `RegistrySchemaError` and the protocol types ([Embedding orc](docs/embedding.md)).
+- **`listProjects()`**: every registered project as `ProjectListEntry` (`id`, `name`, `target_repo_root`, `state_dir`, `repo_present`, `control_socket`, `coordinator_running`), read from `registry.db` without creating anything. `control_socket` is set only while the coordinator runs. `orc project list --json` returns the same shape.
+- **Control API**: typed `status` and `health` routes (`version`, `build_id`); event filters by run, agent and event type; run detail; a task summary list; task revisions; plan import and scout request/report over the API; stream frames that show an open stream is alive, closed or resized.
+- **Operator**: answer a worker's input request with `respond-input`; waiting-input rows carry `request_id`.
+- **Events**: one for every run and finalization state change (`finalization_changed` and the run lifecycle events), `session_opened` and `session_state_changed` for every session-row write, `session_reconciled`, `session_resumed`, `session_resume_failed`, `scout_launched`, `scout_launch_failed`.
+- **Stale coordinator detection**: `orc doctor`, `orc start-session` and `/v1/health` compare the running coordinator's `version` and `build_id` with the code on disk; `orc start-session --restart-stale` restarts it and keeps state.
+- **Terminals**: input is sent in one async tmux call, a writer lease honours `ttl_ms`, and `orc terminal --takeover` (operator only) takes the write lease.
+- **Docs and CI**: [Embedding orc](docs/embedding.md); a test that `docs/cli.md` and `cli/usage.ts` list the same flags; CI runs `pack:smoke`, `install:smoke` and a consumer `tsc --noEmit` against `dist/*.d.ts` on Linux and macOS.
 
 ### Changed
 
+- **CLI output**: operator commands and `orc coordinator start|stop|status` return JSON with `--json` (one compact line when piped); commands that read project state parse arguments strictly (unknown flag → exit 1) and fail loudly when no project resolves.
+- Cancelled runs are kept as failed rows, and run ids cannot collide.
+- A worker is torn down only after consecutive dead probes, not one.
+- `orc status` reads the event cursor before the state it describes.
+- `orc watch` keeps its frame below the terminal height, so it stops flickering.
 - `GET /v1/sessions` lists every session that is not offline, with `state` and `state_reason` (`SessionTerminalView` gains both), so `recoverable` and `unknown` sessions show up.
 - Agent reads report a `running` agent whose latest session is offline as `offline`, without a `session_token`; the coordinator resumes or requeues its run on the next tick.
 - A worker launch whose run was cancelled meanwhile stops the session it started and fails, instead of leaving a running agent without a session record.
-
-- The task status `released` and the `post_merge_release` transition are removed; nothing ever set them. `done` is the single terminal success status. `runtime.db` migrates to schema version 5, which rewrites any `released` task to `done`. `list_tasks` and `orc project task list --status` no longer accept `released`.
+- The stop hook allows a stop before `TASK_START`.
 
 ## [1.0.0] - 2026-11-08
 

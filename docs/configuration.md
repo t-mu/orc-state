@@ -77,6 +77,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 | `ORC_STATE_DIR` | Set for launched sessions: resolves the project from `project.json` without the registry. Selects no project on its own | Project state dir |
 | `ORC_WORKTREES_DIR` | Run worktree directory | `<state>/worktrees` |
 | `ORC_TMUX_BIN` | tmux binary (≥ 3.2). The master and every worker run in tmux, so sessions survive a coordinator restart; `orc doctor` and `orc start-session` fail when it is missing or older | `tmux` |
+| `ORC_CODEX_BINARY` | Codex binary for the structured (`app:`) Codex runtime | `codex` |
 | `ORC_CONTROL_API` | Serve the control API (`control.sock`, `control.json`, `control.token`) | on |
 | `ORC_CONTROL_RETRY_MS` | Retry window for worker lifecycle commands while the coordinator is unreachable | `120000` |
 | `ORC_LOG_LEVEL` | `debug`, `info`, `warn`, `error`, `silent` | `warn` |

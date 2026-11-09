@@ -52,6 +52,7 @@ Details: [Getting started](./docs/getting-started.md). Upgrading with a coordina
 - [Configuration](./docs/configuration.md)
 - [CLI reference](./docs/cli.md)
 - [Contracts](./docs/contracts.md)
+- [Embedding orc](./docs/embedding.md)
 - [Memory](./docs/memory.md)
 - [Adapters](./docs/adapters.md)
 - [Testing](./docs/testing.md)

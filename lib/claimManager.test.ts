@@ -312,6 +312,7 @@ describe('setRunFinalizationState', () => {
     seed(dir);
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
     startRun(dir, run_id, 'agent-01');
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'awaiting_finalize' });
 
     setRunFinalizationState(dir, run_id, 'agent-01', {
       finalizationState: 'finalize_rebase_requested',
@@ -333,6 +334,42 @@ describe('setRunFinalizationState', () => {
     expect(() => setRunFinalizationState(dir, run_id, 'agent-01', {
       finalizationState: 'merge-now' as unknown as import('../types/index.ts').FinalizationState,
     })).toThrow('Unsupported finalization state');
+  });
+});
+
+describe('finalization transition graph', () => {
+  function startedRun() {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    startRun(dir, run_id, 'agent-01');
+    return run_id;
+  }
+  const move = (runId: string, to: import('../types/index.ts').FinalizationState) =>
+    setRunFinalizationState(dir, runId, 'agent-01', { finalizationState: to });
+
+  it('rejects an illegal transition and leaves the state unchanged', () => {
+    const runId = startedRun();
+    expect(() => move(runId, 'ready_to_merge')).toThrow('Illegal finalization transition');
+    move(runId, 'awaiting_finalize');
+    move(runId, 'pr_created');
+    move(runId, 'pr_review_in_progress');
+    move(runId, 'pr_merged');
+    expect(() => move(runId, 'awaiting_finalize')).toThrow('pr_merged → awaiting_finalize');
+    expect(readClaims(dir).claims.find((c) => c.run_id === runId)!.finalization_state).toBe('pr_merged');
+  });
+
+  it('allows ready_to_merge to return to finalize_rebase_requested after a merge failure', () => {
+    const runId = startedRun();
+    for (const state of ['awaiting_finalize', 'finalize_rebase_requested', 'finalize_rebase_in_progress', 'ready_to_merge', 'finalize_rebase_requested'] as const) {
+      move(runId, state);
+    }
+    expect(readClaims(dir).claims.find((c) => c.run_id === runId)!.finalization_state).toBe('finalize_rebase_requested');
+  });
+
+  it('allows rewriting the current state (retry bump)', () => {
+    const runId = startedRun();
+    move(runId, 'awaiting_finalize');
+    move(runId, 'awaiting_finalize');
   });
 });
 
@@ -517,6 +554,7 @@ describe('setRunFinalizationState', () => {
       blockedReason: null,
     });
 
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'finalize_rebase_requested' });
     setRunFinalizationState(dir, run_id, 'agent-01', {
       finalizationState: 'finalize_rebase_in_progress',
       retryCountDelta: 1,
@@ -555,12 +593,14 @@ describe('finalization_changed events', () => {
     seed(dir);
     const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
     startRun(dir, run_id, 'agent-01');
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'awaiting_finalize' });
     setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'finalize_rebase_requested' });
     setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'finalize_rebase_requested' });
     setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'finalize_rebase_requested', retryCountDelta: 1 });
 
     expect(readEvents(dir).filter((e) => e.event === 'finalization_changed').map((e) => e.payload)).toEqual([
-      expect.objectContaining({ from: null, to: 'finalize_rebase_requested', retry_count: 0 }),
+      expect.objectContaining({ from: null, to: 'awaiting_finalize', retry_count: 0 }),
+      expect.objectContaining({ from: 'awaiting_finalize', to: 'finalize_rebase_requested', retry_count: 0 }),
       expect.objectContaining({ from: 'finalize_rebase_requested', to: 'finalize_rebase_requested', retry_count: 1 }),
     ]);
   });
@@ -571,9 +611,10 @@ describe('finalization_changed events', () => {
     startRun(dir, run_id, 'agent-01');
     setPrRef(dir, run_id, 'https://example.test/pr/7');
     setPrCreatedAt(dir, run_id, '2026-01-02T00:00:00.000Z');
+    setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'awaiting_finalize' });
     setRunFinalizationState(dir, run_id, 'agent-01', { finalizationState: 'pr_created' });
 
-    expect(readEvents(dir).find((e) => e.event === 'finalization_changed').payload).toMatchObject({
+    expect(readEvents(dir).filter((e) => e.event === 'finalization_changed')[1].payload).toMatchObject({
       to: 'pr_created', pr_ref: 'https://example.test/pr/7', pr_created_at: '2026-01-02T00:00:00.000Z',
     });
   });

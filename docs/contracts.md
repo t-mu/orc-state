@@ -346,7 +346,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | `validateEventObject` | function | Event validator (`schemas/event.schema.json` + `lib/eventValidation.ts` rules) |
 | `getWorkerBootstrap`, `getMasterBootstrap` | functions | Package bootstrap templates |
 | `listProjects` | function | `listProjects({ env? })`: every registered project as `ProjectListEntry[]`, read from the registry under the data home. Opens `registry.db` read-only with `node:sqlite`: no DDL or migrations, and it never creates the data home or `registry.db` (SQLite may leave the WAL's `registry.db-shm`/`-wal` beside it); `[]` when there is no registry; throws `RegistrySchemaError` (exported from `orc-state/client`) for a newer registry schema |
-| `ProjectListEntry` | type | `{ id, name, target_repo_root, state_dir, control_socket, coordinator_running }`; `control_socket` is the `control.json` path, `null` when the state directory or endpoint is missing or unreadable; `coordinator_running` is `true` when a live coordinator is found by its pid lock or `control.json` (the check `orc start-session` and `orc kill-all` use), independent of `control_socket` |
+| `ProjectListEntry` | type | `{ id, name, target_repo_root, state_dir, repo_present, control_socket, coordinator_running }`; `repo_present` is whether `target_repo_root` exists; `control_socket` is the `control.json` path only while a coordinator runs, `null` when none runs or the state directory or endpoint is missing or unreadable; `coordinator_running` is `true` when a live coordinator is found by its pid lock or `control.json` (the check `orc start-session` and `orc kill-all` use), independent of `control_socket` |
 | `ControlClientOptions` | type | `{ credential?, timeoutMs?, socketPath? }`; `socketPath` overrides the socket in `control.json` (the bearer token still comes from the state directory). The client never reads `ORC_CONTROL_SOCKET`; only the CLI passes it on for workers |
 | `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
 | `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
@@ -363,7 +363,7 @@ The root's client half, for an app (Electron main, a Node sidecar) or TUI: `Cont
 
 Importing it has no side effects: no project resolution, registry access, git call, file write or environment check. Its module graph uses Node built-ins only (no `better-sqlite3`, `ajv`, `ink` or `react`; checked by `client.test.ts`). `listProjects` needs `node:sqlite` (Node ≥ 22.13; Node 24 prints an `ExperimentalWarning` on its first call).
 
-**Embedding orc:** an app imports `orc-state/client`, calls `listProjects()`, and opens `new ControlClient(project.state_dir)` per project. Import the root `orc-state` only to run orc in process (adapters, validators, bootstrap templates): it resolves the active project on import and loads native modules.
+**Embedding orc** ([embedding.md](embedding.md)): an app imports `orc-state/client`, calls `listProjects()`, and opens `new ControlClient(project.state_dir)` per project. Import the root `orc-state` only to run orc in process (adapters, validators, bootstrap templates): it resolves the active project on import and loads native modules.
 
 ### Control API protocol v1
 
@@ -394,7 +394,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 
 | Command | Shape |
 |---|---|
-| `orc project list --json` | `listProjects()`: `[{ id, name, target_repo_root, state_dir, control_socket, coordinator_running }]` (without `--json`, the registry records) |
+| `orc project list --json` | `listProjects()`: `[{ id, name, target_repo_root, state_dir, repo_present, control_socket, coordinator_running }]` (without `--json`, the registry records) |
 | `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError }`; `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
 | `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
 | `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok`. `checks.coordinatorCode.warning` is a restart hint (string) when the running coordinator's code is older than the code on disk, else `null`; it never changes `ok` or the exit code |
@@ -475,7 +475,15 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 3. **Status consistency**: a task's `runtime.db` status agrees with its active run in `events.db` `runs` — `claimed` ↔ one `claimed` run, `in_progress` ↔ one `in_progress` run, `todo` ↔ none; a `done` task may still have its run in finalization. `reconcile` repairs drift.
 4. **Pinned spec**: a run keeps the revision it was claimed with; later edits affect only future runs.
 5. **Single terminal outcome**: completion and failure retries are idempotent; `done` is recorded once per run.
-6. **Forward-only finalization**: `finalization_state` never moves backwards.
+6. **Finalization graph**: `setRunFinalizationState` only allows these moves (`FINALIZATION_TRANSITIONS` in `lib/claimStateManager.ts`); any other throws, and a write of the current state (retry bump) is always legal. It is not strictly forward-only: a failed merge or rebase loops back.
+   - `null → awaiting_finalize`
+   - `awaiting_finalize → finalize_rebase_requested | pr_created | blocked_finalize | pr_failed`
+   - `finalize_rebase_requested → finalize_rebase_in_progress | blocked_finalize | pr_failed`
+   - `finalize_rebase_in_progress → ready_to_merge | finalize_rebase_requested | blocked_finalize | pr_failed`
+   - `ready_to_merge → finalize_rebase_requested` (merge failure) `| blocked_finalize | pr_failed`
+   - `pr_created → pr_review_in_progress | finalize_rebase_requested | blocked_finalize | pr_failed`
+   - `pr_review_in_progress → pr_merged | finalize_rebase_requested | blocked_finalize | pr_failed`
+   - `blocked_finalize`, `pr_merged`, `pr_failed` are terminal; a terminal run event or operator recovery resets the field to null outside this function.
 7. **Event compliance**: events satisfy `schemas/event.schema.json` and `lib/eventValidation.ts`; `seq` strictly increases.
 8. **Lease enforcement**: no expired claim stays `claimed`/`in_progress` outside the finalize window.
 9. **Write exclusivity**: state changes only through `orc` commands, MCP tools or the coordinator; one coordinator owns a project's writes at a time.

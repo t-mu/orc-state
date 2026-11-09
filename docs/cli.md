@@ -30,7 +30,7 @@ orc start-session --provider=claude
 | Command | Notes |
 |---------|-------|
 | `project add <git-path> [--name=N]` | Register a repository; creates its state directory and task store. |
-| `project list` | List registered projects; `--json` adds each control socket and coordinator liveness. |
+| `project list` | List registered projects; `--json` adds `repo_present`, the control socket (only while the coordinator runs) and coordinator liveness. |
 | `project select <id>` | Default project outside every Git repository. |
 | `project show` | Print the resolved project. |
 | `project config <list\|get\|set\|unset> [key] [value] [--global]` | Read/write settings. `list` shows effective values; `--global` targets global settings (not combinable with `--project`). Keys: [configuration.md → Settings](configuration.md#settings). |
@@ -127,8 +127,8 @@ Client for the coordinator's local control API. Fails with "Control daemon is no
 |------------|-------|
 | `snapshot` | — |
 | `events` | `[--after=<seq>]` `[--limit=<n>]` `[--follow]` `[--max-events=<n>]` |
-| `command` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<kind>` `--idempotency-key=<key>` `[--payload=<json>]` |
-| `ack <command_id>` | `--state=<accepted\|running\|completed\|failed>` |
+| `command` | `--run-id=<id>` `--recipient-session=<id>` `--kind=<kind>` `--idempotency-key=<key>` `[--payload=<json>]` `[--credential=<secret>]` |
+| `ack <command_id>` | `--state=<accepted\|running\|completed\|failed>` `[--credential=<secret>]` |
 | `message` | `--run-id=<id>` `--recipient-session=<id>` \| `--recipient-agent=<id>` (exactly one) `--kind=<message\|question\|review_request\|feedback\|result>` `--text=<text>` `--idempotency-key=<key>` `[--artifact-ref=<ref>]` `[--parent-message=<id>]` |
 | `messages` | `[--include-consumed]` |
 | `consume <message_id>` | — |

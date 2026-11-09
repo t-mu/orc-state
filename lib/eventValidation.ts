@@ -48,6 +48,8 @@ const FINALIZATION_STATES = new Set([
   'blocked_finalize', 'pr_created', 'pr_review_in_progress', 'pr_merged', 'pr_failed',
 ]);
 
+const EVENT_PHASES = new Set(['explore', 'implement', 'review', 'complete', 'finalize']);
+
 function requireRunId(event: unknown, errors: string[]): void {
   const e = event as { run_id?: unknown } | null;
   if (!e?.run_id || typeof e.run_id !== 'string') {
@@ -115,6 +117,14 @@ function validateCoreEventInvariants(event: unknown, errors: string[], stored: b
 
   if (eventName && runLifecycleEvents.has(eventName)) {
     requireRunId(event, errors);
+  }
+
+  // Phase events carry a top-level `phase`; rows stored before it was required stay readable.
+  if ((eventName === 'phase_started' || eventName === 'phase_finished') && !stored) {
+    const phase = (event as { phase?: unknown } | null)?.phase;
+    if (typeof phase !== 'string' || !EVENT_PHASES.has(phase)) {
+      errors.push(`phase is required and must be one of: ${Array.from(EVENT_PHASES).join(', ')}`);
+    }
   }
 
   // claim_expired gained a required agent_id; rows stored before that stay readable.

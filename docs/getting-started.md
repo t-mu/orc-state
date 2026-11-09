@@ -94,4 +94,5 @@ Without `--restart-stale`, `orc start-session` reuses the running coordinator an
 
 - [Configuration](configuration.md)
 - [CLI reference](cli.md)
+- [Embedding orc in an app](embedding.md)
 - [Architecture](architecture.md)

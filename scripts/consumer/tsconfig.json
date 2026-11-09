@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "orc-state": ["../../dist/index.d.ts"],
+      "orc-state/client": ["../../dist/client.d.ts"]
+    }
+  },
+  "include": ["consumer.ts"]
+}
