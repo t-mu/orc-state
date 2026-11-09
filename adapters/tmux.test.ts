@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkTmux, checkTmuxVersion, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName, tmuxSocketName, tmuxSocketPath } from './tmux.ts';
+import {
+  checkTmux, checkTmuxVersion, createTmuxAdapter, failedInspection, parseTmuxVersion, tmuxAttachCommand, tmuxSessionName,
+  tmuxSocketName, tmuxSocketPath,
+} from './tmux.ts';
 
 const originalBin = process.env.ORC_TMUX_BIN;
 
@@ -88,3 +93,56 @@ describe('checkTmuxVersion', () => {
     expect(checkTmux()).toMatchObject({ ok: false, version: null });
   });
 });
+
+describe('failedInspection', () => {
+  it.each([
+    ['no server', 'no server running on /tmp/tmux-1000/orc-abc\n'],
+    ['no socket', 'error connecting to /tmp/tmux-1000/orc-abc (No such file or directory)\n'],
+    ['stale socket', 'error connecting to /tmp/tmux-1000/orc-abc (Connection refused)\n'],
+    ['server exiting', 'server exited unexpectedly\n'],
+    ['no session', "can't find session: orc-worker-1234\n"],
+  ])('is dead when tmux reports the session gone (%s)', (_label, stderr) => {
+    expect(failedInspection({ status: 1, stderr })).toEqual({
+      transport: 'tmux', alive: false, writable: false, pid: null, processStart: null, reason: 'tmux session not found',
+    });
+  });
+
+  it('is indeterminate on a timeout, a spawn error, or an unrecognised tmux error', () => {
+    const timeout = Object.assign(new Error('spawnSync tmux ETIMEDOUT'), { code: 'ETIMEDOUT' });
+    expect(failedInspection({ error: timeout, status: null, stderr: '' })).toMatchObject({
+      alive: false, indeterminate: true, reason: 'tmux probe failed: spawnSync tmux ETIMEDOUT',
+    });
+    expect(failedInspection({ status: 1, stderr: 'error connecting to /tmp/tmux-1000/orc-abc (Resource temporarily unavailable)\n' }))
+      .toMatchObject({ alive: false, indeterminate: true });
+    expect(failedInspection({ status: 1, stderr: '' })).toMatchObject({ indeterminate: true, reason: 'tmux probe failed: exit 1' });
+  });
+});
+
+describe('tmux adapter inspectSession', () => {
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+  function fakeTmux(script: string): void {
+    const d = mkdtempSync(join(tmpdir(), 'orc-fake-tmux-'));
+    dirs.push(d);
+    const bin = join(d, 'tmux');
+    writeFileSync(bin, `#!/bin/sh\n${script}\n`);
+    chmodSync(bin, 0o755);
+    process.env.ORC_TMUX_BIN = bin;
+  }
+
+  it('reports a missing tmux binary as indeterminate, not dead', () => {
+    process.env.ORC_TMUX_BIN = '/nonexistent/tmux';
+    expect(createTmuxAdapter().inspectSession('tmux:worker-1')).toMatchObject({ alive: false, indeterminate: true });
+  });
+
+  it('reports a transient tmux error as indeterminate and a missing server as dead', () => {
+    fakeTmux("echo 'error connecting to /tmp/x (Resource temporarily unavailable)' >&2; exit 1");
+    expect(createTmuxAdapter().inspectSession('tmux:worker-1')).toMatchObject({ alive: false, indeterminate: true });
+    fakeTmux("echo 'no server running on /tmp/x' >&2; exit 1");
+    const dead = createTmuxAdapter().inspectSession('tmux:worker-1');
+    expect(dead).toMatchObject({ alive: false, reason: 'tmux session not found' });
+    expect(dead.indeterminate).toBeUndefined();
+  });
+});
+

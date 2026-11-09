@@ -355,8 +355,8 @@ function validateCoreEventInvariants(event: unknown, errors: string[], stored: b
     requirePayloadField(
       event,
       'reason',
-      (v) => v === 'stale' || v === 'no_progress',
-      'must be "stale" or "no_progress"',
+      (v) => v === 'stale' || v === 'no_progress' || v === 'session_not_running',
+      'must be "stale", "no_progress" or "session_not_running"',
       errors,
     );
     if ((event as { payload?: { reason?: unknown } } | null)?.payload?.reason === 'no_progress') {
@@ -375,13 +375,25 @@ function validateCoreEventInvariants(event: unknown, errors: string[], stored: b
         errors,
       );
     }
-    requirePayloadField(
-      event,
-      'idle_ms',
-      (v) => Number.isInteger(v) && (v as number) >= 0,
-      'must be a non-negative integer',
-      errors,
-    );
+    if ((event as { payload?: { reason?: unknown } } | null)?.payload?.reason === 'session_not_running') {
+      requirePayloadField(event, 'session_id', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+      requirePayloadField(event, 'session_state', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+      requirePayloadField(
+        event,
+        'not_running_ms',
+        (v) => Number.isInteger(v) && (v as number) >= 0,
+        'must be a non-negative integer',
+        errors,
+      );
+    } else {
+      requirePayloadField(
+        event,
+        'idle_ms',
+        (v) => Number.isInteger(v) && (v as number) >= 0,
+        'must be a non-negative integer',
+        errors,
+      );
+    }
   }
 
   if (eventName === 'stop_blocked') {

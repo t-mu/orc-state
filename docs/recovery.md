@@ -46,7 +46,7 @@ orc doctor
 
 ### Recoverable or Unknown Sessions
 
-`orc sessions` shows `state=recoverable|unknown` with a `reason:`; the coordinator never kills or redispatches them.
+`orc sessions` shows `state=recoverable|unknown` with a `reason:`; the coordinator never kills or redispatches them directly. A run held by such a session is no longer kept alive by liveness probes: after 2 min the master gets `worker_needs_attention {reason: session_not_running}` (`orc events-tail --event=worker_needs_attention`), and if the worker sends no lifecycle or phase signals its lease expires and the run is requeued.
 
 - `recoverable`: process alive, this coordinator cannot write to it. The worker can still run `orc run-*`; it gets no nudges or envelopes.
 - `unknown`: live process does not match the recorded PID + start time, or has no recorded identity. Not adopted.
@@ -57,6 +57,7 @@ orc doctor
 
 | Symptom | Check | Fix |
 |---------|-------|-----|
+| Worker run requeued (`ERR_PTY_DEAD`) though its pane seemed alive | coordinator log: `probe dead for run <run_id> (n/2 dead in a row)` | A run is requeued only after 2 dead probes in a row (no tmux server, no session, or the pane process exited); tmux errors and timeouts log `probe indeterminate` and never count. See [contracts.md → Lease and liveness](./contracts.md#lease-and-liveness) |
 | Worker stuck in `in_progress` | `orc attach <agent_id>` (read-only, `--write` to type), or `orc terminal provider <run_id> --once` without a TTY; `orc doctor` | `orc task-reset <ref>`, then `orc worker-remove <agent_id>`; dispatch is automatic |
 | Dead worker, claim not released | `orc runs-active`, `orc doctor` | a dead process expires the claim at once; else `orc task-reset <ref>` |
 | Offline/dead workers left in `orc status` (`idle\|running\|offline\|dead`) | `orc status` | a running coordinator removes them; without one `orc worker-gc` (keeps workers with a claim) |

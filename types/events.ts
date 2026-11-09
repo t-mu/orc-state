@@ -385,11 +385,14 @@ export interface WorkerNeedsAttentionEvent extends BaseEvent {
   /**
    * `stale`: no activity for the soft threshold. `no_progress`: alive (recent
    * activity) but no phase change, commit, or lifecycle event for
-   * `run_no_progress_escalate_ms`.
+   * `run_no_progress_escalate_ms`. `session_not_running`: the run's session
+   * has been `recoverable` or `unknown` for the session-owner TTL; its lease is
+   * no longer renewed.
    */
   payload:
     | { reason: 'stale'; idle_ms: number }
-    | { reason: 'no_progress'; idle_ms: number; no_progress_ms: number; phase: string | null; progress_at: string };
+    | { reason: 'no_progress'; idle_ms: number; no_progress_ms: number; phase: string | null; progress_at: string }
+    | { reason: 'session_not_running'; session_id: string; session_state: string; not_running_ms: number; state_reason?: string };
 }
 
 // ── Remediation events ───────────────────────────────────────────────────────
