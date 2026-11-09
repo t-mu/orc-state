@@ -3,8 +3,11 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { queryEvents } from './eventLog.ts';
 import { recordProviderSession } from './runStore.ts';
-import { appendSessionStartedEvent, resetVolatileRuntimeStateForSession, restoreVolatileRuntimeStateFromSnapshot } from './sessionState.ts';
-import { readAgents } from './stateReader.ts';
+import {
+  appendSessionStartedEvent, prepareSessionReuse, resetVolatileRuntimeStateForSession, restoreVolatileRuntimeStateFromSnapshot, stopSessionsForReset,
+} from './sessionState.ts';
+import { listSupervisedSessions, reconcileSessions } from './sessionSupervisor.ts';
+import { readAgents, readClaims } from './stateReader.ts';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks, readBacklog } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -137,5 +140,48 @@ describe('resetVolatileRuntimeStateForSession', () => {
       },
     });
     expect(events.at(-1)?.seq).toBe(seq);
+  });
+});
+
+describe('crash recovery: kept state is adopted, reset stops what it closes', () => {
+  function recordWorkerSession() {
+    recordProviderSession(dir, {
+      sessionId: 'session-orc-1', runId: null, agentId: 'orc-1', provider: 'codex', providerRef: null,
+      startedAt: '2026-01-01T00:00:00Z', transport: 'tmux', processPid: 456, processStart: 'proc:456',
+    });
+  }
+
+  it('a session start on kept state leaves the run in_progress and the coordinator adopts the live worker', async () => {
+    recordWorkerSession();
+    prepareSessionReuse(dir);
+
+    const results = await reconcileSessions(dir, {
+      owner: 'pid:2:new-coordinator',
+      agents: readAgents(dir).agents,
+      inspect: () => Promise.resolve({ transport: 'tmux', alive: true, writable: true, pid: 456, processStart: 'proc:456' }),
+    });
+
+    expect(results.find((result) => result.session_id === 'session-orc-1')).toMatchObject({ outcome: 'adopted', state: 'running' });
+    expect(readClaims(dir).claims.find((claim) => claim.run_id === 'run-2')?.state).toBe('in_progress');
+    expect(queryEvents(dir, { event_type: 'session_reconciled' }).some((event) =>
+      (event.payload as { session_id: string; outcome?: string }).session_id === 'session-orc-1'
+      && (event.payload as { outcome?: string }).outcome === 'adopted')).toBe(true);
+  });
+
+  it('stopSessionsForReset stops every non-master session before the reset closes it', async () => {
+    recordWorkerSession();
+    const stopped: string[] = [];
+    const result = await stopSessionsForReset(dir, (agent) => { stopped.push(agent.session_handle!); return Promise.resolve(); });
+    resetVolatileRuntimeStateForSession(dir);
+
+    expect(stopped).toEqual(['tmux:orc-1']);
+    expect(result).toEqual({ stopped: ['orc-1'], failed: [] });
+    expect(readClaims(dir).claims.map((claim) => claim.state)).toEqual(['failed', 'failed']);
+    expect(listSupervisedSessions(dir).find((row) => row.session_id === 'session-orc-1')?.state).toBe('offline');
+  });
+
+  it('stopSessionsForReset reports a failed stop instead of throwing', async () => {
+    const result = await stopSessionsForReset(dir, () => Promise.reject(new Error('kill failed')));
+    expect(result).toEqual({ stopped: [], failed: [{ agent_id: 'orc-1', error: 'kill failed' }] });
   });
 });

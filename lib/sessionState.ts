@@ -83,6 +83,34 @@ export interface PreparedSessionReset extends SessionResetResult {
   snapshot: SessionStateSnapshot;
 }
 
+export interface SessionStopResult {
+  stopped: string[];
+  failed: Array<{ agent_id: string; error: string }>;
+}
+
+/**
+ * Stop every non-master session a reset is about to close (workers, scouts),
+ * so no process keeps working on a run the reset fails. The master is left
+ * alone: `orc start-session` resets only when no live master runs. Call before
+ * `resetVolatileRuntimeStateForSession`; a failed stop is reported, not thrown.
+ */
+export async function stopSessionsForReset(
+  stateDir: string,
+  stop: (agent: Agent) => Promise<void>,
+): Promise<SessionStopResult> {
+  const result: SessionStopResult = { stopped: [], failed: [] };
+  for (const agent of readAgentsState(stateDir).agents ?? []) {
+    if (agent.role === 'master' || !agent.session_handle) continue;
+    try {
+      await stop(agent);
+      result.stopped.push(agent.agent_id);
+    } catch (error) {
+      result.failed.push({ agent_id: agent.agent_id, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return result;
+}
+
 export function resetVolatileRuntimeStateForSession(
   stateDir: string,
 ): PreparedSessionReset {

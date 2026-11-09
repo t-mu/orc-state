@@ -301,27 +301,53 @@ describe('cli/start-session.ts', () => {
         .toEqual(['sentinel/task-1']);
     });
 
-    it('resets volatile runtime state and appends session_started on startup', async () => {
-      seedState([masterAgent({
-        status: 'running',
-        session_handle: 'tmux:master',
-        provider_ref: { pid: 111 },
-        last_heartbeat_at: '2026-01-01T00:00:00Z',
-      })]);
+    it('keeps runtime state by default when no coordinator runs, so live sessions can be adopted', async () => {
+      seedState([
+        masterAgent(),
+        masterAgent({ agent_id: 'orc-1', role: 'worker', status: 'running', session_handle: 'tmux:orc-1' }),
+      ]);
       seedActiveRuntimeState();
 
-      const spawnMock = makeSpawnMock();
-      mockSpawn(spawnMock);
+      mockSpawn(makeSpawnMock());
       mockBinaryCheck(true);
       setEnv(dir);
-      // No coordinator running → coordinatorAction = 'start' → state reset fires.
-      // (If a coordinator were running, the non-interactive default is 'reuse',
-      //  which intentionally skips the reset — tested separately below.)
+      // No coordinator running, non-interactive: the default keeps state for the new coordinator to adopt.
       process.argv = ['node', 'start-session.ts'];
       await import('./start-session.ts');
 
+      expect(readBacklog(dir).features[0].tasks[0].status).toBe('in_progress');
+      expect(readClaims()[0].state).toBe('in_progress');
+      expect(readAgents().find((agent: { agent_id: string }) => agent.agent_id === 'orc-1'))
+        .toMatchObject({ status: 'running', session_handle: 'tmux:orc-1' });
+      expect(tmuxFake.stop).not.toHaveBeenCalledWith('tmux:orc-1');
+      const events = queryEvents(dir, {});
+      expect(events.find((event) => event.event === 'session_started')?.payload).toMatchObject({ reset_claims: 0 });
+    });
+
+    it('--reset stops every worker session, fails its runs and appends session_started', async () => {
+      seedState([
+        masterAgent({
+          status: 'running',
+          session_handle: 'tmux:master',
+          provider_ref: { pid: 111 },
+          last_heartbeat_at: '2026-01-01T00:00:00Z',
+        }),
+        masterAgent({ agent_id: 'orc-1', role: 'worker', status: 'running', session_handle: 'tmux:orc-1' }),
+      ]);
+      seedActiveRuntimeState();
+
+      mockSpawn(makeSpawnMock());
+      mockBinaryCheck(true);
+      setEnv(dir);
+      process.argv = ['node', 'start-session.ts', '--reset'];
+      await import('./start-session.ts');
+
+      expect(tmuxFake.stop).toHaveBeenCalledWith('tmux:orc-1');
+      expect(tmuxFake.stop).not.toHaveBeenCalledWith('tmux:master');
       expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
       expect(readClaims()[0]).toMatchObject({ state: 'failed', failure_reason: 'session_reset' });
+      expect(readAgents().find((agent: { agent_id: string }) => agent.agent_id === 'orc-1'))
+        .toMatchObject({ status: 'idle', session_handle: null });
       const events = queryEvents(dir, {});
       expect(events.some((event) => event.event === 'session_started')).toBe(true);
     });
@@ -674,6 +700,33 @@ describe('cli/start-session.ts', () => {
   });
 
   describe('coordinator terminate safety', () => {
+    it('refuses to reset while the coordinator it tried to stop still runs', async () => {
+      seedState([masterAgent()]);
+      seedActiveRuntimeState();
+      writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: 12345, started_at: '2026-01-01T00:00:00.000Z' }));
+      vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid === 12345 && (signal === 0 || signal === 'SIGTERM')) return true;
+        throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+      });
+      mockSpawn(makeSpawnMock(), vi.fn().mockReturnValue({ status: 0, stdout: `node ${coordinatorScriptPath}` }));
+      vi.doMock('../lib/prompts.ts', () => ({
+        promptProvider: vi.fn().mockResolvedValue('claude'),
+        isInteractive: vi.fn().mockReturnValue(false),
+        promptCoordinatorAction: vi.fn().mockResolvedValue('reset'),
+        promptMasterAction: vi.fn().mockResolvedValue('reuse'),
+        printManagedWorkerNotice: vi.fn(),
+      }));
+      mockBinaryCheck(true);
+      const exitSpy = mockProcessExit();
+
+      setEnv(dir);
+      process.argv = ['node', 'start-session.ts', '--reset'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(readClaims()[0].state).toBe('in_progress');
+    });
+
     it('does not remove coordinator.pid when terminate does not stop the process', async () => {
       seedState([masterAgent()]);
       writeFileSync(join(dir, 'coordinator.pid'), JSON.stringify({ pid: 12345, started_at: '2026-01-01T00:00:00.000Z' }));

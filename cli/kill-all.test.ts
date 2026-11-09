@@ -288,6 +288,78 @@ describe('cli/kill-all.ts', () => {
     });
   });
 
+  describe('--keep-sessions leaves kept sessions adoptable', () => {
+    it('keeps agent records, session rows, runs and worktrees of kept sessions; resets the rest', async () => {
+      setEnv(dir); // before any import that resolves the project paths
+      const { seedState: seedProjectState } = await import('../test-fixtures/stateHelpers.ts');
+      const claims = [
+        { run_id: 'run-kept', task_ref: 'orch/kept', agent_id: 'alice', state: 'in_progress', claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: '2099-01-01T00:00:00Z' },
+        { run_id: 'run-orphan', task_ref: 'orch/orphan', agent_id: 'gone', state: 'in_progress', claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: '2099-01-01T00:00:00Z' },
+      ];
+      seedProjectState(dir, {
+        agents: [agentRecord({ agent_id: 'alice', session_handle: 'tmux:alice' }), agentRecord({ agent_id: 'idle', session_handle: null })],
+        tasks: [
+          { ref: 'orch/kept', title: 'Kept', status: 'in_progress' },
+          { ref: 'orch/orphan', title: 'Orphan', status: 'in_progress' },
+        ],
+        claims,
+      });
+      const { initEventsDb } = await import('../lib/eventLog.ts');
+      initEventsDb(dir);
+      const { recordProviderSession } = await import('../lib/runStore.ts');
+      recordProviderSession(dir, {
+        sessionId: 'session-alice', runId: null, agentId: 'alice', provider: 'claude', providerRef: null,
+        startedAt: '2026-01-01T00:00:00.000Z', transport: 'tmux', processPid: 4242, processStart: 'proc:4242',
+      });
+      writeFileSync(join(dir, 'run-worktrees.json'), JSON.stringify({ version: '1', runs: [
+        { run_id: 'run-kept', task_ref: 'orch/kept', agent_id: 'alice', branch: 'task/run-kept', worktree_path: join(dir, 'worktrees', 'run-kept') },
+      ] }));
+
+      const stop = vi.fn();
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
+      process.argv = ['node', 'kill-all.ts', '--keep-sessions'];
+      await import('./kill-all.ts');
+
+      expect(stop).not.toHaveBeenCalled();
+      expect(readAgents().map((agent: { agent_id: string }) => agent.agent_id)).toEqual(['alice']);
+      const { readBacklog, readClaims } = await import('../lib/stateReader.ts');
+      expect(Object.fromEntries(readClaims(dir).claims.map((claim) => [claim.run_id, claim.state])))
+        .toEqual({ 'run-kept': 'in_progress', 'run-orphan': 'failed' });
+      expect(Object.fromEntries(readBacklog(dir).features.flatMap((feature) => feature.tasks.map((task) => [task.ref, task.status]))))
+        .toEqual({ 'orch/kept': 'in_progress', 'orch/orphan': 'todo' });
+      expect(JSON.parse(readFileSync(join(dir, 'run-worktrees.json'), 'utf8')).runs.map((run: { run_id: string }) => run.run_id)).toEqual(['run-kept']);
+
+      // The next coordinator adopts the kept session.
+      const { listAgents } = await import('../lib/agentRegistry.ts');
+      const { reconcileSessions } = await import('../lib/sessionSupervisor.ts');
+      const results = await reconcileSessions(dir, {
+        owner: 'pid:2:new-coordinator',
+        agents: listAgents(dir),
+        inspect: () => Promise.resolve({ transport: 'tmux', alive: true, writable: true, pid: 4242, processStart: 'proc:4242' }),
+      });
+      expect(results).toEqual([expect.objectContaining({ session_id: 'session-alice', outcome: 'adopted', state: 'running' })]);
+    });
+
+    it('without --keep-sessions closes every session row', async () => {
+      seedState([agentRecord({ agent_id: 'alice', session_handle: 'tmux:alice' })]);
+      const { initEventsDb } = await import('../lib/eventLog.ts');
+      initEventsDb(dir);
+      const { recordProviderSession } = await import('../lib/runStore.ts');
+      recordProviderSession(dir, {
+        sessionId: 'session-alice', runId: null, agentId: 'alice', provider: 'claude', providerRef: null,
+        startedAt: '2026-01-01T00:00:00.000Z', transport: 'tmux',
+      });
+      vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop: vi.fn().mockResolvedValue(undefined) }) }));
+      setEnv(dir);
+      process.argv = ['node', 'kill-all.ts'];
+      await import('./kill-all.ts');
+
+      const { listSupervisedSessions } = await import('../lib/sessionSupervisor.ts');
+      expect(listSupervisedSessions(dir).map((row) => row.state)).toEqual(['offline']);
+      expect(readAgents()).toEqual([]);
+    });
+  });
+
   describe('coordinator SIGTERM', () => {
     it('sends SIGTERM to the coordinator PID when alive', async () => {
       seedState();

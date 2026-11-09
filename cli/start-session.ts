@@ -7,14 +7,16 @@
  * background process.
  *
  * Usage:
- *   orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>]
+ *   orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset]
  *
  * All flags are optional. Missing values trigger interactive prompts in a TTY;
  * in non-TTY / CI mode they must be supplied as flags.
  *
  * Flow:
  *   0. A live master in orc's tmux server: make sure the coordinator runs, then reattach
- *   1. Reuse/restart coordinator
+ *   1. Reuse/start/restart the coordinator. Runtime state is kept, so the new
+ *      coordinator adopts live worker sessions; `--reset` (or the "start fresh"
+ *      choice) stops every worker session and fails their runs instead
  *   2. Reuse/replace/register the master
  *   3. Start the master provider CLI in a tmux session (resuming its Claude
  *      conversation when one is recorded) and attach this terminal to it
@@ -38,7 +40,7 @@ import {
 import { ACTIVE_PROJECT, assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { codexMcpOverrideArgs } from '../lib/mcpConfig.ts';
 import { loadMasterConfig }      from '../lib/providers.ts';
-import { flag }                  from '../lib/args.ts';
+import { boolFlag, flag }        from '../lib/args.ts';
 import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { recordProviderSession, recordSessionResumeFailed, reopenLiveSession, resumeProviderSession } from '../lib/runStore.ts';
 import { credentialHash, newSessionSecret } from '../lib/sessionCredentials.ts';
@@ -61,7 +63,9 @@ import {
   prepareSessionReuse,
   resetVolatileRuntimeStateForSession,
   restoreVolatileRuntimeStateFromSnapshot,
+  stopSessionsForReset,
 } from '../lib/sessionState.ts';
+import { createAdapter } from '../adapters/index.ts';
 
 function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): string {
   return fileURLToPath(new URL(
@@ -367,16 +371,22 @@ if (master && liveMasterSession) {
 // ── Startup wizard ─────────────────────────────────────────────────────────
 
 const { running: coordinatorRunning, pid: coordinatorPid } = coordinatorStatus();
-const coordinatorAction = await promptCoordinatorAction(coordinatorRunning ? coordinatorPid : null);
+const coordinatorAction = await promptCoordinatorAction(coordinatorRunning ? coordinatorPid : null, { reset: boolFlag('reset') });
+const resetRuntimeState = coordinatorAction === 'reset';
 
 if (coordinatorAction === 'cancel') {
   if (isInteractive()) console.log('Cancelled.');
   process.exit(isInteractive() ? 0 : 1);
 }
 
-if (coordinatorAction === 'terminate' && coordinatorPid) {
+if ((coordinatorAction === 'terminate' || resetRuntimeState) && coordinatorRunning && coordinatorPid) {
   console.log(`Stopping running coordinator (PID ${coordinatorPid})...`);
   const stopped = await stopCoordinator(coordinatorPid);
+  if (!stopped && resetRuntimeState) {
+    // Resetting under a live coordinator would race its ticks for the same runs.
+    console.error(`Coordinator PID ${coordinatorPid} is still running; not resetting. Stop it (orc kill-all) and retry.`);
+    process.exit(1);
+  }
   if (!stopped) {
     console.warn(`Coordinator PID ${coordinatorPid} is still running; continuing with existing coordinator.`);
   }
@@ -447,9 +457,20 @@ if (!authResult.ok) {
 
 // ── Coordinator ────────────────────────────────────────────────────────────
 
-const sessionReset = coordinatorAction === 'reuse'
-  ? prepareSessionReuse(STATE_DIR)
-  : resetVolatileRuntimeStateForSession(STATE_DIR);
+// Kept state is the crash recovery path: the coordinator's startup reconcile adopts
+// live tmux sessions. A reset stops every worker session before failing its run.
+if (resetRuntimeState) {
+  const { stopped, failed } = await stopSessionsForReset(STATE_DIR, (agent) => createAdapter(agent.provider).stop(agent.session_handle!));
+  for (const agentId of stopped) console.log(`✓ Stopped session for ${agentId}`);
+  if (failed.length > 0) {
+    for (const { agent_id, error } of failed) console.error(`Could not stop session for ${agent_id}: ${error}`);
+    console.error('Not resetting while those sessions may still run. Stop them (orc worker-remove <agent_id>) and retry.');
+    process.exit(1);
+  }
+}
+const sessionReset = resetRuntimeState
+  ? resetVolatileRuntimeStateForSession(STATE_DIR)
+  : prepareSessionReuse(STATE_DIR);
 
 // Coordinator spawn is deferred until after the master starts — see below.
 // This avoids a lock race: if the start throws, the error recovery path calls

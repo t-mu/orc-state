@@ -301,6 +301,7 @@ Session identity (schema v8):
 | `offline` | exited, supervisor gone, or replaced |
 
 - Startup reconciles every non-offline session and records `session_reconciled` (`adopted`, `recoverable`, `unknown`, `exited`, `superseded`); it never kills one.
+- `orc start-session` keeps runtime state by default, so a coordinator started after a crash adopts the live sessions. Only `--reset` (or the interactive "Start fresh (reset)") resets: it stops the coordinator and every non-master session first, then fails their runs (`session_reset`) and closes their rows. `orc kill-all --keep-sessions` keeps, under the state lock, the agent records, non-offline session rows, active runs and worktrees of agents with a session.
 - The master is probed each tick. It is retired (offline, handle cleared, session closed so its secret stops authenticating, `master_retired` with the failed probe) only after 2 failed probes in a row; a failure within one tick interval of its `session_started_at` is not counted. `orc start-session` retires an attached master that ended only after 2 failed probes too.
 - `orc start-session` repairs a master marked offline whose tmux pane still runs: it reopens the closed session whose pid/start match the live pane (`session_reconciled`, `outcome: restored`) and restores the agent record, so the master's secret authenticates again. No matching session: it starts a master as usual.
 - Every direct write to a session (envelope, nudge, PR review) requires `running` and a matching pid/start; a mismatch moves it to `unknown`.
