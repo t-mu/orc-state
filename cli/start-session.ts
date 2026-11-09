@@ -120,9 +120,13 @@ function coordinatorStatus() {
 }
 
 /** Why the running coordinator is out of date against the code on disk (version or build); null when current, or unreachable. */
+let warnedStale = false;
 async function staleCoordinatorWarning(): Promise<string | null> {
+  if (warnedStale) return null; // already printed this run
   try {
-    return staleCodeWarning(await new ControlClient(STATE_DIR, { timeoutMs: 3_000, socketPath: controlSocketFromEnv() }).health());
+    const warning = staleCodeWarning(await new ControlClient(STATE_DIR, { timeoutMs: 3_000, socketPath: controlSocketFromEnv() }).health());
+    warnedStale = warning !== null;
+    return warning;
   } catch {
     return null; // no control API, or a coordinator that predates /v1/health
   }

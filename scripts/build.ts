@@ -104,9 +104,9 @@ for (const f of jsFiles) {
 console.log(`  removed ${removedJs} empty .js files`);
 
 // Name this build by content, not file times (npm normalises tarball mtimes). Written last,
-// after every .js is final, and read by lib/codeIdentity.ts.
+// after every file in dist/ (code and copied assets) is final, and read by lib/codeIdentity.ts.
 const hash = createHash('sha256');
-for (const f of globSync('dist/**/*.js').sort()) hash.update(`${f}\0`).update(readFileSync(f)).update('\0');
+for (const f of globSync('dist/**/*', { withFileTypes: false }).filter((f: string) => statSync(f).isFile()).sort()) hash.update(`${f}\0`).update(readFileSync(f)).update('\0');
 writeFileSync('dist/build-id', `${hash.digest('hex').slice(0, 16)}\n`);
 console.log('  wrote dist/build-id');
 
