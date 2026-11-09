@@ -25,7 +25,10 @@ cp "$STATE/agents.json.pre-upgrade" "$STATE/agents.json"
 orc doctor
 ```
 
-- Migrations apply on first open, one transaction each; `orc doctor` reports `runtimeSchema.version`. A database from a newer binary is refused.
+- Migrations apply on first open, one transaction each; `orc doctor` reports `runtimeSchema.version`.
+- Each schema version records `min_compatible` in `schema_migrations`: the oldest code (named by the schema version it was built for) that can still read and write it. Code opens a newer database only when `min_compatible` is at or below its own schema version; otherwise it is refused with "needs code of schema N or newer".
+- A newer binary does not migrate while a live coordinator runs code that cannot read the new schema (the coordinator records its schemas in `coordinator.pid` and `control.json`; one that records none predates ranges and counts as supporting only the current version). The command fails with `<db> needs migration from schema X to Y, but the running coordinator (PID …) supports schema X…`. Upgrade procedure: install or build the new binary, run `orc coordinator restart` (or `orc start-session`, which restarts a stale coordinator when you choose to); the old coordinator stops first and the new one migrates. Until then, commands that open the databases fail with that error.
+- `orc doctor` fails `coordinator_schema` when the running coordinator's schema support does not cover `events.db` or `runtime.db` (`checks.coordinatorSchema`): run `orc coordinator restart`.
 - Never edit `PRAGMA user_version` or migration records to force a downgrade.
 - `backlog.json` is a projection of `runtime.db`; it needs no backup.
 

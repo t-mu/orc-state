@@ -1,32 +1,46 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
+import { assertMigrationAllowed, codeSupportsSchema, readSchemaRange, type SchemaRange } from './schemaCompat.ts';
 
-export const RUNTIME_SCHEMA_VERSION = 8;
+export const RUNTIME_SCHEMA_VERSION = 9;
+/** The schema this code writes, and the oldest code that can read it (`lib/schemaCompat.ts`). Raise `min_compatible` with any change older code cannot read. */
+export const RUNTIME_SCHEMA: SchemaRange = { version: RUNTIME_SCHEMA_VERSION, min_compatible: 9 };
+
+/** `schema_migrations` names by version; index 0 is version 1. */
+const MIGRATION_NAMES = [
+  'initial_operational_tables', 'run_authority_cutover', 'durable_command_delivery', 'session_supervision',
+  'terminal_broker', 'semantic_message_routing', 'session_credentials', 'session_identity', 'schema_compat_range',
+] as const;
 
 const OPERATIONAL_TABLES = [
   'schema_migrations', 'runs', 'sessions', 'commands', 'messages',
   'input_requests', 'offsets', 'control_leases', 'runtime_cutovers', 'terminals',
 ] as const;
 
-/** A zero-version database is the legacy event-only store. */
+/** A zero-version database is the legacy event-only store; a newer one is supported when it records this code as compatible. */
 export function assertSupportedRuntimeSchemaVersion(db: Database.Database): void {
-  const version = db.pragma('user_version', { simple: true }) as number;
-  if (version > RUNTIME_SCHEMA_VERSION) {
-    throw new Error(`events.db schema version ${version} is newer than supported version ${RUNTIME_SCHEMA_VERSION}; use a newer orc binary`);
+  const range = readSchemaRange(db);
+  if (!codeSupportsSchema(RUNTIME_SCHEMA_VERSION, range)) {
+    throw new Error(`events.db schema version ${range.version} needs code of schema ${range.min_compatible} or newer; this orc binary supports ${RUNTIME_SCHEMA_VERSION}; use a newer orc binary`);
   }
 }
 
-/** Install operational tables without importing or changing legacy JSON state. */
-export function migrateRuntimeSchema(db: Database.Database): void {
+/**
+ * Install operational tables without importing or changing legacy JSON state.
+ * With `stateDir`, an upgrade is refused while a live coordinator runs code
+ * that cannot read the new schema.
+ */
+export function migrateRuntimeSchema(db: Database.Database, options: { stateDir?: string } = {}): void {
   db.pragma('foreign_keys = ON');
   assertSupportedRuntimeSchemaVersion(db);
   let currentVersion = db.pragma('user_version', { simple: true }) as number;
-  if (currentVersion === RUNTIME_SCHEMA_VERSION) {
+  if (currentVersion >= RUNTIME_SCHEMA_VERSION) {
     const health = inspectRuntimeSchemaDb(db);
     if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
     return;
   }
+  if (options.stateDir) assertMigrationAllowed(options.stateDir, 'events', currentVersion, RUNTIME_SCHEMA);
   if (currentVersion === 0) {
     db.transaction(() => {
       assertSupportedRuntimeSchemaVersion(db);
@@ -336,13 +350,29 @@ export function migrateRuntimeSchema(db: Database.Database): void {
       db.pragma('foreign_keys = ON');
     }
   }
+  currentVersion = db.pragma('user_version', { simple: true }) as number;
+  if (currentVersion === 8) {
+    db.transaction(() => {
+      if ((db.pragma('user_version', { simple: true }) as number) !== 8) return;
+      // Each version records the oldest code that can still read it (lib/schemaCompat.ts).
+      db.exec(`
+        ALTER TABLE schema_migrations ADD COLUMN min_compatible INTEGER;
+        UPDATE schema_migrations SET min_compatible = version;
+        INSERT INTO schema_migrations (version, name, applied_at, min_compatible)
+        VALUES (9, 'schema_compat_range', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ${RUNTIME_SCHEMA.min_compatible});
+      `);
+      db.pragma('user_version = 9');
+    }).immediate();
+  }
   const health = inspectRuntimeSchemaDb(db);
   if (!health.ok) throw new Error(`events.db schema is inconsistent: ${health.messages.join('; ')}`);
 }
 
-export function inspectRuntimeSchema(stateDir: string): { ok: boolean; version: number | null; messages: string[] } {
+export interface RuntimeSchemaHealth { ok: boolean; version: number | null; min_compatible: number | null; messages: string[] }
+
+export function inspectRuntimeSchema(stateDir: string): RuntimeSchemaHealth {
   const path = join(stateDir, 'events.db');
-  if (!existsSync(path)) return { ok: false, version: null, messages: ['events.db: file not found'] };
+  if (!existsSync(path)) return { ok: false, version: null, min_compatible: null, messages: ['events.db: file not found'] };
   try {
     const db = new Database(path, { readonly: true, fileMustExist: true });
     try {
@@ -351,32 +381,31 @@ export function inspectRuntimeSchema(stateDir: string): { ok: boolean; version: 
       db.close();
     }
   } catch (error) {
-    return { ok: false, version: null, messages: [`events.db: ${(error as Error).message}`] };
+    return { ok: false, version: null, min_compatible: null, messages: [`events.db: ${(error as Error).message}`] };
   }
 }
 
-function inspectRuntimeSchemaDb(db: Database.Database): { ok: boolean; version: number; messages: string[] } {
-  const version = db.pragma('user_version', { simple: true }) as number;
+/** A newer schema within this code's compatible range is checked for everything this code relies on. */
+function inspectRuntimeSchemaDb(db: Database.Database): RuntimeSchemaHealth & { version: number; min_compatible: number } {
+  const range = readSchemaRange(db);
+  const { version } = range;
   const messages: string[] = [];
-  if (version > RUNTIME_SCHEMA_VERSION) messages.push(`schema version ${version} is newer than supported version ${RUNTIME_SCHEMA_VERSION}`);
-  else if (version < RUNTIME_SCHEMA_VERSION) messages.push(`schema version ${version} requires migration to ${RUNTIME_SCHEMA_VERSION}`);
-  if (version === RUNTIME_SCHEMA_VERSION) {
+  if (!codeSupportsSchema(RUNTIME_SCHEMA_VERSION, range)) {
+    messages.push(`schema version ${version} needs code of schema ${range.min_compatible} or newer; supported version is ${RUNTIME_SCHEMA_VERSION}`);
+  } else if (version < RUNTIME_SCHEMA_VERSION) {
+    messages.push(`schema version ${version} requires migration to ${RUNTIME_SCHEMA_VERSION}`);
+  } else {
     const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
     for (const table of OPERATIONAL_TABLES) if (!tables.has(table)) messages.push(`missing table ${table}`);
     if (tables.has('schema_migrations')) {
       const rows = db.prepare('SELECT version, name FROM schema_migrations').all() as Array<{ version: number; name: string }>;
       const byVersion = new Map(rows.map((row) => [row.version, row.name]));
-      if (byVersion.get(1) !== 'initial_operational_tables') messages.push('missing migration record 1');
-      if (byVersion.get(2) !== 'run_authority_cutover') messages.push('missing migration record 2');
-      if (byVersion.get(3) !== 'durable_command_delivery') messages.push('missing migration record 3');
-      if (byVersion.get(4) !== 'session_supervision') messages.push('missing migration record 4');
-      if (byVersion.get(5) !== 'terminal_broker') messages.push('missing migration record 5');
-      if (byVersion.get(6) !== 'semantic_message_routing') messages.push('missing migration record 6');
-      if (byVersion.get(7) !== 'session_credentials') messages.push('missing migration record 7');
-      if (byVersion.get(8) !== 'session_identity') messages.push('missing migration record 8');
+      MIGRATION_NAMES.forEach((name, index) => {
+        if (byVersion.get(index + 1) !== name) messages.push(`missing migration record ${index + 1}`);
+      });
     }
     const violations = db.pragma('foreign_key_check') as unknown[];
     if (violations.length > 0) messages.push(`${violations.length} foreign key violation(s)`);
   }
-  return { ok: messages.length === 0, version, messages };
+  return { ok: messages.length === 0, ...range, messages };
 }

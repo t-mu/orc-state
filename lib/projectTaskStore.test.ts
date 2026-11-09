@@ -125,9 +125,9 @@ describe('project task SQLite schema', () => {
     try {
       expect(db.pragma('user_version', { simple: true })).toBe(PROJECT_TASK_SCHEMA_VERSION);
       migrateProjectTaskSchema(db);
-      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 5 });
-      db.pragma('user_version = 6');
-      expect(() => migrateProjectTaskSchema(db)).toThrow('newer');
+      expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({ count: 6 });
+      db.pragma('user_version = 7');
+      expect(() => migrateProjectTaskSchema(db)).toThrow('needs code of schema 7 or newer');
     } finally { db.close(); }
     const broken = new Database(join(dir, 'broken.db'));
     try {

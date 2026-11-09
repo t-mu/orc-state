@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OrcEvent } from '../types/events.ts';
+import type { SchemaSupport } from './schemaCompat.ts';
 
 /**
  * Local daemon control protocol. HTTP/JSON over a Unix domain socket is the
@@ -36,6 +37,8 @@ export interface ControlEndpoint {
   started_at: string;
   /** The coordinator's start fingerprint (`lib/processIdentity.ts`), so a reused PID is not mistaken for it. */
   process_start?: string | null;
+  /** The schemas the coordinator supports (`lib/schemaCompat.ts`); absent from a coordinator that predates schema ranges. */
+  schemas?: SchemaSupport;
 }
 
 export type ControlErrorCode =

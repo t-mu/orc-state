@@ -6,17 +6,37 @@ import type { TaskStatus } from '../types/backlog.ts';
 import type { TaskTransitionCause } from './projectContract.ts';
 import { openReadOnlyDatabase, shouldOpenReadOnly } from './sqliteReadOnly.ts';
 import { ConflictError, InputError, NotFoundError } from './domainErrors.ts';
+import { assertMigrationAllowed, codeSupportsSchema, readSchemaRange, type SchemaRange } from './schemaCompat.ts';
 
-export const PROJECT_TASK_SCHEMA_VERSION = 5;
+export const PROJECT_TASK_SCHEMA_VERSION = 6;
+/** The schema this code writes, and the oldest code that can read it (`lib/schemaCompat.ts`). Raise `min_compatible` with any change older code cannot read. */
+export const PROJECT_TASK_SCHEMA: SchemaRange = { version: PROJECT_TASK_SCHEMA_VERSION, min_compatible: 6 };
+
+/** `schema_migrations` names by version; index 0 is version 1. */
+const MIGRATION_NAMES = ['project_tasks', 'markdown_imports_and_plans', 'sqlite_lifecycle', 'migration_import', 'drop_released_status', 'schema_compat_range'] as const;
+
+function assertSupportedProjectTaskSchema(db: Database.Database): void {
+  const range = readSchemaRange(db);
+  if (!codeSupportsSchema(PROJECT_TASK_SCHEMA_VERSION, range)) {
+    throw new Error(`runtime.db schema version ${range.version} needs code of schema ${range.min_compatible} or newer; this orc binary supports ${PROJECT_TASK_SCHEMA_VERSION}`);
+  }
+}
 
 const REQUIRED_TABLES = ['schema_migrations', 'tasks', 'task_spec_revisions', 'task_dependencies', 'task_transitions', 'task_runs', 'task_imports', 'plan_documents'];
 
 /** A separate project database: legacy events.db remains untouched until cutover. */
-/** `targetVersion` exists for upgrade tests; production callers always migrate to the latest version. */
-export function migrateProjectTaskSchema(db: Database.Database, targetVersion = PROJECT_TASK_SCHEMA_VERSION): void {
+/**
+ * `targetVersion` exists for upgrade tests; production callers always migrate to the latest version.
+ * With `stateDir`, an upgrade is refused while a live coordinator runs code that cannot read the new
+ * schema; a newer schema within this code's compatible range is left as it is.
+ */
+export function migrateProjectTaskSchema(db: Database.Database, targetVersion = PROJECT_TASK_SCHEMA_VERSION, options: { stateDir?: string } = {}): void {
   db.pragma('foreign_keys = ON');
+  assertSupportedProjectTaskSchema(db);
   const version = db.pragma('user_version', { simple: true }) as number;
-  if (version > PROJECT_TASK_SCHEMA_VERSION) throw new Error(`runtime.db schema version ${version} is newer than supported version ${PROJECT_TASK_SCHEMA_VERSION}`);
+  if (options.stateDir && version < targetVersion) {
+    assertMigrationAllowed(options.stateDir, 'runtime', version, targetVersion === PROJECT_TASK_SCHEMA_VERSION ? PROJECT_TASK_SCHEMA : { version: targetVersion, min_compatible: targetVersion });
+  }
   if (version === 0) {
     db.transaction(() => {
       db.exec(`
@@ -282,19 +302,26 @@ export function migrateProjectTaskSchema(db: Database.Database, targetVersion = 
       db.pragma('foreign_keys = ON');
     }
   }
+  if (targetVersion >= 6 && (db.pragma('user_version', { simple: true }) as number) === 5) {
+    db.transaction(() => {
+      // Each version records the oldest code that can still read it (lib/schemaCompat.ts).
+      db.exec(`
+        ALTER TABLE schema_migrations ADD COLUMN min_compatible INTEGER;
+        UPDATE schema_migrations SET min_compatible = version;
+        INSERT INTO schema_migrations (version, name, applied_at, min_compatible)
+          VALUES (6, 'schema_compat_range', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ${PROJECT_TASK_SCHEMA.min_compatible});
+      `);
+      db.pragma('user_version = 6');
+    }).immediate();
+  }
   if (targetVersion < PROJECT_TASK_SCHEMA_VERSION) return;
   const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name));
   for (const name of REQUIRED_TABLES) if (!names.has(name)) throw new Error(`runtime.db missing table ${name}`);
-  const migration = db.prepare('SELECT name FROM schema_migrations WHERE version = 1').get() as { name: string } | undefined;
-  if (migration?.name !== 'project_tasks') throw new Error('runtime.db missing project task migration');
-  const v2 = db.prepare('SELECT name FROM schema_migrations WHERE version = 2').get() as { name: string } | undefined;
-  if (v2?.name !== 'markdown_imports_and_plans') throw new Error('runtime.db missing markdown import migration');
-  const v3 = db.prepare('SELECT name FROM schema_migrations WHERE version = 3').get() as { name: string } | undefined;
-  if (v3?.name !== 'sqlite_lifecycle') throw new Error('runtime.db missing lifecycle migration');
-  const v4 = db.prepare('SELECT name FROM schema_migrations WHERE version = 4').get() as { name: string } | undefined;
-  if (v4?.name !== 'migration_import') throw new Error('runtime.db missing migration import migration');
-  const v5 = db.prepare('SELECT name FROM schema_migrations WHERE version = 5').get() as { name: string } | undefined;
-  if (v5?.name !== 'drop_released_status') throw new Error('runtime.db missing drop released status migration');
+  const records = new Map((db.prepare('SELECT version, name FROM schema_migrations').all() as Array<{ version: number; name: string }>)
+    .map((row) => [row.version, row.name]));
+  MIGRATION_NAMES.forEach((name, index) => {
+    if (records.get(index + 1) !== name) throw new Error(`runtime.db missing migration record ${index + 1} (${name})`);
+  });
 }
 
 export interface TaskSpecInput {
@@ -448,7 +475,7 @@ export class ProjectTaskStore {
     const db = new Database(path);
     try {
       db.pragma('busy_timeout = 5000');
-      migrateProjectTaskSchema(db);
+      migrateProjectTaskSchema(db, PROJECT_TASK_SCHEMA_VERSION, { stateDir: projectStateDir });
       db.pragma('journal_mode = WAL');
       this.db = db;
     } catch (error) {
@@ -456,10 +483,11 @@ export class ProjectTaskStore {
       // A sandboxed project session reads the task store the coordinator holds open.
       if (!shouldOpenReadOnly(error, path)) throw error;
       this.db = openReadOnlyDatabase(path);
-      const version = this.db.pragma('user_version', { simple: true }) as number;
-      if (version !== PROJECT_TASK_SCHEMA_VERSION) {
+      const range = readSchemaRange(this.db);
+      // A newer schema that records this code as compatible stays readable.
+      if (range.version < PROJECT_TASK_SCHEMA_VERSION || !codeSupportsSchema(PROJECT_TASK_SCHEMA_VERSION, range)) {
         this.db.close();
-        throw new Error(`runtime.db schema version ${version} does not match this orc binary (${PROJECT_TASK_SCHEMA_VERSION}); it cannot be migrated without write access`);
+        throw new Error(`runtime.db schema version ${range.version} does not match this orc binary (${PROJECT_TASK_SCHEMA_VERSION}); it cannot be migrated without write access`);
       }
     }
   }

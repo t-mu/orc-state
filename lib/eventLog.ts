@@ -56,7 +56,7 @@ function getDb(stateDir: string): Database.Database {
       WHERE event = 'phase_started' AND json_valid(payload);
     `);
 
-    migrateRuntimeSchema(db);
+    migrateRuntimeSchema(db, { stateDir });
     migrateJsonlIfNeeded(db, stateDir);
     _dbs.set(stateDir, db);
     return db;
