@@ -20,8 +20,8 @@ import {
  * needs from run-activity.json and the active runs' events.
  *
  * `isStalled` and `runIdleAnchor` are also used, without a RunSignals, by
- * `orc status`/`orc watch` (statusView), runs-active and the control API
- * (statusProjection) and the MCP `list_stalled_runs` tool, so every reader
+ * `orc status`/`orc watch` (statusView), the control API snapshot
+ * (statusProjection) and `orc runs` / MCP `list_runs` (runList), so every reader
  * agrees on when a run is stalled.
  */
 
@@ -67,7 +67,7 @@ export function isStalled(
 }
 
 /**
- * Reader-side idle anchor (status, runs-active, control API): the newer of the
+ * Reader-side idle anchor (status, `orc runs` / `list_runs`, control API): the newer of the
  * run's durable activity and its hook activity, then the claim's heartbeat,
  * start and startup times.
  */

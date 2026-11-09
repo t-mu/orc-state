@@ -1,6 +1,6 @@
 # Memory
 
-Persistent, searchable notes that survive worker sessions. Commands: [cli.md → Memory](./cli.md#memory); MCP tools (`memory_wake_up`, `memory_recall`, `memory_search`, `memory_store`, `memory_status`): `mcp/tools-list.ts`.
+Persistent, searchable notes that survive worker sessions. Commands: [cli.md → Memory](./cli.md#memory); MCP tools (`memory_wake_up`, `memory_search` — without `query` it browses a wing/room —, `memory_store`, `memory_status`): `mcp/tools-list.ts`.
 
 ## Store
 

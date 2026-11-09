@@ -245,8 +245,9 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 | Method | Path | Caller | Result |
 |--------|------|--------|--------|
 | `GET` | `/v1/health` | any authenticated caller (worker session, master, operator) | `{ version, protocol_version, schema_version, started_at, code_root, code_mtime, build_id }`: what the running coordinator loaded. `version` and `build_id` are the staleness signal: `build_id` is the content hash `scripts/build.ts` writes to `dist/build-id` (`git-<sha>` in a source checkout, null when unknown), so it survives npm normalising tarball mtimes. `orc doctor` and `orc start-session` warn when either differs from the code on disk; a source checkout also compares `code_mtime` (ISO, newest mtime among its entry module and `lib/` files at startup). An app compares `version`/`build_id` with the installed package the same way |
-| `GET` | `/v1/status?events=<0-200>` | master, operator | The `orc status --json` view (`StatusView`) with `cursor` (highest event seq, read before claims, backlog and agents, so an event committed during the build has seq above `cursor` and the view may already show it; continue with `/v1/events/stream?after=cursor`) and `waiting_input` (questions are read just after the event window, so one may be newer than `cursor`). `events` sets `recentEvents` length (default 20, `0` → `[]`); out of range → `400 bad_request`. Reads only events from the latest session boundary, those of active runs, and the recent ones |
+| `GET` | `/v1/status?events=<0-200>` | master, operator | The `orc status --json` view (`StatusView`, without the `coordinator` field the CLI adds) with `cursor` (highest event seq, read before claims, backlog and agents, so an event committed during the build has seq above `cursor` and the view may already show it; continue with `/v1/events/stream?after=cursor`) and `waiting_input` (questions are read just after the event window, so one may be newer than `cursor`). `events` sets `recentEvents` length (default 20, `0` → `[]`); out of range → `400 bad_request`. Reads only events from the latest session boundary, those of active runs, and the recent ones |
 | `GET` | `/v1/snapshot` | master, operator | `{ project, cursor, generated_at, runs, sessions }` from one read transaction; runs carry `task_status`, `spec_revision` |
+| `GET` | `/v1/runs?state=&stale_after_ms=` | master, operator | `{ runs }`: the `orc runs --json` / MCP `list_runs` view; `state` is `active` (default), `stalled` or `waiting_input`, anything else `bad_request` |
 | `GET` | `/v1/events?after=&limit=&run_id=&agent_id=&event_type=` | master, operator | `{ events: [{ seq, event }], cursor }`, `limit` 1-1000; the optional `run_id`, `agent_id` and `event_type` filters combine with AND (an empty value → `400 bad_request`). `cursor` is the last returned `seq`, so a filtered page continues from it. `event` is an `OrcEvent`, or `null` for a corrupt row |
 | `GET` | `/v1/runs/<run_id>` | master, operator | `{ run }`: the run's claim plus `task_title`, `worktree_path` (null once the worktree is gone) and `session` (the running `SessionTerminalView`, null when none); unknown id → `404 not_found` |
 | `GET` | `/v1/events/stream?after=` | master, operator | NDJSON `{type:'event',seq,event}` / `{type:'heartbeat',cursor}` |
@@ -383,7 +384,7 @@ Importing it has no side effects: no project resolution, registry access, git ca
 | Group | Commands |
 |---|---|
 | Session and setup | `start-session`, `init`, `install`, `install-agents`, `install-skills`, `project`, `mcp-server` |
-| Inspection | `status`, `watch`, `attach`, `doctor`, `preflight`, `runs-active`, `run-info`, `sessions`, `events`, `event-cursor`, `waiting-input`, `worker-status`, `terminal`, `memory-status`, `memory-search` |
+| Inspection | `status`, `watch`, `attach`, `doctor`, `preflight`, `runs`, `run-info`, `sessions`, `events`, `event-cursor`, `worker-status`, `terminal`, `memory-status`, `memory-search` |
 | Master / operator | `delegate`, `task-mark-done`, `task-reset`, `task-unblock`, `task-cancel`, `run-expire`, `run-close`, `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`, `pr-diff`, `pr-review`, `pr-merge`, `pr-status` |
 | Worker lifecycle (flags below) | `report-for-duty`, `run-start`, `progress`, `review-submit`, `review-read`, `run-work-complete`, `run-finish`, `run-fail`, `run-input-request`, `memory-wake-up`, `memory-record` |
 | Hooks and debug | `stop-check` (Claude Stop hook), `control` (debug; its `command`, `ack`, `message`, `messages` and `consume` subcommands are **Experimental**, like the routes they call), `run-heartbeat` (deprecated no-op) |
@@ -395,16 +396,15 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 | Command | Shape |
 |---|---|
 | `orc project list --json` | `listProjects()`: `[{ id, name, target_repo_root, state_dir, repo_present, control_socket, coordinator_running }]` (without `--json`, the registry records) |
-| `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError }`; `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
+| `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError, coordinator }`; `claims.waiting_input` counts the `waiting_input` rows; `coordinator` is `{ running, pid, version, started_at, stale }`, added by the CLI and absent from `/v1/status` (MCP `get_status` carries the same, with a `waiting_input` count); `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
 | `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
 | `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok`. `checks.coordinatorCode.warning` is a restart hint (string) when the running coordinator's code is older than the code on disk, else `null`; it never changes `ok` or the exit code |
 | `orc preflight --json` | `{ ok, project, checks, warnings, details }`; exit 1 when not `ok` |
-| `orc runs-active --json` | `{ project, total, runs, event_read_error }` |
+| `orc runs --json` | `{ runs }` (same as MCP `list_runs`); rows `{ run_id, task_ref, agent_id, state, phase, age_seconds, idle_seconds, stalled }`, plus `question`, `request_id`, `waiting_seconds` on a run waiting for input |
 | `orc run-info <run_id> --json` | the run's claim fields + `task_title`, `worktree_path`, `task_spec_revision_status` |
 | `orc sessions --json` | `{ total, sessions }` |
 | `orc events --json` | `{ events, last_seq, has_more }` (same as MCP `query_events`) |
 | `orc review-read --json` | `{ count, reviews }` |
-| `orc waiting-input --json` | array of `{ run_id, agent_id, task_ref, question, request_id, waiting_seconds, input_requested_at }` |
 | `orc worker-status --json` | array of agent records + `active_task_ref`, `heartbeat_seconds_ago`; one record when given an `agent_id` |
 
 #### Operator commands
@@ -441,11 +441,11 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 
 | Group | Tool names |
 |---|---|
-| Reads | `list_tasks`, `get_task`, `list_agents`, `list_active_runs`, `list_stalled_runs`, `get_run`, `get_status`, `get_agent_workview`, `query_events`, `list_waiting_input`, `list_worktrees` |
+| Reads | `list_tasks`, `get_task`, `list_agents`, `list_runs`, `get_run`, `get_status`, `get_agent_workview`, `query_events`, `list_worktrees` |
 | Task authoring and control | `create_task`, `update_task`, `delegate_task`, `cancel_task`, `reset_task`, `unblock_task`, `close_run`, `respond_input` |
 | Coordinator | `restart_coordinator` (master secret; checked against the state, not sent to the coordinator it replaces) |
 | Scouts | `request_scout`, `get_scout_report`, `remove_scout` |
-| Memory | `memory_wake_up`, `memory_recall`, `memory_search`, `memory_store`, `memory_status` |
+| Memory | `memory_wake_up`, `memory_search` (browses `wing`/`room` without `query`), `memory_store`, `memory_status` |
 
 ### Config keys
 

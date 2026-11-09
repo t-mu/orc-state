@@ -628,12 +628,24 @@ describe('local daemon control API', () => {
     expect(seen.map((row) => (row.event as { event: string }).event)).toEqual(Array(4).fill('command_queued'));
   });
 
-  it('serves runs-active through the control API with the same rows as the legacy path', async () => {
-    const legacy = JSON.parse((await cli('cli/runs-active.ts', '--json')).stdout) as { runs: Array<Record<string, unknown>> };
-    const viaControl = JSON.parse((await cli('cli/runs-active.ts', '--json', '--via-control')).stdout) as { runs: Array<Record<string, unknown>> };
+  it('serves orc runs through the control API with the same rows as the direct path', async () => {
+    const direct = JSON.parse((await cli('cli/runs.ts', '--json')).stdout) as { runs: Array<Record<string, unknown>> };
+    const viaControl = JSON.parse((await cli('cli/runs.ts', '--json', '--via-control')).stdout) as { runs: Array<Record<string, unknown>> };
     const stable = (runs: Array<Record<string, unknown>>) => runs.map(({ age_seconds: _a, idle_seconds: _i, ...rest }) => rest);
     expect(viaControl.runs).toHaveLength(2);
-    expect(stable(viaControl.runs)).toEqual(stable(legacy.runs));
+    expect(stable(viaControl.runs)).toEqual(stable(direct.runs));
+    const stalledVia = JSON.parse((await cli('cli/runs.ts', '--json', '--via-control', '--state=stalled', '--stale-after-ms=0')).stdout) as { runs: Array<Record<string, unknown>> };
+    const stalledDirect = JSON.parse((await cli('cli/runs.ts', '--json', '--state=stalled', '--stale-after-ms=0')).stdout) as { runs: Array<Record<string, unknown>> };
+    expect(stable(stalledVia.runs)).toEqual(stable(stalledDirect.runs));
+    await expect(new ControlClient(dir).runs({ state: 'waiting_input' })).resolves.toEqual({ runs: [] });
+  });
+
+  it('refuses a bad state on GET /v1/runs and a worker session reading every run', async () => {
+    await expect(new ControlClient(dir, { credential: 'session-master' }).runs({ state: 'done' as never }))
+      .rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    await expect(new ControlClient(dir, { credential: 'session-master' }).runs({ stale_after_ms: 99999999999999999999 }))
+      .rejects.toMatchObject({ code: 'bad_request', status: 400 });
+    await expect(new ControlClient(dir, { credential: 'session-a' }).runs()).rejects.toMatchObject({ status: 403 });
   });
 
   it('refuses a second daemon on a live socket and removes its endpoint on close', async () => {
@@ -641,9 +653,9 @@ describe('local daemon control API', () => {
     await server.close();
     expect(existsSync(join(dir, CONTROL_ENDPOINT_FILE))).toBe(false);
     await expect(new ControlClient(dir).snapshot()).rejects.toBeInstanceOf(ControlError);
-    const legacy = await cli('cli/runs-active.ts', '--json');
-    expect(JSON.parse(legacy.stdout).total).toBe(2);
-    expect((await cli('cli/runs-active.ts', '--via-control')).stderr).toContain('not running');
+    const direct = await cli('cli/runs.ts', '--json');
+    expect(JSON.parse(direct.stdout).runs).toHaveLength(2);
+    expect((await cli('cli/runs.ts', '--via-control')).stderr).toContain('not running');
     server = await startControlServer(dir, { pollMs: 20 });
   });
 

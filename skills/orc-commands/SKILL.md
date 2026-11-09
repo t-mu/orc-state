@@ -27,7 +27,7 @@ Every command acts on one registered project. Inside its repository or a worktre
 |---|---|
 | `orc status [--json] [--mine --agent-id=<id>]` / `orc watch` | agents, tasks, claims |
 | `orc doctor` / `orc preflight` | state validation / environment check |
-| `orc runs-active`, `orc run-info <run_id>`, `orc waiting-input` | runs, one run, pending questions |
+| `orc runs [--state=active\|stalled\|waiting-input]`, `orc run-info <run_id>` | runs (stalled, waiting for input), one run |
 | `orc worker-status [<agent_id>]`, `orc sessions [--all]` | worker health; session state (running/recoverable/unknown) |
 | `orc events [--run-id=] [--agent-id=] [--task-ref=] [--event=] [--notifications] [--after=<seq>] [--limit=N] [--json] [--follow]` | event log, one page (newest without `--after`) |
 | `orc review-read --run-id=<id>` | submitted reviews, one per reviewer label |

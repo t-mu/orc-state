@@ -12,14 +12,14 @@ import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { readRunActivity } from '../lib/runActivityStore.ts';
-import { isStalled, runIdleAnchor } from '../lib/runSignals.ts';
 import { selectCurrentActivity, type CurrentActivity } from '../lib/currentActivity.ts';
 import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, requireProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
 import { TERMINAL_STATUSES, masterActorId } from '../lib/operatorMutations.ts';
 import { extractScoutReport, launchScout, prepareScout, readScoutReport, removeScout } from '../lib/scouts.ts';
-import { listWaitingInput } from '../lib/waitingInput.ts';
-import { describeCoordinator, restartCoordinator } from '../lib/coordinatorProcess.ts';
+import { isWaitingForInput } from '../lib/waitingInput.ts';
+import { listRuns, type RunListArgs } from '../lib/runList.ts';
+import { coordinatorSummary, describeCoordinator, restartCoordinator } from '../lib/coordinatorProcess.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -116,29 +116,9 @@ export function handleListAgents(stateDir: string, { role, include_dead = false 
     }));
 }
 
-export function handleListActiveRuns(stateDir: string) {
-  return readClaims(stateDir).claims.filter((claim) =>
-    ['claimed', 'in_progress'].includes(claim.state),
-  );
-}
-
-export function handleListStalledRuns(stateDir: string, { stale_after_ms = 600_000, now_ms }: { stale_after_ms?: unknown; now_ms?: unknown } = {}) {
-  if (!Number.isInteger(stale_after_ms) || (stale_after_ms as number) < 0) {
-    throw new Error('stale_after_ms must be a non-negative integer');
-  }
-  const now = (now_ms as number) ?? Date.now();
-  const hookActivity = readRunActivity(stateDir);
-  // Same liveness as the coordinator: a hook-observed tool call or label counts, and the
-  // shared isStalled (lib/runSignals.ts) excludes a run waiting for input or running a tool call.
-  return readClaims(stateDir).claims
-    .filter((claim) => ['claimed', 'in_progress'].includes(claim.state))
-    .map((claim) => {
-      // Durable activity events are not read here; the heartbeat they renew stands in for them.
-      const anchor = runIdleAnchor(claim, null, hookActivity[claim.run_id]) ?? claim.claimed_at;
-      return { claim, stale_for_ms: now - new Date(anchor).getTime() };
-    })
-    .filter(({ claim, stale_for_ms }) => isStalled(claim, stale_for_ms, hookActivity[claim.run_id], stale_after_ms as number, now))
-    .map(({ claim, stale_for_ms }) => ({ ...claim, stale_for_ms }));
+/** Same handler and result as `orc runs --json`. */
+export function handleListRuns(stateDir: string, args: RunListArgs = {}) {
+  return listRuns(stateDir, args);
 }
 
 export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unknown } = {}) {
@@ -154,7 +134,7 @@ export function handleGetTask(stateDir: string, { task_ref }: { task_ref?: unkno
   return task;
 }
 
-export function handleGetStatus(stateDir: string, { include_done_count = false }: { include_done_count?: unknown } = {}) {
+export async function handleGetStatus(stateDir: string, { include_done_count = false }: { include_done_count?: unknown } = {}) {
   if (typeof include_done_count !== 'boolean') {
     throw new Error('include_done_count must be a boolean');
   }
@@ -219,7 +199,10 @@ export function handleGetStatus(stateDir: string, { include_done_count = false }
     task_counts: taskCounts,
     active_tasks: activeTasks,
     last_notification_seq: getLastNotificationSeq(stateDir),
-    stalled_runs: handleListStalledRuns(stateDir).length,
+    stalled_runs: listRuns(stateDir, { state: 'stalled' }).runs.length,
+    // Live runs waiting for an input response; list_runs(state: "waiting_input") has the rows.
+    waiting_input: claims.filter(isWaitingForInput).length,
+    coordinator: await coordinatorSummary(stateDir),
     // The registered project this state belongs to.
     project: (() => {
       const descriptor = readProjectDescriptor(stateDir);
@@ -387,10 +370,6 @@ export async function handleRestartCoordinator(stateDir: string, projectId: stri
   return { action: 'restart', changed: true, ...await describeCoordinator(stateDir), previous_pid };
 }
 
-export function handleListWaitingInput(stateDir: string) {
-  return listWaitingInput(stateDir, readClaims(stateDir).claims);
-}
-
 /** Same handler and result as `orc events --json`. */
 export function handleQueryEvents(stateDir: string, args: Record<string, unknown> = {}) {
   return queryEventsPage(stateDir, args);
@@ -439,31 +418,21 @@ export function handleMemoryWakeUp(stateDir: string, args: Record<string, unknow
   }
 }
 
-export function handleMemoryRecall(stateDir: string, args: Record<string, unknown> = {}) {
-  const { wing, room, limit } = args;
-  if (typeof wing !== 'string') throw new Error('wing is required');
-  try {
-    const drawers = listDrawers(stateDir, {
-      wing,
-      ...(typeof room === 'string' ? { room } : {}),
-      ...(typeof limit === 'number' ? { limit } : {}),
-    });
-    return { drawers };
-  } catch (err) {
-    return { error: memoryFailure(stateDir, err) };
-  }
-}
-
+/**
+ * With `query`: FTS5-ranked snippets. Without it: browse the drawers of `wing`
+ * (and `room`) as full drawers. Both return `{ results }`.
+ */
 export function handleMemorySearch(stateDir: string, args: Record<string, unknown> = {}) {
   const { query, wing, room, limit } = args;
-  if (typeof query !== 'string') throw new Error('query is required');
+  if (query !== undefined && typeof query !== 'string') throw new Error('query must be a string');
+  if (query === undefined && typeof wing !== 'string') throw new Error('query or wing is required');
+  const filters = {
+    ...(typeof wing === 'string' ? { wing } : {}),
+    ...(typeof room === 'string' ? { room } : {}),
+    ...(typeof limit === 'number' ? { limit } : {}),
+  };
   try {
-    const results = searchMemory(stateDir, {
-      query,
-      ...(typeof wing === 'string' ? { wing } : {}),
-      ...(typeof room === 'string' ? { room } : {}),
-      ...(typeof limit === 'number' ? { limit } : {}),
-    });
+    const results = typeof query === 'string' ? searchMemory(stateDir, { query, ...filters }) : listDrawers(stateDir, filters);
     return { results };
   } catch (err) {
     return { error: memoryFailure(stateDir, err) };

@@ -8,7 +8,7 @@
 - `orc <subcommand> --help` (or `-h`) prints that subcommand's usage line and never runs it.
 - Commands that show state print the project they act on.
 - Output is for people or for scripts, decided by stdout. On a terminal, `--json` is indented and the `status`/`watch` banner is shown (by `watch` only when it fits). When stdout is piped or captured, `--json` is one compact line and the banner is omitted. The JSON shape is the same either way. A `--json` result is never cut short when piped.
-- Argument parsing is strict for the commands that read project state (`status`, `runs-active`, `run-info`, `review-read`, `worker-status`, `waiting-input`, `sessions`, `events`) and for `task-cancel`, `task-reset` and `worker-remove`: `--x=v` and `--x v` both work, an unknown flag or surplus argument is a usage error (exit 1), and a flag's value is never taken as the positional target.
+- Argument parsing is strict for the commands that read project state (`status`, `runs`, `run-info`, `review-read`, `worker-status`, `sessions`, `events`) and for `task-cancel`, `task-reset` and `worker-remove`: `--x=v` and `--x v` both work, an unknown flag or surplus argument is a usage error (exit 1), and a flag's value is never taken as the positional target.
 - Project-scoped read commands exit 1 with the no-project message when no project resolves, instead of returning empty results.
 
 ## Session management
@@ -56,7 +56,7 @@ orc start-session --provider=claude
 | `doctor` | `[--json]` `[--stale-progress-ms=<ms>]` `[--stale-start-ms=<ms>]` | Full health check: state files, provider binaries, stale workers, orphaned claims, invariants, sandbox deps, memory store, `events.db` schema (`checks.runtimeSchema`), and a restart warning when the running coordinator's code is older than the code on disk (`checks.coordinatorCode`; never fails `doctor`). Stale thresholds default to 20 min / 5 min. |
 | `preflight` | `[--json]` | Fast environment check before `start-session`. |
 
-When a live run (claimed or in progress) waits for an input response, `status` and the plain `watch` print a `Waiting for input (N)` section under the title: agent, task, wait time, the question (truncated) and how to answer (`orc run-input-respond …` or ask master). The section is left out when nothing waits. The `watch` TUI adds a yellow `N WAITING FOR INPUT` header line with the same answer hint, and a `NEEDS INPUT` badge, wait time and question on the worker's slot. Finished claims that still carry `awaiting_input` (legacy runs) are not listed here, by `waiting-input` or by MCP `list_waiting_input`.
+When a live run (claimed or in progress) waits for an input response, `status` and the plain `watch` print a `Waiting for input (N)` section under the title: agent, task, wait time, the question (truncated) and how to answer (`orc run-input-respond …` or ask master). The section is left out when nothing waits. The `watch` TUI adds a yellow `N WAITING FOR INPUT` header line with the same answer hint, and a `NEEDS INPUT` badge, wait time and question on the worker's slot. Finished claims that still carry `awaiting_input` (legacy runs) are not listed here, by `orc runs --state=waiting-input` or by MCP `list_runs`. `status --json` counts the waiting runs in `claims.waiting_input` and adds `coordinator` (`{ running, pid, version, started_at, stale }`, as MCP `get_status`).
 
 Under each active run, `watch` and `status` print a `└` activity line: a note younger than 5 min, else the current to-do item, else the last tool call; dimmed after 2 min. MCP `get_status` / `get_agent_workview` return it as `current_activity`.
 
@@ -112,9 +112,8 @@ Plan Markdown format: [plan-template.md](plan-template.md).
 
 | Command | Flags | Notes |
 |---------|-------|-------|
-| `runs-active` | `[--json]` `[--via-control]` | In-progress/claimed runs with idle/age; JSON rows carry `stalled`. |
+| `runs` | `[--state=active\|stalled\|waiting-input]` `[--stale-after-ms=<ms>]` `[--json]` `[--via-control]` | Live runs (claimed or in progress), same handler and JSON as MCP `list_runs`: `{ runs }`, each row `run_id`, `task_ref`, `agent_id`, `state`, `phase`, `age_seconds`, `idle_seconds`, `stalled`, plus `question`, `request_id`, `waiting_seconds` on a run waiting for input. `active` (default) lists every live run; `stalled` those idle for `--stale-after-ms` (default 600000) with no input wait and no tool call running; `waiting-input` those waiting for an input response. `--via-control` reads them from the coordinator's control API. |
 | `run-info <run_id>` | `[--json]` | Claim state, task, worktree, idle time. |
-| `waiting-input` | `[--json]` | Live runs (claimed or in progress) waiting for input, with `request_id` in `--json`. |
 | `events` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--task-ref=<ref>]` `[--event=<type>]` `[--notifications]` `[--after=<seq>]` `[--limit=<1-100>]` `[--fts=<query>]` `[--verbose]` `[--json]` `[--follow [--max-events=<n>]]` | One page of events, same handler and JSON as MCP `query_events`: `{ events, last_seq, has_more }`. Without `--after`, the newest `--limit` (default 25) matching events; with it, the oldest events after that `seq` (pass `last_seq` back to page on). `--notifications` keeps the notification class. Events are compact (no `event_id`, `actor_type`, `actor_id`; `input_response` without its `question`) unless `--verbose`. `--follow` prints the first page, then each new matching event as it arrives (one JSON line each with `--json`), stopping after `--max-events` when given. |
 | `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` | Show a consumer offset; reset replays events after `<seq>` (coordinator must be stopped). |
 
@@ -133,7 +132,7 @@ Client for the coordinator's local control API. Fails with "Control daemon is no
 | `consume <message_id>` | — |
 
 - Mutations authenticate with `ORC_MASTER_SECRET` or `ORC_SESSION_SECRET`; `--credential=<secret>` overrides (`--session-token` is an alias).
-- `snapshot`, `events` and `runs-active --via-control` read the whole project: master and operator only; a worker session gets `403`.
+- `snapshot`, `events` and `runs --via-control` read the whole project: master and operator only; a worker session gets `403`.
 
 ## Memory
 

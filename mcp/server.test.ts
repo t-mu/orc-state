@@ -39,8 +39,8 @@ describe('orchestrator mcp server foundation', () => {
     const names = TOOLS.map((tool) => tool.name);
     expect(names).toContain('list_tasks');
     expect(names).toContain('list_agents');
-    expect(names).toContain('list_active_runs');
-    expect(names).toContain('list_stalled_runs');
+    expect(names).toContain('list_runs');
+    for (const removed of ['list_active_runs', 'list_stalled_runs', 'list_waiting_input', 'memory_recall']) expect(names).not.toContain(removed);
     expect(names).toContain('get_task');
     expect(names).toContain('query_events');
     expect(names).toContain('get_status');
@@ -197,6 +197,9 @@ describe('orchestrator mcp server foundation', () => {
     expect(validateToolArguments('list_agents', { include_dead: true }).ok).toBe(true);
     expect(validateToolArguments('list_agents', { role: 'scout' }).ok).toBe(true);
     expect(validateToolArguments('get_status', { include_done_count: true }).ok).toBe(true);
+    expect(validateToolArguments('list_runs', { state: 'waiting_input', stale_after_ms: 0 }).ok).toBe(true);
+    expect(validateToolArguments('list_runs', { state: 'waiting-input' }).ok).toBe(false);
+    expect(validateToolArguments('memory_search', { wing: 'general' }).ok).toBe(true);
     expect(validateToolArguments('request_scout', { objective: 'Inspect stalled run' }).ok).toBe(true);
     expect(validateToolArguments('get_agent_workview', { agent_id: 'master' }).ok).toBe(true);
     expect(validateToolArguments('cancel_task', { task_ref: 'project/task-1' }).ok).toBe(true);

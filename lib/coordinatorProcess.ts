@@ -124,6 +124,12 @@ export async function describeCoordinator(stateDir: string, socketPath: string |
   }
 }
 
+/** The coordinator fields of `get_status` and `orc status --json`: `orc coordinator status` without the socket. */
+export async function coordinatorSummary(stateDir: string): Promise<Pick<CoordinatorDescription, 'running' | 'pid' | 'version' | 'started_at' | 'stale'>> {
+  const { running, pid, version, started_at, stale } = await describeCoordinator(stateDir);
+  return { running, pid, version, started_at, stale };
+}
+
 /**
  * Stop the running coordinator, if any; the pid it stopped, or null when none ran.
  * Throws `conflict` for a pid lock without started_at (never signalled: a permanent refusal) and `unavailable` when it does not stop.

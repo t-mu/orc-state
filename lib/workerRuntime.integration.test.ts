@@ -85,7 +85,7 @@ describe('worker launched in its worktree', () => {
   it('orc CLI resolves the project state from the worktree cwd', () => {
     const { stateDir, worktree } = setupProject();
     const env = normalizeWorkerEnv({ ...process.env }, repoRoot, { id: TEST_PROJECT_ID, stateDir });
-    const result = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'runs-active', '--json'], {
+    const result = spawnSync(process.execPath, [join(repoRoot, 'cli', 'orc.ts'), 'runs', '--json'], {
       cwd: worktree,
       env,
       encoding: 'utf8',

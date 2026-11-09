@@ -153,7 +153,7 @@ describe.skipIf(asRoot)('state stores without write access to the state director
       const memories = run('memory-wake-up');
       expect(memories.status, memories.stderr).toBe(0);
       expect(memories.stdout).toContain('remember the build');
-      for (const command of [['status'], ['runs-active'], ['run-info', 'run-x']]) {
+      for (const command of [['status'], ['runs'], ['run-info', 'run-x']]) {
         expect(run(...command).stderr).not.toContain('readonly database');
       }
     } finally {

@@ -44,6 +44,9 @@ describe('cli/status.ts', () => {
     expect(json.master.agent_id).toBe('master');
     expect(json.tasks.total).toBe(1);
     expect(json.claims.total).toBe(1);
+    expect(json.claims.waiting_input).toBe(0);
+    // Same coordinator fields as MCP get_status; none runs for a temp state directory.
+    expect(json.coordinator).toEqual({ running: false, pid: null, version: null, started_at: null, stale: null });
   });
 
   it('prints compact one-line json and no banner when stdout is piped', () => {

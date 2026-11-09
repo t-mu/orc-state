@@ -820,7 +820,7 @@ describe('buildStatus event window', () => {
     expect(() => count(-1)).toThrow(RangeError);
   });
 
-  it('lists awaiting_input runs with their latest question and shares the logic with waiting-input', () => {
+  it('lists awaiting_input runs with their latest question and counts them in claims.waiting_input', () => {
     writeState({
       claims: [{
         run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', state: 'in_progress',
@@ -831,8 +831,9 @@ describe('buildStatus event window', () => {
     writeEvents([
       ...Array.from({ length: 60 }, (_, n) => ({ event: 'input_requested', run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', actor_type: 'agent', actor_id: 'agent-01', payload: { question: `q${n}` }, ts: new Date(Date.now() - 60_000 + n).toISOString() })),
     ]);
-    const s = buildStatus(dir, { settings }) as unknown as { waiting_input: unknown[] };
+    const s = buildStatus(dir, { settings });
     expect(s.waiting_input).toEqual([expect.objectContaining({ run_id: 'run-q', agent_id: 'agent-01', task_ref: 'a/1', question: 'q59' })]);
+    expect(s.claims.waiting_input).toBe(1);
     const direct = listWaitingInput(dir, [{ run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', state: 'in_progress', input_state: 'awaiting_input' } as Claim]);
     expect(direct[0]).toMatchObject({ question: 'q59' });
     expect(direct[0].waiting_seconds).toBeGreaterThanOrEqual(59);
@@ -849,7 +850,9 @@ describe('buildStatus event window', () => {
 
     writeState({ claims: [claim('run-failed', 'failed'), claim('run-done', 'done')] });
     writeEvents([]);
-    expect((buildStatus(dir, { settings }) as unknown as { waiting_input: unknown[] }).waiting_input).toEqual([]);
+    const status = buildStatus(dir, { settings });
+    expect(status.waiting_input).toEqual([]);
+    expect(status.claims.waiting_input).toBe(0);
   });
 });
 

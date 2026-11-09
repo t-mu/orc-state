@@ -18,6 +18,7 @@ import { readBacklog, readClaims, findTask } from './stateReader.ts';
 import { TASK_STATUSES } from './constants.ts';
 import { readProcessStart } from './processIdentity.ts';
 import { readControlSnapshot } from './statusProjection.ts';
+import { listRuns, RUN_LIST_STATES, type RunListState } from './runList.ts';
 import { buildStatus, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS } from './statusView.ts';
 import { TerminalBroker } from './terminalBroker.ts';
 import { consumeMessage, listMessages, sendMessage, type SendMessageInput } from './messageRouter.ts';
@@ -331,6 +332,14 @@ export async function startControlServer(stateDir: string, options: ControlServe
     if (req.method === 'GET' && url.pathname === '/v1/snapshot') {
       projectReader(req);
       return ok(readControlSnapshot(stateDir));
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/runs') {
+      projectReader(req);
+      const state = url.searchParams.get('state') ?? 'active';
+      if (!RUN_LIST_STATES.includes(state as RunListState)) throw new ControlError('bad_request', `state must be one of ${RUN_LIST_STATES.join(', ')}`, 400);
+      const staleAfterMs = optionalIntParam(url, 'stale_after_ms');
+      if (staleAfterMs !== undefined && !Number.isSafeInteger(staleAfterMs)) throw new ControlError('bad_request', 'stale_after_ms must be a non-negative integer', 400);
+      return ok(listRuns(stateDir, { state, stale_after_ms: staleAfterMs }));
     }
     if (req.method === 'GET' && url.pathname === '/v1/status') {
       projectReader(req);

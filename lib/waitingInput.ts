@@ -21,8 +21,8 @@ export interface WaitingInputRow {
 
 /**
  * Active claims (`claimed`/`in_progress`) in `awaiting_input`, with the question
- * from each run's latest `input_requested` event. Shared by `orc waiting-input`,
- * MCP `list_waiting_input` and the status view. A finished claim can keep a
+ * from each run's latest `input_requested` event. Shared by `orc runs` / MCP
+ * `list_runs` (lib/runList.ts) and the status view. A finished claim can keep a
  * stale `input_state` (legacy runs), so the claim state is checked too.
  * An unreadable event log leaves the questions null; the claims stay usable.
  */

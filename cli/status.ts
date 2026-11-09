@@ -15,6 +15,7 @@ import { buildAgentStatus, buildStatus, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { coordinatorSummary } from '../lib/coordinatorProcess.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
 import { exitAfterFlush, formatErrorMessage, printJson, requireProjectScope } from './shared.ts';
 import { USAGE } from './usage.ts';
@@ -90,7 +91,8 @@ if (!watch && !once) {
 
   const status = buildStatus(STATE_DIR, { events });
   if (json) {
-    printJson(status);
+    // Same coordinator fields as MCP get_status.
+    printJson({ ...status, coordinator: await coordinatorSummary(STATE_DIR) });
     printValidationWarnings(warnings);
   } else {
     if (process.stdout.isTTY) console.log(renderBanner());

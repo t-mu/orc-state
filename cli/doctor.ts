@@ -245,7 +245,7 @@ if (!summary.ok) {
   console.log('Suggested fixes:');
   console.log('  1. Install missing provider binaries (npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli)');
   console.log('  2. orc worker-gc');
-  console.log('  3. orc runs-active --json');
+  console.log('  3. orc runs --json');
   console.log('  4. orc status --json');
   console.log('  5. Fix lifecycle invariant violations before dispatch continues');
   process.exit(1);

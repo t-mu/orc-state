@@ -38,24 +38,20 @@ export const TOOLS = [
     },
   },
   {
-    name: 'list_active_runs',
-    description: 'List currently active task claims (claimed and in_progress).',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'list_stalled_runs',
-    description: 'List active claims with no recent heartbeat or hook activity, excluding runs awaiting input or with a tool call still running.',
+    name: 'list_runs',
+    description: 'List live runs (claimed or in_progress) as { runs } (same as orc runs --json). Each row: run_id, task_ref, agent_id, state, phase, age_seconds, idle_seconds, stalled; a run waiting for input also carries question, request_id, waiting_seconds. state "stalled" keeps runs idle for stale_after_ms with no input wait and no tool call running; "waiting_input" keeps runs waiting for an input response. Use get_run(run_id) for one run.',
     inputSchema: {
       type: 'object',
       properties: {
+        state: {
+          type: 'string',
+          enum: ['active', 'stalled', 'waiting_input'],
+          description: 'Which runs to list. Default: active (all live runs)',
+        },
         stale_after_ms: {
           type: 'integer',
           minimum: 0,
-          description: 'Inactivity threshold in ms. Default: 600000 (10 min)',
+          description: 'Inactivity threshold behind stalled, in ms. Default: 600000 (10 min)',
         },
       },
       additionalProperties: false,
@@ -328,15 +324,6 @@ export const TOOLS = [
     },
   },
   {
-    name: 'list_waiting_input',
-    description: 'List all claims currently awaiting worker input, with question text and wait time.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'query_events',
     description: 'Read the event log, one page at a time. Returns { events, last_seq, has_more } (same as orc events --json). With after_seq: the oldest `limit` matching events after it, ascending; pass last_seq back as after_seq to page forward without gaps; has_more means more follow. Without after_seq: the newest `limit` matching events (ascending), last_seq = the newest matching seq, has_more means older ones exist. Events are compact (no event_id, actor_type, actor_id; input_response without the repeated question) unless verbose is true. To poll notifications, start from get_status.last_notification_seq and call with notifications_only: true, after_seq: <cursor>.',
     inputSchema: {
@@ -436,42 +423,18 @@ export const TOOLS = [
     },
   },
   {
-    name: 'memory_recall',
-    description: 'List drawers from a specific wing with optional room/limit filters.',
-    inputSchema: {
-      type: 'object',
-      required: ['wing'],
-      properties: {
-        wing: {
-          type: 'string',
-          description: 'Wing to recall from',
-        },
-        room: {
-          type: 'string',
-          description: 'Filter to a specific room',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of drawers to return',
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'memory_search',
-    description: 'Full-text search (FTS5) across memory drawers. Returns ranked snippets.',
+    description: 'Search or browse memory drawers; returns { results }. With query: full-text search (FTS5), ranked snippets. Without query: browse the drawers of wing (and room) as full drawers.',
     inputSchema: {
       type: 'object',
-      required: ['query'],
       properties: {
         query: {
           type: 'string',
-          description: 'FTS5 search query',
+          description: 'FTS5 search query. Omit to browse wing/room',
         },
         wing: {
           type: 'string',
-          description: 'Filter results to a specific wing',
+          description: 'Filter results to a specific wing (required without query)',
         },
         room: {
           type: 'string',
@@ -479,7 +442,7 @@ export const TOOLS = [
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of results to return (default: 10)',
+          description: 'Maximum number of results to return (search default: 10; browse default: all)',
         },
       },
       additionalProperties: false,

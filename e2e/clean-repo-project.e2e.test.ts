@@ -327,10 +327,8 @@ describe('clean-repository project workflow', () => {
       // ── Inspect and attach through the CLI and the TUI while both runs are active. ──
       const status = json<{ project: { id: string } }>(orcOk(['status', '--json']));
       expect(status.project.id).toBe(project.id);
-      const active = json<{ project: { id: string }; runs: Array<{ run_id: string; task_status: string; spec_revision: number }> }>(orcOk(['runs-active', '--json']));
-      expect(active.project.id).toBe(project.id);
-      expect(active.runs.map((run) => run.task_status).sort()).toEqual(['in_progress', 'in_progress']);
-      expect(active.runs.every((run) => run.spec_revision === 1)).toBe(true);
+      const active = json<{ runs: Array<{ run_id: string; state: string }> }>(orcOk(['runs', '--json']));
+      expect(active.runs.map((run) => run.state).sort()).toEqual(['in_progress', 'in_progress']);
       const tui = orcOk(['watch', '--once']);
       expect(tui).toContain(`demo (${project.id})`);
       for (const item of started) expect(tui).toContain(item.agentId);
