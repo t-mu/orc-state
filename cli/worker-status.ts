@@ -7,11 +7,14 @@
  */
 import { STATE_DIR } from '../lib/paths.ts';
 import { readAgents, readClaims } from '../lib/stateReader.ts';
-import { boolFlag } from '../lib/args.ts';
-import { exitAfterFlush, printJson } from './shared.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
+import { exitAfterFlush, printJson, requireProjectScope } from './shared.ts';
+import { USAGE } from './usage.ts';
 
-const asJson = boolFlag('json');
-const agentId = process.argv.slice(2).find((a) => !a.startsWith('-'));
+const { values, positionals } = parseCommandArgsOrExit(USAGE['worker-status'], { json: { type: 'boolean' } }, process.argv.slice(2), 1);
+const asJson = values.json === true;
+const agentId = positionals[0];
+requireProjectScope();
 
 const agentsState = readAgents(STATE_DIR);
 const claimsState = readClaims(STATE_DIR);

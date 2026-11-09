@@ -10,12 +10,13 @@ import { getAgent, removeAgent } from '../lib/agentRegistry.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { createAdapter } from '../adapters/index.ts';
 import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
-import { boolFlag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { cliError, formatErrorMessage } from './shared.ts';
 import { USAGE } from './usage.ts';
 
-const workerId = process.argv[2];
-const keepSession = boolFlag('keep-session');
+const { values, positionals } = parseCommandArgsOrExit(USAGE['worker-remove'], { 'keep-session': { type: 'boolean' } }, process.argv.slice(2), 1);
+const workerId = positionals[0];
+const keepSession = values['keep-session'] === true;
 
 if (!workerId) {
   console.error(`Usage: ${USAGE['worker-remove']}`);

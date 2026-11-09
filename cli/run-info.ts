@@ -11,20 +11,23 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims, readBacklog, findTask } from '../lib/stateReader.ts';
 import { claimedRunStartupAnchor, newestTimestamp } from '../lib/runActivity.ts';
 import { latestHookActivityTs, readRunActivity } from '../lib/runActivityStore.ts';
-import { boolFlag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
 import { USAGE } from './usage.ts';
+import { exitAfterFlush, printJson, requireProjectScope } from './shared.ts';
 
-const asJson = boolFlag('json');
-const runId = process.argv.slice(2).find((a) => !a.startsWith('-'));
+const { values, positionals } = parseCommandArgsOrExit(USAGE['run-info'], { json: { type: 'boolean' } }, process.argv.slice(2), 1);
+const asJson = values.json === true;
+const runId = positionals[0];
 
 if (!runId) {
   console.error(`Usage: ${USAGE['run-info']}`);
   process.exit(1);
 }
 
+requireProjectScope();
 const claimsState = readClaims(STATE_DIR);
 const claim = claimsState.claims.find((c) => c.run_id === runId);
 
@@ -61,9 +64,8 @@ const idleSec = idleAnchor ? Math.round((now - new Date(idleAnchor).getTime()) /
 const taskSpecRevisionStatus = claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot, STATE_DIR) : 'unknown';
 
 if (asJson) {
-  console.log(JSON.stringify({ ...claim, task_title: taskTitle, worktree_path: worktreePath,
-    task_spec_revision_status: taskSpecRevisionStatus }, null, 2));
-  process.exit(0);
+  printJson({ ...claim, task_title: taskTitle, worktree_path: worktreePath, task_spec_revision_status: taskSpecRevisionStatus });
+  await exitAfterFlush(0);
 }
 
 console.log(formatProjectIdentity(readProjectDescriptor(STATE_DIR)));

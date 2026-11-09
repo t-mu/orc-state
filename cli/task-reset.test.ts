@@ -53,6 +53,18 @@ describe('cli/task-reset.ts', () => {
     expect(result.stdout).toContain('cancelled 1 active claims');
   });
 
+  it('targets the positional task ref when a flag value precedes it', () => {
+    const result = runCli(['--actor-id', 'human', 'docs/task-1']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('task reset: docs/task-1');
+  });
+
+  it('rejects an unknown flag as a usage error', () => {
+    const result = runCli(['docs/task-1', '--bogus']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Usage: orc task-reset');
+  });
+
   it('exits 1 when task-ref is not provided', () => {
     const result = runCli([]);
     expect(result.status).toBe(1);

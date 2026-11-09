@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { flag, intFlag, flagAll } from './args.ts';
+import { flag, intFlag, flagAll, parseCommandArgs } from './args.ts';
 
 describe('flag', () => {
   it('returns null when missing', () => {
@@ -42,5 +42,24 @@ describe('flagAll', () => {
 
   it('preserves equals signs in repeated values', () => {
     expect(flagAll('ac', ['--ac=a=b', '--ac=c=d'])).toEqual(['a=b', 'c=d']);
+  });
+});
+
+describe('parseCommandArgs', () => {
+  const options = { 'actor-id': { type: 'string' }, json: { type: 'boolean' }, event: { type: 'string', multiple: true } } as const;
+
+  it('accepts --x=v and --x v and keeps flag values out of the positionals', () => {
+    expect(parseCommandArgs('u', options, ['--actor-id', 'human', 'app/x'], 1)).toMatchObject({ values: { 'actor-id': 'human' }, positionals: ['app/x'] });
+    expect(parseCommandArgs('u', options, ['app/x', '--actor-id=human', '--json'], 1)).toMatchObject({ values: { 'actor-id': 'human', json: true }, positionals: ['app/x'] });
+  });
+
+  it('collects repeated multiple flags', () => {
+    expect(parseCommandArgs('u', options, ['--event=a', '--event', 'b']).values.event).toEqual(['a', 'b']);
+  });
+
+  it('rejects unknown flags and surplus positionals with the usage line', () => {
+    expect(() => parseCommandArgs('orc x', options, ['--nope'])).toThrow(/Usage: orc x/);
+    expect(() => parseCommandArgs('orc x', options, ['a', 'b'], 1)).toThrow(/unexpected argument: b/);
+    expect(() => parseCommandArgs('orc x', options, ['a'])).toThrow(/unexpected argument: a/);
   });
 });

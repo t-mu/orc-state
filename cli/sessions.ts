@@ -6,14 +6,17 @@
  * List supervised provider sessions with their state and recovery reason.
  * Without --all, offline sessions are hidden.
  */
-import { exitAfterFlush, printJson } from './shared.ts';
-import { boolFlag } from '../lib/args.ts';
+import { exitAfterFlush, printJson, requireProjectScope } from './shared.ts';
+import { USAGE } from './usage.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { listSupervisedSessions } from '../lib/sessionSupervisor.ts';
 
-const sessions = listSupervisedSessions(STATE_DIR, boolFlag('all') ? undefined : ['running', 'recoverable', 'unknown']);
+const { values } = parseCommandArgsOrExit(USAGE['sessions'], { all: { type: 'boolean' }, json: { type: 'boolean' } });
+requireProjectScope();
+const sessions = listSupervisedSessions(STATE_DIR, values.all ? undefined : ['running', 'recoverable', 'unknown']);
 
-if (boolFlag('json')) {
+if (values.json) {
   printJson({ total: sessions.length, sessions });
   await exitAfterFlush(0);
 }

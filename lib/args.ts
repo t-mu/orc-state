@@ -1,3 +1,5 @@
+import { parseArgs } from 'node:util';
+
 /**
  * Parse a --name=value flag from argv.
  * Handles values that contain '=' (e.g. --key=a=b).
@@ -35,4 +37,49 @@ export function flagAll(name: string, argv: string[] = process.argv.slice(2)): s
   return argv
     .filter((a) => a.startsWith(`--${name}=`))
     .map((a) => a.split('=').slice(1).join('='));
+}
+
+export type ParseOptions = Record<string, { type: 'string' | 'boolean'; short?: string; multiple?: boolean }>;
+
+export interface ParsedCommand<O extends ParseOptions> {
+  values: { [K in keyof O]?: O[K] extends { multiple: true } ? string[] : O[K]['type'] extends 'boolean' ? boolean : string };
+  positionals: string[];
+}
+
+/**
+ * Strict per-command argument parsing (node:util parseArgs): accepts `--x=v` and `--x v`,
+ * rejects unknown flags, and never takes a flag's value as a positional.
+ * Throws a usage error (message includes the usage line) so callers can print it and exit 1.
+ */
+export function parseCommandArgs<O extends ParseOptions>(
+  usage: string,
+  options: O,
+  argv: string[] = process.argv.slice(2),
+  maxPositionals = 0,
+): ParsedCommand<O> {
+  let parsed;
+  try {
+    parsed = parseArgs({ args: argv, options, allowPositionals: true, strict: true });
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nUsage: ${usage}`);
+  }
+  if (parsed.positionals.length > maxPositionals) {
+    throw new Error(`unexpected argument: ${parsed.positionals[maxPositionals]}\nUsage: ${usage}`);
+  }
+  return parsed as unknown as ParsedCommand<O>;
+}
+
+/** Like parseCommandArgs, but prints the usage error and exits 1. */
+export function parseCommandArgsOrExit<O extends ParseOptions>(
+  usage: string,
+  options: O,
+  argv: string[] = process.argv.slice(2),
+  maxPositionals = 0,
+): ParsedCommand<O> {
+  try {
+    return parseCommandArgs(usage, options, argv, maxPositionals);
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
 }

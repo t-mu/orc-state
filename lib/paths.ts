@@ -38,6 +38,15 @@ export function assertProjectMode(): void {
   throw new Error(NO_PROJECT_MESSAGE);
 }
 
+/**
+ * Project-scoped reads refuse to run against the placeholder state directory.
+ * ORC_STATE_DIR names a state directory directly (tests, sandboxed workers), so it counts as scoped.
+ */
+export function assertProjectScope(): void {
+  if (ACTIVE_PROJECT || process.env.ORC_STATE_DIR) return;
+  throw new Error(NO_PROJECT_MESSAGE);
+}
+
 // Run worktrees live in the project state directory, outside the target working tree.
 export const WORKTREES_DIR = process.env.ORC_WORKTREES_DIR
   ? resolve(process.env.ORC_WORKTREES_DIR)

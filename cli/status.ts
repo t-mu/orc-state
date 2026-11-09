@@ -7,25 +7,43 @@
  *
  * --watch / -w  Live-refresh mode: clears screen and re-renders on interval.
  * --once        Render exactly one frame and exit (useful for testing watch mode).
+ * --json with --once/--watch prints one compact JSON document per line (NDJSON), no screen-clear codes.
  * --interval-ms Polling interval in ms (default 5000). Only relevant with --watch.
  */
-import { boolFlag, flag, intFlag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { buildAgentStatus, buildStatus, DEFAULT_STATUS_EVENTS, MAX_STATUS_EVENTS } from '../lib/statusView.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatAgentStatus, colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { partitionValidationErrors, validateStateDir } from '../lib/stateValidation.ts';
-import { exitAfterFlush, formatErrorMessage, printJson } from './shared.ts';
+import { exitAfterFlush, formatErrorMessage, printJson, requireProjectScope } from './shared.ts';
 import { USAGE } from './usage.ts';
 
-const json = boolFlag('json');
-const mine = boolFlag('mine');
-const agentId = flag('agent-id');
-const watch = boolFlag('watch') || process.argv.includes('-w');
-const once = boolFlag('once');
-const intervalMs = intFlag('interval-ms', 5000);
+const { values } = parseCommandArgsOrExit(USAGE['status'], {
+  json: { type: 'boolean' },
+  mine: { type: 'boolean' },
+  'agent-id': { type: 'string' },
+  watch: { type: 'boolean', short: 'w' },
+  once: { type: 'boolean' },
+  'interval-ms': { type: 'string' },
+  events: { type: 'string' },
+});
+requireProjectScope();
+const json = values.json === true;
+const mine = values.mine === true;
+const agentId = values['agent-id'];
+const watch = values.watch === true;
+const once = values.once === true;
+const intervalRaw = values['interval-ms'];
+if (intervalRaw !== undefined && !/^[1-9]\d*$/.test(intervalRaw)) {
+  console.error(`--interval-ms must be a positive integer\nUsage: ${USAGE['status']}`);
+  process.exit(1);
+}
+const intervalMs = intervalRaw === undefined ? 5000 : Number(intervalRaw);
+// Clear-screen codes only make sense on a terminal, and never in JSON frames.
+const clearScreen = process.stdout.isTTY === true && !json;
 
-const eventsRaw = flag('events');
+const eventsRaw = values.events;
 const events = eventsRaw == null ? DEFAULT_STATUS_EVENTS : Number(eventsRaw);
 if (eventsRaw != null && (!/^\d+$/.test(eventsRaw) || events > MAX_STATUS_EVENTS)) {
   console.error(`--events must be an integer from 0 to ${MAX_STATUS_EVENTS}\nUsage: ${USAGE['status']}`);
@@ -92,7 +110,21 @@ function render(): boolean {
     return false;
   }
   try {
-    process.stdout.write('\x1b[2J\x1b[H');
+    if (json) {
+      if (mine) {
+        const agentStatus = buildAgentStatus(STATE_DIR, agentId as string);
+        if (!agentStatus.agent) {
+          console.error(`Agent not found: ${agentId}`);
+          return false;
+        }
+        process.stdout.write(`${JSON.stringify(agentStatus)}\n`);
+      } else {
+        process.stdout.write(`${JSON.stringify(buildStatus(STATE_DIR, { events }))}\n`);
+      }
+      printValidationWarnings(warnings);
+      return true;
+    }
+    if (clearScreen) process.stdout.write('\x1b[2J\x1b[H');
     if (process.stdout.isTTY) console.log(renderBanner());
     if (mine) {
       const agentStatus = buildAgentStatus(STATE_DIR, agentId as string);
@@ -123,7 +155,7 @@ function render(): boolean {
 
 if (once) {
   const ok = render();
-  process.exit(ok ? 0 : 1);
+  await exitAfterFlush(ok ? 0 : 1);
 }
 
 if (!render()) process.exit(1);
