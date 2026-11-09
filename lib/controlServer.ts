@@ -36,6 +36,7 @@ const MAX_IMPORT_BODY_BYTES = 32 * 1024 * 1024;
 const ACK_STATES = new Set<AckState>(['accepted', 'running', 'completed', 'failed']);
 /** A terminal viewer this far behind is dropped; it reopens and gets a fresh snapshot. */
 const MAX_TERMINAL_BACKLOG_BYTES = 8 * 1024 * 1024;
+const BACKLOG_GRACE_MS = 10_000;
 
 export interface ControlServerOptions {
   socketPath?: string;
@@ -195,6 +196,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
     return typeof presented === 'string' && presented.length > 0 && timingSafeEqual(digest(presented), operatorDigest);
   };
   const streams = new Set<ServerResponse>();
+  const eventStreams = new Set<ServerResponse>();
   let closing = false;
   const assertOpen = (): void => {
     if (closing) throw new ControlError('unavailable', 'Control daemon is shutting down', 503);
@@ -243,12 +245,17 @@ export async function startControlServer(stateDir: string, options: ControlServe
   function stream(res: ServerResponse, after: number): void {
     res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
     streams.add(res);
+    eventStreams.add(res);
     let cursor = after;
     let draining = false;
     let lastWrite = Date.now();
-    const write = (frame: StreamFrame): boolean => { lastWrite = Date.now(); return res.write(`${JSON.stringify(frame)}\n`); };
+    const write = (frame: StreamFrame): boolean => {
+      if (res.writableEnded) return true;
+      lastWrite = Date.now();
+      return res.write(`${JSON.stringify(frame)}\n`);
+    };
     const pump = (): void => {
-      if (draining || res.destroyed) return;
+      if (draining || res.destroyed || res.writableEnded) return;
       try {
         for (;;) {
           const rows = readEventBatch(join(stateDir, 'events.db'), cursor, 500);
@@ -268,7 +275,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
       }
     };
     const timer = setInterval(pump, pollMs);
-    res.on('close', () => { clearInterval(timer); streams.delete(res); });
+    res.on('close', () => { clearInterval(timer); streams.delete(res); eventStreams.delete(res); });
     write({ type: 'heartbeat', cursor });
     pump();
   }
@@ -282,7 +289,12 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (res.destroyed || res.writableEnded) return;
       if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
       res.write(`${JSON.stringify(frame)}\n`);
-      if (res.writableLength > MAX_TERMINAL_BACKLOG_BYTES) res.destroy();
+      if (res.writableLength > MAX_TERMINAL_BACKLOG_BYTES) {
+        // The backlog is what the viewer never read: drop it and end with the reason instead of resetting the connection.
+        res.end(`${JSON.stringify({ type: 'exit', reason: 'backlog' } satisfies TerminalFrame)}\n`);
+        // A viewer that never reads cannot hold the connection open forever.
+        setTimeout(() => res.destroy(), BACKLOG_GRACE_MS).unref();
+      }
     };
     const close = terminals.stream(terminalId, { send: write, end: () => res.end() }, {
       ...(columns === undefined ? {} : { columns }), ...(rows === undefined ? {} : { rows }),
@@ -548,7 +560,11 @@ export async function startControlServer(stateDir: string, options: ControlServe
       clearInterval(terminalSweep);
       terminals.close();
       // Terminal streams just ended with an exit frame; destroying them would drop it.
-      for (const res of streams) if (!res.writableEnded) res.destroy();
+      for (const res of streams) {
+        if (res.writableEnded) continue;
+        if (eventStreams.has(res)) res.end(`${JSON.stringify({ type: 'closed', reason: 'control daemon is shutting down' } satisfies StreamFrame)}\n`);
+        else res.destroy();
+      }
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       let ours = true;
       try {

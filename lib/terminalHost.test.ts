@@ -37,6 +37,8 @@ describe('TmuxControlParser', () => {
     const [event] = parser.push(line.subarray(12));
     expect(event).toMatchObject({ type: 'output', pane: '%1' });
     expect((event as { data: Buffer }).data.toString('utf8')).toBe('€');
+    expect(parser.push(Buffer.from('%layout-change @1 b25d,80x24,0,0,0 b25d,100x30,0,0,0 *\n')))
+      .toEqual([{ type: 'resize', columns: 100, rows: 30 }]);
     expect(parser.push(Buffer.from('%exit detached\n'))).toEqual([{ type: 'exit', reason: 'detached' }]);
   });
 });
@@ -45,8 +47,11 @@ class FakeConnection implements TerminalConnection {
   stopped = false;
   output: Array<(data: Buffer) => void> = [];
   exits: Array<(reason: string) => void> = [];
+  resizes: Array<(columns: number, rows: number) => void> = [];
   onOutput(listener: (data: Buffer) => void): void { this.output.push(listener); }
+  onResize(listener: (columns: number, rows: number) => void): void { this.resizes.push(listener); }
   onExit(listener: (reason: string) => void): void { this.exits.push(listener); }
+  resize(columns: number, rows: number): void { for (const listener of this.resizes) listener(columns, rows); }
   emit(text: string): void { for (const listener of this.output) listener(Buffer.from(text)); }
   stop(): void { this.stopped = true; }
 }

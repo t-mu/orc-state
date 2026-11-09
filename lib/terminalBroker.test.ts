@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { request, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,7 +9,7 @@ import { closeAllDatabases, initEventsDb, withEventDb, withEventDbTransaction } 
 import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
-import type { TerminalFrame } from './controlProtocol.ts';
+import { CONTROL_TOKEN_FILE, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, type TerminalFrame } from './controlProtocol.ts';
 import { TerminalBroker, TmuxTerminalDriver, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
 import type { TerminalConnection, TerminalSnapshot } from './terminalHost.ts';
 
@@ -25,11 +26,14 @@ class FakeConnection implements TerminalConnection {
   stopped = false;
   private outputs: Array<(data: Buffer) => void> = [];
   private exits: Array<(reason: string) => void> = [];
+  private resizes: Array<(columns: number, rows: number) => void> = [];
   constructor(handle: string) { this.handle = handle; }
   onOutput(listener: (data: Buffer) => void): void { this.outputs.push(listener); }
+  onResize(listener: (columns: number, rows: number) => void): void { this.resizes.push(listener); }
   onExit(listener: (reason: string) => void): void { this.exits.push(listener); }
   emit(text: string): void { for (const listener of this.outputs) listener(Buffer.from(text)); }
   exit(reason: string): void { for (const listener of this.exits) listener(reason); }
+  resize(columns: number, rows: number): void { for (const listener of this.resizes) listener(columns, rows); }
   stop(): void { this.stopped = true; }
 }
 
@@ -124,6 +128,40 @@ afterEach(async () => {
 });
 
 describe('terminal broker', () => {
+  it('sends a resize frame to every viewer', async () => {
+    const client = new ControlClient(dir);
+    const { terminal } = await client.openTerminal('provider', 'run-a');
+    const one = openStream(client, terminal.terminal_id);
+    const two = openStream(client, terminal.terminal_id);
+    await one.next(1);
+    await two.next(1);
+    driver.connections[0].resize(120, 40);
+    expect((await one.next(2))[1]).toEqual({ type: 'resize', columns: 120, rows: 40 });
+    expect((await two.next(2))[1]).toEqual({ type: 'resize', columns: 120, rows: 40 });
+    await one.close();
+    await two.close();
+  });
+
+  it('ends a viewer that falls too far behind with an exit frame', async () => {
+    const { terminal } = await new ControlClient(dir).openTerminal('provider', 'run-a');
+    const token = readFileSync(join(dir, CONTROL_TOKEN_FILE), 'utf8');
+    const res = await new Promise<IncomingMessage>((resolve, reject) => {
+      const req = request({ socketPath: server.endpoint.path, path: `/v1/terminals/${encodeURIComponent(terminal.terminal_id)}/stream`,
+        headers: { 'x-orc-protocol': '1', authorization: `Bearer ${token}`, [OPERATOR_HEADER]: readFileSync(join(dir, OPERATOR_TOKEN_FILE), 'utf8').trim() } }, resolve);
+      req.on('error', reject);
+      req.end();
+    });
+    res.pause();
+    await waitFor(() => driver.connections.length === 1);
+    const chunk = 'x'.repeat(1024 * 1024);
+    for (let i = 0; i < 24; i++) driver.connections[0].emit(chunk);
+    res.resume();
+    let text = '';
+    for await (const part of res) text += (part as Buffer).toString('utf8');
+    const last = JSON.parse(text.trimEnd().split('\n').at(-1)!) as TerminalFrame;
+    expect(last).toEqual({ type: 'exit', reason: 'backlog' });
+  });
+
   it('passes common control and function keys as tmux keys while pasting printable text', () => {
     expect(terminalInputTokens('abc\t\x04\x03\x1b[A\x1bOP\x1b[15~\r')).toEqual([
       { text: 'abc' }, { key: 'Tab' }, { key: 'C-d' }, { key: 'C-c' },

@@ -12,6 +12,8 @@ export interface TerminalSnapshot { screen: string; cursor_x: number; cursor_y: 
 /** A live connection to one terminal's output. Callbacks never fire after `stop()`. */
 export interface TerminalConnection {
   onOutput(listener: (data: Buffer) => void): void;
+  /** The window's size changed (tmux `%layout-change`). */
+  onResize(listener: (columns: number, rows: number) => void): void;
   /** Fires at most once: the terminal ended or the connection was lost. */
   onExit(listener: (reason: string) => void): void;
   stop(): void;
@@ -51,9 +53,14 @@ export function decodeTmuxOutput(payload: Buffer): Buffer {
 
 function isOctal(byte: number | undefined): boolean { return byte !== undefined && byte >= 0x30 && byte <= 0x37; }
 
-export type TmuxControlEvent = { type: 'output'; pane: string; data: Buffer } | { type: 'exit'; reason: string };
+export type TmuxControlEvent =
+  | { type: 'output'; pane: string; data: Buffer }
+  | { type: 'resize'; columns: number; rows: number }
+  | { type: 'exit'; reason: string };
 
 const OUTPUT_PREFIX = /^%output (%\d+) /;
+/** `%layout-change @win layout visible-layout flags`: the layout is `checksum,WxH,x,y…`. */
+const LAYOUT_CHANGE = /^%layout-change @\d+ \S+ [0-9a-f]+,(\d+)x(\d+)[,\s{[]/;
 const EXTENDED_OUTPUT_PREFIX = /^%extended-output (%\d+) \d+[^:]*: /;
 
 /**
@@ -87,6 +94,8 @@ export class TmuxControlParser {
     if (text.startsWith('%begin ')) { this.inReply = true; return null; }
     const match = OUTPUT_PREFIX.exec(text) ?? EXTENDED_OUTPUT_PREFIX.exec(text);
     if (match) return { type: 'output', pane: match[1], data: decodeTmuxOutput(line.subarray(match[0].length)) };
+    const layout = LAYOUT_CHANGE.exec(text);
+    if (layout) return { type: 'resize', columns: Number(layout[1]), rows: Number(layout[2]) };
     if (text === '%exit' || text.startsWith('%exit ')) return { type: 'exit', reason: text.slice(6) || 'terminal exited' };
     return null;
   }
@@ -140,6 +149,14 @@ export class TerminalStreams {
     this.entries.set(handle, entry);
     connection.onOutput((data) => {
       const frame: TerminalFrame = { type: 'output', data: data.toString('base64') };
+      for (const viewer of viewers) viewer.send(frame);
+    });
+    let size = '';
+    connection.onResize((columns, rows) => {
+      // A layout change that keeps the size is not a resize.
+      if (size === `${columns}x${rows}`) return;
+      size = `${columns}x${rows}`;
+      const frame: TerminalFrame = { type: 'resize', columns, rows };
       for (const viewer of viewers) viewer.send(frame);
     });
     connection.onExit((reason) => this.end(handle, reason));

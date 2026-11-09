@@ -29,6 +29,8 @@ export interface ControlClientOptions {
   /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET). */
   credential?: string | null;
   timeoutMs?: number;
+  /** An event or terminal stream that sends nothing for this long (3 daemon heartbeats by default) fails with `unavailable`. */
+  streamIdleMs?: number;
   /**
    * Connect to this socket instead of the one in the endpoint descriptor (the
    * bearer token still comes from the state directory). Without it the
@@ -89,11 +91,13 @@ export class ControlClient {
   private readonly stateDir: string;
   private readonly credential: string | null;
   private readonly timeoutMs: number;
+  private readonly streamIdleMs: number;
   private readonly socketPath: string | null;
   constructor(stateDir: string, options: ControlClientOptions = {}) {
     this.stateDir = stateDir;
     this.credential = options.credential ?? null;
     this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.streamIdleMs = options.streamIdleMs ?? 30_000;
     this.socketPath = options.socketPath?.trim() || null;
   }
 
@@ -242,8 +246,9 @@ export class ControlClient {
   sessions(): Promise<{ sessions: SessionTerminalView[] }> { return this.call('GET', '/v1/sessions'); }
 
   /**
-   * Yield a terminal's frames: one `snapshot`, then `output`/`heartbeat`, and
-   * `exit` last. Pass the size to have the pane sized (by the lease holder, or
+   * Yield a terminal's frames: one `snapshot`, then `output`/`resize`/`heartbeat`, and
+   * `exit` last (reason `backlog`: the viewer fell too far behind). A stream silent
+   * for `streamIdleMs` fails with `unavailable`. Pass the size to have the pane sized (by the lease holder, or
    * the first viewer when no one holds the lease). No reconnect: reopen after `exit`.
    */
   async *streamTerminal(terminalId: string, options: { leaseId?: string; columns?: number; rows?: number } = {}, signal?: AbortSignal): AsyncGenerator<TerminalFrame> {
@@ -282,6 +287,7 @@ export class ControlClient {
   async *subscribe(after: number, signal?: AbortSignal): AsyncGenerator<EventRow> {
     for await (const frame of this.ndjson<StreamFrame>(`/v1/events/stream?after=${after}`, signal)) {
       if (frame.type === 'event') yield { seq: frame.seq, event: frame.event };
+      else if (frame.type === 'closed') return;
     }
   }
 
@@ -295,18 +301,41 @@ export class ControlClient {
     if (res.statusCode !== 200) {
       const chunks: Buffer[] = [];
       for await (const chunk of res) chunks.push(chunk as Buffer);
-      const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as ControlResponse<never>;
-      throw parsed.ok ? new Error('Unexpected stream response') : new ControlError(parsed.error.code, parsed.error.message, res.statusCode ?? 500);
+      const status = res.statusCode ?? 500;
+      let parsed: ControlResponse<never>;
+      try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as ControlResponse<never>; }
+      catch { throw new ControlError(status >= 500 ? 'unavailable' : 'internal', `Stream open failed with HTTP ${status} and a non-JSON body`, status); }
+      throw parsed.ok ? new Error('Unexpected stream response') : new ControlError(parsed.error.code, parsed.error.message, status);
     }
+    // The daemon heartbeats every few seconds; silence for longer means it is stalled or gone.
+    let idle: NodeJS.Timeout | undefined;
+    let stalled = false;
     const lines = createInterface({ input: res, crlfDelay: Infinity });
+    const rearm = (): void => {
+      clearTimeout(idle);
+      idle = setTimeout(() => { stalled = true; lines.close(); res.destroy(); }, this.streamIdleMs);
+    };
+    rearm();
+    // A destroyed response emits 'close', not 'end', which would leave the reader waiting.
+    res.on('close', () => lines.close());
     try {
       for await (const line of lines) {
+        rearm();
         if (!line) continue;
         yield JSON.parse(line) as T;
       }
+      if (stalled) throw new ControlError('unavailable', `No frame from the control daemon for ${this.streamIdleMs} ms`, 503);
+      // A stream that ends without a final frame was cut: shutdown writes `closed`/`exit` first.
+      if (!signal?.aborted && !res.complete) throw new ControlError('unavailable', 'Control stream was cut off', 503);
     } catch (error) {
-      if ((error as Error).name !== 'AbortError' && !signal?.aborted) throw error;
+      if (signal?.aborted || (error as Error).name === 'AbortError') return;
+      if (error instanceof ControlError) throw error;
+      if (stalled) throw new ControlError('unavailable', `No frame from the control daemon for ${this.streamIdleMs} ms`, 503);
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ECONNRESET' || code === 'ERR_STREAM_PREMATURE_CLOSE') throw new ControlError('unavailable', 'Control stream was reset', 503);
+      throw error;
     } finally {
+      clearTimeout(idle);
       lines.close();
       res.destroy();
     }

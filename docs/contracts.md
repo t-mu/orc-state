@@ -369,8 +369,9 @@ Importing it has no side effects: no project resolution, registry access, git ca
 | Envelope | `{ protocol_version, ok: true, result }` / `{ protocol_version, ok: false, error: { code, message } }` |
 | Error codes | `unsupported_protocol_version`, `unauthenticated`, `forbidden`, `not_found`, `conflict`, `bad_request`, `unavailable`, `internal`, `busy` |
 | Routes | The [Routes](#routes) table, except rows marked **Experimental** (`/v1/messages…`, `/v1/commands…`) |
-| Event stream frames | `{ type: "event", seq, event }`, `{ type: "heartbeat", cursor }` |
-| Terminal stream frames | `{ type: "snapshot", screen, cursor_x, cursor_y, columns, rows }`, `{ type: "output", data }`, `{ type: "heartbeat" }`, `{ type: "exit", reason }` |
+| Event stream frames | `{ type: "event", seq, event }`, `{ type: "heartbeat", cursor }`, `{ type: "closed", reason }` (last frame when the daemon shuts down) |
+| Terminal stream frames | `{ type: "snapshot", screen, cursor_x, cursor_y, columns, rows }`, `{ type: "output", data }`, `{ type: "resize", columns, rows }` (pane resized: repaint), `{ type: "heartbeat" }`, `{ type: "exit", reason }` (last frame; `reason: "backlog"` when the viewer was dropped for reading too slowly) |
+| Forward compatibility | Clients ignore frame types and fields they do not know. Streams heartbeat about every 10 s; `ControlClient` fails a stream silent for 3 heartbeats (30 s) with `ControlError("unavailable")`, and maps a reset or cut stream to the same error. |
 
 ### CLI commands
 
