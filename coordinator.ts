@@ -55,6 +55,7 @@ import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError } from './lib/promptInjectionScan.ts';
 import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
 import { resumeWorkerSession, spawnEphemeralWorker } from './lib/workerRuntime.ts';
+import { prReviewSteps, type WorkerTaskWorkflow } from './lib/sessionBootstrap.ts';
 import { classifySessionExit, decideSessionResume, latestRunSession, recordSessionExit, recordSessionResumeFailed, type ResumeDecision } from './lib/sessionResume.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
@@ -651,6 +652,11 @@ function resolveMergeStrategy(
   return ((task?.merge_strategy) ?? config.merge_strategy ?? 'direct') as 'direct' | 'pr';
 }
 
+/** The run's review level and merge mode, so the worker bootstrap renders only that workflow. */
+function taskWorkflow(task: { review_level?: 'none' | 'light' | 'full' | undefined; merge_strategy?: string | undefined } | null): WorkerTaskWorkflow {
+  return { reviewLevel: task?.review_level ?? 'full', mergeStrategy: resolveMergeStrategy(task, COORD_CONFIG) };
+}
+
 
 async function mergeAndFinishDirectRun(claim: Claim, runWorktree: { branch: string; worktree_path?: string }, workerPoolConfig: WorkerPoolConfig) {
   try {
@@ -810,6 +816,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig, eve
       acceptance_criteria: task?.acceptance_criteria?.join('\n') ?? '',
       worktree_path: runWorktree.worktree_path ?? '',
       orc_bin: resolveOrcBinSh(ORC_PACKAGE_ROOT),
+      pr_steps: prReviewSteps(task?.review_level ?? 'full', resolveOrcBinSh(ORC_PACKAGE_ROOT), claim.agent_id),
     });
     try {
       await getAdapter(workerAgent.provider).send(workerAgent.session_handle, prReviewMessage);
@@ -935,6 +942,7 @@ async function resumeOrRequeue(
         workingDirectory: worktreePath,
         repoRoot: ORC_PACKAGE_ROOT,
         taskModel: task?.model ?? null,
+        taskWorkflow: taskWorkflow(task),
         executionMode: workerPoolConfig.execution_mode,
         sandboxNetwork: workerPoolConfig.sandbox_network,
         reason: failure.reason,
@@ -1998,6 +2006,7 @@ async function executeDispatchPlan(
         runId,
         taskRef,
         taskModel: task?.model ?? null,
+        taskWorkflow: taskWorkflow(task),
         executionMode: workerPoolConfig.execution_mode,
         sandboxNetwork: workerPoolConfig.sandbox_network,
         runtime: workerPoolConfig.runtime,

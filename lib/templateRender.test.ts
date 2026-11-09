@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderTemplate } from './templateRender.ts';
 import { TOOLS } from '../mcp/tools-list.ts';
+import { buildSessionBootstrap } from './sessionBootstrap.ts';
 
 describe('renderTemplate', () => {
   it('renders known placeholders and leaves no raw markers', () => {
@@ -16,11 +17,12 @@ describe('renderTemplate', () => {
   });
 
   it('tells the worker which --reviewer label each reviewer submits with', () => {
-    const rendered = renderTemplate('worker-bootstrap-v2.txt', { agent_id: 'bob', orc_bin: 'orc', provider: 'claude', session_token: 't' });
-    expect(rendered).toContain('review-submit --run-id=<run_id> --agent-id=bob');
-    expect(rendered).toContain('<reviewer_label> replaced by `reviewer`');
-    expect(rendered).toContain('<reviewer_label> replaced by `critic`');
-    expect(rendered).toContain('`integrator` for the other');
+    const light = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 't', { reviewLevel: 'light' });
+    const full = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 't', { reviewLevel: 'full' });
+    expect(light).toContain('review-submit --run-id=<run_id> --agent-id=bob');
+    expect(light).toContain('<reviewer_label> replaced by `reviewer`');
+    expect(full).toContain('<reviewer_label> replaced by `critic`');
+    expect(full).toContain('`integrator` for the other');
   });
 
   it('renders master bootstrap with substituted agent and provider', () => {
@@ -61,12 +63,7 @@ describe('renderTemplate', () => {
   });
 
   it('renders task-scoped worker bootstrap language', () => {
-    const rendered = renderTemplate('worker-bootstrap-v2.txt', {
-      agent_id: 'worker-01',
-      orc_bin: '/tmp/node_modules/.bin/orc',
-      provider: 'codex',
-      session_token: 'token-2',
-    });
+    const rendered = buildSessionBootstrap('worker-01', 'codex', 'worker', '/tmp/node_modules/.bin/orc', 'token-2');
     expect(rendered).toContain('task-scoped orchestration worker');
     expect(rendered).toContain('one task run');
     expect(rendered).toContain('assigned worktree');
@@ -88,6 +85,10 @@ describe('renderTemplate', () => {
     for (const template of ['worker-bootstrap-v2.txt', 'scout-bootstrap-v1.txt', 'scout-brief-v1.txt', 'task-envelope-v2.txt']) {
       const rendered = renderTemplate(template, vars);
       for (const tool of TOOLS) expect(rendered, `${template} mentions MCP tool ${tool.name}`).not.toMatch(new RegExp(`\\b${tool.name}\\b`));
+    }
+    for (const mergeStrategy of ['direct', 'pr'] as const) {
+      const rendered = buildSessionBootstrap('w', 'claude', 'worker', 'orc', 't', { mergeStrategy, reviewLevel: 'full' });
+      for (const tool of TOOLS) expect(rendered, `${mergeStrategy} worker bootstrap mentions MCP tool ${tool.name}`).not.toMatch(new RegExp(`\\b${tool.name}\\b`));
     }
   });
 

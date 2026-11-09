@@ -35,7 +35,7 @@ Pin exact versions in `package.json` (no `~`/`^`).
 
 ## Workers: follow WORKER_BOOTSTRAP
 
-The full protocol (commands, review constraints, PR loop, input requests) is `templates/worker-bootstrap-v2.txt`, sent at session start. Phases and gates:
+The full protocol (commands, review constraints, PR loop, input requests) is `templates/worker-bootstrap-v2.txt`, sent at session start; `lib/sessionBootstrap.ts` fills in only the run's review-level and merge-mode steps. Phases and gates:
 
 | Phase | Work | Gate |
 |---|---|---|

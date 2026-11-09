@@ -112,7 +112,7 @@ Readiness comes before the run starts: the coordinator sends TASK_START once the
 | `orc run-fail [--policy=requeue\|block]` | claim `claimed`/`in_progress` | claim → `failed`; task requeued or blocked |
 | `orc run-input-request` | claim `in_progress` | `input_state → awaiting_input`; blocks until `run-input-respond` |
 
-Direct mode: after work-complete the coordinator merges, or requests a finalize rebase (`finalize_rebase_requested` → worker `finalize_rebase_started` → rebase → `run-work-complete` again), then sends FINALIZE_SUCCESS; the worker calls `run-finish`. PR mode: the coordinator sends PR_REVIEW, the worker runs the PR loop and calls `run-work-complete`; the coordinator merges the PR. The worker workflow is in `templates/worker-bootstrap-v2.txt`.
+Direct mode: after work-complete the coordinator merges, or requests a finalize rebase (`finalize_rebase_requested` → worker `finalize_rebase_started` → rebase → `run-work-complete` again), then sends FINALIZE_SUCCESS; the worker calls `run-finish`. PR mode: the coordinator sends PR_REVIEW, which carries the PR loop for the task's current review level; the worker runs it and calls `run-work-complete`; the coordinator merges the PR. The worker workflow is `templates/worker-bootstrap-v2.txt`, rendered by `lib/sessionBootstrap.ts` with only the run's merge-mode and review-level steps (the PR loop rides in PR_REVIEW).
 
 ### Lease and liveness
 
