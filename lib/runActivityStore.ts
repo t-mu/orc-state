@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { atomicWriteJson } from './atomicWrite.ts';
 import type { RunActivityHookEvent } from './hookEventBus.ts';
+import { isCommitToolEvent } from './runProgress.ts';
 
 /**
  * Per-run activity projection derived from harness hook events.
@@ -49,6 +50,8 @@ export interface RunActivitySnapshot {
    * means complete). Kept here so a restarted coordinator still infers the rebase.
    */
   review_read_at?: string;
+  /** Newest hook-seen `git commit` (progress, lib/runProgress.ts), kept after later tool calls. */
+  last_commit_ts?: string;
 }
 
 export type RunActivityMap = Record<string, RunActivitySnapshot>;
@@ -140,6 +143,7 @@ export function applyHookActivity(
         const { [key]: _closed, ...rest } = open;
         open = rest;
       }
+      if (isCommitToolEvent(event) && isNewer(ts, next.last_commit_ts ?? null)) next.last_commit_ts = ts;
       if (!isNewer(ts, next.last_tool_ts)) continue;
       next.last_tool = event.tool;
       next.last_tool_brief = event.brief;

@@ -962,16 +962,23 @@ describe('attention', () => {
     const alert = ev('worker_needs_attention', ago(20 * 60_000), { reason: 'no_progress', idle_ms: 1000, no_progress_ms: 3_600_000, phase: 'implement', progress_at: progressAt }, 'coordinator');
     seed(runClaim(), [ev('phase_started', progressAt, { phase: 'implement' }), alert, alive]);
     expect(read().attention).toEqual({ kind: 'no_progress', run_id: 'run-a', since: progressAt, detail: 'implement', request_id: null });
-    // A git commit the hooks saw clears it.
+    // A git commit the hooks saw clears it, also after later tool calls.
     writeRunActivity(dir, { 'run-a': {
       run_id: 'run-a', agent_id: 'orc-1', label: null, source: null, label_ts: null,
       last_tool: 'Bash', last_tool_brief: 'git commit -m "feat: x"', last_tool_ts: ago(60_000),
     } });
     expect(read().attention).toBeNull();
-    // So does a phase change after the progress point.
+    writeRunActivity(dir, { 'run-a': {
+      run_id: 'run-a', agent_id: 'orc-1', label: null, source: null, label_ts: null,
+      last_tool: 'Bash', last_tool_brief: 'npm test', last_tool_ts: ago(30_000), last_commit_ts: ago(60_000),
+    } });
+    expect(read().attention).toBeNull();
+    // A repeated phase_started for the same phase is not progress, as in the coordinator.
     writeRunActivity(dir, {});
+    eventLog.appendEvent(join(dir, 'events.jsonl'), { seq: 4, phase: 'implement', ...ev('phase_started', ago(50_000), { phase: 'implement' }) } as Parameters<typeof eventLog.appendEvent>[1]);
     expect(read().attention?.kind).toBe('no_progress');
-    eventLog.appendEvent(join(dir, 'events.jsonl'), { seq: 4, phase: 'review', ...ev('phase_started', ago(60_000), { phase: 'review' }) } as Parameters<typeof eventLog.appendEvent>[1]);
+    // A change of phase after the progress point clears it.
+    eventLog.appendEvent(join(dir, 'events.jsonl'), { seq: 5, phase: 'review', ...ev('phase_started', ago(40_000), { phase: 'review' }) } as Parameters<typeof eventLog.appendEvent>[1]);
     expect(read().attention).toBeNull();
   });
 

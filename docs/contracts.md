@@ -38,7 +38,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | `worktrees/<run_id>/` | Run worktrees (git worktrees of the target repo; `ORC_WORKTREES_DIR` overrides) |
 | `run-specs/<run_id>.md` | Pinned task revision body, read-only (`0444`), the worker's `task_spec_path` |
 | `event-checkpoint.json` | Coordinator event-processing checkpoint (`last_processed_seq`, processed ids) |
-| `run-activity.json` | Coordinator per-run activity: label, source, last tool, tool calls in flight, last turn end, `review_read_at` (`lib/runSignals.ts`) |
+| `run-activity.json` | Coordinator per-run activity: label, source, last tool, tool calls in flight, last turn end, `review_read_at`, `last_commit_ts` (newest hook-seen `git commit`) (`lib/runSignals.ts`) |
 | `pty-hook-events/<agent_id>.ndjson` | Hook records (`permission`, `tool_start`, `tool`, `activity`, `turn_end`); drained only by the coordinator tick via `.processing` rename; name kept for compatibility; see [adapters.md](./adapters.md) |
 | `pty-hook-events/<agent_id>.ndjson.tasks.json` | Claude hook sidecar: to-do labels by id + active id |
 | `pty-logs/<agent_id>.log` | tmux output capture (output tails); `pty-` directory names are kept for compatibility |
@@ -393,9 +393,9 @@ Importing it has no side effects: no project resolution, registry access, git ca
 | `permission_prompt` | waiting for input the coordinator recorded for a provider permission or interactive prompt (`input_requested` with `actor_type: coordinator`) and the worker shows no hook activity after it | the request | prompt text | the worker acts again (hook activity after the request) or the input is answered |
 | `question` | waiting for an answer to the worker's `run-input-request` | the request | question text; `request_id` set | `run-input-respond` / `respond_input` |
 | `stalled` | the run's `stalled` flag (`isStalled`, the same test as `claims.stalled`) | the run's idle anchor (last activity) | `null` | any activity |
-| `no_progress` | the coordinator sent `worker_needs_attention {reason: no_progress}` and the run has not progressed since its `progress_at` (phase change, progress lifecycle event, or a `git commit` as the run's last hook-seen tool); not while waiting for input or finalizing | `progress_at` | the phase in the alert | progress |
+| `no_progress` | the coordinator sent `worker_needs_attention {reason: no_progress}` and the run has not progressed since its `progress_at` (a change of phase at its evidence time, a progress lifecycle event, or a hook-seen `git commit`, kept as `last_commit_ts` in `run-activity.json`); not while waiting for input or finalizing | `progress_at` | the phase in the alert | progress |
 
-A run that ends drops out of `claims.active`, so its attention goes with it. `request_id` is null except for `question`. The `orc watch` NEEDS INPUT badge still reads `waiting_input`.
+A run that ends drops out of `claims.active`, so its attention goes with it. `request_id` is null except for `question`. MCP `get_status` builds its own shape and does not carry `attention` yet; read it from `orc status --json` or `/v1/status`. The `orc watch` NEEDS INPUT badge still reads `waiting_input`.
 
 ### CLI commands
 

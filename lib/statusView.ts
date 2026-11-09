@@ -15,7 +15,7 @@ import { readProjectDescriptor, type ActiveProject, type ProjectSelectedBy } fro
 import { formatProjectIdentity } from './projectHealth.ts';
 import { latestHookActivityTs, readRunActivity, type RunActivityMap, type RunActivitySnapshot } from './runActivityStore.ts';
 import { isCommitToolEvent, isProgressLifecycleEvent, noProgressAlertProgressAt } from './runProgress.ts';
-import { isStalled, runIdleAnchor } from './runSignals.ts';
+import { isStalled, phaseEvidenceTs, runIdleAnchor } from './runSignals.ts';
 import { formatActivityLine, selectCurrentActivity, type CurrentActivity } from './currentActivity.ts';
 const STARTUP_FAILURE_LIMIT = 5;
 const LIFECYCLE_FAILURE_LIMIT = 5;
@@ -217,12 +217,13 @@ export interface RunAttentionEvents {
   inputRequestedBy: string | null;
   /** The latest `worker_needs_attention {reason: no_progress}`: the progress point it was raised for. */
   noProgressAlert: { progress_at: string; phase: string | null } | null;
-  /** Newest progress event (lifecycle event or phase change) of the run. */
+  /** Newest progress event of the run: a progress lifecycle event, or a change of phase at its evidence time. */
   progressAt: string | null;
 }
 
 export function collectRunAttentionEvents(events: OrcEvent[]): Map<string, RunAttentionEvents> {
   const byRun = new Map<string, RunAttentionEvents>();
+  const phases = new Map<string, string>();
   for (const event of events) {
     const runId = (event as { run_id?: string }).run_id;
     if (!runId) continue;
@@ -234,8 +235,16 @@ export function collectRunAttentionEvents(events: OrcEvent[]): Map<string, RunAt
       const phase = (event.payload as { phase?: unknown } | undefined)?.phase;
       entry.noProgressAlert = { progress_at: alertedFor, phase: typeof phase === 'string' ? phase : null };
     }
-    if ((isProgressLifecycleEvent(event) || event.event === 'phase_started') && later(entry.progressAt, event.ts)) {
-      entry.progressAt = event.ts;
+    if (isProgressLifecycleEvent(event) && later(entry.progressAt, event.ts)) entry.progressAt = event.ts;
+    // As RunSignals.recordPhase: only a change of phase is progress, at its evidence time.
+    if (event.event === 'phase_started') {
+      const phase = (event as { phase?: unknown }).phase ?? (event.payload as { phase?: unknown } | undefined)?.phase;
+      if (typeof phase === 'string' && phase.length > 0) {
+        const previous = phases.get(runId);
+        phases.set(runId, phase);
+        const evidenceTs = phaseEvidenceTs(event);
+        if (previous !== phase && later(entry.progressAt, evidenceTs)) entry.progressAt = evidenceTs;
+      }
     }
   }
   return byRun;
@@ -253,7 +262,8 @@ function later(current: string | null, candidate: string | undefined): boolean {
  * - `question`: waiting for an answer to the worker's `run-input-request`.
  * - `stalled`: the run's `stalled` flag (`isStalled`, as every status reader computes it).
  * - `no_progress`: the coordinator raised `worker_needs_attention {reason: no_progress}` and the run
- *   has shown no progress (phase change, lifecycle event, hook-seen `git commit`) since its progress point.
+ *   has shown no progress (phase change, lifecycle event, hook-seen `git commit`) since its progress point,
+ *   counted as the coordinator counts it (RunSignals).
  * Each clears with the state it reads: answering the input, the run moving on, or the run ending.
  */
 export function deriveAttention(input: {
@@ -286,6 +296,8 @@ export function deriveAttention(input: {
 
 function progressedSince(progressAt: string, runEvents: RunAttentionEvents, hookSnapshot: RunActivitySnapshot | null | undefined): boolean {
   if (later(progressAt, runEvents.progressAt ?? undefined)) return true;
+  if (later(progressAt, hookSnapshot?.last_commit_ts)) return true;
+  // A snapshot written before last_commit_ts existed: the commit counts while it is the last tool.
   const tool = hookSnapshot?.last_tool;
   const ts = hookSnapshot?.last_tool_ts;
   if (!tool || !ts) return false;
