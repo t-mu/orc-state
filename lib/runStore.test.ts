@@ -69,6 +69,7 @@ describe('SQLite run authority', () => {
       .toEqual(['run-a', 'run-b']);
     expect(() => commitClaims(dir, { version: '1', claims: [makeClaim('run-a', 'orch/other')] })).toThrow('refusing to overwrite');
     expect(readClaims(dir).claims.find((claim) => claim.run_id === 'run-a')?.task_ref).toBe('orch/task-1');
+    expect(() => commitClaims(dir, { version: '1', claims: [{ ...makeClaim('run-a'), agent_id: 'other-worker' }] })).toThrow('refusing to overwrite');
   });
 
   it('rolls back a run write when its event fails validation', () => {
