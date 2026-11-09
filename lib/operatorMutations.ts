@@ -339,7 +339,7 @@ export function unblockTask(stateDir: string, { task_ref, reason = null, actor_i
   });
 }
 
-/** Answer a worker's input request; the caller has already been authorized as the master. */
+/** Answer a worker's input request; the caller has already been authorized as the master or operator. */
 export function respondInput(stateDir: string, { run_id, agent_id, response, actor_id, request_id, record_memory = false }: Record<string, unknown> = {}): OperatorResults['respond-input'] {
   if (typeof run_id !== 'string' || !run_id) throw new InputError('run_id is required');
   if (typeof agent_id !== 'string' || !agent_id) throw new InputError('agent_id is required');
@@ -478,11 +478,10 @@ export function masterForCredential(stateDir: string, credential: string): strin
  * - A caller without a session must present the operator token the
  *   coordinator writes on every start (task 231); it is recorded as `human`
  *   or a registered agent it names.
- * - Answering an input request needs the master session, as it always has.
+ * - Answering an input request is open to the master and the operator; a worker session is refused.
  */
 export function authorizeOperator(stateDir: string, caller: ControlPrincipal | { credential: string | null; operator: boolean } | null, request: OperatorRequest): { actorId: string } {
   const principal = caller && 'credential' in caller ? resolveControlPrincipal(stateDir, caller.credential, caller.operator) : caller;
-  if (principal?.kind === 'operator' && request.op === 'respond-input') throw new ControlError('forbidden', 'Input response requires the master session (not the operator token)', 403);
   return { actorId: requireProjectAuthor(stateDir, principal, request.actor_id) };
 }
 

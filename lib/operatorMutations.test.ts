@@ -80,9 +80,10 @@ describe('authorizeOperator (task 232)', () => {
     expect(() => authorizeOperator(dir, operator, { ...reset, actor_id: 'ghost' })).toThrow(expect.objectContaining({ code: 'bad_request' }));
     // Without a session or operator intent nothing is applied.
     expect(() => authorizeOperator(dir, { credential: null, operator: false }, reset)).toThrow(expect.objectContaining({ code: 'unauthenticated' }));
-    // Answering a worker needs the master, as it always has.
-    expect(() => authorizeOperator(dir, operator, { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'yes' }))
-      .toThrow(expect.objectContaining({ code: 'forbidden' }));
+    // The operator may answer a worker, as human; a worker session may not.
+    const answer = { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'yes' } as const;
+    expect(authorizeOperator(dir, operator, answer)).toEqual({ actorId: 'human' });
+    expect(() => authorizeOperator(dir, { credential: 'session-a', operator: false }, answer)).toThrow(expect.objectContaining({ code: 'forbidden' }));
   });
 
   it('a session must be the master\'s, and acts only as the master', () => {
@@ -168,16 +169,22 @@ describe('master and operator mutations through the coordinator (task 232)', () 
     await expect(operator.operator({ op: 'unblock-task', task_ref: 'orch/blocked' })).rejects.toMatchObject({ code: 'unauthenticated', status: 401 });
   });
 
-  it('a shell inside a worker session presents it and is refused; only the master answers input', async () => {
+  it('a shell inside a worker session presents it and is refused; the master and operator answer input', async () => {
     const workerEnv = { ORC_SESSION_SECRET: 'session-a' };
     await expect(submitOperatorMutation({ op: 'reset-task', task_ref: 'orch/todo' }, { env: workerEnv, requireProject: inProject, stateDir: dir }))
       .rejects.toMatchObject({ code: 'forbidden' });
     bridgeInputRequest(dir, 'run-a', 'worker-a', 'req-1', 'Proceed?');
     const answer = { op: 'respond-input', run_id: 'run-a', agent_id: 'worker-a', response: 'go ahead' } as const;
-    await expect(submitOperatorMutation(answer, { env: {}, requireProject: inProject, stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(submitOperatorMutation(answer, { env: workerEnv, requireProject: inProject, stateDir: dir })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(submitOperatorMutation({ ...answer, request_id: 'req-stale' }, { env: {}, requireProject: inProject, stateDir: dir })).rejects.toThrow('Input request is not pending');
+    await expect(submitOperatorMutation({ ...answer, request_id: 'req-1' }, { env: {}, requireProject: inProject, stateDir: dir }))
+      .resolves.toMatchObject({ ok: true });
+    expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'human', payload: expect.objectContaining({ request_id: 'req-1' }) })]);
+    bridgeInputRequest(dir, 'run-a', 'worker-a', 'req-2', 'Proceed again?');
+    await expect(submitOperatorMutation({ ...answer, response: 'other', request_id: 'req-1' }, { env: {}, requireProject: inProject, stateDir: dir })).rejects.toMatchObject({ code: 'conflict' });
     await expect(submitOperatorMutation(answer, { env: { ORC_MASTER_SECRET: 'session-master' }, requireProject: inProject, stateDir: dir }))
       .resolves.toMatchObject({ ok: true, responded_by: 'master' });
-    expect(queryEvents(dir, { event_type: 'input_response' })).toEqual([expect.objectContaining({ actor_id: 'master', payload: expect.objectContaining({ response: 'go ahead' }) })]);
+    expect(queryEvents(dir, { event_type: 'input_response' }).map((e) => e.actor_id)).toEqual(['human', 'master']);
   });
 
   it('respond_input refuses a run that never asked instead of reporting a delivered answer', async () => {

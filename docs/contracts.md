@@ -172,7 +172,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `need_input` | Coordinator / Worker | run-start or in-progress nudge sent; validates `run-input-request` |
 | `input_provided` | Master | legacy, via `orc progress` |
 | `input_requested` | Worker | `orc run-input-request` |
-| `input_response` | Master | `orc run-input-respond` / `respond_input` |
+| `input_response` | Master, operator | `orc run-input-respond` / `respond_input` |
 | `agent_online` | Coordinator | session confirmed alive |
 | `reported_for_duty` | Worker (`report-for-duty`) or coordinator (session-start hook) | session ready; `payload`: `session_token`, and from the hook `source: 'hook'` and `provider_conversation_id` |
 | `agent_offline` | Coordinator | session lost, or unclaimed record removed (`reason: worker_record_removed`, `code`) |
@@ -212,7 +212,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 |---|---|---|
 | Bearer `control.token` | any process that can read the state dir | reaches the daemon only; names no caller |
 | `ORC_SESSION_SECRET` | each worker/scout session's environment | state keeps its SHA-256 hash; a session id authenticates nobody |
-| `ORC_MASTER_SECRET` | master provider environment (`orc start-session`) | MCP config references `${ORC_MASTER_SECRET}`; needed for `respond_input` / `run-input-respond` |
+| `ORC_MASTER_SECRET` | master provider environment (`orc start-session`) | MCP config references `${ORC_MASTER_SECRET}`; needed for `respond_input`; `run-input-respond` also works with the operator token |
 | `operator.token` | a shell with no session | acts as operator, recorded as `--actor-id` (`human` or a registered agent) or `human` |
 
 - `ORC_SESSION_ID` names the session (e.g. `report-for-duty`); it is not a credential. `ORC_CONTROL_SOCKET` gives workers the socket path.
@@ -248,7 +248,7 @@ A coordinator that holds the pid lock but does not answer gets a retryable `unav
 | `GET` | `/v1/memory/wake-up?wing=&budget=` | any session, operator | `{ initialized, text }`; `budget` 800 |
 | `POST` | `/v1/stop-check` | worker session only | `{ allow, reason? }`; appends `turn_end` first |
 | `POST` | `/v1/lifecycle` | worker session for that run | `{ op, agent_id, run_id?, ... }`; `op`: `run-start`, `run-fail`, `run-finish`, `run-work-complete`, `progress`, `review-submit`, `input-request`, `input-poll`, `input-timeout`, `memory-record`, `report-for-duty`. An offline session may still `input-poll` and repeat `run-finish` on a done run |
-| `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `request-scout` (`{ objective, provider?, run_id?, task_ref?, scope_paths?, use_web? }` → `202 { agent_id }`; the launch continues in the background and the outcome is a `scout_launched` or `scout_launch_failed` event), `remove-scout` (`{ agent_id }` → `{ agent_id, removed }`), `respond-input` (master only). The master's `actor_id` is ignored |
+| `POST` | `/v1/operator` | master, operator | `{ op, actor_id?, ... }`; `op`: `cancel-task`, `reset-task`, `unblock-task`, `delegate-task`, `run-expire`, `run-close`, `task-mark-done`, `request-scout` (`{ objective, provider?, run_id?, task_ref?, scope_paths?, use_web? }` → `202 { agent_id }`; the launch continues in the background and the outcome is a `scout_launched` or `scout_launch_failed` event), `remove-scout` (`{ agent_id }` → `{ agent_id, removed }`), `respond-input` (`{ run_id, agent_id, response, request_id? }`; a `request_id` that is not the pending one → `409 conflict`). The master's `actor_id` is ignored |
 | `POST` | `/v1/plans/import` | master, operator | import `{ files: [{ path, text }] }` → `{ imported: [{ path, plan_id, changed }] }`; atomic (an invalid plan changes nothing), ≤ 32 MiB; stores what `orc project plan import` stores |
 | `GET` | `/v1/scouts/<agent_id>/report` | master, operator | `{ agent_id, status: running\|reported\|truncated\|ended, report, launched_at }`, as MCP `get_scout_report`; an unknown id gets `404`, a non-scout `400` |
 | `POST` | `/v1/commands` | `running` session | **Experimental.** Enqueue `{ run_id, recipient_session_id, idempotency_key, kind, payload }` → `202 { command }`. Delivered to `app:` sessions by `CommandDispatcher` |
