@@ -20,6 +20,9 @@ import { extractScoutReport, launchScout, prepareScout, readScoutReport, removeS
 import { isWaitingForInput } from '../lib/waitingInput.ts';
 import { listRuns, type RunListArgs } from '../lib/runList.ts';
 import { coordinatorSummary, describeCoordinator, restartCoordinator } from '../lib/coordinatorProcess.ts';
+import { doctorCheckList, runDoctor } from '../lib/doctor.ts';
+import { terminalSnapshot, type TerminalReader } from '../lib/terminalSnapshot.ts';
+import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import type { Task } from '../types/backlog.ts';
 import type { RunWorktreesState } from '../types/run-worktrees.ts';
 
@@ -341,6 +344,23 @@ export function handleGetRun(stateDir: string, { run_id }: { run_id?: unknown } 
 
   return { ...claim, task_title: taskTitle, worktree_path: worktreePath,
     task_spec_revision_status: claim.task_spec_snapshot ? taskSnapshotStatus(claim.task_spec_snapshot, stateDir) : 'unknown' };
+}
+
+/** The `orc doctor` checks, one `{ name, ok, detail }` line each; `ok` is the same verdict as `orc doctor`'s exit code. */
+export async function handleDoctor(stateDir: string) {
+  const report = await runDoctor(stateDir);
+  return { ok: report.ok, checks: doctorCheckList(report.checks) };
+}
+
+/**
+ * A run's provider terminal screen, ANSI stripped (MCP `terminal_snapshot`). Read through the coordinator as the
+ * master (its session credential) or the operator (its token); it never takes the input lease or sends keys.
+ */
+export function handleTerminalSnapshot(stateDir: string, { run_id, lines }: { run_id?: unknown; lines?: unknown } = {},
+  client: TerminalReader = new ControlClient(stateDir, { socketPath: controlSocketFromEnv() })) {
+  if (typeof run_id !== 'string' || !run_id) throw new Error('run_id is required');
+  if (!readClaims(stateDir).claims.some((c) => c.run_id === run_id)) return { error: 'not_found', run_id };
+  return terminalSnapshot(client, run_id, lines);
 }
 
 /** Launch a scout and brief it, waiting until it is ready; the coordinator's own path is `request-scout` (lib/scouts.ts). */

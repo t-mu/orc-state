@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- MCP `doctor` (the `orc doctor` checks, one `{ name, ok, detail }` line each, same verdict) and `terminal_snapshot(run_id, lines?)` (a read-only, ANSI-stripped look at the last lines of a run's tmux provider terminal, as `orc terminal provider --once`). Neither needs the master secret.
 - Control API `GET /v1/runs?state=&stale_after_ms=` and `ControlClient.runs()` (with the `RunListRow`/`RunListState` types on `orc-state/client`): the `orc runs --json` / MCP `list_runs` view.
 - MCP `get_status` reports `coordinator` (`{ running, pid, version, started_at, stale }`, as `orc coordinator status`) and a `waiting_input` count; `orc status --json` adds the same `coordinator` and counts waiting runs in `claims.waiting_input`.
 - **`orc-state/client` entry**: a side-effect-free import for apps and TUIs with `ControlClient`, `ControlError`, `listProjects`, `RegistrySchemaError` and the protocol types ([Embedding orc](docs/embedding.md)).

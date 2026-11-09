@@ -441,7 +441,7 @@ With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `d
 
 | Group | Tool names |
 |---|---|
-| Reads | `list_tasks`, `get_task`, `list_agents`, `list_runs`, `get_run`, `get_status`, `get_agent_workview`, `query_events`, `list_worktrees` |
+| Reads | `list_tasks`, `get_task`, `list_agents`, `list_runs`, `get_run`, `get_status`, `get_agent_workview`, `query_events`, `list_worktrees`, `doctor` (the `orc doctor` checks as `{ ok, checks: [{ name, ok, detail }] }`), `terminal_snapshot` (`{ run_id, lines, screen }`: the last `lines` lines, default 40, max 200, of a run's tmux provider terminal, ANSI stripped, as `orc terminal provider --once`; never takes the input lease; needs the coordinator) |
 | Task authoring and control | `create_task`, `update_task`, `delegate_task`, `cancel_task`, `reset_task`, `unblock_task`, `close_run`, `respond_input` |
 | Coordinator | `restart_coordinator` (master secret; checked against the state, not sent to the coordinator it replaces) |
 | Scouts | `request_scout`, `get_scout_report`, `remove_scout` |

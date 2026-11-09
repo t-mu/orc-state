@@ -4,137 +4,21 @@
  * Usage: node cli/doctor.ts [--json]
  */
 import { exitAfterFlush, printJson } from './shared.ts';
-import { execSync } from 'node:child_process';
-import { ACTIVE_PROJECT, NO_PROJECT_MESSAGE, STATE_DIR, TARGET_REPO_ROOT, WORKTREES_DIR } from '../lib/paths.ts';
-import { checkProjectHealth, formatProjectIdentity } from '../lib/projectHealth.ts';
+import { ACTIVE_PROJECT, STATE_DIR } from '../lib/paths.ts';
+import { formatProjectIdentity } from '../lib/projectHealth.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
-import { isBinaryAvailable, PROVIDER_BINARIES, PROVIDER_PACKAGES } from '../lib/binaryCheck.ts';
-import { readAgents, readClaims } from '../lib/stateReader.ts';
-import { validateStateDir, validateMemoryDb } from '../lib/stateValidation.ts';
-import { detectLifecycleIssues, type LifecycleIssue } from '../lib/lifecycleDiagnostics.ts';
-import { claimedRunStartupAnchor } from '../lib/runActivity.ts';
-import { getOrphanedClaims } from '../lib/claimDiagnostics.ts';
-import { checkSandboxControlSocket, checkSandboxDependencies } from '../lib/sandboxDeps.ts';
-import { inspectRuntimeSchema } from '../lib/runtimeSchema.ts';
-import { coordinatorPidFileProblem } from '../lib/coordinatorLiveness.ts';
-import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
-import { staleCodeWarning } from '../lib/codeIdentity.ts';
-import { checkTmux } from '../adapters/tmux.ts';
-import type { Agent } from '../types/agents.ts';
-import type { Claim } from '../types/claims.ts';
+import { runDoctor } from '../lib/doctor.ts';
 
 const asJson = boolFlag('json');
-const staleStartThresholdMs = intFlag('stale-start-ms', 5 * 60 * 1000);
-const staleProgressThresholdMs = intFlag('stale-progress-ms', 20 * 60 * 1000);
-const nowMs = Date.now();
 
-// A project's Git checks run against its registered target, wherever the command is invoked.
-const gitRepo = isGitRepo(ACTIVE_PROJECT ? TARGET_REPO_ROOT : undefined);
-const stateErrors = validateStateDir(STATE_DIR);
-const projectHealth = ACTIVE_PROJECT ? checkProjectHealth(ACTIVE_PROJECT, STATE_DIR, { worktreesDir: WORKTREES_DIR }) : null;
-const agents: Agent[] = safeRead(() => readAgents(STATE_DIR).agents, []);
-const claims: Claim[] = safeRead(() => readClaims(STATE_DIR).claims, []);
-const providers = new Set(agents.map((a) => a.provider));
-
-const sandboxDeps = checkSandboxDependencies();
-const sandboxControlSocket = checkSandboxControlSocket({ project: Boolean(ACTIVE_PROJECT) });
-const memoryHealth = validateMemoryDb(STATE_DIR);
-const runtimeSchema = inspectRuntimeSchema(STATE_DIR);
-const coordinatorLock = { problem: coordinatorPidFileProblem(STATE_DIR) };
-// A warning only: never part of `ok`. Null when no coordinator answers or its code is current.
-const coordinatorCode = { warning: await coordinatorCodeWarning() };
-// Every provider terminal session (master and workers) runs in tmux.
-const tmux = checkTmux();
-// Only a registered project runs.
-const projectSelection = ACTIVE_PROJECT ? null : { ok: false, message: NO_PROJECT_MESSAGE };
-
-const checks: Record<string, unknown> = {
-  project: projectHealth,
-  projectSelection,
-  gitRepo,
-  providerBinaries: {} as Record<string, unknown>,
-  staleLinkedWorkers: [] as unknown[],
-  orphanedActiveClaims: [] as unknown[],
-  staleActiveClaims: [] as unknown[],
-  lifecycleIssues: [] as unknown[],
-  stateErrors,
-  sandboxDependencies: sandboxDeps,
-  sandboxControlSocket,
-  memoryHealth,
-  runtimeSchema,
-  coordinatorLock,
-  coordinatorCode,
-  tmux,
-};
-
-for (const provider of providers) {
-  if (!provider) continue;
-  (checks.providerBinaries as Record<string, unknown>)[provider] = checkProviderBinary(provider);
-}
-
-for (const agent of agents) {
-  if (agent.session_handle && agent.status === 'offline') {
-    (checks.staleLinkedWorkers as unknown[]).push({
-      agent_id: agent.agent_id,
-      status: agent.status,
-      session_handle: agent.session_handle,
-      note: 'offline worker still has session_handle',
-    });
-  }
-}
-
-(checks.orphanedActiveClaims as unknown[]).push(...getOrphanedClaims(agents, claims));
-
-for (const claim of claims) {
-  if (!['claimed', 'in_progress'].includes(claim.state)) continue;
-
-  const anchor = claim.state === 'claimed'
-    ? claimedRunStartupAnchor(claim)
-    : (claim.last_heartbeat_at ?? claim.started_at ?? claim.claimed_at);
-  const idleMs = anchor ? nowMs - new Date(anchor).getTime() : NaN;
-  if (Number.isNaN(idleMs)) continue;
-  if (claim.input_state === 'awaiting_input') continue;
-  if (claim.state === 'claimed' && !claim.task_envelope_sent_at) continue;
-
-  const isStale = claim.state === 'claimed'
-    ? idleMs >= staleStartThresholdMs
-    : idleMs >= staleProgressThresholdMs;
-  if (!isStale) continue;
-  (checks.staleActiveClaims as unknown[]).push({
-    run_id: claim.run_id,
-    task_ref: claim.task_ref,
-    agent_id: claim.agent_id,
-    claim_state: claim.state,
-    idle_seconds: Math.round(idleMs / 1000),
-    threshold_seconds: Math.round((claim.state === 'claimed' ? staleStartThresholdMs : staleProgressThresholdMs) / 1000),
-    hint: claim.state === 'claimed'
-      ? `Worker ${claim.agent_id} has not acknowledged run_started for ${Math.round(idleMs / 1000)}s. Check coordinator logs.`
-      : `Worker ${claim.agent_id} has not emitted progress for ${Math.round(idleMs / 1000)}s. Check coordinator logs.`,
-  });
-}
-
-(checks.lifecycleIssues as unknown[]) = detectLifecycleIssues(STATE_DIR);
-
-const summary = {
-  ok:
-    gitRepo &&
-    stateErrors.length === 0 &&
-    Object.values(checks.providerBinaries as Record<string, unknown>).every((c: unknown) => (c as Record<string, unknown>).ok) &&
-    (checks.staleLinkedWorkers as unknown[]).length === 0 &&
-    (checks.orphanedActiveClaims as unknown[]).length === 0 &&
-    (checks.staleActiveClaims as unknown[]).length === 0 &&
-    (checks.lifecycleIssues as unknown[]).length === 0 &&
-    sandboxDeps.ok &&
-    memoryHealth.ok &&
-    runtimeSchema.ok &&
-    coordinatorLock.problem === null &&
-    tmux.ok &&
-    projectSelection === null &&
-    (projectHealth?.ok ?? true),
-  registered_workers: agents.length,
-  active_claims: claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).length,
-  checks,
-};
+const summary = await runDoctor(STATE_DIR, {
+  project: ACTIVE_PROJECT,
+  staleStartThresholdMs: intFlag('stale-start-ms', 5 * 60 * 1000),
+  staleProgressThresholdMs: intFlag('stale-progress-ms', 20 * 60 * 1000),
+});
+const { checks } = summary;
+const { gitRepo, stateErrors, sandboxControlSocket, runtimeSchema, coordinatorLock, coordinatorCode, tmux, projectSelection } = checks;
+const projectHealth = checks.project;
 
 if (asJson) {
   printJson(summary);
@@ -155,31 +39,30 @@ if (!gitRepo) {
 console.log('');
 
 console.log('provider binaries available');
-if (Object.keys(checks.providerBinaries as Record<string, unknown>).length === 0) {
+if (Object.keys(checks.providerBinaries).length === 0) {
   console.log('  (no registered providers)');
 } else {
-  for (const [provider, result] of Object.entries(checks.providerBinaries as Record<string, unknown>)) {
-    const r = result as Record<string, unknown>;
-    console.log(`  ${provider}: ok=${String(r.ok)} binary=${String(r.binary)}`);
-    if (!r.ok && r.detail) console.log(`    detail: ${typeof r.detail === 'string' ? r.detail : JSON.stringify(r.detail)}`);
+  for (const [provider, r] of Object.entries(checks.providerBinaries)) {
+    console.log(`  ${provider}: ok=${String(r.ok)} binary=${r.binary}`);
+    if (!r.ok && r.detail) console.log(`    detail: ${r.detail}`);
   }
 }
 
 console.log('');
-console.log(`stale linked workers: ${(checks.staleLinkedWorkers as unknown[]).length}`);
-for (const w of checks.staleLinkedWorkers as Array<Record<string, unknown>>) {
-  console.log(`  ${String(w.agent_id)} ${String(w.status)} ${String(w.session_handle)}`);
+console.log(`stale linked workers: ${checks.staleLinkedWorkers.length}`);
+for (const w of checks.staleLinkedWorkers) {
+  console.log(`  ${w.agent_id} ${w.status} ${w.session_handle}`);
 }
 
 console.log('');
-console.log(`orphaned active claims: ${(checks.orphanedActiveClaims as unknown[]).length}`);
-for (const c of checks.orphanedActiveClaims as Array<Record<string, unknown>>) {
+console.log(`orphaned active claims: ${checks.orphanedActiveClaims.length}`);
+for (const c of checks.orphanedActiveClaims) {
   console.log(`  ${String(c.run_id)} task=${String(c.task_ref)} agent=${String(c.agent_id)} owner_status=${String(c.owner_status)}`);
 }
 
 console.log('');
-console.log(`stale active claims: ${(checks.staleActiveClaims as unknown[]).length}`);
-for (const c of checks.staleActiveClaims as Array<Record<string, unknown>>) {
+console.log(`stale active claims: ${checks.staleActiveClaims.length}`);
+for (const c of checks.staleActiveClaims) {
   console.log(`  ${String(c.run_id)} task=${String(c.task_ref)} state=${String(c.claim_state)} idle=${String(c.idle_seconds)}s threshold=${String(c.threshold_seconds)}s`);
   console.log(`    hint: ${String(c.hint)}`);
 }
@@ -191,7 +74,7 @@ for (const error of stateErrors) {
 }
 
 console.log('');
-const lifecycleIssues = checks.lifecycleIssues as LifecycleIssue[];
+const lifecycleIssues = checks.lifecycleIssues;
 console.log(`lifecycle issues: ${lifecycleIssues.length}`);
 for (const issue of lifecycleIssues) {
   console.log(`  ${issue.code} ${issue.message}`);
@@ -199,7 +82,7 @@ for (const issue of lifecycleIssues) {
 }
 
 console.log('');
-const sd = checks.sandboxDependencies as ReturnType<typeof checkSandboxDependencies>;
+const sd = checks.sandboxDependencies;
 if (sd.skipped) {
   console.log(`sandbox dependencies: skipped (${sd.reason})`);
 } else {
@@ -213,7 +96,7 @@ if (sd.skipped) {
 if (sandboxControlSocket.warning) console.log(`  warning: ${sandboxControlSocket.warning}`);
 
 console.log('');
-const mh = checks.memoryHealth as ReturnType<typeof validateMemoryDb>;
+const mh = checks.memoryHealth;
 console.log(`memory health: ok=${String(mh.ok)}`);
 for (const msg of mh.messages) {
   console.log(`  ${msg}`);
@@ -253,41 +136,3 @@ if (!summary.ok) {
 
 console.log('');
 console.log('All checks passed.');
-
-function isGitRepo(cwd?: string): boolean {
-  try {
-    execSync('git rev-parse --git-dir', { stdio: 'pipe', ...(cwd ? { cwd } : {}) });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function checkProviderBinary(provider: string) {
-  const binary = (PROVIDER_BINARIES)[provider] ?? provider;
-  const packageName = (PROVIDER_PACKAGES)[provider];
-  const ok = isBinaryAvailable(binary);
-  const installHint = packageName ? `npm install -g ${packageName}` : null;
-  return {
-    ok,
-    binary,
-    package: packageName ?? null,
-    detail: ok ? '' : (installHint ? `Run: ${installHint}` : `Binary '${binary}' not found on PATH`),
-  };
-}
-
-async function coordinatorCodeWarning(): Promise<string | null> {
-  try {
-    return staleCodeWarning(await new ControlClient(STATE_DIR, { timeoutMs: 3_000, socketPath: controlSocketFromEnv() }).health());
-  } catch {
-    return null; // no coordinator running, or it predates /v1/health
-  }
-}
-
-function safeRead<T>(read: () => T, fallback: T): T {
-  try {
-    return read();
-  } catch {
-    return fallback;
-  }
-}

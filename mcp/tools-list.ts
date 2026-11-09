@@ -405,6 +405,28 @@ export const TOOLS = [
     },
   },
   {
+    name: 'doctor',
+    description: 'Run the orc doctor health checks. Returns { ok, checks: [{ name, ok, detail }] }, one line of detail per check; ok matches orc doctor\'s exit code.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'terminal_snapshot',
+    description: 'Read-only look at a run\'s provider terminal: the last `lines` lines of the screen as plain text (ANSI stripped), like orc terminal provider <run_id> --once. Never takes the input lease or sends keys. Returns { run_id, lines, screen }; an unknown run returns { error: "not_found", run_id }; a run with no live session or with an app: session is a tool error. Needs a running coordinator.',
+    inputSchema: {
+      type: 'object',
+      required: ['run_id'],
+      properties: {
+        run_id: { type: 'string', description: 'Run to look at' },
+        lines: { type: 'integer', minimum: 1, maximum: 200, description: 'Lines from the bottom of the screen. Default 40, max 200' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'memory_wake_up',
     description: 'Load essential memories for context. Returns formatted wake-up text grouped by wing/room.',
     inputSchema: {

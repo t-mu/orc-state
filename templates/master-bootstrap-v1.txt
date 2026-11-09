@@ -62,6 +62,10 @@ query_events(run_id?, agent_id?, task_ref?, event_type?, notifications_only?, af
   Events are compact (no event_id/actor fields) unless verbose: true.
   fts_query: full-text search against event payloads (FTS5 syntax).
 
+doctor()
+
+terminal_snapshot(run_id, lines?)
+
 list_worktrees()
   List all registered run worktrees with agent, task, path, and branch information.
 

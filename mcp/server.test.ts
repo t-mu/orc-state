@@ -51,6 +51,22 @@ describe('orchestrator mcp server foundation', () => {
     expect(names).toContain('cancel_task');
     expect(names).toContain('request_scout');
     expect(names).toContain('respond_input');
+    expect(names).toContain('doctor');
+    expect(names).toContain('terminal_snapshot');
+  });
+
+  it('serves doctor and terminal_snapshot without the master secret', async () => {
+    const noSecret = { credential: null, requireProject: () => {} };
+    const report = await invokeTool(stateDir, 'doctor', {}, noSecret) as { ok: boolean; checks: Array<{ name: string; ok: boolean; detail: string }> };
+    expect(report.ok).toBe(report.checks.every((check) => check.ok));
+    expect(report.checks.map((check) => check.name)).toContain('tmux');
+    await expect(Promise.resolve(invokeTool(stateDir, 'terminal_snapshot', { run_id: 'run-missing' }, noSecret))).resolves.toEqual({ error: 'not_found', run_id: 'run-missing' });
+  });
+
+  it('validates terminal_snapshot lines: at most 200', () => {
+    expect(validateToolArguments('terminal_snapshot', { run_id: 'r', lines: 200 }).ok).toBe(true);
+    expect(validateToolArguments('terminal_snapshot', { run_id: 'r', lines: 201 }).ok).toBe(false);
+    expect(validateToolArguments('terminal_snapshot', {}).ok).toBe(false);
   });
 
   it('unblocks a blocked task through unblock_task and refuses one that is not blocked', async () => {
