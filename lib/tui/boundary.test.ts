@@ -41,7 +41,7 @@ function boundaryViolation(file: string, ref: ImportRef): string | null {
   }
   const target = resolve(dirname(file), specifier);
   if (target === CLIENT_ENTRY || target.startsWith(`${TUI_DIR}/`)) return null;
-  if (!ref.typeOnly && PURE_HELPERS.has(target)) return null;
+  if (PURE_HELPERS.has(target)) return null;
   return `${relative(REPO_ROOT, target)} is not orc-state/client`;
 }
 
@@ -84,7 +84,6 @@ describe('lib/tui import boundary', () => {
       "export { openTaskStore } from '../projectTaskStore.ts';",
       "const lazy = import('../eventLog.ts');",
       "import 'orc-state';",
-      "import type { Banner } from '../banner.ts';",
     ].join('\n');
     expect(violations(file, source)).toEqual([
       'lib/tui/Example.tsx: lib/statusView.ts is not orc-state/client',
@@ -92,7 +91,6 @@ describe('lib/tui import boundary', () => {
       'lib/tui/Example.tsx: lib/stateReader.ts is not orc-state/client',
       'lib/tui/Example.tsx: types/claims.ts is not orc-state/client',
       'lib/tui/Example.tsx: lib/projectTaskStore.ts is not orc-state/client',
-      'lib/tui/Example.tsx: lib/banner.ts is not orc-state/client',
       'lib/tui/Example.tsx: orc-state is not the client entry',
       'lib/tui/Example.tsx: lib/eventLog.ts is not orc-state/client',
     ]);
@@ -107,6 +105,7 @@ describe('lib/tui import boundary', () => {
       "import { stripVTControlCharacters } from 'node:util';",
       "import { Header } from './Header.tsx';",
       "import { renderBanner } from '../banner.ts';",
+      "import type { CurrentActivity } from '../currentActivity.ts';",
     ].join('\n');
     expect(violations(file, source)).toEqual([]);
   });

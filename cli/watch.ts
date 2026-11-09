@@ -93,22 +93,27 @@ function connectionLine(state: ProjectWatchState): string {
 }
 
 /** The plain snapshot of `stateDir`'s project; false when it cannot be shown (not watched, unreachable, incompatible). */
-export function renderPlainSnapshot(source: WatchSource, { intervalMs, stateDir }: Pick<WatchOptions, 'intervalMs' | 'stateDir'>): boolean {
+export function renderPlainSnapshot(
+  source: WatchSource,
+  { intervalMs, stateDir }: Pick<WatchOptions, 'intervalMs' | 'stateDir'>,
+  registryError: string | null = null,
+): boolean {
   const state = currentProject(source, stateDir);
   process.stdout.write('\x1b[2J\x1b[H');
   if (process.stdout.isTTY) console.log(renderBanner());
 
   let ok: boolean;
   if (!state) {
-    console.log(`project: not watched (${stateDir})`);
+    console.log(registryError ? `registry error: ${registryError}` : `project: not watched (${stateDir})`);
     ok = false;
   } else {
     ok = state.connection === 'running' || state.connection === 'stopped';
-    if (state.status && state.connection === 'running') {
+    if (state.status) {
       // The status names the project itself (`Orchestrator Status`, then the project line).
+      // A project that is no longer running keeps its last status, as the TUI shows it.
       console.log(colorFormatStatus(state.status));
       console.log('');
-      console.log(connectionLine(state));
+      console.log(`${connectionLine(state)}${state.connection === 'running' ? '' : ' (showing last known status)'}`);
     } else {
       const { project } = state;
       console.log(`project: ${project.name} (${project.id}) → ${project.target_repo_root}`);
@@ -131,22 +136,30 @@ export function renderPlainSnapshot(source: WatchSource, { intervalMs, stateDir 
 
 export async function runFallbackWatch(options: WatchOptions): Promise<number | null> {
   const source = options.source ?? createWatchSource(options.stateDir);
+  let registryError: string | null = null;
+  const unsubscribe = source.onUpdate((update) => {
+    if (update.type === 'registry_error') registryError = update.error.message;
+    else if (update.type === 'added' || update.type === 'removed') registryError = null;
+  });
   source.start();
-  await waitForSettled(source, options.stateDir, options.settleTimeoutMs ?? 5000);
 
   if (options.once) {
-    const ok = renderPlainSnapshot(source, options);
+    await waitForSettled(source, options.stateDir, options.settleTimeoutMs ?? 5000);
+    const ok = renderPlainSnapshot(source, options, registryError);
+    unsubscribe();
     await source.stop();
     return ok ? 0 : 1;
   }
 
-  renderPlainSnapshot(source, options);
+  // Live: draw right away (the project may still be connecting) and redraw every interval.
+  renderPlainSnapshot(source, options, registryError);
   const timer = setInterval(() => {
-    renderPlainSnapshot(source, options);
+    renderPlainSnapshot(source, options, registryError);
   }, options.intervalMs);
 
   const shutdown = () => {
     clearInterval(timer);
+    unsubscribe();
     void source.stop().finally(() => process.exit(0));
   };
 

@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { ProjectWatcher, type ProjectListEntry } from '../client.ts';
 import { startControlServer } from '../lib/controlServer.ts';
 import { closeAllDatabases } from '../lib/eventLog.ts';
+import { buildStatus } from '../lib/statusView.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 import { runFallbackWatch, watchedProjectList, type WatchSource } from './watch.ts';
 
@@ -110,6 +111,29 @@ describe('cli/watch.ts', () => {
     expect(out).toMatch(/other\s+stopped/);
   });
 
+  it('renders after the settle timeout while the project is still connecting, exiting 1', async () => {
+    const source = fakeSource([{ project: entry(dir, true), connection: 'connecting', error: null, status: null, cursor: null }]);
+    const { code, out } = await captureStdout(() => runFallbackWatch({ once: true, intervalMs: 1000, stateDir: dir, source, settleTimeoutMs: 20 }));
+    expect(code).toBe(1);
+    expect(out).toContain('coordinator: connecting');
+  });
+
+  it('keeps the last status of a project whose coordinator stopped, marked as last known', async () => {
+    const status = { ...emptyStatus(), project: { id: 'p', name: 'demo', target_repo_root: '/repo' } };
+    const source = fakeSource([{ project: entry(dir, false), connection: 'stopped', error: null, status: status as never, cursor: 1 }]);
+    const { code, out } = await captureStdout(() => runFallbackWatch({ once: true, intervalMs: 1000, stateDir: dir, source }));
+    expect(code).toBe(0);
+    expect(out).toContain('Orchestrator Status');
+    expect(out).toContain('coordinator: stopped (coordinator not running) (showing last known status)');
+  });
+
+  it('prints the registry error when the project is not watched because the registry cannot be read', async () => {
+    const source = new ProjectWatcher({ listProjects: () => { throw new Error('registry.db schema version 9 is newer'); } });
+    const { code, out } = await captureStdout(() => runFallbackWatch({ once: true, intervalMs: 1000, stateDir: dir, source }));
+    expect(code).toBe(1);
+    expect(out).toContain('registry error: registry.db schema version 9 is newer');
+  });
+
   it('watches an unregistered state directory alongside the registered projects', () => {
     const registered = entry('/state/registered', false);
     const list = watchedProjectList(dir, () => [registered]);
@@ -125,6 +149,12 @@ function entry(stateDir: string, running: boolean): ProjectListEntry {
     id: `id-${stateDir}`, name: stateDir.split('/').at(-1)!, target_repo_root: '/repo', state_dir: stateDir,
     repo_present: true, control_socket: null, coordinator_running: running,
   };
+}
+
+/** A /v1/status view of an empty project, built as the coordinator builds it. */
+function emptyStatus(): ReturnType<typeof buildStatus> {
+  seedValidState();
+  return buildStatus(dir);
 }
 
 function fakeSource(states: ReturnType<WatchSource['projects']>): WatchSource {
