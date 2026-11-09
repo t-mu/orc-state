@@ -15,6 +15,7 @@ describe('client entry (client.ts)', () => {
       'CONTROL_PROTOCOL_VERSION',
       'ControlClient',
       'ControlError',
+      'ProjectWatcher',
       'RegistrySchemaError',
       'listProjects',
     ]);

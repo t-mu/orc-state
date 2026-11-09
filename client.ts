@@ -3,6 +3,7 @@
  *
  *   ControlClient, ControlError, CONTROL_PROTOCOL_VERSION — local control API client (protocol v1)
  *   listProjects, RegistrySchemaError     — registered projects with control socket + coordinator liveness
+ *   ProjectWatcher                        — every project's connection state, status and events, with reconnect
  *
  * Importing it has no side effects (no project resolution, registry access,
  * git calls or environment checks) and its module graph uses Node built-ins
@@ -34,3 +35,7 @@ export type { OrcEvent, ReviewSubmittedEvent } from './types/events.ts';
 
 export { listProjects, RegistrySchemaError } from './lib/projectList.ts';
 export type { ProjectListEntry } from './lib/projectList.ts';
+export { ProjectWatcher } from './lib/projectWatcher.ts';
+export type {
+  ProjectConnectionState, ProjectWatchClient, ProjectWatcherOptions, ProjectWatchState, ProjectWatchUpdate, WatcherTimers,
+} from './lib/projectWatcher.ts';
