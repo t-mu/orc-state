@@ -5,8 +5,11 @@ import {
   mergeFeed, notificationEntries,
   type AgentDetail, type AttentionKind, type DashboardAgent, type DashboardFeedEntry, type DashboardModel, type DashboardProject,
 } from './dashboard.ts';
+import { ControlClient } from '../../client.ts';
 import { MoreLine } from './MoreLine.tsx';
 import { buildProjectViews, describeConnection, type TuiProjectView, type TuiWatchSource } from './status.ts';
+import { TaskExplorer } from './TaskExplorer.tsx';
+import type { TuiTaskClient } from './taskList.ts';
 
 export interface AppProps {
   /** The project watcher (orc-state/client) the dashboard reads every project from. */
@@ -15,7 +18,11 @@ export interface AppProps {
   stateDir: string;
   /** Re-read the watcher at least this often, besides on each of its updates. */
   intervalMs?: number;
+  /** The read-only task client of a project (`t` opens the task explorer); a `ControlClient` by default. */
+  createTaskClient?: (stateDir: string) => TuiTaskClient;
 }
+
+const defaultTaskClient = (stateDir: string): TuiTaskClient => new ControlClient(stateDir);
 
 const CONNECTION_COLOR: Record<TuiProjectView['connection'], string> = {
   running: 'green',
@@ -34,17 +41,17 @@ const ATTENTION_COLOR: Record<AttentionKind, string> = {
 };
 
 /** Terminal size, updated on `resize`. Undefined rows (no TTY) disables the height budget. */
-function useTerminalRows(): number | undefined {
+function useTerminalSize(): { rows: number | undefined; columns: number | undefined } {
   const { stdout } = useStdout();
-  const [rows, setRows] = useState(() => stdout.rows);
+  const [size, setSize] = useState(() => ({ rows: stdout.rows, columns: stdout.columns }));
   useEffect(() => {
-    const onResize = () => setRows(stdout.rows);
+    const onResize = () => setSize({ rows: stdout.rows, columns: stdout.columns });
     stdout.on('resize', onResize);
     return () => {
       stdout.off('resize', onResize);
     };
   }, [stdout]);
-  return rows;
+  return size;
 }
 
 /**
@@ -102,7 +109,7 @@ function useDashboardModel(source: TuiWatchSource, stateDir: string, intervalMs:
 }
 
 /** The selected agent's key, moved with ↑/↓ (or k/j); follows the agent when the list reorders. */
-function useSelection(agents: DashboardAgent[]): string | null {
+function useSelection(agents: DashboardAgent[], isActive: boolean): string | null {
   const { isRawModeSupported } = useStdin();
   const [selected, setSelected] = useState<string | null>(null);
   const index = Math.max(0, agents.findIndex(agent => agent.key === selected));
@@ -115,18 +122,41 @@ function useSelection(agents: DashboardAgent[]): string | null {
     else if (key.downArrow || input === 'j') next = Math.min(agents.length - 1, index + 1);
     else return;
     setSelected(agents[next].key);
-  }, { isActive: isRawModeSupported === true });
+  }, { isActive: isActive && isRawModeSupported === true });
 
   return current;
 }
 
-export function App({ source, stateDir, intervalMs = 3000 }: AppProps) {
+/** `t` toggles between the dashboard and the task explorer. */
+function useView(): 'dashboard' | 'tasks' {
+  const { isRawModeSupported } = useStdin();
+  const [view, setView] = useState<'dashboard' | 'tasks'>('dashboard');
+  useInput((input) => {
+    if (input === 't') setView(current => (current === 'dashboard' ? 'tasks' : 'dashboard'));
+  }, { isActive: isRawModeSupported === true });
+  return view;
+}
+
+export function App({ source, stateDir, intervalMs = 3000, createTaskClient = defaultTaskClient }: AppProps) {
   const model = useDashboardModel(source, stateDir, intervalMs);
-  const rows = useTerminalRows();
+  const { rows, columns } = useTerminalSize();
+  const view = useView();
   const layout = useMemo(() => computeDashboardLayout(model, rows), [model, rows]);
   const agents = useMemo(() => dashboardAgents(model), [model]);
-  const selected = useSelection(agents);
+  const selected = useSelection(agents, view === 'dashboard');
   const needYou = model.projects.reduce((sum, project) => sum + project.attentionTotal, 0);
+
+  if (view === 'tasks') {
+    return (
+      <TaskExplorer
+        projects={model.projects}
+        initialProjectId={model.projects.find(project => project.current)?.project_id ?? null}
+        createClient={createTaskClient}
+        rows={rows}
+        columns={columns}
+      />
+    );
+  }
 
   return (
     <Box flexDirection="column">

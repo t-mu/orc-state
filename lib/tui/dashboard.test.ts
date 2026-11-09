@@ -10,7 +10,7 @@ function entry(key: string, ts: string | null, seq: number | null = null): Dashb
 
 function projectWith(agents: number): DashboardProject {
   return {
-    project_id: 'p', name: 'p', current: true, connection: 'running', error: null, stale: false,
+    project_id: 'p', state_dir: '/state/p', name: 'p', current: true, connection: 'running', error: null, stale: false,
     agents: Array.from({ length: agents }, (_, i) => ({
       key: `p/a${i}`, agent_id: `a${i}`, role: 'worker', task_ref: null, state: 'in_progress', phase: null, activity: null, attention: null,
     })),

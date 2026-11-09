@@ -58,6 +58,8 @@ export interface DashboardAgent {
 export interface DashboardProject {
   project_id: string;
   name: string;
+  /** The project's state directory (the task explorer's client reads it). */
+  state_dir: string;
   /** The project this dashboard was started for. */
   current: boolean;
   connection: ProjectConnectionState;
@@ -119,6 +121,7 @@ export function buildDashboardProject(view: TuiProjectView, current: boolean): D
   for (const agent of agents) if (agent.attention) attention[agent.attention.kind] += 1;
   return {
     project_id: view.project_id,
+    state_dir: view.state_dir,
     name: view.name,
     current,
     connection: view.connection,
