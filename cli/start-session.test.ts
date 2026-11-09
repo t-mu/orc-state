@@ -324,6 +324,51 @@ describe('cli/start-session.ts', () => {
       expect(events.find((event) => event.event === 'session_started')?.payload).toMatchObject({ reset_claims: 0 });
     });
 
+    it('--reset refuses while a live master runs and changes nothing', async () => {
+      seedState([
+        masterAgent({ status: 'running', session_handle: 'tmux:master', provider_ref: { pid: 4242, transport: 'tmux' } }),
+        masterAgent({ agent_id: 'orc-1', role: 'worker', status: 'running', session_handle: 'tmux:orc-1' }),
+      ]);
+      seedActiveRuntimeState();
+      mockSpawn(makeSpawnMock());
+      tmuxFake.alive.add('master');
+      mockBinaryCheck(true);
+      const exitSpy = mockProcessExit();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      setEnv(dir);
+      process.argv = ['node', 'start-session.ts', '--reset'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('--reset does nothing while it runs'));
+      expect(tmuxFake.stop).not.toHaveBeenCalled();
+      expect(tmuxFake.attaches).toHaveLength(0);
+      expect(readClaims()[0].state).toBe('in_progress');
+    });
+
+    it('--reset stands when the master then fails to start', async () => {
+      seedState([
+        masterAgent(),
+        masterAgent({ agent_id: 'orc-1', role: 'worker', status: 'running', session_handle: 'tmux:orc-1' }),
+      ]);
+      seedActiveRuntimeState();
+      mockSpawn(makeSpawnMock({ providerSpawnError: new Error('ENOENT: spawn claude') }));
+      mockBinaryCheck(true);
+      const exitSpy = mockProcessExit();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      setEnv(dir);
+      process.argv = ['node', 'start-session.ts', '--reset'];
+      await expect(import('./start-session.ts')).rejects.toThrow('process.exit:1');
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(tmuxFake.stop).toHaveBeenCalledWith('tmux:orc-1');
+      // The stopped worker's run is not restored: the next coordinator must not resume it.
+      expect(readClaims()[0]).toMatchObject({ state: 'failed', failure_reason: 'session_reset' });
+      expect(readAgents().find((agent: { agent_id: string }) => agent.agent_id === 'orc-1')).toMatchObject({ session_handle: null });
+    });
+
     it('--reset stops every worker session, fails its runs and appends session_started', async () => {
       seedState([
         masterAgent({

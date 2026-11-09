@@ -362,6 +362,11 @@ if (!liveMasterSession) {
   }
 }
 if (master && liveMasterSession) {
+  if (boolFlag('reset')) {
+    // A reset fails the runs the live master is coordinating; never reattach and pretend it ran.
+    console.error(`Master '${master.agent_id}' is running; --reset does nothing while it runs. Exit the master (or run orc kill-all) and retry.`);
+    process.exit(1);
+  }
   console.log(`✓ Master '${master.agent_id}' is already running`);
   await ensureCoordinatorRunning();
   attachMaster(master, liveMasterSession);
@@ -464,7 +469,7 @@ if (resetRuntimeState) {
   for (const agentId of stopped) console.log(`✓ Stopped session for ${agentId}`);
   if (failed.length > 0) {
     for (const { agent_id, error } of failed) console.error(`Could not stop session for ${agent_id}: ${error}`);
-    console.error('Not resetting while those sessions may still run. Stop them (orc worker-remove <agent_id>) and retry.');
+    console.error('Not resetting while those sessions may still run. Stop them with orc kill-all (stops every session and requeues their tasks) and retry.');
     process.exit(1);
   }
 }
@@ -616,7 +621,8 @@ try {
     throw error;
   }
 } catch (error) {
-  restoreVolatileRuntimeStateFromSnapshot(STATE_DIR, sessionReset.snapshot);
+  // A reset stopped its worker sessions already: restoring their runs would undo it, so it stands.
+  if (!resetRuntimeState) restoreVolatileRuntimeStateFromSnapshot(STATE_DIR, sessionReset.snapshot);
   console.error(`Failed to start master provider CLI '${String(binary)}' for ${master.provider}: ${formatErrorMessage(error)}`);
   process.exit(1);
 }

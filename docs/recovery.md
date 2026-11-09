@@ -118,6 +118,6 @@ orc start-session
 
 `kill-all` stops the coordinator, stops every agent session, clears `agents.json`, resets `claimed`/`in_progress` tasks to `todo`, cancels their claims (`run_cancelled`, reason `kill_all`) and **removes every run worktree** in `run-worktrees.json`. Unmerged work is lost: merge or copy it first.
 
-`--keep-sessions` stops only the coordinator for agents with a session: their sessions keep running, and their agent records, session rows, active runs and worktrees are kept, so `orc start-session` adopts them (a session that already exited is reconciled `exited` and its run resumed or requeued). Everything else is reset as above.
+`--keep-sessions` stops the coordinator but leaves agent sessions running; their agent records, session rows, active runs and worktrees are kept, so `orc start-session` adopts them (a session that already exited is reconciled `exited` and its run resumed or requeued). Everything else is reset as above.
 
-`orc start-session --reset` is the reset without `kill-all`: it stops the coordinator and every worker session, fails their runs (`session_reset`) and requeues the tasks; worktrees stay.
+`orc start-session --reset` is the reset without `kill-all`: it stops the coordinator and every worker session, fails their runs (`session_reset`) and requeues the tasks; worktrees stay. It refuses while a master runs (exit the master first), while the coordinator cannot be stopped, or when a worker session cannot be stopped (`orc kill-all` then). If the master then fails to start, the reset stands.
