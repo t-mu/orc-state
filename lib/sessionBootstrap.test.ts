@@ -120,30 +120,44 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).not.toContain('{{orc_bin}}');
   });
 
-  it.each(['claude', 'codex'])('never tells a %s worker or scout to report for duty: its session-start hook does', (provider) => {
+  it('never tells a Claude worker or scout to report for duty: its session-start hook does', () => {
     for (const role of ['worker', 'scout']) {
-      const rendered = buildSessionBootstrap('bob', provider, role, '/tmp/node_modules/.bin/orc', 'token-123');
-      expect(rendered, role).not.toContain('report-for-duty');
-      expect(rendered, role).not.toContain('report for duty');
-      expect(rendered, role).toContain('reports itself ready');
-      expect(rendered, role).not.toContain('{{');
+      for (const executionMode of ['full-access', 'sandbox'] as const) {
+        const rendered = buildSessionBootstrap('bob', 'claude', role, '/tmp/node_modules/.bin/orc', 'token-123', { executionMode });
+        expect(rendered, role).not.toContain('report-for-duty');
+        expect(rendered, role).not.toContain('report for duty');
+        expect(rendered, role).toContain('reports itself ready');
+        expect(rendered, role).not.toContain('{{');
+      }
     }
-    expect(getWorkerBootstrap(provider)).not.toContain('report-for-duty');
-    expect(getScoutBootstrap(provider)).not.toContain('report-for-duty');
-    const smoke = buildSessionBootstrap('bob', provider, 'worker', 'orc', 'token-123', { workerBootstrapProfile: 'smoke' });
+    expect(getWorkerBootstrap('claude')).not.toContain('report-for-duty');
+    expect(getScoutBootstrap('claude')).not.toContain('report-for-duty');
+    const smoke = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'token-123', { workerBootstrapProfile: 'smoke' });
     expect(smoke).toContain('WORKER_BOOTSTRAP_SMOKE');
     expect(smoke).not.toContain('report-for-duty');
   });
 
-  it('tells a Gemini worker, scout and smoke worker (no session-start hook) to report for duty', () => {
-    const rendered = buildSessionBootstrap('bob', 'gemini', 'worker', '/tmp/node_modules/.bin/orc', 'token-123');
-    expect(rendered).toContain('Before waiting for the TASK_START, report that this exact session is ready');
-    expect(rendered).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-id=token-123');
-    expect(rendered.split('report-for-duty').length - 1).toBe(1);
+  it('never tells a full-access Codex worker to report for duty: its session-start hook does', () => {
+    for (const options of [{}, { executionMode: 'full-access' as const }, { executionMode: 'full-access' as const, workerBootstrapProfile: 'smoke' as const }]) {
+      const rendered = buildSessionBootstrap('bob', 'codex', 'worker', '/tmp/node_modules/.bin/orc', 'token-123', options);
+      expect(rendered).not.toContain('report-for-duty');
+      expect(rendered).toContain('reports itself ready');
+    }
+    expect(getWorkerBootstrap('codex')).not.toContain('report-for-duty');
+  });
+
+  it('tells a sandboxed Codex worker or scout and a Gemini worker (no session-start hook) to report for duty', () => {
+    for (const [provider, executionMode] of [['codex', 'sandbox'], ['gemini', 'full-access'], ['gemini', 'sandbox']] as const) {
+      const rendered = buildSessionBootstrap('bob', provider, 'worker', '/tmp/node_modules/.bin/orc', 'token-123', { executionMode });
+      expect(rendered, provider).toContain('Before waiting for the TASK_START, report that this exact session is ready');
+      expect(rendered, provider).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-id=token-123');
+      expect(rendered.split('report-for-duty').length - 1, provider).toBe(1);
+    }
+    expect(buildSessionBootstrap('bob', 'codex', 'worker', 'orc', 'token-123', { executionMode: 'sandbox', workerBootstrapProfile: 'smoke' }))
+      .toContain('orc report-for-duty --agent-id=bob --session-id=token-123');
     expect(buildSessionBootstrap('scout-1', 'gemini', 'scout', 'orc', 'scout-token'))
       .toContain('orc report-for-duty --agent-id=scout-1 --session-id=scout-token');
-    expect(buildSessionBootstrap('bob', 'gemini', 'worker', 'orc', 'token-123', { workerBootstrapProfile: 'smoke' }))
-      .toContain('orc report-for-duty --agent-id=bob --session-id=token-123');
+    expect(getScoutBootstrap('codex')).toContain('orc report-for-duty --agent-id=scout --session-id=session-id-unset');
   });
 
   it('uses scout-bootstrap-v1.txt for scout role', () => {
@@ -151,7 +165,8 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toContain('SCOUT_BOOTSTRAP');
     expect(rendered).toContain('agent_id: scout-1');
     expect(rendered).toContain('investigation-only agent');
-    expect(rendered).toContain('Wait for the SCOUT_BRIEF');
+    // A scout always launches sandboxed, so a Codex scout has no readiness hook.
+    expect(rendered).toContain('orc report-for-duty --agent-id=scout-1 --session-id=scout-token');
     expect(rendered).not.toContain('orc run-work-complete');
   });
 

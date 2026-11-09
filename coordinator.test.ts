@@ -1003,8 +1003,9 @@ describe('worker session lifecycle', () => {
       expect(send).not.toHaveBeenCalled();
     });
 
-    it('nudges a Gemini session to report for duty', async () => {
-      seedAwaitingSession('gemini', 30_000);
+    it.each([['gemini', 'full-access'], ['codex', 'sandbox']])('nudges a %s session (%s) to report for duty', async (provider, mode) => {
+      seedAwaitingSession(provider, 30_000);
+      useSettings({ worker_pool: { execution_mode: mode } });
       const send = vi.fn().mockResolvedValue('');
       vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send, stop: vi.fn() }));
       await tickWith();
@@ -1092,7 +1093,7 @@ describe('worker session lifecycle', () => {
     }
 
     it('applies a session-start record drained before the launch was recorded after a coordinator restart', async () => {
-      seedStartingScout('codex');
+      seedStartingScout('claude');
       vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: vi.fn(), send: vi.fn(), stop: vi.fn() }));
 
       await tickWith();

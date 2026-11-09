@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { Agent } from './types/agents.ts';
 import type { Claim } from './types/claims.ts';
 import type { WorkerPoolConfig, CoordinatorConfig, LeaseConfig, ProviderName } from './lib/providers.ts';
-import { hasSessionStartHook, resolveWorkerProvider } from './lib/providers.ts';
+import { hasSessionStartHook, resolveWorkerProvider, type ExecutionMode } from './lib/providers.ts';
 import type { ActorType, OrcEvent, OrcEventInput } from './types/events.ts';
 
 // Distributive Omit — preserves discriminated union across all members
@@ -413,6 +413,9 @@ async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) 
   const nowMs = Date.now();
   const byAgent = new Map(agents.map((agent) => [agent.agent_id, agent]));
   const nudgeWork = [];
+  // Workers launch in the worker pool's execution mode, which decides whether a Codex session has its hook.
+  let executionMode: ExecutionMode | null = null;
+  const workerExecutionMode = (): ExecutionMode => (executionMode ??= loadWorkerPoolConfig().execution_mode);
 
   for (const claim of claims ?? []) {
     if (claim.state !== 'claimed') {
@@ -467,7 +470,7 @@ async function processClaimedSessionReadiness(agents: Agent[], claims: Claim[]) 
     }
 
     // A hook provider's session reports ready by itself (its session-start hook): no nudge.
-    if (ageMs < SESSION_READY_NUDGE_MS || !agent.session_token || hasSessionStartHook(agent.provider)) continue;
+    if (ageMs < SESSION_READY_NUDGE_MS || !agent.session_token || hasSessionStartHook(agent.provider, workerExecutionMode())) continue;
     const lastNudgeAt = sessionReadyNudgeAtMs.get(claim.run_id) ?? 0;
     if (nowMs - lastNudgeAt < SESSION_READY_NUDGE_INTERVAL_MS) continue;
 

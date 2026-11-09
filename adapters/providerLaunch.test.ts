@@ -127,9 +127,9 @@ describe('provider launch', () => {
     ]);
   });
 
-  it('gives a codex session its SessionStart hook as launch args, whose command appends the readiness record', async () => {
+  it('gives a full-access codex session its SessionStart hook as launch args, whose command appends the readiness record', async () => {
     const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
-    await adapter.start('cx', { execution_mode: 'sandbox', read_only: true, system_prompt: 'SCOUT' });
+    await adapter.start('cx', { execution_mode: 'full-access', system_prompt: 'SCOUT' });
     const args = spawnSpy.mock.calls[0][1] as string[];
     const at = args.indexOf('--dangerously-bypass-hook-trust');
     expect(at).toBeGreaterThan(-1);
@@ -147,6 +147,17 @@ describe('provider launch', () => {
     expect(result.status).toBe(0);
     const records = readFileSync(join(dir, 'pty-hook-events', 'cx.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as unknown);
     expect(records).toEqual([{ type: 'session_start', session_id: 'thread-1', source: 'startup', orc_session_id: 'orc-session-1', ts: expect.any(String) }]);
+  });
+
+  it('gives a sandboxed codex session (workers and scouts) no hook and no trust bypass', async () => {
+    const { adapter, spawnSpy } = await makeAdapter({ provider: 'codex' });
+    await adapter.start('cw', { execution_mode: 'sandbox', system_prompt: 'BOOT' });
+    await adapter.start('cs', { execution_mode: 'sandbox', read_only: true, system_prompt: 'SCOUT' });
+    for (const call of spawnSpy.mock.calls) {
+      const args = call[1] as string[];
+      expect(args).not.toContain('--dangerously-bypass-hook-trust');
+      expect(args.some((arg) => arg.startsWith('hooks.'))).toBe(false);
+    }
   });
 
   it('gives a claude task worker a Stop hook that runs `orc stop-check` from its ORC_BIN', async () => {
@@ -635,11 +646,11 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     const roots = ['-c', `sandbox_workspace_write.writable_roots=${JSON.stringify([socket, ...gitRoots(target)])}`];
     const codex = await makeAdapter({ provider: 'codex' });
     await codex.adapter.start('c', { execution_mode: 'sandbox', working_directory: worktree, env: { ORC_CONTROL_SOCKET: socket } });
-    expect(codex.spawnSpy.mock.calls[0][1]).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...roots, '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', ...await codexHook('c')]);
+    expect(codex.spawnSpy.mock.calls[0][1]).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...roots, '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}']);
     await codex.adapter.start('d', { execution_mode: 'sandbox', sandbox_network: 'open', working_directory: worktree, env: { ORC_CONTROL_SOCKET: socket } });
     expect(codex.spawnSpy.mock.calls[1][1]).toEqual([
       '--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...roots,
-      '-c', 'sandbox_workspace_write.network_access=true', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', ...await codexHook('d'),
+      '-c', 'sandbox_workspace_write.network_access=true', '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}',
     ]);
     const { codexSandboxNetworkArgs } = await import('./providerLaunch.ts');
     expect(codexSandboxNetworkArgs({ readOnly: true, cwd: worktree, stateDir, gitRepoRoot: target, controlSocket: socket }, 'open')).toEqual([]);
@@ -653,7 +664,7 @@ describe('sandbox roots end-to-end via start() (task 204)', () => {
     expect(codex.spawnSpy.mock.calls[0][1]).toEqual([
       '--sandbox', 'workspace-write', '--ask-for-approval', 'never',
       '-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(gitRoots(target))}`,
-      '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}', ...await codexHook('c'),
+      '--enable', 'multi_agent', '-c', 'mcp_servers.orchestrator={command="true",enabled=false}',
     ]);
     expect(codex.spawnSpy.mock.calls[0][2]).toMatchObject({ cwd: worktree });
 

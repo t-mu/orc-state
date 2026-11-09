@@ -102,7 +102,7 @@ Derived at claim time, never stored:
 
 ## Run Lifecycle
 
-Readiness comes before the run starts: the coordinator sends TASK_START once the worker's session is ready, meaning a `reported_for_duty` event for its current `session_token`. A Claude or Codex CLI session's `SessionStart` hook produces it (`payload.source: 'hook'`); Gemini CLI sessions run `orc report-for-duty` and are nudged with `SESSION_NUDGE`; an `app:` session is ready after its handshake. A session that is not ready within `coordinator.session_ready_timeout_ms` is requeued (`ERR_SESSION_READY_TIMEOUT`). Per provider: [adapters.md → Session readiness](./adapters.md#session-readiness).
+Readiness comes before the run starts: the coordinator sends TASK_START once the worker's session is ready, meaning a `reported_for_duty` event for its current `session_token`. A Claude or `full-access` Codex CLI session's `SessionStart` hook produces it (`payload.source: 'hook'`); Gemini and sandboxed Codex CLI sessions run `orc report-for-duty` and are nudged with `SESSION_NUDGE`; an `app:` session is ready after its handshake. A session that is not ready within `coordinator.session_ready_timeout_ms` is requeued (`ERR_SESSION_READY_TIMEOUT`). Per provider: [adapters.md → Session readiness](./adapters.md#session-readiness).
 
 | Command | Precondition | Effect |
 |---------|--------------|--------|

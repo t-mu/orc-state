@@ -1,5 +1,5 @@
 import { renderTemplate } from './templateRender.ts';
-import { hasSessionStartHook, isSupportedProvider, type ProviderName } from './providers.ts';
+import { hasSessionStartHook, isSupportedProvider, type ExecutionMode, type ProviderName } from './providers.ts';
 
 const WORKER_BOOTSTRAP_TEMPLATE = 'worker-bootstrap-v2.txt';
 const WORKER_BOOTSTRAP_SMOKE_TEMPLATE = 'worker-bootstrap-smoke-v1.txt';
@@ -32,12 +32,13 @@ function phaseCompleteStep(orcBin: string, agentId: string): string {
 }
 
 /**
- * How the session becomes ready, injected as {{session_ready_step}}. A provider
- * with a session-start hook reports ready by itself, so its agent is never told
- * to run report-for-duty; the others are.
+ * How the session becomes ready, injected as {{session_ready_step}}. A session
+ * launched with a session-start hook (by provider and execution mode) reports
+ * ready by itself, so its agent is never told to run report-for-duty; the
+ * others are.
  */
-function sessionReadyVars(provider: string, orcBin: string, agentId: string, sessionId: string, awaiting: string) {
-  if (hasSessionStartHook(provider)) {
+function sessionReadyVars(provider: string, executionMode: ExecutionMode, orcBin: string, agentId: string, sessionId: string, awaiting: string) {
+  if (hasSessionStartHook(provider, executionMode)) {
     return {
       session_ready_step: `This session reports itself ready when it starts (session-start hook); you run no command for that. Wait for the ${awaiting}.`,
     };
@@ -225,7 +226,7 @@ export function prReviewSteps(level: ReviewLevel, orcBin: string, agentId: strin
   ].join('\n');
 }
 
-function workerVars(provider: string, orcBin: string, agentId: string, sessionId: string, workflow: WorkerTaskWorkflow) {
+function workerVars(provider: string, orcBin: string, agentId: string, sessionId: string, workflow: WorkerTaskWorkflow, executionMode: ExecutionMode) {
   const reviewLevel = workflow.reviewLevel ?? 'full';
   const mergeStrategy = workflow.mergeStrategy ?? 'direct';
   return {
@@ -239,7 +240,7 @@ function workerVars(provider: string, orcBin: string, agentId: string, sessionId
     review_step: reviewStep(reviewLevel, orcBin, agentId),
     phase_complete_step: phaseCompleteStep(orcBin, agentId),
     finish_steps: finishSteps(mergeStrategy, orcBin, agentId),
-    ...sessionReadyVars(provider, orcBin, agentId, sessionId, 'TASK_START'),
+    ...sessionReadyVars(provider, executionMode, orcBin, agentId, sessionId, 'TASK_START'),
   };
 }
 
@@ -250,7 +251,8 @@ function renderBootstrap(template: string, provider: string, agentId: string): s
     orc_bin: 'orc',
     provider,
     session_id: 'session-id-unset',
-    ...sessionReadyVars(provider, 'orc', agentId, 'session-id-unset', awaiting),
+    // Scouts always launch sandboxed; the master template has no readiness step.
+    ...sessionReadyVars(provider, 'sandbox', 'orc', agentId, 'session-id-unset', awaiting),
   });
 }
 
@@ -258,6 +260,8 @@ export type WorkerBootstrapProfile = 'default' | 'smoke';
 
 export interface WorkerBootstrapOptions extends WorkerTaskWorkflow {
   workerBootstrapProfile?: WorkerBootstrapProfile;
+  /** The worker's launch mode (default `full-access`, as the launch's): it decides whether a Codex session has its readiness hook. */
+  executionMode?: ExecutionMode;
 }
 
 // The smoke profile keeps its own hardcoded Phase 4 step. It is a deterministic
@@ -273,7 +277,7 @@ function resolveWorkerTemplate(role: string, workerBootstrapProfile: WorkerBoots
 
 export function getWorkerBootstrap(provider: string, agentId: string = 'worker', workflow: WorkerTaskWorkflow = {}): string {
   const resolvedProvider = assertProvider(provider);
-  return renderTemplate(WORKER_BOOTSTRAP_TEMPLATE, workerVars(resolvedProvider, 'orc', agentId, 'session-id-unset', workflow));
+  return renderTemplate(WORKER_BOOTSTRAP_TEMPLATE, workerVars(resolvedProvider, 'orc', agentId, 'session-id-unset', workflow, 'full-access'));
 }
 
 export function getScoutBootstrap(provider: string): string;
@@ -314,11 +318,12 @@ export function buildSessionBootstrap(
       orc_bin: orcBin,
       provider,
       session_id: sessionId,
-      ...sessionReadyVars(provider, orcBin, agentId, sessionId, 'SCOUT_BRIEF'),
+      // A scout always launches sandboxed (workerRuntime).
+      ...sessionReadyVars(provider, 'sandbox', orcBin, agentId, sessionId, 'SCOUT_BRIEF'),
     });
   }
   return renderTemplate(
     resolveWorkerTemplate(role, options.workerBootstrapProfile ?? 'default'),
-    workerVars(provider, orcBin, agentId, sessionId, options),
+    workerVars(provider, orcBin, agentId, sessionId, options, options.executionMode ?? 'full-access'),
   );
 }

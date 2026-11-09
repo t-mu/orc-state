@@ -23,7 +23,7 @@ import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT, hookEventPath } from '../lib/paths.ts';
 import { resolveOrcBin, shellEscape } from '../lib/orcBin.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
-import type { SandboxNetwork } from '../lib/providers.ts';
+import { hasSessionStartHook, type SandboxNetwork } from '../lib/providers.ts';
 import { OPERATOR_TOKEN_FILE } from '../lib/controlProtocol.ts';
 import { taskLabelsPath } from '../hooks/orc-hook.ts';
 import { fileURLToPath } from 'node:url';
@@ -52,6 +52,9 @@ export function claudeHookCommand(kind: string, eventsFile: string): string {
  * `--dangerously-bypass-hook-trust` runs it without that. The TUI fires
  * SessionStart when its first prompt (the bootstrap) starts the thread, before
  * the model runs; the payload carries `session_id` and `source` like Claude's.
+ * The bypass covers the whole invocation (the user's and the repository's
+ * `hooks.json` too, and hooks run outside the Codex sandbox), so only a
+ * `full-access` launch gets these args. Needs Codex 0.163 or newer.
  * The value is TOML: JSON string escaping is valid TOML basic-string escaping.
  */
 export function codexSessionStartHookArgs(eventsFile: string): string[] {
@@ -308,7 +311,11 @@ function buildStartArgs(provider: string, agentId: string, config: Record<string
       args.push('--dangerously-bypass-approvals-and-sandbox');
     }
     // Enable multi-agent support so Codex workers can spawn sub-agent reviewers.
-    args.push('--enable', 'multi_agent', ...isolatedMcpArgs('codex'), ...codexSessionStartHookArgs(hookEventPath(agentId)));
+    args.push('--enable', 'multi_agent', ...isolatedMcpArgs('codex'));
+    // The readiness hook needs the trust bypass, which must not reach a sandboxed session (hasSessionStartHook).
+    if (hasSessionStartHook('codex', executionMode === 'sandbox' ? 'sandbox' : 'full-access')) {
+      args.push(...codexSessionStartHookArgs(hookEventPath(agentId)));
+    }
     if (typeof config.model === 'string' && config.model) args.push('--model', config.model);
     if (typeof config.system_prompt === 'string' && config.system_prompt) args.push(config.system_prompt);
     return args;

@@ -119,8 +119,8 @@ export function prepareScout(stateDir: string, request: ScoutRequest, actorProvi
   // A stalled run's worktree may be gone, which is exactly when a scout is wanted — investigate from the root.
   const linkedWorktree = recordedWorktree != null && existsSync(recordedWorktree) ? recordedWorktree : null;
 
-  // A scout gets the control socket under the same opt-in as workers; a Gemini scout reports
-  // for duty through it (a Claude or Codex scout is made ready by its session-start hook).
+  // A scout gets the control socket under the same opt-in as workers; a Codex or Gemini
+  // scout reports for duty through it (a Claude scout is made ready by its session-start hook).
   // Resolved before registering, so an invalid setting leaves no scout behind.
   const sandboxNetwork = loadWorkerPoolConfig().sandbox_network;
 
@@ -166,10 +166,15 @@ export async function launchScout(stateDir: string, prepared: PreparedScout) {
   if (!await waitForScoutReady(stateDir, scout.agent_id, sessionToken, scout)) {
     await adapter.stop(launchResult.session_handle);
     removeAgent(stateDir, scout.agent_id);
-    if (hasSessionStartHook(scout.provider)) {
+    if (hasSessionStartHook(scout.provider, 'sandbox')) {
       throw new ScoutLaunchError(`Failed to brief scout ${scout.agent_id}: scout session did not become ready in time (no session-start hook record)`);
     }
-    throw new ScoutLaunchError(`Failed to brief scout ${scout.agent_id}: scout did not report for duty in time`);
+    // A read-only Codex scout in a project cannot reach the control socket, so it never reports (task 230).
+    const hint = scout.provider === 'codex' && (prepared.sandbox_network === 'restricted' || prepared.sandbox_network === 'open')
+      ? `in a project a sandboxed ${scout.provider} scout reports through the control socket, which it cannot reach here`
+        + ' (request a claude scout) — see docs/configuration.md → Execution Modes'
+      : null;
+    throw new ScoutLaunchError(`Failed to brief scout ${scout.agent_id}: scout did not report for duty in time`, hint);
   }
   const contextLines = [
     prepared.run_id ? `linked_run_id: ${prepared.run_id}` : null,

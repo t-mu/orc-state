@@ -274,13 +274,15 @@ Set with `default_execution_mode`, `master.execution_mode`, `worker_pool.executi
 -c sandbox_workspace_write.writable_roots=["<control-socket>","<target>/.git/objects","<target>/.git/refs","<target>/.git/logs","<target>/.git/worktrees"]
 ```
 
+A sandboxed Codex session gets no session-start hook: the hook needs `--dangerously-bypass-hook-trust`, which would also run the repository's `hooks.json` outside the sandbox. It reports for duty instead ([adapters.md → Session readiness](./adapters.md#session-readiness)); a `full-access` Codex launch passes that flag and needs Codex 0.163 or newer.
+
 These override keys were not verified against a live Codex sandbox. If sandboxed commits or `orc` calls fail, check them against your `codex` version (`codexSandboxWritableRootArgs` / `codexSandboxNetworkArgs` in `adapters/providerLaunch.ts`).
 
 ### Scouts
 
 - Scouts launch with `read_only: true`: Codex sandbox → `read-only`; Claude sandbox → no `allowWrite`.
 - In `full-access`, `read_only` has no effect.
-- A read-only Codex scout has no network, but its session-start hook reports it ready without the control socket, as a Claude scout's does ([adapters.md → Session readiness](./adapters.md#session-readiness)).
+- A read-only Codex scout has no network, so it cannot report for duty in a project; request a `claude` scout, whose session-start hook reports it ready without the control socket.
 
 ### Linux prerequisites (Claude sandbox)
 
