@@ -47,6 +47,6 @@ Run `orc doctor --project=<id>` with the same environment to confirm tmux, the p
 ## Upgrading
 
 1. Install the new package (`npm i -g orc-state@next`, or rebuild).
-2. Restart the coordinator; it keeps the code it started with: `orc start-session --restart-stale --project=<id>` (runs and live worker sessions are kept and adopted). See [getting-started.md → Upgrading while a coordinator runs](getting-started.md#upgrading-while-a-coordinator-runs).
+2. Restart the coordinator; it keeps the code it started with: `orc coordinator restart --project=<id>` (runs and live worker sessions are kept and adopted). See [getting-started.md → Upgrading while a coordinator runs](getting-started.md#upgrading-while-a-coordinator-runs).
 3. Re-read `health()`: `version` and `build_id` should equal the installed package.
 4. `listProjects()` throws `RegistrySchemaError` (`{ version, supportedVersion }`) when a newer orc wrote `registry.db`: update the app's `orc-state` dependency before using it again.

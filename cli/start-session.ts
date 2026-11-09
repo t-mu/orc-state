@@ -64,6 +64,7 @@ import {
   stopRunningCoordinator,
 } from '../lib/coordinatorProcess.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
+import { ControlError } from '../lib/controlProtocol.ts';
 import { staleCodeWarning } from '../lib/codeIdentity.ts';
 import {
   appendSessionStartedEvent,
@@ -227,7 +228,14 @@ async function ensureCoordinatorRunning() {
       : await startCoordinatorIfStopped(STATE_DIR, ACTIVE_PROJECT!.id);
     console.log(`✓ Coordinator running  (PID ${restarted.pid})`);
   } catch (err) {
-    console.warn(`Warning: coordinator failed to ${running ? 'restart' : 'start'}: ${formatErrorMessage(err)}. Master session continues${coordinatorStatus().running ? ' with the running coordinator' : ' without coordinator'}.`);
+    if (coordinatorStatus().running) {
+      console.warn(`Warning: coordinator did not restart: ${formatErrorMessage(err)}. Master session continues with the running coordinator.`);
+    } else if (err instanceof ControlError && err.code === 'unavailable') {
+      // The detached coordinator may still come up after the 2 s wait.
+      console.log('  Coordinator spawned (PID confirmation pending; check orc coordinator status)');
+    } else {
+      console.warn(`Warning: coordinator failed to start: ${formatErrorMessage(err)}. Master session continues without coordinator.`);
+    }
   }
 }
 

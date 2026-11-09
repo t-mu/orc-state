@@ -72,7 +72,7 @@ A coordinator keeps the code it started with. After `npm i -g orc-state@next` or
 | Step | Command |
 |---|---|
 | See it | `orc doctor` warns when the running coordinator's `version` or `build_id` (from `/v1/health`) differs from the code on disk |
-| Restart | `orc start-session --restart-stale` (runs and live sessions are kept and adopted) |
+| Restart | `orc coordinator restart` (MCP `restart_coordinator`), or `orc start-session --restart-stale` when starting the master; runs and live sessions are kept and adopted |
 
 Without `--restart-stale`, `orc start-session` reuses the running coordinator and prints the same warning. An app checks `version`/`build_id` from `/v1/health` against the installed package.
 

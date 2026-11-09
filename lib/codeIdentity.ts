@@ -78,18 +78,18 @@ export function captureCodeIdentity(codeRoot: string = ORC_PACKAGE_ROOT): CodeId
 export function staleCodeWarning(running: CodeIdentity & { version?: string }): string | null {
   const diskVersion = readPackageVersion(running.code_root);
   if (running.version && diskVersion && running.version !== diskVersion) {
-    return `coordinator is running version ${running.version}, disk has ${diskVersion}; restart with orc start-session --restart-stale`;
+    return `coordinator is running version ${running.version}, disk has ${diskVersion}; restart with orc coordinator restart`;
   }
   const diskBuild = readBuildId(running.code_root);
   if (running.build_id && diskBuild && running.build_id !== diskBuild) {
-    return `coordinator is running build ${running.build_id}, disk has ${diskBuild}; restart with orc start-session --restart-stale`;
+    return `coordinator is running build ${running.build_id}, disk has ${diskBuild}; restart with orc coordinator restart`;
   }
   // A coordinator started before health carried identity reports neither; it is older than any build on disk.
   if (diskBuild && !running.build_id && !running.version) {
-    return 'coordinator reports no build id (older than this build); restart with orc start-session --restart-stale';
+    return 'coordinator reports no build id (older than this build); restart with orc coordinator restart';
   }
   if (!isSourceCheckout(running.code_root)) return null;
   const onDisk = newestCodeMtimeMs(running.code_root);
   if (onDisk === null || onDisk <= Date.parse(running.code_mtime)) return null;
-  return `coordinator is running code from ${running.code_mtime}; restart with orc start-session --restart-stale`;
+  return `coordinator is running code from ${running.code_mtime}; restart with orc coordinator restart`;
 }

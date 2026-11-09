@@ -41,7 +41,7 @@ describe('code identity', () => {
     const running = captureCodeIdentity(root);
     expect(staleCodeWarning(running)).toBeNull();
     touch('lib/x.ts', 500);
-    expect(staleCodeWarning(running)).toBe(`coordinator is running code from ${running.code_mtime}; restart with orc start-session --restart-stale`);
+    expect(staleCodeWarning(running)).toBe(`coordinator is running code from ${running.code_mtime}; restart with orc coordinator restart`);
   });
 
   describe('built code (dist, mtimes normalised)', () => {
@@ -63,14 +63,14 @@ describe('code identity', () => {
       const running = captureCodeIdentity(root);
       expect(staleCodeWarning(running)).toBeNull();
       writeFileSync(join(root, BUILD_ID_FILE), 'new\n');
-      expect(staleCodeWarning(running)).toBe('coordinator is running build old, disk has new; restart with orc start-session --restart-stale');
+      expect(staleCodeWarning(running)).toBe('coordinator is running build old, disk has new; restart with orc coordinator restart');
     });
 
     it('warns when the package version on disk changed', () => {
       touch('coordinator.js', normalised);
       build('same', '1.1.0');
       const running = { ...captureCodeIdentity(root), version: '1.0.0' };
-      expect(staleCodeWarning(running)).toBe('coordinator is running version 1.0.0, disk has 1.1.0; restart with orc start-session --restart-stale');
+      expect(staleCodeWarning(running)).toBe('coordinator is running version 1.0.0, disk has 1.1.0; restart with orc coordinator restart');
       expect(staleCodeWarning({ ...running, version: '1.1.0' })).toBeNull();
     });
 
@@ -79,7 +79,7 @@ describe('code identity', () => {
       const legacy = { code_root: root, code_mtime: new Date(normalised * 1000).toISOString(), build_id: null };
       expect(staleCodeWarning(legacy)).toBeNull(); // disk side unknowable
       build('abc');
-      expect(staleCodeWarning(legacy)).toBe('coordinator reports no build id (older than this build); restart with orc start-session --restart-stale');
+      expect(staleCodeWarning(legacy)).toBe('coordinator reports no build id (older than this build); restart with orc coordinator restart');
       expect(staleCodeWarning({ ...legacy, build_id: 'abc' })).toBeNull();
     });
 
