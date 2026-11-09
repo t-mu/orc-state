@@ -12,6 +12,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.doUnmock('../lib/agentRegistry.ts');
   cleanupTempStateDir(dir);
 });
 
@@ -122,6 +123,38 @@ describe('cli/gc-workers.ts', () => {
     }
 
     expect(readAgents().map((a: Record<string, unknown>) => a.agent_id)).toEqual(['claimed']);
+  });
+
+  it('keeps a worker the coordinator claims a task for after the listing', async () => {
+    writeAgents([
+      { agent_id: 'late', provider: 'claude', status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' },
+    ]);
+    // The claim lands after the CLI lists the workers, before it removes them.
+    vi.doMock('../lib/agentRegistry.ts', async () => {
+      const actual = await vi.importActual<typeof import('../lib/agentRegistry.ts')>('../lib/agentRegistry.ts');
+      let first = true;
+      return { ...actual, listAgents: (stateDir: string) => {
+        const agents = actual.listAgents(stateDir);
+        if (first) writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [
+      { run_id: 'run-1', task_ref: 'proj/task-1', agent_id: 'late', state: 'claimed', claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: '2099-01-01T00:00:00Z' },
+    ] }));
+        first = false;
+        return agents;
+      } };
+    });
+
+    const oldArgv = process.argv;
+    const oldStateDir = process.env.ORC_STATE_DIR;
+    process.argv = ['node', 'cli/gc-workers.ts'];
+    setStateDirEnv(dir);
+    try {
+      await import('./gc-workers.ts');
+    } finally {
+      process.argv = oldArgv;
+      setStateDirEnv(oldStateDir);
+    }
+
+    expect(readAgents().map((a: Record<string, unknown>) => a.agent_id)).toEqual(['late']);
   });
 
 });

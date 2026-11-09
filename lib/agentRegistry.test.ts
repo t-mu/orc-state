@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   registerAgent,
@@ -8,10 +8,12 @@ import {
   listAgents,
   listCoordinatorAgents,
   removeAgent,
+  removeUnclaimedAgent,
   nextAvailableWorkerName,
   nextAvailableScoutId,
 } from './agentRegistry.ts';
 import { validateAgents } from './stateValidation.ts';
+import { lockPath } from './lock.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
 
 let dir: string;
@@ -225,6 +227,49 @@ describe('removeAgent', () => {
     registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
     expect(() => removeAgent(dir, 'agent-99')).not.toThrow();
     expect(listAgents(dir)).toHaveLength(1);
+  });
+});
+
+// ── removeUnclaimedAgent ───────────────────────────────────────────────────
+
+describe('removeUnclaimedAgent', () => {
+  function writeClaim(agentId: string, state: string) {
+    writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [
+      { run_id: 'run-1', task_ref: 'proj/task-1', agent_id: agentId, state, claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: '2099-01-01T00:00:00Z' },
+    ] }));
+  }
+
+  it('removes an agent without an active claim', () => {
+    registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
+    writeClaim('agent-01', 'done');
+    expect(removeUnclaimedAgent(dir, 'agent-01')).toEqual({ removed: true });
+    expect(getAgent(dir, 'agent-01')).toBeNull();
+  });
+
+  it.each(['claimed', 'in_progress'])('keeps an agent with a %s claim and returns it', (state) => {
+    registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
+    writeClaim('agent-01', state);
+    const result = removeUnclaimedAgent(dir, 'agent-01');
+    expect(result).toMatchObject({ removed: false, reason: 'active_claim', claim: { run_id: 'run-1', state } });
+    expect(getAgent(dir, 'agent-01')).not.toBeNull();
+  });
+
+  it('reports an unknown agent', () => {
+    expect(removeUnclaimedAgent(dir, 'agent-99')).toEqual({ removed: false, reason: 'not_found' });
+  });
+
+  it('keeps the agent when canRemove rejects it', () => {
+    registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
+    expect(removeUnclaimedAgent(dir, 'agent-01', () => false)).toEqual({ removed: false, reason: 'kept' });
+    expect(getAgent(dir, 'agent-01')).not.toBeNull();
+  });
+
+  it('decides while holding the state lock that claim creation takes', () => {
+    registerAgent(dir, { agent_id: 'agent-01', provider: 'claude' });
+    let lockHeld = false;
+    removeUnclaimedAgent(dir, 'agent-01', () => { lockHeld = existsSync(lockPath(dir)); return true; });
+    expect(lockHeld).toBe(true);
+    expect(existsSync(lockPath(dir))).toBe(false);
   });
 });
 
