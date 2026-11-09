@@ -46,7 +46,7 @@ The tmux adapter writes a Claude settings file whose hooks run `hooks/orc-hook.t
 | `PreToolUse` (`*`) | `tool_start` | `{type:'tool_start', tool, id?, ts}` (`id` = `tool_use_id`); the call is in flight (run not stalled) until its `tool` record or a `turn_end`, for up to 1 h. A start without `id` is closed by the next `tool_start` once a later call finished |
 | `PostToolUse` / `PostToolUseFailure` (`*`) | `tool` | `{type:'tool', tool, brief, id?, ts}`; `brief` ≤ 80 chars; `Agent`/`Task` add `subagent_type` (infers the review phase) |
 | `PreToolUse` (`TodoWrite\|TaskCreate\|TaskUpdate`) | `todo` | `{type:'activity', label, source:'todo', ts}`; empty label clears it |
-| `Stop` (task workers) | — | runs `orc stop-check`: blocks the turn end while the run is unfinished (`stop_blocked`, capped); the coordinator appends `{type:'turn_end', ts}`, closing every open tool call |
+| `Stop` (task workers) | — | runs `orc stop-check`: blocks the turn end while the run is unfinished, except before TASK_START is sent (`stop_blocked`, capped); the coordinator appends `{type:'turn_end', ts}`, closing every open tool call |
 
 - Scouts get only `SessionStart` and `Notification`. Hook files are drained for runs with an active claim, and for a scout whose session is not ready yet (only its `session_start` record is used).
 - Orphaned hook files are removed at coordinator start and by `orc worker-gc` (`lib/hookFiles.ts`).
