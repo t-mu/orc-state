@@ -579,6 +579,26 @@ describe('current_activity', () => {
 });
 
 describe('formatStatus', () => {
+  it('prints a Waiting for input section near the top only when a run is waiting', () => {
+    writeState({
+      claims: [{
+        run_id: 'run-w', task_ref: 'feat/ask', agent_id: 'agent-07', state: 'in_progress',
+        claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        input_state: 'awaiting_input',
+      } as Claim],
+    });
+    writeEvents([{
+      event: 'input_requested', run_id: 'run-w', task_ref: 'feat/ask', agent_id: 'agent-07', actor_type: 'agent', actor_id: 'agent-07',
+      payload: { question: `Which schema?\nOption A or B ${'x'.repeat(100)}` }, ts: new Date(Date.now() - 42_000).toISOString(),
+    }]);
+    const status = buildStatus(dir, { settings });
+    const output = formatStatus(status);
+    expect(output).toMatch(/Waiting for input \(1\):\n {2}agent-07\s+feat\/ask waiting=4\ds\n {4}question: Which schema\? Option A or B x+…\n {2}answer: orc run-input-respond/);
+    expect(output.indexOf('Waiting for input')).toBeLessThan(output.indexOf('Master:'));
+
+    expect(formatStatus({ ...status, waiting_input: [] })).not.toContain('Waiting for input');
+  });
+
   it('produces a non-empty string', () => {
     writeState();
     writeEvents([]);
@@ -813,10 +833,23 @@ describe('buildStatus event window', () => {
     ]);
     const s = buildStatus(dir, { settings }) as unknown as { waiting_input: unknown[] };
     expect(s.waiting_input).toEqual([expect.objectContaining({ run_id: 'run-q', agent_id: 'agent-01', task_ref: 'a/1', question: 'q59' })]);
-    const direct = listWaitingInput(dir, [{ run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', input_state: 'awaiting_input' } as Claim]);
+    const direct = listWaitingInput(dir, [{ run_id: 'run-q', task_ref: 'a/1', agent_id: 'agent-01', state: 'in_progress', input_state: 'awaiting_input' } as Claim]);
     expect(direct[0]).toMatchObject({ question: 'q59' });
     expect(direct[0].waiting_seconds).toBeGreaterThanOrEqual(59);
     expect(listWaitingInput(dir, [{ run_id: 'run-x', task_ref: 'a/2', agent_id: 'agent-01', input_state: 'none' } as unknown as Claim])).toEqual([]);
+  });
+
+  it('leaves out finished claims that still carry a stale awaiting_input (legacy runs)', () => {
+    const claim = (run_id: string, state: Claim['state']) => ({
+      run_id, task_ref: 'a/1', agent_id: 'orc-1', state, input_state: 'awaiting_input',
+      claimed_at: '2026-03-29T18:00:00Z', lease_expires_at: '2026-03-29T18:30:00Z',
+    } as Claim);
+    const claims = [claim('run-claimed', 'claimed'), claim('run-live', 'in_progress'), claim('run-failed', 'failed'), claim('run-done', 'done')];
+    expect(listWaitingInput(dir, claims).map((row) => row.run_id)).toEqual(['run-claimed', 'run-live']);
+
+    writeState({ claims: [claim('run-failed', 'failed'), claim('run-done', 'done')] });
+    writeEvents([]);
+    expect((buildStatus(dir, { settings }) as unknown as { waiting_input: unknown[] }).waiting_input).toEqual([]);
   });
 });
 

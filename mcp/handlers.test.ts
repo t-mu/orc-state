@@ -1067,6 +1067,21 @@ describe('handleListWaitingInput', () => {
     expect(result).toEqual([]);
   });
 
+  it('leaves out a finished claim that still carries awaiting_input', () => {
+    seedClaims([
+      {
+        run_id: 'run-legacy',
+        task_ref: 'project/todo-one',
+        agent_id: 'orc-1',
+        state: 'failed',
+        input_state: 'awaiting_input',
+        claimed_at: '2026-01-01T00:00:00.000Z',
+        lease_expires_at: '2026-01-01T00:10:00.000Z',
+      },
+    ]);
+    expect(handleListWaitingInput(dir)).toEqual([]);
+  });
+
   it('returns waiting claims with question text', () => {
     seedClaims([
       {

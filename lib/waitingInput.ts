@@ -1,6 +1,14 @@
 import { queryEvents } from './eventLog.ts';
 import type { Claim } from '../types/claims.ts';
 
+/** How an operator answers a waiting worker; shown by `orc status` and `orc watch`. */
+export const WAITING_INPUT_ANSWER_HINT = 'orc run-input-respond --run-id=<id> --agent-id=<id> --response=<text>, or ask master';
+
+/** True for a live run (claimed or in progress) that is waiting for an input response. */
+export function isWaitingForInput(claim: Claim): boolean {
+  return claim.input_state === 'awaiting_input' && (claim.state === 'claimed' || claim.state === 'in_progress');
+}
+
 export interface WaitingInputRow {
   run_id: string;
   agent_id: string;
@@ -12,12 +20,14 @@ export interface WaitingInputRow {
 }
 
 /**
- * Claims in `awaiting_input` with the question from each run's latest
- * `input_requested` event. Shared by `orc waiting-input` and the status view.
+ * Active claims (`claimed`/`in_progress`) in `awaiting_input`, with the question
+ * from each run's latest `input_requested` event. Shared by `orc waiting-input`,
+ * MCP `list_waiting_input` and the status view. A finished claim can keep a
+ * stale `input_state` (legacy runs), so the claim state is checked too.
  * An unreadable event log leaves the questions null; the claims stay usable.
  */
 export function listWaitingInput(stateDir: string, claims: Claim[], now = Date.now()): WaitingInputRow[] {
-  return claims.filter((c) => c.input_state === 'awaiting_input').map((c) => {
+  return claims.filter(isWaitingForInput).map((c) => {
     let question: string | null = null;
     let ts: string | null = null;
     let requestId: string | null = null;

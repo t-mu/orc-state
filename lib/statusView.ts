@@ -1,6 +1,6 @@
 import { listCoordinatorAgents } from './agentRegistry.ts';
 import { readEventCursor, readStatusEvents } from './eventLog.ts';
-import { listWaitingInput, type WaitingInputRow } from './waitingInput.ts';
+import { listWaitingInput, WAITING_INPUT_ANSWER_HINT, type WaitingInputRow } from './waitingInput.ts';
 import type { OrcEvent } from '../types/events.ts';
 import { claimedRunStartupAnchor, latestRunActivityDetailMap, latestRunPhaseMap, runPhaseHistory } from './runActivity.ts';
 import type { RunPhaseEntry } from './runActivity.ts';
@@ -556,6 +556,17 @@ export function formatStatus(status: Record<string, unknown>): string {
   lines.push('Orchestrator Status');
   lines.push(formatProjectIdentity(status['project'] as { id: string; name: string; target_repo_root: string } | null ?? null));
   lines.push('─'.repeat(40));
+  const waitingInput = (status['waiting_input'] ?? []) as WaitingInputRow[];
+  if (waitingInput.length > 0) {
+    lines.push('');
+    lines.push(`Waiting for input (${waitingInput.length}):`);
+    for (const row of waitingInput) {
+      const waited = row.waiting_seconds == null ? '?' : `${row.waiting_seconds}s`;
+      lines.push(`  ${row.agent_id.padEnd(12)} ${row.task_ref} waiting=${waited}`);
+      lines.push(`    question: ${row.question ? truncate(row.question.replace(/\s+/g, ' ')) : '(unknown)'}`);
+    }
+    lines.push(`  answer: ${WAITING_INPUT_ANSWER_HINT}`);
+  }
   lines.push('');
   lines.push('Master:');
   if (!master) {

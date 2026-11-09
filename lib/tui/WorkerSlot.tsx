@@ -12,7 +12,7 @@ import type { PhaseEntry, WorkerSlotViewModel } from './status.ts';
  */
 export function WorkerSlot({ slot, sprites, detail = 'full' }: { slot: WorkerSlotViewModel; sprites: SpriteMap; detail?: SlotDetail }) {
   const roleColor = slot.role === 'reviewer' ? 'magenta' : 'green';
-  const borderColor = roleColor;
+  const borderColor = slot.waiting_input ? 'yellow' : roleColor;
   const providerLabel = slot.provider ?? 'unknown';
   const modelLabel = slot.model ? ` ${slot.model}` : '';
 
@@ -26,6 +26,7 @@ export function WorkerSlot({ slot, sprites, detail = 'full' }: { slot: WorkerSlo
       <Text dimColor wrap="truncate">{providerLabel}{modelLabel}</Text>
       {detail === 'full' ? <OrcSprite spriteState={slot.sprite_state} role="worker" sprites={sprites} /> : null}
       <Text wrap="truncate">{slot.task_ref ?? slot.slot_state}</Text>
+      {slot.waiting_input ? <WaitingInput waiting={slot.waiting_input} /> : null}
       {detail === 'minimal'
         ? <MinimalPhase slot={slot} />
         : slot.phases.length > 0 ? <PhaseWizard phases={slot.phases} activity={slot.current_activity} /> : <Text dimColor>{slot.run_state ?? ''}</Text>}
@@ -34,6 +35,19 @@ export function WorkerSlot({ slot, sprites, detail = 'full' }: { slot: WorkerSlo
       </Text>
       <Text dimColor wrap="truncate">heartbeat: {formatSeconds(slot.heartbeat_seconds)}</Text>
     </Box>
+  );
+}
+
+/** Two rows: the NEEDS INPUT badge with the wait time, then the question. */
+function WaitingInput({ waiting }: { waiting: NonNullable<WorkerSlotViewModel['waiting_input']> }) {
+  return (
+    <>
+      <Text wrap="truncate">
+        <Text bold inverse color="yellow">{' NEEDS INPUT '}</Text>
+        <Text color="yellow">{` waiting ${formatSeconds(waiting.waiting_seconds)}`}</Text>
+      </Text>
+      <Text color="yellow" wrap="truncate">? {waiting.question ?? '(question unavailable)'}</Text>
+    </>
   );
 }
 

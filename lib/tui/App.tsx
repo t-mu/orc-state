@@ -82,11 +82,12 @@ export function App({ stateDir, sprites, intervalMs = 3000 }: AppProps) {
     bannerWidth: bannerSize.width,
     spriteLines: spriteHeight,
     hasFailures: failureCount > 0,
-    slots: workerSlots.map(slot => ({ phaseLines: phaseLines(slot) })),
+    slots: workerSlots.map(slot => ({ phaseLines: phaseLines(slot), waitingLines: slot.waiting_input ? 2 : 0 })),
     scoutCount: scouts.length,
     runCount: status.claims.active.length,
     eventCount: status.recentEvents.length,
     hasEventError: Boolean(status.eventReadError),
+    waitingCount: status.waiting_input?.length ?? 0,
   });
 
   return (

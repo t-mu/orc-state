@@ -7,6 +7,7 @@ import {
 } from './statusView.ts';
 
 const HEADER_PATTERN = /^(Orchestrator Status|Master:|Worker Capacity:|Active Runs[^:]*:|Finalization[^:]*:|Recent Failures[^:]*:|Tasks[^:]*:|Agent Status:[^\n]*|Assigned Tasks[^:]*:|Queued Owned Tasks[^:]*:|Role:[^\n]*|Status:[^\n]*|Provider:[^\n]*)$/gm;
+const WAITING_INPUT_HEADER_PATTERN = /^Waiting for input[^:]*:$/gm;
 const POSITIVE_PATTERN = /\b(running|in_progress|attached|available)\b/g;
 const WARNING_PATTERN = /\b(claimed|warming)\b/g;
 const NEGATIVE_PATTERN = /\b(blocked|failed|unavailable|session_start_failed|run_failed)\b/g;
@@ -15,6 +16,7 @@ const COMPLETED_PATTERN = /\b(done|released|offline|cancelled)\b/g;
 function applyColors(text: string): string {
   return text
     .replace(HEADER_PATTERN, (value) => chalk.bold.cyan(value))
+    .replace(WAITING_INPUT_HEADER_PATTERN, (value) => chalk.bold.yellow(value))
     .replace(POSITIVE_PATTERN, (value) => chalk.green(value))
     .replace(WARNING_PATTERN, (value) => chalk.yellow(value))
     .replace(NEGATIVE_PATTERN, (value) => chalk.red(value))

@@ -22,6 +22,8 @@ export const EVENT_FEED_LIMIT = 10;
 export interface LayoutSlotInput {
   /** Phase rows in full/compact detail (phases plus the activity line, or 1/0 for the run-state line). */
   phaseLines: number;
+  /** Rows of the NEEDS INPUT indicator (badge + question), 0 when the run is not waiting. */
+  waitingLines?: number;
 }
 
 export interface LayoutInput {
@@ -36,6 +38,8 @@ export interface LayoutInput {
   runCount: number;
   eventCount: number;
   hasEventError: boolean;
+  /** Runs waiting for an input response; any adds the header's waiting line. */
+  waitingCount?: number;
 }
 
 export interface Layout {
@@ -50,7 +54,7 @@ export interface Layout {
 /** Lines one worker slot takes at a given detail, border included. */
 export function slotHeight(slot: LayoutSlotInput, detail: SlotDetail, spriteLines: number): number {
   // border (2) + id + provider + task + two age lines
-  const base = 7;
+  const base = 7 + (slot.waitingLines ?? 0);
   if (detail === 'minimal') return base + 1;
   const phases = slot.phaseLines;
   return base + phases + (detail === 'full' ? spriteLines : 0);
@@ -69,8 +73,8 @@ function gridHeight(input: LayoutInput, detail: SlotDetail): number {
 }
 
 function headerHeight(input: LayoutInput, showBanner: boolean): number {
-  // identity + counts + marginBottom
-  return (showBanner ? input.bannerLines : 0) + 3;
+  // identity + counts + waiting line + marginBottom
+  return (showBanner ? input.bannerLines : 0) + 3 + ((input.waitingCount ?? 0) > 0 ? 1 : 0);
 }
 
 /** Item lines a list wants: one per item, or one "(none)" line. */

@@ -243,6 +243,46 @@ describe('App', () => {
     expect(frame).toContain('session_started');
   });
 
+  it('flags a worker waiting for input on its slot and in the header', () => {
+    const slot = (agent_id: string, run: string) => ({
+      agent_id, role: 'worker', provider: 'claude', model: null, status: 'running', session_handle: `tmux:${agent_id}`,
+      slot_state: 'busy', active_run_id: run, active_task_ref: `feat/${run}`, last_status_change_at: null, last_heartbeat_at: null,
+    });
+    const claim = (agent_id: string, run: string) => ({
+      run_id: run, task_ref: `feat/${run}`, agent_id, state: 'in_progress', age_seconds: 60, idle_seconds: 5,
+    });
+    const status = {
+      worker_capacity: {
+        configured_slots: 2, used_slots: 2, available_slots: 0, warming_slots: 0, unavailable_slots: 0,
+        provider: 'claude', dispatch_ready_count: 0, waiting_for_capacity: 0,
+        slots: [slot('asking-orc', 'run-a'), slot('busy-orc', 'run-b')],
+      },
+      tasks: { counts: {}, total: 0 },
+      scouts: [],
+      claims: { active: [claim('asking-orc', 'run-a'), claim('busy-orc', 'run-b')], total: 2, awaiting_run_started: 0, in_progress: 2, stalled: 0 },
+      failures: { startup: [], lifecycle: [] },
+      waiting_input: [{ run_id: 'run-a', agent_id: 'asking-orc', task_ref: 'feat/run-a', question: 'Use schema v2?', waiting_seconds: 42 }],
+      recentEvents: [],
+      eventReadError: '',
+    };
+    mockBuildStatus.mockReturnValue(status);
+
+    const app = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+    const frame = app.lastFrame() ?? '';
+
+    expect(frame).toContain('1 WAITING FOR INPUT');
+    expect(frame).toContain('answer: orc run-input-respond');
+    expect(frame.match(/NEEDS INPUT/g)).toHaveLength(1);
+    expect(frame).toContain('waiting 42s');
+    expect(frame).toContain('? Use schema v2?');
+
+    cleanup();
+    mockBuildStatus.mockReturnValue({ ...status, waiting_input: [] });
+    const quiet = render(<App stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />).lastFrame() ?? '';
+    expect(quiet).not.toContain('NEEDS INPUT');
+    expect(quiet).not.toContain('WAITING FOR INPUT');
+  });
+
   it('worker slot shows activity and heartbeat separately', () => {
     mockBuildStatus.mockReturnValue({
       worker_capacity: {
