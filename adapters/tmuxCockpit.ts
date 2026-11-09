@@ -23,7 +23,7 @@ export const COCKPIT_SESSION = 'cockpit';
 /** The one key the cockpit claims: its tmux prefix. Pressed twice, it reaches the pane. */
 export const COCKPIT_PREFIX = 'C-]';
 /** How to get around, shown on attach and in the status line. */
-export const COCKPIT_KEYS = 'Ctrl-] o: switch pane | Ctrl-] n/p: next/previous project | Ctrl-] d: detach';
+export const COCKPIT_KEYS = 'Ctrl-] o: switch pane | Ctrl-] n/p: next/previous tab | Ctrl-] d: detach';
 /** The dashboard pane's share of the window width. */
 const DASHBOARD_WIDTH = '35%';
 const DEFAULT_SIZE = { columns: 200, rows: 50 };
