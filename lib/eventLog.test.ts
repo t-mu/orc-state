@@ -155,6 +155,22 @@ describe('readEvents resilience', () => {
     expect(events[0].seq).toBe(1);
   });
 
+  it('keeps a stored claim_expired written before agent_id was required', () => {
+    appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
+    const db = new Database(join(dir, 'events.db'));
+    db.prepare(`UPDATE events SET payload = ? WHERE seq = 1`).run(JSON.stringify({
+      seq: 1, ts: '2026-01-01T00:00:00Z', event: 'claim_expired', actor_type: 'coordinator', actor_id: 'coordinator',
+      run_id: 'run-old', task_ref: 'orch/a', payload: { policy: 'requeue', code: 'ERR_LEASE_EXPIRED' },
+    }));
+    db.close();
+
+    expect(readEvents(logPath)).toEqual([expect.objectContaining({ seq: 1, event: 'claim_expired', run_id: 'run-old' })]);
+    // A new claim_expired without agent_id is still refused at append time.
+    expect(() => appendEvent(logPath, validEvent(2, 'claim_expired', {
+      agent_id: undefined, run_id: 'run-new', task_ref: 'orch/a', payload: { policy: 'requeue', code: 'ERR_LEASE_EXPIRED' },
+    }), { fsyncPolicy: 'never' })).toThrow('agent_id is required');
+  });
+
   it('logs console.error for each skipped row', () => {
     appendEvent(logPath, validEvent(1), { fsyncPolicy: 'never' });
 

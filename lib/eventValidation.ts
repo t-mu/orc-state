@@ -62,7 +62,7 @@ function requireAgentId(event: unknown, errors: string[]): void {
   }
 }
 
-function validateCoreEventInvariants(event: unknown, errors: string[]): void {
+function validateCoreEventInvariants(event: unknown, errors: string[], stored: boolean): void {
   const e = event as { event?: string; agent_id?: string; run_id?: string; payload?: Record<string, unknown> } | null;
   const eventName = e?.event;
   const taskEvents = new Set(['task_added', 'task_updated', 'task_cancelled', 'task_delegated', 'task_dispatch_blocked']);
@@ -115,9 +115,13 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
     requireRunId(event, errors);
   }
 
+  // claim_expired gained a required agent_id; rows stored before that stay readable.
+  if (eventName === 'claim_expired' && !stored) {
+    requireAgentId(event, errors);
+  }
+
   if (eventName && new Set([
     'claim_created',
-    'claim_expired',
     'finalization_changed',
     'task_envelope_sent',
     'run_started',
@@ -262,7 +266,10 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
   }
 
   if (eventName === 'claim_expired') {
-    requirePayloadField(event, 'code', (v) => typeof v === 'string' && v.length > 0, 'must be a non-empty string', errors);
+    const code = (e as { payload?: Record<string, unknown> } | null)?.payload?.code;
+    if (code !== undefined && !(typeof code === 'string' && code.length > 0)) {
+      errors.push('payload.code must be a non-empty string');
+    }
   }
 
   if (eventName === 'finalization_changed') {
@@ -442,10 +449,12 @@ function validateCoreEventInvariants(event: unknown, errors: string[]): void {
 /**
  * Validate one event object against schema + event-specific payload contract.
  * Returns an array of human-readable errors (empty when valid).
+ * `stored: true` checks a row read back from events.db: a rule added after the
+ * row was written (a `claim_expired` without `agent_id`) does not reject it.
  */
-export function validateEventObject(event: unknown): string[] {
+export function validateEventObject(event: unknown, { stored = false }: { stored?: boolean } = {}): string[] {
   const ok = validateSchema(event);
   const errors = ok ? [] : formatAjvErrors(validateSchema.errors as AjvError[] | null);
-  validateCoreEventInvariants(event, errors);
+  validateCoreEventInvariants(event, errors, stored);
   return errors;
 }

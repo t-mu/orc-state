@@ -328,9 +328,14 @@ describe('validateEventObject', () => {
         .toContain('agent_id is required and must be a valid agent_id');
     });
 
-    it('rejects a claim_expired without code and mistyped task fields', () => {
+    it('accepts a stored claim_expired of the older shapes (no agent_id, no code)', () => {
+      expect(validateEventObject(base('claim_expired', { ...fields, payload: { policy: 'requeue', code: 'ERR_LEASE_EXPIRED' } }), { stored: true })).toEqual([]);
+      expect(validateEventObject(base('claim_expired', { ...fields, agent_id: 'worker-01', payload: { reason: 'manual_expire', policy: 'requeue' } }), { stored: true })).toEqual([]);
+    });
+
+    it('rejects an empty code and mistyped task fields', () => {
       const errors = validateEventObject(base('claim_expired', {
-        ...fields, agent_id: 'worker-01', payload: { policy: 'requeue', task_status: 3, attempt_count: -1 },
+        ...fields, agent_id: 'worker-01', payload: { policy: 'requeue', code: '', task_status: 3, attempt_count: -1 },
       }));
       expect(errors).toContain('payload.code must be a non-empty string');
       expect(errors).toContain('payload.task_status must be a string or null');
