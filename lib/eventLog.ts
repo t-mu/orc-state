@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
-import { validateEventObject } from './eventValidation.ts';
+import { RUN_SESSION_EVENTS, validateEventObject } from './eventValidation.ts';
 import type { OrcEvent, OrcEventInput } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { assertSupportedRuntimeSchemaVersion, migrateRuntimeSchema } from './runtimeSchema.ts';
@@ -254,6 +254,17 @@ export function appendEvent(logPath: string, event: OrcEvent, { fsyncPolicy: _fs
   }
 }
 
+/** Add the run's latest session to a run event's payload; the caller's own `session_id` wins. */
+function withRunSessionIdentity(db: Database.Database, event: OrcEvent): OrcEvent {
+  const ev = event as unknown as { event: string; run_id?: unknown; payload?: Record<string, unknown> };
+  if (!RUN_SESSION_EVENTS.has(ev.event) || typeof ev.run_id !== 'string') return event;
+  if (ev.payload?.session_id !== undefined) return event;
+  const session = db.prepare('SELECT session_id, generation FROM sessions WHERE run_id = ? ORDER BY rowid DESC LIMIT 1')
+    .get(ev.run_id) as { session_id: string; generation: number } | undefined;
+  if (!session) return event;
+  return { ...event, payload: { ...ev.payload, session_id: session.session_id, generation: session.generation } } as OrcEvent;
+}
+
 /**
  * Append an event with a DB-assigned monotonic seq.
  * lockAlreadyHeld and lockStrategy are accepted for API compatibility;
@@ -288,16 +299,17 @@ export function appendSequencedEvent(
   `);
   const update = db.prepare('UPDATE events SET payload = ? WHERE seq = ?');
   return db.transaction(() => {
+    const stamped = withRunSessionIdentity(db, provisional);
     const row = insert.get(
-      provisional.event_id ?? null,
-      provisional.ts,
-      provisional.event,
+      stamped.event_id ?? null,
+      stamped.ts,
+      stamped.event,
       ev.agent_id ?? null,
       ev.run_id ?? null,
       ev.task_ref ?? null,
-      JSON.stringify(provisional),
+      JSON.stringify(stamped),
     ) as { seq: number };
-    const assigned = { ...provisional, seq: row.seq };
+    const assigned = { ...stamped, seq: row.seq };
     const assignedErrors = validateEventObject(assigned);
     if (assignedErrors.length > 0) throw new Error(`event validation failed: ${assignedErrors.join('; ')}`);
     update.run(JSON.stringify(assigned), row.seq);

@@ -69,17 +69,26 @@ export interface ClaimExpiredEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { policy: FailurePolicy; code: string; reason: string; [key: string]: unknown } & Partial<FailureTaskOutcome>;
+  payload: RunSessionIdentity & { policy: FailurePolicy; code: string; reason: string; [key: string]: unknown } & Partial<FailureTaskOutcome>;
 }
 
 // ── Run lifecycle events ─────────────────────────────────────────────────────
+
+/**
+ * Stamped by the event store on run events (`RUN_SESSION_EVENTS`) when the run has a session.
+ * `run_id` is the stable key for a worker's work; `session_id` + `generation` name one live process.
+ */
+export interface RunSessionIdentity {
+  session_id?: string;
+  generation?: number;
+}
 
 export interface RunStartedEvent extends BaseEvent {
   event: 'run_started';
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 export interface TaskEnvelopeSentEvent extends BaseEvent {
@@ -87,7 +96,7 @@ export interface TaskEnvelopeSentEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 export interface WorkCompleteEvent extends BaseEvent {
@@ -95,7 +104,7 @@ export interface WorkCompleteEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { status: 'awaiting_finalize'; retry_count?: number; [key: string]: unknown };
+  payload: RunSessionIdentity & { status: 'awaiting_finalize'; retry_count?: number; [key: string]: unknown };
 }
 
 export interface FinalizeRebaseStartedEvent extends BaseEvent {
@@ -103,7 +112,7 @@ export interface FinalizeRebaseStartedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { status: 'finalize_rebase_in_progress'; retry_count?: number; [key: string]: unknown };
+  payload: RunSessionIdentity & { status: 'finalize_rebase_in_progress'; retry_count?: number; [key: string]: unknown };
 }
 
 export interface ReadyToMergeEvent extends BaseEvent {
@@ -111,7 +120,7 @@ export interface ReadyToMergeEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { status: 'ready_to_merge'; retry_count?: number; [key: string]: unknown };
+  payload: RunSessionIdentity & { status: 'ready_to_merge'; retry_count?: number; [key: string]: unknown };
 }
 
 export interface RunFinishedEvent extends BaseEvent {
@@ -119,7 +128,7 @@ export interface RunFinishedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 export interface RunFailedEvent extends BaseEvent {
@@ -127,7 +136,7 @@ export interface RunFailedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: { policy: FailurePolicy; reason?: string | null | undefined; code?: string | undefined; [key: string]: unknown } & Partial<FailureTaskOutcome>;
+  payload: RunSessionIdentity & { policy: FailurePolicy; reason?: string | null | undefined; code?: string | undefined; [key: string]: unknown } & Partial<FailureTaskOutcome>;
 }
 
 /** One change of a run's finalization fields (`setRunFinalizationState`), committed with the claim. */
@@ -136,7 +145,7 @@ export interface FinalizationChangedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload: {
+  payload: RunSessionIdentity & {
     from: string | null;
     to: string | null;
     retry_count: number;
@@ -152,7 +161,7 @@ export interface RunCancelledEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id?: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 export type CommandEventName =
@@ -183,7 +192,7 @@ export interface PhaseStartedEvent extends BaseEvent {
   task_ref: string;
   agent_id: string;
   phase?: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 export interface PhaseFinishedEvent extends BaseEvent {
@@ -192,7 +201,7 @@ export interface PhaseFinishedEvent extends BaseEvent {
   task_ref: string;
   agent_id: string;
   phase?: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 // ── Blocking events ──────────────────────────────────────────────────────────
@@ -202,7 +211,7 @@ export interface BlockedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload?: { reason?: string; [key: string]: unknown };
+  payload?: RunSessionIdentity & { reason?: string; [key: string]: unknown };
 }
 
 export interface UnblockedEvent extends BaseEvent {
@@ -210,7 +219,7 @@ export interface UnblockedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 // ── Input events ─────────────────────────────────────────────────────────────
@@ -220,7 +229,7 @@ export interface NeedInputEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload?: { reason?: string; [key: string]: unknown };
+  payload?: RunSessionIdentity & { reason?: string; [key: string]: unknown };
 }
 
 export interface InputProvidedEvent extends BaseEvent {
@@ -228,7 +237,7 @@ export interface InputProvidedEvent extends BaseEvent {
   run_id: string;
   task_ref: string;
   agent_id: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 export interface InputRequestedEvent extends BaseEvent {
@@ -236,7 +245,7 @@ export interface InputRequestedEvent extends BaseEvent {
   run_id: string;
   task_ref?: string | undefined;
   agent_id: string;
-  payload: { question: string; request_id?: string; [key: string]: unknown };
+  payload: RunSessionIdentity & { question: string; request_id?: string; [key: string]: unknown };
 }
 
 export interface InputResponseEvent extends BaseEvent {
@@ -244,7 +253,7 @@ export interface InputResponseEvent extends BaseEvent {
   run_id: string;
   task_ref?: string | undefined;
   agent_id: string;
-  payload: { response: string; request_id?: string | null; [key: string]: unknown };
+  payload: RunSessionIdentity & { response: string; request_id?: string | null; [key: string]: unknown };
 }
 
 // ── Heartbeat ─────────────────────────────────────────────────────────────────
@@ -254,7 +263,7 @@ export interface HeartbeatEvent extends BaseEvent {
   run_id?: string;
   task_ref?: string;
   agent_id?: string;
-  payload?: Record<string, unknown>;
+  payload?: RunSessionIdentity & Record<string, unknown>;
 }
 
 // ── Agent events ─────────────────────────────────────────────────────────────

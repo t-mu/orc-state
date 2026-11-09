@@ -46,6 +46,10 @@ const status = await client.status({}, { signal: abort.signal, timeoutMs: 2_000 
 - An error response that is not JSON (a proxy page, an empty body) is a `ControlError` (code `internal`) with the HTTP status and a short excerpt, never a `SyntaxError`.
 - `inputTerminal` calls on one client to one terminal are sent one at a time in call order. A retried input (after `busy`) joins the back of the queue, so queue nothing else until the retry settles ([terminal-streaming.md](terminal-streaming.md)).
 
+## Keying workers
+
+Key a worker's work by `run_id`. Agent names are reused across runs, and one `session_id` survives a resume (only `generation` goes up), so a view keyed by either mixes different runs or misses a restart. `session_id` + `generation` identify one live process; run events carry both in `payload` when the run has a session. Details: [contracts.md → Events](contracts.md#events).
+
 ## Passing `--project`
 
 When the app runs the `orc` CLI itself (for example `orc start-session`, `orc project task create`), pass `--project=<id>` with the `id` from `listProjects()` on every call. It beats every other selector, and an inherited `ORC_STATE_DIR` is ignored; a GUI has no meaningful working directory to resolve a project from. See [configuration.md → Project selection](configuration.md#project-selection).

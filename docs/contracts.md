@@ -151,6 +151,8 @@ The coordinator emits `phase_started {inferred: true, evidence, evidence_ts}` (`
 
 Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `task_ref`, `payload`). Fields and per-event payloads: [schemas/event.schema.json](../schemas/event.schema.json) plus `lib/eventValidation.ts`. `event_id` is optional; `actor_type` is `agent|coordinator|human`.
 
+Worker identity: `run_id` is the stable key for one piece of a worker's work. Agent names (`surly-mire`) are reused across runs, and a session keeps its `session_id` across resumes, so neither keys a run on its own; `session_id` + `generation` identify one live process. Run events (`RUN_SESSION_EVENTS` in `lib/eventValidation.ts`: the run, phase, finalization, input, blocking, heartbeat, review and attention events below) get the run's latest session stamped into `payload.session_id` and `payload.generation` when the event is written, if the run has a session; a caller-supplied `session_id` is kept. Runs without a session, and events written before this, carry neither.
+
 | Event | Emitter | Note |
 |-------|---------|------|
 | `claim_created` | Coordinator | Task claimed for a worker |
