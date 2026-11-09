@@ -282,7 +282,7 @@ export function verifyPackedPackage(root: string): void {
   if (watchBundle.includes('.tsx') || watchBundle.includes('server.ts')) {
     throw new Error('installed watch bundle still contains stale TypeScript runtime references');
   }
-  if (!watchBundle.includes('App.js') || !watchBundle.includes('sprites.js')) {
+  if (!watchBundle.includes('App.js')) {
     throw new Error('installed watch bundle does not reference built TUI modules');
   }
 }

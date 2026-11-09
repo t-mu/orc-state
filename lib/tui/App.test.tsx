@@ -1,47 +1,92 @@
+import { EventEmitter } from 'node:events';
+import { stripVTControlCharacters } from 'node:util';
 import React, { act } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { render as inkRender, type Instance } from 'ink';
 import { cleanup, render } from 'ink-testing-library';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProjectConnectionState, ProjectWatchState, ProjectWatchUpdate, StatusView } from '../../client.ts';
 import { App } from './App.tsx';
-import type { SpriteMap } from './sprites.ts';
-import type { ProjectWatchUpdate } from '../../client.ts';
-import { emptyTuiStatus, type TuiWatchSource } from './status.ts';
+import type { TuiAttention, TuiRecentEvent, TuiStatus, TuiWatchSource } from './status.ts';
 
-const { mockBuildStatus, mockBanner } = vi.hoisted(() => ({
-  mockBuildStatus: vi.fn(),
-  mockBanner: vi.fn(() => 'ORC-STATE'),
-}));
+type Kind = TuiAttention['kind'];
 
-/** A watcher with one project at /tmp/state: running with `mockBuildStatus()`, or stopped without a status when it throws. */
-const source: TuiWatchSource = {
-  projects: () => {
-    const project = {
-      id: 'p1', name: 'demo', target_repo_root: '/repo', state_dir: '/tmp/state',
-      repo_present: true, control_socket: null, coordinator_running: true,
-    };
-    try {
-      return [{ project, connection: 'running', error: null, status: mockBuildStatus(), cursor: 0 }];
-    } catch {
-      return [{ project: { ...project, coordinator_running: false }, connection: 'stopped', error: null, status: null, cursor: null }];
-    }
-  },
-  onUpdate: () => () => {},
-};
+interface AgentSpec { id: string; task?: string; phase?: string; activity?: string; attention?: { kind: Kind; detail?: string | null } }
 
-vi.mock('../banner.ts', () => ({
-  renderBanner: mockBanner,
-}));
+function status(agents: AgentSpec[], recentEvents: TuiRecentEvent[] = []): TuiStatus {
+  return {
+    worker_capacity: {
+      configured_slots: agents.length, used_slots: agents.length, available_slots: 0, warming_slots: 0, unavailable_slots: 0,
+      provider: 'claude', dispatch_ready_count: 0, waiting_for_capacity: 0,
+      slots: agents.map(agent => ({
+        agent_id: agent.id, role: 'worker', provider: 'claude', model: null, status: 'running', session_handle: null,
+        slot_state: 'busy', active_run_id: `run-${agent.id}`, active_task_ref: agent.task ?? null,
+        last_status_change_at: null, last_heartbeat_at: null,
+        attention: agent.attention
+          ? { kind: agent.attention.kind, run_id: `run-${agent.id}`, since: null, detail: agent.attention.detail ?? null, request_id: null }
+          : null,
+      })),
+    },
+    scouts: [],
+    tasks: { counts: {}, total: 0 },
+    claims: {
+      active: agents.map(agent => ({
+        run_id: `run-${agent.id}`, task_ref: agent.task ?? null, agent_id: agent.id, state: 'in_progress',
+        age_seconds: 1, idle_seconds: 1, activity_seconds: 1, heartbeat_seconds: 1, current_phase: agent.phase ?? null,
+        current_activity: agent.activity ? { text: agent.activity, source: 'note', ts: '2026-11-09T10:00:00Z' } as never : null,
+      })),
+      total: agents.length, awaiting_run_started: 0, in_progress: agents.length, stalled: 0,
+    },
+    failures: { startup: [], lifecycle: [] },
+    recentEvents,
+    eventReadError: '',
+  };
+}
 
-const sprites: SpriteMap = new Map([
-  ['idle', ['IDLE-1', 'IDLE-2']],
-  ['work', ['WORK-1', 'WORK-2']],
-  ['done', ['DONE-1']],
-  ['fail', ['FAIL-1']],
-]);
+function project(id: string, connection: ProjectConnectionState, s: TuiStatus | null, error: string | null = null): ProjectWatchState {
+  return {
+    project: {
+      id, name: id, target_repo_root: `/repo/${id}`, state_dir: `/state/${id}`,
+      repo_present: true, control_socket: null, coordinator_running: connection === 'running',
+    },
+    connection,
+    error,
+    status: s as unknown as StatusView | null,
+    cursor: s ? 0 : null,
+  };
+}
+
+/** A watcher whose projects the test sets, and whose updates it emits. */
+function fakeSource(initial: ProjectWatchState[]) {
+  let states = initial;
+  const listeners = new Set<(update: ProjectWatchUpdate) => void>();
+  const source: TuiWatchSource = {
+    projects: () => states,
+    onUpdate: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  return {
+    source,
+    set(next: ProjectWatchState[]) { states = next; },
+    emit(update: ProjectWatchUpdate) { for (const listener of listeners) listener(update); },
+  };
+}
+
+function plain(frame: string | undefined): string {
+  return stripVTControlCharacters(frame ?? '').trimEnd();
+}
+
+/** Let mount effects and state updates settle (React schedules them on the faked timers). */
+async function settle(action: () => void = () => {}): Promise<void> {
+  await act(async () => {
+    action();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
-  mockBuildStatus.mockReset();
-  mockBanner.mockClear();
 });
 
 afterEach(() => {
@@ -49,360 +94,208 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('App', () => {
-  it('shows a project whose coordinator is stopped as stopped, with the empty dashboard', () => {
-    mockBuildStatus.mockImplementation(() => {
-      throw new Error('no coordinator');
-    });
+describe('dashboard App', () => {
+  it('gives each attention kind its own badge on the agent row and counts them per project', () => {
+    const { source } = fakeSource([project('alpha', 'running', status([
+      { id: 'busy-one', task: 'plan/working', activity: 'Running npm test' },
+      { id: 'asks-perm', attention: { kind: 'permission_prompt', detail: 'Allow Bash(rm -rf dist)?' } },
+      { id: 'asks-q', attention: { kind: 'question', detail: 'Which\n  schema?' } },
+      { id: 'is-stalled', attention: { kind: 'stalled' } },
+      { id: 'no-moves', attention: { kind: 'no_progress', detail: 'implement' } },
+    ]))]);
 
-    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
-    const frame = app.lastFrame() ?? '';
+    const frame = plain(render(<App source={source} stateDir="/state/alpha" intervalMs={1000} />).lastFrame());
+    const lines = frame.split('\n');
+    const row = (agent: string) => lines.find(line => line.includes(agent)) ?? '';
 
-    expect(frame).toContain('ORC-STATE');
-    expect(frame).toContain('project: demo (p1) → /repo');
-    expect(frame).toContain('coordinator: stopped (coordinator not running)');
-    expect(frame).toContain('Live Workers');
-    expect(frame).toContain('Recent Events');
+    expect(row('asks-perm')).toContain(' PERMISSION');
+    expect(row('asks-q')).toContain(' QUESTION');
+    expect(row('is-stalled')).toContain(' STALLED');
+    expect(row('no-moves')).toContain(' NO PROGRESS');
+    expect(row('busy-one')).not.toMatch(/PERMISSION|QUESTION|STALLED|NO PROGRESS/);
+    expect(frame).toContain('? Allow Bash(rm -rf dist)?');
+    expect(frame).toContain('? Which schema?');
+    expect(frame).toContain('no progress in implement');
+    expect(frame).toContain('└ Running npm test');
+
+    expect(frame).toContain('alpha running ⚠ 4');
+    expect(frame).toContain('1 permission · 1 question · 1 stalled · 1 no progress');
+    expect(frame).toContain('4 NEED YOU');
+    // Agents needing a human come first, by precedence; the busy one last.
+    const order = ['asks-perm', 'asks-q', 'is-stalled', 'no-moves', 'busy-one'].map(agent => lines.indexOf(row(agent)));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  it('says so when the state directory belongs to no watched project', () => {
-    mockBuildStatus.mockReturnValue(emptyTuiStatus());
+  it('shows stopped, incompatible and unreachable projects as such, the current project first', () => {
+    const { source } = fakeSource([
+      project('old', 'incompatible', null, 'protocol v9 not supported'),
+      project('gone', 'stopped', status([{ id: 'last-seen', task: 'x/y' }])),
+      project('idle', 'stopped', null),
+      project('mine', 'running', status([])),
+    ]);
 
-    const frame = render(<App source={source} stateDir="/tmp/other" sprites={sprites} intervalMs={1000} />).lastFrame() ?? '';
+    const frame = plain(render(<App source={source} stateDir="/state/mine" intervalMs={1000} />).lastFrame());
 
-    expect(frame).toContain('project: (none selected)');
-    expect(frame).toContain('project not registered: /tmp/other');
+    expect(frame).toContain('4 projects');
+    expect(frame).toMatch(/▸ mine running\n\s+\(no live agents\)/);
+    expect(frame).toContain('old incompatible');
+    expect(frame).toContain('incompatible: protocol v9 not supported');
+    expect(frame).toContain('gone stopped (last known)');
+    expect(frame).toContain('last-seen');
+    expect(frame).toMatch(/idle stopped\n\s+\(coordinator not running\)/);
+    expect(frame.indexOf('mine')).toBeLessThan(frame.indexOf('old'));
   });
 
-  it('re-renders on a watcher update and lists the other projects with their connection', async () => {
-    let listener: ((update: ProjectWatchUpdate) => void) | null = null;
-    const project = (id: string, stateDir: string) => ({
-      id, name: id, target_repo_root: `/repo/${id}`, state_dir: stateDir,
-      repo_present: true, control_socket: null, coordinator_running: true,
-    });
-    let todo = 1;
-    const live: TuiWatchSource = {
-      projects: () => [
-        { project: project('alpha', '/tmp/state'), connection: 'running', error: null, status: { ...emptyTuiStatus(), tasks: { counts: { todo }, total: todo } } as never, cursor: 1 },
-        { project: project('beta', '/tmp/beta'), connection: 'unreachable', error: 'connect ECONNREFUSED', status: null, cursor: null },
-      ],
-      onUpdate: (fn) => {
-        listener = fn;
-        return () => { listener = null; };
-      },
-    };
+  it('says why nothing is shown when the registry cannot be read', async () => {
+    const watcher = fakeSource([]);
+    const app = render(<App source={watcher.source} stateDir="/state/none" intervalMs={1000} />);
+    expect(plain(app.lastFrame())).toContain('no registered projects');
 
-    const app = render(<App source={live} stateDir="/tmp/state" sprites={sprites} intervalMs={60_000} />);
-    expect(app.lastFrame()).toContain('coordinator: running');
-    expect(app.lastFrame()).toContain('other projects: beta unreachable');
-    expect(app.lastFrame()).toContain('todo: 1');
+    await settle();
+    await settle(() => watcher.emit({ type: 'registry_error', error: new Error('registry unreadable') }));
+    expect(plain(app.lastFrame())).toContain('registry error: registry unreadable');
+  });
 
-    todo = 4;
+  it('feeds notification events from every project, newest first', async () => {
+    const watcher = fakeSource([
+      project('alpha', 'running', status([], [
+        { seq: 1, ts: '2026-11-09T10:00:00Z', event: 'run_finished', agent_id: 'a1', task_ref: 'plan/first' },
+        { seq: 2, ts: '2026-11-09T10:01:00Z', event: 'heartbeat', agent_id: 'a1', task_ref: 'plan/first' },
+      ])),
+      project('beta', 'running', status([], [
+        { seq: 7, ts: '2026-11-09T10:02:00Z', event: 'input_requested', agent_id: 'b1', task_ref: 'plan/second' },
+      ])),
+    ]);
+    const app = render(<App source={watcher.source} stateDir="/state/alpha" intervalMs={1000} />);
+    await settle();
+    let frame = plain(app.lastFrame());
+
+    expect(frame).toContain('Notifications');
+    expect(frame).not.toContain('heartbeat');
+    expect(frame.indexOf('input_requested beta b1 second')).toBeGreaterThan(-1);
+    expect(frame.indexOf('input_requested beta b1 second')).toBeLessThan(frame.indexOf('run_finished alpha a1 first'));
+
+    // A streamed event joins the feed on top, with the attention reason.
+    await settle(() => watcher.emit({
+      type: 'event', project_id: 'alpha',
+      row: { seq: 3, event: { event: 'worker_needs_attention', ts: '2026-11-09T10:03:00Z', agent_id: 'a2', payload: { reason: 'no_progress' } } as never },
+    }));
+    frame = plain(app.lastFrame());
+    expect(frame.indexOf('worker_needs_attention:no_progress alpha a2')).toBeGreaterThan(-1);
+    expect(frame.indexOf('worker_needs_attention:no_progress alpha a2')).toBeLessThan(frame.indexOf('input_requested beta b1'));
+  });
+
+  it('does not re-render while the data is unchanged, and does when it changes', async () => {
+    const watcher = fakeSource([project('alpha', 'running', status([{ id: 'w1', task: 'plan/a', phase: 'explore' }]))]);
+    const app = render(<App source={watcher.source} stateDir="/state/alpha" intervalMs={1000} />);
+    await settle();
+    const framesAfterMount = app.frames.length;
+
+    // Interval ticks and watcher updates with equal (but new) data.
+    watcher.set([project('alpha', 'running', status([{ id: 'w1', task: 'plan/a', phase: 'explore' }]))]);
+    await settle(() => watcher.emit({ type: 'status', project_id: 'alpha', status: watcher.source.projects()[0].status as StatusView }));
     await act(async () => {
-      listener?.({ type: 'event', project_id: 'alpha', row: { seq: 2 } as never });
-      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(app.lastFrame()).toContain('todo: 4');
+    expect(app.frames.length).toBe(framesAfterMount);
 
+    watcher.set([project('alpha', 'running', status([{ id: 'w1', task: 'plan/a', phase: 'implement' }]))]);
     await act(async () => {
-      app.unmount();
-      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(listener).toBeNull();
+    expect(app.frames.length).toBeGreaterThan(framesAfterMount);
+    expect(plain(app.lastFrame())).toContain('plan/a · implement');
   });
 
-  it('renders only live registered workers without phantom slot placeholders', () => {
-    mockBuildStatus.mockReturnValue({
-      worker_capacity: {
-        configured_slots: 3,
-        used_slots: 1,
-        available_slots: 2,
-        warming_slots: 0,
-        unavailable_slots: 0,
-        provider: 'codex',
-        dispatch_ready_count: 0,
-        waiting_for_capacity: 0,
-        slots: [
-          {
-            agent_id: 'amber-anchor',
-            role: 'worker',
-            provider: 'codex',
-            model: null,
-            status: 'running',
-            session_handle: 'pty:1',
-            slot_state: 'busy',
-            active_run_id: 'run-1',
-            active_task_ref: 'feat/task-1',
-            last_status_change_at: null,
-            last_heartbeat_at: null,
-          },
-        ],
-      },
-      tasks: { counts: { todo: 2 }, total: 2 },
-      scouts: [
-        {
-          agent_id: 'scout-1',
-          provider: 'codex',
-          model: null,
-          status: 'running',
-          session_handle: 'pty:scout-1',
-          launched_at: null,
-        },
-      ],
-      claims: {
-        active: [
-          {
-            run_id: 'run-1',
-            task_ref: 'feat/task-1',
-            agent_id: 'amber-anchor',
-            state: 'in_progress',
-            age_seconds: 12,
-            idle_seconds: 3,
-          },
-        ],
-        total: 1,
-        awaiting_run_started: 0,
-        in_progress: 1,
-        stalled: 0,
-      },
-      failures: { startup: [], lifecycle: [] },
-      recentEvents: [],
-      eventReadError: '',
-    });
+  it('moves the selection through agents of every project with the arrow keys and j/k', async () => {
+    const { source } = fakeSource([
+      project('alpha', 'running', status([{ id: 'a1' }, { id: 'a2' }])),
+      project('beta', 'running', status([{ id: 'b1' }])),
+    ]);
+    const app = render(<App source={source} stateDir="/state/alpha" intervalMs={1000} />);
+    const selectedRow = () => plain(app.lastFrame()).split('\n').find(line => line.startsWith('› ')) ?? '';
 
-    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
-    const frame = app.lastFrame() ?? '';
+    await settle();
+    expect(selectedRow()).toContain('a1');
+    await settle(() => app.stdin.write('\u001B[B'));
+    expect(selectedRow()).toContain('a2');
+    await settle(() => app.stdin.write('j'));
+    expect(selectedRow()).toContain('b1');
+    await settle(() => app.stdin.write('j'));
+    expect(selectedRow()).toContain('b1');
+    await settle(() => app.stdin.write('k'));
+    expect(selectedRow()).toContain('a2');
+  });
+});
 
-    // Only the registered live worker appears — no phantom orc-N placeholders
-    expect(frame).toContain('amber-anchor');
-    expect(frame).not.toContain('orc-2');
-    expect(frame).not.toContain('orc-3');
-    // Capacity summary is shown separately from the live worker list
-    expect(frame).toContain('1/3 capacity');
-    expect(frame).toContain('2 available');
-    // Scouts are listed by id and state, not drawn as worker slots
-    expect(frame).toContain('Scouts (1)');
-    expect(frame).toMatch(/scout-1\s+running\s+attached/);
-    expect(frame).not.toContain('[SCOUT]');
+/** A terminal of fixed size that records the frames Ink writes. */
+class FakeStdout extends EventEmitter {
+  frames: string[] = [];
+  constructor(public rows: number, public columns: number) { super(); }
+  write = (frame: string) => { this.frames.push(frame); return true; };
+  lastFrame(): string { return this.frames[this.frames.length - 1] ?? ''; }
+}
+
+class FakeStdin extends EventEmitter {
+  isTTY = false;
+  setEncoding() {}
+  setRawMode() {}
+  resume() {}
+  pause() {}
+  ref() {}
+  unref() {}
+  read() { return null; }
+}
+
+describe('dashboard App in a terminal', () => {
+  let instance: Instance | null = null;
+
+  afterEach(() => {
+    instance?.unmount();
+    instance = null;
   });
 
-  it('refreshes status on the polling interval', async () => {
-    mockBuildStatus
-      .mockReturnValueOnce({
-        worker_capacity: {
-          configured_slots: 1,
-          used_slots: 0,
-          available_slots: 1,
-          warming_slots: 0,
-          unavailable_slots: 0,
-          provider: 'codex',
-          dispatch_ready_count: 0,
-          waiting_for_capacity: 0,
-          slots: [],
-        },
-        tasks: { counts: { todo: 0 }, total: 0 },
-        scouts: [],
-        claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
-        failures: { startup: [], lifecycle: [] },
-        recentEvents: [],
-        eventReadError: '',
-      })
-      .mockReturnValue({
-        worker_capacity: {
-          configured_slots: 1,
-          used_slots: 1,
-          available_slots: 0,
-          warming_slots: 0,
-          unavailable_slots: 0,
-          provider: 'codex',
-          dispatch_ready_count: 0,
-          waiting_for_capacity: 0,
-          slots: [
-            {
-              agent_id: 'orc-1',
-              role: 'worker',
-              provider: 'codex',
-              model: null,
-              status: 'running',
-              session_handle: 'pty:1',
-              slot_state: 'busy',
-              active_run_id: 'run-1',
-              active_task_ref: 'feat/task-1',
-              last_status_change_at: null,
-              last_heartbeat_at: null,
-            },
-          ],
-        },
-        tasks: { counts: { todo: 1 }, total: 1 },
-        scouts: [
-        {
-          agent_id: 'scout-1',
-          provider: 'codex',
-          model: null,
-          status: 'idle',
-          session_handle: null,
-          launched_at: null,
-        },
-      ],
-        claims: {
-          active: [
-            {
-              run_id: 'run-1',
-              task_ref: 'feat/task-1',
-              agent_id: 'orc-1',
-              state: 'claimed',
-              age_seconds: 5,
-              idle_seconds: 5,
-            },
-          ],
-          total: 1,
-          awaiting_run_started: 1,
-          in_progress: 0,
-          stalled: 0,
-        },
-        failures: { startup: [], lifecycle: [] },
-        recentEvents: [{ seq: 1, event: 'claimed', run_id: 'run-1' }],
-        eventReadError: '',
-      });
+  function renderIn(rows: number, columns: number, states: ProjectWatchState[]): FakeStdout {
+    const stdout = new FakeStdout(rows, columns);
+    instance = inkRender(<App source={fakeSource(states).source} stateDir="/state/alpha" intervalMs={1000} />, {
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
+      patchConsole: false,
+      exitOnCtrlC: false,
+    });
+    return stdout;
+  }
 
-    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
+  it('fits a 40-column side pane: no line wider, badges and counts still visible', () => {
+    const stdout = renderIn(40, 40, [
+      project('alpha-with-a-long-project-name', 'running', status([
+        { id: 'wretched-cave-worker', task: 'cockpit/dashboard-pane-with-a-long-slug', phase: 'implement', activity: 'Running the whole test suite with coverage' },
+        { id: 'asks-perm', task: 'cockpit/x', attention: { kind: 'permission_prompt', detail: 'Allow Bash(npm publish --access public --tag next)?' } },
+      ], [{ seq: 1, ts: '2026-11-09T10:00:00Z', event: 'run_failed', agent_id: 'wretched-cave-worker', task_ref: 'cockpit/dashboard-pane-with-a-long-slug' }])),
+      project('beta', 'incompatible', null, 'coordinator speaks control protocol v9, this client supports v1 and v2'),
+    ]);
 
-    await vi.advanceTimersByTimeAsync(1000);
-
-    expect(app.lastFrame()).toContain('feat/task-1');
-    expect(app.lastFrame()).toContain('scout-1');
-    expect(mockBuildStatus).toHaveBeenCalledTimes(3);
+    const lines = plain(stdout.lastFrame()).split('\n');
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(40);
+    const frame = lines.join('\n');
+    expect(frame).toContain(' PERMISSION');
+    expect(frame).toContain('1 permission');
+    expect(frame).toContain('beta incompatible');
+    expect(frame).toContain('run_failed');
   });
 
-  it('event feed shows agent_id and task slug instead of run_id', () => {
-    mockBuildStatus.mockReturnValue({
-      worker_capacity: {
-        configured_slots: 1,
-        used_slots: 0,
-        available_slots: 1,
-        warming_slots: 0,
-        unavailable_slots: 0,
-        provider: 'codex',
-        dispatch_ready_count: 0,
-        waiting_for_capacity: 0,
-        slots: [],
-      },
-      tasks: { counts: {}, total: 0 },
-      scouts: [],
-      claims: { active: [], total: 0, awaiting_run_started: 0, in_progress: 0, stalled: 0 },
-      failures: { startup: [], lifecycle: [] },
-      recentEvents: [
-        { seq: 1, event: 'run_started', run_id: 'run-abc', agent_id: 'orc-1', task_ref: 'publish/111-fix-package-json' },
-        { seq: 2, event: 'session_started', run_id: null, agent_id: null, task_ref: null },
-      ],
-      eventReadError: '',
-    });
+  it('stays below the terminal height, collapsing agent rows and cutting long lists', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ id: `w${i}`, task: `plan/t${i}`, phase: 'implement' }));
+    const stdout = renderIn(16, 40, [project('alpha', 'running', status([
+      ...many,
+      { id: 'needs-me', attention: { kind: 'question', detail: 'ok?' } },
+    ]))]);
 
-    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
-    const frame = app.lastFrame() ?? '';
-
-    expect(frame).toContain('orc-1 run_started 111-fix-package-json');
-    expect(frame).not.toContain('run-abc');
-    expect(frame).toContain('session_started');
-  });
-
-  it('flags a worker waiting for input on its slot and in the header', () => {
-    const slot = (agent_id: string, run: string) => ({
-      agent_id, role: 'worker', provider: 'claude', model: null, status: 'running', session_handle: `tmux:${agent_id}`,
-      slot_state: 'busy', active_run_id: run, active_task_ref: `feat/${run}`, last_status_change_at: null, last_heartbeat_at: null,
-    });
-    const claim = (agent_id: string, run: string) => ({
-      run_id: run, task_ref: `feat/${run}`, agent_id, state: 'in_progress', age_seconds: 60, idle_seconds: 5,
-    });
-    const status = {
-      worker_capacity: {
-        configured_slots: 2, used_slots: 2, available_slots: 0, warming_slots: 0, unavailable_slots: 0,
-        provider: 'claude', dispatch_ready_count: 0, waiting_for_capacity: 0,
-        slots: [slot('asking-orc', 'run-a'), slot('busy-orc', 'run-b')],
-      },
-      tasks: { counts: {}, total: 0 },
-      scouts: [],
-      claims: { active: [claim('asking-orc', 'run-a'), claim('busy-orc', 'run-b')], total: 2, awaiting_run_started: 0, in_progress: 2, stalled: 0 },
-      failures: { startup: [], lifecycle: [] },
-      waiting_input: [{ run_id: 'run-a', agent_id: 'asking-orc', task_ref: 'feat/run-a', question: 'Use schema v2?', waiting_seconds: 42 }],
-      recentEvents: [],
-      eventReadError: '',
-    };
-    mockBuildStatus.mockReturnValue(status);
-
-    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
-    const frame = app.lastFrame() ?? '';
-
-    expect(frame).toContain('1 WAITING FOR INPUT');
-    expect(frame).toContain('answer: orc run-input-respond');
-    expect(frame.match(/NEEDS INPUT/g)).toHaveLength(1);
-    expect(frame).toContain('waiting 42s');
-    expect(frame).toContain('? Use schema v2?');
-
-    cleanup();
-    mockBuildStatus.mockReturnValue({ ...status, waiting_input: [] });
-    const quiet = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />).lastFrame() ?? '';
-    expect(quiet).not.toContain('NEEDS INPUT');
-    expect(quiet).not.toContain('WAITING FOR INPUT');
-  });
-
-  it('worker slot shows activity and heartbeat separately', () => {
-    mockBuildStatus.mockReturnValue({
-      worker_capacity: {
-        configured_slots: 1,
-        used_slots: 1,
-        available_slots: 0,
-        warming_slots: 0,
-        unavailable_slots: 0,
-        provider: 'codex',
-        dispatch_ready_count: 0,
-        waiting_for_capacity: 0,
-        slots: [
-          {
-            agent_id: 'orc-1',
-            role: 'worker',
-            provider: 'codex',
-            model: null,
-            status: 'running',
-            session_handle: 'pty:1',
-            slot_state: 'busy',
-            active_run_id: 'run-1',
-            active_task_ref: 'feat/task-1',
-            last_status_change_at: null,
-            last_heartbeat_at: null,
-          },
-        ],
-      },
-      tasks: { counts: { in_progress: 1 }, total: 1 },
-      scouts: [],
-      claims: {
-        active: [
-          {
-            run_id: 'run-1',
-            task_ref: 'feat/task-1',
-            agent_id: 'orc-1',
-            state: 'in_progress',
-            age_seconds: 120,
-            idle_seconds: 12,
-            activity_seconds: 12,
-            heartbeat_seconds: 48,
-          },
-        ],
-        total: 1,
-        awaiting_run_started: 0,
-        in_progress: 1,
-        stalled: 0,
-      },
-      failures: { startup: [], lifecycle: [] },
-      recentEvents: [],
-      eventReadError: '',
-    });
-
-    const app = render(<App source={source} stateDir="/tmp/state" sprites={sprites} intervalMs={1000} />);
-    const frame = app.lastFrame() ?? '';
-
-    expect(frame).toContain('activity: 12s');
-    expect(frame).toContain('heartbeat: 48s');
-    expect(frame).not.toContain('idle:');
+    const frame = plain(stdout.lastFrame());
+    expect(frame.split('\n').length).toBeLessThan(16);
+    // The agent needing a human sorts first, so it survives the cut.
+    expect(frame).toContain('needs-me  QUESTION');
+    expect(frame).toMatch(/\+\d+ more/);
+    expect(frame).toContain('Notifications');
   });
 });

@@ -63,7 +63,7 @@ function violations(file: string, source: string): string[] {
 describe('lib/tui import boundary', () => {
   it('lib/tui imports nothing but orc-state/client, its own modules and pure helpers', () => {
     const files = tuiSourceFiles();
-    expect(files.length).toBeGreaterThan(5);
+    expect(files.length).toBeGreaterThan(3);
     expect(files.flatMap((file) => violations(file, readFileSync(file, 'utf8')))).toEqual([]);
   });
 
