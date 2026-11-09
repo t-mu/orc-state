@@ -13,6 +13,7 @@ import { readProjectDescriptor } from './projectContext.ts';
 import { defaultSocketPath } from './controlProtocol.ts';
 import { SESSION_OWNER_TTL_MS, currentSessionOwnerId, type SupervisedSession } from './sessionSupervisor.ts';
 import { beginSessionResume, completeSessionResume } from './sessionResume.ts';
+import { sessionCapabilities } from './sessionCapabilities.ts';
 import type { WorkerBootstrapProfile } from './sessionBootstrap.ts';
 
 function syncAgentRuntime(agent: Agent, updates: Partial<Agent>): void {
@@ -213,8 +214,8 @@ export async function launchWorkerSession(
     }, repoRoot, { id: project.id, stateDir, sessionId, sessionSecret }));
     const workerBootstrapProfile = resolveWorkerBootstrapProfile();
     const workerStartupProfile = resolveWorkerStartupProfile();
-    // orc chooses the Claude conversation id so a crashed session can be resumed (`--resume`).
-    const conversationId = agent.provider === 'claude' ? randomUUID() : null;
+    // orc chooses the conversation id where its CLI takes one (Claude), so a crashed session can be resumed (`--resume`).
+    const conversationId = sessionCapabilities(agent.provider, 'tmux').conversation_id === 'orc' ? randomUUID() : null;
     const { session_handle, provider_ref } = await adapter.start(agent.agent_id, {
       ...(conversationId ? { conversation_id: conversationId } : {}),
       system_prompt: buildSessionBootstrap(

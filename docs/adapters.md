@@ -37,6 +37,21 @@ Optional (all present on the composite):
 | `submit(handle, text, options?)` | acknowledged input; `app:` only, CLI sessions reject with `CapabilityRefusal` |
 | `onEvent(listener)` / `turnActive(handle)` | app-server runtime events / turn in progress |
 
+## Session capabilities
+
+What a session can do depends on its provider and transport. `lib/sessionCapabilities.ts` holds the one table; resume (`providerSupportsResume`), readiness (`hasSessionStartHook`), the conversation id orc picks at launch (workers and the master) and terminal streaming read it. Session listings carry the row as `capabilities`: `GET /v1/sessions`, `orc sessions --json`, and the MCP `get_status` agent rows of agents with a session ([contracts.md](./contracts.md)).
+
+| Provider | Transport | `resume` | `conversation_id` | `attach` | `terminal_input` | `readiness_hook` | `can_be_master` |
+|----------|-----------|----------|-------------------|----------|------------------|------------------|-----------------|
+| Claude | `tmux` | yes (`--resume`) | `orc` (`--session-id`) | yes | yes | `always` | yes |
+| Codex | `tmux` | no | `provider` (from the hook; informational) | yes | yes | `full-access` | yes |
+| Codex | `app-server` | yes (`thread/resume`) | `provider` (thread id) | no | no | `never` (protocol handshake) | no |
+| Gemini | `tmux` | no | none (`null`) | yes | yes | `never` (report-for-duty) | yes |
+
+- `resume`: a crashed worker session is relaunched in place ([configuration.md](./configuration.md) `sessions.resume`). `conversation_id`: who names the provider conversation (`orc` at launch, the `provider` once known, or `null`). `attach` / `terminal_input`: there is a tmux terminal to stream and type into. `readiness_hook`: [Session readiness](#session-readiness). `can_be_master`: `orc start-session` runs the master on it (the master is always a tmux session).
+- Any other pair, such as a legacy `pty` session, has every capability off.
+- Not the same as `capabilitiesFor(handle)`: that declares what a runtime's protocol supports (`adapters/runtime.ts`), not what orc does with the session.
+
 ## Codex app-server sessions
 
 `adapters/codexAppServer.ts` runs `codex app-server --listen unix://<state>/app-server/<agent>.sock` detached, in its own process group, so it survives a coordinator restart. Codex speaks WebSocket on that socket (one JSON-RPC message per text frame, `adapters/unixWebSocket.ts`); a path too long for a Unix socket is a symlink Codex makes to a short one under `/tmp`.

@@ -12,6 +12,7 @@ import { startControlServer, type ControlServer } from './controlServer.ts';
 import { CONTROL_TOKEN_FILE, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, type TerminalFrame } from './controlProtocol.ts';
 import { TerminalBroker, TmuxTerminalDriver, terminalInputScript, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
 import type { TerminalConnection, TerminalSnapshot } from './terminalHost.ts';
+import { sessionCapabilities } from './sessionCapabilities.ts';
 
 const exec = promisify(execFile);
 const repoRoot = join(import.meta.dirname, '..');
@@ -451,8 +452,10 @@ describe('terminal broker', () => {
   it('lists sessions with their terminals; an app session has none to stream', async () => {
     const client = new ControlClient(dir);
     expect((await client.sessions()).sessions).toEqual([
-      { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', provider: 'claude', transport: 'tmux', state: 'running', state_reason: null, terminal_id: 'provider:session-a', writer: null },
-      { session_id: 'session-b', agent_id: 'worker-b', run_id: 'run-b', provider: 'codex', transport: 'app-server', state: 'running', state_reason: null, terminal_id: null, writer: null },
+      { session_id: 'session-a', agent_id: 'worker-a', run_id: 'run-a', provider: 'claude', transport: 'tmux', state: 'running', state_reason: null, terminal_id: 'provider:session-a', writer: null,
+        capabilities: sessionCapabilities('claude', 'tmux') },
+      { session_id: 'session-b', agent_id: 'worker-b', run_id: 'run-b', provider: 'codex', transport: 'app-server', state: 'running', state_reason: null, terminal_id: null, writer: null,
+        capabilities: expect.objectContaining({ resume: true, attach: false, terminal_input: false }) },
     ]);
     await expect(openStream(client, 'provider:session-b').next(1)).rejects.toMatchObject({ code: 'not_found' });
     await expect(openStream(client, 'provider:no-such-session').next(1)).rejects.toMatchObject({ code: 'not_found' });

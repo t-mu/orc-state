@@ -5,6 +5,7 @@ import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eve
 import { writeSessionRow } from './runStore.ts';
 import type { SessionExitStatus } from '../adapters/interface.ts';
 import type { SessionResumeMode } from './providers.ts';
+import { sessionCapabilities } from './sessionCapabilities.ts';
 import type { SessionExitReason, SupervisedSession } from './sessionSupervisor.ts';
 
 /**
@@ -18,15 +19,12 @@ import type { SessionExitReason, SupervisedSession } from './sessionSupervisor.t
 export const SESSION_RESUME_BUDGET = 2;
 
 /**
- * Which sessions can be resumed: the Claude CLI (orc picks its `--session-id`
- * and relaunches with `--resume`) and Codex on the `app:` runtime
- * (`thread/resume`). The Codex and Gemini terminal CLIs cannot.
+ * Which sessions can be resumed: `resume` in the session capability table
+ * (lib/sessionCapabilities.ts): the Claude CLI and Codex on the `app:` runtime.
  */
 export function providerSupportsResume(provider: string, transport: string | null): boolean {
   // A legacy `pty` session (older orc) is never resumed: its exit was not observed.
-  if (provider === 'claude') return transport === 'tmux';
-  if (provider === 'codex') return transport === 'app-server';
-  return false;
+  return sessionCapabilities(provider, transport).resume;
 }
 
 /**

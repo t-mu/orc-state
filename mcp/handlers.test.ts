@@ -344,6 +344,10 @@ describe('mcp read handlers', () => {
     expect((status.agents as Array<Record<string, unknown>>).every((agent) =>
       ['agent_id', 'role', 'status', 'provider', 'active_task_ref'].every((key) => Object.hasOwn(agent, key)))).toBe(true);
     expect((status.agents as Array<Record<string, unknown>>).some((agent) => agent.agent_id === 'orc-dead')).toBe(false);
+    // Capabilities come from the session's provider and transport; an agent without a session has none.
+    const agentRows = status.agents as Array<Record<string, unknown>>;
+    expect(agentRows.find((agent) => agent.agent_id === 'orc-1')?.capabilities).toMatchObject({ resume: false, attach: true, readiness_hook: 'full-access' });
+    expect(Object.hasOwn(agentRows.find((agent) => agent.agent_id === 'master')!, 'capabilities')).toBe(false);
     expect(status.task_counts).toEqual({
       todo: 1,
       claimed: 0,

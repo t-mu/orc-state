@@ -2,6 +2,7 @@ import { ACTIVE_PROJECT } from './paths.ts';
 import { projectConfigObject } from './projectContext.ts';
 import { logger } from './logger.ts';
 import { DEFAULT_LEASE_MS, FINALIZE_LEASE_MS } from './constants.ts';
+import { sessionCapabilities } from './sessionCapabilities.ts';
 
 export const PROVIDERS = ['codex', 'claude', 'gemini'] as const;
 export type ProviderName = typeof PROVIDERS[number];
@@ -23,8 +24,8 @@ export const EXECUTION_MODES: readonly ExecutionMode[] = ['full-access', 'sandbo
  * See docs/adapters.md → Session readiness.
  */
 export function hasSessionStartHook(provider: string | null | undefined, executionMode: ExecutionMode): boolean {
-  if (provider === 'claude') return true;
-  return provider === 'codex' && executionMode === 'full-access';
+  const hook = sessionCapabilities(provider, 'tmux').readiness_hook;
+  return hook === 'always' || (hook === 'full-access' && executionMode === 'full-access');
 }
 
 export function isSupportedExecutionMode(value: string): value is ExecutionMode {
