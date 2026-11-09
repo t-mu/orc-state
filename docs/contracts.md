@@ -56,7 +56,7 @@ Project state directory: `<data-home>/projects/<project_id>/` (sessions receive 
 | [event.schema.json](../schemas/event.schema.json) | see **Events** |
 | [run-worktrees.schema.json](../schemas/run-worktrees.schema.json), [event-checkpoint.schema.json](../schemas/event-checkpoint.schema.json), [snapshot.schema.json](../schemas/snapshot.schema.json) | — |
 
-Task refs: `<feature>/<slug>`. Run ids: `run-<timestamp>-<hex>`. Worker agent ids: random orc-themed two-word names, unique among active workers.
+Task refs: `<feature>/<slug>`. Run ids: `run-<timestamp>-<16 hex>` (64 random bits); a run is never deleted or reassigned to another task/agent, and `cancel_task` keeps its runs as `failed` with reason `cancelled`. Worker agent ids: random orc-themed two-word names, unique among active workers.
 
 ---
 
@@ -184,7 +184,7 @@ Stored in `events.db` (`seq`, `event_id`, `ts`, `event`, `agent_id`, `run_id`, `
 | `master_retired` | Coordinator; `start-session` (attached master ended) | master went offline and its session closed (`session_handle`, `session_id`, `probe: { alive, reason, pid }`, `consecutive_failures`) |
 | `session_resumed`, `session_resume_failed` | Coordinator; `start-session` (master resume) | provider session resumed under the same `session_id` (`session_id`, `agent_id`, `run_id?`, `generation`, `provider_conversation_id?`, `reason?`; `reason` required on failure) |
 | `task_added`, `task_updated` | Master / operator / Coordinator | task created / changed |
-| `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task` |
+| `task_cancelled`, `task_delegated` | Master / operator | `cancel_task`, `delegate_task`; `task_cancelled` payload lists every cancelled run in `cancelled_run_ids` |
 | `task_dispatch_blocked` | Coordinator | dispatch refused (deps, no agent) |
 | `command_queued` … `command_outcome_unknown` | Coordinator | durable command states: `queued`, `dispatching`, `send_started`, `sent`, `accepted`, `running`, `completed`, `failed`, `cancelled`, `outcome_unknown` |
 | `coordinator_started`, `coordinator_stopped` | Coordinator | process start/stop |

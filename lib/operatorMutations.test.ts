@@ -131,6 +131,16 @@ describe('applyOperatorMutation (task 232)', () => {
   });
 });
 
+describe('cancel-task keeps its runs', () => {
+  it('leaves the cancelled run as a failed row and names it in task_cancelled', () => {
+    applyOperatorMutation(dir, { op: 'cancel-task', task_ref: 'orch/active', actor_id: 'human' });
+    expect(readClaims(dir).claims).toEqual([expect.objectContaining({ run_id: 'run-a', state: 'failed', failure_reason: 'cancelled' })]);
+    expect(queryEvents(dir, { event_type: 'task_cancelled' }).at(-1)).toMatchObject({
+      run_id: 'run-a', payload: { cancelled_run_ids: ['run-a'] },
+    });
+  });
+});
+
 describe('master and operator mutations through the coordinator (task 232)', () => {
   let server: ControlServer;
 

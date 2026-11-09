@@ -186,9 +186,15 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
       claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state),
     );
     if (activeClaims.length > 0) {
-      claimsData.claims = claims.filter((claim) =>
-        !(claim.task_ref === task_ref && ['claimed', 'in_progress'].includes(claim.state)),
-      );
+      for (const claim of activeClaims) {
+        claim.state = 'failed';
+        claim.failure_reason = 'cancelled';
+        claim.finished_at = now;
+        // Finalization state is only valid on an in_progress run (lib/lifecycleDiagnostics.ts).
+        claim.finalization_state = null;
+        claim.finalization_retry_count = 0;
+        claim.finalization_blocked_reason = null;
+      }
       cancelledRuns = activeClaims;
       commitClaims(stateDir, claimsData, activeClaims.map((removed) => ({
         ts: now,
@@ -205,7 +211,7 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
     // Cancellation is its own terminal status.
     task.status = 'cancelled';
     delete task.blocked_reason;
-    commitBacklog(stateDir, backlog, { [task_ref]: { cause: 'cancel', actorId: actor_id as string, reason: (reason as string | null) ?? null } });
+    commitBacklog(stateDir, backlog, { [task_ref]: { cause: 'cancel', actorId: actor_id as string, runId: cancelledRuns[0]?.run_id ?? null, reason: (reason as string | null) ?? null } });
 
     appendSequencedEvent(
       stateDir,
@@ -219,6 +225,7 @@ export function cancelTask(stateDir: string, args: Record<string, unknown> = {})
         payload: {
           reason,
           had_active_run: cancelledRuns.length > 0,
+          cancelled_run_ids: cancelledRuns.map((run) => run.run_id),
         },
       },
       { lockAlreadyHeld: true },

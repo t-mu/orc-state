@@ -220,6 +220,7 @@ export function restoreVolatileRuntimeStateFromSnapshot(
       return [];
     });
     restoreBacklogStatuses(stateDir, snapshot.backlog, snapshot.claims.claims);
+    // Upsert only: a reset fails existing runs and creates none, so there is nothing newer than the snapshot to drop.
     commitClaims(stateDir, snapshot.claims, events);
     restoreProviderSessionsForAgents(stateDir, snapshot.agents.agents, now);
     atomicWriteJson(join(stateDir, 'agents.json'), snapshot.agents);
