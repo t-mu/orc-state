@@ -3,11 +3,12 @@
  * cli/remove-worker.ts
  * Usage: node cli/remove-worker.ts <worker_id> [--keep-session] [--json]
  *
- * Stops a worker's session (unless --keep-session) and removes its
- * registration. Refuses while the worker holds an active claim.
+ * Removes a worker's registration, then stops its session (unless
+ * --keep-session). Refuses while the worker holds an active claim; the claim
+ * check and the removal share one state-lock section, so the coordinator
+ * cannot claim a task for the worker in between.
  */
-import { getAgent, removeAgent } from '../lib/agentRegistry.ts';
-import { readClaims } from '../lib/stateReader.ts';
+import { getAgent, removeUnclaimedAgent } from '../lib/agentRegistry.ts';
 import { createAdapter } from '../adapters/index.ts';
 import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
 import { parseCommandArgsOrExit } from '../lib/args.ts';
@@ -43,11 +44,10 @@ if (worker.role === 'master' || worker.role === 'scout') {
   await refuse('conflict', `Cannot remove ${workerId}: it is the ${worker.role}, not a worker${worker.role === 'scout' ? ' (the master removes scouts with remove_scout)' : ''}`);
 }
 
-const activeClaim = (readClaims(STATE_DIR).claims ?? []).find((claim) =>
-  claim.agent_id === workerId && ['claimed', 'in_progress'].includes(claim.state),
-);
-if (activeClaim) {
-  await refuse('conflict', `Cannot remove ${workerId}: active claim exists (run_id=${activeClaim.run_id}, state=${activeClaim.state}); cancel or reset its task first`);
+const result = removeUnclaimedAgent(STATE_DIR, workerId);
+if (!result.removed && result.reason === 'not_found') await refuse('not_found', `Worker not found: ${workerId}`);
+if (!result.removed && result.reason === 'active_claim') {
+  await refuse('conflict', `Cannot remove ${workerId}: active claim exists (run_id=${result.claim.run_id}, state=${result.claim.state}); cancel or reset its task first`);
 }
 
 let sessionStopped = false;
@@ -61,6 +61,5 @@ if (worker.session_handle && !keepSession) {
   }
 }
 
-removeAgent(STATE_DIR, workerId);
 if (json) printJson({ worker_id: workerId, removed: true, session_stopped: sessionStopped });
 else console.log(`Removed worker ${workerId}`);

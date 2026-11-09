@@ -4,6 +4,8 @@ import { withLock, lockPath } from './lock.ts';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { isSupportedProvider } from './providers.ts';
 import type { Agent, AgentsState, AgentRole, Provider } from '../types/agents.ts';
+import type { Claim } from '../types/claims.ts';
+import { readClaims } from './stateReader.ts';
 import { AGENT_ID_RE, AGENT_ROLES } from './constants.ts';
 import { logger } from './logger.ts';
 import { nextAvailableAgentName } from './agentNames.ts';
@@ -160,6 +162,35 @@ export function removeAgent(stateDir: string, agentId: string): void {
     file.agents = file.agents.filter((a) => a.agent_id !== agentId);
     closeProviderSessionsForAgent(stateDir, agentId, new Date().toISOString());
     atomicWriteJson(join(stateDir, 'agents.json'), file);
+  });
+}
+
+/**
+ * Remove an agent unless it holds an active (claimed / in_progress) claim,
+ * checking the claims and the registry in the same locked section that
+ * removes it. Claims are created under this lock (claimTask), so a claim
+ * created concurrently is either seen here and blocks the removal, or is
+ * created after the agent is gone. `canRemove` re-checks the agent record
+ * under the lock (for example its status); returning false keeps it.
+ */
+export function removeUnclaimedAgent(
+  stateDir: string,
+  agentId: string,
+  canRemove: (agent: Agent) => boolean = () => true,
+): { removed: true } | { removed: false; reason: 'not_found' | 'kept' } | { removed: false; reason: 'active_claim'; claim: Claim } {
+  return withLock(lockPath(stateDir), () => {
+    const file = readAgentsFile(stateDir);
+    const agent = file.agents.find((a) => a.agent_id === agentId);
+    if (!agent) return { removed: false, reason: 'not_found' } as const;
+    const claim = (readClaims(stateDir).claims ?? []).find((c) =>
+      c.agent_id === agentId && ['claimed', 'in_progress'].includes(c.state),
+    );
+    if (claim) return { removed: false, reason: 'active_claim', claim } as const;
+    if (!canRemove(agent)) return { removed: false, reason: 'kept' } as const;
+    file.agents = file.agents.filter((a) => a.agent_id !== agentId);
+    closeProviderSessionsForAgent(stateDir, agentId, new Date().toISOString());
+    atomicWriteJson(join(stateDir, 'agents.json'), file);
+    return { removed: true } as const;
   });
 }
 

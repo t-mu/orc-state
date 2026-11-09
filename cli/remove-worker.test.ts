@@ -12,6 +12,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.doUnmock('../lib/agentRegistry.ts');
   cleanupTempStateDir(dir);
 });
 
@@ -52,7 +53,7 @@ describe('cli/remove-worker.ts', () => {
     expect(readAgents()).toEqual([]);
   });
 
-  it('stops session before removing worker unless --keep-session', async () => {
+  it('removes the worker, then stops its session unless --keep-session', async () => {
     writeAgents([{ agent_id: 'bob', provider: 'claude', status: 'running', session_handle: 'claude:session:bob', registered_at: '2026-01-01T00:00:00Z' }]);
     const stop = vi.fn().mockResolvedValue(undefined);
     vi.doMock('../adapters/index.ts', () => ({
@@ -123,6 +124,62 @@ describe('cli/remove-worker.ts', () => {
     exit.mockRestore();
   });
 
+
+  it('refuses when the coordinator claims a task for the worker after the initial read', async () => {
+    writeAgents([{ agent_id: 'bob', provider: 'claude', status: 'running', session_handle: 'claude:session:bob', registered_at: '2026-01-01T00:00:00Z' }]);
+    // The claim lands right after the CLI's first registry read, before the removal.
+    vi.doMock('../lib/agentRegistry.ts', async () => {
+      const actual = await vi.importActual<typeof import('../lib/agentRegistry.ts')>('../lib/agentRegistry.ts');
+      return { ...actual, getAgent: (stateDir: string, agentId: string) => {
+        const agent = actual.getAgent(stateDir, agentId);
+        writeFileSync(join(dir, 'claims.json'), JSON.stringify({ version: '1', claims: [
+      { run_id: 'run-1', task_ref: 'proj/task-1', agent_id: 'bob', state: 'claimed', claimed_at: '2026-01-01T00:00:00Z', lease_expires_at: '2099-01-01T00:00:00Z' },
+    ] }));
+        return agent;
+      } };
+    });
+    const stop = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`__exit__${code}`); }) as never);
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const oldArgv = process.argv;
+    const oldStateDir = process.env.ORC_STATE_DIR;
+    process.argv = ['node', 'cli/remove-worker.ts', 'bob'];
+    setStateDirEnv(dir);
+    try {
+      await expect(import('./remove-worker.ts')).rejects.toThrow('__exit__1');
+    } finally {
+      process.argv = oldArgv;
+      setStateDirEnv(oldStateDir);
+    }
+
+    expect(stderr.mock.calls.flat().join(' ')).toContain('Cannot remove bob: active claim exists (run_id=run-1');
+    expect(stop).not.toHaveBeenCalled();
+    expect(readAgents().map((a: Record<string, unknown>) => a.agent_id)).toEqual(['bob']);
+    exit.mockRestore();
+  });
+
+  it('removes the registration before awaiting the session stop', async () => {
+    writeAgents([{ agent_id: 'bob', provider: 'claude', status: 'running', session_handle: 'claude:session:bob', registered_at: '2026-01-01T00:00:00Z' }]);
+    let registeredDuringStop: unknown[] | null = null;
+    const stop = vi.fn().mockImplementation(() => { registeredDuringStop = readAgents(); return Promise.resolve(); });
+    vi.doMock('../adapters/index.ts', () => ({ createAdapter: () => ({ stop }) }));
+
+    const oldArgv = process.argv;
+    const oldStateDir = process.env.ORC_STATE_DIR;
+    process.argv = ['node', 'cli/remove-worker.ts', 'bob'];
+    setStateDirEnv(dir);
+    try {
+      await import('./remove-worker.ts');
+    } finally {
+      process.argv = oldArgv;
+      setStateDirEnv(oldStateDir);
+    }
+
+    expect(stop).toHaveBeenCalled();
+    expect(registeredDuringStop).toEqual([]);
+  });
 
   it.each(['master', 'scout'])('refuses the %s', async (role) => {
     writeAgents([{ agent_id: 'them', provider: 'claude', role, status: 'offline', session_handle: null, registered_at: '2026-01-01T00:00:00Z' }]);
