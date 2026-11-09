@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
 import {
   buildSessionBootstrap,
   getMasterBootstrap,
@@ -141,7 +140,7 @@ describe('buildSessionBootstrap', () => {
       const rendered = buildSessionBootstrap('bob', provider, 'worker', '/tmp/node_modules/.bin/orc', 'token-123');
       expect(rendered, provider).toContain('Before waiting for the TASK_START, report that this exact session is ready');
       expect(rendered, provider).toContain('/tmp/node_modules/.bin/orc report-for-duty --agent-id=bob --session-id=token-123');
-      expect(rendered, provider).toContain('- First report for duty for this exact session with /tmp/node_modules/.bin/orc report-for-duty');
+      expect(rendered.split('report-for-duty').length - 1, provider).toBe(1);
     }
   });
 
@@ -154,11 +153,15 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).not.toContain('orc run-work-complete');
   });
 
-  it('worker bootstrap template contains REVIEWER CONSTRAINTS block', () => {
-    const content = readFileSync('templates/worker-bootstrap-v2.txt', 'utf8');
-    expect(content).toContain('REVIEWER CONSTRAINTS');
-    expect(content).toContain('orc run-finish');
-    expect(content).toContain('MAX_DEPTH=1');
+  it('a reviewed worker bootstrap contains the REVIEWER CONSTRAINTS block', () => {
+    for (const reviewLevel of ['light', 'full'] as const) {
+      const rendered = buildSessionBootstrap('bob', 'claude', 'worker', 'orc', 'tok', { reviewLevel });
+      expect(rendered, reviewLevel).toContain('REVIEWER CONSTRAINTS');
+      expect(rendered, reviewLevel).toContain('MAX_DEPTH=1');
+      expect(rendered, reviewLevel).toContain('orc review-submit --run-id=<run_id> --agent-id=bob');
+      expect(rendered, reviewLevel).toContain('REVIEW_FINDINGS_END');
+      expect(rendered, reviewLevel).toContain('orc run-finish');
+    }
   });
 
   it('rendered worker bootstrap keeps the task-mark-done prohibition', () => {
@@ -190,7 +193,7 @@ describe('buildSessionBootstrap', () => {
   it('uses worker-bootstrap-v2.txt when role is undefined', () => {
     const rendered = buildSessionBootstrap('dave', 'claude', undefined as unknown as string, 'orc');
     expect(rendered).toContain('agent_id: dave');
-    expect(rendered).toContain('coordinator finalization');
+    expect(rendered).toContain('WORKER_BOOTSTRAP v5');
   });
 
   it('keeps master bootstrap path unchanged while documenting the new worker handoff', () => {
@@ -199,5 +202,101 @@ describe('buildSessionBootstrap', () => {
     expect(rendered).toContain('orc run-work-complete');
     expect(rendered).toContain('do not merge to main or clean up');
     expect(rendered).toContain('respond_input');
+  });
+});
+
+describe('worker bootstrap: only the run\'s own workflow', () => {
+  const PR_ONLY = ['PR_REVIEW', 'pr-status', 'git push --force-with-lease', 'origin/main'];
+  const render = (options: Parameters<typeof buildSessionBootstrap>[5], provider = 'claude') =>
+    buildSessionBootstrap('w1', provider, 'worker', 'orc', 'sid', options);
+
+  it('gives a direct-mode worker no PR-mode steps', () => {
+    const rendered = render({ mergeStrategy: 'direct' });
+    expect(rendered).toContain('merge mode: direct');
+    expect(rendered).toContain('git rebase main');
+    expect(rendered).toContain('finalize rebase');
+    for (const text of PR_ONLY) expect(rendered, text).not.toContain(text);
+  });
+
+  it('gives a PR-mode worker the PR loop and no direct-mode rebase or finalize-rebase steps', () => {
+    const rendered = render({ mergeStrategy: 'pr' });
+    expect(rendered).toContain('merge mode: pr');
+    for (const text of PR_ONLY) expect(rendered, text).toContain(text);
+    expect(rendered).toContain('review-fix loop exceeded 3 iterations');
+    expect(rendered).toContain('ci-fix loop exceeded 3 iterations');
+    expect(rendered).not.toContain('git rebase main ');
+    expect(rendered).not.toContain('finalize rebase');
+  });
+
+  it('defaults to direct mode and full review, as the coordinator does', () => {
+    expect(render({})).toBe(render({ mergeStrategy: 'direct', reviewLevel: 'full' }));
+  });
+
+  it('review_level none: self-review only, no reviewer sub-agents', () => {
+    const rendered = render({ reviewLevel: 'none' });
+    expect(rendered).toContain('Self-review (review_level none)');
+    expect(rendered).not.toContain('REVIEWER CONSTRAINTS');
+    expect(rendered).not.toContain('review-read');
+    expect(rendered).not.toContain('`critic`');
+  });
+
+  it('review_level light: one reviewer, no critic/integrator', () => {
+    const rendered = render({ reviewLevel: 'light' });
+    expect(rendered).toContain('spawn ONE reviewer sub-agent (agents/reviewer.md)');
+    expect(rendered).toContain('<reviewer_label> replaced by `reviewer`');
+    expect(rendered).not.toContain('`critic`');
+    expect(rendered).not.toContain('`integrator`');
+    expect(rendered).not.toContain('Self-review');
+  });
+
+  it('review_level full: critic and integrator, no single reviewer', () => {
+    const rendered = render({ reviewLevel: 'full' });
+    expect(rendered).toContain('<reviewer_label> replaced by `critic`');
+    expect(rendered).toContain('`integrator` for the other');
+    expect(rendered).not.toContain('agents/reviewer.md');
+    expect(rendered).not.toContain('Self-review');
+  });
+
+  it('states each lifecycle command and rule once', () => {
+    for (const mergeStrategy of ['direct', 'pr'] as const) {
+      const rendered = render({ mergeStrategy, reviewLevel: 'light' });
+      const count = (text: string) => rendered.split(text).length - 1;
+      expect(count('orc run-start '), mergeStrategy).toBe(1);
+      expect(count('orc run-finish '), mergeStrategy).toBe(1);
+      expect(count('orc run-input-request '), mergeStrategy).toBe(1);
+      expect(count('orc run-fail --run-id=<run_id> --agent-id=w1 --reason="<explanation>"'), mergeStrategy).toBe(1);
+      expect(count('Lease renewal is automatic'), mergeStrategy).toBe(1);
+      expect(count('Do not end your turn'), mergeStrategy).toBe(1);
+      expect(count('reports itself ready'), mergeStrategy).toBe(1);
+      expect(count('never speculatively') + count('Wait for the coordinator to merge'), mergeStrategy).toBe(1);
+    }
+    expect(render({ mergeStrategy: 'direct' }).split('orc run-work-complete ').length - 1).toBe(1);
+  });
+
+  it('carries no stale state file names, tick wording or frontmatter claim', () => {
+    for (const mergeStrategy of ['direct', 'pr'] as const) {
+      for (const reviewLevel of ['none', 'light', 'full'] as const) {
+        const rendered = render({ mergeStrategy, reviewLevel });
+        for (const stale of ['backlog.json', 'claims.json', 'events.db', 'next tick', 'frontmatter', 'runs-active', ' c. ', ' d. ']) {
+          expect(rendered, `${mergeStrategy}/${reviewLevel}: ${stale}`).not.toContain(stale);
+        }
+        expect(rendered).not.toMatch(/\{\{/);
+      }
+    }
+  });
+
+  it('points Claude and Codex at the AGENTS.md they already load, and tells Gemini to read it', () => {
+    expect(render({}, 'claude')).toContain('AGENTS.md (already in your context)');
+    expect(render({}, 'codex')).toContain('AGENTS.md (already in your context)');
+    expect(render({}, 'gemini')).toContain('read AGENTS.md at the worktree root');
+  });
+
+  it('is at least 40% smaller than before for a direct-mode, light-review Claude task', () => {
+    // 17292 bytes: the v4 bootstrap rendered for this case, which carried every mode and review level.
+    const before = 17292;
+    const after = Buffer.byteLength(buildSessionBootstrap('worker-01', 'claude', 'worker', 'orc', 'session-id-unset', {
+      mergeStrategy: 'direct', reviewLevel: 'light',
+    }));
+    expect(after).toBeLessThanOrEqual(before * 0.6);
   });
 });

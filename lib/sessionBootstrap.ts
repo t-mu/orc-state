@@ -32,21 +32,183 @@ function phaseCompleteStep(orcBin: string, agentId: string): string {
 }
 
 /**
- * How the session becomes ready, injected as {{session_ready_step}} and
- * {{session_ready_rule}}. A provider with a session-start hook reports ready by
- * itself, so its agent is never told to run report-for-duty; the others are.
+ * How the session becomes ready, injected as {{session_ready_step}}. A provider
+ * with a session-start hook reports ready by itself, so its agent is never told
+ * to run report-for-duty; the others are.
  */
 function sessionReadyVars(provider: string, orcBin: string, agentId: string, sessionId: string, awaiting: string) {
   if (hasSessionStartHook(provider)) {
     return {
       session_ready_step: `This session reports itself ready when it starts (session-start hook); you run no command for that. Wait for the ${awaiting}.`,
-      session_ready_rule: `- Your session reports itself ready (session-start hook): run no command for it, just wait for the ${awaiting}.`,
     };
   }
   const command = `${orcBin} report-for-duty --agent-id=${agentId} --session-id=${sessionId}`;
   return {
     session_ready_step: `Before waiting for the ${awaiting}, report that this exact session is ready:\n\n  ${command}`,
-    session_ready_rule: `- First report for duty for this exact session with ${command}.`,
+  };
+}
+
+export type ReviewLevel = 'none' | 'light' | 'full';
+export type MergeStrategy = 'direct' | 'pr';
+
+/** What a worker needs to know about its own run to get only its own workflow. */
+export interface WorkerTaskWorkflow {
+  reviewLevel?: ReviewLevel | null | undefined;
+  mergeStrategy?: MergeStrategy | null | undefined;
+}
+
+/**
+ * Providers whose CLI loads the repository's agent guide by itself: Codex reads
+ * AGENTS.md, Claude reads CLAUDE.md (which in this layout imports AGENTS.md).
+ * Gemini reads GEMINI.md only, so its worker is told to read AGENTS.md.
+ */
+const AGENT_GUIDE_AUTOLOAD_PROVIDERS: ReadonlySet<string> = new Set<ProviderName>(['claude', 'codex']);
+
+function repoGuideLine(provider: string): string {
+  const contents = 'commit format, verification checklist, what to avoid';
+  return AGENT_GUIDE_AUTOLOAD_PROVIDERS.has(provider)
+    ? `The repository's AGENTS.md (already in your context) holds the repo rules: ${contents}.`
+    : `Before starting, read AGENTS.md at the worktree root if it exists: it holds the repo rules (${contents}).`;
+}
+
+function reviewerConstraints(orcBin: string, agentId: string): string {
+  return [
+    '          --- REVIEWER CONSTRAINTS (read this before doing anything) ---',
+    '          You are a code reviewer sub-agent operating at MAX_DEPTH=1.',
+    '          Your only role is to review the diff provided above — do not explore',
+    '          the codebase independently. Identify any issues and return findings',
+    '          as text (or "approved" if none).',
+    '',
+    '          You MUST call before returning:',
+    `            ${orcBin} review-submit --run-id=<run_id> --agent-id=${agentId} \\`,
+    '              --reviewer=<reviewer_label> --outcome=<approved|findings> --reason="<findings text>"',
+    '          <reviewer_label> must be your own label (filled in above); keep --agent-id',
+    "          exactly as written: it is the worker's id, not yours.",
+    '          This is the ONLY orc command you may call.',
+    '',
+    '          You MUST NOT call any of the following commands:',
+    '            orc run-start, orc run-heartbeat, orc run-work-complete,',
+    '            orc run-finish, orc run-fail, orc run-input-request,',
+    '            orc task-mark-done, orc delegate, orc task-reset,',
+    '            orc task-unblock, orc kill-all',
+    '          You MUST NOT write to orc state (runtime.db or any other file in the project state directory).',
+    '          You MUST NOT spawn further sub-agents or delegates.',
+    '          You MUST NOT make any file edits, commits, or git operations.',
+    '',
+    '          Wrap your entire output in this block (no text outside it):',
+    '            REVIEW_FINDINGS',
+    '            verdict: approved | findings',
+    '',
+    '            <one finding per issue, or "No issues found.">',
+    '            REVIEW_FINDINGS_END',
+    '          --- END REVIEWER CONSTRAINTS ---',
+  ].join('\n');
+}
+
+/**
+ * Step 6 for the run's review_level only, injected as {{review_step}}. The
+ * level is a task field (default `full`), not something the worker can read
+ * from the pinned spec, so the bootstrap states it.
+ */
+function reviewStep(level: ReviewLevel, orcBin: string, agentId: string): string {
+  if (level === 'none') {
+    return [
+      '  6. Self-review (review_level none): read your diff (`git diff main...HEAD`) against the acceptance criteria.',
+      '     Fix any gap in a fixup commit and re-check; if a gap is unresolvable, call run-fail with the reason.',
+    ].join('\n');
+  }
+  const spawn = level === 'light'
+    ? [
+      '  6. Review (review_level light): spawn ONE reviewer sub-agent (agents/reviewer.md) with:',
+      '       - the acceptance criteria for this task',
+      '       - the full diff, not just file names: `git diff --stat --patch main...HEAD`',
+      '       - the REVIEWER CONSTRAINTS block below, with <reviewer_label> replaced by `reviewer`',
+    ]
+    : [
+      '  6. Review (review_level full): spawn TWO independent reviewer sub-agents (critic + integrator) with:',
+      '       - the acceptance criteria for this task',
+      '       - the full diff, not just file names: `git diff --stat --patch main...HEAD`',
+      '       - the REVIEWER CONSTRAINTS block below, with <reviewer_label> replaced by `critic`',
+      '         for one reviewer and `integrator` for the other (reviews with the same label replace each other)',
+    ];
+  return [
+    ...spawn,
+    '',
+    reviewerConstraints(orcBin, agentId),
+    '',
+    `     Read the reviews: ${orcBin} review-read --run-id=<run_id>`,
+    '     It exits 0 whatever the reviews say (inspect the outcomes); non-zero means they could not be read, so retry shortly.',
+    '     A reviewer that never submitted, or whose output lacks REVIEW_FINDINGS_END, is non-responsive. If it submitted and its',
+    '     conversation is still active, send it once: "Your review-submit was received but the structured REVIEW_FINDINGS block',
+    '     is missing from your output. Emit only the block now." Otherwise proceed with the reviews that were submitted.',
+    '     One review round only: address all findings in a fixup commit, then proceed.',
+  ].join('\n');
+}
+
+/**
+ * Steps 8 onward for the run's merge mode only, injected as {{finish_steps}}:
+ * direct mode rebases and waits for the coordinator's merge, PR mode waits for
+ * PR_REVIEW and runs the PR loop.
+ */
+function finishSteps(mode: MergeStrategy, orcBin: string, agentId: string): string {
+  const ids = `--run-id=<run_id> --agent-id=${agentId}`;
+  const workComplete = `${orcBin} run-work-complete ${ids}`;
+  const finalizeSignal = `${orcBin} progress --event=phase_started --phase=finalize ${ids}`;
+  const runFinish = `${orcBin} run-finish ${ids}`;
+  if (mode === 'direct') {
+    return [
+      '  8. Rebase onto main, resolving conflicts iteratively and never aborting:',
+      '       git rebase main   # on conflict: resolve → git add <file> → git rebase --continue, until clean',
+      '     Fail the run only if a conflict is truly unresolvable. Then rerun `npm test`; it must pass.',
+      '  9. Hand off; implementation and review are done:',
+      `       ${workComplete}`,
+      '  10. Signal finalize and wait in this session for the coordinator:',
+      `       ${finalizeSignal}`,
+      '       - Told to perform a finalize rebase: rebase in this worktree, verify/commit as instructed, call',
+      '         run-work-complete again and keep waiting.',
+      '       - Told finalization succeeded or the session can stop, or no follow-up arrives: end the run. Only after',
+      '         run-work-complete, never speculatively:',
+      `           ${runFinish}`,
+    ].join('\n');
+  }
+  const fail = (reason: string) => `${orcBin} run-fail ${ids} --reason="${reason}" --policy=requeue`;
+  return [
+    '  8. Hand off; implementation and review are done (no rebase yet: the PR loop rebases):',
+    `       ${workComplete}`,
+    '  9. Signal finalize and wait in this session for a PR_REVIEW message:',
+    `       ${finalizeSignal}`,
+    '     From PR_REVIEW take pr_ref, run_id, task_ref, review_level, acceptance_criteria, assigned_worktree, orc_bin, then:',
+    '     A. Rebase: git fetch origin main && git rebase origin/main',
+    '        Resolve conflicts iteratively (resolve → git add <file> → git rebase --continue). If unresolvable:',
+    `          ${fail('unresolvable rebase conflict')}`,
+    '     B. Review-fix loop, max 3 iterations: repeat step 6 on `git diff --stat --patch origin/main...HEAD`, collect with',
+    `        ${orcBin} review-read --run-id=<run_id>; if all approved exit the loop, else fix, commit and loop. Past 3:`,
+    `          ${fail('review-fix loop exceeded 3 iterations')}`,
+    '     C. Pre-push rebase: git fetch origin main && git rebase origin/main; `npm test` — on failure back to B (counts against the limit).',
+    '     D. CI loop, max 3 iterations: git push --force-with-lease, then',
+    `        ${orcBin} pr-status <pr_ref> --wait; if passing exit the loop, else diagnose, fix, commit and loop. Past 3:`,
+    `          ${fail('ci-fix loop exceeded 3 iterations')}`,
+    `     E. Signal ready: ${workComplete}`,
+    '        Wait for the coordinator to merge the PR and send the run-finish signal; when it arrives:',
+    `          ${runFinish}`,
+  ].join('\n');
+}
+
+function workerVars(provider: string, orcBin: string, agentId: string, sessionId: string, workflow: WorkerTaskWorkflow) {
+  const reviewLevel = workflow.reviewLevel ?? 'full';
+  const mergeStrategy = workflow.mergeStrategy ?? 'direct';
+  return {
+    agent_id: agentId,
+    orc_bin: orcBin,
+    provider,
+    session_id: sessionId,
+    review_level: reviewLevel,
+    merge_strategy: mergeStrategy,
+    repo_guide: repoGuideLine(provider),
+    review_step: reviewStep(reviewLevel, orcBin, agentId),
+    phase_complete_step: phaseCompleteStep(orcBin, agentId),
+    finish_steps: finishSteps(mergeStrategy, orcBin, agentId),
+    ...sessionReadyVars(provider, orcBin, agentId, sessionId, 'TASK_START'),
   };
 }
 
@@ -57,12 +219,15 @@ function renderBootstrap(template: string, provider: string, agentId: string): s
     orc_bin: 'orc',
     provider,
     session_id: 'session-id-unset',
-    phase_complete_step: phaseCompleteStep('orc', agentId),
     ...sessionReadyVars(provider, 'orc', agentId, 'session-id-unset', awaiting),
   });
 }
 
 export type WorkerBootstrapProfile = 'default' | 'smoke';
+
+export interface WorkerBootstrapOptions extends WorkerTaskWorkflow {
+  workerBootstrapProfile?: WorkerBootstrapProfile;
+}
 
 // The smoke profile keeps its own hardcoded Phase 4 step. It is a deterministic
 // lifecycle smoke-test fixture, not a production path. It has no
@@ -75,11 +240,9 @@ function resolveWorkerTemplate(role: string, workerBootstrapProfile: WorkerBoots
   return WORKER_BOOTSTRAP_TEMPLATE;
 }
 
-export function getWorkerBootstrap(provider: string): string;
-export function getWorkerBootstrap(provider: string, agentId: string): string;
-export function getWorkerBootstrap(provider: string, agentId: string = 'worker'): string {
+export function getWorkerBootstrap(provider: string, agentId: string = 'worker', workflow: WorkerTaskWorkflow = {}): string {
   const resolvedProvider = assertProvider(provider);
-  return renderBootstrap(WORKER_BOOTSTRAP_TEMPLATE, resolvedProvider, agentId);
+  return renderTemplate(WORKER_BOOTSTRAP_TEMPLATE, workerVars(resolvedProvider, 'orc', agentId, 'session-id-unset', workflow));
 }
 
 export function getScoutBootstrap(provider: string): string;
@@ -104,14 +267,14 @@ export function getMasterBootstrap(provider: string, agentId: string = 'master')
 export function buildSessionBootstrap(agentId: string, provider: string, role: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string): string;
 export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionId: string): string;
-export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionId: string, options: { workerBootstrapProfile?: WorkerBootstrapProfile }): string;
+export function buildSessionBootstrap(agentId: string, provider: string, role: string, orcBin: string, sessionId: string, options: WorkerBootstrapOptions): string;
 export function buildSessionBootstrap(
   agentId: string,
   provider: string,
   role: string,
   orcBin: string = 'orc',
   sessionId: string = 'session-id-unset',
-  options: { workerBootstrapProfile?: WorkerBootstrapProfile } = {},
+  options: WorkerBootstrapOptions = {},
 ): string {
   if (role === 'master') return getMasterBootstrap(provider, agentId);
   if (role === 'scout') {
@@ -123,12 +286,8 @@ export function buildSessionBootstrap(
       ...sessionReadyVars(provider, orcBin, agentId, sessionId, 'SCOUT_BRIEF'),
     });
   }
-  return renderTemplate(resolveWorkerTemplate(role, options.workerBootstrapProfile ?? 'default'), {
-    agent_id: agentId,
-    orc_bin: orcBin,
-    provider,
-    session_id: sessionId,
-    phase_complete_step: phaseCompleteStep(orcBin, agentId),
-    ...sessionReadyVars(provider, orcBin, agentId, sessionId, 'TASK_START'),
-  });
+  return renderTemplate(
+    resolveWorkerTemplate(role, options.workerBootstrapProfile ?? 'default'),
+    workerVars(provider, orcBin, agentId, sessionId, options),
+  );
 }

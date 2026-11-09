@@ -668,6 +668,33 @@ describe('worker session lifecycle', () => {
     );
   });
 
+  it("renders the spawned worker's bootstrap for the task's own review level and merge mode only", async () => {
+    seedState(dir, {
+      tasks: [{ ...DISPATCHABLE_TASK, review_level: 'light' as const, merge_strategy: 'pr' as const }],
+    });
+    process.env.ORC_MAX_WORKERS = '1';
+    process.env.ORC_WORKER_PROVIDER = 'codex';
+
+    const mockStart = vi.fn().mockResolvedValue({ session_handle: 'tmux:new-worker', provider_ref: null });
+    vi.doMock('./adapters/index.ts', () => makeAdapterMock({ start: mockStart }));
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      ensureRunWorktree: vi.fn().mockReturnValue({
+        run_id: 'run-worktree',
+        branch: 'task/run-worktree',
+        worktree_path: '/tmp/orc-worktrees/run-worktree',
+      }),
+    }));
+
+    const { tick } = await import('./coordinator.ts');
+    await tick();
+
+    const prompt = String((mockStart.mock.calls[0][1] as Record<string, unknown>).system_prompt);
+    expect(prompt).toContain('review_level: light and merge mode: pr');
+    expect(prompt).toContain('PR_REVIEW');
+    expect(prompt).not.toContain('`critic`');
+    expect(prompt).not.toContain('git rebase main ');
+  });
+
   it('does not dispatch when max_workers capacity is exhausted by active claims', async () => {
     const now = new Date().toISOString();
     seedState(dir, {
@@ -6042,6 +6069,7 @@ describe('dead worker session resume (v1/run-resume)', () => {
     expect(config).toMatchObject({ runtime: 'structured', resume_conversation_id: 'thread-1' });
     // Thread config, not a message: the bootstrap goes back as developer instructions.
     expect(String(config.system_prompt)).toContain('WORKER_BOOTSTRAP');
+    expect(String(config.system_prompt)).toContain('review_level: full and merge mode: direct');
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('in_progress');
   });
 

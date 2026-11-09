@@ -1,7 +1,7 @@
 import { credentialHash, newSessionSecret } from './sessionCredentials.ts';
 import { updateAgentRuntime, registerAgent, removeAgent } from './agentRegistry.ts';
 import { resolveOrcBin } from './orcBin.ts';
-import { buildSessionBootstrap } from './sessionBootstrap.ts';
+import { buildSessionBootstrap, type WorkerTaskWorkflow } from './sessionBootstrap.ts';
 import type { Agent, AgentStatus } from '../types/agents.ts';
 import type { OrcEventInput } from '../types/events.ts';
 import type { ExecutionMode, ProviderName, SandboxNetwork, WorkerRuntime } from './providers.ts';
@@ -179,6 +179,7 @@ export async function launchWorkerSession(
     runId = null,
     taskRef = null,
     taskModel = null,
+    taskWorkflow = {},
     executionMode,
     sandboxNetwork,
     runtime,
@@ -191,6 +192,8 @@ export async function launchWorkerSession(
     runId?: string | null;
     taskRef?: string | null;
     taskModel?: string | null;
+    /** The run's review level and merge mode: the bootstrap renders only that workflow. */
+    taskWorkflow?: WorkerTaskWorkflow;
     executionMode?: ExecutionMode;
     sandboxNetwork?: SandboxNetwork;
     runtime?: WorkerRuntime;
@@ -220,7 +223,7 @@ export async function launchWorkerSession(
         agent.role ?? 'worker',
         workerEnv.ORC_BIN ?? 'orc',
         sessionId,
-        { workerBootstrapProfile },
+        { workerBootstrapProfile, ...taskWorkflow },
       ),
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory ?? undefined,
@@ -316,6 +319,7 @@ export async function resumeWorkerSession(
     workingDirectory,
     repoRoot = null,
     taskModel = null,
+    taskWorkflow = {},
     executionMode,
     sandboxNetwork,
     reason,
@@ -324,6 +328,7 @@ export async function resumeWorkerSession(
     workingDirectory: string;
     repoRoot?: string | null;
     taskModel?: string | null;
+    taskWorkflow?: WorkerTaskWorkflow;
     executionMode?: ExecutionMode;
     sandboxNetwork?: SandboxNetwork;
     reason: string;
@@ -345,7 +350,7 @@ export async function resumeWorkerSession(
       // `thread/resume` is given them again rather than relying on the thread keeping them.
       ...(structured ? {
         system_prompt: buildSessionBootstrap(agent.agent_id, agent.provider, agent.role ?? 'worker', workerEnv.ORC_BIN ?? 'orc',
-          session.session_id, { workerBootstrapProfile: resolveWorkerBootstrapProfile() }),
+          session.session_id, { workerBootstrapProfile: resolveWorkerBootstrapProfile(), ...taskWorkflow }),
       } : {}),
       model: taskModel ?? agent.model ?? null,
       working_directory: workingDirectory,
@@ -413,6 +418,7 @@ export async function spawnEphemeralWorker(
     runId = null,
     taskRef = null,
     taskModel = null,
+    taskWorkflow = {},
     executionMode,
     sandboxNetwork,
     runtime,
@@ -427,6 +433,8 @@ export async function spawnEphemeralWorker(
     runId?: string | null;
     taskRef?: string | null;
     taskModel?: string | null;
+    /** The run's review level and merge mode: the bootstrap renders only that workflow. */
+    taskWorkflow?: WorkerTaskWorkflow;
     executionMode?: ExecutionMode;
     sandboxNetwork?: SandboxNetwork;
     runtime?: WorkerRuntime;
@@ -448,6 +456,7 @@ export async function spawnEphemeralWorker(
     runId,
     taskRef,
     taskModel,
+    taskWorkflow,
     ...(executionMode !== undefined ? { executionMode } : {}),
     ...(sandboxNetwork !== undefined ? { sandboxNetwork } : {}),
     ...(runtime !== undefined ? { runtime } : {}),
