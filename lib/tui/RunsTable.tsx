@@ -1,7 +1,10 @@
 import { Box, Text } from 'ink';
+import { fitList } from './layout.ts';
+import { MoreLine } from './MoreLine.tsx';
 import type { TuiClaim } from './status.ts';
 
-export function RunsTable({ runs }: { runs: TuiClaim[] }) {
+export function RunsTable({ runs, maxLines = Infinity }: { runs: TuiClaim[]; maxLines?: number }) {
+  const { shown, hidden } = fitList(runs, maxLines);
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text bold color="cyan">
@@ -10,18 +13,19 @@ export function RunsTable({ runs }: { runs: TuiClaim[] }) {
       {runs.length === 0 ? (
         <Text dimColor>(none)</Text>
       ) : (
-        runs.map(run => (
-          <Box key={run.run_id}>
-            <Text>{truncate(run.run_id, 18).padEnd(18)}</Text>
-            <Text> </Text>
-            <Text>{truncate(run.task_ref ?? '—', 28).padEnd(28)}</Text>
-            <Text> </Text>
-            <Text>{(run.state ?? 'unknown').padEnd(12)}</Text>
-            <Text> </Text>
+        shown.map(run => (
+          <Text key={run.run_id} wrap="truncate">
+            {truncate(run.run_id, 18).padEnd(18)}
+            {' '}
+            {truncate(run.task_ref ?? '—', 28).padEnd(28)}
+            {' '}
+            {(run.state ?? 'unknown').padEnd(12)}
+            {' '}
             <Text dimColor>idle {run.idle_seconds ?? '--'}s</Text>
-          </Box>
+          </Text>
         ))
       )}
+      <MoreLine hidden={hidden} />
     </Box>
   );
 }

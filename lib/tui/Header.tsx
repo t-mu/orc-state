@@ -1,20 +1,20 @@
 import { Box, Text } from 'ink';
-import { renderBanner } from '../banner.ts';
 import type { TuiStatus } from './status.ts';
 import { formatProjectIdentity } from '../projectHealth.ts';
 
-export function Header({ status }: { status: TuiStatus }) {
+/** `updatedAt` is when the status was loaded, so animation renders leave the header unchanged. */
+export function Header({ status, banner, updatedAt }: { status: TuiStatus; banner: string | null; updatedAt: string }) {
   const taskCounts = status.tasks.counts;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text>{renderBanner()}</Text>
-      <Text bold>{formatProjectIdentity(status.project ?? null)}</Text>
-      <Text dimColor>
+      {banner != null ? <Text>{banner}</Text> : null}
+      <Text bold wrap="truncate">{formatProjectIdentity(status.project ?? null)}</Text>
+      <Text dimColor wrap="truncate">
         capacity: {status.worker_capacity.used_slots}/{status.worker_capacity.configured_slots}
         {' | '}todo: {taskCounts.todo ?? 0}
         {' | '}active: {status.claims.in_progress}
-        {' | '}updated: {new Date().toISOString()}
+        {' | '}updated: {updatedAt}
       </Text>
     </Box>
   );

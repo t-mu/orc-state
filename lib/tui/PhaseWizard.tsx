@@ -39,7 +39,8 @@ const ACTIVE_STATES = new Set<PhaseEntry['state']>(['active', 'stale', 'error'])
 function PhaseRow({ phase }: { phase: PhaseEntry }) {
   const ind = INDICATOR[phase.state];
   const isLive = ACTIVE_STATES.has(phase.state);
-  const elapsed = useElapsed(isLive ? phase.started_at : null);
+  // Tick only when the row shows a live counter; a fixed duration needs no timer.
+  const elapsed = useElapsed(isLive && phase.duration_seconds == null ? phase.started_at : null);
   const displaySeconds = phase.duration_seconds ?? elapsed;
 
   return (
@@ -61,7 +62,7 @@ export const ACTIVITY_LINE_WIDTH = 32;
 function ActivityLine({ activity, width }: { activity: CurrentActivity; width: number }) {
   const nowMs = Date.now();
   const line = formatActivityLine(activity, width, nowMs, '  └ ');
-  return isActivityStale(activity.ts, nowMs) ? <Text dimColor>{line}</Text> : <Text>{line}</Text>;
+  return isActivityStale(activity.ts, nowMs) ? <Text dimColor wrap="truncate">{line}</Text> : <Text wrap="truncate">{line}</Text>;
 }
 
 export function PhaseWizard({ phases, activity = null, width = ACTIVITY_LINE_WIDTH }: {
