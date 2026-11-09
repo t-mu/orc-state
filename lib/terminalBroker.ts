@@ -94,24 +94,32 @@ export function terminalInputTokens(data: string): Array<{ key?: string; text?: 
     });
 }
 
-/** tmux ends a command at an argument ending in `;`; a `\` before that `;` keeps it literal. */
-function tmuxLiteral(arg: string): string {
-  return arg.endsWith(';') ? `${arg.slice(0, -1)}\\;` : arg;
+/** A tmux config-syntax word that tmux reads back literally. */
+function tmuxQuote(arg: string): string {
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
- * The arguments of one tmux command list that sends `data` to `target`: runs
- * of keys as one `send-keys`, text pasted (bracketed) through `buffer`.
+ * The tmux commands, one per line, that send `data` to `target`: runs of keys
+ * as one `send-keys`, text pasted (bracketed) through `buffer`. Fed to
+ * `tmux source-file -`, so any size takes one spawn and runs as one command
+ * list, which nothing another tmux client sends can split.
  */
-export function terminalInputCommands(target: string, buffer: string, data: string): string[] {
-  const commands: string[][] = [];
+export function terminalInputScript(target: string, buffer: string, data: string): string {
+  const lines: string[] = [];
+  let keys: string[] = [];
+  const flush = (): void => {
+    if (keys.length) lines.push(['send-keys', '-t', tmuxQuote(target), ...keys].join(' '));
+    keys = [];
+  };
   for (const token of terminalInputTokens(data)) {
-    const last = commands.at(-1);
-    if (token.key && last?.[0] === 'send-keys') last.push(tmuxLiteral(token.key));
-    else if (token.key) commands.push(['send-keys', '-t', target, tmuxLiteral(token.key)]);
-    else commands.push(['set-buffer', '-b', buffer, '--', tmuxLiteral(token.text!)], ['paste-buffer', '-d', '-p', '-b', buffer, '-t', target]);
+    if (token.key) { keys.push(tmuxQuote(token.key)); continue; }
+    flush();
+    lines.push(`set-buffer -b ${tmuxQuote(buffer)} -- ${tmuxQuote(token.text!)}`,
+      `paste-buffer -d -p -b ${tmuxQuote(buffer)} -t ${tmuxQuote(target)}`);
   }
-  return commands.flatMap((command, index) => (index ? [';', ...command] : command));
+  flush();
+  return `${lines.join('\n')}\n`;
 }
 
 /** The same private tmux server as the provider adapter, with distinct shell names. */
@@ -205,15 +213,18 @@ export class TmuxTerminalDriver implements TerminalDriver {
     };
   }
 
-  /** One asynchronous tmux spawn per call, whatever the input holds. */
+  /** One asynchronous tmux spawn per call, whatever the input holds; the commands go over stdin. */
   input(handle: string, data: string): Promise<void> {
     if (!data) return Promise.resolve();
-    const args = terminalInputCommands(this.target(handle), `${this.name(handle)}-input`, data);
+    const script = terminalInputScript(this.target(handle), `${this.name(handle)}-input`, data);
     return new Promise((resolve, reject) => {
-      execFile(process.env.ORC_TMUX_BIN ?? 'tmux', ['-L', tmuxSocketName(this.stateDir), ...args], { timeout: 10_000 }, (error, _stdout, stderr) => {
-        if (error) reject(new Error(`tmux input failed: ${String(stderr).trim() || error.message}`));
-        else resolve();
-      });
+      const child = execFile(process.env.ORC_TMUX_BIN ?? 'tmux', ['-L', tmuxSocketName(this.stateDir), 'source-file', '-'],
+        { timeout: 10_000 }, (error, _stdout, stderr) => {
+          if (error) reject(new Error(`tmux input failed: ${String(stderr).trim() || error.message}`));
+          else resolve();
+        });
+      child.stdin?.on('error', () => { /* the exit callback reports the failure */ });
+      child.stdin?.end(script);
     });
   }
 
@@ -365,7 +376,7 @@ export class TerminalBroker {
       const current = db.prepare("SELECT lease_id, owner_id, expires_at FROM control_leases WHERE resource_type = 'terminal' AND resource_id = ?")
         .get(terminalId) as { lease_id: string; owner_id: string; expires_at: string } | undefined;
       if (current && Date.parse(current.expires_at) > now && !options.takeover) {
-        throw new ControlError('conflict', `Terminal already has a writer (${current.owner_id} until ${current.expires_at})`, 409);
+        throw new ControlError('conflict', `Terminal already has a writer (${current.owner_id} until ${current.expires_at}); the operator can take it over`, 409);
       }
       const leaseId = `t${ttlMs}-${randomUUID()}`;
       const expiresAt = new Date(now + ttlMs).toISOString();
@@ -400,8 +411,10 @@ export class TerminalBroker {
   renew(terminalId: string, leaseId: string): void { this.withLease(terminalId, leaseId, () => undefined); }
   /**
    * Checks the lease in a short transaction, then sends after it commits, so a
-   * large paste holds no database lock and does not block the coordinator.
-   * Callers send one request at a time: concurrent requests may interleave.
+   * large paste holds no database lock and does not block the coordinator. One
+   * request reaches tmux as one command list, so a coordinator send lands
+   * before or after it, never inside. Callers send one request at a time:
+   * concurrent requests may arrive out of order.
    */
   async input(terminalId: string, leaseId: string, data: string): Promise<void> {
     if (typeof data !== 'string' || data.length > 8192) throw new ControlError('bad_request', 'data must be at most 8192 characters', 400);

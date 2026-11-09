@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { request, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
@@ -10,7 +10,7 @@ import { commitClaims } from './runStore.ts';
 import { ControlClient } from './controlClient.ts';
 import { startControlServer, type ControlServer } from './controlServer.ts';
 import { CONTROL_TOKEN_FILE, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, type TerminalFrame } from './controlProtocol.ts';
-import { TerminalBroker, TmuxTerminalDriver, terminalInputCommands, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
+import { TerminalBroker, TmuxTerminalDriver, terminalInputScript, terminalInputTokens, type TerminalDriver } from './terminalBroker.ts';
 import type { TerminalConnection, TerminalSnapshot } from './terminalHost.ts';
 
 const exec = promisify(execFile);
@@ -187,17 +187,18 @@ describe('terminal broker', () => {
     expect(terminalInputTokens('\x1b[?1;2c')).toEqual([{ text: '\x1b[?1;2c' }]);
   });
 
-  it('builds one tmux command list per input, joining keys and keeping a trailing ; literal', () => {
-    expect(terminalInputCommands('=s:', 'buf', 'ls -a;\r\x1b[Z\x1b;')).toEqual([
-      'set-buffer', '-b', 'buf', '--', 'ls -a\\;', ';', 'paste-buffer', '-d', '-p', '-b', 'buf', '-t', '=s:',
-      ';', 'send-keys', '-t', '=s:', 'Enter', 'BTab', 'M-\\;',
-    ]);
+  it('writes one tmux command per line, joining keys and quoting every argument', () => {
+    expect(terminalInputScript('=s:', 'buf', "it's $HOME;\r\x1b[Z\x1b;")).toBe([
+      "set-buffer -b 'buf' -- 'it'\\''s $HOME;'",
+      "paste-buffer -d -p -b 'buf' -t '=s:'",
+      "send-keys -t '=s:' 'Enter' 'BTab' 'M-;'",
+    ].join('\n') + '\n');
   });
 
   it('sends an 8192-character paste in one tmux spawn', async () => {
     const tmux = join(dir, 'fake-tmux');
     const log = join(dir, 'fake-tmux.log');
-    writeFileSync(tmux, `#!/bin/sh\necho "$#" >> '${log}'\n`);
+    writeFileSync(tmux, `#!/bin/sh\necho "$*" >> '${log}'\ncat > /dev/null\n`);
     chmodSync(tmux, 0o755);
     const previous = process.env.ORC_TMUX_BIN;
     process.env.ORC_TMUX_BIN = tmux;
@@ -207,7 +208,7 @@ describe('terminal broker', () => {
       if (previous === undefined) delete process.env.ORC_TMUX_BIN;
       else process.env.ORC_TMUX_BIN = previous;
     }
-    expect(readFileSync(log, 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([expect.stringMatching(/ source-file -$/)]);
   });
 
   it('sends input after the lease transaction commits, with the lease already extended', async () => {
@@ -474,6 +475,31 @@ describe('terminal broker', () => {
     await client.inputTerminal(id, lease.lease_id, 'x');
     expect(driver.writes).toEqual([{ handle: 'tmux:worker-a', data: 'x' }]);
   });
+});
+
+const hasTmux = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
+
+describe.skipIf(!hasTmux)('real tmux terminal input', () => {
+  it('delivers an 8192-character multi-line or non-ASCII paste, beyond the tmux command-line limit', async () => {
+    const real = new TmuxTerminalDriver(dir);
+    const handle = 'shell:paste-run';
+    const out = join(dir, 'pasted.txt');
+    real.startShell(handle, worktree, join(dir, 'paste.log'));
+    try {
+      // Raw mode, no echo: the shell's cat copies every byte it gets.
+      await real.input(handle, `stty raw -echo; cat > '${out}'\r`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const lines = "a;'$x\r".repeat(8192 / 8);
+      await real.input(handle, lines);
+      await real.input(handle, 'é'.repeat(8192));
+      const expected = Buffer.byteLength(lines) + Buffer.byteLength('é'.repeat(8192));
+      await waitFor(() => { try { return readFileSync(out).length >= expected; } catch { return false; } });
+      const text = readFileSync(out, 'utf8').replace(/\x1b\[20[01]~/g, '');
+      expect(text).toBe(lines + 'é'.repeat(8192));
+    } finally {
+      real.stop(handle);
+    }
+  }, 20_000);
 });
 
 describe.runIf(process.env.RUN_TMUX_SMOKE === '1')('real tmux terminal smoke', () => {

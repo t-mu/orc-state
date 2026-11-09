@@ -262,7 +262,7 @@ export class ControlClient {
 
   /**
    * The exclusive input lease. `ttlMs` (1000–120000, default 30000) is its term
-   * from now and from each renew or input; `takeover` replaces a live holder's lease.
+   * from now and from each renew or input; `takeover` (operator only) replaces a live holder's lease.
    */
   acquireTerminal(terminalId: string, ownerId: string, options: { ttlMs?: number; takeover?: boolean } = {}): Promise<{ lease_id: string; expires_at: string }> {
     return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/lease`, {
@@ -278,7 +278,7 @@ export class ControlClient {
     return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/lease`, { action: 'release', lease_id: leaseId });
   }
 
-  /** Resolves once the terminal has the input. Send one request at a time: concurrent ones may interleave. */
+  /** Resolves once the terminal has the input. Send one request at a time: concurrent ones may arrive out of order. */
   inputTerminal(terminalId: string, leaseId: string, data: string): Promise<void> {
     return this.call('POST', `/v1/terminals/${encodeURIComponent(terminalId)}/input`, { lease_id: leaseId, data });
   }

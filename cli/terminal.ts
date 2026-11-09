@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Stream a provider terminal or an independent worktree shell. Input needs --write. */
+/** Stream a provider terminal or an independent worktree shell. Input needs --write; --takeover takes the lease from its holder. */
 import { randomUUID } from 'node:crypto';
 import { boolFlag } from '../lib/args.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
@@ -66,7 +66,7 @@ try {
   terminalId = (await client.openTerminal(kind, runId)).terminal.terminal_id;
   if (writable) {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('--write requires a terminal');
-    leaseId = (await client.acquireTerminal(terminalId, `cli:${process.pid}:${randomUUID()}`)).lease_id;
+    leaseId = (await client.acquireTerminal(terminalId, `cli:${process.pid}:${randomUUID()}`, { takeover: boolFlag('takeover') })).lease_id;
   }
   const size = once ? {} : { columns: process.stdout.columns ?? 80, rows: process.stdout.rows ?? 24 };
   const frames = client.streamTerminal(terminalId, { ...(leaseId ? { leaseId } : {}), ...size }, abort.signal);

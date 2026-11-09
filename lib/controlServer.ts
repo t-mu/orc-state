@@ -409,6 +409,9 @@ export async function startControlServer(stateDir: string, options: ControlServe
       if (req.method === 'POST' && action !== 'stream') {
         const body = await readBody(req);
         if (action === 'lease') {
+          if (body.action === 'takeover' && principal(req)?.kind !== 'operator') {
+            throw new ControlError('forbidden', 'Only the operator can take over a terminal', 403);
+          }
           if (body.action === 'acquire' || body.action === 'takeover') {
             return ok(terminals.acquire(terminalId, body.owner_id as string, body.ttl_ms === undefined ? undefined : Number(body.ttl_ms),
               { takeover: body.action === 'takeover' }));
