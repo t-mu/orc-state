@@ -395,7 +395,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 | `orc events-tail --json` | `{ total, events }` |
 | `orc events-filter --json` | array of events |
 | `orc review-read --json` | `{ count, reviews }` |
-| `orc waiting-input --json` | array of `{ run_id, agent_id, task_ref, question, waiting_seconds, input_requested_at }` |
+| `orc waiting-input --json` | array of `{ run_id, agent_id, task_ref, question, request_id, waiting_seconds, input_requested_at }` |
 | `orc worker-status --json` | array of agent records + `active_task_ref`, `heartbeat_seconds_ago`; one record when given an `agent_id` |
 
 ### Worker lifecycle commands
