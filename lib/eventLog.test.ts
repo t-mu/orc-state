@@ -67,7 +67,7 @@ describe('appendEvent', () => {
 
   it('appends multiple events as separate lines', () => {
     appendEvent(logPath, validEvent(1, 'run_started', { run_id: 'run-1', task_ref: 'orch/task-1' }), { fsyncPolicy: 'never' });
-    appendEvent(logPath, validEvent(2, 'phase_started', { run_id: 'run-1', task_ref: 'orch/task-1', phase: 'build' }), { fsyncPolicy: 'never' });
+    appendEvent(logPath, validEvent(2, 'phase_started', { run_id: 'run-1', task_ref: 'orch/task-1', phase: 'implement' }), { fsyncPolicy: 'never' });
     appendEvent(logPath, validEvent(3, 'run_finished', { run_id: 'run-1', task_ref: 'orch/task-1' }), { fsyncPolicy: 'never' });
     const events = readEvents(logPath);
     expect(events).toHaveLength(3);

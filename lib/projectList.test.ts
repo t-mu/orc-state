@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 describe('listProjects', () => {
-  it('lists every registered project with its control socket', () => {
+  it('lists every registered project and drops the socket of a stopped coordinator', () => {
     const a = registry.add(gitRepo('alpha'));
     const b = registry.add(gitRepo('beta'));
     writeFileSync(join(a.stateDir, 'control.json'), JSON.stringify({ protocol_version: 1, transport: 'unix', path: '/run/alpha.sock', pid: 999999999, started_at: 'x' }));
@@ -40,8 +40,8 @@ describe('listProjects', () => {
 
     const projects = listProjects({ env: { ORC_DATA_HOME: dataHome } });
     expect(projects).toEqual([
-      { id: a.id, name: 'alpha', target_repo_root: a.canonicalGitRoot, state_dir: a.stateDir, control_socket: '/run/alpha.sock', coordinator_running: false },
-      { id: b.id, name: 'beta', target_repo_root: b.canonicalGitRoot, state_dir: b.stateDir, control_socket: '/run/beta.sock', coordinator_running: false },
+      { id: a.id, name: 'alpha', target_repo_root: a.canonicalGitRoot, state_dir: a.stateDir, repo_present: true, control_socket: null, coordinator_running: false },
+      { id: b.id, name: 'beta', target_repo_root: b.canonicalGitRoot, state_dir: b.stateDir, repo_present: true, control_socket: null, coordinator_running: false },
     ]);
   });
 
@@ -49,8 +49,15 @@ describe('listProjects', () => {
     const project = registry.add(gitRepo('gone'));
     rmSync(project.stateDir, { recursive: true, force: true });
     expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })).toEqual([
-      { id: project.id, name: 'gone', target_repo_root: project.canonicalGitRoot, state_dir: project.stateDir, control_socket: null, coordinator_running: false },
+      { id: project.id, name: 'gone', target_repo_root: project.canonicalGitRoot, state_dir: project.stateDir, repo_present: true, control_socket: null, coordinator_running: false },
     ]);
+  });
+
+  it('reports repo_present false when the checkout is gone', () => {
+    const root = gitRepo('moved');
+    registry.add(root);
+    rmSync(root, { recursive: true, force: true });
+    expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })[0]).toMatchObject({ repo_present: false });
   });
 
   it('treats an unreadable control.json as no socket', () => {
@@ -69,6 +76,8 @@ describe('listProjects', () => {
       const pid = coordinator.pid!;
       writeFileSync(join(project.stateDir, 'coordinator.pid'), JSON.stringify({ pid, started_at: 'x', process_start: readProcessStart(pid) }));
       expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })[0]).toMatchObject({ control_socket: null, coordinator_running: true });
+      writeFileSync(join(project.stateDir, 'control.json'), JSON.stringify({ protocol_version: 1, transport: 'unix', path: '/run/live.sock', pid, started_at: 'x' }));
+      expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })[0]).toMatchObject({ control_socket: '/run/live.sock', coordinator_running: true });
     } finally {
       coordinator.kill();
     }

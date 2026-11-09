@@ -28,7 +28,9 @@ export interface ProjectListEntry {
   name: string;
   target_repo_root: string;
   state_dir: string;
-  /** Unix socket from the project's `control.json`; null when the state directory or endpoint file is missing or unreadable. */
+  /** Whether `target_repo_root` still exists on disk (a moved or deleted checkout stays registered). */
+  repo_present: boolean;
+  /** Unix socket from the project's `control.json`; null unless the coordinator is running (a stopped coordinator leaves a stale file) or the file is missing or unreadable. */
   control_socket: string | null;
   coordinator_running: boolean;
 }
@@ -45,13 +47,15 @@ function controlSocket(stateDir: string): string | null {
 /** The registry's projects as list entries; a missing or unreadable state directory is not an error. */
 export function describeProjects(registry: { list(): ProjectRecord[] }): ProjectListEntry[] {
   return registry.list().map((project) => {
+    const coordinatorRunning = findLiveCoordinator(project.stateDir) !== null;
     return {
       id: project.id,
       name: project.name,
       target_repo_root: project.canonicalGitRoot,
       state_dir: project.stateDir,
-      control_socket: controlSocket(project.stateDir),
-      coordinator_running: findLiveCoordinator(project.stateDir) !== null,
+      repo_present: existsSync(project.canonicalGitRoot),
+      control_socket: coordinatorRunning ? controlSocket(project.stateDir) : null,
+      coordinator_running: coordinatorRunning,
     };
   });
 }

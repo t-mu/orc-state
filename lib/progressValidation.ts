@@ -18,6 +18,7 @@ const SUPPORTED_EVENTS = new Set([
   'review_submitted',
 ]);
 
+const PHASES = ['explore', 'implement', 'review', 'complete', 'finalize'];
 const EVENTS_REQUIRING_PHASE = new Set(['phase_started', 'phase_finished']);
 const EVENTS_REQUIRING_REASON = new Set(['run_failed', 'blocked', 'need_input']);
 const EVENTS_REQUIRING_IN_PROGRESS = new Set([
@@ -71,8 +72,8 @@ export function validateProgressCommandInput(input: ProgressInput, claim: Claim 
   if (claim.agent_id !== agentId) {
     throw new Error(`Run ${runId} belongs to ${claim.agent_id}, not ${agentId}`);
   }
-  if (EVENTS_REQUIRING_PHASE.has(event) && !phase) {
-    throw new Error(`Event ${event} requires --phase=<name>`);
+  if (EVENTS_REQUIRING_PHASE.has(event) && (!phase || !PHASES.includes(phase))) {
+    throw new Error(`Event ${event} requires --phase=<${PHASES.join('|')}>`);
   }
   if (EVENTS_REQUIRING_REASON.has(event) && !reason) {
     throw new Error(`Event ${event} requires --reason=<text>`);
@@ -120,8 +121,8 @@ export function validateProgressInput(input: ProgressInput, claim: Claim | null 
     throw new Error(`${event} requires run_started first (claim state must be 'in_progress', got: ${claim.state})`);
   }
 
-  if (EVENTS_REQUIRING_PHASE.has(event) && !phase) {
-    throw new Error(`Event ${event} requires --phase=<name>`);
+  if (EVENTS_REQUIRING_PHASE.has(event) && (!phase || !PHASES.includes(phase))) {
+    throw new Error(`Event ${event} requires --phase=<${PHASES.join('|')}>`);
   }
   if (EVENTS_REQUIRING_REASON.has(event) && !reason) {
     throw new Error(`Event ${event} requires --reason=<text>`);

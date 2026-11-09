@@ -28,3 +28,11 @@ jobs:
         run: npm test
       - name: E2E tests
         run: npm run test:e2e
+      - name: Build
+        run: npm run build
+      - name: Consumer typecheck (dist/*.d.ts)
+        run: npm run typecheck:consumer
+      - name: Pack smoke
+        run: npm run pack:smoke
+      - name: Install smoke
+        run: npm run install:smoke

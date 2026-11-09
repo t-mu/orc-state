@@ -288,6 +288,15 @@ describe('validateEventObject', () => {
     expect(bad).toContain('payload.source must be one of: todo, note, tool');
   });
 
+  it('requires a top-level phase from the enum on phase events', () => {
+    const fields = { actor_type: 'agent', actor_id: 'worker-01', run_id: 'run-1', task_ref: 'docs/task-1', agent_id: 'worker-01' };
+    expect(validateEventObject(base('phase_started', { ...fields, phase: 'implement' }))).toEqual([]);
+    expect(validateEventObject(base('phase_finished', { ...fields, phase: 'finalize' }))).toEqual([]);
+    expect(validateEventObject(base('phase_started', fields)).join()).toContain('phase is required');
+    expect(validateEventObject(base('phase_started', { ...fields, payload: { phase: 'implement' } })).join()).toContain('phase is required');
+    expect(validateEventObject(base('phase_finished', { ...fields, phase: 'bogus' })).join()).toContain('phase is required');
+  });
+
   it('accepts a valid stop_blocked event and validates its payload', () => {
     const fields = { actor_type: 'coordinator', actor_id: 'coordinator', run_id: 'run-1', task_ref: 'docs/task-1', agent_id: 'worker-01' };
     expect(validateEventObject(base('stop_blocked', { ...fields, payload: { phase: 'implement', count: 1, stop_hook_active: false } }))).toEqual([]);

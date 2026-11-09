@@ -33,10 +33,10 @@ describe('cli/progress.ts', () => {
 
   it('accepts phase_started before coordinator has processed run_started and leaves claims untouched', async () => {
     const before = readClaims();
-    const result = await runCli(['--event=phase_started', '--run-id=run-1', '--agent-id=bob', '--phase=impl']);
+    const result = await runCli(['--event=phase_started', '--run-id=run-1', '--agent-id=bob', '--phase=implement']);
     expect(result.status).toBe(0);
     expect(readClaims()).toEqual(before);
-    expect(readEvents().some((event) => event.event === 'phase_started' && event.phase === 'impl')).toBe(true);
+    expect(readEvents().some((event) => event.event === 'phase_started' && event.phase === 'implement')).toBe(true);
   });
 
   it('commits run_started once and accepts a duplicate report', async () => {
