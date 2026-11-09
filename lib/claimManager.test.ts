@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { queryEvents } from './eventLog.ts';
+import { recordProviderSession } from './runStore.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState, readStateFile, readBacklog as readStoreBacklog } from '../test-fixtures/stateHelpers.ts';
 import {
   claimTask,
@@ -155,6 +156,21 @@ describe('startRun', () => {
     const ev = readEvents(dir).find(e => e.event === 'run_started');
     expect(ev).toBeTruthy();
     expect(ev!.run_id).toBe(run_id);
+  });
+
+  it('stamps run_started and run_finished with the run session id and generation', () => {
+    seed(dir);
+    const { run_id } = claimTask(dir, 'orch/init', 'agent-01');
+    recordProviderSession(dir, {
+      sessionId: 'sess-worker-1', runId: run_id, agentId: 'agent-01', provider: 'claude',
+      providerRef: null, startedAt: new Date().toISOString(),
+    });
+    startRun(dir, run_id, 'agent-01');
+    finishRun(dir, run_id, 'agent-01');
+    for (const name of ['run_started', 'run_finished']) {
+      const ev = readEvents(dir).find(e => e.event === name);
+      expect(ev?.payload).toMatchObject({ session_id: 'sess-worker-1', generation: 0 });
+    }
   });
 
   it('throws when run_id not found', () => {

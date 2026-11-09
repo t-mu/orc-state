@@ -510,7 +510,7 @@ describe('local daemon control API', () => {
     expect(blocked).toEqual({ allow: false, reason: expect.stringContaining('Run run-a (phase implement) is not finished.') });
     const recorded = readEventBatch(join(dir, 'events.db'), 0, 100).map((row) => row.event as { event: string; run_id?: string; payload?: unknown })
       .filter((event) => event.event === 'stop_blocked');
-    expect(recorded).toEqual([expect.objectContaining({ run_id: 'run-a', payload: { phase: 'implement', count: 1, stop_hook_active: false } })]);
+    expect(recorded).toEqual([expect.objectContaining({ run_id: 'run-a', payload: { phase: 'implement', count: 1, stop_hook_active: false, session_id: 'session-a', generation: 0 } })]);
 
     await expect(new ControlClient(dir, { credential: 'session-master' }).stopCheck(false)).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     // A client without a session acts as the operator, which owns no run.

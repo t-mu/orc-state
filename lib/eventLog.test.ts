@@ -15,6 +15,7 @@ import {
   rotateEventsLogIfNeeded,
   registerDb,
   unregisterDb,
+  withEventDb,
 } from './eventLog.ts';
 import type { OrcEvent } from '../types/index.ts';
 import { createTempStateDir, cleanupTempStateDir } from '../test-fixtures/stateHelpers.ts';
@@ -424,6 +425,65 @@ describe('appendSequencedEvent', () => {
     // No rotation archives exist — SQLite stores everything in a single DB.
     expect(existsSync(`${logPath}.1`)).toBe(false);
     expect(readEvents(logPath)).toHaveLength(10_001);
+  });
+});
+
+describe('appendSequencedEvent run session identity', () => {
+  function seedSession(sessionId: string, generation: number, runId = 'run-a'): void {
+    withEventDb(dir, (db) => {
+      db.prepare("INSERT OR IGNORE INTO runs (run_id, task_ref, agent_id, state, created_at, updated_at) VALUES (?, 'orch/a', 'agent-01', 'in_progress', 'now', 'now')").run(runId);
+      db.prepare("INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, generation) VALUES (?, ?, 'agent-01', 'claude', 'running', 'now', 'now', ?)")
+        .run(sessionId, runId, generation);
+    });
+  }
+  function runEvent(event: string, payload: Record<string, unknown>): OrcEvent {
+    return validEvent(undefined, event, {
+      event_id: `evt-${event}`, run_id: 'run-a', task_ref: 'orch/a', phase: 'implement', payload,
+    });
+  }
+  const PAYLOADS: Record<string, Record<string, unknown>> = {
+    run_started: {},
+    phase_started: {},
+    work_complete: { status: 'awaiting_finalize' },
+    run_finished: {},
+    run_failed: { policy: 'requeue' },
+    run_cancelled: {},
+    input_requested: { question: 'which?' },
+    input_response: { response: 'that' },
+    heartbeat: {},
+  };
+
+  it.each(Object.entries(PAYLOADS))('stamps %s with the run session id and generation', (event, payload) => {
+    appendSequencedEvent(dir, validEvent(undefined, 'heartbeat', { event_id: 'evt-init' }));
+    seedSession('sess-old', 0);
+    withEventDb(dir, (db) => db.prepare("UPDATE sessions SET state = 'offline' WHERE session_id = 'sess-old'").run());
+    seedSession('sess-new', 2);
+    appendSequencedEvent(dir, runEvent(event, payload));
+    const stored = readEvents(logPath).find((e) => e.event === event && (e as { run_id?: string }).run_id === 'run-a');
+    expect(stored?.payload).toEqual({ ...payload, session_id: 'sess-new', generation: 2 });
+  });
+
+  it('leaves the payload alone when the run has no session', () => {
+    appendSequencedEvent(dir, runEvent('run_started', { reason: 'x' }));
+    const stored = readEvents(logPath).find((e) => e.event === 'run_started');
+    expect(stored?.payload).toEqual({ reason: 'x' });
+  });
+
+  it('keeps a caller-supplied session_id and does not stamp non-run events', () => {
+    appendSequencedEvent(dir, validEvent(undefined, 'heartbeat', { event_id: 'evt-init' }));
+    seedSession('sess-a', 1);
+    appendSequencedEvent(dir, runEvent('run_finished', { session_id: 'sess-explicit' }));
+    appendSequencedEvent(dir, validEvent(undefined, 'agent_online', { event_id: 'evt-online', run_id: 'run-a' }));
+    const events = readEvents(logPath);
+    expect(events.find((e) => e.event === 'run_finished')?.payload).toEqual({ session_id: 'sess-explicit' });
+    expect(events.find((e) => e.event === 'agent_online')?.payload).toBeUndefined();
+  });
+
+  it('rejects a malformed session_id or generation on a run event', () => {
+    expect(() => appendSequencedEvent(dir, runEvent('run_started', { session_id: '' })))
+      .toThrow('payload.session_id must be a non-empty string');
+    expect(() => appendSequencedEvent(dir, runEvent('run_started', { generation: -1 })))
+      .toThrow('payload.generation must be a non-negative integer');
   });
 });
 

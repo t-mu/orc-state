@@ -141,6 +141,7 @@ describe('run-expire', () => {
     expect(event.payload).toEqual({
       policy: 'requeue', code: 'ERR_MANUAL_EXPIRE', reason: 'manual_expire',
       task_status: 'todo', attempt_count: 0, requeue_eligible_after: null, blocked_reason: null,
+      session_id: 'session-a', generation: 0,
     });
   });
 });

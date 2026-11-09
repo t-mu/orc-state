@@ -116,7 +116,11 @@
     "payload": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Event-specific data. Schema varies by event type."
+      "description": "Event-specific data. Schema varies by event type. Run events (RUN_SESSION_EVENTS) carry session_id and generation of the run's latest session when the run has one.",
+      "properties": {
+        "session_id": { "type": "string", "minLength": 1, "description": "Session that was current for the run; stable across resumes." },
+        "generation": { "type": "integer", "minimum": 0, "description": "Incarnation of that session; bumped by each resume." }
+      }
     }
   }
 }

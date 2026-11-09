@@ -48,6 +48,18 @@ const FINALIZATION_STATES = new Set([
   'blocked_finalize', 'pr_created', 'pr_review_in_progress', 'pr_merged', 'pr_failed',
 ]);
 
+/**
+ * Run events stamped with the identity of the run's session when one exists: `session_id`
+ * names the worker process across resumes, `generation` the incarnation that was current.
+ */
+export const RUN_SESSION_EVENTS: ReadonlySet<string> = new Set([
+  'task_envelope_sent', 'run_started', 'phase_started', 'phase_finished', 'heartbeat', 'review_submitted',
+  'work_complete', 'finalize_rebase_started', 'ready_to_merge', 'finalization_changed',
+  'run_finished', 'run_failed', 'run_cancelled', 'claim_expired',
+  'blocked', 'unblocked', 'need_input', 'input_provided', 'input_requested', 'input_response',
+  'worker_needs_attention', 'remediation_applied', 'activity_note', 'stop_blocked',
+]);
+
 const EVENT_PHASES = new Set(['explore', 'implement', 'review', 'complete', 'finalize']);
 
 function requireRunId(event: unknown, errors: string[]): void {
@@ -117,6 +129,16 @@ function validateCoreEventInvariants(event: unknown, errors: string[], stored: b
 
   if (eventName && runLifecycleEvents.has(eventName)) {
     requireRunId(event, errors);
+  }
+
+  if (eventName && RUN_SESSION_EVENTS.has(eventName)) {
+    const payload = e?.payload;
+    if (payload?.session_id !== undefined && !(typeof payload.session_id === 'string' && payload.session_id.length > 0)) {
+      errors.push('payload.session_id must be a non-empty string');
+    }
+    if (payload?.generation !== undefined && !(Number.isInteger(payload.generation) && (payload.generation as number) >= 0)) {
+      errors.push('payload.generation must be a non-negative integer');
+    }
   }
 
   // Phase events carry a top-level `phase`; rows stored before it was required stay readable.
