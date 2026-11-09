@@ -9,20 +9,17 @@ import {
   handleGetAgentWorkview,
   handleGetStatus,
   handleGetTask,
-  handleListActiveRuns,
   handleListAgents,
-  handleListStalledRuns,
+  handleListRuns,
   handleListTasks,
   handleReadAgents,
   handleReadBacklog,
   handleCreateTask,
   handleUpdateTask,
   handleGetRun,
-  handleListWaitingInput,
   handleQueryEvents,
   handleListWorktrees,
   handleMemoryWakeUp,
-  handleMemoryRecall,
   handleMemorySearch,
   handleMemoryStore,
   handleMemoryStatus,
@@ -262,22 +259,25 @@ describe('mcp read handlers', () => {
     }]);
   });
 
-  it('handleListActiveRuns returns only claimed/in_progress claims', () => {
-    const active = handleListActiveRuns(dir);
-    expect(active.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2']);
-  });
-
-  it('handleListStalledRuns returns stale runs with stale_for_ms', () => {
+  it('handleListRuns lists live runs (claimed/in_progress) with the shared row shape', () => {
     const now = new Date('2026-01-01T00:20:00.000Z').getTime();
-    const stale = handleListStalledRuns(dir, { stale_after_ms: 60_000, now_ms: now }) as Array<Record<string, unknown>>;
-    expect(stale.map((claim) => claim.run_id).sort()).toEqual(['run-1', 'run-2']);
-    const run1 = stale.find((claim) => claim.run_id === 'run-1');
-    const run2 = stale.find((claim) => claim.run_id === 'run-2');
-    expect(run1?.stale_for_ms).toBe(1_194_000);
-    expect(run2?.stale_for_ms).toBe(1_200_000);
+    const { runs } = handleListRuns(dir, { now_ms: now });
+    expect(runs.map((run) => run.run_id).sort()).toEqual(['run-1', 'run-2']);
+    expect(runs.find((run) => run.run_id === 'run-1')).toEqual({
+      run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', state: 'in_progress',
+      phase: null, age_seconds: 1195, idle_seconds: 1194, stalled: true,
+    });
   });
 
-  it('handleListStalledRuns counts hook activity and skips a run with a tool call still running', () => {
+  it('handleListRuns state=stalled applies stale_after_ms', () => {
+    const now = new Date('2026-01-01T00:20:00.000Z').getTime();
+    const stale = handleListRuns(dir, { state: 'stalled', stale_after_ms: 60_000, now_ms: now }).runs;
+    // run-2 is claimed with no TASK_START delivered yet: no idle anchor, so it is never stalled.
+    expect(stale.map((run) => [run.run_id, run.idle_seconds])).toEqual([['run-1', 1194]]);
+    expect(handleListRuns(dir, { state: 'stalled', stale_after_ms: 1_300_000, now_ms: now }).runs).toEqual([]);
+  });
+
+  it('handleListRuns state=stalled counts hook activity and skips a run with a tool call still running', () => {
     const now = new Date('2026-01-01T00:20:00.000Z').getTime();
     writeRunActivity(dir, {
       'run-1': {
@@ -289,12 +289,12 @@ describe('mcp read handlers', () => {
         last_tool: null, last_tool_brief: null, last_tool_ts: null, open_tools: { toolu_1: '2026-01-01T00:05:00.000Z' },
       },
     });
-    expect(handleListStalledRuns(dir, { stale_after_ms: 60_000, now_ms: now })).toEqual([]);
-    const later = handleListStalledRuns(dir, { stale_after_ms: 20_000, now_ms: now }) as Array<Record<string, unknown>>;
-    expect(later.map((claim) => [claim.run_id, claim.stale_for_ms])).toEqual([['run-1', 30_000]]);
+    expect(handleListRuns(dir, { state: 'stalled', stale_after_ms: 60_000, now_ms: now }).runs).toEqual([]);
+    const later = handleListRuns(dir, { state: 'stalled', stale_after_ms: 20_000, now_ms: now }).runs;
+    expect(later.map((run) => [run.run_id, run.idle_seconds])).toEqual([['run-1', 30]]);
   });
 
-  it('handleListStalledRuns skips a run waiting for an input response (shared isStalled)', () => {
+  it('handleListRuns state=stalled skips a run waiting for an input response (shared isStalled)', () => {
     const now = new Date('2026-01-01T00:20:00.000Z').getTime();
     seedClaims([
       { run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', state: 'in_progress', claimed_at: '2026-01-01T00:00:00.000Z',
@@ -302,8 +302,22 @@ describe('mcp read handlers', () => {
       { run_id: 'run-2', task_ref: 'project/done-one', agent_id: 'orc-2', state: 'in_progress', claimed_at: '2026-01-01T00:00:00.000Z',
         last_heartbeat_at: '2026-01-01T00:00:06.000Z', lease_expires_at: '2026-01-01T00:30:00.000Z' },
     ]);
-    const stale = handleListStalledRuns(dir, { stale_after_ms: 60_000, now_ms: now }) as Array<Record<string, unknown>>;
-    expect(stale.map((claim) => claim.run_id)).toEqual(['run-2']);
+    const stale = handleListRuns(dir, { state: 'stalled', stale_after_ms: 60_000, now_ms: now }).runs;
+    expect(stale.map((run) => run.run_id)).toEqual(['run-2']);
+  });
+
+  it('handleListRuns reports the latest phase of each run', () => {
+    seedEventsLines([
+      JSON.stringify({ seq: 10, ts: '2026-01-01T00:01:00.000Z', event: 'phase_started', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', phase: 'explore' }),
+      JSON.stringify({ seq: 11, ts: '2026-01-01T00:02:00.000Z', event: 'phase_started', actor_type: 'agent', actor_id: 'orc-1', run_id: 'run-1', task_ref: 'project/todo-one', agent_id: 'orc-1', phase: 'implement' }),
+    ]);
+    const run1 = handleListRuns(dir).runs.find((run) => run.run_id === 'run-1');
+    expect(run1?.phase).toBe('implement');
+  });
+
+  it('handleListRuns rejects an unknown state and a negative stale_after_ms', () => {
+    expect(() => handleListRuns(dir, { state: 'done' })).toThrow(/state must be one of active, stalled, waiting_input/);
+    expect(() => handleListRuns(dir, { stale_after_ms: -1 })).toThrow(/stale_after_ms/);
   });
 
   it('handleGetTask returns task or not_found error', () => {
@@ -314,17 +328,20 @@ describe('mcp read handlers', () => {
     expect(missing).toEqual({ error: 'not_found', task_ref: 'project/missing' });
   });
 
-  it('handleGetStatus names the registered project a state directory belongs to', () => {
+  it('handleGetStatus names the registered project a state directory belongs to', async () => {
     writeFileSync(join(dir, 'project.json'), JSON.stringify({ id: 'p-1', name: 'demo', target_repo_root: '/tmp/demo' }));
-    expect(handleGetStatus(dir).project).toEqual({ id: 'p-1', name: 'demo', target_repo_root: '/tmp/demo' });
+    expect((await handleGetStatus(dir)).project).toEqual({ id: 'p-1', name: 'demo', target_repo_root: '/tmp/demo' });
   });
 
-  it('handleGetStatus returns aggregate keys and expected value shapes', () => {
-    const status = handleGetStatus(dir);
+  it('handleGetStatus returns aggregate keys and expected value shapes', async () => {
+    const status = await handleGetStatus(dir);
 
     expect(Object.keys(status).sort()).toEqual(
-      ['active_tasks', 'agents', 'last_notification_seq', 'project', 'stalled_runs', 'task_counts'].sort(),
+      ['active_tasks', 'agents', 'coordinator', 'last_notification_seq', 'project', 'stalled_runs', 'task_counts', 'waiting_input'].sort(),
     );
+    // No coordinator runs in a temp state directory.
+    expect(status.coordinator).toEqual({ running: false, pid: null, version: null, started_at: null, stale: null });
+    expect(status.waiting_input).toBe(0);
     expect((status.agents as Array<Record<string, unknown>>).every((agent) =>
       ['agent_id', 'role', 'status', 'provider', 'active_task_ref'].every((key) => Object.hasOwn(agent, key)))).toBe(true);
     expect((status.agents as Array<Record<string, unknown>>).some((agent) => agent.agent_id === 'orc-dead')).toBe(false);
@@ -338,11 +355,21 @@ describe('mcp read handlers', () => {
       ['ref', 'title', 'status', 'feature_ref', 'owner'].every((key) => Object.hasOwn(task, key)))).toBe(true);
     expect((status.active_tasks as Array<Record<string, unknown>>).some((task) => task.status === 'done')).toBe(false);
     expect(status.last_notification_seq).toBe(0);
-    expect(status.stalled_runs).toBe(2);
+    expect(status.stalled_runs).toBe(1);
     expect(status.project).toMatchObject({ id: TEST_PROJECT_ID });
   });
 
-  it('handleGetStatus includes done and cancelled counts when include_done_count=true', () => {
+  it('handleGetStatus counts live runs waiting for input, not legacy finished claims', async () => {
+    seedClaims([
+      { run_id: 'run-w', task_ref: 'project/todo-one', agent_id: 'orc-1', state: 'in_progress', input_state: 'awaiting_input',
+        claimed_at: '2026-01-01T00:00:00.000Z', lease_expires_at: '2026-01-01T00:10:00.000Z' },
+      { run_id: 'run-old', task_ref: 'project/done-one', agent_id: 'orc-2', state: 'failed', input_state: 'awaiting_input',
+        claimed_at: '2026-01-01T00:00:00.000Z', lease_expires_at: '2026-01-01T00:10:00.000Z' },
+    ]);
+    expect((await handleGetStatus(dir)).waiting_input).toBe(1);
+  });
+
+  it('handleGetStatus includes done and cancelled counts when include_done_count=true', async () => {
     seedTasks([
       {
         ref: 'project/done-two',
@@ -364,13 +391,13 @@ describe('mcp read handlers', () => {
       },
     ]);
 
-    const status = handleGetStatus(dir, { include_done_count: true });
+    const status = await handleGetStatus(dir, { include_done_count: true });
     expect((status.task_counts as Record<string, unknown>).done).toBe(2);
     expect((status.task_counts as Record<string, unknown>).released).toBeUndefined();
     expect((status.task_counts as Record<string, unknown>).cancelled).toBe(1);
   });
 
-  it('handleGetStatus response stays <= 2KB for 3 workers and 10 active tasks', () => {
+  it('handleGetStatus response stays <= 2KB for 3 workers and 10 active tasks', async () => {
     seedAgents([
       { agent_id: 'master', provider: 'claude', role: 'master', status: 'idle' },
       { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running' },
@@ -410,7 +437,7 @@ describe('mcp read handlers', () => {
       },
     ]);
 
-    const status = handleGetStatus(dir);
+    const status = await handleGetStatus(dir);
     expect(Buffer.byteLength(JSON.stringify(status), 'utf8')).toBeLessThanOrEqual(2048);
   });
 
@@ -443,7 +470,7 @@ describe('mcp read handlers', () => {
     expect(workview.recommended_action).toBe('heartbeat');
   });
 
-  it('get_status and get_agent_workview return current_activity for the active run', () => {
+  it('get_status and get_agent_workview return current_activity for the active run', async () => {
     writeRunActivity(dir, {
       'run-1': {
         run_id: 'run-1', agent_id: 'orc-1', label: 'Writing tests', source: 'todo', label_ts: '2026-01-01T00:00:30.000Z',
@@ -452,7 +479,7 @@ describe('mcp read handlers', () => {
     });
     const expected = { text: 'Writing tests', source: 'todo', ts: '2026-01-01T00:00:30.000Z' };
 
-    const status = handleGetStatus(dir);
+    const status = await handleGetStatus(dir);
     const task = (status.active_tasks as Array<Record<string, unknown>>).find((t) => t.ref === 'project/todo-one');
     expect(task?.current_activity).toEqual(expected);
     // A task without an active run carries no current_activity field.
@@ -463,13 +490,13 @@ describe('mcp read handlers', () => {
     expect(workview.active_run?.current_activity).toEqual(expected);
   });
 
-  it('handleGetStatus stays <= 2KB with long activity text on active runs', () => {
+  it('handleGetStatus stays <= 2KB with long activity text on active runs', async () => {
     const long = (runId: string, agentId: string) => ({
       run_id: runId, agent_id: agentId, label: 'n'.repeat(1000), source: 'note' as const, label_ts: new Date().toISOString(),
       last_tool: 'Bash', last_tool_brief: 'b'.repeat(1000), last_tool_ts: new Date().toISOString(),
     });
     writeRunActivity(dir, { 'run-1': long('run-1', 'orc-1'), 'run-2': long('run-2', 'orc-2') });
-    const status = handleGetStatus(dir);
+    const status = await handleGetStatus(dir);
     const withActivity = (status.active_tasks as Array<Record<string, unknown>>).filter((t) => t.current_activity);
     expect(withActivity.length).toBeGreaterThan(0);
     expect(Buffer.byteLength(JSON.stringify(status), 'utf8')).toBeLessThanOrEqual(2048);
@@ -538,13 +565,12 @@ describe('mcp read handlers', () => {
     }
   });
 
-  it('throws validation errors for invalid filter inputs', () => {
+  it('throws validation errors for invalid filter inputs', async () => {
     expect(() => handleListTasks(dir, { status: 'invalid' })).toThrow(/Invalid status/);
     expect(() => handleListAgents(dir, { role: 'invalid' })).toThrow(/Invalid role/);
     expect(() => handleListAgents(dir, { include_dead: 'yes' })).toThrow(/include_dead must be a boolean/);
-    expect(() => handleListStalledRuns(dir, { stale_after_ms: -1 })).toThrow(/stale_after_ms/);
     expect(() => handleQueryEvents(dir, { limit: -1 })).toThrow(/limit/);
-    expect(() => handleGetStatus(dir, { include_done_count: 'yes' })).toThrow(/include_done_count must be a boolean/);
+    await expect(handleGetStatus(dir, { include_done_count: 'yes' })).rejects.toThrow(/include_done_count must be a boolean/);
   });
 
   it('handleReadBacklog and handleReadAgents return valid json text', () => {
@@ -971,13 +997,12 @@ describe('handleGetRun', () => {
   });
 });
 
-describe('handleListWaitingInput', () => {
+describe('handleListRuns state=waiting_input', () => {
   it('returns empty when no claims await input', () => {
-    const result = handleListWaitingInput(dir);
-    expect(result).toEqual([]);
+    expect(handleListRuns(dir, { state: 'waiting_input' })).toEqual({ runs: [] });
   });
 
-  it('leaves out a finished claim that still carries awaiting_input', () => {
+  it('leaves out a finished claim that still carries awaiting_input (legacy runs)', () => {
     seedClaims([
       {
         run_id: 'run-legacy',
@@ -989,10 +1014,11 @@ describe('handleListWaitingInput', () => {
         lease_expires_at: '2026-01-01T00:10:00.000Z',
       },
     ]);
-    expect(handleListWaitingInput(dir)).toEqual([]);
+    expect(handleListRuns(dir, { state: 'waiting_input' })).toEqual({ runs: [] });
+    expect(handleListRuns(dir)).toEqual({ runs: [] });
   });
 
-  it('returns waiting claims with question text', () => {
+  it('returns waiting runs with question, request_id and waiting_seconds; other states carry them too', () => {
     seedClaims([
       {
         run_id: 'run-waiting',
@@ -1004,6 +1030,15 @@ describe('handleListWaitingInput', () => {
         claimed_at: '2026-01-01T00:00:00.000Z',
         started_at: '2026-01-01T00:00:05.000Z',
         last_heartbeat_at: '2026-01-01T00:00:06.000Z',
+        lease_expires_at: '2026-01-01T00:10:00.000Z',
+      },
+      {
+        run_id: 'run-busy',
+        task_ref: 'project/done-one',
+        agent_id: 'orc-2',
+        state: 'in_progress',
+        claimed_at: '2026-01-01T00:00:00.000Z',
+        started_at: '2026-01-01T00:00:05.000Z',
         lease_expires_at: '2026-01-01T00:10:00.000Z',
       },
     ]);
@@ -1018,12 +1053,14 @@ describe('handleListWaitingInput', () => {
       }),
     ]);
 
-    const result = handleListWaitingInput(dir);
-    expect(result).toHaveLength(1);
-    expect(result[0].run_id).toBe('run-waiting');
-    expect(result[0].question).toBe('Should I proceed?');
-    expect(result[0].request_id).toBe('req-9');
-    expect(result[0].input_requested_at).toBe('2026-01-01T00:05:00.000Z');
+    const now = new Date('2026-01-01T00:06:00.000Z').getTime();
+    const { runs } = handleListRuns(dir, { state: 'waiting_input', now_ms: now });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ run_id: 'run-waiting', question: 'Should I proceed?', request_id: 'req-9', waiting_seconds: 60, stalled: false });
+    const active = handleListRuns(dir, { now_ms: now }).runs;
+    expect(active.map((run) => run.run_id).sort()).toEqual(['run-busy', 'run-waiting']);
+    expect(active.find((run) => run.run_id === 'run-busy')).not.toHaveProperty('question');
+    expect(active.find((run) => run.run_id === 'run-waiting')).toHaveProperty('request_id', 'req-9');
   });
 });
 
@@ -1171,17 +1208,20 @@ describe('memory handlers', () => {
     expect(result.results.every((r) => r.wing === 'africa')).toBe(true);
   });
 
-  it('handleMemoryRecall returns spatially-filtered drawers', () => {
-    handleMemoryStore(dir, { content: 'recall content one', wing: 'recall-wing', room: 'recall-room' });
-    handleMemoryStore(dir, { content: 'recall content two', wing: 'recall-wing', room: 'other-room' });
+  it('handleMemorySearch without query browses a wing/room as full drawers', () => {
+    handleMemoryStore(dir, { content: 'browse content one', wing: 'browse-wing', room: 'browse-room' });
+    handleMemoryStore(dir, { content: 'browse content two', wing: 'browse-wing', room: 'other-room' });
+    handleMemoryStore(dir, { content: 'browse content three', wing: 'other-wing', room: 'browse-room' });
     closeMemoryDb();
-    const result = handleMemoryRecall(dir, { wing: 'recall-wing', room: 'recall-room' }) as { drawers: unknown[] };
-    expect(result).toHaveProperty('drawers');
-    expect(result.drawers).toHaveLength(1);
+    const room = handleMemorySearch(dir, { wing: 'browse-wing', room: 'browse-room' }) as { results: Array<{ content: string }> };
+    expect(room.results.map((r) => r.content)).toEqual(['browse content one']);
+    const wing = handleMemorySearch(dir, { wing: 'browse-wing', limit: 1 }) as { results: unknown[] };
+    expect(wing.results).toHaveLength(1);
   });
 
-  it('handleMemoryRecall throws when wing is missing', () => {
-    expect(() => handleMemoryRecall(dir, {})).toThrow('wing is required');
+  it('handleMemorySearch throws without query or wing', () => {
+    expect(() => handleMemorySearch(dir, {})).toThrow('query or wing is required');
+    expect(() => handleMemorySearch(dir, { room: 'r' })).toThrow('query or wing is required');
   });
 
   it('handleMemoryWakeUp returns formatted text', () => {
@@ -1218,7 +1258,7 @@ describe('memory handlers', () => {
     // These four throw internally and return a structured error object
     expect(handleMemoryStore(badDir, { content: 'test' })).toEqual({ error: 'memory system not initialized' });
     expect(handleMemorySearch(badDir, { query: 'test' })).toEqual({ error: 'memory system not initialized' });
-    expect(handleMemoryRecall(badDir, { wing: 'general' })).toEqual({ error: 'memory system not initialized' });
+    expect(handleMemorySearch(badDir, { wing: 'general' })).toEqual({ error: 'memory system not initialized' });
     expect(handleMemoryStatus(badDir)).toEqual({ error: 'memory system not initialized' });
     // memoryWakeUp handles DB failure internally and returns empty text, so handleMemoryWakeUp returns { text: '' }
     expect(handleMemoryWakeUp(badDir, {})).toEqual({ text: '' });

@@ -59,9 +59,9 @@ orc doctor
 |---------|-------|-----|
 | Worker run requeued (`ERR_PTY_DEAD`) though its pane seemed alive | coordinator log: `probe dead for run <run_id> (n/2 dead in a row)` | A run is requeued only after 2 dead probes in a row (no tmux server, no session, or the pane process exited); tmux errors and timeouts log `probe indeterminate` and never count. See [contracts.md → Lease and liveness](./contracts.md#lease-and-liveness) |
 | Worker stuck in `in_progress` | `orc attach <agent_id>` (read-only, `--write` to type), or `orc terminal provider <run_id> --once` without a TTY; `orc doctor` | `orc task-reset <ref>`, then `orc worker-remove <agent_id>`; dispatch is automatic |
-| Dead worker, claim not released | `orc runs-active`, `orc doctor` | a dead process expires the claim at once; else `orc task-reset <ref>` |
+| Dead worker, claim not released | `orc runs`, `orc doctor` | a dead process expires the claim at once; else `orc task-reset <ref>` |
 | Offline/dead workers left in `orc status` (`idle\|running\|offline\|dead`) | `orc status` | a running coordinator removes them; without one `orc worker-gc` (keeps workers with a claim) |
-| Worker blocked on `run-input-request` | `orc waiting-input` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response="…"`; otherwise it fails on timeout and is requeued |
+| Worker blocked on `run-input-request` | `orc runs --state=waiting-input` | `orc run-input-respond --run-id=<id> --agent-id=<id> --response="…"`; otherwise it fails on timeout and is requeued |
 | Task `blocked` | `orc status`, `orc project task show <ref>` | fix the cause, `orc task-unblock <ref>` |
 | Task never dispatched | `orc project task show <ref>` (`depends_on`) | finish the dependency; `orc task-reset <dep-ref>` if it is stuck |
 | `finalization_state=blocked_finalize` | `orc status`, `orc run-info <run_id>` | [Finalization Failure](#finalization-failure-blocked_finalize) |
@@ -88,7 +88,7 @@ Run worktrees live at `<state>/worktrees/<run_id>`, registered in `$STATE/run-wo
 
 | Symptom | Check | Fix |
 |---------|-------|-----|
-| Worktree left after a run finished or failed | `git worktree list` vs `orc runs-active` | `git worktree remove [--force] <state>/worktrees/<run_id>`, then `git worktree prune` |
+| Worktree left after a run finished or failed | `git worktree list` vs `orc runs` | `git worktree remove [--force] <state>/worktrees/<run_id>`, then `git worktree prune` |
 | Worktree creation fails (path exists) | `git worktree list` | `git worktree prune`; `rm -rf <state>/worktrees/<run_id>` if it remains; `orc task-reset <ref>` |
 
 ## Providers

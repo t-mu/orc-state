@@ -20,7 +20,7 @@ export interface ActiveRunRow {
   idle_seconds: number | null;
   last_activity_at: string | null;
   last_activity_source: string | null;
-  /** Idle for STALLED_RUN_IDLE_SECONDS with no input wait and no tool call running (lib/runSignals.ts isStalled). */
+  /** Idle for STALLED_RUN_IDLE_SECONDS (or the caller's threshold) with no input wait and no tool call running (lib/runSignals.ts isStalled). */
   stalled: boolean;
   lease_expires_at: string | null;
   /** Project state directories only: the task's SQLite status and the revision this run is pinned to. */
@@ -47,12 +47,13 @@ function elapsedSeconds(anchor: string | null, now: number): number | null {
   return ms == null || Number.isNaN(ms) ? null : Math.round(ms / 1000);
 }
 
-/** Shared by the legacy `runs-active` path and the control API snapshot. */
+/** Shared by `list_runs` / `orc runs` (lib/runList.ts) and the control API snapshot. */
 export function projectActiveRuns(
   claims: Claim[],
   runActivity: Map<string, RunActivityDetail>,
   now = Date.now(),
   hookActivity: RunActivityMap = {},
+  staleAfterMs = STALLED_RUN_IDLE_SECONDS * 1000,
 ): ActiveRunRow[] {
   return claims.filter((c) => ['claimed', 'in_progress'].includes(c.state)).map((c) => {
     const startupAnchor = claimedRunStartupAnchor(c);
@@ -71,7 +72,7 @@ export function projectActiveRuns(
       idle_seconds: idleSeconds,
       last_activity_at: activity?.ts ?? null,
       last_activity_source: activity?.source ?? null,
-      stalled: isStalled(c, idleSeconds == null ? null : idleSeconds * 1000, hookActivity[c.run_id], STALLED_RUN_IDLE_SECONDS * 1000, now),
+      stalled: isStalled(c, idleSeconds == null ? null : idleSeconds * 1000, hookActivity[c.run_id], staleAfterMs, now),
       lease_expires_at: c.lease_expires_at ?? null,
     };
   });

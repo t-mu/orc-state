@@ -55,7 +55,7 @@ describe('unknown flags are usage errors', () => {
 describe('project-scoped reads fail outside a project', () => {
   it.each([
     ['cli/worker-status.ts', []],
-    ['cli/waiting-input.ts', ['--json']],
+    ['cli/runs.ts', ['--json']],
     ['cli/sessions.ts', ['--json']],
     ['cli/events.ts', ['--json']],
     ['cli/run-info.ts', ['run-1']],

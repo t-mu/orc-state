@@ -169,10 +169,8 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleListTasks(stateDir, args);
     case 'list_agents':
       return handlers.handleListAgents(stateDir, args);
-    case 'list_active_runs':
-      return handlers.handleListActiveRuns(stateDir);
-    case 'list_stalled_runs':
-      return handlers.handleListStalledRuns(stateDir, args);
+    case 'list_runs':
+      return handlers.handleListRuns(stateDir, args);
     case 'get_task':
       return handlers.handleGetTask(stateDir, args);
     case 'get_status':
@@ -185,16 +183,12 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleUpdateTask(stateDir, args);
     case 'get_run':
       return handlers.handleGetRun(stateDir, args);
-    case 'list_waiting_input':
-      return handlers.handleListWaitingInput(stateDir);
     case 'query_events':
       return handlers.handleQueryEvents(stateDir, args);
     case 'list_worktrees':
       return handlers.handleListWorktrees(stateDir);
     case 'memory_wake_up':
       return handlers.handleMemoryWakeUp(stateDir, args);
-    case 'memory_recall':
-      return handlers.handleMemoryRecall(stateDir, args);
     case 'memory_search':
       return handlers.handleMemorySearch(stateDir, args);
     case 'memory_store':

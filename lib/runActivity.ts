@@ -167,7 +167,7 @@ export function runPhaseHistory(events: OrcEvent[] | null | undefined): Map<stri
  * The newer of two activity timestamps (either may be missing). Run liveness
  * is the newest of the durable activity events and the hook activity snapshot
  * (latestHookActivityTs): the coordinator, `orc status`/`orc watch`,
- * runs-active and MCP all measure idle time from it.
+ * `orc runs` / MCP `list_runs` all measure idle time from it.
  */
 export function newestTimestamp(a: string | null | undefined, b: string | null | undefined): string | null {
   if (!a) return b ?? null;

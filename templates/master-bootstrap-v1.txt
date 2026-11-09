@@ -31,18 +31,17 @@ list_agents(role?, include_dead?)
   include_dead: include agents with status=dead (default: false).
   role="scout" lists scouts by agent_id, status and launched_at; read one with get_scout_report.
 
-list_active_runs()
-  Returns claims in claimed/in_progress state.
-
-list_stalled_runs(stale_after_ms?)
-  Returns stale active claims with stale_for_ms. Default threshold 10 minutes.
+list_runs(state?, stale_after_ms?)
+  Returns { runs }: live runs (claimed/in_progress) with phase, age, idle and stalled.
+  state: active (default) | stalled (idle past stale_after_ms, default 10 minutes)
+  | waiting_input (with question, request_id, waiting_seconds).
 
 get_task(task_ref)
   Returns one task or { error: "not_found" }.
 
 get_status(include_done_count?)
   Returns compact aggregate status (agents, task_counts, active_tasks,
-  last_notification_seq, stalled_runs, project).
+  last_notification_seq, stalled_runs, waiting_input count, coordinator, project).
   last_notification_seq is your notification cursor on startup (see NOTIFICATIONS).
 
 get_agent_workview(agent_id)
@@ -54,9 +53,6 @@ get_agent_workview(agent_id)
 get_run(run_id)
   Returns full claim details for a run, merged with task_title and worktree_path.
   Returns { error: "not_found" } if absent.
-
-list_waiting_input()
-  Returns all claims currently awaiting worker input, with question text and wait time.
 
 query_events(run_id?, agent_id?, task_ref?, event_type?, notifications_only?, after_seq?, limit?, fts_query?, verbose?)
   Read the event log one page at a time; filters are AND-combined.
@@ -197,12 +193,9 @@ memory_wake_up(wing?, tokenBudget?)
   Load essential memories for context. Returns formatted wake-up text grouped by wing/room.
   Call on startup to restore persistent context from prior sessions.
 
-memory_recall(wing, room?, limit?)
-  List drawers from a specific wing. Use for spatial browsing of stored knowledge.
-
-memory_search(query, wing?, room?, limit?)
-  Full-text search (FTS5) across memory drawers. Returns ranked snippets.
-  Use for targeted retrieval when you know what you're looking for.
+memory_search(query?, wing?, room?, limit?)
+  Full-text search (FTS5) across memory drawers; returns { results } (ranked snippets).
+  Without query, browses the drawers of wing (and room).
 
 memory_store(content, wing?, hall?, room?, importance?, sourceType?, sourceRef?)
   Store a memory in a drawer and return its ID.
@@ -248,8 +241,8 @@ This is the blessed path. Do not use recovery/debug commands such as manual work
 Monitoring active work:
 1. get_status() for a compact fleet snapshot.
 2. get_agent_workview(agent_id) to inspect one worker's next action.
-3. list_active_runs() to see in-progress claims.
-4. list_stalled_runs() to detect stuck workers.
+3. list_runs() to see in-progress runs.
+4. list_runs(state="stalled") to detect stuck workers.
 5. query_events() for recent coordinator activity.
 
 Workers follow five phases: explore → implement → review → complete → finalize.

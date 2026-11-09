@@ -293,6 +293,8 @@ export type StatusView = {
   tasks: TaskCounts;
   claims: {
     active: ActiveClaimView[]; total: number; awaiting_run_started: number; in_progress: number; stalled: number;
+    /** Live runs waiting for an input response (the rows are `waiting_input`). */
+    waiting_input: number;
   };
   finalization: {
     total: number; awaiting_finalize: number; finalize_rebase_requested: number;
@@ -401,6 +403,7 @@ export function buildStatus(
     }));
   const blockedFinalizationRuns = finalizationRuns.filter((claim) => claim.finalization_state === 'blocked_finalize');
 
+  const waitingInput = listWaitingInput(stateDir, claims, nowMs);
   const descriptor = readProjectDescriptor(stateDir);
   return {
     cursor,
@@ -444,6 +447,7 @@ export function buildStatus(
       awaiting_run_started: awaitingRunStarted,
       in_progress: inProgressRuns,
       stalled: activeClaimsWithMetrics.filter((claim) => claim.stalled).length,
+      waiting_input: waitingInput.length,
     },
     finalization: {
       total: finalizationRuns.length,
@@ -456,7 +460,7 @@ export function buildStatus(
       blocked_preserved: blockedFinalizationRuns,
     },
     failures: startupFailures,
-    waiting_input: listWaitingInput(stateDir, claims, nowMs),
+    waiting_input: waitingInput,
     recentEvents,
     eventReadError,
   };

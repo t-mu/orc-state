@@ -12,6 +12,7 @@ import type { ControlHealth } from './controlServer.ts';
 import type { DurableCommand } from './commandDelivery.ts';
 import type { SemanticMessage, SendMessageInput } from './messageRouter.ts';
 import type { ControlSnapshot } from './statusProjection.ts';
+import type { RunListRow, RunListState } from './runList.ts';
 import type { StatusView } from './statusView.ts';
 import type { TerminalRecord } from './terminalBroker.ts';
 import type { LifecycleRequest, LifecycleResult } from './workerLifecycle.ts';
@@ -152,6 +153,15 @@ export class ControlClient {
   health(): Promise<ControlHealth> { return this.call('GET', '/v1/health'); }
 
   snapshot(): Promise<ControlSnapshot> { return this.call('GET', '/v1/snapshot'); }
+
+  /** The `orc runs --json` / MCP `list_runs` view (lib/runList.ts). */
+  runs({ state, stale_after_ms }: { state?: RunListState | undefined; stale_after_ms?: number | undefined } = {}): Promise<{ runs: RunListRow[] }> {
+    const query = new URLSearchParams();
+    if (state !== undefined) query.set('state', state);
+    if (stale_after_ms !== undefined) query.set('stale_after_ms', String(stale_after_ms));
+    const qs = query.toString();
+    return this.call('GET', `/v1/runs${qs ? `?${qs}` : ''}`);
+  }
 
   /** The `orc status --json` view; `events` (0-200, default 20) sets how many recent events it carries. */
   status({ events }: { events?: number } = {}): Promise<StatusView> {
