@@ -12,7 +12,8 @@ import { detectLifecycleIssues, type LifecycleIssue } from './lifecycleDiagnosti
 import { claimedRunStartupAnchor } from './runActivity.ts';
 import { getOrphanedClaims } from './claimDiagnostics.ts';
 import { checkSandboxControlSocket, checkSandboxDependencies } from './sandboxDeps.ts';
-import { inspectRuntimeSchema } from './runtimeSchema.ts';
+import { inspectRuntimeSchema, RUNTIME_SCHEMA } from './runtimeSchema.ts';
+import { PROJECT_TASK_SCHEMA } from './projectTaskStore.ts';
 import { coordinatorSchemaProblems, inspectSchemaRange, type SchemaRange } from './schemaCompat.ts';
 import type { ControlHealth } from './controlServer.ts';
 import { coordinatorPidFileProblem } from './coordinatorLiveness.ts';
@@ -240,12 +241,12 @@ async function coordinatorHealth(stateDir: string): Promise<ControlHealth | null
   }
 }
 
-/** The running coordinator's schema support against the databases on disk. */
+/** The running coordinator's schema support against the databases on disk, and the migrations it blocks. */
 function checkCoordinatorSchema(stateDir: string, health: Partial<ControlHealth> | null): DoctorChecks['coordinatorSchema'] {
   const databases = { events: inspectSchemaRange(stateDir, 'events'), runtime: inspectSchemaRange(stateDir, 'runtime') };
   if (typeof health?.schema_version !== 'number') return { ok: true, problems: [], coordinator: null, databases };
   const coordinator = { schema_version: health.schema_version, ...(health.schemas ? { schemas: health.schemas } : {}) };
-  const problems = coordinatorSchemaProblems(coordinator, databases);
+  const problems = coordinatorSchemaProblems(coordinator, databases, { events: RUNTIME_SCHEMA, runtime: PROJECT_TASK_SCHEMA });
   return { ok: problems.length === 0, problems, coordinator, databases };
 }
 

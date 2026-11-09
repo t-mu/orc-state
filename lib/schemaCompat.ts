@@ -97,26 +97,38 @@ export function assertMigrationAllowed(stateDir: string, database: SchemaDatabas
   throw new SchemaMigrationRefusedError(
     `${DB_FILES[database]} needs migration from schema ${fromVersion} to ${target.version}, but the running coordinator (PID ${live.pid}) `
     + `supports schema ${supported} and schema ${target.version} needs code of schema ${target.min_compatible} or newer. `
-    + 'Run `orc coordinator restart` (or `orc start-session`) so the new coordinator migrates it.',
+    + 'Run `orc coordinator restart` so the new coordinator migrates it; to back up first, run `orc coordinator stop`, '
+    + 'back up (docs/recovery.md), then `orc coordinator start`.',
   );
 }
 
 /**
  * Problems for `orc doctor`: each database the running coordinator's
- * schema support does not cover. `coordinator` is what its `/v1/health`
- * reported (`schemas`, or only `schema_version` from an older coordinator).
+ * schema support does not cover, and each database below this code's
+ * schema (`targets`) whose migration that coordinator blocks.
+ * `coordinator` is what its `/v1/health` reported (`schemas`, or only
+ * `schema_version` from an older coordinator).
  */
 export function coordinatorSchemaProblems(
   coordinator: { schemas?: Partial<SchemaSupport>; schema_version?: number },
   databases: Partial<Record<SchemaDatabase, SchemaRange | null>>,
+  targets: Partial<SchemaSupport> = {},
 ): string[] {
   const problems: string[] = [];
   for (const database of Object.keys(DB_FILES) as SchemaDatabase[]) {
     const db = databases[database];
-    const supported = coordinator.schemas?.[database]?.version ?? (database === 'events' ? coordinator.schema_version : undefined);
-    if (!db || typeof supported !== 'number' || codeSupportsSchema(supported, db)) continue;
-    problems.push(`running coordinator supports ${DB_FILES[database]} schema ${supported}, but the database is at schema ${db.version} `
-      + `(needs code of schema ${db.min_compatible} or newer); run orc coordinator restart`);
+    const supported = coordinator.schemas?.[database]?.version ?? (database === 'events' ? coordinator.schema_version : db?.version);
+    if (!db || typeof supported !== 'number') continue;
+    if (!codeSupportsSchema(supported, db)) {
+      problems.push(`running coordinator supports ${DB_FILES[database]} schema ${supported}, but the database is at schema ${db.version} `
+        + `(needs code of schema ${db.min_compatible} or newer); run orc coordinator restart`);
+      continue;
+    }
+    const target = targets[database];
+    if (db.version > 0 && target && db.version < target.version && !codeSupportsSchema(supported, target)) {
+      problems.push(`${DB_FILES[database]} needs migration from schema ${db.version} to ${target.version}, which the running coordinator `
+        + `(schema ${supported}) cannot read, so orc refuses to migrate it; run orc coordinator restart`);
+    }
   }
   return problems;
 }

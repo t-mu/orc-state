@@ -65,6 +65,14 @@ const userVersion = (file: string): number => {
   try { return db.pragma('user_version', { simple: true }) as number; } finally { db.close(); }
 };
 
+const sqliteObjects = (file: string): string[] => {
+  const db = new Database(join(dir, file), { readonly: true });
+  try {
+    return (db.prepare('SELECT type, name FROM sqlite_master ORDER BY type, name').all() as Array<{ type: string; name: string }>)
+      .map((row) => `${row.type}:${row.name}`);
+  } finally { db.close(); }
+};
+
 /** Pretend newer code moved the database to `version`, declaring `minCompatible` as the oldest code that can read it. */
 function bumpTo(file: string, version: number, minCompatible: number): void {
   const db = new Database(join(dir, file));
@@ -108,8 +116,11 @@ describe('migration under a live coordinator', () => {
   it('refuses to migrate events.db while an incompatible coordinator is live', async () => {
     eventsDbAtVersion8();
     await startFakeCoordinator({ events: { version: 8, min_compatible: 8 }, runtime: { version: 5, min_compatible: 5 } });
-    expect(() => initEventsDb(dir)).toThrow(/events\.db needs migration from schema 8 to 9/);
+    const objects = sqliteObjects('events.db');
+    expect(() => initEventsDb(dir)).toThrow(/events\.db needs migration from schema 8 to 9.*orc coordinator restart/);
     expect(userVersion('events.db')).toBe(8);
+    // No table or index was created or dropped under the coordinator either.
+    expect(sqliteObjects('events.db')).toEqual(objects);
   });
 
   it('migrates when the live coordinator can read the target schema, or when none runs', async () => {
@@ -189,5 +200,15 @@ describe('coordinatorSchemaProblems', () => {
     expect(coordinatorSchemaProblems({ schema_version: 8 }, current)).toEqual([
       'running coordinator supports events.db schema 8, but the database is at schema 9 (needs code of schema 9 or newer); run orc coordinator restart',
     ]);
+  });
+
+  it('flags a pending migration the running coordinator blocks, and not one it can read', () => {
+    const notMigrated = { events: { version: 8, min_compatible: 8 }, runtime: { version: 5, min_compatible: 5 } };
+    expect(coordinatorSchemaProblems({ schema_version: 8 }, notMigrated, current)).toEqual([
+      'events.db needs migration from schema 8 to 9, which the running coordinator (schema 8) cannot read, so orc refuses to migrate it; run orc coordinator restart',
+      'runtime.db needs migration from schema 5 to 6, which the running coordinator (schema 5) cannot read, so orc refuses to migrate it; run orc coordinator restart',
+    ]);
+    expect(coordinatorSchemaProblems({ schema_version: 9, schemas: current }, notMigrated, current)).toEqual([]);
+    expect(coordinatorSchemaProblems({ schema_version: 9, schemas: current }, current, current)).toEqual([]);
   });
 });
