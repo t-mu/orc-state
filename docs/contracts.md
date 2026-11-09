@@ -284,7 +284,7 @@ Format `<transport>:<agent_id>` (`tmux:broken-nose`, `tmux:master`, `app:…`). 
 | Transport | Owner | Survives coordinator exit |
 |-----------|-------|---------------------------|
 | `tmux` | private tmux server `tmux -L orc-<hash>` | yes; writable by any orc process of the user |
-| `app` | the coordinator (structured runtime stdio) | no; run requeued |
+| `app` | detached `codex app-server` on `<state>/app-server/<agent>.sock` | yes; the next coordinator adopts it after a PID + start-time check, else the run is resumed or requeued |
 
 ### Session supervision
 

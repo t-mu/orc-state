@@ -211,7 +211,7 @@ Times in ms. Behaviour of the liveness thresholds: [contracts.md](contracts.md).
 | Runtime | Behaviour |
 |---------|-----------|
 | `cli` (default) | Provider's interactive CLI in a tmux terminal; input is unacknowledged typed text. |
-| `structured` | Codex runs `codex app-server --listen stdio://` (session `app:<agent_id>`). Other providers stay on `cli` and record `provider_ref.runtime_fallback`. |
+| `structured` | Codex runs `codex app-server --listen unix://<state>/app-server/<agent_id>.sock`, detached (session `app:<agent_id>`). Other providers stay on `cli` and record `provider_ref.runtime_fallback`. |
 
 Codex app-server:
 
@@ -220,7 +220,7 @@ Codex app-server:
 - Input is delivered between turns only; nudges skip a mid-turn worker; `FINALIZE_SUCCESS` is not delivered.
 - The handshake marks the session ready (no `report-for-duty`).
 - Steering, interrupt and approvals are refused (`unsupported_capability`); threads run with `approvalPolicy: never`.
-- A crashed app-server is resumed on its thread (`thread/resume`, [Session Resume](#session-resume)). The session ends with the coordinator that launched it; that run is requeued. Roll back with `runtime: cli`.
+- The app-server outlives a coordinator restart; the next coordinator adopts it and its running turn ([adapters.md → Codex app-server sessions](./adapters.md#codex-app-server-sessions)). A crashed app-server is resumed on its thread (`thread/resume`, [Session Resume](#session-resume)). Roll back with `runtime: cli`.
 
 ## Session Resume
 

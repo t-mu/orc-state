@@ -60,6 +60,7 @@ const offlineAdapter = {
   detectInputBlock: () => null,
   // No exit was observed, so the run is requeued rather than resumed.
   exitStatus: () => null,
+  survivesCoordinatorExit: () => false,
   inspectSession: (): SessionInspection => ({
     transport: 'legacy', alive: false, writable: false, pid: null, processStart: null, reason: 'not a tmux or app-server session',
   }),
@@ -122,7 +123,11 @@ export function createAdapter(provider: string, options: Record<string, unknown>
     ownsSession: (sessionHandle: string) => route(sessionHandle).ownsSession(sessionHandle),
     detectInputBlock: (sessionHandle: string, hookEvents?: Array<{ message?: string }>) => route(sessionHandle).detectInputBlock(sessionHandle, hookEvents),
     inspectSession: (sessionHandle: string) => route(sessionHandle).inspectSession(sessionHandle),
-    survivesCoordinatorExit: (sessionHandle: string) => tmux.survivesCoordinatorExit(sessionHandle),
+    adoptSession: (sessionHandle: string) => {
+      const target = route(sessionHandle);
+      return target === structured ? structured.adoptSession(sessionHandle) : Promise.resolve(target.inspectSession(sessionHandle));
+    },
+    survivesCoordinatorExit: (sessionHandle: string) => route(sessionHandle).survivesCoordinatorExit(sessionHandle),
     exitStatus: (sessionHandle: string) => route(sessionHandle).exitStatus(sessionHandle),
   };
   assertAdapterContract(adapter);

@@ -173,8 +173,23 @@ export async function adapterInspectSession(adapter: unknown, sessionHandle: str
 }
 
 /**
+ * Optional capability: take over a live session another coordinator launched
+ * (codex app-server: reconnect to its socket and reattach its thread), and
+ * report the result as an inspection. Adapters without it are inspected as is.
+ */
+export async function adapterAdoptSession(adapter: unknown, sessionHandle: string): Promise<SessionInspection | null> {
+  const adopt = (adapter as { adoptSession?: (handle: string) => Promise<SessionInspection> })?.adoptSession;
+  if (typeof adopt !== 'function') return adapterInspectSession(adapter, sessionHandle);
+  try {
+    return await adopt.call(adapter, sessionHandle);
+  } catch (error) {
+    return { transport: 'app-server', alive: false, writable: false, pid: null, processStart: null, reason: (error as Error).message };
+  }
+}
+
+/**
  * Optional capability: sessions whose process is supervised outside the
- * coordinator (tmux) survive a coordinator exit and must not be stopped by it.
+ * coordinator (tmux, the detached codex app-server) survive a coordinator exit and must not be stopped by it.
  */
 export function adapterSurvivesCoordinatorExit(adapter: unknown, sessionHandle: string): boolean {
   const survives = (adapter as { survivesCoordinatorExit?: (handle: string) => boolean })?.survivesCoordinatorExit;

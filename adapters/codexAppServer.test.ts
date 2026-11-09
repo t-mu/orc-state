@@ -5,7 +5,7 @@ import { cleanupTempStateDir, createTempStateDir } from '../test-fixtures/stateH
 import type { RuntimeEvent } from './runtime.ts';
 
 const fixtureBin = resolve(import.meta.dirname, '..', 'test-fixtures', 'bin');
-const FAKE_KEYS = ['FAKE_CODEX_ACCOUNT', 'FAKE_CODEX_SPLIT_FRAMES', 'FAKE_CODEX_STARTED_FIRST', 'FAKE_CODEX_LATE_ITEM',
+const FAKE_KEYS = ['FAKE_CODEX_NO_LIST_TURNS', 'FAKE_CODEX_ACCOUNT', 'FAKE_CODEX_SPLIT_FRAMES', 'FAKE_CODEX_STARTED_FIRST', 'FAKE_CODEX_LATE_ITEM',
   'FAKE_CODEX_APPROVAL', 'FAKE_CODEX_TURN_STATUS', 'FAKE_CODEX_TURN_HOLD_MS', 'FAKE_CODEX_NOISE', 'FAKE_CODEX_TURN_SCRIPT'];
 
 let dir: string;
@@ -45,6 +45,11 @@ async function waitFor(check: () => boolean, timeoutMs = 8000): Promise<void> {
   }
 }
 
+/** The fake provider's own PID (the session PID is its exit-recording wrapper's). */
+function providerPid(): number {
+  return records().filter((entry) => entry.kind === 'startup').at(-1)!.pid as number;
+}
+
 const turnEvents = (events: RuntimeEvent[], turnId: string) => events.filter((event) => event.turn_id === turnId).map((event) => event.type);
 
 beforeEach(() => {
@@ -61,22 +66,16 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const entry of started.splice(0)) await entry.stop(entry.handle);
+  // A session whose record does not match its process (identity tests) is not stoppable through the adapter.
+  for (const entry of records().filter((record) => record.kind === 'startup')) {
+    try { process.kill(entry.pid as number, 'SIGKILL'); } catch { /* already gone */ }
+  }
   process.env.PATH = originalPath;
   delete process.env.ORC_STATE_DIR;
   delete process.env.FAKE_CODEX_RECORD;
   for (const key of FAKE_KEYS) delete process.env[key];
   delete process.env.OPENAI_API_KEY;
   cleanupTempStateDir(dir);
-});
-
-describe('JsonLineDecoder', () => {
-  it('reassembles partial frames, splits batched frames and skips non-JSON lines', async () => {
-    const { JsonLineDecoder } = await import('./codexAppServer.ts');
-    const decoder = new JsonLineDecoder();
-    expect(decoder.push('{"id":1,"res')).toEqual([]);
-    expect(decoder.push('ult":{}}\nnot json\n{"method":"a"}\n{"method"')).toEqual([{ id: 1, result: {} }, { method: 'a' }]);
-    expect(decoder.push(':"b"}\n[1,2]\n')).toEqual([{ method: 'b' }]);
-  });
 });
 
 describe('codex app-server runtime: session start', () => {
@@ -97,6 +96,7 @@ describe('codex app-server runtime: session start', () => {
     expect(events.map((event) => event.type)).toEqual(['session_ready']);
     expect(events[0].provider_meta).toMatchObject({ plan_type: 'team', resumed: false });
     expect(adapter.inspectSession(result.session_handle)).toMatchObject({ transport: 'app-server', alive: true, writable: true });
+    expect(records().find((entry) => entry.kind === 'startup')?.argv).toEqual(expect.arrayContaining(['--listen', `unix://${join(dir, 'app-server', 'worker-1.sock')}`]));
   });
 
   it('strips API-key billing variables from the provider environment', async () => {
@@ -151,9 +151,12 @@ describe('codex app-server runtime: session start', () => {
     expect(frames('thread/start')).toEqual([]);
     expect(frames('thread/resume')[0].params).toMatchObject({ threadId: 'thread-earlier', developerInstructions: expect.stringContaining('BOOT') });
     expect(adapter.exitStatus(result.session_handle)).toBeNull();
-    process.kill((result.provider_ref as { pid: number }).pid, 'SIGKILL');
+    process.kill(providerPid(), 'SIGKILL');
     await waitFor(() => adapter.exitStatus(result.session_handle) != null);
     expect(adapter.exitStatus(result.session_handle)).toEqual({ code: null, signal: 'SIGKILL' });
+    // The status is on disk: a process that never attached the session reads it too.
+    const other = (await import('./codexAppServer.ts')).createCodexAppServerAdapter();
+    expect(other.exitStatus(result.session_handle)).toEqual({ code: null, signal: 'SIGKILL' });
   });
 
   it('fails clearly for a missing worktree without spawning', async () => {
@@ -246,9 +249,9 @@ describe('codex app-server runtime: turns and ACKs', () => {
     await waitFor(() => events.some((event) => event.type === 'turn_failed'));
     expect(events.find((event) => event.type === 'turn_failed')).toMatchObject({ command_id: 'cmd-f', provider_meta: { status: 'failed' } });
 
-    const pid = adapter.inspectSession(session_handle).pid!;
-    process.kill(pid, 'SIGKILL');
+    process.kill(providerPid(), 'SIGKILL');
     await waitFor(() => events.some((event) => event.type === 'session_exited'));
+    expect(events.find((event) => event.type === 'session_exited')?.provider_meta).toMatchObject({ code: null, signal: 'SIGKILL' });
     expect(adapter.inspectSession(session_handle)).toMatchObject({ alive: false, writable: false });
     await expect(adapter.submit(session_handle, 'x')).rejects.toThrow('No live app-server session');
     await expect(adapter.heartbeatProbe(session_handle)).resolves.toBe(false);
@@ -258,7 +261,8 @@ describe('codex app-server runtime: turns and ACKs', () => {
     const { adapter } = await loadAdapter();
     expect(adapter.inspectSession('app:someone-else')).toMatchObject({ alive: false, writable: false, reason: expect.stringContaining('not attached to this process') });
     expect(adapter.ownsSession('app:someone-else')).toBe(false);
-    expect(adapter.survivesCoordinatorExit()).toBe(false);
+    expect(adapter.survivesCoordinatorExit('app:someone-else')).toBe(true);
+    expect(adapter.survivesCoordinatorExit('tmux:someone-else')).toBe(false);
   });
 
   it('lets another process see and stop a session through its recorded process identity', async () => {
@@ -280,5 +284,119 @@ describe('codex app-server runtime: turns and ACKs', () => {
     await other.stop(session_handle);
     await waitFor(() => events.some((event) => event.type === 'session_exited'));
     expect(other.inspectSession(session_handle)).toMatchObject({ alive: false });
+  });
+});
+
+describe('codex app-server runtime: adoption after a coordinator restart', () => {
+  /** Record the session as the coordinator does (lib/workerRuntime.ts), then let the launching adapter go. */
+  async function launchAndDetach(adapter: Awaited<ReturnType<typeof loadAdapter>>['adapter'], { processStart, thread }: { processStart?: string; thread?: string | null } = {}) {
+    const result = await startSession(adapter);
+    const ref = result.provider_ref as { pid: number; process_start: string; thread_id: string };
+    const { initEventsDb, withEventDbTransaction } = await import('../lib/eventLog.ts');
+    initEventsDb(dir);
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, transport, process_pid, process_start,
+        provider_conversation_id, started_at, updated_at)
+        VALUES ('s-1', NULL, 'worker-1', 'codex', 'running', 'app-server', ?, ?, ?, '2026-01-01', '2026-01-01')`)
+        .run(ref.pid, processStart ?? ref.process_start, thread === undefined ? ref.thread_id : thread);
+    });
+    return { ...result, ref };
+  }
+
+  async function restartedAdapter() {
+    const next = (await import('./codexAppServer.ts')).createCodexAppServerAdapter();
+    const events: RuntimeEvent[] = [];
+    next.onEvent((event) => events.push(event));
+    started.push({ stop: next.stop, handle: 'app:worker-1' });
+    return { next, events };
+  }
+
+  it('reattaches a live app-server and its running turn, and the turn ACKs the command that started it', async () => {
+    process.env.FAKE_CODEX_TURN_HOLD_MS = '600';
+    const { adapter } = await loadAdapter();
+    const { session_handle, ref } = await launchAndDetach(adapter);
+    await adapter.submit(session_handle, 'long task', { commandId: 'cmd-long' });
+    adapter.detach(session_handle);
+
+    const { next, events } = await restartedAdapter();
+    expect(next.inspectSession(session_handle)).toMatchObject({ alive: true, writable: false });
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: true, writable: true, pid: ref.pid, processStart: ref.process_start });
+    expect(frames('thread/resume').at(-1)?.params).toMatchObject({ threadId: ref.thread_id, excludeTurns: true });
+    expect(next.turnActive(session_handle)).toBe(true);
+    expect(next.threadId(session_handle)).toBe(ref.thread_id);
+
+    await waitFor(() => events.some((event) => event.type === 'turn_completed'));
+    expect(events.find((event) => event.type === 'turn_completed')).toMatchObject({ turn_id: 'turn-1', command_id: 'cmd-long' });
+    expect(next.turnActive(session_handle)).toBe(false);
+    await expect(next.submit(session_handle, 'after restart', { commandId: 'cmd-next' })).resolves.toEqual({ turn_id: 'turn-2', mode: 'started' });
+    // Adopting again is a no-op on an attached session.
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: true, writable: true });
+    expect(frames('thread/resume')).toHaveLength(1);
+  });
+
+  it('falls back to the full thread history when the provider cannot list turns yet, and keeps the command from the turn record', async () => {
+    process.env.FAKE_CODEX_TURN_HOLD_MS = '600';
+    process.env.FAKE_CODEX_NO_LIST_TURNS = '1';
+    const { adapter } = await loadAdapter();
+    const { session_handle } = await launchAndDetach(adapter);
+    await adapter.submit(session_handle, 'just started', { commandId: 'cmd-early' });
+    adapter.detach(session_handle);
+
+    const { next, events } = await restartedAdapter();
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: true, writable: true });
+    expect(frames('thread/resume').slice(-2).map((frame) => (frame.params as { excludeTurns?: boolean }).excludeTurns)).toEqual([true, undefined]);
+    expect(next.turnActive(session_handle)).toBe(true);
+    await waitFor(() => events.some((event) => event.type === 'turn_completed'));
+    expect(events.find((event) => event.type === 'turn_completed')).toMatchObject({ turn_id: 'turn-1', command_id: 'cmd-early' });
+  });
+
+  it('reports a turn that finished while no coordinator was attached', async () => {
+    const { adapter } = await loadAdapter();
+    const { session_handle } = await launchAndDetach(adapter);
+    adapter.detach(session_handle);
+    // Another client drives a turn to the end while no coordinator listens (the provider keeps the turn).
+    const driver = await loadAdapter();
+    await driver.adapter.adoptSession(session_handle);
+    await driver.adapter.submit(session_handle, 'work', { commandId: 'cmd-offline' });
+    await waitFor(() => driver.events.some((event) => event.type === 'turn_completed'));
+    driver.adapter.detach(session_handle);
+
+    const { next, events } = await restartedAdapter();
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: true, writable: true });
+    expect(events.filter((event) => event.type === 'turn_completed')).toEqual([expect.objectContaining({ turn_id: 'turn-1', command_id: 'cmd-offline' })]);
+    expect(next.turnActive(session_handle)).toBe(false);
+  });
+
+  it('does not adopt an app-server that exited, and says why', async () => {
+    const { adapter } = await loadAdapter();
+    const { session_handle } = await launchAndDetach(adapter);
+    adapter.detach(session_handle);
+    process.kill(providerPid(), 'SIGKILL');
+    await waitFor(() => adapter.exitStatus(session_handle) != null);
+
+    const { next } = await restartedAdapter();
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: false, writable: false, reason: 'app-server exited (signal SIGKILL) while no coordinator was attached' });
+    expect(next.exitStatus(session_handle)).toEqual({ code: null, signal: 'SIGKILL' });
+  });
+
+  it('does not adopt a process whose identity does not match the record', async () => {
+    const { adapter } = await loadAdapter();
+    const { session_handle } = await launchAndDetach(adapter, { processStart: 'proc:not-this-one' });
+    adapter.detach(session_handle);
+
+    const { next } = await restartedAdapter();
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: false, reason: expect.stringContaining('now belongs to another process') });
+    expect(frames('initialize')).toHaveLength(1);
+  });
+
+  it('stops a live app-server it cannot reattach, so it does not work unsupervised', async () => {
+    const { adapter } = await loadAdapter();
+    const { session_handle, ref } = await launchAndDetach(adapter, { thread: null });
+    adapter.detach(session_handle);
+
+    const { next } = await restartedAdapter();
+    await expect(next.adoptSession(session_handle)).resolves.toMatchObject({ alive: false, reason: 'no recorded provider thread to reattach; stopped the app-server' });
+    const { isPidAlive } = await import('../lib/processIdentity.ts');
+    expect(isPidAlive(ref.pid)).toBe(false);
   });
 });

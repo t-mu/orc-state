@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /**
- * Fake `codex app-server --listen stdio://` for runtime tests (task 203).
- * Speaks the subset of the JSON-RPC line protocol the structured runtime uses.
+ * Fake `codex app-server --listen unix://PATH` for runtime tests (task 203).
+ * Speaks the subset of the JSON-RPC protocol the structured runtime uses, one
+ * message per WebSocket text frame. Like the real server it keeps running when
+ * a client disconnects (turns go on; their notifications reach whoever is
+ * connected), and a later client can reattach with thread/resume and read the
+ * last turn with thread/turns/list.
  *
  * Knobs (env):
  *   FAKE_CODEX_ACCOUNT          chatgpt (default) | apiKey | none
@@ -14,11 +18,15 @@
  *   FAKE_CODEX_TURN_SCRIPT      shell command run per turn (cwd = server cwd; FAKE_TURN_TEXT = input text,
  *                               FAKE_THREAD_INSTRUCTIONS = the thread's developerInstructions)
  *   FAKE_CODEX_TURN_HOLD_MS     keep each turn running this long before completing
- *   FAKE_CODEX_NOISE=1          print a non-JSON line before the first frame
+ *   FAKE_CODEX_NOISE=1          send a non-JSON text frame before the first protocol frame
+ *   FAKE_CODEX_NO_LIST_TURNS=1  like Codex 0.163 just after a turn starts: thread/turns/list and
+ *                               thread/resume with excludeTurns fail ("list_turns is not supported yet"),
+ *                               and a full thread/resume returns the turns without their user message
  */
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { createServer, type Socket } from 'node:net';
+import { acceptKey, encodeFrame, FrameDecoder, OPCODE } from '../adapters/unixWebSocket.ts';
 
 const env = process.env;
 const record = (value: Record<string, unknown>) => {
@@ -28,29 +36,39 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 record({
   kind: 'startup',
+  pid: process.pid,
   argv: process.argv.slice(2),
   cwd: process.cwd(),
   api_key_env: ['OPENAI_API_KEY', 'CODEX_API_KEY', 'ANTHROPIC_API_KEY'].filter((key) => env[key] !== undefined),
 });
 
+const clients = new Set<Socket>();
+
+/** Write raw bytes to every connected client, in small pieces when FAKE_CODEX_SPLIT_FRAMES is set. */
 let writeChain = Promise.resolve();
-function send(frame: Record<string, unknown>): Promise<void> {
-  const line = `${JSON.stringify(frame)}\n`;
+function sendText(text: string, only?: Socket): Promise<void> {
+  const bytes = encodeFrame(OPCODE.text, Buffer.from(text, 'utf8'), false);
   writeChain = writeChain.then(async () => {
-    if (env.FAKE_CODEX_SPLIT_FRAMES !== '1') { process.stdout.write(line); return; }
-    for (let index = 0; index < line.length; index += 7) {
-      process.stdout.write(line.slice(index, index + 7));
-      await sleep(1);
+    for (const client of only ? [only] : [...clients]) {
+      if (client.destroyed) continue;
+      if (env.FAKE_CODEX_SPLIT_FRAMES !== '1') { client.write(bytes); continue; }
+      for (let index = 0; index < bytes.length; index += 7) {
+        client.write(bytes.subarray(index, index + 7));
+        await sleep(1);
+      }
     }
   });
   return writeChain;
 }
-
-if (env.FAKE_CODEX_NOISE === '1') process.stdout.write('codex app-server: starting (not json)\n');
+function send(frame: Record<string, unknown>, only?: Socket): Promise<void> {
+  return sendText(JSON.stringify(frame), only);
+}
 
 const threadId = `thread-${process.pid}`;
 let turnSeq = 0;
 let threadInstructions = '';
+/** Every turn, newest last, as thread/turns/list reports it. */
+const turns: Array<{ id: string; status: string; clientId: string | null }> = [];
 let serverRequestSeq = 1000;
 const waitingServerRequests = new Map<number, (result: unknown) => void>();
 
@@ -90,13 +108,15 @@ async function runTurn(turnId: string, text: string): Promise<void> {
   const hold = Number.parseInt(env.FAKE_CODEX_TURN_HOLD_MS ?? '0', 10);
   if (hold > 0) await sleep(hold);
   const status = scriptExit === 0 ? (env.FAKE_CODEX_TURN_STATUS ?? 'completed') : 'failed';
+  const entry = turns.find((turn) => turn.id === turnId);
+  if (entry) entry.status = status;
   await send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status, items: [], error: null } } });
   if (env.FAKE_CODEX_LATE_ITEM === '1') {
     await send({ method: 'item/completed', params: { ...base, item: { type: 'fileChange', id: `${turnId}-late`, status: 'completed' }, completedAtMs: Date.now() } });
   }
 }
 
-createInterface({ input: process.stdin }).on('line', (line) => {
+function onMessage(client: Socket, line: string): void {
   let frame: Record<string, unknown>;
   try { frame = JSON.parse(line) as Record<string, unknown>; } catch { return; }
   const method = typeof frame.method === 'string' ? frame.method : undefined;
@@ -108,7 +128,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     resolve?.(frame.result ?? { error: frame.error });
     return;
   }
-  const reply = (result: unknown) => send({ id: frame.id, result });
+  const reply = (result: unknown) => send({ id: frame.id, result }, client);
   switch (method) {
     case 'initialize': void reply({ userAgent: 'fake-codex/0.0.0' }); return;
     case 'initialized': return;
@@ -119,22 +139,86 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       void send({ method: 'thread/started', params: { thread: { id: threadId } } });
       return;
     case 'thread/resume':
-      threadInstructions = typeof params.developerInstructions === 'string' ? params.developerInstructions : '';
-      void reply({ thread: { id: params.threadId }, model: 'fake', modelProvider: 'openai', cwd: params.cwd ?? process.cwd() });
+      if (env.FAKE_CODEX_NO_LIST_TURNS === '1' && params.excludeTurns === true && turns.length > 0) {
+        void send({ id: frame.id, error: { code: -32601, message: 'list_turns is not supported yet' } }, client);
+        return;
+      }
+      if (typeof params.developerInstructions === 'string') threadInstructions = params.developerInstructions;
+      void reply({
+        thread: {
+          id: params.threadId,
+          ...(params.excludeTurns === true ? {} : { turns: turns.map((turn) => ({ id: turn.id, status: turn.status, error: null, items: [], itemsView: 'notLoaded' })) }),
+        },
+        model: 'fake', modelProvider: 'openai', cwd: params.cwd ?? process.cwd() });
       return;
     case 'turn/start': {
       const turnId = `turn-${++turnSeq}`;
+      turns.push({ id: turnId, status: 'inProgress', clientId: typeof params.clientUserMessageId === 'string' ? params.clientUserMessageId : null });
       const input = (params.input as Array<{ text?: string }> | undefined) ?? [];
       const text = input.map((entry) => entry.text ?? '').join('\n');
       const started = { method: 'turn/started', params: { threadId, turn: { id: turnId, status: 'inProgress', items: [], error: null } } };
       const respond = { id: frame.id, result: { turn: { id: turnId, status: 'inProgress', items: [], error: null } } };
       void (async () => {
-        if (env.FAKE_CODEX_STARTED_FIRST === '1') { await send(started); await send(respond); } else { await send(respond); await send(started); }
+        if (env.FAKE_CODEX_STARTED_FIRST === '1') { await send(started); await send(respond, client); } else { await send(respond, client); await send(started); }
         await runTurn(turnId, text);
       })();
       return;
     }
+    case 'thread/turns/list': {
+      if (env.FAKE_CODEX_NO_LIST_TURNS === '1') {
+        void send({ id: frame.id, error: { code: -32601, message: 'list_turns is not supported yet' } }, client);
+        return;
+      }
+      const newest = [...turns].reverse().slice(0, typeof params.limit === 'number' ? params.limit : turns.length);
+      void reply({
+        data: newest.map((turn) => ({
+          id: turn.id, status: turn.status, error: null, itemsView: 'full',
+          items: [{ type: 'userMessage', id: `${turn.id}-user`, clientId: turn.clientId, content: [] }],
+        })),
+        nextCursor: null, backwardsCursor: null,
+      });
+      return;
+    }
     default:
-      if (frame.id !== undefined) void send({ id: frame.id, error: { code: -32601, message: `fake does not implement ${method}` } });
+      if (frame.id !== undefined) void send({ id: frame.id, error: { code: -32601, message: `fake does not implement ${method}` } }, client);
   }
-});
+}
+
+/** WebSocket upgrade, then one JSON-RPC message per text frame. */
+function onConnection(client: Socket): void {
+  let header = Buffer.alloc(0);
+  let decoder: FrameDecoder | null = null;
+  const deliver = (chunk: Buffer) => {
+    for (const message of decoder!.push(chunk)) {
+      if (message.opcode === OPCODE.text) onMessage(client, message.payload.toString('utf8'));
+      else if (message.opcode === OPCODE.close) client.end();
+    }
+  };
+  client.on('data', (chunk: Buffer) => {
+    if (decoder) { deliver(chunk); return; }
+    header = Buffer.concat([header, chunk]);
+    const end = header.indexOf('\r\n\r\n');
+    if (end === -1) return;
+    const key = header.subarray(0, end).toString('latin1').split('\r\n')
+      .find((line) => line.toLowerCase().startsWith('sec-websocket-key:'))?.slice(18).trim() ?? '';
+    client.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\n\r\n`);
+    decoder = new FrameDecoder();
+    clients.add(client);
+    record({ kind: 'connection', count: clients.size });
+    if (env.FAKE_CODEX_NOISE === '1') void sendText('codex app-server: connected (not json)', client);
+    const rest = header.subarray(end + 4);
+    if (rest.length) deliver(rest);
+  });
+  client.on('close', () => { clients.delete(client); });
+  client.on('error', () => { clients.delete(client); });
+}
+
+const listen = process.argv[process.argv.indexOf('--listen') + 1] ?? '';
+if (!listen.startsWith('unix://')) {
+  process.stderr.write(`fake codex app-server supports only --listen unix://PATH (got ${listen})\n`);
+  process.exit(2);
+}
+const socketFile = listen.slice('unix://'.length);
+rmSync(socketFile, { force: true });
+createServer(onConnection).listen(socketFile);
+process.on('SIGTERM', () => { rmSync(socketFile, { force: true }); process.exit(143); });

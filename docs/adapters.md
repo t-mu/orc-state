@@ -29,11 +29,33 @@ Optional (all present on the composite):
 |--------|---------|
 | `ownsSession(handle)` | this process can write to the session (absent → assumed) |
 | `inspectSession(handle)` | `{transport, alive, writable, pid, processStart, reason?}`; drives `recoverable` / `unknown` ([recovery.md](./recovery.md#recoverable-or-unknown-sessions)) |
-| `survivesCoordinatorExit(handle)` | true for tmux: the coordinator must not stop it on exit |
+| `adoptSession(handle)` | reattach a live session another coordinator launched; returns an inspection (`app:` only, others are inspected as is). See [Codex app-server sessions](#codex-app-server-sessions) |
+| `survivesCoordinatorExit(handle)` | true for tmux and `app:`: the coordinator must not stop it on exit |
+| `exitStatus(handle)` | `{code, signal}` of a session that ended, or `null`; tmux reads the dead pane, `app:` its exit file |
 | `detectInputBlock(handle, hookEvents)` | blocking prompt line or `null`; first permission hook message, else output scan. Adapters never read hook files |
 | `capabilitiesFor(handle)` | CLI capabilities or the app-server's (`adapters/runtime.ts`) |
 | `submit(handle, text, options?)` | acknowledged input; `app:` only, CLI sessions reject with `CapabilityRefusal` |
 | `onEvent(listener)` / `turnActive(handle)` | app-server runtime events / turn in progress |
+
+## Codex app-server sessions
+
+`adapters/codexAppServer.ts` runs `codex app-server --listen unix://<state>/app-server/<agent>.sock` detached, in its own process group, so it survives a coordinator restart. Codex speaks WebSocket on that socket (one JSON-RPC message per text frame, `adapters/unixWebSocket.ts`); a path too long for a Unix socket is a symlink Codex makes to a short one under `/tmp`.
+
+| File (`<state>/app-server/`) | Written by | Holds |
+|------------------------------|------------|-------|
+| `<agent>.sock` | Codex | the listening socket |
+| `<agent>.exit` | the `sh` wrapper that launches Codex | the exit code, or 128 + signal; absent while it runs or when `stop` signalled the whole group |
+| `<agent>.turn.json` | the adapter, at each turn start | `{turn_id, command_id}`: the command that started the latest turn |
+
+The session's recorded PID and `process_start` are the wrapper's; `stop` signals its process group (SIGTERM, SIGKILL after 5 s).
+
+On start the coordinator adopts each live `app:` session (`adoptSession`, through session reconciliation):
+
+1. The recorded PID and start time must still match. Otherwise the session is reported dead with the reason: `app-server exited (<code or signal>) while no coordinator was attached`, `PID <pid> now belongs to another process`, or `process <pid> is gone`.
+2. It connects to the socket, initializes, and resumes the recorded thread (`thread/resume`). Codex cannot list the turns of a thread whose history is not written yet (`list_turns is not supported yet`, just after a turn starts), so the paginated resume falls back to a full one.
+3. It reads the thread's last turn. A running turn keeps the session busy, and its events carry the command id from `<agent>.turn.json` (or the turn's `clientUserMessageId`). A turn that finished while no coordinator was attached is reported now, so its command's ACK advances.
+
+A live app-server that cannot be reattached (no recorded thread, socket or protocol failure) is stopped, so it does not keep working unsupervised. A dead or stopped session takes the dead-session path: resumed on its thread after a crash, otherwise requeued ([configuration.md → Session Resume](./configuration.md#session-resume)).
 
 ## Claude hooks
 
