@@ -384,6 +384,19 @@ Importing it has no side effects: no project resolution, registry access, git ca
 | Terminal stream frames | `{ type: "snapshot", screen, cursor_x, cursor_y, columns, rows }`, `{ type: "output", data }`, `{ type: "resize", columns, rows }` (pane resized: repaint), `{ type: "heartbeat" }`, `{ type: "exit", reason }` (last frame; `reason: "backlog"` when the viewer was dropped for reading too slowly) |
 | Forward compatibility | Clients ignore frame types and fields they do not know. Streams heartbeat about every 10 s; `ControlClient` fails a stream silent for 3 heartbeats (30 s) with `ControlError("unavailable")`, and maps a reset or cut stream to the same error. |
 
+### Agent attention
+
+`attention` in the status view (`orc status --json`, `GET /v1/status`, both from `buildStatus` in `lib/statusView.ts`) says what a worker's run needs from a human. It is `null`, or `{ kind, run_id, since, detail, request_id }`, derived from current state on every read (claims, `run-activity.json`, the run's events), never stored. When several conditions hold, the first kind below wins (`ATTENTION_PRECEDENCE`):
+
+| `kind` | When | `since` | `detail` | Clears when |
+|---|---|---|---|---|
+| `permission_prompt` | waiting for input the coordinator recorded for a provider permission or interactive prompt (`input_requested` with `actor_type: coordinator`) and the worker shows no hook activity after it | the request | prompt text | the worker acts again (hook activity after the request) or the input is answered |
+| `question` | waiting for an answer to the worker's `run-input-request` | the request | question text; `request_id` set | `run-input-respond` / `respond_input` |
+| `stalled` | the run's `stalled` flag (`isStalled`, the same test as `claims.stalled`) | the run's idle anchor (last activity) | `null` | any activity |
+| `no_progress` | the coordinator sent `worker_needs_attention {reason: no_progress}` and the run has not progressed since its `progress_at` (phase change, progress lifecycle event, or a `git commit` as the run's last hook-seen tool); not while waiting for input or finalizing | `progress_at` | the phase in the alert | progress |
+
+A run that ends drops out of `claims.active`, so its attention goes with it. `request_id` is null except for `question`. The `orc watch` NEEDS INPUT badge still reads `waiting_input`.
+
 ### CLI commands
 
 | Group | Commands |
@@ -401,7 +414,7 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 | Command | Shape |
 |---|---|
 | `orc project list --json` | `listProjects()`: `[{ id, name, target_repo_root, state_dir, repo_present, control_socket, coordinator_running }]` (without `--json`, the registry records) |
-| `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError, coordinator }`; `claims.waiting_input` counts the `waiting_input` rows; `coordinator` is `{ running, pid, version, started_at, stale }`, added by the CLI and absent from `/v1/status` (MCP `get_status` carries the same, with a `waiting_input` count); `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
+| `orc status --json [--events=<0-200>]` | `{ cursor, project, agents, master, worker_capacity, scouts, tasks, claims, finalization, failures, waiting_input, recentEvents, eventReadError, coordinator }`; `claims.waiting_input` counts the `waiting_input` rows; each `claims.active[]` run and each `worker_capacity.slots[]` slot (from its active run; `null` without one) carries `attention` (see [Agent attention](#agent-attention)); `coordinator` is `{ running, pid, version, started_at, stale }`, added by the CLI and absent from `/v1/status` (MCP `get_status` carries the same, with a `waiting_input` count); `--events` sets the `recentEvents` length (default 20, `0` → `[]`) |
 | `orc status --mine --json` | `{ agent, assigned_tasks, queued_tasks }` |
 | `orc doctor --json` | `{ ok, registered_workers, active_claims, checks }`; exit 1 when not `ok`. `checks.coordinatorCode.warning` is a restart hint (string) when the running coordinator's code is older than the code on disk, else `null`; it never changes `ok` or the exit code |
 | `orc preflight --json` | `{ ok, project, checks, warnings, details }`; exit 1 when not `ok` |

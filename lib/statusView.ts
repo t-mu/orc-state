@@ -13,7 +13,8 @@ import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 import { computeWorkerCapacity } from './workerCapacity.ts';
 import { readProjectDescriptor, type ActiveProject, type ProjectSelectedBy } from './projectContext.ts';
 import { formatProjectIdentity } from './projectHealth.ts';
-import { readRunActivity, type RunActivityMap } from './runActivityStore.ts';
+import { latestHookActivityTs, readRunActivity, type RunActivityMap, type RunActivitySnapshot } from './runActivityStore.ts';
+import { isCommitToolEvent, isProgressLifecycleEvent, noProgressAlertProgressAt } from './runProgress.ts';
 import { isStalled, runIdleAnchor } from './runSignals.ts';
 import { formatActivityLine, selectCurrentActivity, type CurrentActivity } from './currentActivity.ts';
 const STARTUP_FAILURE_LIMIT = 5;
@@ -191,6 +192,106 @@ export function buildActiveClaimMetrics(
   });
 }
 
+/** Why an agent needs a human, highest precedence first (`ATTENTION_PRECEDENCE`). */
+export type AttentionKind = 'permission_prompt' | 'question' | 'stalled' | 'no_progress';
+
+/** When several conditions hold, the earliest kind here wins. */
+export const ATTENTION_PRECEDENCE: readonly AttentionKind[] = ['permission_prompt', 'question', 'stalled', 'no_progress'];
+
+/**
+ * What an agent's run needs from a human, derived from current state (null: nothing).
+ * `since`: when the condition began. `detail`: the question or prompt text, or the phase for `no_progress`.
+ * `request_id`: the worker's input request id (`question` only), to answer it.
+ */
+export interface AgentAttention {
+  kind: AttentionKind;
+  run_id: string;
+  since: string | null;
+  detail: string | null;
+  request_id: string | null;
+}
+
+/** Per-run facts from the run's events that attention needs beyond the claim. */
+export interface RunAttentionEvents {
+  /** `actor_type` of the run's latest `input_requested`: `coordinator` means a provider prompt it detected. */
+  inputRequestedBy: string | null;
+  /** The latest `worker_needs_attention {reason: no_progress}`: the progress point it was raised for. */
+  noProgressAlert: { progress_at: string; phase: string | null } | null;
+  /** Newest progress event (lifecycle event or phase change) of the run. */
+  progressAt: string | null;
+}
+
+export function collectRunAttentionEvents(events: OrcEvent[]): Map<string, RunAttentionEvents> {
+  const byRun = new Map<string, RunAttentionEvents>();
+  for (const event of events) {
+    const runId = (event as { run_id?: string }).run_id;
+    if (!runId) continue;
+    const entry = byRun.get(runId) ?? { inputRequestedBy: null, noProgressAlert: null, progressAt: null };
+    byRun.set(runId, entry);
+    if (event.event === 'input_requested') entry.inputRequestedBy = event.actor_type ?? null;
+    const alertedFor = noProgressAlertProgressAt(event);
+    if (alertedFor) {
+      const phase = (event.payload as { phase?: unknown } | undefined)?.phase;
+      entry.noProgressAlert = { progress_at: alertedFor, phase: typeof phase === 'string' ? phase : null };
+    }
+    if ((isProgressLifecycleEvent(event) || event.event === 'phase_started') && later(entry.progressAt, event.ts)) {
+      entry.progressAt = event.ts;
+    }
+  }
+  return byRun;
+}
+
+function later(current: string | null, candidate: string | undefined): boolean {
+  if (!candidate || !Number.isFinite(Date.parse(candidate))) return false;
+  return current == null || Date.parse(candidate) > Date.parse(current);
+}
+
+/**
+ * One run's attention, by `ATTENTION_PRECEDENCE`:
+ * - `permission_prompt`: waiting for input the coordinator recorded for a provider permission or
+ *   interactive prompt; gone once the worker shows hook activity after the request (the prompt was answered).
+ * - `question`: waiting for an answer to the worker's `run-input-request`.
+ * - `stalled`: the run's `stalled` flag (`isStalled`, as every status reader computes it).
+ * - `no_progress`: the coordinator raised `worker_needs_attention {reason: no_progress}` and the run
+ *   has shown no progress (phase change, lifecycle event, hook-seen `git commit`) since its progress point.
+ * Each clears with the state it reads: answering the input, the run moving on, or the run ending.
+ */
+export function deriveAttention(input: {
+  claim: Pick<Claim, 'run_id' | 'finalization_state'> & { stalled: boolean };
+  waiting: WaitingInputRow | null;
+  runEvents: RunAttentionEvents | null;
+  hookSnapshot: RunActivitySnapshot | null | undefined;
+  idleAnchor: string | null;
+}): AgentAttention | null {
+  const { claim, waiting, runEvents, hookSnapshot } = input;
+  const runId = claim.run_id;
+  if (waiting) {
+    if (runEvents?.inputRequestedBy === 'coordinator') {
+      if (!later(waiting.input_requested_at, latestHookActivityTs(hookSnapshot) ?? undefined)) {
+        return { kind: 'permission_prompt', run_id: runId, since: waiting.input_requested_at, detail: waiting.question, request_id: null };
+      }
+    } else {
+      return { kind: 'question', run_id: runId, since: waiting.input_requested_at, detail: waiting.question, request_id: waiting.request_id };
+    }
+  }
+  if (claim.stalled) {
+    return { kind: 'stalled', run_id: runId, since: input.idleAnchor, detail: null, request_id: null };
+  }
+  const alert = runEvents?.noProgressAlert;
+  if (alert && !waiting && claim.finalization_state == null && !progressedSince(alert.progress_at, runEvents, hookSnapshot)) {
+    return { kind: 'no_progress', run_id: runId, since: alert.progress_at, detail: alert.phase, request_id: null };
+  }
+  return null;
+}
+
+function progressedSince(progressAt: string, runEvents: RunAttentionEvents, hookSnapshot: RunActivitySnapshot | null | undefined): boolean {
+  if (later(progressAt, runEvents.progressAt ?? undefined)) return true;
+  const tool = hookSnapshot?.last_tool;
+  const ts = hookSnapshot?.last_tool_ts;
+  if (!tool || !ts) return false;
+  return isCommitToolEvent({ type: 'tool', tool, brief: hookSnapshot.last_tool_brief ?? '', ts }) && later(progressAt, ts);
+}
+
 /** One worker slot in `StatusView.worker_capacity.slots`. */
 export interface SlotSummary {
   agent_id: string;
@@ -204,6 +305,8 @@ export interface SlotSummary {
   active_task_ref: string | null;
   last_status_change_at: string | null;
   last_heartbeat_at: string | null;
+  /** The slot's active run's attention (`deriveAttention`), null when it has none or no active run. */
+  attention: AgentAttention | null;
 }
 
 /** One scout in `StatusView.scouts`. */
@@ -218,7 +321,7 @@ export interface ScoutSummary {
 
 export function buildSlotSummary(
   workerSlots: Agent[],
-  activeClaimByAgentId: Map<string, ReturnType<typeof buildActiveClaimMetrics>[number]>,
+  activeClaimByAgentId: Map<string, ReturnType<typeof buildActiveClaimMetrics>[number] & { attention?: AgentAttention | null }>,
 ): SlotSummary[] {
   const slotDetails = workerSlots.map((slot) => {
     const activeClaim = activeClaimByAgentId.get(slot.agent_id) ?? null;
@@ -234,6 +337,7 @@ export function buildSlotSummary(
       active_task_ref: activeClaim?.task_ref ?? null,
       last_status_change_at: slot.last_status_change_at ?? null,
       last_heartbeat_at: slot.last_heartbeat_at ?? null,
+      attention: activeClaim?.attention ?? null,
     };
   });
   return slotDetails;
@@ -255,7 +359,7 @@ export const DEFAULT_STATUS_EVENTS = 20;
 export const MIN_STATUS_EVENTS = 0;
 export const MAX_STATUS_EVENTS = 200;
 
-type ActiveClaimView = ReturnType<typeof buildActiveClaimMetrics>[number] & { current_activity: CurrentActivity | null };
+type ActiveClaimView = ReturnType<typeof buildActiveClaimMetrics>[number] & { current_activity: CurrentActivity | null; attention: AgentAttention | null };
 type FinalizationRun = {
   run_id: string;
   task_ref: string | null;
@@ -377,11 +481,21 @@ export function buildStatus(
   const nowMs = Date.now();
 
   const activitySnapshots = readRunActivity(stateDir);
-  const activeClaimsWithMetrics = buildActiveClaimMetrics(
+  const waitingInput = listWaitingInput(stateDir, claims, nowMs);
+  const waitingByRunId = new Map(waitingInput.map((row) => [row.run_id, row]));
+  const attentionEvents = collectRunAttentionEvents(allEvents);
+  const activeClaimsWithMetrics: ActiveClaimView[] = buildActiveClaimMetrics(
     activeClaims, runActivity, runPhase, runWorktreeByRunId, nowMs, nonHeartbeatRunActivity, runPhaseHistoryMap, activitySnapshots,
   ).map((claim) => ({
     ...claim,
     current_activity: selectCurrentActivity(activitySnapshots[claim.run_id], nowMs),
+    attention: deriveAttention({
+      claim,
+      waiting: waitingByRunId.get(claim.run_id) ?? null,
+      runEvents: attentionEvents.get(claim.run_id) ?? null,
+      hookSnapshot: activitySnapshots[claim.run_id],
+      idleAnchor: runIdleAnchor(claim, runActivity.get(claim.run_id)?.ts, activitySnapshots[claim.run_id]),
+    }),
   }));
 
   const activeClaimByAgentId = new Map(
@@ -413,7 +527,6 @@ export function buildStatus(
     }));
   const blockedFinalizationRuns = finalizationRuns.filter((claim) => claim.finalization_state === 'blocked_finalize');
 
-  const waitingInput = listWaitingInput(stateDir, claims, nowMs);
   const descriptor = readProjectDescriptor(stateDir);
   return {
     cursor,

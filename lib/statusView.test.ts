@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
-import { buildAgentStatus, buildStatus, formatAgentStatus, formatStatus, withProjectSelection } from './statusView.ts';
+import { ATTENTION_PRECEDENCE, buildAgentStatus, buildStatus, deriveAttention, formatAgentStatus, formatStatus, withProjectSelection } from './statusView.ts';
+import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
+import { setRunInputState } from './claimManager.ts';
 import { formatProjectIdentity } from './projectHealth.ts';
 import { writeRunActivity } from './runActivityStore.ts';
 import * as eventLog from './eventLog.ts';
@@ -884,5 +886,106 @@ describe('withProjectSelection', () => {
     expect(formatProjectIdentity({ ...project, selected_by: 'flag' })).toBe('project: one (p1) → /repo (selected by --project)');
     expect(formatProjectIdentity({ ...project, selected_by: 'selected' })).toBe('project: one (p1) → /repo (selected by orc project select)');
     expect(formatProjectIdentity(project)).toBe('project: one (p1) → /repo');
+  });
+});
+
+describe('attention', () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const runClaim = (over: Partial<Claim> = {}): Claim => ({
+    run_id: 'run-a', task_ref: 'orch/task-1', agent_id: 'orc-1', state: 'in_progress',
+    claimed_at: ago(10 * 60_000), started_at: ago(10 * 60_000), last_heartbeat_at: ago(30_000),
+    lease_expires_at: new Date(Date.now() + 60_000).toISOString(), ...over,
+  } as Claim);
+  function seed(claim: Claim, events: Record<string, unknown>[] = []) {
+    writeState({
+      agents: [
+        { agent_id: 'orc-1', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:1' } as Agent,
+        { agent_id: 'orc-2', provider: 'claude', role: 'worker', status: 'running', session_handle: 'tmux:2' } as Agent,
+      ],
+      claims: [claim],
+      tasks: [{ ref: 'orch/task-1', title: 'Task 1', status: 'in_progress', owner: 'orc-1', planning_state: 'ready_for_dispatch' } as Task],
+    });
+    writeEvents(events);
+  }
+  const ev = (event: string, ts: string, payload: Record<string, unknown>, actor = 'agent') => ({
+    event, ts, run_id: 'run-a', task_ref: 'orch/task-1', agent_id: 'orc-1',
+    actor_type: actor, actor_id: actor === 'agent' ? 'orc-1' : 'coordinator', payload,
+  });
+  const read = () => {
+    const s = buildStatus(dir, { settings });
+    const slot = s.worker_capacity.slots.find((entry) => entry.agent_id === 'orc-1');
+    expect(slot?.attention).toEqual(s.claims.active[0]?.attention ?? null);
+    return { attention: slot?.attention ?? null, idle: s.worker_capacity.slots.find((entry) => entry.agent_id === 'orc-2')?.attention };
+  };
+
+  it('is null for an idle healthy agent and for a healthy run', () => {
+    seed(runClaim());
+    const { attention, idle } = read();
+    expect(attention).toBeNull();
+    expect(idle).toBeNull();
+  });
+
+  it('shows a worker question with its text and request id, and clears once answered', () => {
+    const asked = ago(60_000);
+    seed(runClaim({ input_state: 'awaiting_input' }), [ev('input_requested', asked, { question: 'Which table?', request_id: 'req-1' })]);
+    expect(read().attention).toEqual({ kind: 'question', run_id: 'run-a', since: asked, detail: 'Which table?', request_id: 'req-1' });
+    // respond_input clears input_state; the question is gone.
+    setRunInputState(dir, 'run-a', 'orc-1', { inputState: null });
+    expect(read().attention).toBeNull();
+  });
+
+  it('shows a provider permission prompt and clears it once the worker acts after it', () => {
+    const asked = ago(60_000);
+    const events = [ev('input_requested', asked, { question: 'Allow Bash: rm -rf dist?', reason: 'remediation_policy:permission_prompt' }, 'coordinator')];
+    seed(runClaim({ input_state: 'awaiting_input' }), events);
+    writeRunActivity(dir, { 'run-a': {
+      run_id: 'run-a', agent_id: 'orc-1', label: null, source: null, label_ts: null,
+      last_tool: 'Read', last_tool_brief: 'a.ts', last_tool_ts: ago(90_000), open_tools: { toolu_1: ago(70_000) },
+    } });
+    expect(read().attention).toEqual({ kind: 'permission_prompt', run_id: 'run-a', since: asked, detail: 'Allow Bash: rm -rf dist?', request_id: null });
+    writeRunActivity(dir, { 'run-a': {
+      run_id: 'run-a', agent_id: 'orc-1', label: null, source: null, label_ts: null,
+      last_tool: 'Bash', last_tool_brief: 'rm -rf dist', last_tool_ts: ago(10_000),
+    } });
+    expect(read().attention).toBeNull();
+  });
+
+  it('shows a stalled run from the shared stalled test, since its idle anchor', () => {
+    const idleSince = ago(2 * STALLED_RUN_IDLE_SECONDS * 1000);
+    seed(runClaim({ claimed_at: idleSince, started_at: idleSince, last_heartbeat_at: idleSince }));
+    expect(read().attention).toMatchObject({ kind: 'stalled', since: idleSince, detail: null });
+  });
+
+  it('shows no_progress after the coordinator alert until the run progresses again', () => {
+    const progressAt = ago(90 * 60_000);
+    const alive = ev('heartbeat', ago(30_000), {});
+    const alert = ev('worker_needs_attention', ago(20 * 60_000), { reason: 'no_progress', idle_ms: 1000, no_progress_ms: 3_600_000, phase: 'implement', progress_at: progressAt }, 'coordinator');
+    seed(runClaim(), [ev('phase_started', progressAt, { phase: 'implement' }), alert, alive]);
+    expect(read().attention).toEqual({ kind: 'no_progress', run_id: 'run-a', since: progressAt, detail: 'implement', request_id: null });
+    // A git commit the hooks saw clears it.
+    writeRunActivity(dir, { 'run-a': {
+      run_id: 'run-a', agent_id: 'orc-1', label: null, source: null, label_ts: null,
+      last_tool: 'Bash', last_tool_brief: 'git commit -m "feat: x"', last_tool_ts: ago(60_000),
+    } });
+    expect(read().attention).toBeNull();
+    // So does a phase change after the progress point.
+    writeRunActivity(dir, {});
+    expect(read().attention?.kind).toBe('no_progress');
+    eventLog.appendEvent(join(dir, 'events.jsonl'), { seq: 4, phase: 'review', ...ev('phase_started', ago(60_000), { phase: 'review' }) } as Parameters<typeof eventLog.appendEvent>[1]);
+    expect(read().attention).toBeNull();
+  });
+
+  it('applies the documented precedence when several conditions hold', () => {
+    expect(ATTENTION_PRECEDENCE).toEqual(['permission_prompt', 'question', 'stalled', 'no_progress']);
+    const runEvents = { inputRequestedBy: 'agent', noProgressAlert: { progress_at: ago(90 * 60_000), phase: 'implement' }, progressAt: ago(90 * 60_000) };
+    const waiting = { run_id: 'run-a', agent_id: 'orc-1', task_ref: 'orch/task-1', question: 'q', request_id: 'r', waiting_seconds: 1, input_requested_at: ago(1000) };
+    const claim = { run_id: 'run-a', finalization_state: null, stalled: true };
+    const base = { claim, waiting, runEvents, hookSnapshot: null, idleAnchor: ago(5000) };
+    expect(deriveAttention(base)?.kind).toBe('question');
+    expect(deriveAttention({ ...base, runEvents: { ...runEvents, inputRequestedBy: 'coordinator' } })?.kind).toBe('permission_prompt');
+    expect(deriveAttention({ ...base, waiting: null })?.kind).toBe('stalled');
+    expect(deriveAttention({ ...base, waiting: null, claim: { ...claim, stalled: false } })?.kind).toBe('no_progress');
+    // Finalization is not checked for progress, as in the coordinator.
+    expect(deriveAttention({ ...base, waiting: null, claim: { ...claim, stalled: false, finalization_state: 'awaiting_finalize' } })).toBeNull();
   });
 });
