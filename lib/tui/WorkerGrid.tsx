@@ -18,7 +18,7 @@ export function WorkerGrid({ slots, sprites, capacity, detail = 'full' }: {
 }) {
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text bold color="green">
+      <Text bold color="green" wrap="truncate">
         {'Live Workers  '}
         <Text dimColor>{`(${capacity.used}/${capacity.configured} capacity, ${capacity.available} available)`}</Text>
       </Text>
