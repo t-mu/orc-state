@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { CommandDispatcher, type CommandAuthenticator } from './commandDelivery.ts';
 import {
-  CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
+  CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_PROTOCOL_VERSIONS, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER, defaultSocketPath,
   type AckState, type ControlEndpoint, type StreamFrame, type SubmitCommandRequest, type TerminalFrame,
 } from './controlProtocol.ts';
@@ -56,7 +56,10 @@ export interface ControlServerOptions {
 /** `GET /v1/health`: the code and schema the running coordinator has loaded. */
 export interface ControlHealth extends CodeIdentity {
   version: string;
+  /** The newest protocol version this coordinator speaks (the max of `protocol_versions`). */
   protocol_version: number;
+  /** `[min, max]` protocol versions this coordinator accepts in the protocol header. */
+  protocol_versions: readonly [number, number];
   schema_version: number;
   started_at: string;
 }
@@ -195,6 +198,7 @@ export async function startControlServer(stateDir: string, options: ControlServe
   const health: ControlHealth = {
     version: (JSON.parse(readFileSync(new URL(import.meta.url.endsWith('.ts') ? '../package.json' : '../../package.json', import.meta.url), 'utf8')) as { version: string }).version,
     protocol_version: CONTROL_PROTOCOL_VERSION,
+    protocol_versions: CONTROL_PROTOCOL_VERSIONS,
     schema_version: RUNTIME_SCHEMA_VERSION,
     started_at: new Date().toISOString(),
     ...captureCodeIdentity(options.codeRoot),
@@ -319,16 +323,21 @@ export async function startControlServer(stateDir: string, options: ControlServe
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     assertOpen();
-    const version = req.headers[PROTOCOL_HEADER];
-    if (version !== String(CONTROL_PROTOCOL_VERSION)) {
-      throw new ControlError('unsupported_protocol_version',
-        `Unsupported protocol version ${String(version ?? '(missing)')}; supported: ${CONTROL_PROTOCOL_VERSION}`, 400);
-    }
-    authenticated(req);
     const url = new URL(req.url ?? '/', 'http://orc.local');
     const ok = (result: unknown, status = 200) => send(res, status, { protocol_version: CONTROL_PROTOCOL_VERSION, ok: true, result });
     // Any holder of the bearer token may ask what code this coordinator runs: worker, master or operator.
-    if (req.method === 'GET' && url.pathname === '/v1/health') return ok(health);
+    // Health needs no protocol header, so a client of any version can read `protocol_versions` first.
+    if (req.method === 'GET' && url.pathname === '/v1/health') {
+      authenticated(req);
+      return ok(health);
+    }
+    const version = req.headers[PROTOCOL_HEADER];
+    const [minVersion, maxVersion] = CONTROL_PROTOCOL_VERSIONS;
+    if (typeof version !== 'string' || !/^\d+$/.test(version) || Number(version) < minVersion || Number(version) > maxVersion) {
+      throw new ControlError('unsupported_protocol_version',
+        `Unsupported protocol version ${String(version ?? '(missing)')}; this coordinator supports [${minVersion}, ${maxVersion}]`, 400);
+    }
+    authenticated(req);
     if (req.method === 'GET' && url.pathname === '/v1/snapshot') {
       projectReader(req);
       return ok(readControlSnapshot(stateDir));

@@ -24,7 +24,7 @@ function fakeClient(screen: string, sessions: SessionTerminalView[] = [session()
     },
     async *streamTerminal(terminalId, options, abort) {
       calls.push({ method: 'streamTerminal', args: [terminalId, options] });
-      signal = abort;
+      signal = abort instanceof AbortSignal ? abort : abort?.signal;
       const frames: TerminalFrame[] = [
         { type: 'snapshot', screen, cursor_x: 0, cursor_y: 0, columns: 80, rows: 24 },
         { type: 'output', data: Buffer.from('later').toString('base64') },
