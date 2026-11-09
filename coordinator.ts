@@ -55,7 +55,7 @@ import { HERMETIC_GIT_CONFIG_ARGS } from './lib/gitPlumbing.ts';
 import { InjectionScanError } from './lib/promptInjectionScan.ts';
 import { pruneOrphanRunTaskSnapshots, taskSnapshotStatus, verifyRunTaskSnapshot } from './lib/documentIndex.ts';
 import { resumeWorkerSession, spawnEphemeralWorker } from './lib/workerRuntime.ts';
-import type { WorkerTaskWorkflow } from './lib/sessionBootstrap.ts';
+import { prReviewSteps, type WorkerTaskWorkflow } from './lib/sessionBootstrap.ts';
 import { classifySessionExit, decideSessionResume, latestRunSession, recordSessionExit, recordSessionResumeFailed, type ResumeDecision } from './lib/sessionResume.ts';
 import { markTaskDoneRuntimeOnly } from './lib/taskCompletion.ts';
 import { readEventCheckpoint } from './lib/eventCheckpoint.ts';
@@ -816,6 +816,7 @@ async function finalizeRun(claim: Claim, workerPoolConfig: WorkerPoolConfig, eve
       acceptance_criteria: task?.acceptance_criteria?.join('\n') ?? '',
       worktree_path: runWorktree.worktree_path ?? '',
       orc_bin: resolveOrcBinSh(ORC_PACKAGE_ROOT),
+      pr_steps: prReviewSteps(task?.review_level ?? 'full', resolveOrcBinSh(ORC_PACKAGE_ROOT), claim.agent_id),
     });
     try {
       await getAdapter(workerAgent.provider).send(workerAgent.session_handle, prReviewMessage);

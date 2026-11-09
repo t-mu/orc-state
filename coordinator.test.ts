@@ -5502,6 +5502,12 @@ describe('PR finalization', () => {
       ([handle, msg]) => handle === 'tmux:orc-1' && typeof msg === 'string' && String(msg).includes('PR_REVIEW'),
     );
     expect(envelopeCalls.length).toBeGreaterThan(0);
+    // PR_REVIEW carries the PR loop for the review level it is sent with, not the one the worker started with.
+    const envelope = String(envelopeCalls[0][1]);
+    expect(envelope).toContain('review_level: full');
+    expect(envelope).toContain('pr-status <pr_ref> --wait');
+    expect(envelope).toContain('--agent-id=orc-1');
+    expect(envelope).not.toContain('{{');
 
     const claim = readClaims(dir).find((c) => c.run_id === 'run-pr-test')!;
     expect(claim.finalization_state).toBe('pr_review_in_progress');

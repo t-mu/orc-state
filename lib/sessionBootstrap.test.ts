@@ -4,6 +4,7 @@ import {
   getMasterBootstrap,
   getScoutBootstrap,
   getWorkerBootstrap,
+  prReviewSteps,
 } from './sessionBootstrap.ts';
 import { renderTemplate } from './templateRender.ts';
 
@@ -206,7 +207,7 @@ describe('buildSessionBootstrap', () => {
 });
 
 describe('worker bootstrap: only the run\'s own workflow', () => {
-  const PR_ONLY = ['PR_REVIEW', 'pr-status', 'git push --force-with-lease', 'origin/main'];
+  const PR_LOOP = ['pr-status', 'git push --force-with-lease', 'origin/main'];
   const render = (options: Parameters<typeof buildSessionBootstrap>[5], provider = 'claude') =>
     buildSessionBootstrap('w1', provider, 'worker', 'orc', 'sid', options);
 
@@ -215,29 +216,56 @@ describe('worker bootstrap: only the run\'s own workflow', () => {
     expect(rendered).toContain('merge mode: direct');
     expect(rendered).toContain('git rebase main');
     expect(rendered).toContain('finalize rebase');
-    for (const text of PR_ONLY) expect(rendered, text).not.toContain(text);
+    for (const text of PR_LOOP) expect(rendered, text).not.toContain(text);
+    // A merge mode edited mid-run still reaches the worker: PR_REVIEW carries its own loop.
+    expect(rendered).toContain('A PR_REVIEW message (the merge mode changed): follow the PR loop it carries.');
   });
 
-  it('gives a PR-mode worker the PR loop and no direct-mode rebase or finalize-rebase steps', () => {
+  it('gives a PR-mode worker the PR_REVIEW wait and no direct-mode rebase or finalize-rebase steps', () => {
     const rendered = render({ mergeStrategy: 'pr' });
     expect(rendered).toContain('merge mode: pr');
-    for (const text of PR_ONLY) expect(rendered, text).toContain(text);
-    expect(rendered).toContain('review-fix loop exceeded 3 iterations');
-    expect(rendered).toContain('ci-fix loop exceeded 3 iterations');
+    expect(rendered).toContain('wait in this session for a PR_REVIEW message; it carries the PR loop to follow');
+    expect(rendered).toContain('If FINALIZE_REBASE or FINALIZE_SUCCESS arrives instead');
     expect(rendered).not.toContain('git rebase main ');
     expect(rendered).not.toContain('finalize rebase');
+    for (const text of PR_LOOP) expect(rendered, text).not.toContain(text);
+  });
+
+  it('PR_REVIEW steps carry the whole PR loop for the review level they are sent with', () => {
+    for (const level of ['none', 'light', 'full'] as const) {
+      const steps = prReviewSteps(level, '/bin/orc', 'w1');
+      for (const text of PR_LOOP) expect(steps, `${level}: ${text}`).toContain(text);
+      expect(steps, level).toContain('review-fix loop exceeded 3 iterations');
+      expect(steps, level).toContain('ci-fix loop exceeded 3 iterations');
+      expect(steps, level).toContain('/bin/orc run-finish --run-id=<run_id> --agent-id=w1');
+      expect(steps, level).not.toMatch(/\{\{/);
+    }
+    const none = prReviewSteps('none', 'orc', 'w1');
+    expect(none).toContain('review_level none');
+    expect(none).not.toContain('review-read');
+    expect(none).not.toContain('REVIEWER CONSTRAINTS');
+    const light = prReviewSteps('light', 'orc', 'w1');
+    expect(light).toContain('label `reviewer`');
+    expect(light).toContain('REVIEW_FINDINGS_END');
+    expect(light).toContain('orc review-read --run-id=<run_id>');
+    expect(light).not.toContain('`critic`');
+    const full = prReviewSteps('full', 'orc', 'w1');
+    expect(full).toContain('labels `critic` and `integrator`');
+    expect(full).not.toContain('agents/reviewer.md');
   });
 
   it('defaults to direct mode and full review, as the coordinator does', () => {
     expect(render({})).toBe(render({ mergeStrategy: 'direct', reviewLevel: 'full' }));
   });
 
-  it('review_level none: self-review only, no reviewer sub-agents', () => {
-    const rendered = render({ reviewLevel: 'none' });
-    expect(rendered).toContain('Self-review (review_level none)');
-    expect(rendered).not.toContain('REVIEWER CONSTRAINTS');
-    expect(rendered).not.toContain('review-read');
-    expect(rendered).not.toContain('`critic`');
+  it('review_level none: self-review only, no reviewer sub-agents, in either merge mode', () => {
+    for (const mergeStrategy of ['direct', 'pr'] as const) {
+      const rendered = render({ reviewLevel: 'none', mergeStrategy });
+      expect(rendered, mergeStrategy).toContain('Self-review (review_level none)');
+      expect(rendered, mergeStrategy).not.toContain('REVIEWER CONSTRAINTS');
+      expect(rendered, mergeStrategy).not.toContain('review-read');
+      expect(rendered, mergeStrategy).not.toContain('`critic`');
+    }
   });
 
   it('review_level light: one reviewer, no critic/integrator', () => {
@@ -268,7 +296,6 @@ describe('worker bootstrap: only the run\'s own workflow', () => {
       expect(count('Lease renewal is automatic'), mergeStrategy).toBe(1);
       expect(count('Do not end your turn'), mergeStrategy).toBe(1);
       expect(count('reports itself ready'), mergeStrategy).toBe(1);
-      expect(count('never speculatively') + count('Wait for the coordinator to merge'), mergeStrategy).toBe(1);
     }
     expect(render({ mergeStrategy: 'direct' }).split('orc run-work-complete ').length - 1).toBe(1);
   });
@@ -286,8 +313,8 @@ describe('worker bootstrap: only the run\'s own workflow', () => {
   });
 
   it('points Claude and Codex at the AGENTS.md they already load, and tells Gemini to read it', () => {
-    expect(render({}, 'claude')).toContain('AGENTS.md (already in your context)');
-    expect(render({}, 'codex')).toContain('AGENTS.md (already in your context)');
+    expect(render({}, 'claude')).toContain('If the repository has an AGENTS.md (loaded into your context with the repo)');
+    expect(render({}, 'codex')).toContain('If the repository has an AGENTS.md (loaded into your context with the repo)');
     expect(render({}, 'gemini')).toContain('read AGENTS.md at the worktree root');
   });
 

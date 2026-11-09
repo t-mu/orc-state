@@ -67,7 +67,7 @@ const AGENT_GUIDE_AUTOLOAD_PROVIDERS: ReadonlySet<string> = new Set<ProviderName
 function repoGuideLine(provider: string): string {
   const contents = 'commit format, verification checklist, what to avoid';
   return AGENT_GUIDE_AUTOLOAD_PROVIDERS.has(provider)
-    ? `The repository's AGENTS.md (already in your context) holds the repo rules: ${contents}.`
+    ? `If the repository has an AGENTS.md (loaded into your context with the repo), follow its repo rules: ${contents}.`
     : `Before starting, read AGENTS.md at the worktree root if it exists: it holds the repo rules (${contents}).`;
 }
 
@@ -148,7 +148,8 @@ function reviewStep(level: ReviewLevel, orcBin: string, agentId: string): string
 /**
  * Steps 8 onward for the run's merge mode only, injected as {{finish_steps}}:
  * direct mode rebases and waits for the coordinator's merge, PR mode waits for
- * PR_REVIEW and runs the PR loop.
+ * PR_REVIEW (which carries the PR loop, see prReviewSteps). Each also says how
+ * to follow the other mode's messages, since a task's merge mode is revisable.
  */
 function finishSteps(mode: MergeStrategy, orcBin: string, agentId: string): string {
   const ids = `--run-id=<run_id> --agent-id=${agentId}`;
@@ -164,6 +165,7 @@ function finishSteps(mode: MergeStrategy, orcBin: string, agentId: string): stri
       `       ${workComplete}`,
       '  10. Signal finalize and wait in this session for the coordinator:',
       `       ${finalizeSignal}`,
+      '       - A PR_REVIEW message (the merge mode changed): follow the PR loop it carries.',
       '       - Told to perform a finalize rebase: rebase in this worktree, verify/commit as instructed, call',
       '         run-work-complete again and keep waiting.',
       '       - Told finalization succeeded or the session can stop, or no follow-up arrives: end the run. Only after',
@@ -171,26 +173,55 @@ function finishSteps(mode: MergeStrategy, orcBin: string, agentId: string): stri
       `           ${runFinish}`,
     ].join('\n');
   }
-  const fail = (reason: string) => `${orcBin} run-fail ${ids} --reason="${reason}" --policy=requeue`;
   return [
     '  8. Hand off; implementation and review are done (no rebase yet: the PR loop rebases):',
     `       ${workComplete}`,
-    '  9. Signal finalize and wait in this session for a PR_REVIEW message:',
+    '  9. Signal finalize and wait in this session for a PR_REVIEW message; it carries the PR loop to follow:',
     `       ${finalizeSignal}`,
-    '     From PR_REVIEW take pr_ref, run_id, task_ref, review_level, acceptance_criteria, assigned_worktree, orc_bin, then:',
-    '     A. Rebase: git fetch origin main && git rebase origin/main',
-    '        Resolve conflicts iteratively (resolve → git add <file> → git rebase --continue). If unresolvable:',
-    `          ${fail('unresolvable rebase conflict')}`,
-    '     B. Review-fix loop, max 3 iterations: repeat step 6 on `git diff --stat --patch origin/main...HEAD`, collect with',
-    `        ${orcBin} review-read --run-id=<run_id>; if all approved exit the loop, else fix, commit and loop. Past 3:`,
-    `          ${fail('review-fix loop exceeded 3 iterations')}`,
-    '     C. Pre-push rebase: git fetch origin main && git rebase origin/main; `npm test` — on failure back to B (counts against the limit).',
-    '     D. CI loop, max 3 iterations: git push --force-with-lease, then',
-    `        ${orcBin} pr-status <pr_ref> --wait; if passing exit the loop, else diagnose, fix, commit and loop. Past 3:`,
-    `          ${fail('ci-fix loop exceeded 3 iterations')}`,
-    `     E. Signal ready: ${workComplete}`,
-    '        Wait for the coordinator to merge the PR and send the run-finish signal; when it arrives:',
-    `          ${runFinish}`,
+    '     If FINALIZE_REBASE or FINALIZE_SUCCESS arrives instead (the merge mode changed), follow it; after',
+    `     FINALIZE_SUCCESS end the run: ${runFinish}`,
+  ].join('\n');
+}
+
+/**
+ * The PR loop, carried by the PR_REVIEW message rather than the bootstrap so it
+ * follows the merge mode and review level the coordinator finalizes with, even
+ * when the task was edited after the worker started. Built with orc_bin and
+ * agent_id interpolated (single-pass renderTemplate).
+ */
+export function prReviewSteps(level: ReviewLevel, orcBin: string, agentId: string): string {
+  const ids = `--run-id=<run_id> --agent-id=${agentId}`;
+  const fail = (reason: string) => `${orcBin} run-fail ${ids} --reason="${reason}" --policy=requeue`;
+  const review = level === 'none'
+    ? [
+      '  B. Review-fix loop, max 3 iterations (review_level none): self-review `git diff origin/main...HEAD` against the',
+      '     acceptance criteria; if all are met exit the loop, else fix, commit and loop. Past 3:',
+    ]
+    : [
+      `  B. Review-fix loop, max 3 iterations (review_level ${level}): ${level === 'light'
+        ? 'spawn ONE reviewer sub-agent (agents/reviewer.md), label `reviewer`,'
+        : 'spawn TWO reviewer sub-agents, labels `critic` and `integrator`,'}`,
+      '     each given the acceptance criteria, `git diff --stat --patch origin/main...HEAD` and the REVIEWER CONSTRAINTS',
+      '     below with <reviewer_label> replaced by its label.',
+      '',
+      reviewerConstraints(orcBin, agentId),
+      '',
+      `     Collect with ${orcBin} review-read --run-id=<run_id>; if all approved exit the loop, else fix, commit and loop. Past 3:`,
+    ];
+  return [
+    'Follow these steps in order:',
+    '  A. Rebase: git fetch origin main && git rebase origin/main',
+    '     Resolve conflicts iteratively (resolve → git add <file> → git rebase --continue). If unresolvable:',
+    `       ${fail('unresolvable rebase conflict')}`,
+    ...review,
+    `       ${fail('review-fix loop exceeded 3 iterations')}`,
+    '  C. Pre-push rebase: git fetch origin main && git rebase origin/main; `npm test` — on failure back to B (counts against the limit).',
+    '  D. CI loop, max 3 iterations: git push --force-with-lease, then',
+    `     ${orcBin} pr-status <pr_ref> --wait; if passing exit the loop, else diagnose, fix, commit and loop. Past 3:`,
+    `       ${fail('ci-fix loop exceeded 3 iterations')}`,
+    `  E. Signal ready: ${orcBin} run-work-complete ${ids}`,
+    '     Wait for the coordinator to merge the PR and send the run-finish signal; when it arrives:',
+    `       ${orcBin} run-finish ${ids}`,
   ].join('\n');
 }
 
