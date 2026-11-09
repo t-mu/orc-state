@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
  * cli/task-unblock.ts
- * Usage: orc task-unblock <task_ref> [--reason=<text>] [--actor-id=<id>]
+ * Usage: orc task-unblock <task_ref> [--reason=<text>] [--actor-id=<id>] [--json]
  *
  * Change a blocked task back to todo status. In a registered project the
  * running coordinator applies it.
  */
-import { flag } from '../lib/args.ts';
+import { boolFlag, flag } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
-import { cliError } from './shared.ts';
+import { failCommand, printJson } from './shared.ts';
 import { USAGE } from './usage.ts';
 
 const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
 const reason = flag('reason');
 const actorId = flag('actor-id');
+const json = boolFlag('json');
 
 if (!taskRef) {
   console.error(`Usage: ${USAGE['task-unblock']}`);
@@ -21,8 +22,9 @@ if (!taskRef) {
 }
 
 try {
-  await submitOperatorMutation({ op: 'unblock-task', task_ref: taskRef, ...(actorId ? { actor_id: actorId } : {}), ...(reason ? { reason } : {}) });
-  console.log(`task unblocked: ${taskRef}`);
+  const result = await submitOperatorMutation({ op: 'unblock-task', task_ref: taskRef, ...(actorId ? { actor_id: actorId } : {}), ...(reason ? { reason } : {}) });
+  if (json) printJson(result);
+  else console.log(`task unblocked: ${taskRef}`);
 } catch (err) {
-  cliError(err);
+  await failCommand(err, json);
 }

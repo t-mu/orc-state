@@ -6,8 +6,9 @@
  * sessions, and clear the registry.
  *
  * Usage:
- *   orc-kill-all [--keep-sessions]
+ *   orc-kill-all [--keep-sessions] [--json]
  *
+ * --json           Print one JSON summary instead of progress lines.
  * --keep-sessions  Leave every agent session running and adoptable: its agent
  *                  record, session row, run and worktree are kept, so the next
  *                  `orc start-session` adopts it. Everything else is reset.
@@ -24,16 +25,25 @@ import { RUN_WORKTREES_FILE }       from '../lib/paths.ts';
 import { readBacklog, readClaims }  from '../lib/stateReader.ts';
 import { closeProviderSessionsForAgent, commitClaims } from '../lib/runStore.ts';
 import { boolFlag }                 from '../lib/args.ts';
-import { cliError, formatErrorMessage } from './shared.ts';
+import { failCommand, formatErrorMessage, printJson } from './shared.ts';
 import { commitBacklog } from '../lib/projectTasks.ts';
 import { findLiveCoordinator, isCoordinatorLockHeld, type CoordinatorLock } from '../lib/coordinatorLiveness.ts';
 
 const keepSessions = boolFlag('keep-sessions');
+const json = boolFlag('json');
+/** Progress lines for people; silent with --json, which prints one summary at the end. */
+const say = (line: string): void => { if (!json) console.log(line); };
+const summary = {
+  coordinator: 'not_running' as 'stopped' | 'already_stopped' | 'not_running' | 'signal_failed',
+  coordinator_pid: null as number | null,
+  sessions_stopped: [] as string[],
+  agents_cleared: 0, agents_kept: 0, tasks_reset: 0, claims_cancelled: 0, runs_kept: 0, worktrees_removed: 0,
+};
 
 try {
   assertProjectMode();
 } catch (error) {
-  cliError(error);
+  await failCommand(error, json);
 }
 
 // ── Step 1: Kill coordinator ────────────────────────────────────────────────
@@ -63,19 +73,26 @@ if (coordinator) {
       await new Promise((r) => setTimeout(r, 200));
       try { process.kill(pid, 0); } catch { break; } // ESRCH = dead, stop polling
     }
-    console.log(`✓ Coordinator stopped  (PID ${pid}${via})`);
+    summary.coordinator = 'stopped';
+    summary.coordinator_pid = pid;
+    say(`✓ Coordinator stopped  (PID ${pid}${via})`);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ESRCH') {
       if (source === 'pid_file') { try { unlinkSync(pidFile); } catch { /* already gone */ } }
-      console.log('  Coordinator already stopped');
+      summary.coordinator = 'already_stopped';
+      summary.coordinator_pid = pid;
+      say('  Coordinator already stopped');
     } else {
+      summary.coordinator = 'signal_failed';
+      summary.coordinator_pid = pid;
       console.error(`  Warning: could not signal coordinator: ${formatErrorMessage(e)}`);
     }
   }
 } else if (staleLock) {
-  console.log('  Coordinator already stopped');
+  summary.coordinator = 'already_stopped';
+  say('  Coordinator already stopped');
 } else {
-  console.log('  Coordinator not running');
+  say('  Coordinator not running');
 }
 
 // ── Step 2: Stop all agent sessions ────────────────────────────────────────
@@ -88,7 +105,8 @@ if (!keepSessions) {
     try {
       const adapter = createAdapter(agent.provider);
       await adapter.stop(agent.session_handle!);
-      console.log(`✓ Stopped session for ${agent.agent_id}`);
+      summary.sessions_stopped.push(agent.agent_id);
+      say(`✓ Stopped session for ${agent.agent_id}`);
     } catch (e) {
       console.error(`  Warning: could not stop session for ${agent.agent_id}: ${formatErrorMessage(e)}`);
     }
@@ -112,7 +130,9 @@ withLock(join(STATE_DIR, '.lock'), () => {
       version: '1', agents: listAgents(STATE_DIR).filter((agent) => keptAgentIds.has(agent.agent_id)),
     });
   }
-  console.log(`✓ Cleared ${agents.length - keptAgentIds.size} agent(s)${keptAgentIds.size ? `, kept ${keptAgentIds.size} with a live session` : ''}`);
+  summary.agents_cleared = agents.length - keptAgentIds.size;
+  summary.agents_kept = keptAgentIds.size;
+  say(`✓ Cleared ${agents.length - keptAgentIds.size} agent(s)${keptAgentIds.size ? `, kept ${keptAgentIds.size} with a live session` : ''}`);
 
   if (!existsSync(join(STATE_DIR, 'backlog.json')) || !existsSync(join(STATE_DIR, 'claims.json'))) return;
   const backlog = readBacklog(STATE_DIR);
@@ -162,7 +182,10 @@ withLock(join(STATE_DIR, '.lock'), () => {
         ...run, payload: { reason: 'kill_all' },
       }))]);
 
-  console.log(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)${keptRunIds.size ? `, kept ${keptRunIds.size} run(s) of kept sessions` : ''}`);
+  summary.tasks_reset = resetCount;
+  summary.claims_cancelled = cancelledClaims;
+  summary.runs_kept = keptRunIds.size;
+  say(`✓ Reset ${resetCount} in-flight task(s), cancelled ${cancelledClaims} claim(s)${keptRunIds.size ? `, kept ${keptRunIds.size} run(s) of kept sessions` : ''}`);
 });
 
 // ── Step 5: Remove all run worktrees ────────────────────────────────────────
@@ -189,5 +212,8 @@ if (existsSync(RUN_WORKTREES_FILE)) {
   withLock(join(STATE_DIR, '.lock'), () => {
     atomicWriteJson(RUN_WORKTREES_FILE, { version: '1', runs: runs.filter((entry) => keptRunIds.has(entry.run_id)) });
   });
-  console.log(`✓ Removed ${removedWorktrees} run worktree(s)`);
+  summary.worktrees_removed = removedWorktrees;
+  say(`✓ Removed ${removedWorktrees} run worktree(s)`);
 }
+
+if (json) printJson(summary);

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * cli/gc-workers.ts
- * Usage: node cli/gc-workers.ts
+ * Usage: node cli/gc-workers.ts [--json]
  *
  * Removes offline and dead worker records. A running coordinator removes these
  * itself (along with workers whose session exited), so this covers the case
@@ -14,12 +14,15 @@ import { listAgents, removeAgent } from '../lib/agentRegistry.ts';
 import { gcOrphanedHookFiles } from '../lib/hookFiles.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { assertProjectMode, STATE_DIR } from '../lib/paths.ts';
-import { cliError } from './shared.ts';
+import { boolFlag } from '../lib/args.ts';
+import { failCommand, printJson } from './shared.ts';
+
+const json = boolFlag('json');
 
 try {
   assertProjectMode();
 } catch (error) {
-  cliError(error);
+  await failCommand(error, json);
 }
 
 const claimed = new Set((readClaims(STATE_DIR).claims ?? [])
@@ -38,4 +41,5 @@ for (const worker of workers) {
 
 const hookFiles = gcOrphanedHookFiles(STATE_DIR, listAgents(STATE_DIR).map((agent) => agent.agent_id));
 
-console.log(`Worker GC complete. Removed ${removed} worker(s) and ${hookFiles.length} orphaned hook-event file(s).`);
+if (json) printJson({ removed_workers: removed, removed_hook_files: hookFiles.length });
+else console.log(`Worker GC complete. Removed ${removed} worker(s) and ${hookFiles.length} orphaned hook-event file(s).`);

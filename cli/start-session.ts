@@ -24,9 +24,9 @@
  * Detaching (Ctrl-b d) or closing the terminal leaves the master running; its
  * credential is revoked when the master exits or by `orc kill-all`.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,7 +57,11 @@ import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { listSupervisedSessions, MASTER_RETIRE_FAILURES, retireMaster, type MasterProbe } from '../lib/sessionSupervisor.ts';
 import { getMasterBootstrap, MASTER_BOOTSTRAP_TEMPLATE } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
-import { findLiveCoordinator } from '../lib/coordinatorLiveness.ts';
+import {
+  coordinatorStatus as coordinatorStatusOf,
+  spawnCoordinator as spawnCoordinatorProcess,
+  stopCoordinator as stopCoordinatorProcess,
+} from '../lib/coordinatorProcess.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { staleCodeWarning } from '../lib/codeIdentity.ts';
 import {
@@ -78,46 +82,7 @@ function runtimeModulePath(relativeTsPath: string, relativeJsPath: string): stri
 
 // ── Coordinator helpers ────────────────────────────────────────────────────
 
-const COORDINATOR_PID_FILE = join(STATE_DIR, 'coordinator.pid');
-const COORDINATOR_SCRIPT_PATH = runtimeModulePath('../coordinator.ts', '../coordinator.js');
-
-function isValidPid(pid: unknown): pid is number {
-  return Number.isInteger(pid) && (pid as number) > 0;
-}
-
-function readCoordinatorPidRecord() {
-  if (!existsSync(COORDINATOR_PID_FILE)) return null;
-  try {
-    const data = JSON.parse(readFileSync(COORDINATOR_PID_FILE, 'utf8')) as Record<string, unknown>;
-    if (!isValidPid(data?.pid)) return null;
-    return {
-      pid: Number(data.pid),
-      started_at: typeof data.started_at === 'string' ? data.started_at : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function readCoordinatorPidFromFile() {
-  return readCoordinatorPidRecord()?.pid ?? null;
-}
-
-function removeCoordinatorPidFileIfMatches(pid: number) {
-  const record = readCoordinatorPidRecord();
-  if (record?.pid !== pid) return;
-  try {
-    unlinkSync(COORDINATOR_PID_FILE);
-  } catch {
-    // already gone
-  }
-}
-
-/** The live coordinator, found through coordinator.pid or, with that file missing or stale, control.json. */
-function coordinatorStatus() {
-  const live = findLiveCoordinator(STATE_DIR);
-  return live ? { running: true, pid: live.pid } : { running: false, pid: readCoordinatorPidFromFile() };
-}
+const coordinatorStatus = () => coordinatorStatusOf(STATE_DIR);
 
 /** Why the running coordinator is out of date against the code on disk (version or build); null when current, or unreachable. */
 let warnedStale = false;
@@ -132,58 +97,8 @@ async function staleCoordinatorWarning(): Promise<string | null> {
   }
 }
 
-async function spawnCoordinator() {
-  const child = spawn(process.execPath, [COORDINATOR_SCRIPT_PATH], {
-    env:      { ...process.env, ...orcStateEnv() },
-    detached: true,
-    stdio:    'ignore',
-  });
-  child.unref();
-
-  // Poll coordinator.pid up to 2 s (10 × 200 ms) to confirm startup
-  for (let i = 0; i < 10; i++) {
-    await new Promise((r) => setTimeout(r, 200));
-    const pid = readCoordinatorPidFromFile();
-    if (pid) return pid;
-  }
-  return null;
-}
-
-async function stopCoordinator(pid: number) {
-  if (!isValidPid(pid)) return false;
-  // Only a PID verified as this state's live coordinator is ever signalled,
-  // and a pid lock without started_at is not trusted for a terminate.
-  const live = findLiveCoordinator(STATE_DIR);
-  if (live?.pid !== pid) return false;
-  if (live.source === 'pid_file' && !readCoordinatorPidRecord()?.started_at) return false;
-
-  try {
-    process.kill(pid, 0);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException)?.code === 'ESRCH') {
-      removeCoordinatorPidFileIfMatches(pid);
-      return true;
-    }
-    return false;
-  }
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch {
-    return false;
-  }
-  for (let i = 0; i < 10; i++) {
-    await new Promise((r) => setTimeout(r, 200));
-    try {
-      process.kill(pid, 0);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ESRCH') {
-        removeCoordinatorPidFileIfMatches(pid);
-        return true;
-      }
-    }
-  }
-  return false;
-}
+const spawnCoordinator = () => spawnCoordinatorProcess(STATE_DIR, ACTIVE_PROJECT!.id);
+const stopCoordinator = (pid: number) => stopCoordinatorProcess(STATE_DIR, pid);
 
 /** How child processes find this session's state: the project identity. */
 function orcStateEnv(): Record<string, string> {

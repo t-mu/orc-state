@@ -102,3 +102,27 @@ describe('cli/shared.ts', () => {
     });
   });
 });
+
+describe('JSON failure helpers', () => {
+  it('maps domain and control errors to control codes', async () => {
+    const { errorCode, isRetryableCode } = await import('./shared.ts');
+    const { NotFoundError, ConflictError, InputError } = await import('../lib/domainErrors.ts');
+    const { ControlError } = await import('../lib/controlProtocol.ts');
+    expect(errorCode(new NotFoundError('x'))).toBe('not_found');
+    expect(errorCode(new ConflictError('x'))).toBe('conflict');
+    expect(errorCode(new InputError('x'))).toBe('bad_request');
+    expect(errorCode(new ControlError('busy', 'x', 409))).toBe('busy');
+    expect(errorCode(new Error('x'))).toBe('internal');
+    expect(['unavailable', 'busy'].every(isRetryableCode)).toBe(true);
+    expect(['not_found', 'conflict', 'internal'].some(isRetryableCode)).toBe(false);
+  });
+
+  it('exits 75 with the error object for a retryable code and 1 otherwise', () => {
+    const run = (code: string) => runPiped(`import { exitWithJsonError } from ${JSON.stringify(SHARED_PATH)};\nawait exitWithJsonError(${JSON.stringify(code)}, 'm');`);
+    const retry = run('unavailable');
+    expect(retry.status).toBe(75);
+    expect(JSON.parse(retry.stdout)).toEqual({ error: { code: 'unavailable', message: 'm' } });
+    expect(run('busy').status).toBe(75);
+    expect(run('conflict').status).toBe(1);
+  });
+});
