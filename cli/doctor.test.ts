@@ -52,7 +52,7 @@ describe('cli/doctor.ts', () => {
       const future = Date.now() / 1000 + 3600;
       utimesSync(join(codeRoot, 'lib', 'touched.ts'), future, future);
       const stale = await doctor();
-      expect(stale.json.checks.coordinatorCode.warning).toMatch(/^coordinator is running code from .+; restart with orc start-session$/);
+      expect(stale.json.checks.coordinatorCode.warning).toMatch(/^coordinator is running code from .+; restart with orc start-session --restart-stale$/);
       expect(stale.text).toContain('restart with orc start-session');
       expect(stale.code).toBe(baseline);
     } finally {

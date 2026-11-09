@@ -12,6 +12,7 @@ import { buildStatus } from './statusView.ts';
 import { RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
 import { ORC_PACKAGE_ROOT } from './paths.ts';
 import { ControlClient, controlSocketFromEnv, type EventRow } from './controlClient.ts';
+import { readBuildId } from './codeIdentity.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, PROTOCOL_HEADER, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import Database from 'better-sqlite3';
@@ -558,6 +559,7 @@ describe('local daemon control API', () => {
     expect(operator).toEqual({
       version, protocol_version: CONTROL_PROTOCOL_VERSION, schema_version: RUNTIME_SCHEMA_VERSION,
       started_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/), code_root: ORC_PACKAGE_ROOT, code_mtime: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+      build_id: readBuildId(ORC_PACKAGE_ROOT),
     });
     expect(await new ControlClient(dir, { credential: 'session-a' }).health()).toEqual(operator);
     expect(await new ControlClient(dir, { credential: 'session-master' }).health()).toEqual(operator);

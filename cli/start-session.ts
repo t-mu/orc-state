@@ -7,7 +7,7 @@
  * background process.
  *
  * Usage:
- *   orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset]
+ *   orc start-session [--provider=<claude|codex|gemini>] [--agent-id=<id>] [--reset] [--restart-stale]
  *
  * All flags are optional. Missing values trigger interactive prompts in a TTY;
  * in non-TTY / CI mode they must be supplied as flags.
@@ -58,6 +58,8 @@ import { listSupervisedSessions, MASTER_RETIRE_FAILURES, retireMaster, type Mast
 import { getMasterBootstrap, MASTER_BOOTSTRAP_TEMPLATE } from '../lib/sessionBootstrap.ts';
 import { formatErrorMessage } from './shared.ts';
 import { findLiveCoordinator } from '../lib/coordinatorLiveness.ts';
+import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
+import { staleCodeWarning } from '../lib/codeIdentity.ts';
 import {
   appendSessionStartedEvent,
   prepareSessionReuse,
@@ -115,6 +117,15 @@ function removeCoordinatorPidFileIfMatches(pid: number) {
 function coordinatorStatus() {
   const live = findLiveCoordinator(STATE_DIR);
   return live ? { running: true, pid: live.pid } : { running: false, pid: readCoordinatorPidFromFile() };
+}
+
+/** Why the running coordinator is out of date against the code on disk (version or build); null when current, or unreachable. */
+async function staleCoordinatorWarning(): Promise<string | null> {
+  try {
+    return staleCodeWarning(await new ControlClient(STATE_DIR, { timeoutMs: 3_000, socketPath: controlSocketFromEnv() }).health());
+  } catch {
+    return null; // no control API, or a coordinator that predates /v1/health
+  }
 }
 
 async function spawnCoordinator() {
@@ -276,7 +287,15 @@ async function ensureCoordinatorRunning() {
   const { running, pid } = coordinatorStatus();
   if (running) {
     console.log(`✓ Coordinator already running  (PID ${pid})`);
-    return;
+    const stale = await staleCoordinatorWarning();
+    if (!stale) return;
+    console.warn(`Warning: ${stale}`);
+    if (!boolFlag('restart-stale') || !pid) return;
+    console.log(`Restarting stale coordinator (PID ${pid})...`);
+    if (!await stopCoordinator(pid)) {
+      console.warn(`Coordinator PID ${pid} is still running; continuing with it.`);
+      return;
+    }
   }
   try {
     const newPid = await spawnCoordinator();
@@ -376,7 +395,14 @@ if (master && liveMasterSession) {
 // ── Startup wizard ─────────────────────────────────────────────────────────
 
 const { running: coordinatorRunning, pid: coordinatorPid } = coordinatorStatus();
-const coordinatorAction = await promptCoordinatorAction(coordinatorRunning ? coordinatorPid : null, { reset: boolFlag('reset') });
+let coordinatorAction = await promptCoordinatorAction(coordinatorRunning ? coordinatorPid : null, { reset: boolFlag('reset') });
+if (coordinatorAction === 'reuse') {
+  const stale = await staleCoordinatorWarning();
+  if (stale) {
+    console.warn(`Warning: ${stale}`);
+    if (boolFlag('restart-stale')) coordinatorAction = 'terminate';
+  }
+}
 const resetRuntimeState = coordinatorAction === 'reset';
 
 if (coordinatorAction === 'cancel') {
