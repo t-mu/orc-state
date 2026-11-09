@@ -94,7 +94,7 @@ describe('session resume records', () => {
   it('records the provider conversation id at spawn and keeps it across a re-record', () => {
     expect(current().provider_conversation_id).toBe('conv-1');
     recordProviderSession(dir, {
-      sessionId: 'session-1', runId: 'run-1', agentId: 'worker-a', provider: 'claude', providerRef: null, startedAt: 'later',
+      sessionId: 'session-1', runId: 'run-1', agentId: 'worker-a', provider: 'claude', providerRef: null, startedAt: '2026-01-01T01:00:00.000Z',
     });
     expect(current().provider_conversation_id).toBe('conv-1');
   });

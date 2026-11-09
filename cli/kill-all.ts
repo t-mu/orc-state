@@ -124,7 +124,7 @@ withLock(join(STATE_DIR, '.lock'), () => {
   const now = new Date().toISOString();
   if (existsSync(join(STATE_DIR, 'agents.json'))) {
     for (const agent of agents) {
-      if (!keptAgentIds.has(agent.agent_id)) closeProviderSessionsForAgent(STATE_DIR, agent.agent_id, now);
+      if (!keptAgentIds.has(agent.agent_id)) closeProviderSessionsForAgent(STATE_DIR, agent.agent_id, now, { type: 'human', id: 'human' });
     }
     atomicWriteJson(join(STATE_DIR, 'agents.json'), {
       version: '1', agents: listAgents(STATE_DIR).filter((agent) => keptAgentIds.has(agent.agent_id)),

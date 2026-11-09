@@ -5810,8 +5810,8 @@ describe('dead worker session resume (v1/run-resume)', () => {
   const RUN = 'run-resume-1';
 
   async function seedCrashedWorker({
-    provider = 'claude', transport = 'tmux', resumeCount = 0, conversationId = 'conv-1', worktree = true, beforeReport = false,
-  }: { provider?: string; transport?: string; resumeCount?: number; conversationId?: string | null; worktree?: boolean; beforeReport?: boolean } = {}) {
+    provider = 'claude', transport = 'tmux', resumeCount = 0, conversationId = 'conv-1', worktree = true, beforeReport = false, claimed = beforeReport,
+  }: { provider?: string; transport?: string; resumeCount?: number; conversationId?: string | null; worktree?: boolean; beforeReport?: boolean; claimed?: boolean } = {}) {
     const now = new Date().toISOString();
     const worktreePath = join(dir, 'worktrees', RUN);
     if (worktree) mkdirSync(join(worktreePath, '.git'), { recursive: true });
@@ -5822,10 +5822,10 @@ describe('dead worker session resume (v1/run-resume)', () => {
         session_handle: beforeReport ? null : `${transport === 'app-server' ? 'app' : transport}:worker-r`, session_token: 'sess-r',
         session_started_at: now, session_ready_at: beforeReport ? null : now, registered_at: now, last_heartbeat_at: now,
       }],
-      tasks: [{ ...DISPATCHABLE_TASK, status: beforeReport ? 'claimed' : 'in_progress' }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: claimed ? 'claimed' : 'in_progress' }],
       claims: [{
-        run_id: RUN, task_ref: 'proj/fix-bug', agent_id: 'worker-r', state: beforeReport ? 'claimed' : 'in_progress',
-        claimed_at: now, task_envelope_sent_at: beforeReport ? null : now, started_at: beforeReport ? null : now, last_heartbeat_at: now,
+        run_id: RUN, task_ref: 'proj/fix-bug', agent_id: 'worker-r', state: claimed ? 'claimed' : 'in_progress',
+        claimed_at: now, task_envelope_sent_at: claimed ? null : now, started_at: claimed ? null : now, last_heartbeat_at: now,
         lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
         finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
         input_state: null, input_requested_at: null,
@@ -5995,6 +5995,26 @@ describe('dead worker session resume (v1/run-resume)', () => {
     await tick();
     expect(start).toHaveBeenCalledOnce();
     expect(readEvents(dir).some((e) => e.event === 'session_resumed')).toBe(true);
+  });
+
+  it.each([
+    ['in_progress', false],
+    ['claimed (before its task envelope)', true],
+  ])('resumes a run (%s) whose session row a restart already reconciled offline, though the registry still says running', async (_label, claimed) => {
+    await seedCrashedWorker({ claimed });
+    const { setSessionState } = await import('./lib/sessionSupervisor.ts');
+    setSessionState(dir, 'sess-r', 'offline', 'session process exited', { outcome: 'exited' });
+    const { readAgents: readAgentsState } = await import('./lib/stateReader.ts');
+    expect(readAgentsState(dir).agents.find((a) => a.agent_id === 'worker-r')).toMatchObject({ status: 'offline', session_handle: 'tmux:worker-r' });
+    const { start } = crashedAdapter({ code: null, signal: 9 });
+
+    const { tick } = await import('./coordinator.ts');
+    await tick(); // the offline row is the confirmed death: no further probes needed
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(await sessionRow()).toMatchObject({ state: 'running', generation: 1 });
+    expect(readClaims(dir).find((c) => c.run_id === RUN)).toMatchObject({ agent_id: 'worker-r' });
+    expect(readAgents(dir).find((a) => a.agent_id === 'worker-r')).toMatchObject({ status: 'running', session_token: 'sess-r' });
   });
 
   it('requeues a session cleared before report-for-duty: no exit status, so exit_reason is unknown', async () => {

@@ -299,6 +299,24 @@ export interface SessionReconciledEvent extends BaseEvent {
   payload: { session_id: string; state: string; previous_state?: string; reason?: string; [key: string]: unknown };
 }
 
+/** A session row was inserted (`recordProviderSession`); every row starts `running`. */
+export interface SessionOpenedEvent extends BaseEvent {
+  event: 'session_opened';
+  agent_id: string;
+  run_id?: string;
+  task_ref?: string;
+  payload: { session_id: string; agent_id: string; run_id?: string; state: string; transport: string | null; generation: number; [key: string]: unknown };
+}
+
+/** Any other session-row write; `from` equals `to` when only the row's metadata changed (a resume starting). */
+export interface SessionStateChangedEvent extends BaseEvent {
+  event: 'session_state_changed';
+  agent_id: string;
+  run_id?: string;
+  task_ref?: string;
+  payload: { session_id: string; agent_id: string; run_id?: string; from: string; to: string; reason?: string; generation: number; [key: string]: unknown };
+}
+
 /** A session id survives a resume; the payload carries the new generation. */
 interface SessionResumePayload {
   session_id: string;
@@ -477,6 +495,8 @@ export type OrcEvent =
   | SessionStartFailedEvent
   | ScoutLaunchedEvent
   | ScoutLaunchFailedEvent
+  | SessionOpenedEvent
+  | SessionStateChangedEvent
   | SessionReconciledEvent
   | SessionResumedEvent
   | SessionResumeFailedEvent

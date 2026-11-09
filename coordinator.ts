@@ -1777,7 +1777,16 @@ async function probeActiveWorkerSessions(
 
   for (const claim of active) {
     const agent = byAgent.get(claim.agent_id);
-    if (!agent?.session_handle || agent.status === 'offline') continue;
+    if (!agent?.session_handle) continue;
+    if (agent.status === 'offline') {
+      // Offline with a handle still recorded: the session row went offline (an observed exit, or restart
+      // reconciliation found the process gone), which is already the confirmed death the probes look for.
+      log(`worker ${claim.agent_id} session is offline — resuming or requeueing run ${claim.run_id} (${claim.task_ref})`);
+      workerLiveness.delete(claim.run_id);
+      await resumeOrRequeue(claim, agent, { reason: 'session_offline: worker session row is offline', code: 'ERR_PTY_DEAD' });
+      cleaned = true;
+      continue;
+    }
 
     const probe = await adapterProbeLiveness(getAdapter(agent.provider), agent.session_handle);
     const tracker = workerLiveness.get(claim.run_id) ?? { ...newLivenessTracker(), verdict: probe.verdict };

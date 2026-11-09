@@ -82,8 +82,14 @@ describe('resetVolatileRuntimeStateForSession', () => {
     expect(readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token).toBeNull();
     restoreVolatileRuntimeStateFromSnapshot(dir, reset.snapshot);
     expect(readAgents(dir).agents.find((agent) => agent.agent_id === 'master')?.session_token).toBe(before);
+    // The reset closes the master's session and the rollback reopens it, each with its own event.
     expect(queryEvents(dir, {}).map((event) => event.event)).toEqual([
-      'run_failed', 'run_failed', 'claim_created', 'run_started',
+      'session_opened', 'run_failed', 'run_failed', 'session_state_changed', 'claim_created', 'run_started', 'session_state_changed',
+    ]);
+    const changes = queryEvents(dir, { event_type: 'session_state_changed' }).map((event) => event.payload);
+    expect(changes).toMatchObject([
+      { session_id: 'session-master', from: 'running', to: 'offline', reason: 'session closed' },
+      { session_id: 'session-master', from: 'offline', to: 'running', reason: 'session reset rolled back' },
     ]);
   });
 

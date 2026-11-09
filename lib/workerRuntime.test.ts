@@ -141,6 +141,7 @@ interface TestAdapter {
     startup_profile?: 'default' | 'real-provider-smoke';
     env: Record<string, string>;
   }): Promise<{ session_handle: string; provider_ref: unknown }>;
+  stop(sessionHandle: string): Promise<void>;
 }
 
 describe('launchWorkerSession execution mode', () => {
@@ -164,6 +165,7 @@ describe('launchWorkerSession execution mode', () => {
   let adapterStartSpy: ReturnType<typeof vi.fn>;
   let buildSessionBootstrapSpy: ReturnType<typeof vi.fn>;
   let adapter: TestAdapter;
+  let adapterStopSpy: ReturnType<typeof vi.fn>;
   let stateDir: string;
 
   beforeEach(() => {
@@ -171,7 +173,8 @@ describe('launchWorkerSession execution mode', () => {
     stateDir = mkdtempSync(join(tmpdir(), 'orc-launch-test-'));
     writeFileSync(join(stateDir, 'project.json'), JSON.stringify({ id: 'test-project', name: 'test', target_repo_root: '/repo' }));
     adapterStartSpy = vi.fn().mockResolvedValue({ session_handle: 'handle-1', provider_ref: null });
-    adapter = { start: adapterStartSpy as unknown as TestAdapter['start'] };
+    adapterStopSpy = vi.fn().mockResolvedValue(undefined);
+    adapter = { start: adapterStartSpy as unknown as TestAdapter['start'], stop: adapterStopSpy as unknown as TestAdapter['stop'] };
     vi.doMock('./agentRegistry.ts', () => ({ updateAgentRuntime: vi.fn() }));
     vi.doMock('./orcBin.ts', () => ({ resolveOrcBin: vi.fn(() => 'orc') }));
     // One registration per test: re-mocking the module inside a test can leave workerRuntime bound to this one.
@@ -187,6 +190,21 @@ describe('launchWorkerSession execution mode', () => {
     rmSync(stateDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.resetModules();
+  });
+
+  it('stops the session and fails the launch when its run was cancelled during the launch', async () => {
+    const registry = await import('./agentRegistry.ts');
+    const { launchWorkerSession } = await import('./workerRuntime.ts');
+    const emit = vi.fn();
+    // No runs row for run-gone: recordProviderSession refuses the session.
+    const result = await launchWorkerSession(stateDir, makeAgent(), {
+      adapter, workingDirectory: '/tmp/work', runId: 'run-gone', taskRef: 'general/gone', emit,
+    });
+    expect(result.ok).toBe(false);
+    expect(adapterStopSpy).toHaveBeenCalledWith('handle-1');
+    const updates = vi.mocked(registry.updateAgentRuntime).mock.calls.map((call) => call[2]);
+    expect(updates.some((update) => update.status === 'running')).toBe(false);
+    expect(emit.mock.calls.map(([event]) => event.event)).not.toContain('agent_online');
   });
 
   it('passes execution_mode to adapter.start', async () => {

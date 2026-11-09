@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
 import { atomicWriteJson } from './atomicWrite.ts';
 import { appendSequencedEvent, withEventDb, withEventDbTransaction } from './eventLog.ts';
 import type { Claim, ClaimsState } from '../types/claims.ts';
-import type { OrcEventInput } from '../types/events.ts';
+import type { ActorType, OrcEventInput } from '../types/events.ts';
 import type { Agent, AgentsState } from '../types/agents.ts';
 import { logger } from './logger.ts';
 
@@ -59,7 +59,13 @@ function importLegacyClaims(db: Database.Database, stateDir: string): boolean {
   return true;
 }
 
-/** Overlay the stable provider session ID onto the agent registry. */
+/**
+ * Overlay the agent's latest session row onto the registry: the row answers
+ * whether the session is alive. An offline row clears `session_token` and
+ * reports a `running` agent as `offline`; a recoverable or unknown row still
+ * belongs to the agent. `session_handle` is kept as recorded: it names the
+ * terminal (a dead pane stays in tmux) that cleanup still has to stop.
+ */
 export function withAuthoritativeAgentSessions(stateDir: string, state: AgentsState): AgentsState {
   if (!existsSync(join(stateDir, 'events.db'))) return state;
   return withEventDb(stateDir, (db) => {
@@ -72,8 +78,8 @@ export function withAuthoritativeAgentSessions(stateDir: string, state: AgentsSt
       agents: state.agents.map((agent) => {
         const session = latest.get(agent.agent_id);
         if (!session) return agent;
-        // Recoverable and unknown sessions still belong to the agent; only offline ones are cleared.
-        return { ...agent, session_token: session.state !== 'offline' ? session.session_id : null };
+        if (session.state !== 'offline') return { ...agent, session_token: session.session_id };
+        return { ...agent, session_token: null, ...(agent.status === 'running' ? { status: 'offline' as const } : {}) };
       }),
     };
   });
@@ -110,7 +116,112 @@ export function commitClaims(stateDir: string, state: ClaimsState, events: OrcEv
   projectClaims(stateDir, stored);
 }
 
-/** Persist the provider session identity separately from its agent and run. */
+/** Who wrote a session row, as recorded on its event. */
+export interface SessionActor { type: ActorType; id: string }
+
+const COORDINATOR_ACTOR: SessionActor = { type: 'coordinator', id: 'coordinator' };
+const SUPERSEDED_REASON = 'superseded by a new session';
+
+/** A session row as its writes and events see it. */
+export interface SessionRowSnapshot {
+  session_id: string;
+  agent_id: string;
+  run_id: string | null;
+  state: string;
+  state_reason: string | null;
+  transport: string | null;
+  provider_ref: string | null;
+  provider_conversation_id: string | null;
+  generation: number;
+}
+
+/** The event a write appends instead of `session_state_changed` (e.g. `session_resumed`). */
+export type SessionEventBuilder = (row: { before: SessionRowSnapshot; after: SessionRowSnapshot; taskRef: string | null }) => OrcEventInput;
+
+const SESSION_COLUMN_RE = /^[a-z_]+$/;
+
+function readSessionRow(db: Database.Database, sessionId: string): SessionRowSnapshot | undefined {
+  return db.prepare(`SELECT session_id, agent_id, run_id, state, state_reason, transport, provider_ref, provider_conversation_id,
+    generation FROM sessions WHERE session_id = ?`).get(sessionId) as SessionRowSnapshot | undefined;
+}
+
+function taskRefForRun(db: Database.Database, runId: string | null): string | null {
+  if (!runId) return null;
+  return (db.prepare('SELECT task_ref FROM runs WHERE run_id = ?').get(runId) as { task_ref: string } | undefined)?.task_ref ?? null;
+}
+
+function sessionEventEnvelope(row: SessionRowSnapshot, taskRef: string | null, at: string, actor: SessionActor) {
+  return {
+    ts: at, actor_type: actor.type, actor_id: actor.id, agent_id: row.agent_id,
+    ...(row.run_id ? { run_id: row.run_id } : {}),
+    ...(taskRef ? { task_ref: taskRef } : {}),
+  };
+}
+
+/**
+ * The one way to change an existing session row: apply `set` (and `increment`)
+ * and append exactly one event in the caller's event-DB transaction, so an app
+ * following events sees every session write. The event is
+ * `session_state_changed` (from/to/reason/generation) unless `event` names
+ * another. Returns the row after the write, or null when there is no such row.
+ * Lease renewal (`renewSessionOwnership`) is the one write that skips it: it
+ * only extends `owner_expires_at` and runs every tick.
+ */
+export function writeSessionRow(db: Database.Database, stateDir: string, sessionId: string, change: {
+  set: Record<string, unknown>;
+  increment?: Array<'generation' | 'resume_count'>;
+  at: string;
+  reason?: string | null;
+  actor?: SessionActor;
+  event?: SessionEventBuilder;
+}): SessionRowSnapshot | null {
+  const before = readSessionRow(db, sessionId);
+  if (!before) return null;
+  const columns = Object.keys(change.set);
+  for (const column of [...columns, ...(change.increment ?? [])]) {
+    if (!SESSION_COLUMN_RE.test(column)) throw new Error(`Invalid session column: ${column}`);
+  }
+  const assignments = [
+    ...columns.map((column) => `${column} = ?`),
+    ...(change.increment ?? []).map((column) => `${column} = ${column} + 1`),
+    'updated_at = ?',
+  ];
+  db.prepare(`UPDATE sessions SET ${assignments.join(', ')} WHERE session_id = ?`)
+    .run(...columns.map((column) => change.set[column]), change.at, sessionId);
+  const after = readSessionRow(db, sessionId)!;
+  const taskRef = taskRefForRun(db, after.run_id);
+  const actor = change.actor ?? COORDINATOR_ACTOR;
+  appendSequencedEvent(stateDir, change.event ? change.event({ before, after, taskRef }) : {
+    ...sessionEventEnvelope(after, taskRef, change.at, actor),
+    event: 'session_state_changed',
+    payload: {
+      session_id: sessionId, agent_id: after.agent_id,
+      ...(after.run_id ? { run_id: after.run_id } : {}),
+      from: before.state, to: after.state,
+      ...(change.reason ? { reason: change.reason } : {}),
+      generation: after.generation,
+    },
+  });
+  return after;
+}
+
+/** Take every other open session of the agent offline, one event each. */
+function supersedeAgentSessions(db: Database.Database, stateDir: string, agentId: string, keepSessionId: string | null, at: string,
+  reason = SUPERSEDED_REASON, actor: SessionActor = COORDINATOR_ACTOR): void {
+  const rows = db.prepare("SELECT session_id FROM sessions WHERE agent_id = ? AND state <> 'offline' ORDER BY rowid")
+    .all(agentId) as Array<{ session_id: string }>;
+  for (const row of rows) {
+    if (row.session_id === keepSessionId) continue;
+    writeSessionRow(db, stateDir, row.session_id, { set: { state: 'offline', state_reason: reason }, at, reason, actor });
+  }
+}
+
+/**
+ * Persist the provider session identity separately from its agent and run:
+ * the agent's other open sessions are superseded and the row is inserted
+ * (`session_opened`), or rewritten when it already exists. Returns false,
+ * writing nothing, when the run no longer exists (it was cancelled meanwhile).
+ */
 export function recordProviderSession(stateDir: string, session: {
   sessionId: string;
   runId: string | null;
@@ -134,23 +245,40 @@ export function recordProviderSession(stateDir: string, session: {
   }
   return withEventDbTransaction(stateDir, (db) => {
     if (session.runId !== null && !db.prepare('SELECT 1 FROM runs WHERE run_id = ?').get(session.runId)) return false;
-    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
-      .run(session.startedAt, session.agentId, session.sessionId);
+    supersedeAgentSessions(db, stateDir, session.agentId, session.sessionId, session.startedAt);
+    const providerRef = session.providerRef == null ? null : JSON.stringify(session.providerRef);
+    const process = {
+      transport: session.transport ?? null, process_pid: session.processPid ?? null, process_start: session.processStart ?? null,
+      owner_id: session.ownerId ?? null, owner_expires_at: session.ownerExpiresAt ?? null,
+    };
+    if (readSessionRow(db, session.sessionId)) {
+      writeSessionRow(db, stateDir, session.sessionId, {
+        set: {
+          state: 'running', state_reason: null, provider_ref: providerRef, ...process,
+          ...(session.credentialHash != null ? { credential_hash: session.credentialHash } : {}),
+          ...(session.providerConversationId != null ? { provider_conversation_id: session.providerConversationId } : {}),
+        },
+        at: session.startedAt, reason: 'session recorded again',
+      });
+      return true;
+    }
     db.prepare(`
       INSERT INTO sessions (session_id, run_id, agent_id, provider, state, provider_ref, started_at, updated_at,
         transport, process_pid, process_start, owner_id, owner_expires_at, state_reason, credential_hash, provider_conversation_id)
       VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-      ON CONFLICT(session_id) DO UPDATE SET
-        state = 'running', provider_ref = excluded.provider_ref, updated_at = excluded.updated_at,
-        transport = excluded.transport, process_pid = excluded.process_pid, process_start = excluded.process_start,
-        owner_id = excluded.owner_id, owner_expires_at = excluded.owner_expires_at, state_reason = NULL,
-        credential_hash = COALESCE(excluded.credential_hash, sessions.credential_hash),
-        provider_conversation_id = COALESCE(excluded.provider_conversation_id, sessions.provider_conversation_id)
-    `).run(session.sessionId, session.runId, session.agentId, session.provider,
-      session.providerRef == null ? null : JSON.stringify(session.providerRef), session.startedAt, session.startedAt,
-      session.transport ?? null, session.processPid ?? null, session.processStart ?? null,
-      session.ownerId ?? null, session.ownerExpiresAt ?? null, session.credentialHash ?? null,
-      session.providerConversationId ?? null);
+    `).run(session.sessionId, session.runId, session.agentId, session.provider, providerRef, session.startedAt, session.startedAt,
+      process.transport, process.process_pid, process.process_start, process.owner_id, process.owner_expires_at,
+      session.credentialHash ?? null, session.providerConversationId ?? null);
+    const row = readSessionRow(db, session.sessionId)!;
+    appendSequencedEvent(stateDir, {
+      ...sessionEventEnvelope(row, taskRefForRun(db, row.run_id), session.startedAt, COORDINATOR_ACTOR),
+      event: 'session_opened',
+      payload: {
+        session_id: row.session_id, agent_id: row.agent_id,
+        ...(row.run_id ? { run_id: row.run_id } : {}),
+        state: row.state, transport: row.transport, generation: row.generation,
+      },
+    });
     return true;
   });
 }
@@ -173,28 +301,30 @@ export function resumeProviderSession(stateDir: string, session: {
   actorId?: string;
 }): number | null {
   return withEventDbTransaction(stateDir, (db) => {
-    const row = db.prepare('SELECT agent_id, run_id, provider_conversation_id FROM sessions WHERE session_id = ?')
-      .get(session.sessionId) as { agent_id: string; run_id: string | null; provider_conversation_id: string | null } | undefined;
+    const row = readSessionRow(db, session.sessionId);
     if (!row) return null;
-    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
-      .run(session.at, row.agent_id, session.sessionId);
-    db.prepare(`UPDATE sessions SET state = 'running', state_reason = NULL, exit_reason = NULL, provider_ref = ?, updated_at = ?,
-        transport = ?, process_pid = ?, process_start = ?, owner_id = NULL, owner_expires_at = NULL, credential_hash = ?,
-        generation = generation + 1, resume_count = resume_count + 1
-      WHERE session_id = ?`).run(session.providerRef == null ? null : JSON.stringify(session.providerRef), session.at,
-      session.transport, session.processPid, session.processStart, session.credentialHash, session.sessionId);
-    const { generation } = db.prepare('SELECT generation FROM sessions WHERE session_id = ?').get(session.sessionId) as { generation: number };
-    const actorId = session.actorId ?? 'human';
-    appendSequencedEvent(stateDir, {
-      ts: session.at, event: 'session_resumed', actor_type: 'human', actor_id: actorId, agent_id: row.agent_id,
-      ...(row.run_id ? { run_id: row.run_id } : {}),
-      payload: {
-        session_id: session.sessionId, agent_id: row.agent_id, generation,
-        ...(row.run_id ? { run_id: row.run_id } : {}),
-        ...(row.provider_conversation_id ? { provider_conversation_id: row.provider_conversation_id } : {}),
+    const actor: SessionActor = { type: 'human', id: session.actorId ?? 'human' };
+    supersedeAgentSessions(db, stateDir, row.agent_id, session.sessionId, session.at, SUPERSEDED_REASON, actor);
+    const after = writeSessionRow(db, stateDir, session.sessionId, {
+      set: {
+        state: 'running', state_reason: null, exit_reason: null,
+        provider_ref: session.providerRef == null ? null : JSON.stringify(session.providerRef),
+        transport: session.transport, process_pid: session.processPid, process_start: session.processStart,
+        owner_id: null, owner_expires_at: null, credential_hash: session.credentialHash,
       },
-    });
-    return generation;
+      increment: ['generation', 'resume_count'],
+      at: session.at,
+      event: ({ after }) => ({
+        ...sessionEventEnvelope(after, null, session.at, actor),
+        event: 'session_resumed',
+        payload: {
+          session_id: session.sessionId, agent_id: after.agent_id, generation: after.generation,
+          ...(after.run_id ? { run_id: after.run_id } : {}),
+          ...(after.provider_conversation_id ? { provider_conversation_id: after.provider_conversation_id } : {}),
+        },
+      }),
+    })!;
+    return after.generation;
   });
 }
 
@@ -213,17 +343,23 @@ export function reopenLiveSession(stateDir: string, {
 }): { sessionId: string; providerRef: unknown } | null {
   if (!existsSync(join(stateDir, 'events.db'))) return null;
   return withEventDbTransaction(stateDir, (db) => {
-    const row = db.prepare(`SELECT session_id, state, transport, provider_ref FROM sessions
+    const row = db.prepare(`SELECT session_id, state, provider_ref FROM sessions
       WHERE agent_id = ? AND process_pid = ? AND process_start = ? ORDER BY rowid DESC LIMIT 1`)
-      .get(agentId, processPid, processStart) as { session_id: string; state: string; transport: string | null; provider_ref: string | null } | undefined;
+      .get(agentId, processPid, processStart) as { session_id: string; state: string; provider_ref: string | null } | undefined;
     if (!row || row.state !== 'offline') return null;
-    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'superseded by a new session', updated_at = ? WHERE agent_id = ? AND session_id <> ? AND state <> 'offline'")
-      .run(at, agentId, row.session_id);
-    db.prepare(`UPDATE sessions SET state = 'running', state_reason = NULL, updated_at = ?, owner_id = NULL, owner_expires_at = NULL
-      WHERE session_id = ?`).run(at, row.session_id);
-    appendSequencedEvent(stateDir, {
-      ts: at, event: 'session_reconciled', actor_type: 'human', actor_id: actorId, agent_id: agentId,
-      payload: { session_id: row.session_id, state: 'running', previous_state: 'offline', transport: row.transport, outcome: 'restored', reason },
+    const actor: SessionActor = { type: 'human', id: actorId };
+    supersedeAgentSessions(db, stateDir, agentId, row.session_id, at, SUPERSEDED_REASON, actor);
+    writeSessionRow(db, stateDir, row.session_id, {
+      set: { state: 'running', state_reason: null, owner_id: null, owner_expires_at: null },
+      at,
+      event: ({ before, after, taskRef }) => ({
+        ...sessionEventEnvelope(after, taskRef, at, actor),
+        event: 'session_reconciled',
+        payload: {
+          session_id: row.session_id, state: 'running', previous_state: before.state, transport: after.transport, outcome: 'restored', reason,
+          generation: after.generation,
+        },
+      }),
     });
     let providerRef: unknown = null;
     try { providerRef = row.provider_ref == null ? null : JSON.parse(row.provider_ref); } catch { /* unreadable ref: none */ }
@@ -231,10 +367,11 @@ export function reopenLiveSession(stateDir: string, {
   });
 }
 
-export function closeProviderSessionsForAgent(stateDir: string, agentId: string, at: string): void {
+/** Close every open session of the agent (`session_state_changed` to offline, one per session). */
+export function closeProviderSessionsForAgent(stateDir: string, agentId: string, at: string, actor: SessionActor = COORDINATOR_ACTOR): void {
   if (!existsSync(join(stateDir, 'events.db'))) return;
   withEventDbTransaction(stateDir, (db) => {
-    db.prepare("UPDATE sessions SET state = 'offline', state_reason = 'session closed', updated_at = ? WHERE agent_id = ? AND state <> 'offline'").run(at, agentId);
+    supersedeAgentSessions(db, stateDir, agentId, null, at, 'session closed', actor);
   });
 }
 
@@ -242,12 +379,14 @@ export function closeProviderSessionsForAgent(stateDir: string, agentId: string,
 export function restoreProviderSessionsForAgents(stateDir: string, agents: Agent[], at: string): void {
   if (!existsSync(join(stateDir, 'events.db'))) return;
   withEventDbTransaction(stateDir, (db) => {
-    const latest = db.prepare('SELECT session_id FROM sessions WHERE agent_id = ? ORDER BY rowid DESC LIMIT 1');
-    const reactivate = db.prepare("UPDATE sessions SET state = 'running', updated_at = ? WHERE session_id = ?");
+    const latest = db.prepare('SELECT session_id, state FROM sessions WHERE agent_id = ? ORDER BY rowid DESC LIMIT 1');
     for (const agent of agents) {
       if (!agent.session_handle || agent.status !== 'running') continue;
-      const session = latest.get(agent.agent_id) as { session_id: string } | undefined;
-      if (session) reactivate.run(at, session.session_id);
+      const session = latest.get(agent.agent_id) as { session_id: string; state: string } | undefined;
+      if (!session || session.state === 'running') continue;
+      writeSessionRow(db, stateDir, session.session_id, {
+        set: { state: 'running', state_reason: null }, at, reason: 'session reset rolled back', actor: { type: 'human', id: 'human' },
+      });
     }
   });
 }
