@@ -139,7 +139,8 @@ describe('ControlClient error bodies', () => {
     const error = await new ControlClient(dir).snapshot().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ControlError);
     expect(error).not.toBeInstanceOf(SyntaxError);
-    expect(error).toMatchObject({ code: 'unavailable', status: 502, message: expect.stringContaining('<html> Bad Gateway</html>') });
+    // It reached a server, so it is never `unavailable` (which callers retry as unsent).
+    expect(error).toMatchObject({ code: 'internal', status: 502, message: expect.stringContaining('<html> Bad Gateway</html>') });
 
     handler = (_req, res) => { res.writeHead(400); res.end(); };
     await expect(new ControlClient(dir).snapshot()).rejects.toMatchObject({ code: 'internal', status: 400, message: expect.stringContaining('an empty body') });
@@ -159,6 +160,8 @@ describe('ControlClient error bodies', () => {
   it('maps a non-JSON stream open failure to ControlError', async () => {
     handler = (_req, res) => { res.writeHead(404); res.end('not here'); };
     await expect(drainAll(new ControlClient(dir).subscribe(0))).rejects.toMatchObject({ code: 'internal', status: 404, message: expect.stringContaining('not here') });
+    handler = (_req, res) => { res.writeHead(503); res.end('down'); };
+    await expect(drainAll(new ControlClient(dir).subscribe(0))).rejects.toMatchObject({ code: 'unavailable', status: 503 });
   });
 });
 
@@ -249,6 +252,26 @@ describe('ControlClient protocol negotiation', () => {
     expect(error).toMatchObject({ code: 'unsupported_protocol_version' });
     expect(error.message).toContain('unknown range');
     expect(error.message).toContain(`this client supports [${CONTROL_PROTOCOL_VERSIONS[0]}, ${CONTROL_PROTOCOL_VERSIONS[1]}]`);
+  });
+
+  it('keeps the health lookup within the call timeout', async () => {
+    handler = (req, res) => { if (req.url !== '/v1/health') refuse(res); };
+    const started = Date.now();
+    const error = await new ControlClient(dir).snapshot({ timeoutMs: 200 }).catch((e: unknown) => e) as ControlError;
+    expect(error).toMatchObject({ code: 'unsupported_protocol_version', message: expect.stringContaining('unknown range') });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('reports a transport mismatch without negotiating a version', async () => {
+    let requests = 0;
+    handler = (_req, res) => { requests += 1; json(res, 200, okBody({})); };
+    writeFileSync(join(dir, CONTROL_ENDPOINT_FILE), JSON.stringify({
+      protocol_version: 1, transport: 'tcp', path: defaultSocketPath(dir), pid: process.pid, started_at: new Date().toISOString(),
+    }));
+    const error = await new ControlClient(dir).snapshot().catch((e: unknown) => e) as ControlError;
+    expect(error).toMatchObject({ code: 'unsupported_protocol_version', message: expect.stringContaining('transport tcp') });
+    expect(error.message).not.toContain('mismatch');
+    expect(requests).toBe(0);
   });
 
   it('does not refuse a descriptor written by a coordinator of another protocol version', async () => {

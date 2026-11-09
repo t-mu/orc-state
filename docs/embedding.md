@@ -43,8 +43,8 @@ const status = await client.status({}, { signal: abort.signal, timeoutMs: 2_000 
 
 - Abort destroys the request and rejects with `ControlError` code `aborted`; a stream ends without an error instead. `timeoutMs: 0` disables the timeout.
 - A timeout rejects with code `timeout`. The coordinator may already have applied the request, so retry only reads or idempotent calls.
-- An error response that is not JSON (a proxy page, an empty body) is a `ControlError` with the HTTP status and a short excerpt, never a `SyntaxError`.
-- `inputTerminal` calls on one client to one terminal are sent one at a time in call order ([terminal-streaming.md](terminal-streaming.md)).
+- An error response that is not JSON (a proxy page, an empty body) is a `ControlError` (code `internal`) with the HTTP status and a short excerpt, never a `SyntaxError`.
+- `inputTerminal` calls on one client to one terminal are sent one at a time in call order. A retried input (after `busy`) joins the back of the queue, so queue nothing else until the retry settles ([terminal-streaming.md](terminal-streaming.md)).
 
 ## Passing `--project`
 

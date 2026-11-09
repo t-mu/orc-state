@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import {
   CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_PROTOCOL_VERSIONS, CONTROL_TOKEN_FILE, ControlError, OPERATOR_TOKEN_FILE,
   OPERATOR_HEADER, PROTOCOL_HEADER, SESSION_HEADER,
-  type AckState, type ControlEndpoint, type ControlResponse, type SessionTerminalView, type StreamFrame, type SubmitCommandRequest,
+  type AckState, type ControlEndpoint, type ControlErrorCode, type ControlResponse, type SessionTerminalView, type StreamFrame, type SubmitCommandRequest,
   type TerminalFrame,
 } from './controlProtocol.ts';
 import type { ControlHealth } from './controlServer.ts';
@@ -115,22 +115,37 @@ function connectionError(error: unknown): Error {
 }
 
 /** A response body that is not a control envelope (a proxy page, a truncated reply, nothing at all). */
-function bodyError(status: number, text: string, what: string): ControlError {
+function bodyError(status: number, text: string, what: string, code: ControlErrorCode): ControlError {
   const excerpt = text.replace(/\s+/g, ' ').trim();
   const shown = excerpt.length > 200 ? `${excerpt.slice(0, 200)}…` : excerpt;
-  return new ControlError(status >= 500 ? 'unavailable' : 'internal',
+  return new ControlError(code,
     `${what} failed with HTTP ${status} and ${shown ? `a non-JSON body: ${shown}` : 'an empty body'}`, status);
 }
 
-function parseEnvelope<T>(status: number, text: string, what: string): ControlResponse<T> {
+/**
+ * `badBodyCode` is what a non-envelope body becomes: `internal` for a request (it reached
+ * a server, so callers must not treat it as never sent), `unavailable` for a 5xx stream open.
+ */
+function parseEnvelope<T>(status: number, text: string, what: string, badBodyCode: ControlErrorCode = 'internal'): ControlResponse<T> {
   let parsed: unknown;
-  try { parsed = JSON.parse(text); } catch { throw bodyError(status, text, what); }
+  try { parsed = JSON.parse(text); } catch { throw bodyError(status, text, what, badBodyCode); }
   const envelope = parsed as ControlResponse<T> | null;
   if (typeof envelope !== 'object' || envelope === null || typeof envelope.ok !== 'boolean'
     || (!envelope.ok && (typeof envelope.error !== 'object' || envelope.error === null))) {
-    throw bodyError(status, text, what);
+    throw bodyError(status, text, what, badBodyCode);
   }
   return envelope;
+}
+
+type Discovered = { endpoint: ControlEndpoint; token: string };
+
+/** Longest the health lookup after a version refusal may take. */
+const NEGOTIATION_TIMEOUT_MS = 3_000;
+
+/** What is left of a call's timeout for the follow-up health lookup, capped (and finite even when the call has none). */
+function remainingBudget(timeoutMs: number, started: number): number {
+  if (timeoutMs <= 0) return NEGOTIATION_TIMEOUT_MS;
+  return Math.max(1, Math.min(NEGOTIATION_TIMEOUT_MS, timeoutMs - (Date.now() - started)));
 }
 
 function abortedError(what: string): ControlError {
@@ -190,19 +205,26 @@ export class ControlClient {
 
   /** `defaultTimeoutMs` applies when the call passes no `timeoutMs`. */
   private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown, options: CallOptions = {}, defaultTimeoutMs = this.timeoutMs): Promise<T> {
+    if (options.signal?.aborted) throw abortedError(`Control request ${method} ${path.split('?')[0]}`);
+    // Discovery errors (no daemon, wrong transport) are local: they never start a version negotiation.
+    const target = discover(this.stateDir, this.socketPath);
+    const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
+    const started = Date.now();
     try {
-      return await this.request<T>(method, path, body, options, options.timeoutMs ?? defaultTimeoutMs);
+      return await this.request<T>(target, method, path, body, options, timeoutMs);
     } catch (error) {
-      if (error instanceof ControlError && error.code === 'unsupported_protocol_version') throw await this.protocolMismatch(error, options.signal);
+      if (error instanceof ControlError && error.code === 'unsupported_protocol_version') {
+        throw await this.protocolMismatch(error, target, options.signal, remainingBudget(timeoutMs, started));
+      }
       throw error;
     }
   }
 
-  private request<T>(method: 'GET' | 'POST', path: string, body: unknown, options: CallOptions, timeoutMs: number): Promise<T> {
+  private request<T>(target: Discovered, method: 'GET' | 'POST', path: string, body: unknown, options: CallOptions, timeoutMs: number): Promise<T> {
     const what = `Control request ${method} ${path.split('?')[0]}`;
     const { signal } = options;
     if (signal?.aborted) return Promise.reject(abortedError(what));
-    const { endpoint, token } = discover(this.stateDir, this.socketPath);
+    const { endpoint, token } = target;
     const text = body === undefined ? undefined : JSON.stringify(body);
     return new Promise<T>((resolve, reject) => {
       let settled = false;
@@ -249,10 +271,10 @@ export class ControlClient {
    * The coordinator refused our protocol version: ask `/v1/health` (which needs no
    * protocol header) for its range and name both sides' ranges in the error.
    */
-  private async protocolMismatch(original: ControlError, signal: AbortSignal | undefined): Promise<ControlError> {
+  private async protocolMismatch(original: ControlError, target: Discovered, signal: AbortSignal | undefined, timeoutMs: number): Promise<ControlError> {
     let theirs: string;
     try {
-      const health = await this.request<Partial<ControlHealth>>('GET', '/v1/health', undefined, { signal }, Math.min(this.timeoutMs, 3_000));
+      const health = await this.request<Partial<ControlHealth>>(target, 'GET', '/v1/health', undefined, { signal }, timeoutMs);
       const range = health.protocol_versions
         ?? (typeof health.protocol_version === 'number' ? [health.protocol_version, health.protocol_version] as const : null);
       theirs = range ? formatRange(range) : 'an unknown range (its /v1/health does not report one)';
@@ -439,8 +461,9 @@ export class ControlClient {
   /**
    * Resolves once the terminal has the input. Calls on one client for one terminal are
    * queued and sent one at a time in call order, each after the previous one settles
-   * (a failed input is not retried; later ones are still sent). The timeout counts from
-   * the send; aborting a queued call rejects it at once and it is never sent.
+   * (a failed input is not retried; later ones are still sent). A retry, e.g. after
+   * `busy`, joins the back of the queue: to keep order, queue nothing else until it settles.
+   * The timeout counts from the send; aborting a queued call rejects it at once, unsent.
    */
   inputTerminal(terminalId: string, leaseId: string, data: string, options: CallOptions = {}): Promise<void> {
     const previous = this.inputQueues.get(terminalId) ?? Promise.resolve();
@@ -468,12 +491,11 @@ export class ControlClient {
   }
 
   /** Open a stream: resolves with the 200 response, rejects with the server's error, `aborted`, or `timeout` before the headers arrive. */
-  private openStream(path: string, options: CallOptions): Promise<import('node:http').IncomingMessage> {
+  private openStream(target: Discovered, path: string, options: CallOptions, timeoutMs: number): Promise<import('node:http').IncomingMessage> {
     const what = `Control stream ${path.split('?')[0]}`;
     const { signal } = options;
     if (signal?.aborted) return Promise.reject(abortedError(what));
-    const { endpoint, token } = discover(this.stateDir, this.socketPath);
-    const timeoutMs = options.timeoutMs ?? this.streamIdleMs;
+    const { endpoint, token } = target;
     return new Promise((resolve, reject) => {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
@@ -494,7 +516,7 @@ export class ControlClient {
         res.on('end', () => {
           const status = res.statusCode ?? 500;
           let parsed: ControlResponse<never>;
-          try { parsed = parseEnvelope<never>(status, Buffer.concat(chunks).toString('utf8'), 'Stream open'); }
+          try { parsed = parseEnvelope<never>(status, Buffer.concat(chunks).toString('utf8'), 'Stream open', status >= 500 ? 'unavailable' : 'internal'); }
           catch (error) { fail(error as Error); return; }
           fail(parsed.ok ? new ControlError('internal', `Stream open answered HTTP ${status} without a stream`, status)
             : new ControlError(parsed.error.code, parsed.error.message, status));
@@ -510,12 +532,16 @@ export class ControlClient {
   private async *ndjson<T>(path: string, options: CallOptions): AsyncGenerator<T> {
     const { signal } = options;
     let res: import('node:http').IncomingMessage;
+    if (signal?.aborted) return;
+    const target = discover(this.stateDir, this.socketPath);
+    const timeoutMs = options.timeoutMs ?? this.streamIdleMs;
+    const started = Date.now();
     try {
-      res = await this.openStream(path, options);
+      res = await this.openStream(target, path, options, timeoutMs);
     } catch (error) {
       if (error instanceof ControlError && error.code === 'aborted') return;
       if (error instanceof ControlError && error.code === 'unsupported_protocol_version') {
-        const mismatch = await this.protocolMismatch(error, signal);
+        const mismatch = await this.protocolMismatch(error, target, signal, remainingBudget(timeoutMs, started));
         if (mismatch.code === 'aborted') return;
         throw mismatch;
       }

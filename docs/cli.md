@@ -95,7 +95,7 @@ Under each active run, `watch` and `status` print a `└` activity line: a note 
 
 `run-close` requires a non-terminal claim whose task is `done` or whose branch is merged into `main` (an ancestor of `main`, not on its first-parent history). It records the claim `done`, emits `run_finished {closed_by, reason, manual: true}`, and for a merged branch marks the task `done` and removes the worktree and branch. For squash/rebase/fast-forward merges run `task-mark-done` first; otherwise use `run-expire` or `task-reset`.
 
-With `--json`, the operator commands above (and `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`) print one JSON document on stdout. Failure prints `{ "error": { "code", "message" } }` on stdout instead and exits 1, or 75 when `code` is `unavailable` or `busy` (retry). Without `--json`, output and exit codes are unchanged. Codes are the control API's: `not_found`, `conflict`, `bad_request`, `forbidden`, `unauthenticated`, `unavailable`, `busy`, `internal`.
+With `--json`, the operator commands above (and `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`) print one JSON document on stdout. Failure prints `{ "error": { "code", "message" } }` on stdout instead and exits 1, or 75 when `code` is `unavailable` or `busy` (retry). Without `--json`, output and exit codes are unchanged. Codes are the control API's: `not_found`, `conflict`, `bad_request`, `forbidden`, `unauthenticated`, `unavailable`, `busy`, `internal`, plus the client-side `timeout` (exit 1, not retried: the coordinator may already have applied the request).
 
 Authorization (canonical: [contracts.md → Local Control API](contracts.md#local-control-api)):
 
