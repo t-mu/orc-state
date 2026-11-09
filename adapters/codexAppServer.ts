@@ -1,11 +1,11 @@
 /**
  * adapters/codexAppServer.ts — structured Codex runtime (task 203).
  *
- * Drives `codex app-server --listen stdio://` (JSON-RPC, one JSON object per
- * line) instead of the Codex terminal UI. Proven locally against Codex CLI
- * 0.163 under a ChatGPT login (docs/configuration.md "Worker Runtimes"):
- * initialize → account/read → thread/start → turn/start → turn/completed, and
- * thread/resume from a second process.
+ * Drives `codex app-server` (JSON-RPC) instead of the Codex terminal UI.
+ * Proven locally against Codex CLI 0.163 under a ChatGPT login
+ * (docs/configuration.md "Worker Runtimes"): initialize → account/read →
+ * thread/start → turn/start → turn/completed, thread/resume from a second
+ * process, and reattaching a running turn from a second client.
  *
  * Billing guard: API-key routing variables are removed from the child
  * environment and `account/read` must report a ChatGPT account before any
@@ -16,22 +16,28 @@
  * yet proven end to end, so they are refused; approval requests from the
  * server are declined (the thread runs with approvalPolicy `never`).
  *
- * The app-server's stdio is owned by the coordinator process that launched it:
- * it does not survive a coordinator exit, and another process cannot write to
- * it. Another process (a restarted coordinator, `orc worker-remove`) sees the
- * session through its recorded PID and start time: alive but not writable, and
- * stoppable by signal.
+ * The app-server runs detached from the coordinator, listening on a Unix
+ * socket under the state directory (`app-server/<agent>.sock`, WebSocket
+ * framing), so it survives a coordinator restart: the next coordinator adopts
+ * it (`adoptSession`) after checking the recorded PID and start time, and
+ * reattaches its thread. A small shell wrapper records the provider's exit
+ * status in `app-server/<agent>.exit`, so the exit is known whichever process
+ * is attached, or none; `app-server/<agent>.turn.json` names the command that
+ * started the latest turn (docs/adapters.md "Codex app-server sessions"). Another process that does not adopt the session (`orc
+ * worker-remove`) sees it alive but not writable, and stops it by signal.
  */
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import { join } from 'node:path';
 import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { stripAnsi } from '../lib/ansi.ts';
-import { isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
+import { isPidAlive, isSameProcess, readProcessStart } from '../lib/processIdentity.ts';
 import { currentSessionForAgent } from '../lib/sessionSupervisor.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { controlSocketOf, isolatedMcpArgs, resolveBinary, resolveLaunchCwd, sandboxExtraWritableRoots, sandboxNetworkOf } from './providerLaunch.ts';
 import type { SessionExitStatus, SessionInspection } from './interface.ts';
+import { connectUnixWebSocket, type UnixWebSocket } from './unixWebSocket.ts';
 import {
   CapabilityRefusal,
   UnverifiedAuthError,
@@ -94,30 +100,6 @@ function handshakeTimeoutMs(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 30_000;
 }
 
-/**
- * Split a byte stream into JSON frames. Frames may arrive split across chunks
- * or several per chunk; a line that is not a JSON object is skipped (the
- * server may log to stdout) rather than poisoning the stream.
- */
-export class JsonLineDecoder {
-  private buffer = '';
-  push(chunk: string): Record<string, unknown>[] {
-    this.buffer += chunk;
-    const frames: Record<string, unknown>[] = [];
-    let newline: number;
-    while ((newline = this.buffer.indexOf('\n')) !== -1) {
-      const line = this.buffer.slice(0, newline).trim();
-      this.buffer = this.buffer.slice(newline + 1);
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) frames.push(parsed as Record<string, unknown>);
-      } catch { /* not a protocol frame */ }
-    }
-    return frames;
-  }
-}
-
 interface PendingRpc {
   method: string;
   resolve: (result: Record<string, unknown>) => void;
@@ -127,12 +109,15 @@ interface PendingRpc {
 interface CodexSession {
   agentId: string;
   handle: string;
-  child: ChildProcessWithoutNullStreams;
+  /** The wrapper shell that owns the app-server: the recorded identity and process-group leader. */
   pid: number;
   processStart: string | null;
   threadId: string | null;
-  exited: boolean;
-  exitStatus: SessionExitStatus | null;
+  socket: UnixWebSocket | null;
+  /** True while the socket is open; the provider's exit itself is recorded on disk (`exitStatus`). */
+  connected: boolean;
+  /** Set by `stop` and `detach`: a close this process asked for is not a provider exit. */
+  closing: boolean;
   nextId: number;
   pending: Map<number, PendingRpc>;
   /** Turn the provider is currently running, if any. */
@@ -141,6 +126,53 @@ interface CodexSession {
   submitting: { commandId: string | undefined } | null;
   turnCommands: Map<string, string | undefined>;
   finishedTurns: Set<string>;
+}
+
+function appServerDir(): string { return join(STATE_DIR, 'app-server'); }
+/** Codex replaces a socket path too long for AF_UNIX with a symlink to a short one; connect through realpath. */
+function socketPath(agentId: string): string { return join(appServerDir(), `${agentId}.sock`); }
+function exitPath(agentId: string): string { return join(appServerDir(), `${agentId}.exit`); }
+/** The latest turn and the command that started it, for a coordinator that adopts the session later. */
+function turnPath(agentId: string): string { return join(appServerDir(), `${agentId}.turn.json`); }
+
+function persistTurn(agentId: string, turnId: string, commandId: string | undefined, finished: boolean): void {
+  try {
+    const path = turnPath(agentId);
+    writeFileSync(`${path}.tmp`, `${JSON.stringify({ turn_id: turnId, command_id: commandId ?? null, finished })}\n`);
+    renameSync(`${path}.tmp`, path);
+  } catch { /* best effort: the provider's own record (clientUserMessageId) is the fallback */ }
+}
+
+function persistedTurn(agentId: string): { turn_id: string; command_id: string | null; finished: boolean } | null {
+  try {
+    const parsed = JSON.parse(readFileSync(turnPath(agentId), 'utf8')) as { turn_id?: unknown; command_id?: unknown; finished?: unknown };
+    if (typeof parsed.turn_id !== 'string') return null;
+    return { turn_id: parsed.turn_id, command_id: typeof parsed.command_id === 'string' ? parsed.command_id : null, finished: parsed.finished === true };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs the provider and records its exit status: the code, or 128 + signal.
+ * `exec` is not used, so the shell outlives the provider to write the file.
+ */
+const EXIT_RECORDER = 'exit_file=$1; shift; "$@"; status=$?; printf \'%s\\n\' "$status" > "$exit_file.tmp" && mv -f "$exit_file.tmp" "$exit_file"';
+
+const SIGNAL_NAMES = new Map(Object.entries(osConstants.signals).map(([name, number]) => [number, name]));
+
+/** The recorded exit of an agent's app-server, or null while it runs (or was stopped with its wrapper). */
+export function readAppServerExit(agentId: string): SessionExitStatus | null {
+  let raw: string;
+  try { raw = readFileSync(exitPath(agentId), 'utf8').trim(); } catch { return null; }
+  const status = Number.parseInt(raw, 10);
+  if (!Number.isInteger(status)) return { code: null, signal: null };
+  if (status > 128 && SIGNAL_NAMES.has(status - 128)) return { code: null, signal: SIGNAL_NAMES.get(status - 128)! };
+  return { code: status, signal: null };
+}
+
+function describeExit(status: SessionExitStatus): string {
+  return status.signal != null ? `signal ${String(status.signal)}` : `code ${String(status.code)}`;
 }
 
 function logPath(agentId: string): string { return join(STATE_DIR, 'pty-logs', `${agentId}.log`); }
@@ -194,8 +226,8 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
   }
 
   function write(session: CodexSession, frame: Record<string, unknown>): void {
-    if (session.exited || !session.child.stdin.writable) throw new Error(`app-server session ${session.handle} is not running`);
-    session.child.stdin.write(`${JSON.stringify(frame)}\n`);
+    if (!session.connected || !session.socket) throw new Error(`app-server session ${session.handle} is not running`);
+    session.socket.send(JSON.stringify(frame));
   }
 
   function rpc(session: CodexSession, method: string, params: Record<string, unknown>, timeoutMs = handshakeTimeoutMs()): Promise<Record<string, unknown>> {
@@ -222,7 +254,9 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
 
   /** Attribute a turn id to the submission in flight, the first time it is seen. */
   function claimTurn(session: CodexSession, turnId: string): void {
-    if (!session.turnCommands.has(turnId) && session.submitting) session.turnCommands.set(turnId, session.submitting.commandId);
+    if (session.turnCommands.has(turnId) || !session.submitting) return;
+    session.turnCommands.set(turnId, session.submitting.commandId);
+    persistTurn(session.agentId, turnId, session.submitting.commandId, session.finishedTurns.has(turnId));
   }
 
   function onNotification(session: CodexSession, method: string, params: Record<string, unknown>): void {
@@ -240,6 +274,9 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
       claimTurn(session, turnId);
       session.finishedTurns.add(turnId);
       if (session.activeTurnId === turnId) session.activeTurnId = null;
+      // Reported now: a coordinator that adopts the session later must not report it again.
+      const recorded = persistedTurn(session.agentId);
+      if (!recorded || recorded.turn_id === turnId) persistTurn(session.agentId, turnId, session.turnCommands.get(turnId), true);
       const status = typeof turn?.status === 'string' ? turn.status : 'unknown';
       const type: RuntimeEventType = status === 'completed' ? 'turn_completed' : status === 'interrupted' ? 'turn_interrupted' : 'turn_failed';
       appendLog(session.agentId, `\n[turn ${status} ${turnId}]\n`);
@@ -318,42 +355,99 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     return typeof account.planType === 'string' ? account.planType : 'unknown';
   }
 
+  /** Wire a connected socket to a session: frames in, and a close that is not ours reported as an exit. */
+  async function connect(session: CodexSession, timeoutMs: number): Promise<void> {
+    session.closing = false;
+    session.socket = await connectUnixWebSocket(realpathSync(socketPath(session.agentId)), {
+      timeoutMs,
+      onMessage: (text) => {
+        let frame: unknown;
+        try { frame = JSON.parse(text); } catch { return; /* not a protocol frame */ }
+        if (frame && typeof frame === 'object' && !Array.isArray(frame)) onFrame(session, frame as Record<string, unknown>);
+      },
+      onClose: () => { void onDisconnect(session); },
+    });
+    session.connected = true;
+  }
+
+  async function onDisconnect(session: CodexSession): Promise<void> {
+    session.connected = false;
+    session.socket = null;
+    session.activeTurnId = null;
+    for (const pending of session.pending.values()) pending.reject(new Error('app-server connection closed before responding'));
+    session.pending.clear();
+    if (session.closing) return;
+    // The wrapper writes the exit status just after the provider closes the socket.
+    const deadline = Date.now() + 2_000;
+    let status = readAppServerExit(session.agentId);
+    while (!status && Date.now() < deadline && isPidAlive(session.pid)) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      status = readAppServerExit(session.agentId);
+    }
+    if (!status && isPidAlive(session.pid)) {
+      // Not an exit: the process runs on without this connection. It reads as not alive here; `stop` still ends it.
+      appendLog(session.agentId, '\n[app-server connection closed; the process is still running]\n');
+      return;
+    }
+    appendLog(session.agentId, `\n[app-server exited ${status ? describeExit(status) : '(status unknown)'}]\n`);
+    emit(session, 'session_exited', 'process/exit', { code: status?.code ?? null, signal: status?.signal ?? null });
+  }
+
+  /** Wait for the detached app-server to listen, then connect; fail early if it exits first. */
+  async function connectWhenListening(session: CodexSession): Promise<void> {
+    const timeoutMs = handshakeTimeoutMs();
+    const deadline = Date.now() + timeoutMs;
+    let lastError: Error | null = null;
+    while (Date.now() < deadline) {
+      const exit = readAppServerExit(session.agentId);
+      if (exit) throw new Error(`app-server exited before listening (${describeExit(exit)})`);
+      if (existsSync(socketPath(session.agentId))) {
+        try {
+          await connect(session, Math.max(1, deadline - Date.now()));
+          return;
+        } catch (error) {
+          lastError = error as Error;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`app-server did not listen on ${socketPath(session.agentId)} within ${timeoutMs}ms${lastError ? `: ${lastError.message}` : ''}`);
+  }
+
+  function newSession(agentId: string, pid: number, processStart: string | null, threadId: string | null): CodexSession {
+    return {
+      agentId, handle: `${HANDLE_PREFIX}${agentId}`, pid, processStart, threadId, socket: null, connected: false, closing: false,
+      nextId: 1, pending: new Map(), activeTurnId: null, submitting: null, turnCommands: new Map(), finishedTurns: new Set(),
+    };
+  }
+
   async function start(agentId: string, config: Record<string, unknown> = {}) {
     const cwd = resolveLaunchCwd(config);
     const handle = `${HANDLE_PREFIX}${agentId}`;
-    const existing = sessions.get(handle);
-    if (existing) await stop(handle);
+    if (sessions.has(handle) || recordedProcess(handle)) await stop(handle);
     mkdirSync(join(STATE_DIR, 'pty-logs'), { recursive: true });
+    mkdirSync(appServerDir(), { recursive: true });
+    rmSync(socketPath(agentId), { force: true });
+    rmSync(exitPath(agentId), { force: true });
+    rmSync(turnPath(agentId), { force: true });
 
     const env = withoutApiBillingEnv({ ...stripNestedProviderEnv(process.env), ...(config.env as Record<string, string> | undefined ?? {}) });
     const binary = resolveBinary(process.env.ORC_CODEX_BINARY ?? 'codex', env);
-    const child = spawn(binary, ['app-server', '--listen', 'stdio://', '--enable', 'multi_agent', ...isolatedMcpArgs('codex')], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const args = ['app-server', '--listen', `unix://${socketPath(agentId)}`, '--enable', 'multi_agent', ...isolatedMcpArgs('codex')];
+    // Detached into its own session and process group, so it outlives this coordinator; `stop` signals the group.
+    const child = spawn('/bin/sh', ['-c', EXIT_RECORDER, 'orc-codex-app-server', exitPath(agentId), binary, ...args], {
+      cwd, env, detached: true, stdio: 'ignore',
+    });
+    child.unref();
     const spawnError = new Promise<never>((_, reject) => child.once('error', reject));
     spawnError.catch(() => { /* surfaced through the handshake below */ });
-    const session: CodexSession = {
-      agentId, handle, child, pid: child.pid ?? -1, processStart: child.pid ? readProcessStart(child.pid) : null,
-      threadId: null, exited: false, exitStatus: null, nextId: 1, pending: new Map(), activeTurnId: null, submitting: null,
-      turnCommands: new Map(), finishedTurns: new Set(),
-    };
-    const decoder = new JsonLineDecoder();
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { for (const frame of decoder.push(chunk)) onFrame(session, frame); });
-    // stderr carries provider diagnostics; keep it out of the protocol and the log.
-    child.stderr.resume();
-    child.once('exit', (code, signal) => {
-      session.exited = true;
-      session.exitStatus = { code: signal ? null : code, signal: signal ?? null };
-      session.activeTurnId = null;
-      for (const pending of session.pending.values()) pending.reject(new Error('app-server exited before responding'));
-      session.pending.clear();
-      appendLog(agentId, `\n[app-server exited code=${String(code)} signal=${String(signal)}]\n`);
-      emit(session, 'session_exited', 'process/exit', { code, signal });
-    });
+    const session = newSession(agentId, child.pid ?? -1, child.pid ? readProcessStart(child.pid) : null, null);
     sessions.set(handle, session);
     appendLog(agentId, `\n[app-server starting in ${cwd}]\n`);
 
     try {
       await Promise.race([spawnError, (async () => {
+        await connectWhenListening(session);
         await rpc(session, 'initialize', { clientInfo: { name: 'orc_state', title: 'orc-state', version: '1' }, capabilities: null });
         write(session, { method: 'initialized', params: {} });
         const planType = await verifySubscription(session);
@@ -397,9 +491,104 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     };
   }
 
+  /**
+   * Reattach a thread this process did not drive and recover its last turn.
+   * The provider keeps the turns; the command that started the last one is
+   * the persisted turn record (`<agent>.turn.json`), or the turn's user
+   * message `clientId` (`clientUserMessageId`). A turn that finished while no
+   * coordinator was attached (the record is not marked `finished`) is
+   * reported now, so its command's ACK advances;
+   * a running one keeps the session busy. Codex cannot list the turns of a
+   * thread whose history is not written yet (`list_turns is not supported
+   * yet` just after a turn starts), so the full resume is the fallback.
+   */
+  async function reattachThread(session: CodexSession): Promise<void> {
+    type Turn = { id?: unknown; status?: unknown; items?: unknown };
+    const persisted = persistedTurn(session.agentId);
+    // Codex replays the running turn's turn/started during the resume: attribute it already.
+    if (persisted?.command_id) session.turnCommands.set(persisted.turn_id, persisted.command_id);
+    let last: Turn | undefined;
+    try {
+      const response = await rpc(session, 'thread/resume', { threadId: session.threadId, excludeTurns: true });
+      if (stringField(response.thread, 'id') !== session.threadId) throw new Error('thread/resume returned a different thread');
+      const listed = await rpc(session, 'thread/turns/list', { threadId: session.threadId, limit: 1, sortDirection: 'desc', itemsView: 'full' });
+      last = (Array.isArray(listed.data) ? listed.data[0] : undefined) as Turn | undefined;
+    } catch {
+      const response = await rpc(session, 'thread/resume', { threadId: session.threadId });
+      if (stringField(response.thread, 'id') !== session.threadId) throw new Error('thread/resume returned a different thread');
+      const turns = (response.thread as { turns?: unknown } | undefined)?.turns;
+      last = (Array.isArray(turns) ? turns.at(-1) : undefined) as Turn | undefined;
+    }
+    if (!last || typeof last.id !== 'string') return;
+    const items = Array.isArray(last.items) ? last.items as Array<{ type?: unknown; clientId?: unknown }> : [];
+    const clientId = items.find((item) => item.type === 'userMessage' && typeof item.clientId === 'string')?.clientId as string | undefined;
+    session.turnCommands.set(last.id, (persisted?.turn_id === last.id ? persisted.command_id : null) ?? clientId);
+    // A turn/completed in the same chunk as the RPC answer was handled before this continuation.
+    if (session.finishedTurns.has(last.id)) return;
+    if (last.status === 'inProgress') {
+      session.activeTurnId = last.id;
+      return;
+    }
+    // Already reported by the coordinator that saw it finish.
+    if (persisted?.turn_id === last.id && persisted.finished) return;
+    onNotification(session, 'turn/completed', { threadId: session.threadId, turn: { id: last.id, status: last.status } });
+  }
+
+  /** The recorded session of an app-server handle, with its process identity, or null. */
+  function recordedSession(sessionHandle: string) {
+    if (!isAppServerHandle(sessionHandle)) return null;
+    const record = currentSessionForAgent(STATE_DIR, sessionHandle.slice(HANDLE_PREFIX.length));
+    if (record?.transport !== 'app-server' || record.process_pid == null || record.process_start == null) return null;
+    return { ...record, process_pid: record.process_pid, process_start: record.process_start };
+  }
+
+  /**
+   * Take over a live app-server another coordinator launched (a coordinator
+   * restart): check the recorded PID and start time, reconnect to its socket
+   * and reattach its thread. Returns the inspection the supervisor classifies:
+   * writable once adopted, otherwise not alive with the reason, so the run
+   * takes the dead-session path (resume or requeue). A live app-server that
+   * cannot be reattached is stopped, so it cannot keep working unsupervised.
+   */
+  async function adoptSession(sessionHandle: string): Promise<SessionInspection> {
+    const attached = sessions.get(sessionHandle);
+    if (attached?.connected || !isAppServerHandle(sessionHandle)) return inspectSession(sessionHandle);
+    const agentId = sessionHandle.slice(HANDLE_PREFIX.length);
+    const record = recordedSession(sessionHandle);
+    const gone = (reason: string): SessionInspection => ({
+      transport: 'app-server', alive: false, writable: false, pid: record?.process_pid ?? null, processStart: record?.process_start ?? null, reason,
+    });
+    if (!record) return gone('no recorded app-server process identity to adopt');
+    if (!isSameProcess({ pid: record.process_pid, start: record.process_start })) {
+      const exit = readAppServerExit(agentId);
+      if (exit) return gone(`app-server exited (${describeExit(exit)}) while no coordinator was attached`);
+      return gone(isPidAlive(record.process_pid)
+        ? `app-server is gone: PID ${record.process_pid} now belongs to another process (start time does not match)`
+        : `app-server process ${record.process_pid} is gone`);
+    }
+    if (!record.provider_conversation_id) {
+      await stop(sessionHandle);
+      return gone('no recorded provider thread to reattach; stopped the app-server');
+    }
+    const session = newSession(agentId, record.process_pid, record.process_start, record.provider_conversation_id);
+    sessions.set(sessionHandle, session);
+    try {
+      await connect(session, handshakeTimeoutMs());
+      await rpc(session, 'initialize', { clientInfo: { name: 'orc_state', title: 'orc-state', version: '1' }, capabilities: null });
+      write(session, { method: 'initialized', params: {} });
+      await reattachThread(session);
+    } catch (error) {
+      await stop(sessionHandle);
+      return gone(`could not reattach the live app-server (${(error as Error).message}); stopped it`);
+    }
+    appendLog(agentId, `\n[app-server adopted by coordinator pid ${process.pid}]\n`);
+    emit(session, 'session_ready', 'thread/resume', { adopted: true, resumed: true });
+    return inspectSession(sessionHandle);
+  }
+
   function liveSession(sessionHandle: string): CodexSession {
     const session = sessions.get(sessionHandle);
-    if (!session || session.exited || !session.threadId) throw new Error(`No live app-server session for handle: ${sessionHandle}`);
+    if (!session?.connected || !session.threadId) throw new Error(`No live app-server session for handle: ${sessionHandle}`);
     return session;
   }
 
@@ -426,31 +615,42 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
     }
   }
 
-  /** The recorded app-server process of a session this process did not launch, if it is still that process. */
+  /** The recorded app-server process of a session this process has not attached, if it is still that process. */
   function recordedProcess(sessionHandle: string): { pid: number; processStart: string } | null {
-    if (!isAppServerHandle(sessionHandle)) return null;
-    const record = currentSessionForAgent(STATE_DIR, sessionHandle.slice(HANDLE_PREFIX.length));
-    if (record?.transport !== 'app-server' || record.process_pid == null || record.process_start == null) return null;
-    if (!isSameProcess({ pid: record.process_pid, start: record.process_start })) return null;
+    const record = recordedSession(sessionHandle);
+    if (!record || !isSameProcess({ pid: record.process_pid, start: record.process_start })) return null;
     return { pid: record.process_pid, processStart: record.process_start };
+  }
+
+  /**
+   * SIGTERM the wrapper's process group (wrapper and provider), then SIGKILL
+   * it after a grace period. The wrapper's identity is checked once, before
+   * signalling; the wrapper dies at once on SIGTERM, so the wait follows the
+   * group, which lives as long as the provider does.
+   */
+  async function signalGroup(pid: number, processStart: string | null): Promise<void> {
+    if (pid <= 0 || !(processStart ? isSameProcess({ pid, start: processStart }) : isPidAlive(pid))) return;
+    const kill = (signal: NodeJS.Signals | 0): boolean => {
+      try { process.kill(-pid, signal); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+    };
+    kill('SIGTERM');
+    const deadline = Date.now() + STOP_GRACE_MS;
+    while (kill(0) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+    if (kill(0)) kill('SIGKILL');
   }
 
   async function stop(sessionHandle: string): Promise<void> {
     const session = sessions.get(sessionHandle);
     if (!session) {
-      // Launched by another process (the coordinator): its stdio is not ours, but the process can be signalled.
+      // Launched or adopted by another process (the coordinator): signal it through its recorded identity.
       const recorded = recordedProcess(sessionHandle);
-      if (recorded) process.kill(recorded.pid, 'SIGTERM');
+      if (recorded) await signalGroup(recorded.pid, recorded.processStart);
       return;
     }
     sessions.delete(sessionHandle);
-    if (session.exited) return;
-    const exited = new Promise<void>((resolve) => session.child.once('exit', () => resolve()));
-    session.child.stdin.end();
-    session.child.kill('SIGTERM');
-    const timer = setTimeout(() => { if (!session.exited) session.child.kill('SIGKILL'); }, STOP_GRACE_MS);
-    await exited;
-    clearTimeout(timer);
+    session.closing = true;
+    session.socket?.close();
+    await signalGroup(session.pid, session.processStart);
   }
 
   function getOutputTail(sessionHandle: string, maxBytes = OUTPUT_TAIL_BYTES): string | null {
@@ -471,15 +671,16 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
       if (recorded) {
         return {
           transport: 'app-server', alive: true, writable: false, pid: recorded.pid, processStart: recorded.processStart,
-          reason: 'app-server session is owned by the coordinator process that launched it; stop it with orc worker-remove',
+          reason: 'app-server session is attached to another process (the coordinator adopts it on start); stop it with orc worker-remove',
         };
       }
+      const exit = readAppServerExit(sessionHandle.slice(HANDLE_PREFIX.length));
       return {
         transport: 'app-server', alive: false, writable: false, pid: null, processStart: null,
-        reason: 'app-server session is not attached to this process; its stdio closes with the coordinator that launched it',
+        reason: exit ? `app-server process exited (${describeExit(exit)})` : 'app-server session is not attached to this process and its process is gone',
       };
     }
-    const alive = !session.exited;
+    const alive = session.connected;
     return {
       transport: 'app-server', alive, writable: alive, pid: session.pid, processStart: session.processStart,
       ...(alive ? {} : { reason: 'app-server process exited' }),
@@ -501,10 +702,21 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
       return Promise.resolve(inspectSession(sessionHandle).alive);
     },
     stop,
+    /**
+     * Drop this process's connection and leave the app-server running, as a
+     * coordinator exit does; the next coordinator adopts it (`adoptSession`).
+     */
+    detach(sessionHandle: string): void {
+      const session = sessions.get(sessionHandle);
+      if (!session) return;
+      sessions.delete(sessionHandle);
+      session.closing = true;
+      session.socket?.close();
+    },
     /** True while a turn is running or being started; new input would be refused. */
     turnActive(sessionHandle: string): boolean {
       const session = sessions.get(sessionHandle);
-      return Boolean(session && !session.exited && (session.activeTurnId || session.submitting));
+      return Boolean(session?.connected && (session.activeTurnId || session.submitting));
     },
     getOutputTail,
     onEvent(listener: RuntimeEventListener): () => void {
@@ -518,12 +730,14 @@ export function createCodexAppServerAdapter({ provider = 'codex' }: { provider?:
       return null;
     },
     inspectSession,
-    survivesCoordinatorExit(): boolean {
-      return false;
+    adoptSession,
+    /** The app-server runs detached; the next coordinator adopts it. */
+    survivesCoordinatorExit(sessionHandle: string): boolean {
+      return isAppServerHandle(sessionHandle);
     },
-    /** Only the coordinator that launched the app-server sees its exit. */
+    /** Read from the exit file the wrapper writes, so any process sees it. */
     exitStatus(sessionHandle: string): SessionExitStatus | null {
-      return sessions.get(sessionHandle)?.exitStatus ?? null;
+      return isAppServerHandle(sessionHandle) ? readAppServerExit(sessionHandle.slice(HANDLE_PREFIX.length)) : null;
     },
     /** Test/diagnostic view of the provider thread behind a session. */
     threadId(sessionHandle: string): string | null {

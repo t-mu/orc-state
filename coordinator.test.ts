@@ -6107,3 +6107,118 @@ describe('dead worker session resume (v1/run-resume)', () => {
     expect(readClaims(dir).find((c) => c.run_id === RUN)!.state).toBe('failed');
   });
 });
+
+describe('codex app-server worker across a coordinator restart (fake app-server process)', () => {
+  const RUN = 'run-app-restart';
+  const fixtureBin = join(import.meta.dirname, 'test-fixtures', 'bin');
+  let savedPath: string | undefined;
+  let recordFile: string;
+
+  beforeEach(() => {
+    // Earlier tests leave the adapter module mocked; this one drives the real adapter and a fake provider process.
+    vi.doUnmock('./adapters/index.ts');
+    savedPath = process.env.PATH;
+    process.env.PATH = `${fixtureBin}:${savedPath ?? ''}`;
+    recordFile = join(dir, 'fake-codex.jsonl');
+    process.env.FAKE_CODEX_RECORD = recordFile;
+  });
+
+  afterEach(() => {
+    process.env.PATH = savedPath;
+    delete process.env.FAKE_CODEX_RECORD;
+    delete process.env.FAKE_CODEX_TURN_HOLD_MS;
+    // The app-server is detached and survives the coordinator by design; end every fake this test launched.
+    const lines = existsSync(recordFile) ? readFileSync(recordFile, 'utf8').trim().split('\n').filter(Boolean) : [];
+    for (const line of lines) {
+      const entry = JSON.parse(line) as { kind: string; pid?: number };
+      if (entry.kind === 'startup' && entry.pid) try { process.kill(entry.pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+  });
+
+  /** What the previous coordinator left behind: a live app-server worker on an in-progress run, then its own exit. */
+  async function launchWorkerThenExitCoordinator({ processStart }: { processStart?: string } = {}) {
+    const now = new Date().toISOString();
+    const worktreePath = join(dir, 'worktrees', RUN);
+    mkdirSync(join(worktreePath, '.git'), { recursive: true });
+    const { createCodexAppServerAdapter } = await import('./adapters/codexAppServer.ts');
+    const previous = createCodexAppServerAdapter();
+    const { session_handle, provider_ref } = await previous.start('worker-a', { working_directory: worktreePath, system_prompt: 'BOOT' });
+    const ref = provider_ref as { pid: number; process_start: string; thread_id: string };
+    seedState(dir, {
+      agents: [{
+        agent_id: 'worker-a', provider: 'codex', role: 'worker', status: 'running', ephemeral: true,
+        session_handle, session_token: 'sess-a', session_started_at: now, session_ready_at: now, registered_at: now, last_heartbeat_at: now,
+      }],
+      tasks: [{ ...DISPATCHABLE_TASK, status: 'in_progress' }],
+      claims: [{
+        run_id: RUN, task_ref: 'proj/fix-bug', agent_id: 'worker-a', state: 'in_progress',
+        claimed_at: now, task_envelope_sent_at: now, started_at: now, last_heartbeat_at: now,
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        finalization_state: null, finalization_retry_count: 0, finalization_blocked_reason: null,
+        input_state: null, input_requested_at: null,
+      }],
+    });
+    const { withEventDbTransaction } = await import('./lib/eventLog.ts');
+    const { commitClaims } = await import('./lib/runStore.ts');
+    initEventsDb(dir);
+    commitClaims(dir, { version: '1', claims: readClaims(dir) as never });
+    withEventDbTransaction(dir, (db) => {
+      db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, transport,
+        process_pid, process_start, provider_conversation_id, owner_id)
+        VALUES ('sess-a', ?, 'worker-a', 'codex', 'running', ?, ?, 'app-server', ?, ?, ?, 'pid:1:previous')`)
+        .run(RUN, now, now, ref.pid, processStart ?? ref.process_start, ref.thread_id);
+    });
+    previous.detach(session_handle);
+    vi.doMock('./lib/runWorktree.ts', () => makeRunWorktreeMock({
+      getRunWorktree: vi.fn().mockReturnValue({ run_id: RUN, branch: `task/${RUN}`, worktree_path: worktreePath }),
+    }));
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    return { session_handle, ref };
+  }
+
+  function sessionRow() {
+    return new Database(join(dir, 'events.db'), { readonly: true })
+      .prepare("SELECT state, state_reason, owner_id FROM sessions WHERE session_id = 'sess-a'").get() as { state: string; state_reason: string | null; owner_id: string };
+  }
+
+  it('adopts the live app-server: the run keeps going, input reaches the worker, and shutdown leaves it running', async () => {
+    const { session_handle, ref } = await launchWorkerThenExitCoordinator();
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    expect(sessionRow()).toMatchObject({ state: 'running', owner_id: expect.stringMatching(new RegExp(`^pid:${process.pid}:`)) });
+    expect(queryEvents(dir, { event_type: 'session_reconciled' })).toMatchObject([{ payload: { session_id: 'sess-a', outcome: 'adopted' } }]);
+
+    await coordinator.tick();
+    await coordinator.tick(); // a dead session is acted on after two dead probes in a row
+    expect(readClaims(dir).find((claim) => claim.run_id === RUN)?.state).toBe('in_progress');
+    expect(queryEvents(dir, { run_id: RUN, event_type: 'run_failed' })).toEqual([]);
+
+    const adapter = coordinator.getCoordinatorAdapter('codex');
+    expect(adapter.inspectSession(session_handle)).toMatchObject({ alive: true, writable: true, pid: ref.pid });
+    await adapter.send(session_handle, `FOLLOW_UP\nrun_id: ${RUN}`);
+    const turnStarts = readFileSync(recordFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { kind: string; method?: string })
+      .filter((entry) => entry.kind === 'frame' && entry.method === 'turn/start');
+    expect(turnStarts).toHaveLength(1);
+
+    await coordinator.doShutdown();
+    const { isSameProcess } = await import('./lib/processIdentity.ts');
+    expect(isSameProcess({ pid: ref.pid, start: ref.process_start })).toBe(true);
+  });
+
+  it('requeues the run when the recorded process identity does not match, with the reason on session_reconciled', async () => {
+    await launchWorkerThenExitCoordinator({ processStart: 'proc:reused-pid' });
+
+    const coordinator = await import('./coordinator.ts');
+    await coordinator.main();
+    expect(queryEvents(dir, { event_type: 'session_reconciled' })).toMatchObject([{
+      payload: { session_id: 'sess-a', outcome: 'exited', state: 'offline', reason: expect.stringContaining('now belongs to another process') },
+    }]);
+
+    await coordinator.tick();
+    await coordinator.tick();
+    expect(readClaims(dir).find((claim) => claim.run_id === RUN)?.state).toBe('failed');
+    expect(readBacklog(dir).features[0].tasks[0].status).toBe('todo');
+    await coordinator.doShutdown();
+  });
+});

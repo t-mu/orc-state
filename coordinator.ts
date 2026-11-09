@@ -28,7 +28,7 @@ import { getAgent, listCoordinatorAgents, updateAgentRuntime, nextAvailableWorke
 import { getGitHostAdapter } from './lib/gitHosts/index.ts';
 import { createAdapter } from './adapters/index.ts';
 import {
-  adapterDetectInputBlock, adapterExitStatus, adapterInspectSession, adapterOwnsSession, adapterProbeLiveness, adapterSurvivesCoordinatorExit,
+  adapterAdoptSession, adapterDetectInputBlock, adapterExitStatus, adapterInspectSession, adapterOwnsSession, adapterProbeLiveness, adapterSurvivesCoordinatorExit,
   type LivenessVerdict,
 } from './adapters/interface.ts';
 import type { SessionInspection } from './adapters/interface.ts';
@@ -2498,10 +2498,14 @@ function sessionOwnerTtlMs(): number {
   return Math.max(SESSION_OWNER_TTL_MS, INTERVAL_MS * 3);
 }
 
-/** Adapters without inspectSession are judged by probe and ownership alone. */
+/**
+ * Sessions a previous coordinator launched are adopted where the adapter can
+ * reattach them (codex app-server); adapters without inspectSession are judged
+ * by probe and ownership alone.
+ */
 async function inspectAgentSession(agent: Agent, session: SupervisedSession): Promise<SessionInspection | null> {
   const adapter = getAdapter(agent.provider);
-  const inspected = await adapterInspectSession(adapter, agent.session_handle!);
+  const inspected = await adapterAdoptSession(adapter, agent.session_handle!);
   if (inspected) return inspected;
   const alive = await adapter.heartbeatProbe(agent.session_handle!);
   return {
