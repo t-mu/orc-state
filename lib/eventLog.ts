@@ -518,7 +518,8 @@ export function nextSeq(logPath: string): number {
 }
 
 /**
- * Query events with SQL filters. Used by the query_events MCP tool.
+ * Query events with SQL filters, for internal readers and tests. MCP query_events and
+ * `orc events` page through queryEventPage (lib/eventQuery.ts) instead.
  */
 export function queryEvents(
   stateDir: string,
