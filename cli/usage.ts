@@ -46,7 +46,7 @@ export const USAGE: Record<string, string> = {
   'task-cancel':       'orc task-cancel <task_ref> [--reason=<text>] [--actor-id=<id>]',
   'run-expire':        'orc run-expire <run_id>',
   'run-close':         'orc run-close <run_id> [--reason=<text>] [--actor-id=<id>]',
-  'events-filter':     'orc events-filter [--run-id=<id>] [--agent-id=<id>] [--event=<type>] [--last=<N>] [--json]',
+  'events-filter':     'orc events-filter [--run-id=<id>] [--agent-id=<id>] [--event=<type>] [--last=<N>] [--after=<seq>] [--json]',
   'worker-status':     'orc worker-status [<agent_id>] [--json]',
   'memory-status':     'orc memory-status',
   'memory-search':     'orc memory-search <query> [--wing=X] [--room=Y]',

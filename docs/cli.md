@@ -8,6 +8,8 @@
 - `orc <subcommand> --help` (or `-h`) prints that subcommand's usage line and never runs it.
 - Commands that show state print the project they act on.
 - Output is for people or for scripts, decided by stdout. On a terminal, `--json` is indented and the `status`/`watch` banner is shown. When stdout is piped or captured, `--json` is one compact line and the banner is omitted. The JSON shape is the same either way. A `--json` result is never cut short when piped.
+- Argument parsing is strict for the commands that read project state (`status`, `runs-active`, `run-info`, `review-read`, `worker-status`, `waiting-input`, `sessions`, `events-tail`, `events-filter`) and for `task-cancel`, `task-reset` and `worker-remove`: `--x=v` and `--x v` both work, an unknown flag or surplus argument is a usage error (exit 1), and a flag's value is never taken as the positional target.
+- Project-scoped read commands exit 1 with the no-project message when no project resolves, instead of returning empty results.
 
 ## Session management
 
@@ -48,7 +50,7 @@ orc start-session --provider=claude
 
 | Command | Flags | Notes |
 |---------|-------|-------|
-| `status` | `[--json [--events=<0-200>]]` `[--mine --agent-id=<id>]` `[--watch\|-w [--interval-ms=<ms>] [--once]]` | Agents, tasks, claims, capacity. |
+| `status` | `[--json [--events=<0-200>]]` `[--mine --agent-id=<id>]` `[--watch\|-w [--interval-ms=<ms>] [--once]]` | Agents, tasks, claims, capacity. With `--json`, `--once`/`--watch` print one compact JSON document per line (NDJSON); screen-clear codes are written only to a TTY. |
 | `watch` | `[--interval-ms=<ms>]` `[--once]` | Live TUI; plain refresh without a TTY. |
 | `doctor` | `[--json]` `[--stale-progress-ms=<ms>]` `[--stale-start-ms=<ms>]` | Full health check: state files, provider binaries, stale workers, orphaned claims, invariants, sandbox deps, memory store, `events.db` schema (`checks.runtimeSchema`), and a restart warning when the running coordinator's code is older than the code on disk (`checks.coordinatorCode`; never fails `doctor`). Stale thresholds default to 20 min / 5 min. |
 | `preflight` | `[--json]` | Fast environment check before `start-session`. |
@@ -109,7 +111,7 @@ Plan Markdown format: [plan-template.md](plan-template.md).
 | `run-info <run_id>` | `[--json]` | Claim state, task, worktree, idle time. |
 | `waiting-input` | `[--json]` | Runs waiting for input, with `request_id` in `--json`. |
 | `events-tail` | `[--n=<count>]` `[--event=<name>]` `[--json]` | Last N events. |
-| `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--json]` | Query events. |
+| `events-filter` | `[--run-id=<id>]` `[--agent-id=<id>]` `[--event=<type>]` `[--last=<N>]` `[--after=<seq>]` `[--json]` | Query events; `--after` keeps events with a greater `seq`. |
 | `event-cursor` | `[--consumer=<id>]` `[--reset-to=<seq>]` | Show a consumer offset; reset replays events after `<seq>` (coordinator must be stopped). |
 
 ### `orc control`

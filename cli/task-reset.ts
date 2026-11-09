@@ -6,14 +6,15 @@
  * Reset a task back to todo status and fail any active claims. In a
  * registered project the running coordinator applies it.
  */
-import { flag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
 import { USAGE } from './usage.ts';
 
-const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
+const { values, positionals } = parseCommandArgsOrExit(USAGE['task-reset'], { 'actor-id': { type: 'string' } }, process.argv.slice(2), 1);
+const taskRef = positionals[0];
 // Without --actor-id the coordinator records the caller: the operator as human, a master session as the master.
-const actorId = flag('actor-id');
+const actorId = values['actor-id'];
 
 if (!taskRef) {
   console.error(`Usage: ${USAGE['task-reset']}`);

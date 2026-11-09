@@ -11,8 +11,9 @@ import { STATE_DIR } from '../lib/paths.ts';
 import { readEvents } from '../lib/eventLog.ts';
 import { latestRunActivityDetailMap } from '../lib/runActivity.ts';
 import { readRunActivity as readRunActivitySnapshots } from '../lib/runActivityStore.ts';
-import { boolFlag } from '../lib/args.ts';
-import { cliError, exitAfterFlush, formatErrorMessage, printJson } from './shared.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
+import { cliError, exitAfterFlush, formatErrorMessage, printJson, requireProjectScope } from './shared.ts';
+import { USAGE } from './usage.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { projectActiveRuns, withProjectTaskState, type ActiveRunRow } from '../lib/statusProjection.ts';
@@ -20,11 +21,13 @@ import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
 import type { RunActivityDetail } from '../lib/runActivity.ts';
 
-const asJson = boolFlag('json');
+const { values } = parseCommandArgsOrExit(USAGE['runs-active'], { json: { type: 'boolean' }, 'via-control': { type: 'boolean' } });
+const asJson = values.json === true;
+requireProjectScope();
 
 let rows: ActiveRunRow[];
 let eventReadError = '';
-if (boolFlag('via-control')) {
+if (values['via-control']) {
   try {
     rows = (await new ControlClient(STATE_DIR, { socketPath: controlSocketFromEnv() }).snapshot()).runs;
   } catch (error) {

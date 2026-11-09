@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { spawnSync } from 'node:child_process';
@@ -97,6 +98,23 @@ describe('cli/runs-active.ts', () => {
     expect(json.runs[0].age_seconds).toBeNull();
     expect(json.runs[0].idle_seconds).toBeNull();
     expect(json.runs[0].awaiting_run_started).toBe(true);
+  });
+});
+
+describe('cli/runs-active.ts outside a project', () => {
+  it('exits 1 with a no-project message instead of reading the placeholder directory', () => {
+    const empty = mkdtempSync(join(tmpdir(), 'orc-no-project-'));
+    try {
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ORC_')));
+      const result = spawnSync('node', [resolve(repoRoot, 'cli/runs-active.ts'), '--json'], {
+        cwd: empty, env: { ...env, ORC_DATA_HOME: join(empty, 'data') }, encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('No registered project');
+      expect(result.stdout).toBe('');
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 });
 

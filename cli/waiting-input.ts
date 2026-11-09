@@ -5,13 +5,16 @@
  *
  * Show all claims currently awaiting input, with the question text.
  */
-import { exitAfterFlush, printJson } from './shared.ts';
+import { exitAfterFlush, printJson, requireProjectScope } from './shared.ts';
+import { USAGE } from './usage.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { readClaims } from '../lib/stateReader.ts';
 import { listWaitingInput } from '../lib/waitingInput.ts';
-import { boolFlag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 
-const asJson = boolFlag('json');
+const { values } = parseCommandArgsOrExit(USAGE['waiting-input'], { json: { type: 'boolean' } });
+const asJson = values.json === true;
+requireProjectScope();
 const rows = listWaitingInput(STATE_DIR, readClaims(STATE_DIR).claims);
 
 if (asJson) {

@@ -10,12 +10,14 @@
  * exits 1 only when the reviews could not be read (retry later).
  */
 import { STATE_DIR } from '../lib/paths.ts';
-import { boolFlag, flag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { readRunReviews, readViaCoordinator } from '../lib/projectReads.ts';
-import { cliError } from './shared.ts';
+import { cliError, exitAfterFlush, printJson } from './shared.ts';
+import { USAGE } from './usage.ts';
 
-const runId = flag('run-id');
-const asJson = boolFlag('json');
+const { values } = parseCommandArgsOrExit(USAGE['review-read'], { 'run-id': { type: 'string' }, json: { type: 'boolean' } });
+const runId = values['run-id'];
+const asJson = values.json === true;
 
 if (!runId) {
   console.error('--run-id is required');
@@ -33,8 +35,8 @@ try {
 }
 
 if (asJson) {
-  console.log(JSON.stringify({ count: reviews.length, reviews }));
-  process.exit(0);
+  printJson({ count: reviews.length, reviews });
+  await exitAfterFlush(0);
 }
 
 if (reviews.length === 0) {

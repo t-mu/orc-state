@@ -5,17 +5,25 @@
  */
 import { readEvents } from '../lib/eventLog.ts';
 import { EVENTS_FILE } from '../lib/paths.ts';
-import { boolFlag, flag, intFlag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { isRunEvent, isTaskEvent, isAgentEvent } from '../types/events.ts';
-import { cliError, exitAfterFlush, printJson } from './shared.ts';
+import { cliError, eventLogMissing, exitAfterFlush, printJson, requireProjectScope } from './shared.ts';
+import { USAGE } from './usage.ts';
 
-const asJson = boolFlag('json');
-const n = intFlag('n', 40);
-const eventName = flag('event');
+const { values } = parseCommandArgsOrExit(USAGE['events-tail'], { json: { type: 'boolean' }, n: { type: 'string' }, event: { type: 'string' } });
+requireProjectScope();
+const asJson = values.json === true;
+if (values.n !== undefined && !/^[1-9]\d*$/.test(values.n)) {
+  console.error(`Error: --n must be a positive integer\nUsage: ${USAGE['events-tail']}`);
+  process.exit(1);
+}
+const n = values.n === undefined ? 40 : Number(values.n);
+const eventName = values.event;
 
 let events: ReturnType<typeof readEvents>;
 try {
-  events = readEvents(EVENTS_FILE);
+  // A missing database is an empty log, as in events-filter; reading must not create it.
+  events = eventLogMissing(EVENTS_FILE) ? [] : readEvents(EVENTS_FILE);
 } catch (error) {
   cliError(error);
 }

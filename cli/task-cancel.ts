@@ -7,14 +7,15 @@
  * registered project the running coordinator applies it; the operator can
  * cancel without the master.
  */
-import { flag } from '../lib/args.ts';
+import { parseCommandArgsOrExit } from '../lib/args.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { cliError } from './shared.ts';
 import { USAGE } from './usage.ts';
 
-const taskRef = process.argv.slice(2).find((a) => !a.startsWith('-'));
-const reason = flag('reason');
-const actorId = flag('actor-id');
+const { values, positionals } = parseCommandArgsOrExit(USAGE['task-cancel'], { reason: { type: 'string' }, 'actor-id': { type: 'string' } }, process.argv.slice(2), 1);
+const taskRef = positionals[0];
+const reason = values.reason;
+const actorId = values['actor-id'];
 
 if (!taskRef) {
   console.error(`Usage: ${USAGE['task-cancel']}`);

@@ -5,6 +5,7 @@ import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixt
 import { spawnSync } from 'node:child_process';
 import { stripVTControlCharacters } from 'node:util';
 import { renderBanner } from '../lib/banner.ts';
+import { appendSequencedEvent } from '../lib/eventLog.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let root: string;
@@ -57,6 +58,33 @@ describe('cli/status.ts', () => {
     const bannerFirstLine = stripVTControlCharacters(renderBanner().split('\n')[0]);
     expect(bannerFirstLine.trim().length).toBeGreaterThan(0);
     expect(stripVTControlCharacters(text.stdout)).not.toContain(bannerFirstLine);
+  });
+
+  it('honors --events <n> given as a separate argument', () => {
+    seedValidState();
+    for (let i = 0; i < 8; i++) {
+      appendSequencedEvent(dir, { ts: '2026-01-01T00:00:00Z', event: 'heartbeat', actor_type: 'agent', actor_id: 'w', run_id: `run-${i}`, task_ref: 'docs/task-1', agent_id: 'w', payload: {} } as never);
+    }
+    const result = runStatus(['--events', '5', '--json']);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).recentEvents).toHaveLength(5);
+  });
+
+  it('rejects unknown flags as a usage error', () => {
+    seedValidState();
+    const result = runStatus(['--bogus']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Usage: orc status');
+  });
+
+  it('prints one escape-free JSON frame for --json --once', () => {
+    seedValidState();
+    const result = runStatus(['--json', '--once']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain('\x1b');
+    const lines = result.stdout.trimEnd().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]).tasks.total).toBe(1);
   });
 
   it('survives malformed events log by skipping corrupted rows', () => {
@@ -168,7 +196,7 @@ describe('cli/status.ts', () => {
     expect(result.stderr).toContain('Usage: orc status');
   });
 
-  it('--watch --once renders one frame with ANSI clear and update footer', () => {
+  it('--watch --once renders one frame with update footer and no clear-screen codes when piped', () => {
     seedValidState({
       agents: [
         { agent_id: 'orc-1', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z' },
@@ -185,7 +213,7 @@ describe('cli/status.ts', () => {
     });
     const result = runStatus(['--watch', '--once']);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('\x1b[2J\x1b[H');
+    expect(result.stdout).not.toContain('\x1b');
     expect(result.stdout).toContain('Orchestrator Status');
     expect(result.stdout).toContain('watch interval:');
     expect(result.stdout).toContain('updated at:');
