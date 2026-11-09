@@ -162,7 +162,7 @@ export function resetVolatileRuntimeStateForSession(
     }));
     commitClaims(stateDir, claims, events);
     for (const agent of snapshot.agents.agents) {
-      if (agent.session_handle) closeProviderSessionsForAgent(stateDir, agent.agent_id, now);
+      if (agent.session_handle) closeProviderSessionsForAgent(stateDir, agent.agent_id, now, { type: 'human', id: 'human' });
     }
     atomicWriteJson(join(stateDir, 'agents.json'), agents);
 

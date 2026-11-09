@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Every session-row write emits one event: `session_opened` for a new session, `session_state_changed` (`from`, `to`, `reason`, `generation`) for a close, supersede, exit, resume start or reset rollback. Lease renewal emits none.
+
 ### Changed
+
+- `GET /v1/sessions` lists every session that is not offline, with `state` and `state_reason` (`SessionTerminalView` gains both), so `recoverable` and `unknown` sessions show up.
+- Agent reads report a `running` agent whose latest session is offline as `offline`, without a `session_token`; the coordinator resumes or requeues its run on the next tick.
+- A worker launch whose run was cancelled meanwhile stops the session it started and fails, instead of leaving a running agent without a session record.
 
 - The task status `released` and the `post_merge_release` transition are removed; nothing ever set them. `done` is the single terminal success status. `runtime.db` migrates to schema version 5, which rewrites any `released` task to `done`. `list_tasks` and `orc project task list --status` no longer accept `released`.
 

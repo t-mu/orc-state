@@ -355,7 +355,10 @@ export function reopenLiveSession(stateDir: string, {
       event: ({ before, after, taskRef }) => ({
         ...sessionEventEnvelope(after, taskRef, at, actor),
         event: 'session_reconciled',
-        payload: { session_id: row.session_id, state: 'running', previous_state: before.state, transport: after.transport, outcome: 'restored', reason },
+        payload: {
+          session_id: row.session_id, state: 'running', previous_state: before.state, transport: after.transport, outcome: 'restored', reason,
+          generation: after.generation,
+        },
       }),
     });
     let providerRef: unknown = null;
