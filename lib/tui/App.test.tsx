@@ -5,7 +5,7 @@ import { render as inkRender, type Instance } from 'ink';
 import { cleanup, render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectConnectionState, ProjectWatchState, ProjectWatchUpdate, StatusView } from '../../client.ts';
-import { App } from './App.tsx';
+import { App, KEYS_HINT, KEYS_HINT_STANDALONE, type AgentOpener } from './App.tsx';
 import type { TuiAttention, TuiRecentEvent, TuiStatus, TuiWatchSource } from './status.ts';
 
 type Kind = TuiAttention['kind'];
@@ -226,6 +226,42 @@ describe('dashboard App', () => {
     await settle(() => app.stdin.write('k'));
     expect(selectedRow()).toContain('a2');
   });
+
+  it('opens the selected agent on Enter and shows what happened while it stays selected', async () => {
+    const { source } = fakeSource([
+      project('alpha', 'running', { ...status([{ id: 'a1' }]), master: { agent_id: 'boss', status: 'running' } }),
+      project('beta', 'running', status([{ id: 'b1' }])),
+    ]);
+    const onOpen = vi.fn<AgentOpener>((agent) => {
+      if (agent.agent_id === 'b1') throw new Error('tmux new-window failed');
+      return `opened ${agent.agent_id}`;
+    });
+    const app = render(<App source={source} stateDir="/state/alpha" intervalMs={1000} onOpen={onOpen} />);
+    const lastLine = () => plain(app.lastFrame()).split('\n').at(-1);
+
+    await settle();
+    expect(lastLine()).toBe(KEYS_HINT);
+    // The master is listed first and selectable.
+    await settle(() => app.stdin.write('\r'));
+    expect(onOpen).toHaveBeenLastCalledWith(
+      expect.objectContaining({ agent_id: 'boss', role: 'master' }),
+      expect.objectContaining({ project_id: 'alpha', state_dir: '/state/alpha' }),
+    );
+    expect(lastLine()).toBe('opened boss');
+    await settle(() => app.stdin.write('j'));
+    expect(lastLine()).toBe(KEYS_HINT);
+    await settle(() => app.stdin.write('j'));
+    await settle(() => app.stdin.write('\r'));
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ agent_id: 'b1' }), expect.objectContaining({ project_id: 'beta' }));
+    expect(lastLine()).toBe('b1: tmux new-window failed');
+  });
+
+  it('says where Enter works when the dashboard runs outside the cockpit', async () => {
+    const { source } = fakeSource([project('alpha', 'running', status([{ id: 'a1' }]))]);
+    const app = render(<App source={source} stateDir="/state/alpha" intervalMs={1000} />);
+    await settle(() => app.stdin.write('\r'));
+    expect(plain(app.lastFrame()).split('\n').at(-1)).toBe(KEYS_HINT_STANDALONE);
+  });
 });
 
 /** A terminal of fixed size that records the frames Ink writes. */
@@ -237,7 +273,7 @@ class FakeStdout extends EventEmitter {
 }
 
 class FakeStdin extends EventEmitter {
-  isTTY = false;
+  constructor(public isTTY = false) { super(); }
   setEncoding() {}
   setRawMode() {}
   resume() {}
@@ -255,11 +291,11 @@ describe('dashboard App in a terminal', () => {
     instance = null;
   });
 
-  function renderIn(rows: number, columns: number, states: ProjectWatchState[]): FakeStdout {
+  function renderIn(rows: number, columns: number, states: ProjectWatchState[], tty = false): FakeStdout {
     const stdout = new FakeStdout(rows, columns);
     instance = inkRender(<App source={fakeSource(states).source} stateDir="/state/alpha" intervalMs={1000} />, {
       stdout: stdout as unknown as NodeJS.WriteStream,
-      stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
+      stdin: new FakeStdin(tty) as unknown as NodeJS.ReadStream,
       patchConsole: false,
       exitOnCtrlC: false,
     });
@@ -284,12 +320,12 @@ describe('dashboard App in a terminal', () => {
     expect(frame).toContain('run_failed');
   });
 
-  it('stays below the terminal height, collapsing agent rows and cutting long lists', () => {
+  it.each([false, true])('stays below the terminal height, collapsing agent rows and cutting long lists (keys read: %s)', (tty) => {
     const many = Array.from({ length: 12 }, (_, i) => ({ id: `w${i}`, task: `plan/t${i}`, phase: 'implement' }));
     const stdout = renderIn(16, 40, [project('alpha', 'running', status([
       ...many,
       { id: 'needs-me', attention: { kind: 'question', detail: 'ok?' } },
-    ]))]);
+    ]))], tty);
 
     const frame = plain(stdout.lastFrame());
     expect(frame.split('\n').length).toBeLessThan(16);
@@ -297,5 +333,7 @@ describe('dashboard App in a terminal', () => {
     expect(frame).toContain('needs-me  QUESTION');
     expect(frame).toMatch(/\+\d+ more/);
     expect(frame).toContain('Notifications');
+    // With keys read, the bindings footer is part of the budget.
+    if (tty) expect(frame.split('\n').at(-1)).toBe(KEYS_HINT_STANDALONE);
   });
 });

@@ -42,7 +42,8 @@ const cleanup = async (code = 0) => {
   closing = true;
   abort.abort();
   if (renewTimer) clearInterval(renewTimer);
-  if (raw) process.stdin.setRawMode(false);
+  // A hung-up terminal (its cockpit tab closed) cannot leave raw mode; the lease is released all the same.
+  try { if (raw) process.stdin.setRawMode(false); } catch { /* terminal gone */ }
   process.stdin.pause();
   try { await pending; if (leaseId) await client.releaseTerminal(terminalId, leaseId); }
   catch (error) { console.error((error as Error).message); }
@@ -78,6 +79,12 @@ try {
   const frames = client.streamTerminal(terminalId, { ...(leaseId ? { leaseId } : {}), ...size }, abort.signal);
   process.on('SIGINT', () => { void cleanup(); });
   process.on('SIGTERM', () => { void cleanup(); });
+  // Closing the window or tab that runs this releases the lease at once, so reopening it can write.
+  process.on('SIGHUP', () => {
+    // Writes to the gone terminal fail (EIO); they must not crash the process before the release.
+    for (const stream of [process.stdout, process.stderr]) stream.on('error', () => undefined);
+    void cleanup();
+  });
   for await (const frame of frames) {
     if (frame.type === 'snapshot') {
       if (once) { process.stdout.write(frame.screen); break; }

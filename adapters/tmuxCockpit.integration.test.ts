@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { COCKPIT_PREFIX, COCKPIT_SOCKET, ensureCockpitWindow, type CockpitMaster } from './tmuxCockpit.ts';
+import {
+  COCKPIT_PREFIX, COCKPIT_SOCKET, ensureCockpitWindow, openAgentTab, switchToMasterTab, type CockpitMaster,
+} from './tmuxCockpit.ts';
 
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
 /** Fake masters run on their own servers, as each project's master does; fresh names per test, so no test meets a server still exiting. */
@@ -116,4 +118,51 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     const [window] = cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_id}']).split('\n');
     await waitFor(() => capture(panes(window)[0].split(' ')[0]).includes('MASTER-A2'));
   });
+
+  it('opens one tab per agent next to its project, switches to it, and closing it leaves the agent running', async () => {
+    startFakeMaster(MASTER_SOCKETS[0], 'master-a', 'MASTER-A');
+    startFakeMaster(MASTER_SOCKETS[1], 'master-b', 'MASTER-B');
+    open('a', { agentId: 'master', socket: MASTER_SOCKETS[0], session: 'master-a' });
+    open('b', { agentId: 'master', socket: MASTER_SOCKETS[1], session: 'master-b' });
+    // A fake worker session, and a fake `orc terminal`: it streams until the session ends, then says so.
+    const workerSocket = `${MASTER_SOCKETS[0]}-w`;
+    MASTER_SOCKETS.push(workerSocket);
+    startFakeMaster(workerSocket, 'worker-1', 'WORKER-1');
+    const alive = () => tmux(workerSocket, ['has-session', '-t', '=worker-1']).status === 0;
+    const tab = {
+      projectId: 'a', projectName: 'project-a', agentId: 'w1', root: tmpdir(), env: {},
+      command: ['/bin/sh', '-c', `echo "STREAM w1 [$ORC_PROJECT_ID]"; while tmux -L ${workerSocket} -f /dev/null has-session -t =worker-1 2>/dev/null; do sleep 0.2; done; echo '[terminal stream ended: session_ended]'`],
+    };
+    const windows = () => cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_name} #{window_active}']).split('\n');
+    const tabPane = () => cockpit(['list-panes', '-t', '=cockpit:project-a/w1', '-F', '#{pane_id}']);
+
+    expect(openAgentTab(tab)).toBe('opened');
+    // Inserted after its project's tab, focused; ORC_* from the cockpit is unset.
+    expect(windows()).toEqual(['project-a 0', 'project-a/w1 1', 'project-b 0']);
+    await waitFor(() => capture(tabPane()).includes('STREAM w1 []'));
+
+    // Selecting it again switches to the same tab: no second tab, no second stream.
+    cockpit(['select-window', '-t', '=cockpit:project-b']);
+    expect(openAgentTab(tab)).toBe('switched');
+    expect(windows()).toEqual(['project-a 0', 'project-a/w1 1', 'project-b 0']);
+
+    // A master switches to its project's tab, master pane focused.
+    expect(switchToMasterTab('a')).toBe(true);
+    expect(windows()).toEqual(['project-a 1', 'project-a/w1 0', 'project-b 0']);
+    expect(switchToMasterTab('nope')).toBe(false);
+
+    // Closing the tab ends only the stream.
+    cockpit(['kill-window', '-t', '=cockpit:project-a/w1']);
+    expect(windows()).toEqual(['project-a 1', 'project-b 0']);
+    expect(alive()).toBe(true);
+
+    // The session ends: the tab says so instead of hanging, and Enter closes it.
+    expect(openAgentTab(tab)).toBe('opened');
+    const pane = tabPane();
+    tmux(workerSocket, ['kill-session', '-t', '=worker-1']);
+    await waitFor(() => capture(pane).includes('The terminal of w1 (project-a) is closed (exit 0).'));
+    expect(capture(pane)).toContain('[terminal stream ended: session_ended]');
+    cockpit(['send-keys', '-t', pane, 'Enter']);
+    await waitFor(() => !windows().some((line) => line.startsWith('project-a/w1')));
+  }, 30_000);
 });
