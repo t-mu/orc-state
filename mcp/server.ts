@@ -20,6 +20,7 @@ import { ForbiddenError } from '../lib/domainErrors.ts';
 import { submitOperatorMutation } from '../lib/operatorDispatch.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
+import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { routeToCoordinator, submitProjectWrite } from '../lib/projectWriteDispatch.ts';
 import * as handlers from './handlers.ts';
 import { TOOLS } from './tools-list.ts';
@@ -187,6 +188,11 @@ export function invokeTool(stateDir: string, name: string, args: Record<string, 
       return handlers.handleQueryEvents(stateDir, args);
     case 'list_worktrees':
       return handlers.handleListWorktrees(stateDir);
+    case 'doctor':
+      return handlers.handleDoctor(stateDir);
+    case 'terminal_snapshot':
+      return handlers.handleTerminalSnapshot(stateDir, args,
+        new ControlClient(stateDir, { socketPath: controlSocketFromEnv(), credential }));
     case 'memory_wake_up':
       return handlers.handleMemoryWakeUp(stateDir, args);
     case 'memory_search':
