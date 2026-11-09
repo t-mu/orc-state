@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -71,6 +71,22 @@ describe('operator commands with --json', { timeout: 30_000 }, () => {
     expect(text.stderr).toContain('Error:');
   });
 
+  it('exits 75 with an unavailable error when a coordinator holds the project but does not answer', () => {
+    const stateDir = (JSON.parse(orc(['project', 'show']).stdout) as { stateDir: string }).stateDir;
+    const fake = join(temp, 'coordinator.js');
+    writeFileSync(fake, 'setInterval(() => {}, 1000);\n');
+    const holder = spawn(process.execPath, [fake], { stdio: 'ignore' });
+    try {
+      writeFileSync(join(stateDir, 'coordinator.pid'), JSON.stringify({ pid: holder.pid, started_at: new Date().toISOString() }));
+      const result = orc(['task-cancel', 'app/doomed', '--json']);
+      expect(result.status).toBe(75);
+      expect(out(result).error.code).toBe('unavailable');
+      expect(orc(['task-cancel', 'app/doomed']).status).toBe(1);
+    } finally {
+      holder.kill();
+    }
+  });
+
   it('prints delegate and respond-input failures as JSON', () => {
     expect(out(orc(['delegate', '--task-ref=app/missing', '--json'])).error.code).toBe('not_found');
     const respond = orc(['run-input-respond', '--run-id=run-x', '--agent-id=nobody', '--response=ok', '--json']);
@@ -112,6 +128,15 @@ describe('orc coordinator', { timeout: 60_000 }, () => {
     expect(out(stopped)).toMatchObject({ running: false, changed: true });
     expect(out(orc(['coordinator', 'stop', '--json']))).toMatchObject({ running: false, changed: false });
     expect(out(orc(['project', 'task', 'show', 'app/doomed'])).status).toBe('todo');
+  });
+
+  it('starts over a stale pid lock and reports the live coordinator', () => {
+    const stateDir = (JSON.parse(orc(['project', 'show']).stdout) as { stateDir: string }).stateDir;
+    writeFileSync(join(stateDir, 'coordinator.pid'), JSON.stringify({ pid: 2_000_000_000, started_at: new Date().toISOString() }));
+    const started = orc(['coordinator', 'start', '--json']);
+    expect(started.status).toBe(0);
+    expect(out(started)).toMatchObject({ running: true, changed: true });
+    expect(out(started).pid).not.toBe(2_000_000_000);
   });
 
   it('rejects an unknown action with usage', () => {

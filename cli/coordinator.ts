@@ -13,7 +13,8 @@ import { ensureStateInitialized } from '../lib/stateInit.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { ControlError, defaultSocketPath } from '../lib/controlProtocol.ts';
 import { staleCodeWarning } from '../lib/codeIdentity.ts';
-import { coordinatorStatus, spawnCoordinator, stopCoordinator } from '../lib/coordinatorProcess.ts';
+import { findLiveCoordinator } from '../lib/coordinatorLiveness.ts';
+import { coordinatorStatus, readCoordinatorPidRecord, spawnCoordinator, stopCoordinator } from '../lib/coordinatorProcess.ts';
 import { failCommand, printJson } from './shared.ts';
 import { USAGE } from './usage.ts';
 
@@ -61,11 +62,15 @@ try {
     } else {
       ensureStateInitialized(STATE_DIR);
       const pid = await spawnCoordinator(STATE_DIR, ACTIVE_PROJECT!.id);
-      if (pid === null) throw new ControlError('unavailable', 'coordinator did not write its pid lock within 2 s; check orc status, then retry', 503);
+      if (pid === null) throw new ControlError('unavailable', 'coordinator did not come up within 2 s; check orc status, then retry', 503);
       print({ action, changed: true, ...await describe() });
     }
   } else {
     const { running, pid } = coordinatorStatus(STATE_DIR);
+    // A pid lock without started_at is never trusted for a terminate: a permanent refusal, not a retry.
+    if (running && findLiveCoordinator(STATE_DIR)?.source === 'pid_file' && !readCoordinatorPidRecord(STATE_DIR)?.started_at) {
+      throw new ControlError('conflict', `coordinator.pid names PID ${pid} but records no started_at, so orc will not signal it; stop that process by hand`, 409);
+    }
     if (running && pid !== null && !await stopCoordinator(STATE_DIR, pid)) {
       throw new ControlError('unavailable', `coordinator PID ${pid} is still running; retry, or use orc kill-all`, 503);
     }

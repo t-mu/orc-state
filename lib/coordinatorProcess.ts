@@ -41,7 +41,7 @@ export function coordinatorStatus(stateDir: string): { running: boolean; pid: nu
   return live ? { running: true, pid: live.pid } : { running: false, pid: readCoordinatorPidRecord(stateDir)?.pid ?? null };
 }
 
-/** Start a detached coordinator for the project and wait up to 2 s for its pid lock; null when none appeared. */
+/** Start a detached coordinator for the project and wait up to 2 s for it to be live (a stale pid lock does not count); null when it did not appear. */
 export async function spawnCoordinator(stateDir: string, projectId: string): Promise<number | null> {
   const child = spawn(process.execPath, [coordinatorScriptPath()], {
     env: { ...process.env, ORC_PROJECT_ID: projectId, ORC_STATE_DIR: stateDir },
@@ -52,7 +52,7 @@ export async function spawnCoordinator(stateDir: string, projectId: string): Pro
 
   for (let i = 0; i < 10; i++) {
     await new Promise((r) => setTimeout(r, 200));
-    const pid = readCoordinatorPidRecord(stateDir)?.pid ?? null;
+    const pid = findLiveCoordinator(stateDir)?.pid ?? null;
     if (pid) return pid;
   }
   return null;

@@ -28,7 +28,12 @@ if (!runId || !agentId || !response) {
 const result = await submitOperatorMutation({
   op: 'respond-input', run_id: runId, agent_id: agentId, response, record_memory: true, ...(actorId ? { actor_id: actorId } : {}),
   ...(requestedId ? { request_id: requestedId } : {}),
-}).catch((error: unknown) => failCommand(error, json));
+}).catch((error: unknown) => {
+  if (json) return failCommand(error, true);
+  // Without --json the failure is the bare message, as before.
+  console.error((error as Error).message);
+  process.exit(1);
+});
 
 if (json) printJson(result);
 else console.log(`input_response: ${runId} (${agentId})`);
