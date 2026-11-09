@@ -184,7 +184,7 @@ describe('launchScout', () => {
     });
     vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
     try {
-        const failure = launch({ objective: 'Inspect', provider: 'claude' });
+      const failure = launch({ objective: 'Inspect', provider: 'claude' });
       await expect(failure).rejects.toThrow('scout session did not become ready in time (no session-start hook record)');
       await expect(failure).rejects.not.toThrow(/control socket|report for duty/);
     } finally {
@@ -207,7 +207,7 @@ describe('launchScout', () => {
     }));
     vi.stubEnv('ORC_WORKER_SANDBOX_NETWORK', 'restricted');
     try {
-        // The master is a Codex session, so the scout is a Codex scout: read-only, no network setting.
+      // The master is a Codex session, so the scout is a Codex scout: read-only, no network setting.
       await expect(launch({ objective: 'Inspect' }))
         .rejects.toThrow(/did not report for duty in time; in a project a sandboxed codex scout .* \(request a claude scout\)/);
       expect(launchWorkerSessionMock.mock.calls[0][2]).toMatchObject({ sandboxNetwork: 'restricted' });
