@@ -17,7 +17,8 @@
 |---------|-------|-------|
 | `init` | `[--provider=claude,codex,gemini]` `[--worker-provider=<name>]` | Needs a registered project (`orc project add`). Records `default_provider`, `worker_pool.provider`, and `worker_pool.max_workers` (when unset) in the registry; writes nothing into the repository. `--provider` is required outside a TTY. Refuses `--force`. |
 | `start-session` | `[--provider=claude\|codex\|gemini]` `[--agent-id=<id>]` `[--reset]` `[--restart-stale]` | Starts the coordinator (background) and the master in orc's tmux server (needs tmux), then attaches to it. A live master is reattached instead of starting another. `Ctrl-b d` or closing the terminal detaches and the master keeps running. A dead Claude master resumes its recorded conversation. Without a TTY it starts the master and does not attach. Wires the orchestrator MCP server into the master. Runtime state is kept: the new coordinator adopts live worker sessions (crash recovery). `--reset` (interactive: "Start fresh (reset)") stops the running coordinator and every worker session, then fails their runs (`session_reset`) and requeues the tasks; it refuses while a master runs or the coordinator cannot be stopped. A running coordinator whose `version` or `build_id` differs from the code on disk triggers a warning; `--restart-stale` then restarts it (state is kept). |
-| `kill-all` | `[--keep-sessions]` | Full reset: stops the coordinator, terminates sessions, clears the agent registry, resets active tasks, removes run worktrees. `--keep-sessions` leaves every agent session running and adoptable: its agent record, session row, active run and worktree are kept for the next `start-session`. |
+| `coordinator <start\|stop\|status>` | `[--json]` | Runs only the coordinator: no master, provider auth or tmux master check. `start` is a no-op when one runs; `stop` ends it and leaves tasks, claims, agents and worktrees alone (`kill-all` resets them); `status` reports `pid`, `version`, `socket`. Shapes: [contracts.md → CLI `--json` output](contracts.md#cli---json-output). |
+| `kill-all` | `[--keep-sessions]` `[--json]` | Full reset: stops the coordinator, terminates sessions, clears the agent registry, resets active tasks, removes run worktrees. `--keep-sessions` leaves every agent session running and adoptable: its agent record, session row, active run and worktree are kept for the next `start-session`. |
 
 ```bash
 orc init --provider=claude,codex
@@ -74,23 +75,25 @@ Under each active run, `watch` and `status` print a `└` activity line: a note 
 | `attach <agent_id\|run_id>` | `[--write]` | Real `tmux attach-session` on orc's private tmux server. Read-only by default; `--write` sends input; Ctrl-b d detaches. Needs a TTY; refuses non-tmux (`app:`) sessions. |
 | `terminal <provider\|shell> <run_id>` | `[--write]` `[--once]` | `provider`: the run's provider terminal; `shell`: a shell in the run worktree (survives detach; output in `<state>/terminal-logs/`). Streams live output (`GET /v1/terminals/<id>/stream`); sizes the pane to this terminal when it holds the lease or is the first viewer. Read-only by default; `--write` takes the exclusive input lease; `--once` prints the current screen and exits. Ctrl-] detaches a writer, Ctrl-C an observer. Needs the coordinator and tmux; run from the master or an operator shell, never a worker. |
 | `worker-status [<agent_id>]` | `[--json]` | Worker state, active task, session. |
-| `worker-remove <worker_id>` | `[--keep-session]` | Refused while the worker holds a claim, and for the master or a scout. |
-| `worker-gc` | — | Remove offline/dead workers without a claim (not master/scouts) and `pty-hook-events/` files of unregistered agents. A running coordinator does this itself. |
+| `worker-remove <worker_id>` | `[--keep-session]` `[--json]` | Refused while the worker holds a claim, and for the master or a scout. |
+| `worker-gc` | `[--json]` | Remove offline/dead workers without a claim (not master/scouts) and `pty-hook-events/` files of unregistered agents. A running coordinator does this itself. |
 | `sessions` | `[--all]` `[--json]` | Supervised sessions: state (`running`, `recoverable`, `unknown`, `offline`), transport, PID, owner, reason. |
 
 ## Task management
 
 | Command | Flags | Notes |
 |---------|-------|-------|
-| `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` `[--actor-id=<id>]` | Force dispatch (normal dispatch is automatic). Refuses a target with an active run. |
-| `task-reset <task_ref>` | `[--actor-id=<id>]` | Any status → `todo`; cancels active claims (`run_cancelled` per run), clears requeue backoff. |
-| `task-unblock <task_ref>` | `[--reason=<text>]` `[--actor-id=<id>]` | `blocked` → `todo`. |
-| `task-cancel <task_ref>` | `[--reason=<text>]` `[--actor-id=<id>]` | → `cancelled`, ends any active run. Exits 1 if already done/cancelled. |
-| `task-mark-done <task_ref>` | `[--actor-id=<id>]` | Recovery: mark done in runtime state (the coordinator does this after merge). |
-| `run-expire <run_id>` | — | Force-expire a claim and requeue the task. |
-| `run-close <run_id>` | `[--reason=<text>]` `[--actor-id=<id>]` | Close a run merged by hand (see below). MCP: `close_run`. |
+| `delegate` | `--task-ref=<feature/task>` `[--target-agent-id=<id>]` `[--task-type=implementation\|refactor]` `[--note=<text>]` `[--actor-id=<id>]` `[--json]` | Force dispatch (normal dispatch is automatic). Refuses a target with an active run. |
+| `task-reset <task_ref>` | `[--actor-id=<id>]` `[--json]` | Any status → `todo`; cancels active claims (`run_cancelled` per run), clears requeue backoff. |
+| `task-unblock <task_ref>` | `[--reason=<text>]` `[--actor-id=<id>]` `[--json]` | `blocked` → `todo`. |
+| `task-cancel <task_ref>` | `[--reason=<text>]` `[--actor-id=<id>]` `[--json]` | → `cancelled`, ends any active run. Exits 1 if already done/cancelled. |
+| `task-mark-done <task_ref>` | `[--actor-id=<id>]` `[--json]` | Recovery: mark done in runtime state (the coordinator does this after merge). |
+| `run-expire <run_id>` | `[--json]` | Force-expire a claim and requeue the task. |
+| `run-close <run_id>` | `[--reason=<text>]` `[--actor-id=<id>]` `[--json]` | Close a run merged by hand (see below). MCP: `close_run`. |
 
 `run-close` requires a non-terminal claim whose task is `done` or whose branch is merged into `main` (an ancestor of `main`, not on its first-parent history). It records the claim `done`, emits `run_finished {closed_by, reason, manual: true}`, and for a merged branch marks the task `done` and removes the worktree and branch. For squash/rebase/fast-forward merges run `task-mark-done` first; otherwise use `run-expire` or `task-reset`.
+
+With `--json`, the operator commands above (and `run-input-respond`, `worker-remove`, `worker-gc`, `kill-all`) print one JSON document on stdout. Failure prints `{ "error": { "code", "message" } }` on stdout instead and exits 1, or 75 when `code` is `unavailable` or `busy` (retry). Without `--json`, output and exit codes are unchanged. Codes are the control API's: `not_found`, `conflict`, `bad_request`, `forbidden`, `unauthenticated`, `unavailable`, `busy`, `internal`.
 
 Authorization (canonical: [contracts.md → Local Control API](contracts.md#local-control-api)):
 
@@ -156,7 +159,7 @@ Client for the coordinator's local control API. Fails with "Control daemon is no
 | `run-finish` | `--run-id=<id>` `--agent-id=<id>` | Terminal success. |
 | `run-fail` | `--run-id=<id>` `--agent-id=<id>` `[--reason=<text>]` `[--code=<code>]` `[--policy=<requeue\|block>]` | Terminal failure; default `requeue`. |
 | `run-input-request` | `--run-id=<id>` `--agent-id=<id>` `--question=<text>` `[--timeout-ms=<ms>]` `[--poll-ms=<ms>]` | Blocking question to the master. |
-| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` | Answer a pending input request, as master or operator; `--request-id` targets one request (a stale id → conflict). |
+| `run-input-respond` | `--run-id=<id>` `--agent-id=<id>` `--response=<text>` `[--actor-id=<id>]` `[--request-id=<id>]` `[--json]` | Answer a pending input request, as master or operator; `--request-id` targets one request (a stale id → conflict). |
 | `run-heartbeat` | — | Deprecated no-op; leases renew automatically. |
 
 `progress --event` values (`lib/progressValidation.ts`): `run_started`, `heartbeat`, `phase_started`, `phase_finished` (need `--phase`), `review_submitted`, `work_complete`, `finalize_rebase_started`, `ready_to_merge`, `run_finished`, `run_failed`, `blocked`, `need_input` (need `--reason`), `input_provided`, `unblocked`.

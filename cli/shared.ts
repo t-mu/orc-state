@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { assertProjectScope, STATE_DIR } from '../lib/paths.ts';
 import { readClaims } from '../lib/stateReader.ts';
+import { ControlError, type ControlErrorCode } from '../lib/controlProtocol.ts';
+import { ConflictError, InputError, NotFoundError } from '../lib/domainErrors.ts';
 import type { Claim } from '../types/claims.ts';
 
 export function loadClaim(runId: string): Claim | null {
@@ -47,4 +49,32 @@ export function requireProjectScope(): void {
   } catch (error) {
     cliError(error);
   }
+}
+
+/** Exit code of a `--json` failure that may succeed when retried (`unavailable`, `busy`); other failures exit 1 (sysexits EX_TEMPFAIL). */
+export const EXIT_RETRYABLE = 75;
+
+/** The control-API error code of a failure, whether it came back from the coordinator or was raised by the direct path. */
+export function errorCode(error: unknown): ControlErrorCode {
+  if (error instanceof ControlError) return error.code;
+  if (error instanceof NotFoundError) return 'not_found';
+  if (error instanceof ConflictError) return 'conflict';
+  if (error instanceof InputError) return 'bad_request';
+  return 'internal';
+}
+
+export function isRetryableCode(code: string): boolean {
+  return code === 'unavailable' || code === 'busy';
+}
+
+/** Print `{ error: { code, message } }` on stdout and exit: 75 for a retryable code, else 1. */
+export function exitWithJsonError(code: string, message: string): Promise<never> {
+  printJson({ error: { code, message } });
+  return exitAfterFlush(isRetryableCode(code) ? EXIT_RETRYABLE : 1);
+}
+
+/** Report a failed command: a `--json` error object, or the usual `Error:` line on stderr with exit 1. */
+export function failCommand(error: unknown, json: boolean): Promise<never> | never {
+  if (json) return exitWithJsonError(errorCode(error), formatErrorMessage(error));
+  return cliError(error);
 }

@@ -34,6 +34,7 @@ export function readVersion(): string {
 
 export const COMMANDS: Record<string, string> = {
   'start-session':      'start-session.ts',
+  'coordinator':        'coordinator.ts',
   'status':             'status.ts',
   'watch':              'watch.ts',
   'attach':             'attach.ts',

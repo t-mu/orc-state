@@ -403,6 +403,21 @@ Flags are those in `cli/usage.ts` (`orc <command> --help`); `--project=<id>` sel
 | `orc waiting-input --json` | array of `{ run_id, agent_id, task_ref, question, request_id, waiting_seconds, input_requested_at }` |
 | `orc worker-status --json` | array of agent records + `active_task_ref`, `heartbeat_seconds_ago`; one record when given an `agent_id` |
 
+#### Operator commands
+
+With `--json`, `task-cancel`, `task-reset`, `task-unblock`, `task-mark-done`, `delegate`, `run-close`, `run-expire` and `run-input-respond` print the `/v1/operator` result for their op (the same object the MCP tool returns). A refused request prints `{ "error": { "code", "message" } }` on stdout. Exit codes: 0 success, 1 failure, **75** a retryable failure (`code` is `unavailable` or `busy`: the coordinator holds the project but is not answering, or is sending to the terminal). `task-cancel` of an already-terminal task is `conflict`. Codes are the control API's `ControlErrorCode`; the direct (no-coordinator) path maps `NotFoundError`, `ConflictError` and `InputError` to `not_found`, `conflict` and `bad_request`.
+
+| Command | `--json` success shape |
+|---|---|
+| `orc worker-remove <id> --json` | `{ worker_id, removed: true, session_stopped }`; refusals are `not_found` (unknown worker) or `conflict` (master, scout, active claim) |
+| `orc worker-gc --json` | `{ removed_workers, removed_hook_files }` |
+| `orc kill-all --json` | `{ coordinator: 'stopped'\|'already_stopped'\|'not_running'\|'signal_failed', coordinator_pid, sessions_stopped, agents_cleared, agents_kept, tasks_reset, claims_cancelled, runs_kept, worktrees_removed }` |
+| `orc coordinator start\|stop\|status --json` | `{ action, changed, running, pid, version, socket, started_at, stale }`. `pid` is `null` when not running; `version`, `started_at` and `stale` (a restart hint, as `checks.coordinatorCode.warning`) come from the coordinator's `/v1/health` and are `null` when it does not answer; `socket` is the control socket path; `changed` is true when `start` started it or `stop` stopped it. `start` and `stop` exit 75 (`unavailable`) when the coordinator does not appear or stop within 2 s. `stop` never changes tasks, claims, agents or worktrees |
+
+#### `orc project …` output
+
+`orc project …` always prints JSON on stdout (no `--json` flag, except `project list`, whose plain form is the registry records) and reports failures as `Error` text on stderr with exit 1. Documented shapes: `task list` → rows from the task store; `task show <ref>` → a task (`describeProjectTask`: the backlog task fields + `feature_ref`, `content_hash`, `body_markdown`), or with `--revision=<n>` that revision; `task create` → the same task view; `task edit` → the task view + `changed`; `task import <path>` → `{ imported: [{ path, ref, action: 'created'\|'revised'\|'unchanged', revision, ignored_fields }], skipped }`; `plan import <path>` → `{ plan_id, changed }`; `config get` → `{ key, value }`; `config set` → `{ key, value, scope }`; `config unset` → `{ key, scope, unset: true }`. **Unstable** (may change in a minor release): `task list` row fields, `task revisions`, `plan list`/`show`/`export`, `config list`, `project add`/`select`/`show`.
+
 ### Worker lifecycle commands
 
 | Command | Required flags |
