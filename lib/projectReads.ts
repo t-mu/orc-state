@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ControlClient } from './controlClient.ts';
+import { ControlClient, controlSocketFromEnv } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
 import { clientCredential } from './sessionCredentials.ts';
 import { queryEvents } from './eventLog.ts';
@@ -20,7 +20,7 @@ import type { ReviewSubmittedEvent } from '../types/events.ts';
 export async function readViaCoordinator<T>(
   remote: (client: ControlClient) => Promise<T>,
   local: () => T,
-  { client = () => new ControlClient(STATE_DIR, { credential: clientCredential() }) }: { client?: () => ControlClient } = {},
+  { client = () => new ControlClient(STATE_DIR, { credential: clientCredential(), socketPath: controlSocketFromEnv() }) }: { client?: () => ControlClient } = {},
 ): Promise<T> {
   let unanswered: ControlError;
   try {

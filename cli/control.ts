@@ -18,7 +18,7 @@
  * ORC_SESSION_SECRET), or --credential (--session-token is its older name).
  */
 import { boolFlag, flag } from '../lib/args.ts';
-import { ControlClient } from '../lib/controlClient.ts';
+import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { clientCredential } from '../lib/sessionCredentials.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import type { AckState } from '../lib/controlProtocol.ts';
@@ -44,6 +44,7 @@ function required(name: string): string {
 
 const client = new ControlClient(STATE_DIR, {
   credential: flag('credential') ?? flag('session-token') ?? clientCredential(),
+  socketPath: controlSocketFromEnv(),
 });
 
 try {

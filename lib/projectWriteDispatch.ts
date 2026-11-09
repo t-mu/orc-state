@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { ControlClient } from './controlClient.ts';
+import { ControlClient, controlSocketFromEnv } from './controlClient.ts';
 import { ControlError } from './controlProtocol.ts';
 import { runningCoordinatorPid } from './coordinatorLiveness.ts';
 import { resolveControlPrincipal, requireProjectAuthor } from './controlPrincipal.ts';
@@ -27,7 +27,7 @@ export async function routeToCoordinator<A, T>(stateDir: string, operation: stri
   warn: (line: string) => void;
 }): Promise<T> {
   try {
-    return await remote(new ControlClient(stateDir, { credential, timeoutMs: COORDINATOR_REQUEST_TIMEOUT_MS }));
+    return await remote(new ControlClient(stateDir, { credential, timeoutMs: COORDINATOR_REQUEST_TIMEOUT_MS, socketPath: controlSocketFromEnv() }));
   } catch (error) {
     if (!(error instanceof ControlError) || error.code !== 'unavailable') throw error;
   }

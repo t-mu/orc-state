@@ -14,7 +14,7 @@ import { readRunActivity as readRunActivitySnapshots } from '../lib/runActivityS
 import { boolFlag } from '../lib/args.ts';
 import { cliError, exitAfterFlush, formatErrorMessage, printJson } from './shared.ts';
 import { readClaims } from '../lib/stateReader.ts';
-import { ControlClient } from '../lib/controlClient.ts';
+import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { projectActiveRuns, withProjectTaskState, type ActiveRunRow } from '../lib/statusProjection.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
@@ -26,7 +26,7 @@ let rows: ActiveRunRow[];
 let eventReadError = '';
 if (boolFlag('via-control')) {
   try {
-    rows = (await new ControlClient(STATE_DIR).snapshot()).runs;
+    rows = (await new ControlClient(STATE_DIR, { socketPath: controlSocketFromEnv() }).snapshot()).runs;
   } catch (error) {
     cliError(error);
   }

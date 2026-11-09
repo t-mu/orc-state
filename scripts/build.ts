@@ -14,6 +14,7 @@ import { buildSync } from 'esbuild';
 
 const allFiles = globSync([
   'index.ts',
+  'client.ts',
   'coordinator.ts',
   'cli/**/*.ts',
   'lib/**/*.ts',

@@ -21,12 +21,12 @@ async function readStdin(): Promise<string> {
 
 try {
   // Imported here, not statically: resolving the project may throw, and the hook must still fail open.
-  const { ControlClient } = await import('../lib/controlClient.ts');
+  const { ControlClient, controlSocketFromEnv } = await import('../lib/controlClient.ts');
   const { STATE_DIR } = await import('../lib/paths.ts');
   const { clientCredential } = await import('../lib/sessionCredentials.ts');
   const credential = clientCredential();
   const check = credential
-    ? (stopHookActive: boolean) => new ControlClient(STATE_DIR, { credential, timeoutMs: STOP_CHECK_TIMEOUT_MS }).stopCheck(stopHookActive)
+    ? (stopHookActive: boolean) => new ControlClient(STATE_DIR, { credential, timeoutMs: STOP_CHECK_TIMEOUT_MS, socketPath: controlSocketFromEnv() }).stopCheck(stopHookActive)
     : null;
   const output = await stopHookOutput(await readStdin(), check);
   if (output) console.log(output);

@@ -319,6 +319,7 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | Specifier | Resolves to | Why it is public |
 |---|---|---|
 | `orc-state` | `dist/index.js` + `dist/index.d.ts` | The library entry point (below) |
+| `orc-state/client` | `dist/client.js` + `dist/client.d.ts` | The side-effect-free client entry for apps and TUIs (below) |
 | `orc-state/schemas/<name>.json` | `dist/schemas/<name>.json` | JSON Schemas of the state files and events, for external validators |
 | `orc` (bin) | `dist/cli/orc.js` | The CLI |
 
@@ -335,12 +336,25 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 | `validateAgents` | function | `agents.json` validator (an authoritative file; projections have no public validator) |
 | `validateEventObject` | function | Event validator (`schemas/event.schema.json` + `lib/eventValidation.ts` rules) |
 | `getWorkerBootstrap`, `getMasterBootstrap` | functions | Package bootstrap templates |
-| `listProjects` | function | `listProjects({ env? })`: every registered project as `ProjectListEntry[]`, read from the registry under the data home |
+| `listProjects` | function | `listProjects({ env? })`: every registered project as `ProjectListEntry[]`, read from the registry under the data home. Opens `registry.db` read-only with `node:sqlite`: no DDL or migrations, and it never creates the data home or `registry.db` (SQLite may leave the WAL's `registry.db-shm`/`-wal` beside it); `[]` when there is no registry; throws `RegistrySchemaError` (exported from `orc-state/client`) for a newer registry schema |
 | `ProjectListEntry` | type | `{ id, name, target_repo_root, state_dir, control_socket, coordinator_running }`; `control_socket` is the `control.json` path, `null` when the state directory or endpoint is missing or unreadable; `coordinator_running` is `true` when a live coordinator is found by its pid lock or `control.json` (the check `orc start-session` and `orc kill-all` use), independent of `control_socket` |
-| `ControlClientOptions`, `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
+| `ControlClientOptions` | type | `{ credential?, timeoutMs?, socketPath? }`; `socketPath` overrides the socket in `control.json` (the bearer token still comes from the state directory). The client never reads `ORC_CONTROL_SOCKET`; only the CLI passes it on for workers |
+| `EventRow`, `OperatorResult`, `OperatorResults`, `OperatorOp`, `OperatorRequest` | types | Client options, event rows, `/v1/operator` request and per-`op` results |
 | `ControlResponse`, `ControlErrorBody`, `ControlErrorCode`, `ControlEndpoint`, `StreamFrame`, `TerminalFrame`, `SessionTerminalView` | types | Protocol envelope, endpoint descriptor and frames |
 | `ControlSnapshot`, `StatusView`, `ControlHealth`, `LifecycleRequest`, `LifecycleResult`, `ProjectTaskView`, `TaskAuthoringInput`, `TaskImportResult`, `PlanImportResult`, `ScoutReportView`, `TaskMarkdownSource`, `ReviewSubmittedEvent`, `TerminalRecord` | types | Route bodies and results |
 | `SubmitCommandRequest`, `AckState`, `DurableCommand`, `SemanticMessage`, `SendMessageInput` | types | **Experimental**, like the `/v1/commands…` and `/v1/messages…` routes they serve |
+
+### Client exports (`orc-state/client`)
+
+The root's client half, for an app (Electron main, a Node sidecar) or TUI: `ControlClient`, `ControlError`, `CONTROL_PROTOCOL_VERSION`, `listProjects`, every type in the rows above except the adapter ones, and `RegistrySchemaError`.
+
+| Export | Kind | Contract |
+|---|---|---|
+| `RegistrySchemaError` | class | Thrown by `listProjects` when `registry.db` has a newer schema (`{ version, supportedVersion }`); other calls are unaffected |
+
+Importing it has no side effects: no project resolution, registry access, git call, file write or environment check. Its module graph uses Node built-ins only (no `better-sqlite3`, `ajv`, `ink` or `react`; checked by `client.test.ts`). `listProjects` needs `node:sqlite` (Node ≥ 22.13; Node 24 prints an `ExperimentalWarning` on its first call).
+
+**Embedding orc:** an app imports `orc-state/client`, calls `listProjects()`, and opens `new ControlClient(project.state_dir)` per project. Import the root `orc-state` only to run orc in process (adapters, validators, bootstrap templates): it resolves the active project on import and loads native modules.
 
 ### Control API protocol v1
 

@@ -61,8 +61,8 @@ describe('package.json contract', () => {
     }
   });
 
-  it('exports only the package root and the schemas', () => {
-    expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(['.', './schemas/*']);
+  it('exports only the package root, the client entry and the schemas', () => {
+    expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(['.', './client', './schemas/*']);
   });
 
   it('builds every export from an existing source', () => {
@@ -77,7 +77,7 @@ describe('package.json contract', () => {
 
   it('documents the public surface in docs/contracts.md', () => {
     expect(PUBLIC_SURFACE).not.toBe('');
-    for (const specifier of ['`orc-state`', '`orc-state/schemas/<name>.json`']) expect(PUBLIC_SURFACE).toContain(specifier);
+    for (const specifier of ['`orc-state`', '`orc-state/client`', '`orc-state/schemas/<name>.json`']) expect(PUBLIC_SURFACE).toContain(specifier);
     for (const command of Object.keys(USAGE)) expect(PUBLIC_SURFACE, `CLI command ${command}`).toContain(`\`${command}\``);
     for (const tool of TOOLS) expect(PUBLIC_SURFACE, `MCP tool ${tool.name}`).toContain(`\`${tool.name}\``);
     for (const key of PROJECT_SETTING_KEYS) {
@@ -90,5 +90,9 @@ describe('package.json contract', () => {
     const rootExport = packageJson.exports?.['.'];
     const defaultPath = typeof rootExport === 'string' ? rootExport : rootExport?.default;
     expect(defaultPath).toBe('./dist/index.js');
+  });
+
+  it('exports the client entry from client.ts', () => {
+    expect(packageJson.exports?.['./client']).toEqual({ types: './dist/client.d.ts', default: './dist/client.js' });
   });
 });

@@ -8,7 +8,8 @@
  *   validateEventObject                   — event schema validator
  *   getWorkerBootstrap/getMasterBootstrap — package bootstrap helpers
  *
- * The root and `./schemas/*` are the only package exports; every other module is internal.
+ * The root, `./client` (client.ts: the side-effect-free client half) and `./schemas/*` are the only
+ * package exports; every other module is internal.
  */
 export { ControlClient } from './lib/controlClient.ts';
 export type { ControlHealth } from './lib/controlServer.ts';

@@ -72,7 +72,7 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ORC_DATA_HOME` | Registry and `projects/<id>` directory | Platform data dir |
+| `ORC_DATA_HOME` | Registry and `projects/<id>` directory; empty counts as unset | Platform data dir |
 | `ORC_PROJECT_ID` | Select a registered project | — |
 | `ORC_STATE_DIR` | Set for launched sessions: resolves the project from `project.json` without the registry. Selects no project on its own | Project state dir |
 | `ORC_WORKTREES_DIR` | Run worktree directory | `<state>/worktrees` |

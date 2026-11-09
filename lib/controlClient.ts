@@ -29,10 +29,24 @@ export interface ControlClientOptions {
   /** The session secret the caller presents (ORC_SESSION_SECRET or ORC_MASTER_SECRET). */
   credential?: string | null;
   timeoutMs?: number;
+  /**
+   * Connect to this socket instead of the one in the endpoint descriptor (the
+   * bearer token still comes from the state directory). Without it the
+   * descriptor's socket is used; the process environment is never consulted.
+   */
+  socketPath?: string | null;
+}
+
+/**
+ * The socket a project worker is handed in `ORC_CONTROL_SOCKET`, for the CLI
+ * to pass as `socketPath`; null when unset or blank.
+ */
+export function controlSocketFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.ORC_CONTROL_SOCKET?.trim() || null;
 }
 
 /** Read the endpoint and token on every call so a restarted daemon is found again. */
-function discover(stateDir: string): { endpoint: ControlEndpoint; token: string } {
+function discover(stateDir: string, socketPath: string | null): { endpoint: ControlEndpoint; token: string } {
   let endpoint: ControlEndpoint;
   let token: string;
   try {
@@ -45,9 +59,7 @@ function discover(stateDir: string): { endpoint: ControlEndpoint; token: string 
     throw new ControlError('unsupported_protocol_version',
       `Daemon endpoint uses protocol ${endpoint.protocol_version}/${endpoint.transport}; client supports ${CONTROL_PROTOCOL_VERSION}/unix`, 400);
   }
-  // A project worker is handed its coordinator's socket explicitly; the bearer token still comes from the state dir.
-  const socket = process.env.ORC_CONTROL_SOCKET?.trim();
-  return { endpoint: socket ? { ...endpoint, path: socket } : endpoint, token };
+  return { endpoint: socketPath ? { ...endpoint, path: socketPath } : endpoint, token };
 }
 
 /** The operator token the running coordinator wrote; empty when it cannot be read (the server then refuses). */
@@ -77,10 +89,12 @@ export class ControlClient {
   private readonly stateDir: string;
   private readonly credential: string | null;
   private readonly timeoutMs: number;
+  private readonly socketPath: string | null;
   constructor(stateDir: string, options: ControlClientOptions = {}) {
     this.stateDir = stateDir;
     this.credential = options.credential ?? null;
     this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.socketPath = options.socketPath?.trim() || null;
   }
 
   /** A client with a session presents its secret; one without acts as the operator if it can read the operator token. */
@@ -95,7 +109,7 @@ export class ControlClient {
   }
 
   private async call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
-    const { endpoint, token } = discover(this.stateDir);
+    const { endpoint, token } = discover(this.stateDir, this.socketPath);
     const text = body === undefined ? undefined : JSON.stringify(body);
     return new Promise<T>((resolve, reject) => {
       const req = request({
@@ -272,7 +286,7 @@ export class ControlClient {
   }
 
   private async *ndjson<T>(path: string, signal?: AbortSignal): AsyncGenerator<T> {
-    const { endpoint, token } = discover(this.stateDir);
+    const { endpoint, token } = discover(this.stateDir, this.socketPath);
     const res = await new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
       const req = request({ socketPath: endpoint.path, path, method: 'GET', agent: false, headers: this.headers(token), signal }, resolve);
       req.on('error', (error) => reject(connectionError(error)));

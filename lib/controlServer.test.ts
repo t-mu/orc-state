@@ -11,7 +11,7 @@ import { CommandDispatcher, markSendStarted, markSent, reserveCommand } from './
 import { buildStatus } from './statusView.ts';
 import { RUNTIME_SCHEMA_VERSION } from './runtimeSchema.ts';
 import { ORC_PACKAGE_ROOT } from './paths.ts';
-import { ControlClient, type EventRow } from './controlClient.ts';
+import { ControlClient, controlSocketFromEnv, type EventRow } from './controlClient.ts';
 import { CONTROL_ENDPOINT_FILE, CONTROL_PROTOCOL_VERSION, CONTROL_TOKEN_FILE, ControlError, OPERATOR_HEADER, OPERATOR_TOKEN_FILE, PROTOCOL_HEADER, defaultSocketPath } from './controlProtocol.ts';
 import { sessionAuthenticator, startControlServer, type ControlServer } from './controlServer.ts';
 import Database from 'better-sqlite3';
@@ -562,6 +562,22 @@ describe('local daemon control API', () => {
     expect(await new ControlClient(dir, { credential: 'session-a' }).health()).toEqual(operator);
     expect(await new ControlClient(dir, { credential: 'session-master' }).health()).toEqual(operator);
     expect((await rawGet({ 'x-orc-protocol': '1' }, '/v1/health')).status).toBe(401);
+  });
+
+  it('connects to the descriptor socket unless socketPath is passed; ORC_CONTROL_SOCKET is ignored', async () => {
+    const bogus = join(dir, 'elsewhere.sock');
+    vi.stubEnv('ORC_CONTROL_SOCKET', bogus);
+    try {
+      expect(await new ControlClient(dir).health()).toMatchObject({ protocol_version: CONTROL_PROTOCOL_VERSION });
+      await expect(new ControlClient(dir, { socketPath: bogus }).health()).rejects.toMatchObject({ code: 'unavailable' });
+      // The CLI hands a worker's socket over explicitly.
+      expect(controlSocketFromEnv()).toBe(bogus);
+      expect(controlSocketFromEnv({ ORC_CONTROL_SOCKET: ' ' })).toBeNull();
+      vi.stubEnv('ORC_CONTROL_SOCKET', server.endpoint.path);
+      expect(await new ControlClient(dir, { socketPath: controlSocketFromEnv() }).health()).toMatchObject({ protocol_version: CONTROL_PROTOCOL_VERSION });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('serves the status view over GET /v1/status with a cursor and a bounded recent-event count', async () => {

@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
 import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
+import { projectDataHome } from './dataHome.ts';
 import { selectProject } from './projectContract.ts';
+
+export { projectDataHome };
 
 export interface ProjectRecord {
   id: string;
@@ -116,15 +118,6 @@ export function validateProjectSetting(key: string, value: unknown): SettingValu
   };
   if (choices[kind] && !choices[kind].includes(value)) throw new Error(`Invalid ${key}: ${value}`);
   return value;
-}
-
-export function projectDataHome(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.ORC_DATA_HOME !== undefined) {
-    if (!env.ORC_DATA_HOME.trim()) throw new Error('ORC_DATA_HOME must be a non-empty path');
-    return resolve(env.ORC_DATA_HOME);
-  }
-  if (platform() === 'darwin') return join(homedir(), 'Library', 'Application Support', 'orc-state');
-  return join(env.XDG_DATA_HOME ? resolve(env.XDG_DATA_HOME) : join(homedir(), '.local', 'share'), 'orc-state');
 }
 
 /** Worktrees and symlinks resolve to the owning repository's canonical root. */

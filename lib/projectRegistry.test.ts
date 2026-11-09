@@ -31,7 +31,7 @@ afterEach(() => {
 describe('global project registry', () => {
   it('uses an overridable data home and keeps registry and state outside the target repo', () => {
     expect(projectDataHome({ ORC_DATA_HOME: join(temp, 'custom') })).toBe(resolve(temp, 'custom'));
-    expect(() => projectDataHome({ ORC_DATA_HOME: '' })).toThrow('non-empty');
+    expect(projectDataHome({ ORC_DATA_HOME: '', XDG_DATA_HOME: join(temp, 'xdg') })).toBe(projectDataHome({ XDG_DATA_HOME: join(temp, 'xdg') }));
     const root = gitRepo('product');
     const project = registry.add(root);
     expect(project.id).toMatch(/^[0-9a-f-]{36}$/);

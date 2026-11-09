@@ -1,11 +1,12 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readProcessStart } from './processIdentity.ts';
 import { runProjectCommand } from '../cli/project.ts';
-import { listProjects } from './projectList.ts';
+import Database from 'better-sqlite3';
+import { listProjects, RegistrySchemaError } from './projectList.ts';
 import { ProjectRegistry } from './projectRegistry.ts';
 
 let temp: string;
@@ -71,6 +72,50 @@ describe('listProjects', () => {
     } finally {
       coordinator.kill();
     }
+  });
+
+  it('returns [] for an empty data home and creates nothing', () => {
+    const empty = join(temp, 'empty');
+    expect(listProjects({ env: { ORC_DATA_HOME: empty } })).toEqual([]);
+    expect(existsSync(empty)).toBe(false);
+    mkdirSync(empty);
+    expect(listProjects({ env: { ORC_DATA_HOME: empty } })).toEqual([]);
+    expect(readdirSync(empty)).toEqual([]);
+  });
+
+  it('reads the registry without running DDL or migrations', () => {
+    const bare = join(temp, 'bare');
+    mkdirSync(bare);
+    new Database(join(bare, 'registry.db')).close();
+    expect(listProjects({ env: { ORC_DATA_HOME: bare } })).toEqual([]);
+    const db = new Database(join(bare, 'registry.db'));
+    try {
+      expect(db.prepare('SELECT name FROM sqlite_master').all()).toEqual([]);
+      expect(db.pragma('user_version', { simple: true })).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('reads a WAL registry with no writer open, adding nothing but its WAL files', () => {
+    const project = registry.add(gitRepo('wal'));
+    registry.close();
+    expect(listProjects({ env: { ORC_DATA_HOME: dataHome } })).toMatchObject([{ id: project.id, name: 'wal' }]);
+    expect(readdirSync(dataHome).filter((name) => !['registry.db', 'registry.db-shm', 'registry.db-wal', 'projects'].includes(name))).toEqual([]);
+    registry = new ProjectRegistry(dataHome);
+    expect(registry.list()).toEqual([project]);
+  });
+
+  it('throws a typed error for a newer registry schema', () => {
+    const newer = join(temp, 'newer');
+    mkdirSync(newer);
+    const db = new Database(join(newer, 'registry.db'));
+    db.pragma('user_version = 2');
+    db.close();
+    let error: unknown;
+    try { listProjects({ env: { ORC_DATA_HOME: newer } }); } catch (caught) { error = caught; }
+    expect(error).toBeInstanceOf(RegistrySchemaError);
+    expect(error).toMatchObject({ version: 2, supportedVersion: 1 });
   });
 
   it('is what `orc project list --json` prints, while plain list keeps the registry records', () => {

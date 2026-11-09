@@ -2,7 +2,7 @@
 /** Stream a provider terminal or an independent worktree shell. Input needs --write. */
 import { randomUUID } from 'node:crypto';
 import { boolFlag } from '../lib/args.ts';
-import { ControlClient } from '../lib/controlClient.ts';
+import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { STATE_DIR } from '../lib/paths.ts';
 import { cliError } from './shared.ts';
@@ -20,7 +20,7 @@ if ((kind !== 'provider' && kind !== 'shell') || !runId) {
 const BUSY_RETRIES = 50;
 const BUSY_RETRY_MS = 100;
 
-const client = new ControlClient(STATE_DIR);
+const client = new ControlClient(STATE_DIR, { socketPath: controlSocketFromEnv() });
 // Identity on stderr: stdout carries the raw terminal stream.
 console.error(formatProjectIdentity(readProjectDescriptor(STATE_DIR)));
 const writable = boolFlag('write');
