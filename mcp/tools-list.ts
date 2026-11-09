@@ -231,7 +231,7 @@ export const TOOLS = [
   },
   {
     name: 'request_scout',
-    description: 'Launch an on-demand investigation-only scout session. Scouts inspect code, logs, git history, runtime state, and optionally the web, then report findings without editing files or mutating orchestrator state. With the coordinator running this returns { agent_id } at once and the coordinator launches and briefs the scout: a scout_launched or scout_launch_failed event (query_events) says how it went, and get_scout_report is `ended` if the launch failed. With no coordinator it waits for the launch and returns the scout\'s details.',
+    description: 'Launch an on-demand investigation-only scout session. Scouts inspect code, logs, git history, runtime state, and optionally the web, then report findings without editing files or mutating orchestrator state. Returns { agent_id } at once; the coordinator launches, briefs and supervises the scout: a scout_launched or scout_launch_failed event (query_events) says how it went, and get_scout_report is `ended` if the launch failed. Needs a running coordinator: without one it fails with "coordinator not running; restart_coordinator first".',
     inputSchema: {
       type: 'object',
       required: ['objective'],

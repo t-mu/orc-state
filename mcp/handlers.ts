@@ -6,7 +6,7 @@ import { closeMemoryDb, getMemoryStats, listDrawers, memoryWakeUp, searchMemory,
 import { taskSnapshotStatus } from '../lib/documentIndex.ts';
 import { getLastNotificationSeq } from '../lib/eventLog.ts';
 import { queryEventsPage } from '../lib/eventQuery.ts';
-import { getAgent, listAgents } from '../lib/agentRegistry.ts';
+import { listAgents } from '../lib/agentRegistry.ts';
 import { findTask, readBacklog, readClaims } from '../lib/stateReader.ts';
 import { evaluateTaskEligibility } from '../lib/taskRouting.ts';
 import { RUN_WORKTREES_FILE } from '../lib/paths.ts';
@@ -16,7 +16,7 @@ import { selectCurrentActivity, type CurrentActivity } from '../lib/currentActiv
 import { AGENT_ID_RE, AGENT_ROLES, TASK_STATUSES } from '../lib/constants.ts';
 import { createProjectTask, describeProjectTask, projectTaskStoreFor, requireProjectTaskStore, reviseProjectTask } from '../lib/projectTasks.ts';
 import { TERMINAL_STATUSES, masterActorId } from '../lib/operatorMutations.ts';
-import { extractScoutReport, launchScout, prepareScout, readScoutReport, removeScout } from '../lib/scouts.ts';
+import { extractScoutReport, readScoutReport, removeScout } from '../lib/scouts.ts';
 import { isWaitingForInput } from '../lib/waitingInput.ts';
 import { listRuns, type RunListArgs } from '../lib/runList.ts';
 import { coordinatorSummary, describeCoordinator, restartCoordinator } from '../lib/coordinatorProcess.ts';
@@ -353,16 +353,6 @@ export function handleTerminalSnapshot(stateDir: string, { run_id, lines }: { ru
   if (typeof run_id !== 'string' || !run_id) throw new Error('run_id is required');
   if (!readClaims(stateDir).claims.some((c) => c.run_id === run_id)) return { error: 'not_found', run_id };
   return terminalSnapshot(client, run_id, lines);
-}
-
-/** Launch a scout and brief it, waiting until it is ready; the coordinator's own path is `request-scout` (lib/scouts.ts). */
-export async function handleRequestScout(stateDir: string, { actor_id = defaultActorId(stateDir), ...request }: Record<string, unknown> = {}) {
-  assertActorId(stateDir, actor_id);
-  const actor = typeof actor_id === 'string' ? getAgent(stateDir, actor_id) : null;
-  if (actor_id !== 'human' && actor?.role !== 'master') {
-    throw new Error(`request_scout may only be invoked by master or human actors; got role '${actor?.role ?? 'unknown'}'`);
-  }
-  return launchScout(stateDir, prepareScout(stateDir, request, actor?.provider ?? null));
 }
 
 export { extractScoutReport };

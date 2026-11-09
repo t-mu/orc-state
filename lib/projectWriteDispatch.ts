@@ -8,6 +8,9 @@ import { clientCredential } from './sessionCredentials.ts';
 /** Coordinator requests are applied once received, so a timeout is never retried (see lifecycleDispatch). */
 const COORDINATOR_REQUEST_TIMEOUT_MS = 120_000;
 
+/** The refusal of an operation only a running coordinator may apply. */
+export const COORDINATOR_REQUIRED = 'coordinator not running; restart_coordinator first';
+
 /**
  * The one rule for a client's project write: the running coordinator applies
  * it. Only when the request provably never reached one (`unavailable`) and no
@@ -15,7 +18,8 @@ const COORDINATOR_REQUEST_TIMEOUT_MS = 120_000;
  * directly, after the coordinator's own authorization, and say so. A
  * coordinator that holds the project but is not answering (starting, shutting
  * down, between descriptors) still owns its writes, so the caller refuses
- * with a retryable error.
+ * with a retryable error. An operation without `direct` (a scout launch,
+ * whose session only the coordinator supervises) is refused instead.
  */
 export async function routeToCoordinator<A, T>(stateDir: string, operation: string, {
   credential, remote, authorize, direct, warn,
@@ -23,7 +27,7 @@ export async function routeToCoordinator<A, T>(stateDir: string, operation: stri
   credential: string | null;
   remote: (client: ControlClient) => Promise<T>;
   authorize: () => A;
-  direct: (authorized: A) => T;
+  direct?: ((authorized: A) => T) | undefined;
   warn: (line: string) => void;
 }): Promise<T> {
   try {
@@ -35,6 +39,7 @@ export async function routeToCoordinator<A, T>(stateDir: string, operation: stri
   if (pid !== null) {
     throw new ControlError('unavailable', `The coordinator (pid ${pid}) is running but its control API is not answering; retry ${operation} in a moment. If pid ${pid} is not an orc coordinator, remove ${join(stateDir, 'coordinator.pid')}`, 503);
   }
+  if (!direct) throw new ControlError('unavailable', COORDINATOR_REQUIRED, 503);
   const authorized = authorize();
   warn(`coordinator is not running; applying ${operation} directly`);
   return direct(authorized);

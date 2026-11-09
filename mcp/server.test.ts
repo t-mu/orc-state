@@ -1,16 +1,18 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
-import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { TOOLS } from './tools-list.ts';
 import { asToolResult, invokeTool, isExpectedToolError, validateToolArguments } from './server.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
+import { ControlClient } from '../lib/controlClient.ts';
 import { RevisionConflictError } from '../lib/projectTaskStore.ts';
 import { initEventsDb, withEventDbTransaction, closeAllDatabases } from '../lib/eventLog.ts';
 import { credentialHash } from '../lib/sessionCredentials.ts';
 import { commitClaims } from '../lib/runStore.ts';
 import { startFakeCoordinator } from '../test-fixtures/fakeCoordinator.ts';
+import { COORDINATOR_REQUIRED } from '../lib/projectWriteDispatch.ts';
 
 let stateDir: string;
 
@@ -81,6 +83,39 @@ describe('orchestrator mcp server foundation', () => {
       await expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/stuck', reason: 'resolved' }, asMaster)).resolves.toMatchObject({ unblocked: true });
       await expect(invokeTool(stateDir, 'unblock_task', { task_ref: 'project/fine' }, asMaster)).rejects.toThrow(/not blocked/);
     } finally {
+      closeAllDatabases();
+    }
+  });
+
+  it('request_scout launches only through the coordinator: with none running it is refused and registers nothing', async () => {
+    initEventsDb(stateDir);
+    withEventDbTransaction(stateDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-master', NULL, 'master', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('master-secret')));
+    const warnings: string[] = [];
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation((line: string) => { warnings.push(line); });
+    try {
+      await expect(invokeTool(stateDir, 'request_scout', { objective: 'look' }, { credential: 'master-secret', requireProject: () => {} }))
+        .rejects.toMatchObject({ code: 'unavailable', message: COORDINATOR_REQUIRED });
+      const agents = JSON.parse(readFileSync(joinPath('agents.json'), 'utf8')).agents as Array<{ role: string }>;
+      expect(agents.some((agent) => agent.role === 'scout')).toBe(false);
+      expect(warnings.join('\n')).not.toMatch(/applying/);
+    } finally {
+      errorSpy.mockRestore();
+      closeAllDatabases();
+    }
+  });
+
+  it('request_scout goes to the coordinator\'s operator route as request-scout', async () => {
+    initEventsDb(stateDir);
+    withEventDbTransaction(stateDir, (db) => db.prepare(`INSERT INTO sessions (session_id, run_id, agent_id, provider, state, started_at, updated_at, credential_hash)
+      VALUES ('session-master', NULL, 'master', 'claude', 'running', '2026-01-01', '2026-01-01', ?)`).run(credentialHash('master-secret')));
+    const operator = vi.spyOn(ControlClient.prototype, 'operator').mockResolvedValue({ agent_id: 'scout-1' } as never);
+    try {
+      await expect(invokeTool(stateDir, 'request_scout', { objective: 'look' }, { credential: 'master-secret', requireProject: () => {} }))
+        .resolves.toEqual({ agent_id: 'scout-1' });
+      expect(operator).toHaveBeenCalledWith({ op: 'request-scout', objective: 'look' });
+    } finally {
+      operator.mockRestore();
       closeAllDatabases();
     }
   });
