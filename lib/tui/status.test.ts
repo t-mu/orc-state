@@ -1,99 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ProjectWatchState, StatusView } from '../../client.ts';
-import { buildPhases, buildProjectViews, buildWorkerSlotViewModels, describeConnection, selectProjectView } from './status.ts';
+import { buildProjectViews, buildWorkerSlotViewModels, describeConnection } from './status.ts';
 import type { TuiStatus } from './status.ts';
-
-describe('buildPhases', () => {
-  it('marks completed phases as done with correct duration', () => {
-    const history = [
-      { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
-      { phase: 'implement', started_at: '2026-01-01T00:01:12Z' },
-      { phase: 'review', started_at: '2026-01-01T00:10:17Z' },
-    ];
-    const phases = buildPhases(history, 10, 'in_progress');
-    const explore = phases.find((p) => p.name === 'explore')!;
-    const implement = phases.find((p) => p.name === 'implement')!;
-    const review = phases.find((p) => p.name === 'review')!;
-    expect(explore.state).toBe('done');
-    expect(explore.duration_seconds).toBe(72); // 1m12s
-    expect(explore.started_at).toBeNull();
-    expect(implement.state).toBe('done');
-    expect(implement.duration_seconds).toBe(545); // 9m5s
-    expect(implement.started_at).toBeNull();
-    expect(review.state).toBe('active');
-    expect(review.duration_seconds).toBeNull();
-    expect(review.started_at).toBe('2026-01-01T00:10:17Z');
-  });
-
-  it('marks latest phase as active when heartbeat fresh', () => {
-    const history = [
-      { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
-      { phase: 'implement', started_at: '2026-01-01T00:05:00Z' },
-    ];
-    const phases = buildPhases(history, 60, 'in_progress');
-    const implement = phases.find((p) => p.name === 'implement')!;
-    expect(implement.state).toBe('active');
-    expect(implement.duration_seconds).toBeNull();
-    expect(implement.started_at).toBe('2026-01-01T00:05:00Z');
-  });
-
-  it('marks latest phase as stale when heartbeat >= 300s', () => {
-    const history = [
-      { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
-      { phase: 'implement', started_at: '2026-01-01T00:05:00Z' },
-    ];
-    const phases300 = buildPhases(history, 300, 'in_progress');
-    const implement300 = phases300.find((p) => p.name === 'implement')!;
-    expect(implement300.state).toBe('stale');
-
-    const phases301 = buildPhases(history, 301, 'in_progress');
-    const implement301 = phases301.find((p) => p.name === 'implement')!;
-    expect(implement301.state).toBe('stale');
-  });
-
-  it('marks active phase as error when run_state is blocked', () => {
-    const history = [
-      { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
-      { phase: 'implement', started_at: '2026-01-01T00:05:00Z' },
-    ];
-    const phases = buildPhases(history, 10, 'blocked');
-    const implement = phases.find((p) => p.name === 'implement')!;
-    expect(implement.state).toBe('error');
-  });
-
-  it('marks active phase as error when run_state is failed', () => {
-    const history = [
-      { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
-    ];
-    const phases = buildPhases(history, 10, 'failed');
-    const explore = phases.find((p) => p.name === 'explore')!;
-    expect(explore.state).toBe('error');
-  });
-
-  it('marks unstarted phases as pending with null started_at', () => {
-    const history = [
-      { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
-    ];
-    const phases = buildPhases(history, 10, 'in_progress');
-    const implement = phases.find((p) => p.name === 'implement')!;
-    const review = phases.find((p) => p.name === 'review')!;
-    const complete = phases.find((p) => p.name === 'complete')!;
-    const finalize = phases.find((p) => p.name === 'finalize')!;
-    expect(implement.state).toBe('pending');
-    expect(review.state).toBe('pending');
-    expect(complete.state).toBe('pending');
-    expect(finalize.state).toBe('pending');
-    expect(implement.duration_seconds).toBeNull();
-    expect(implement.started_at).toBeNull();
-  });
-
-  it('returns all 5 canonical phases', () => {
-    const history = [{ phase: 'explore', started_at: '2026-01-01T00:00:00Z' }];
-    const phases = buildPhases(history, 10, 'in_progress');
-    expect(phases).toHaveLength(5);
-    expect(phases.map((p) => p.name)).toEqual(['explore', 'implement', 'review', 'complete', 'finalize']);
-  });
-});
 
 const liveSlot: TuiStatus['worker_capacity']['slots'][number] = {
   agent_id: 'orc-1',
@@ -165,7 +73,7 @@ describe('buildWorkerSlotViewModels — live workers only', () => {
   });
 });
 
-describe('buildWorkerSlotViewModels — phases', () => {
+describe('buildWorkerSlotViewModels — one live slot', () => {
   const baseStatus: TuiStatus = {
     worker_capacity: {
       configured_slots: 1,
@@ -192,11 +100,6 @@ describe('buildWorkerSlotViewModels — phases', () => {
       scouts: [{ agent_id: 'scout-1', provider: 'claude', model: null, status: 'running', session_handle: 'tmux:s', launched_at: null }],
     });
     expect(vms.map((vm) => vm.slot_id)).toEqual(['orc-1']);
-  });
-
-  it('returns empty phases array when no run is active', () => {
-    const vms = buildWorkerSlotViewModels(baseStatus);
-    expect(vms[0].phases).toEqual([]);
   });
 
   it('carries current_activity from the active claim', () => {
@@ -247,38 +150,6 @@ describe('buildWorkerSlotViewModels — phases', () => {
     });
     expect(other[0].waiting_input).toBeNull();
   });
-
-  it('builds phases from claim phase_history', () => {
-    const status: TuiStatus = {
-      ...baseStatus,
-      claims: {
-        active: [{
-          run_id: 'run-1',
-          task_ref: 'task/1',
-          agent_id: 'orc-1',
-          state: 'in_progress',
-          age_seconds: 600,
-          idle_seconds: 10,
-          activity_seconds: 10,
-          heartbeat_seconds: 30,
-          current_phase: 'implement',
-          phase_history: [
-            { phase: 'explore', started_at: '2026-01-01T00:00:00Z' },
-            { phase: 'implement', started_at: '2026-01-01T00:05:00Z' },
-          ],
-        }],
-        total: 1,
-        awaiting_run_started: 0,
-        in_progress: 1,
-        stalled: 0,
-      },
-    };
-    const vms = buildWorkerSlotViewModels(status);
-    expect(vms[0].phases).toHaveLength(5);
-    expect(vms[0].phases[0]).toMatchObject({ name: 'explore', state: 'done' });
-    expect(vms[0].phases[1]).toMatchObject({ name: 'implement', state: 'active' });
-    expect(vms[0].phases[2]).toMatchObject({ name: 'review', state: 'pending' });
-  });
 });
 
 describe('project views from the watcher', () => {
@@ -302,12 +173,6 @@ describe('project views from the watcher', () => {
     ]);
     expect(views[0].status).toBe(status);
     expect(views[2].status).toBeNull();
-  });
-
-  it('selects the project by state directory', () => {
-    const views = buildProjectViews(states);
-    expect(selectProjectView(views, '/state/b')?.project_id).toBe('b');
-    expect(selectProjectView(views, '/state/none')).toBeNull();
   });
 
   it('describes the connection, with the error when there is one', () => {

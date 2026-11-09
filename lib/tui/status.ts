@@ -1,5 +1,4 @@
 import type { ProjectConnectionState, ProjectWatchState, ProjectWatchUpdate, SlotSummary, StatusView } from '../../client.ts';
-import type { SpriteState } from './sprites.ts';
 
 // lib/tui renders only data obtained through orc-state/client (see boundary.test.ts).
 
@@ -30,13 +29,6 @@ export interface TuiScout {
   status: string;
   session_handle: string | null;
   launched_at: string | null;
-}
-
-export interface PhaseEntry {
-  name: string;
-  state: 'done' | 'active' | 'stale' | 'error' | 'pending';
-  duration_seconds: number | null;
-  started_at: string | null;
 }
 
 export interface TuiClaim {
@@ -123,7 +115,6 @@ export interface WorkerSlotViewModel {
   task_ref: string | null;
   run_state: string | null;
   current_phase: string | null;
-  phases: PhaseEntry[];
   current_activity: CurrentActivity | null;
   /** The activity text alone (`current_activity.text`), null without one. */
   activity_label: string | null;
@@ -132,80 +123,8 @@ export interface WorkerSlotViewModel {
   age_seconds: number | null;
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
-  sprite_state: SpriteState;
   /** Set while the slot's run waits for an input response; the question is collapsed to one line. */
   waiting_input: { waiting_seconds: number | null; question: string | null } | null;
-}
-
-const CANONICAL_PHASES = ['explore', 'implement', 'review', 'complete', 'finalize'] as const;
-
-export function buildPhases(
-  phaseHistory: { phase: string; started_at: string }[],
-  heartbeat_seconds: number | null,
-  run_state: string | null,
-): PhaseEntry[] {
-  return CANONICAL_PHASES.map((name) => {
-    const idx = phaseHistory.findIndex((h) => h.phase === name);
-    if (idx === -1) {
-      return { name, state: 'pending' as const, duration_seconds: null, started_at: null };
-    }
-    // A phase is done when it is NOT the last entry in the sorted history
-    const isLastInHistory = phaseHistory[phaseHistory.length - 1]?.phase === name;
-    if (!isLastInHistory) {
-      const nextInHistory = phaseHistory[idx + 1] ?? null;
-      const duration_seconds = nextInHistory
-        ? Math.round(
-            (new Date(nextInHistory.started_at).getTime() - new Date(phaseHistory[idx].started_at).getTime()) / 1000,
-          )
-        : null;
-      return { name, state: 'done' as const, duration_seconds, started_at: null };
-    }
-    // Last phase in history — determine if active, stale, or error
-    let state: PhaseEntry['state'];
-    if (run_state === 'blocked' || run_state === 'failed') {
-      state = 'error';
-    } else if (heartbeat_seconds != null && heartbeat_seconds >= 300) {
-      state = 'stale';
-    } else {
-      state = 'active';
-    }
-    return { name, state, duration_seconds: null, started_at: phaseHistory[idx].started_at };
-  });
-}
-
-export function emptyTuiStatus(): TuiStatus {
-  return {
-    worker_capacity: {
-      configured_slots: 0,
-      used_slots: 0,
-      available_slots: 0,
-      warming_slots: 0,
-      unavailable_slots: 0,
-      provider: 'unknown',
-      dispatch_ready_count: 0,
-      waiting_for_capacity: 0,
-      slots: [],
-    },
-    scouts: [],
-    tasks: {
-      counts: {},
-      total: 0,
-    },
-    claims: {
-      active: [],
-      total: 0,
-      awaiting_run_started: 0,
-      in_progress: 0,
-      stalled: 0,
-    },
-    failures: {
-      startup: [],
-      lifecycle: [],
-    },
-    waiting_input: [],
-    recentEvents: [],
-    eventReadError: '',
-  };
 }
 
 /** One watched project as the TUI shows it. */
@@ -237,11 +156,6 @@ export function buildProjectViews(states: ProjectWatchState[]): TuiProjectView[]
   }));
 }
 
-/** The project whose state directory is `stateDir` (the one `orc watch` was started for), or null. */
-export function selectProjectView(views: TuiProjectView[], stateDir: string): TuiProjectView | null {
-  return views.find((view) => view.state_dir === stateDir) ?? null;
-}
-
 /** What the TUI reads from a project watcher (`ProjectWatcher` from orc-state/client). */
 export interface TuiWatchSource {
   projects(): ProjectWatchState[];
@@ -271,7 +185,6 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
     const claim = claimByAgentId.get(slot.agent_id) ?? null;
     const runState = claim?.state ?? null;
     const heartbeat_seconds = claim?.heartbeat_seconds ?? null;
-    const phaseHistory = claim?.phase_history ?? [];
     const waiting = claim ? waitingByRunId.get(claim.run_id) ?? null : null;
     viewModels.push({
       slot_id: slot.agent_id,
@@ -282,14 +195,12 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       task_ref: claim?.task_ref ?? slot.active_task_ref ?? null,
       run_state: runState,
       current_phase: claim?.current_phase ?? null,
-      phases: phaseHistory.length > 0 ? buildPhases(phaseHistory, heartbeat_seconds, runState) : [],
       current_activity: claim?.current_activity ?? null,
       activity_label: claim?.current_activity?.text ?? null,
       attention: slot.attention ?? null,
       age_seconds: claim?.age_seconds ?? null,
       activity_seconds: claim?.activity_seconds ?? null,
       heartbeat_seconds,
-      sprite_state: runStateToSpriteState(runState),
       waiting_input: waiting
         ? { waiting_seconds: waiting.waiting_seconds, question: waiting.question?.replace(/\s+/g, ' ').trim() || null }
         : null,
@@ -297,11 +208,4 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
   }
 
   return viewModels;
-}
-
-export function runStateToSpriteState(runState: string | null | undefined): SpriteState {
-  if (runState === 'in_progress' || runState === 'claimed') return 'work';
-  if (runState === 'done' || runState === 'released') return 'done';
-  if (runState === 'blocked' || runState === 'failed') return 'fail';
-  return 'idle';
 }

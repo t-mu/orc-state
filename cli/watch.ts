@@ -4,9 +4,10 @@
  * Usage:
  *   node cli/watch.ts [--interval-ms=5000] [--once]
  *
- * Every view is built from orc-state/client: a ProjectWatcher over every
- * registered project, never the state files. The project this command runs
- * for is shown in full; without a running coordinator it is shown as stopped.
+ * The cockpit dashboard, standalone (the cockpit's dashboard pane runs this
+ * command). Every view is built from orc-state/client: a ProjectWatcher over
+ * every registered project, never the state files. The project this command
+ * runs for is listed first; without a running coordinator it is shown as stopped.
  */
 import { basename } from 'node:path';
 import { render } from 'ink';
@@ -17,7 +18,7 @@ import { renderBanner } from '../lib/banner.ts';
 import { colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { describeProjects, listProjects } from '../lib/projectList.ts';
-import { cliError, formatErrorMessage } from './shared.ts';
+import { cliError } from './shared.ts';
 
 /** What `orc watch` reads: the client's `ProjectWatcher` (tests inject a fake). */
 export interface WatchSource {
@@ -172,21 +173,9 @@ function runtimeImportPath(relativeTsPath: string, relativeJsPath: string): stri
   return import.meta.url.endsWith('.ts') ? relativeTsPath : relativeJsPath;
 }
 
+/** The cockpit dashboard (`lib/tui/App.tsx`) on its own: the view the cockpit's dashboard pane runs. */
 export async function runTtyWatch(options: WatchOptions): Promise<number> {
-  const [appModule, spriteModule] = await Promise.all([
-    import(runtimeImportPath('../lib/tui/App.tsx', '../lib/tui/App.js')) as Promise<typeof import('../lib/tui/App.tsx')>,
-    import(runtimeImportPath('../lib/tui/sprites.ts', '../lib/tui/sprites.js')) as Promise<typeof import('../lib/tui/sprites.ts')>,
-  ]);
-  const { App } = appModule;
-  const { preloadSprites } = spriteModule;
-
-  let sprites;
-  try {
-    sprites = await preloadSprites();
-  } catch (error) {
-    console.error(`Failed to preload watch sprites: ${formatErrorMessage(error)}`);
-    return 1;
-  }
+  const { App } = await (import(runtimeImportPath('../lib/tui/App.tsx', '../lib/tui/App.js')) as Promise<typeof import('../lib/tui/App.tsx')>);
 
   const source = options.source ?? createWatchSource(options.stateDir);
   source.start();
@@ -195,7 +184,6 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
   const instance = render(createElement(App, {
     source,
     stateDir: options.stateDir,
-    sprites,
     intervalMs: options.intervalMs,
   }));
 
