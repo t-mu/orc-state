@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `ProjectWatcher` on `orc-state/client`: one object that watches every registered project (connection state `connecting`/`running`/`stopped`/`unreachable`/`incompatible`, the latest `/v1/status` view, new events), reconnects after a coordinator restart from the last event cursor, and follows projects registered or removed while it runs ([Embedding orc → Watching every project](docs/embedding.md#watching-every-project)).
 - MCP `doctor` (the `orc doctor` checks, one `{ name, ok, detail }` line each, same verdict) and `terminal_snapshot(run_id, lines?)` (a read-only, ANSI-stripped look at the last lines of a run's tmux provider terminal, as `orc terminal provider --once`). Neither needs the master secret.
 - Agent terminals by agent id: `POST /v1/terminals/provider` takes `{ agent_id }` instead of `{ run_id }`, `ControlClient.openAgentTerminal(agentId)` and `orc terminal <agent_id>` (e.g. `orc terminal master --write`) open the provider terminal of any agent's running session, the master and scouts included; `/v1/sessions` now gives run-less master and scout sessions a `terminal_id`.
 - Control API `GET /v1/runs?state=&stale_after_ms=` and `ControlClient.runs()` (with the `RunListRow`/`RunListState` types on `orc-state/client`): the `orc runs --json` / MCP `list_runs` view.

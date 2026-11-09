@@ -6,7 +6,7 @@ How an app (Electron main process, a Node sidecar, a TUI) drives orc without she
 
 | Import | Use for | Cost |
 |---|---|---|
-| `orc-state/client` | An app or UI: `listProjects`, `ControlClient`, `ControlError`, `RegistrySchemaError`, and the types | No side effects on import; Node built-ins only (`node:sqlite` for `listProjects`). Safe in a bundle or a main process |
+| `orc-state/client` | An app or UI: `listProjects`, `ControlClient`, `ProjectWatcher`, `ControlError`, `RegistrySchemaError`, and the types | No side effects on import; Node built-ins only (`node:sqlite` for `listProjects`). Safe in a bundle or a main process |
 | `orc-state` (root) | Running orc in process: adapters, validators, bootstrap templates | Resolves the active project on import and loads native modules |
 
 An app imports `orc-state/client` only. It needs Node ≥ 22.13 for `listProjects` (Node 24 prints an `ExperimentalWarning` on the first call).
@@ -45,6 +45,42 @@ const status = await client.status({}, { signal: abort.signal, timeoutMs: 2_000 
 - A timeout rejects with code `timeout`. The coordinator may already have applied the request, so retry only reads or idempotent calls.
 - An error response that is not JSON (a proxy page, an empty body) is a `ControlError` (code `internal`) with the HTTP status and a short excerpt, never a `SyntaxError`.
 - `inputTerminal` calls on one client to one terminal are sent one at a time in call order. A retried input (after `busy`) joins the back of the queue, so queue nothing else until the retry settles ([terminal-streaming.md](terminal-streaming.md)).
+
+## Watching every project
+
+`ProjectWatcher` does the `listProjects()` + one `ControlClient` per project + status + event stream loop for you, including coordinator restarts and registry changes. A cockpit or desktop app consumes its updates instead of managing connections.
+
+```ts
+import { ProjectWatcher } from 'orc-state/client';
+
+const watcher = new ProjectWatcher();
+const unsubscribe = watcher.onUpdate((update) => {
+  switch (update.type) {
+    case 'added': case 'removed': break;                  // the registry gained or lost a project
+    case 'connection': render(update.project_id, update.connection, update.error); break;
+    case 'status': renderStatus(update.project_id, update.status); break; // StatusView, agents carry `attention`
+    case 'event': append(update.project_id, update.row); break;            // EventRow, in seq order
+    case 'registry_error': warn(update.error); break;      // e.g. RegistrySchemaError; the watched set is kept
+  }
+});
+watcher.start();
+// later
+await watcher.stop(); // closes every stream and timer
+```
+
+| `connection` | Meaning | Next |
+|---|---|---|
+| `connecting` | Added with a coordinator registered as running; first connect not settled | `running`, `unreachable` or `incompatible` |
+| `running` | Status read and event stream open | |
+| `stopped` | No coordinator runs (the registry's liveness check) | Waits for the registry poll to see one start |
+| `unreachable` | A coordinator is registered as running but refuses or drops the connection, or closed its stream | Retries with backoff: `initialMs` (500) doubling up to `maxMs` (30 000); reset once connected |
+| `incompatible` | Its `protocol_versions` do not overlap the client's (`error` names both ranges) | Retries every `maxMs`, e.g. after the coordinator is upgraded |
+
+- **Events.** The first connect starts at the status view's `cursor`: earlier events are in `status.recentEvents`, not replayed. Every reconnect resumes the stream from the last delivered `seq`, so a restart neither repeats nor skips events; a row at or below the cursor is dropped.
+- **Status.** Read on every connect, then refreshed after events: the events of one `statusDebounceMs` window (250 ms) share one `GET /v1/status`, so the watcher never polls status on a timer. A failed refresh keeps the previous view; the stream reports connection loss.
+- **Registry.** Re-read every `registryPollMs` (2 s) and after a stream ends: new projects are `added`, unregistered ones `removed` (their streams closed), and a coordinator's start or stop wakes its project at once. A project whose `state_dir` changed is removed and added again.
+- **Testing.** `listProjects`, `createClient` (anything with `health`, `status`, `subscribe`) and `timers` (`setTimeout`/`clearTimeout`) are injectable; `clientOptions` reaches the default `ControlClient`.
+- A listener that throws does not stop the watcher; its error is rethrown in a microtask (an uncaught exception, as from a throwing event listener).
 
 ## Keying workers
 

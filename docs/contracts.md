@@ -360,11 +360,13 @@ Everything in this section follows semver from 1.0: a breaking change needs a ma
 
 ### Client exports (`orc-state/client`)
 
-The root's client half, for an app (Electron main, a Node sidecar) or TUI: `ControlClient`, `ControlError`, `CONTROL_PROTOCOL_VERSION`, `listProjects`, every type in the rows above except the adapter ones, and `RegistrySchemaError`.
+The root's client half, for an app (Electron main, a Node sidecar) or TUI: `ControlClient`, `ControlError`, `CONTROL_PROTOCOL_VERSION`, `listProjects`, every type in the rows above except the adapter ones, `RegistrySchemaError` and `ProjectWatcher`.
 
 | Export | Kind | Contract |
 |---|---|---|
 | `RegistrySchemaError` | class | Thrown by `listProjects` when `registry.db` has a newer schema (`{ version, supportedVersion }`); other calls are unaffected |
+| `ProjectWatcher` | class | `new ProjectWatcher(options?)`, `start()`, `stop(): Promise<void>` (closes every stream and timer), `projects(): ProjectWatchState[]`, `onUpdate(listener) → unsubscribe`. Watches every registered project with one `ControlClient` each; reconnects with bounded backoff from the last event cursor; re-reads the registry every `registryPollMs`. Behaviour: [embedding.md → Watching every project](embedding.md#watching-every-project) |
+| `ProjectWatchState`, `ProjectWatchUpdate`, `ProjectConnectionState`, `ProjectWatcherOptions`, `ProjectWatchClient`, `WatcherTimers` | types | `ProjectWatchState` is `{ project: ProjectListEntry, connection, error, status: StatusView \| null, cursor }`; `ProjectConnectionState` is `connecting \| running \| stopped \| unreachable \| incompatible`; `ProjectWatchUpdate` is `added`, `removed`, `connection`, `status`, `event` (one `EventRow`) or `registry_error` |
 
 Importing it has no side effects: no project resolution, registry access, git call, file write or environment check. Its module graph uses Node built-ins only (no `better-sqlite3`, `ajv`, `ink` or `react`; checked by `client.test.ts`). `listProjects` needs `node:sqlite` (Node ≥ 22.13; Node 24 prints an `ExperimentalWarning` on its first call).
 
