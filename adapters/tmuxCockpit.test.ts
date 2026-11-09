@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
   COCKPIT_PREFIX, COCKPIT_SOCKET, cockpitAttachCommand, cockpitServerEnv, cockpitServerOptions, dashboardPaneScript,
@@ -28,9 +31,28 @@ describe('masterPaneScript', () => {
     expect(parsesAsShell(script)).toBe(true);
   });
 
-  it('detaches the cockpit when the master is detached from while it runs', () => {
+  it('detaches only the cockpit client showing the pane when the master is detached from while it runs', () => {
     const script = masterPaneScript(master, project, { tmux: '/opt/tmux', trueColor: false });
-    expect(script).toContain(`'/opt/tmux' -L ${COCKPIT_SOCKET} detach-client -s '=cockpit'`);
+    expect(script).toContain(`TMUX=$cockpit_tmux '/opt/tmux' detach-client 2>/dev/null`);
+    expect(script).not.toContain('detach-client -s');
+  });
+
+  it('keeps a failed attach on screen and retries without detaching the cockpit', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-fake-tmux-'));
+    try {
+      // A tmux whose master session exists but whose attach fails; every call is logged.
+      const fake = join(dir, 'tmux');
+      writeFileSync(fake, `#!/bin/sh\necho "$*" >> ${JSON.stringify(join(dir, 'calls'))}\ncase "$*" in *attach-session*) echo 'open terminal failed' >&2; exit 1;; esac\nexit 0\n`, { mode: 0o755 });
+      // Stop the loop at its first retry pause.
+      const script = masterPaneScript(master, project, { tmux: fake, trueColor: false }).replace('sleep 5', 'exit 7');
+      const result = spawnSync('/bin/sh', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, TMUX: '/x,1,0' } });
+      expect(result.status).toBe(7);
+      expect(result.stderr).toContain('open terminal failed');
+      expect(result.stdout).toContain('Could not attach to the master; retrying in 5 s.');
+      expect(readFileSync(join(dir, 'calls'), 'utf8')).not.toContain('detach-client');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('tells how to restart a master that is not running, quoting the project name', () => {
@@ -88,12 +110,12 @@ describe('windowLayoutCommands', () => {
 });
 
 describe('cockpitServerEnv', () => {
-  it('drops the outer tmux, project selection and session secrets', () => {
+  it('drops the outer tmux, project selection and session secrets, keeping other orc settings', () => {
     const env = cockpitServerEnv({
       PATH: '/bin', TMUX: '/tmp/x,1,0', TMUX_PANE: '%1', TMUX_TMPDIR: '/t', ORC_PROJECT_ID: 'p', ORC_STATE_DIR: '/s',
-      ORC_MASTER_SECRET: 'secret', CLAUDECODE: '1',
+      ORC_CONTROL_SOCKET: '/s/c.sock', ORC_PROJECT_FLAG: 'p', ORC_MASTER_SECRET: 'secret', CLAUDECODE: '1', ORC_TMUX_BIN: '/opt/tmux',
     });
-    expect(env).toEqual({ PATH: '/bin', TMUX_TMPDIR: '/t' });
+    expect(env).toEqual({ PATH: '/bin', TMUX_TMPDIR: '/t', ORC_TMUX_BIN: '/opt/tmux' });
   });
 });
 

@@ -80,9 +80,13 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     await waitFor(() => tmux(MASTER_SOCKETS[0], ['list-clients']).stdout.trim() === '');
     await waitFor(() => tmux(MASTER_SOCKETS[0], ['list-clients']).stdout.trim() !== '');
 
-    // Running it again reuses the window.
+    // Running it again reuses the window, and rebuilds a closed dashboard pane.
+    tmux(COCKPIT_SOCKET, ['kill-pane', '-t', dashboardPane.split(' ')[0]]);
     expect(open('a', masterA)).toBe('existing');
     expect(cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_id}']).split('\n')).toEqual([window]);
+    const rebuilt = panes(window);
+    expect(rebuilt).toHaveLength(2);
+    expect(rebuilt[0]).toBe(`${masterPane.split(' ')[0]} 1`);
   });
 
   it('adds a tab for a second project, and waits for a master that stopped', async () => {

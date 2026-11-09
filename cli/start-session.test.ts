@@ -167,6 +167,8 @@ const tmuxFake = {
   cockpitFails: false,
   /** This process runs inside the cockpit (TMUX names its server). */
   insideCockpit: false,
+  /** The cockpit's tmux client cannot be run. */
+  cockpitAttachError: false,
   exitOnAttach: false,
   /** A `--resume` launch dies at once, as Claude does for a conversation it cannot find. */
   failResume: false,
@@ -179,12 +181,14 @@ const tmuxFake = {
     this.cockpitWindows = [];
     this.cockpitFails = false;
     this.insideCockpit = false;
+    this.cockpitAttachError = false;
     this.exitOnAttach = false;
     this.failResume = false;
     this.pid = 12345;
     this.stop = vi.fn().mockImplementation((handle: string) => { this.alive.delete(handle.slice('tmux:'.length)); return Promise.resolve(); });
   },
   onAttach(args: string[], env: NodeJS.ProcessEnv | undefined) {
+    if (this.cockpitAttachError && args.at(-1) === '=cockpit') return { status: null, stdout: '', error: new Error('spawn tmux ENOENT') };
     this.attaches.push({ args, env });
     const target = args[args.length - 1].replace(/^=/, '');
     if (this.exitOnAttach) this.alive.delete(target === 'cockpit' ? this.cockpitWindows.at(-1)!.master.agentId : target);
@@ -1155,6 +1159,24 @@ describe('cli/start-session.ts', () => {
       await import('./start-session.ts');
 
       expect(warnings.join('\n')).toContain('could not open the cockpit (cockpit server refused); attaching to the master directly');
+      expect(tmuxFake.attaches.map((attach) => attach.args)).toEqual([['attach-session', '-t', '=master']]);
+    });
+
+    it('attaches straight to the master when the cockpit client cannot run', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      tmuxFake.cockpitAttachError = true;
+      mockBinaryCheck(true);
+      const warnings: string[] = [];
+      vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => warnings.push(args.join(' ')));
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+      await import('./start-session.ts');
+
+      expect(warnings.join('\n')).toContain('could not attach to the cockpit (spawn tmux ENOENT); attaching to the master directly');
       expect(tmuxFake.attaches.map((attach) => attach.args)).toEqual([['attach-session', '-t', '=master']]);
     });
 

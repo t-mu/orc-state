@@ -293,7 +293,10 @@ function openCockpit(agent: NonNullable<typeof master>, sessionName: string): bo
   const { TMUX: _tmux, ...env } = process.env;
   const { command, args } = cockpitAttachCommand();
   const result = spawnSync(command, args, { stdio: 'inherit', env });
-  if (result.error) console.error(`Could not run ${command}: ${result.error.message}`);
+  if (result.error) {
+    console.warn(`Warning: could not attach to the cockpit (${result.error.message}); attaching to the master directly.`);
+    return false;
+  }
   afterClientExit(agent, sessionName, {
     detached: '\nDetached. The cockpit and the master keep running; run orc start-session to reattach.',
     ended: '\nMaster session ended. The cockpit and the coordinator keep running; run orc start-session to restart the master.',

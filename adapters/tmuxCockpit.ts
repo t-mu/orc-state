@@ -68,8 +68,10 @@ export function masterKey(master: CockpitMaster): string {
 /**
  * The master pane's script: attach to the master with input, and attach again
  * whenever the client returns. A client detached by the master's own Ctrl-b d
- * while the master runs detaches the cockpit too, as a direct attach would. A
- * master that is not running leaves a note and the pane waits for it to start.
+ * (exit 0) while the master runs detaches the cockpit client showing this pane
+ * too, as a direct attach would; a failed attach keeps its error on screen and
+ * retries after a pause. A master that is not running leaves a note and the
+ * pane waits for it to start.
  */
 export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitProject, 'name'>, options: CockpitOptions): string {
   const tmux = shellQuote(options.tmux);
@@ -81,14 +83,20 @@ export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitPro
     'The cockpit, the workers and the coordinator keep running.',
   ].map(shellQuote).join(' ');
   return [
-    // A nested tmux client refuses to start while TMUX names the cockpit.
+    // A nested tmux client refuses to start while TMUX names the cockpit; keep it to reach the cockpit client.
+    'cockpit_tmux=$TMUX',
     'unset TMUX',
     "trap '' INT",
     `has() { ${tmux} -L ${socket} has-session -t ${session} 2>/dev/null; }`,
     'while :; do',
     '  if has; then',
-    `    ${tmux} ${options.trueColor ? '-T RGB ' : ''}-L ${socket} attach-session -t ${session}`,
-    `    if has; then ${tmux} -L ${COCKPIT_SOCKET} detach-client -s ${shellQuote(`=${COCKPIT_SESSION}`)} 2>/dev/null; sleep 1; fi`,
+    `    if ${tmux} ${options.trueColor ? '-T RGB ' : ''}-L ${socket} attach-session -t ${session}; then`,
+    // With TMUX and TMUX_PANE naming this pane, detach-client picks the cockpit client that shows it.
+    `      if has; then TMUX=$cockpit_tmux ${tmux} detach-client 2>/dev/null; sleep 1; fi`,
+    '    else',
+    `      printf '%s\n' ${shellQuote('Could not attach to the master; retrying in 5 s.')}`,
+    '      sleep 5',
+    '    fi',
     '  else',
     '    clear',
     `    printf '%s\\n' ${note}`,
@@ -148,12 +156,13 @@ function focusCommands(windowId: string, paneId: string): string[][] {
   return [['select-window', '-t', windowId], ['select-pane', '-t', paneId]];
 }
 
-/** The server's environment: no session secrets, no project selection and no outer tmux; panes set their own. */
+/** Names one project or one tmux client; the cockpit serves several, so each pane sets its own. */
+const PER_PROJECT_ENV = ['TMUX', 'TMUX_PANE', 'ORC_PROJECT_ID', 'ORC_STATE_DIR', 'ORC_CONTROL_SOCKET', 'ORC_PROJECT_FLAG'];
+
+/** The server's environment: no session secrets, no project selection and no outer tmux; other ORC_* settings stay. */
 export function cockpitServerEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const next = stripNestedProviderEnv(env);
-  for (const key of Object.keys(next)) {
-    if (key === 'TMUX' || key === 'TMUX_PANE' || key.startsWith('ORC_')) delete next[key];
-  }
+  for (const key of PER_PROJECT_ENV) delete next[key];
   return next as Record<string, string>;
 }
 
@@ -219,22 +228,31 @@ export function ensureCockpitWindow(spec: {
   const dashboardScript = dashboardPaneScript(project, spec.watchCommand);
   const newPane = ['-n', project.name, '-c', project.root, '-P', '-F', '#{window_id} #{pane_id}', ...masterCommand];
 
-  if (cockpitTmux(['has-session', '-t', `=${COCKPIT_SESSION}`]).status !== 0) {
+  const hasCockpit = () => cockpitTmux(['has-session', '-t', `=${COCKPIT_SESSION}`]).status === 0;
+  if (!hasCockpit()) {
     const columns = spec.size?.columns || DEFAULT_SIZE.columns;
     const rows = spec.size?.rows || DEFAULT_SIZE.rows;
-    const out = cockpitTmuxOrThrow(commandList([
+    const created = cockpitTmux(commandList([
       ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal() }),
       ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), ...newPane],
     ]));
-    const { windowId, paneId } = parseCreated(out);
-    cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, project, master, dashboardScript)));
-    return 'created-session';
+    if (!created.error && created.status === 0) {
+      const { windowId, paneId } = parseCreated(created.stdout);
+      cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, project, master, dashboardScript)));
+      return 'created-session';
+    }
+    // Another start-session created the cockpit first: add this project's tab to it.
+    if (!hasCockpit()) throw created.error ?? new Error(`tmux new-session failed: ${(created.stderr || '').trim() || `exit ${created.status}`}`);
   }
 
   const existing = cockpitWindows().find((window) => window.projectId === project.id);
   if (existing) {
     const panes = windowPanes(existing.windowId);
     if (panes.includes(existing.masterPane)) {
+      if (panes.length < 2) {
+        // The dashboard pane was closed: rebuild the layout around the master pane.
+        cockpitTmuxOrThrow(commandList(windowLayoutCommands(existing.windowId, existing.masterPane, project, master, dashboardScript)));
+      }
       if (existing.master === masterKey(master)) {
         cockpitTmuxOrThrow(commandList(focusCommands(existing.windowId, existing.masterPane)));
         return 'existing';
