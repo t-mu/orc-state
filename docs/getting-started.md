@@ -54,7 +54,7 @@ In the dashboard:
 
 - `↑`/`↓` select an agent. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`), with the question below it, and is listed first.
 - Enter on a worker or scout opens its live terminal in a tab of its project (`orc terminal <agent_id> --write`), shown in the slot, or shows that tab again; the stream stays open while other tabs are shown. Closing the tab ends only the stream; the agent keeps running. Enter on a master shows its project's master tab.
-- `t` opens the task explorer: the project's tasks and their specs, read-only.
+- `F12 t` shows the task explorer in the slot: the active project's tasks and their specs, read-only (see the keys above).
 
 The dashboard only shows a question. Answer it through the master, or with `orc run-input-respond`.
 
