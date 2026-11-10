@@ -18,6 +18,7 @@ describe('client entry (client.ts)', () => {
       'ProjectWatcher',
       'RegistrySchemaError',
       'listProjects',
+      'tmuxSessionTarget',
     ]);
   });
 
@@ -29,6 +30,9 @@ describe('client entry (client.ts)', () => {
     const inputs = Object.keys(metafile.inputs);
     expect(inputs.some((input) => input.endsWith('lib/paths.ts'))).toBe(false);
     expect(inputs.some((input) => input.endsWith('lib/projectRegistry.ts'))).toBe(false);
+    expect(inputs.some((input) => input.endsWith('lib/eventLog.ts'))).toBe(false);
+    expect(inputs.some((input) => input.startsWith('adapters/') || input.includes('/adapters/'))).toBe(false);
+    expect(inputs.some((input) => input.endsWith('lib/tmuxNames.ts'))).toBe(true);
     const external = new Set(Object.values(metafile.outputs).flatMap((output) => output.imports.filter((i) => i.external).map((i) => i.path)));
     for (const name of ['better-sqlite3', 'ajv', 'ink', 'react']) expect(external.has(name), name).toBe(false);
     const builtins = new Set(builtinModules);

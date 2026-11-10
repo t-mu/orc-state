@@ -12,11 +12,12 @@
  *   pty-logs/{agentId}.log  — raw pane output via pipe-pane (truncated on each start())
  */
 import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { STATE_DIR, hookEventPath } from '../lib/paths.ts';
+import * as names from '../lib/tmuxNames.ts';
 import { taskLabelsPath } from '../hooks/orc-hook.ts';
 import { stripAnsi } from '../lib/ansi.ts';
 import { readProcessStart } from '../lib/processIdentity.ts';
@@ -41,7 +42,7 @@ export function tmuxBinary(): string { return process.env.ORC_TMUX_BIN ?? 'tmux'
 
 /** One private tmux server per state dir; tmux keeps its sockets in a per-user 0700 directory. */
 export function tmuxSocketName(stateDir = STATE_DIR): string {
-  return `orc-${createHash('sha256').update(stateDir).digest('hex').slice(0, 12)}`;
+  return names.tmuxSocketName(stateDir);
 }
 
 /**
@@ -101,17 +102,12 @@ export function killTmuxServer(stateDir = STATE_DIR): void {
 
 /** Readable and injective: the hash keeps `a.b` and `a_b` from sharing a session. */
 export function tmuxSessionName(agentId: string): string {
-  const readable = agentId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
-  return `orc-${readable}-${createHash('sha256').update(agentId).digest('hex').slice(0, 8)}`;
+  return names.tmuxSessionName(agentId);
 }
 
 /** The tmux socket and session an agent's session runs in: those recorded in its provider_ref win over the computed ones. */
 export function tmuxSessionTarget(agentId: string, providerRef?: unknown): { socket: string; session: string } {
-  const ref = (providerRef ?? {}) as { tmux_socket?: unknown; tmux_session?: unknown };
-  return {
-    socket: typeof ref.tmux_socket === 'string' && ref.tmux_socket ? ref.tmux_socket : tmuxSocketName(),
-    session: typeof ref.tmux_session === 'string' && ref.tmux_session ? ref.tmux_session : tmuxSessionName(agentId),
-  };
+  return names.tmuxSessionTarget(STATE_DIR, agentId, providerRef);
 }
 
 /**
