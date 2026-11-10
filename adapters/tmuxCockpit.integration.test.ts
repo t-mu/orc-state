@@ -4,11 +4,27 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MASTER_TAB, openAgent, selectProject, selectTab } from '../lib/cockpitTabs.ts';
 import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, applyCockpitTransition, watchCockpitChanges, cockpitRunShell, ensureCockpitWindow, masterKey, masterPaneScript, openAgentTab, openExplorer,
-  resolveCockpitKeys, switchToMasterTab, type CockpitKeys, type CockpitMaster,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, applyCockpitTransition, watchCockpitChanges, cockpitRunShell, ensureCockpitWindow, masterKey, masterPaneScript, openExplorer,
+  resolveCockpitKeys, type CockpitAgentTab, type CockpitKeys, type CockpitMaster,
 } from './tmuxCockpit.ts';
+
+/** Shows `tab` in the slot, opening it first when it has no pane (`orc cockpit open`). */
+function openAgentTab(tab: CockpitAgentTab): 'opened' | 'switched' {
+  const result = applyCockpitTransition((state) => openAgent(state, tab.projectId, tab.agentId), () => tab);
+  if (!result.ok) throw new Error(result.message);
+  return result.opened ? 'opened' : 'switched';
+}
+
+/** Shows `projectId`'s master tab; false when the project has none. */
+function switchToMasterTab(projectId: string): boolean {
+  return applyCockpitTransition((state) => {
+    const selected = selectProject(state, projectId);
+    return selected.ok ? selectTab(selected.state, MASTER_TAB) : selected;
+  }).ok;
+}
 
 /** How the cockpit keys run orc: this checkout's entry point. */
 const ORC = [process.execPath, fileURLToPath(new URL('../cli/orc.ts', import.meta.url))];
@@ -169,7 +185,7 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     expect(listedWindows()).toEqual(['orc']);
     expect(slot()).toMatchObject({ project: 'b', active: true });
     const masterPaneB = slot().id;
-    // The sidebar's dashboard now runs for b, the project start-session ran in.
+    // The sidebar now runs for b, the project start-session ran in.
     await waitFor(() => capture(role('sidebar').id).includes('DASHBOARD b'));
     await waitFor(() => capture(masterPaneB).includes('MASTER-B'));
     // A's master went back to A's holding window, still attached.

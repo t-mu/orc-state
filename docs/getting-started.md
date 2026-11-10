@@ -29,11 +29,11 @@ orc start-session
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
 - **Master**: your interactive session. It runs in orc's private tmux server.
-- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), shown as one window: the sidebar (`orc watch`) on the left, a tab bar at the top with the active project's tabs (click one to show it, its `×` to close an agent tab), and below it the slot, showing the active tab: at first the master, focused.
+- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), shown as one window: the sidebar (`orc watch`) on the left, a tab bar at the top with the active project's tabs, and below it the slot, showing the active tab: at first the master, focused. Each project has its own tabs: its master first, then the agent terminals you open, in opening order. A tab not shown keeps running in the background, so switching is instant and a stream is never reopened.
 
 ### Getting around
 
-The cockpit claims only its own keys, all function keys by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the focused pane. Mouse mode is on: click a pane to focus it; a program that uses the mouse, such as the master, still gets its clicks.
+The cockpit claims only its own keys, all function keys by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the focused pane. Mouse mode is on: click a pane to focus it; a program that uses the mouse, such as the master, still gets its clicks. Click a tab in the tab bar to show it, its `×` to close an agent tab, and a project or an agent in the sidebar to select it.
 
 | Keys | Does |
 |---|---|
@@ -53,12 +53,14 @@ The cockpit claims only its own keys, all function keys by default, so they work
 In the sidebar (`F10` focuses it):
 
 - **Status**: the active project's coordinator, its workers used/total, and how many agents need you across projects.
-- **Projects**: every project with its state and `!N` when N of its agents need you; `▸` marks the active one.
+- **Projects**: every registered project with its state and `!N` when N of its agents need you; `▸` marks the active one. Selecting another project shows it with the tabs and the active tab you left it on; one that is not running shows the command that starts it (the cockpit starts nothing itself).
 - **Agents** of the active project, workers and scouts: name, phase and run time, then what it is doing. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`) with the question or reason below it, and is listed first.
 - `↑`/`↓` move within a box, `Tab` switches between Projects and Agents, Enter (or a click) selects, `Esc` goes back to the slot. Selecting a project shows it in the slot (`orc cockpit project`); selecting an agent opens its live terminal in a tab of its project (`orc terminal <agent_id> --write`), or shows that tab again; the stream stays open while other tabs are shown. Closing the tab ends only the stream; the agent keeps running.
 - `F12 t` shows the task explorer in the slot: the active project's tasks and their specs, read-only (see the keys above).
 
-The sidebar only shows a question. Answer it through the master, or with `orc run-input-respond`.
+The tab bar shows the active project's tabs, the active one highlighted. An agent tab whose agent needs you carries the same badge, and `‹ N` / `N ›` count the tabs that do not fit.
+
+The sidebar and the tab bar only show a question. Answer it through the master, or with `orc run-input-respond`; the badges clear once it is answered.
 
 ### Detach and reattach
 
