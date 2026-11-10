@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalFrame } from './controlProtocol.ts';
-import { TerminalStreams, TmuxControlParser, decodeTmuxOutput, type TerminalConnection, type TerminalSource } from './terminalHost.ts';
+import { TerminalStreams, TmuxControlParser, decodeTmuxOutput, type TerminalConnection, type TerminalSource,
+  type TmuxControlEvent, type TmuxControlReplyEvent } from './terminalHost.ts';
 
 describe('decodeTmuxOutput', () => {
   it('turns octal escapes back into bytes and passes everything else through', () => {
@@ -40,6 +41,48 @@ describe('TmuxControlParser', () => {
     expect(parser.push(Buffer.from('%layout-change @1 b25d,80x24,0,0,0 b25d,100x30,0,0,0 *\n')))
       .toEqual([{ type: 'resize', columns: 100, rows: 30 }]);
     expect(parser.push(Buffer.from('%exit detached\n'))).toEqual([{ type: 'exit', reason: 'detached' }]);
+  });
+});
+
+describe('TmuxControlParser with replies', () => {
+  it('returns reply blocks with body lines and an error flag', () => {
+    const parser = new TmuxControlParser<TmuxControlEvent | TmuxControlReplyEvent>({ replies: true });
+    const events = parser.push(Buffer.from([
+      '%begin 1 1 0', '%end 1 1 0',
+      '%begin 2 2 1', '%0 100 30', 'caf\u00e9', '%end 2 2 1',
+      '%begin 3 3 1', 'parse error: unknown command: x', '%error 3 3 1',
+      '',
+    ].join('\n'), 'utf8'));
+    expect(events).toEqual([
+      { type: 'reply', lines: [], error: false },
+      { type: 'reply', lines: ['%0 100 30', 'caf\u00e9'], error: false },
+      { type: 'reply', lines: ['parse error: unknown command: x'], error: true },
+    ]);
+  });
+
+  it('returns %sessions-changed and other notifications; %layout-change also as resize', () => {
+    const parser = new TmuxControlParser<TmuxControlEvent | TmuxControlReplyEvent>({ replies: true });
+    const events = parser.push(Buffer.from([
+      '%sessions-changed',
+      '%layout-change @1 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *',
+      '%session-changed $0 a1',
+      '%output %0 x',
+      '%exit',
+      '',
+    ].join('\n')));
+    expect(events.map((event) => event.type === 'output' ? event.type : event)).toEqual([
+      { type: 'sessions-changed' },
+      { type: 'resize', columns: 80, rows: 24 },
+      { type: 'notification', line: '%layout-change @1 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *' },
+      { type: 'notification', line: '%session-changed $0 a1' },
+      'output',
+      { type: 'exit', reason: 'terminal exited' },
+    ]);
+  });
+
+  it('returns none of them without the option', () => {
+    const events = new TmuxControlParser().push(Buffer.from('%begin 1 1 0\nbody\n%error 1 1 0\n%sessions-changed\n%window-add @1\n'));
+    expect(events).toEqual([]);
   });
 });
 

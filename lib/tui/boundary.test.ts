@@ -3,18 +3,20 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * lib/tui renders only data obtained through orc-state/client, so the
- * cockpit and the desktop app share one data path. Its non-test modules may
- * import: other lib/tui modules, the client entry (`client.ts` /
- * `orc-state/client`), npm packages and Node built-ins, and the pure
- * formatting helpers below. Never state readers, `STATE_DIR`/paths, SQLite
+ * lib/tui and lib/cockpit2 render only data obtained through orc-state/client,
+ * so the cockpits and the desktop app share one data path. Their non-test
+ * modules may import: modules of their own directory, the client entry
+ * (`client.ts` / `orc-state/client`), npm packages and Node built-ins, and the
+ * pure helpers below. Never state readers, `STATE_DIR`/paths, adapters, SQLite
  * stores or any other runtime internal.
  */
 const REPO_ROOT = resolve(import.meta.dirname, '../..');
 const TUI_DIR = join(REPO_ROOT, 'lib', 'tui');
+const BOUNDARY_DIRS = [TUI_DIR, join(REPO_ROOT, 'lib', 'cockpit2')];
 const CLIENT_ENTRY = join(REPO_ROOT, 'client.ts');
-/** Formatting helpers with no runtime import of another repo module (checked below). */
-const PURE_HELPERS = new Set(['lib/banner.ts', 'lib/currentActivity.ts'].map((path) => join(REPO_ROOT, path)));
+/** Helpers with no runtime import of another repo module (checked below). */
+const PURE_HELPERS = new Set(['lib/banner.ts', 'lib/currentActivity.ts', 'lib/terminalHost.ts', 'lib/cockpitTabs.ts']
+  .map((path) => join(REPO_ROOT, path)));
 
 interface ImportRef { specifier: string; typeOnly: boolean }
 
@@ -29,7 +31,7 @@ function importsOf(source: string): ImportRef[] {
   return refs;
 }
 
-/** Why importing `ref` from the lib/tui file `file` breaks the boundary, or null when it is allowed. */
+/** Why importing `ref` from the boundary file `file` breaks the boundary, or null when it is allowed. */
 function boundaryViolation(file: string, ref: ImportRef): string | null {
   const { specifier } = ref;
   if (!specifier.startsWith('.')) {
@@ -40,15 +42,16 @@ function boundaryViolation(file: string, ref: ImportRef): string | null {
     return null;
   }
   const target = resolve(dirname(file), specifier);
-  if (target === CLIENT_ENTRY || target.startsWith(`${TUI_DIR}/`)) return null;
+  const ownDir = BOUNDARY_DIRS.find((dir) => file.startsWith(`${dir}/`));
+  if (target === CLIENT_ENTRY || (ownDir && target.startsWith(`${ownDir}/`))) return null;
   if (PURE_HELPERS.has(target)) return null;
   return `${relative(REPO_ROOT, target)} is not orc-state/client`;
 }
 
-function tuiSourceFiles(dir: string = TUI_DIR): string[] {
+function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) return tuiSourceFiles(path);
+    if (entry.isDirectory()) return sourceFiles(path);
     return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
   });
 }
@@ -60,11 +63,12 @@ function violations(file: string, source: string): string[] {
     .map((reason) => `${relative(REPO_ROOT, file)}: ${reason}`);
 }
 
-describe('lib/tui import boundary', () => {
-  it('lib/tui imports nothing but orc-state/client, its own modules and pure helpers', () => {
-    const files = tuiSourceFiles();
-    expect(files.length).toBeGreaterThan(3);
-    expect(files.flatMap((file) => violations(file, readFileSync(file, 'utf8')))).toEqual([]);
+describe('lib/tui and lib/cockpit2 import boundary', () => {
+  it('lib/tui and lib/cockpit2 import nothing but orc-state/client, their own modules and pure helpers', () => {
+    const [tui, cockpit2] = BOUNDARY_DIRS.map((dir) => sourceFiles(dir));
+    expect(tui.length).toBeGreaterThan(3);
+    expect(cockpit2.length).toBeGreaterThan(0);
+    expect([...tui, ...cockpit2].flatMap((file) => violations(file, readFileSync(file, 'utf8')))).toEqual([]);
   });
 
   it('the pure helpers import no other repo module at runtime', () => {
@@ -93,6 +97,23 @@ describe('lib/tui import boundary', () => {
       'lib/tui/Example.tsx: lib/projectTaskStore.ts is not orc-state/client',
       'lib/tui/Example.tsx: orc-state is not the client entry',
       'lib/tui/Example.tsx: lib/eventLog.ts is not orc-state/client',
+    ]);
+  });
+
+  it('fails on a lib/cockpit2 import of an adapter, paths or a lib/tui module (negative cases)', () => {
+    const file = join(REPO_ROOT, 'lib', 'cockpit2', 'example.ts');
+    const source = [
+      "import { tmuxBinary } from '../../adapters/tmux.ts';",
+      "import { STATE_DIR } from '../paths.ts';",
+      "import { Header } from '../tui/Header.tsx';",
+      "import { TmuxControlParser } from '../terminalHost.ts';",
+      "import { MASTER_TAB } from '../cockpitTabs.ts';",
+      "import { TmuxControlClient } from './tmuxControl.ts';",
+    ].join('\n');
+    expect(violations(file, source)).toEqual([
+      'lib/cockpit2/example.ts: adapters/tmux.ts is not orc-state/client',
+      'lib/cockpit2/example.ts: lib/paths.ts is not orc-state/client',
+      'lib/cockpit2/example.ts: lib/tui/Header.tsx is not orc-state/client',
     ]);
   });
 
