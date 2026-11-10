@@ -257,6 +257,29 @@ describe('sidebar App', () => {
     expect(plain(app.lastFrame()).split('\n').at(-1)).toBe('another cockpit action is still running');
   });
 
+  it('shows why Esc could not focus the slot, and keeps a refused project from becoming active', async () => {
+    const { source } = fakeSource([
+      project('alpha', 'running', status([{ id: 'a1' }])),
+      project('beta', 'running', status([{ id: 'b1' }])),
+    ]);
+    const actions = fakeActions();
+    actions.focusSlot.mockImplementation(() => { throw new Error('tmux select-pane failed'); });
+    actions.selectProject.mockRejectedValue(new Error('unknown project beta'));
+    const app = render(<App source={source} stateDir="/state/alpha" now={now} actions={actions} />);
+    const frame = () => plain(app.lastFrame());
+    await settle();
+    await settle(() => app.stdin.write('\u001B'));
+    expect(frame().split('\n').at(-1)).toBe('tmux select-pane failed');
+
+    await settle(() => app.stdin.write('\t'));
+    await settle(() => app.stdin.write('j'));
+    await settle(() => app.stdin.write('\r'));
+    expect(frame().split('\n').at(-1)).toBe('unknown project beta');
+    expect(frame()).toMatch(/│▸ alpha/);
+    expect(frame()).toContain('a1');
+    expect(frame()).not.toContain('b1');
+  });
+
   it('outside a cockpit selects but runs no action, and says where terminals open', async () => {
     const { source } = fakeSource([
       project('alpha', 'running', status([{ id: 'a1' }])),

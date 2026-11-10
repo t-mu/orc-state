@@ -13,7 +13,7 @@ export interface SidebarActions {
   selectProject: (project: SidebarProject) => Promise<string>;
   /** `orc cockpit open <agent_id> <project_id>`: open the agent's tab, or show it. */
   openAgent: (agent: SidebarAgent, project: SidebarProject) => Promise<string>;
-  /** Esc: focus the slot. */
+  /** Esc: focus the slot; a throw is shown in the footer. */
   focusSlot: () => void;
 }
 
@@ -183,9 +183,18 @@ export function App({ source, stateDir, intervalMs = 3000, actions, activeProjec
   const selectProject = (project: SidebarProject) => {
     setProjectKey(project.project_id);
     if (project.project_id !== model.activeProjectId) setAgentKey(null);
+    const previous = model.activeProjectId;
     setActive(project.project_id);
     setResult(null);
-    if (actions) report(actions.selectProject(project));
+    if (!actions) return;
+    actions.selectProject(project).then(
+      text => setResult({ text, error: false }),
+      (error: unknown) => {
+        // The cockpit did not switch: the Agents box goes back to the project it shows.
+        if (previous) setActive(previous);
+        setResult({ text: (error as Error).message, error: true });
+      },
+    );
   };
   const openAgent = (agent: SidebarAgent) => {
     setAgentKey(agent.key);
@@ -205,7 +214,11 @@ export function App({ source, stateDir, intervalMs = 3000, actions, activeProjec
       return;
     }
     if (key.escape) {
-      actions?.focusSlot();
+      try {
+        actions?.focusSlot();
+      } catch (error) {
+        setResult({ text: (error as Error).message, error: true });
+      }
       return;
     }
     const list = focus === 'projects' ? model.projects.length : model.agents.length;

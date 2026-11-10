@@ -397,7 +397,7 @@ Importing it has no side effects: no project resolution, registry access, git ca
 | `stalled` | the run's `stalled` flag (`isStalled`, the same test as `claims.stalled`) | the run's idle anchor (last activity) | `null` | any activity |
 | `no_progress` | the coordinator sent `worker_needs_attention {reason: no_progress}` and the run has not progressed since its `progress_at` (a change of phase at its evidence time, a progress lifecycle event, or a hook-seen `git commit`, kept as `last_commit_ts` in `run-activity.json`); not while waiting for input or finalizing | `progress_at` | the phase in the alert | progress |
 
-A run that ends drops out of `claims.active`, so its attention goes with it. `request_id` is null except for `question`. MCP `get_status` builds its own shape and does not carry `attention` yet; read it from `orc status --json` or `/v1/status`. The `orc watch` dashboard shows it as a badge on the agent's row.
+A run that ends drops out of `claims.active`, so its attention goes with it. `request_id` is null except for `question`. MCP `get_status` builds its own shape and does not carry `attention` yet; read it from `orc status --json` or `/v1/status`. The `orc watch` sidebar shows it as a badge on the agent's row.
 
 ### CLI commands
 
