@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProjectListEntry } from '../client.ts';
 import type { AgentTabResolver, CockpitActionResult, StoppedProjectResolver } from '../adapters/tmuxCockpit.ts';
 import type { CockpitTabState, OpenTab, TabTransition } from '../lib/cockpitTabs.ts';
-import { NOT_IN_COCKPIT, parseCockpitArgs, runCockpit, tabProject, waitingAgents, type CockpitDeps } from './cockpit.ts';
+import { NOT_IN_COCKPIT, parseCockpitArgs, runCockpit, throttle, tabProject, waitingAgents, type CockpitDeps } from './cockpit.ts';
 
 const STATE: CockpitTabState = {
   activeProject: 'p-1',
@@ -230,5 +230,21 @@ describe('waitingAgents', () => {
   it('skips projects whose coordinator is not running and those it cannot ask', async () => {
     const projects = [entry('p-1'), entry('p-2', { coordinator_running: true, state_dir: '/nonexistent/orc-state' })];
     expect(await waitingAgents(STATE, projects)).toEqual([]);
+  });
+});
+
+describe('throttle', () => {
+  it('runs at most once per interval, so a slot the bar cannot put back does not loop on its own change signal', () => {
+    let clock = 0;
+    let runs = 0;
+    const refresh = throttle(() => { runs += 1; }, 5_000, () => clock);
+    for (let i = 0; i < 50; i += 1) refresh();
+    expect(runs).toBe(1);
+    clock = 4_999;
+    refresh();
+    expect(runs).toBe(1);
+    clock = 5_000;
+    refresh();
+    expect(runs).toBe(2);
   });
 });

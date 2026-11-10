@@ -265,6 +265,20 @@ export async function runCockpit(argv: string[], deps: CockpitDeps = defaultDeps
   }
 }
 
+/** How often the tab bar may try to put back a missing slot: the fallback re-read's interval (TAB_BAR_INTERVAL_MS). */
+const BAR_REFRESH_MS = 5_000;
+
+/** `fn`, run at most once per `intervalMs` (calls in between are dropped). */
+export function throttle(fn: () => void, intervalMs: number, now: () => number = Date.now): () => void {
+  let lastRun = -Infinity;
+  return () => {
+    const at = now();
+    if (at - lastRun < intervalMs) return;
+    lastRun = at;
+    fn();
+  };
+}
+
 /**
  * Runs the tab bar (lib/tui/TabBar.tsx) until the pane closes: the active
  * project's tabs, redrawn when an action signals a change (and at the
@@ -275,10 +289,12 @@ async function runTabBar(deps: CockpitDeps): Promise<number> {
   // Loaded on demand, as the explorer is: the other actions must not load Ink.
   const { runTabBar: runApp } = await (import(runtimeImportPath('../lib/tui/TabBar.tsx', '../lib/tui/TabBar.js')) as Promise<typeof import('../lib/tui/TabBar.tsx')>);
   const { runOrcCommand } = await (import(runtimeImportPath('./watch.ts', './watch.js')) as Promise<typeof import('./watch.ts')>);
+  // A refresh signals a change, which re-reads; a slot it cannot put back must not loop.
+  const refreshSlot = throttle(() => deps.refresh(), BAR_REFRESH_MS);
   return runApp({
     read: () => {
       const view = deps.bar();
-      if (view.slotMissing) deps.refresh();
+      if (view.slotMissing) refreshSlot();
       return view.state;
     },
     watcher: deps.watcher(),

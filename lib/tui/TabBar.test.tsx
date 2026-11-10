@@ -126,6 +126,18 @@ describe('TabBar', () => {
     expect(lastDrawn(app.frames)).toContain('2 w1 STALLED');
   });
 
+  it('rebuilds from the last read tab state on a watcher update, without reading it again', async () => {
+    const read = vi.fn(() => tabState(['w1'], null));
+    const watcher = fakeSource([watched({})]);
+    const app = render(<TabBar read={read} source={watcher.source} />);
+    await settle();
+    const calls = read.mock.calls.length;
+    watcher.set([watched({ w1: 'question' })]);
+    await settle(() => watcher.emit());
+    expect(lastDrawn(app.frames)).toContain('2 w1 QUESTION');
+    expect(read.mock.calls.length).toBe(calls);
+  });
+
   it('re-reads at the fallback interval, never faster', async () => {
     const read = vi.fn(() => tabState([], null));
     render(<TabBar read={read} source={fakeSource([]).source} intervalMs={5000} />);

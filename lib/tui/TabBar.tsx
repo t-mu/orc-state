@@ -45,28 +45,35 @@ const ATTENTION_COLOR: Record<AttentionKind, string> = {
 };
 
 /**
- * The model, rebuilt on each change signal, watcher update and every
- * `intervalMs`, but only stored (so rendered) when it differs from the last
+ * The model, rebuilt on each change signal and every `intervalMs` (which
+ * re-read the tab state) and on each watcher update (new attention, the tab
+ * state as last read), but only stored (so rendered) when it differs from the last
  * one: an unchanged tab state does not repaint the bar.
  */
 function useTabBarModel({ read, source, changes, intervalMs }: Required<Pick<TabBarProps, 'read' | 'source' | 'intervalMs'>> & { changes: TabBarProps['changes'] | undefined }): TabBarModel {
-  const build = (): TabBarModel => {
-    try {
-      const state = read();
-      return buildTabBarModel(state, tabAttention(buildProjectViews(source.projects()), state.activeProject));
-    } catch (error) {
-      return { tabs: [], notice: `orc cockpit bar: ${(error as Error).message}` };
+  // The last tab state read: a watcher update changes only the attention, so it rebuilds from this without reading tmux again.
+  const last = useRef<{ state: TabBarState } | { error: string } | null>(null);
+  const build = (reread: boolean): TabBarModel => {
+    if (reread || !last.current) {
+      try {
+        last.current = { state: read() };
+      } catch (error) {
+        last.current = { error: (error as Error).message };
+      }
     }
+    const current = last.current;
+    if ('error' in current) return { tabs: [], notice: `orc cockpit bar: ${current.error}` };
+    return buildTabBarModel(current.state, tabAttention(buildProjectViews(source.projects()), current.state.activeProject));
   };
   const keyRef = useRef('');
   const [model, setModel] = useState(() => {
-    const initial = build();
+    const initial = build(true);
     keyRef.current = JSON.stringify(initial);
     return initial;
   });
-  const refresh = useRef(() => {});
-  refresh.current = () => {
-    const next = build();
+  const refresh = useRef((_reread: boolean) => {});
+  refresh.current = (reread) => {
+    const next = build(reread);
     const key = JSON.stringify(next);
     if (key === keyRef.current) return;
     keyRef.current = key;
@@ -74,9 +81,9 @@ function useTabBarModel({ read, source, changes, intervalMs }: Required<Pick<Tab
   };
 
   useEffect(() => {
-    const unsubscribe = source.onUpdate(() => refresh.current());
-    const stopChanges = changes?.(() => refresh.current());
-    const timer = setInterval(() => refresh.current(), intervalMs);
+    const unsubscribe = source.onUpdate(() => refresh.current(false));
+    const stopChanges = changes?.(() => refresh.current(true));
+    const timer = setInterval(() => refresh.current(true), intervalMs);
     return () => {
       clearInterval(timer);
       stopChanges?.();
