@@ -305,11 +305,12 @@ function textPaneScript(lines: string[]): string {
 
 /**
  * The master pane's script: attach to the master with input, and attach again
- * whenever the client returns. A client detached by the master's own Ctrl-b d
- * (exit 0) while the master runs detaches the cockpit client showing this pane
- * too, as a direct attach would; a failed attach keeps its error on screen and
- * retries after a pause. A master that is not running leaves a note with the
- * command that starts it, and the pane waits for it to start.
+ * whenever the client returns. A client that returns cleanly (the master's own
+ * Ctrl-b d, or the master ended) detaches the cockpit client showing this pane
+ * too, as a direct attach would, but only while the pane is shown; a failed
+ * attach keeps its error on screen and retries after a pause. A master that is
+ * not running leaves a note with the command that starts it, and the pane
+ * waits for it to start without echoing what is typed.
  */
 export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitProject, 'name' | 'root'>, options: CockpitOptions): string {
   const tmux = shellQuote(options.tmux);
@@ -329,8 +330,13 @@ export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitPro
     'while :; do',
     '  if has; then',
     `    if ${tmux} ${options.trueColor ? '-T RGB ' : ''}-L ${socket} attach-session -t ${session}; then`,
+    // Detached (Ctrl-b d) or the master ended (/exit): either way the user is done here, so the
+    // cockpit client goes too, as a direct attach returns to the shell. Only while the pane is
+    // shown: a master ending in a holding window must not detach someone viewing another project.
     // With TMUX and TMUX_PANE naming this pane, detach-client picks the cockpit client that shows it.
-    `      if has; then TMUX=$cockpit_tmux ${tmux} detach-client 2>/dev/null; sleep 1; fi`,
+    `      if [ "$(TMUX=$cockpit_tmux ${tmux} display-message -p -t "$TMUX_PANE" '#{window_active}' 2>/dev/null)" = 1 ]; then`,
+    `        TMUX=$cockpit_tmux ${tmux} detach-client 2>/dev/null; sleep 1`,
+    '      fi',
     '    else',
     `      printf '%s\n' ${shellQuote('Could not attach to the master; retrying in 5 s.')}`,
     '      sleep 5',
@@ -340,7 +346,10 @@ export function masterPaneScript(master: CockpitMaster, project: Pick<CockpitPro
     '    note',
     // Drawn again on resize: the pane may have been small in its holding window.
     '    trap note WINCH',
+    // Typing here does nothing: keep it off the screen so the pane does not look like an editor.
+    '    stty -echo 2>/dev/null',
     '    while ! has; do sleep 2 & wait $!; done',
+    '    stty echo 2>/dev/null',
     "    trap - WINCH",
     '  fi',
     'done',

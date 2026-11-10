@@ -43,6 +43,29 @@ describe('masterPaneScript', () => {
     expect(script).not.toContain('detach-client -s');
   });
 
+  it.each([
+    { shown: true, detaches: true },
+    { shown: false, detaches: false },
+  ])('when the master ends, detaches the cockpit client only if the pane is shown ($shown)', ({ shown, detaches }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-fake-tmux-'));
+    try {
+      // The master exists for the first check only; attach succeeds (the master ended with /exit).
+      const fake = join(dir, 'tmux');
+      const seen = join(dir, 'seen');
+      writeFileSync(fake, `#!/bin/sh\necho "$*" >> ${JSON.stringify(join(dir, 'calls'))}\ncase "$*" in\n  *has-session*) [ -e ${JSON.stringify(seen)} ] && exit 1; touch ${JSON.stringify(seen)}; exit 0;;\n  *display-message*) echo ${shown ? 1 : 0};;\nesac\nexit 0\n`, { mode: 0o755 });
+      // Stop the loop once it waits for the master to start again, after showing the note.
+      const script = masterPaneScript(master, project, { tmux: fake, trueColor: false }).replace('while ! has; do sleep 2 & wait $!; done', 'exit 8');
+      const result = spawnSync('/bin/sh', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, TMUX: '/x,1,0', TMUX_PANE: '%3' } });
+      expect(result.status).toBe(8);
+      expect(result.stdout).toContain('is not running');
+      const calls = readFileSync(join(dir, 'calls'), 'utf8');
+      expect(calls).toContain('display-message -p -t %3 #{window_active}');
+      expect(calls.includes('detach-client')).toBe(detaches);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a failed attach on screen and retries without detaching the cockpit', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-fake-tmux-'));
     try {
