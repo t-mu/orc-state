@@ -8,7 +8,7 @@ import { startControlServer } from '../lib/controlServer.ts';
 import { closeAllDatabases } from '../lib/eventLog.ts';
 import { buildStatus } from '../lib/statusView.ts';
 import { createTempStateDir, cleanupTempStateDir, seedState } from '../test-fixtures/stateHelpers.ts';
-import { agentTab, cockpitOpener, runFallbackWatch, watchedProjectList, type CockpitTabs, type WatchSource } from './watch.ts';
+import { cockpitActions, runFallbackWatch, runOrcCommand, watchedProjectList, type WatchSource } from './watch.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 let dir: string;
@@ -194,38 +194,30 @@ function runCli(args: string[]) {
   });
 }
 
-describe('cockpit agent terminals', () => {
+describe('cockpit sidebar actions', () => {
   const orc = ['/usr/bin/node', '/orc/cli/orc.ts'];
-  const registered = { project_id: 'p-1', name: 'app', state_dir: '/state/p-1', target_repo_root: '/repo/app' };
-  const agent = (agent_id: string, role = 'worker') => ({
-    key: `p-1/${agent_id}`, agent_id, role, task_ref: null, state: 'running', phase: null, activity: null, attention: null,
+  const project = {
+    project_id: 'p-1', name: 'app', state_dir: '/state/p-1', target_repo_root: '/repo/app',
+    connection: 'running' as const, state: 'running' as const, error: null, attention: 0, active: true,
+  };
+  const agent = { key: 'p-1/w1', agent_id: 'w1', role: 'worker', phase: 'implement', elapsed: '3m', detail: null, attention: null };
+
+  it('selects a project and opens an agent through orc cockpit; Esc focuses the slot', async () => {
+    const run = vi.fn((command: string[]) => Promise.resolve(`ran ${command.slice(2).join(' ')}`));
+    const focusSlot = vi.fn();
+    const actions = cockpitActions(orc, run, focusSlot);
+
+    await expect(actions.selectProject(project)).resolves.toBe('ran cockpit project p-1');
+    expect(run).toHaveBeenLastCalledWith([...orc, 'cockpit', 'project', 'p-1']);
+    await expect(actions.openAgent(agent, project)).resolves.toBe('ran cockpit open w1 p-1');
+    expect(run).toHaveBeenLastCalledWith([...orc, 'cockpit', 'open', 'w1', 'p-1']);
+    actions.focusSlot();
+    expect(focusSlot).toHaveBeenCalledTimes(1);
   });
-  const project = { ...registered, current: true, connection: 'running' as const, error: null, stale: false, agents: [], attention: { permission_prompt: 0, question: 0, stalled: 0, no_progress: 0 }, attentionTotal: 0 };
 
-  it('streams the agent with input for its project: --project for a registered one, ORC_STATE_DIR otherwise', () => {
-    expect(agentTab({ agent_id: 'w1' }, registered, orc)).toEqual({
-      projectId: 'p-1', projectName: 'app', agentId: 'w1', root: '/repo/app',
-      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], close: [...orc, 'cockpit', 'close', 'w1'], env: {},
-    });
-    const unregistered = { ...registered, project_id: 'unregistered:/state/x', state_dir: '/state/x' };
-    expect(agentTab({ agent_id: 'w1' }, unregistered, orc)).toMatchObject({
-      command: [...orc, 'terminal', 'w1', '--write'], env: { ORC_STATE_DIR: '/state/x' },
-    });
-  });
-
-  it('opens or switches to a worker\'s tab, and sends a master to its project tab without opening a stream', () => {
-    const openAgentTab = vi.fn<CockpitTabs['openAgentTab']>(() => 'opened');
-    const switchToMasterTab = vi.fn<CockpitTabs['switchToMasterTab']>(() => true);
-    const open = cockpitOpener(orc, { openAgentTab, switchToMasterTab });
-    expect(open(agent('w1'), project)).toBe('opened w1 in a new tab');
-    expect(openAgentTab).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'w1', projectId: 'p-1' }));
-    openAgentTab.mockReturnValue('switched');
-    expect(open(agent('w1'), project)).toBe("switched to w1's tab");
-
-    expect(open(agent('master', 'master'), project)).toBe("switched to app's master");
-    expect(switchToMasterTab).toHaveBeenCalledWith('p-1');
-    expect(openAgentTab).toHaveBeenCalledTimes(2);
-    switchToMasterTab.mockReturnValue(false);
-    expect(() => open(agent('master', 'master'), project)).toThrow('app has no cockpit tab; run orc start-session in it');
+  it('resolves to what the command printed, and rejects with its error output', async () => {
+    await expect(runOrcCommand([process.execPath, '-e', 'console.log("Switched to project p-1.")'])).resolves.toBe('Switched to project p-1.');
+    await expect(runOrcCommand([process.execPath, '-e', 'console.error("orc cockpit runs inside the cockpit"); process.exit(1)']))
+      .rejects.toThrow('orc cockpit runs inside the cockpit');
   });
 });

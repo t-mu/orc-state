@@ -109,7 +109,7 @@ Per user, for every project: `orc start-session` reads them each time it opens o
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ORC_COCKPIT_PREFIX` | The cockpit's prefix: prefix + `d` detach, `o` switch pane, `n`/`p` next/previous tab, `1`–`9` select a tab, `&` close the agent tab (all of the active project), `N`/`P` next/previous project; pressed twice it reaches the pane | `F12` |
-| `ORC_COCKPIT_KEYS` | Direct keys (no prefix), comma-separated `<action>=<key>`, overriding only the actions named: `tab1`–`tab9` select that tab of the active project, `dashboard` focuses the sidebar (the dashboard), `attention` shows the next agent needing attention. `none` unbinds one. A direct key must be a function key or carry `C-` or `M-`; one that repeats the prefix or another action's key is dropped | `tab1=F1,…,tab9=F9,dashboard=F10,attention=F11` |
+| `ORC_COCKPIT_KEYS` | Direct keys (no prefix), comma-separated `<action>=<key>`, overriding only the actions named: `tab1`–`tab9` select that tab of the active project, `dashboard` focuses the sidebar, `attention` shows the next agent needing attention. `none` unbinds one. A direct key must be a function key or carry `C-` or `M-`; one that repeats the prefix or another action's key is dropped | `tab1=F1,…,tab9=F9,dashboard=F10,attention=F11` |
 
 Example: `ORC_COCKPIT_PREFIX=C-a ORC_COCKPIT_KEYS='dashboard=F12,attention=none' orc start-session`.
 

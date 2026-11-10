@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
   COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, SIDEBAR_COLUMNS, TAB_BAR_ROWS, agentTabScript, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint,
-  cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, dashboardPaneScript, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
+  cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, dashboardPaneScript, focusSlotCommands, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
   isTmuxKeyName, keeperPaneScript, messagePaneScript, paneTab, parseCockpitPanes, placeholderPaneScript, resolveCockpitKeys, masterPaneScript, slotCommands,
   startCommand, tabBarPaneScript, tabPaneOptions, terminalHasTrueColor, withCockpitLock, explorerPaneScript, type CockpitPane,
 } from './tmuxCockpit.ts';
@@ -246,6 +246,17 @@ describe('frame', () => {
     expect(frameOf(panes)).toEqual({ windowId: '@1', sidebar: '%1', tabbar: '%2', slot: panes[2] });
     expect(frameOf(panes.filter((entry) => entry.paneId !== '%5'))?.slot).toBeNull();
     expect(frameOf(panes.slice(3))).toBeNull();
+  });
+
+  it('focuses the slot\'s pane in the frame window; nothing without a frame or a slot', () => {
+    const panes = [
+      pane({ paneId: '%1', windowId: '@1', inFrame: true, role: 'sidebar' }),
+      pane({ paneId: '%2', windowId: '@1', inFrame: true, role: 'tabbar' }),
+      pane({ paneId: '%5', windowId: '@1', inFrame: true, role: 'master', projectId: 'p-1' }),
+    ];
+    expect(focusSlotCommands(frameOf(panes))).toEqual([['select-window', '-t', '@1'], ['select-pane', '-t', '%5']]);
+    expect(focusSlotCommands(frameOf(panes.slice(0, 2)))).toBeNull();
+    expect(focusSlotCommands(null)).toBeNull();
   });
 
   it('names a tab pane with pane options, which move with it when it is swapped', () => {

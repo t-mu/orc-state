@@ -29,7 +29,7 @@ orc start-session
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
 - **Master**: your interactive session. It runs in orc's private tmux server.
-- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), shown as one window: the dashboard (`orc watch`) as a sidebar on the left, a tab bar at the top listing the projects and the active project's tabs, and below it the slot, showing the active tab: at first the master, focused.
+- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), shown as one window: the sidebar (`orc watch`) on the left, a tab bar at the top listing the projects and the active project's tabs, and below it the slot, showing the active tab: at first the master, focused.
 
 ### Getting around
 
@@ -38,7 +38,7 @@ The cockpit claims only its own keys, all function keys by default, so they work
 | Keys | Does |
 |---|---|
 | `F1` … `F9` (or `F12 1` … `F12 9`) | select tab 1–9 of the active project (tab 1 is its master) |
-| `F10` | focus the dashboard (the sidebar) |
+| `F10` | focus the sidebar |
 | `F11` | show the next agent that needs you (its project and tab) |
 | `F12 o` | switch between the slot, the sidebar and the tab bar |
 | `F12 n` / `F12 p` | next / previous tab of the active project |
@@ -50,13 +50,15 @@ The cockpit claims only its own keys, all function keys by default, so they work
 
 `F12` is the prefix: press it, release, then the key. Change the prefix and the direct keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); `orc start-session` applies them to a running cockpit too.
 
-In the dashboard:
+In the sidebar (`F10` focuses it):
 
-- `↑`/`↓` select an agent. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`), with the question below it, and is listed first.
-- Enter on a worker or scout opens its live terminal in a tab of its project (`orc terminal <agent_id> --write`), shown in the slot, or shows that tab again; the stream stays open while other tabs are shown. Closing the tab ends only the stream; the agent keeps running. Enter on a master shows its project's master tab.
+- **Status**: the active project's coordinator, its workers used/total, and how many agents need you across projects.
+- **Projects**: every project with its state and `!N` when N of its agents need you; `▸` marks the active one.
+- **Agents** of the active project, workers and scouts: name, phase and run time, then what it is doing. An agent that needs you shows a badge (`QUESTION`, `PERMISSION`, `STALLED`, `NO PROGRESS`) with the question or reason below it, and is listed first.
+- `↑`/`↓` move within a box, `Tab` switches between Projects and Agents, Enter (or a click) selects, `Esc` goes back to the slot. Selecting a project shows it in the slot (`orc cockpit project`); selecting an agent opens its live terminal in a tab of its project (`orc terminal <agent_id> --write`), or shows that tab again; the stream stays open while other tabs are shown. Closing the tab ends only the stream; the agent keeps running.
 - `F12 t` shows the task explorer in the slot: the active project's tasks and their specs, read-only (see the keys above).
 
-The dashboard only shows a question. Answer it through the master, or with `orc run-input-respond`.
+The sidebar only shows a question. Answer it through the master, or with `orc run-input-respond`.
 
 ### Detach and reattach
 
@@ -88,11 +90,11 @@ Automatic: each tick the coordinator claims an eligible `todo` task, creates a w
 
 ## Monitor
 
-The cockpit's dashboard is the live view. From any other shell:
+The cockpit's sidebar is the live view. From any other shell:
 
 ```bash
 orc status                 # one-shot summary
-orc watch                  # the cockpit dashboard on its own (Enter opens terminals only in the cockpit)
+orc watch                  # the cockpit sidebar on its own (terminals open only in the cockpit)
 orc events                 # recent events
 orc terminal <agent-id>    # an agent's live terminal, read-only (--write for input)
 orc doctor                 # health check
