@@ -33,15 +33,20 @@ orc start-session
 
 ### Getting around
 
-The cockpit claims one key, its prefix `Ctrl-]`. Every other key, `Ctrl-b` included, reaches the focused pane, and the mouse behaves as in a plain terminal.
+The cockpit claims only its own keys, all function keys by default, so they work on any keyboard layout without Option/Alt. Every other key, `Ctrl-b` included, reaches the focused pane. Mouse mode is on: click a pane to focus it or a tab in the status line to select it; a program that uses the mouse, such as the master, still gets its clicks.
 
 | Keys | Does |
 |---|---|
-| `Ctrl-] o` | switch between the master and the dashboard pane |
-| `Ctrl-] n` / `Ctrl-] p` | next / previous tab (project tabs and agent tabs) |
-| `Ctrl-] d` | detach |
-| `Ctrl-] &` | close the current tab; never stops its master or agent |
-| `Ctrl-]` `Ctrl-]` | send `Ctrl-]` to the pane |
+| `F1` … `F9` (or `F12 1` … `F12 9`) | select tab 1–9 |
+| `F10` | focus the dashboard pane |
+| `F11` | focus the dashboard pane (later: the next agent that needs you) |
+| `F12 o` | switch between the master and the dashboard pane |
+| `F12 n` / `F12 p` | next / previous tab (project tabs and agent tabs) |
+| `F12 d` | detach |
+| `F12 &` | close the current tab; never stops its master or agent |
+| `F12` `F12` | send `F12` to the pane |
+
+`F12` is the prefix: press it, release, then the key. Change the prefix and the direct keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); `orc start-session` applies them to a running cockpit too.
 
 In the dashboard pane:
 
@@ -53,7 +58,7 @@ The dashboard only shows a question. Answer it through the master, or with `orc 
 
 ### Detach and reattach
 
-- Detach with `Ctrl-] d`, the master's `Ctrl-b d`, or by closing the terminal. The cockpit, the master, the workers and the coordinator keep running, and the master's MCP tools keep working.
+- Detach with `F12 d`, the master's `Ctrl-b d`, or by closing the terminal. The cockpit, the master, the workers and the coordinator keep running, and the master's MCP tools keep working.
 - Run `orc start-session` again to reattach. A live master is reattached with no prompts and no state reset.
 - Run it in another registered project to add that project's tab to the same cockpit. From a shell inside the cockpit it only switches to the tab.
 - If the master process has died, its pane says so and waits; `orc start-session` starts it again. A Claude master resumes its recorded conversation (`--resume`); otherwise it starts fresh.

@@ -16,7 +16,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { COCKPIT_SOCKET, COCKPIT_SESSION, ensureCockpitWindow } from '../adapters/tmuxCockpit.ts';
+import { COCKPIT_SOCKET, COCKPIT_SESSION, DEFAULT_COCKPIT_KEYS, ensureCockpitWindow } from '../adapters/tmuxCockpit.ts';
 import { checkTmux, shellQuote, tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
 import { startControlServer, type ControlServer } from '../lib/controlServer.ts';
 import { setRunInputState } from '../lib/claimManager.ts';
@@ -174,6 +174,7 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → indicator → agent tab �
       master: { agentId: 'master', socket: tmuxSocketName(dir), session: tmuxSessionName('master') },
       watchCommand: [...orc, 'watch', '--interval-ms=500'],
       options: { tmux: 'tmux', trueColor: false },
+      keys: DEFAULT_COCKPIT_KEYS,
       size: { columns: 200, rows: 50 },
     })).toBe('created-session');
     const [masterPane, dashboardPane] = cockpit(['list-panes', '-t', `=${COCKPIT_SESSION}:smoke`, '-F', '#{pane_id}']).split('\n');

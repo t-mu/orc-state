@@ -8,10 +8,11 @@
  * `orc attach master --write`), so it keeps working while the coordinator
  * restarts or is down; the pane beside it runs `orc watch`.
  *
- * The server starts with no config file (`-f /dev/null`), and its prefix is
- * COCKPIT_PREFIX, the one key it claims: every other key, Ctrl-b included,
- * reaches the focused pane. Mouse stays off, so the terminal handles the
- * mouse as it does for a direct attach.
+ * The server starts with no config file (`-f /dev/null`). It claims only its
+ * keys (`resolveCockpitKeys`: a prefix, F12 by default, and a few direct
+ * function keys), all of them layout-safe; every other key, Ctrl-b included,
+ * reaches the focused pane. Mouse mode is on: a click focuses a pane or
+ * selects a tab, and a pane whose program asks for the mouse still gets it.
  */
 import { spawnSync } from 'node:child_process';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
@@ -20,10 +21,156 @@ import { shellQuote, tmuxBinary, tmuxSocketPath } from './tmux.ts';
 /** The per-user cockpit server: tmux keeps it in the per-user 0700 socket directory. */
 export const COCKPIT_SOCKET = 'orc-cockpit';
 export const COCKPIT_SESSION = 'cockpit';
-/** The one key the cockpit claims: its tmux prefix. Pressed twice, it reaches the pane. */
-export const COCKPIT_PREFIX = 'C-]';
+
+// ── Keys ─────────────────────────────────────────────────────────────────────
+// Defaults are function keys: they need no Option/Alt/AltGr on any keyboard layout.
+
+/** The direct keys' actions: `tab1`..`tab9` select that tab, `dashboard` focuses the dashboard pane, `attention` (for now) too. */
+export const COCKPIT_ACTIONS = ['tab1', 'tab2', 'tab3', 'tab4', 'tab5', 'tab6', 'tab7', 'tab8', 'tab9', 'dashboard', 'attention'] as const;
+export type CockpitAction = typeof COCKPIT_ACTIONS[number];
+
+export interface CockpitKeys {
+  /** The tmux prefix: prefix + d/o/n/p/&/1-9 as in tmux; pressed twice, it reaches the pane. */
+  prefix: string;
+  /** Keys bound without the prefix; null leaves the action to the prefix table only. */
+  direct: Record<CockpitAction, string | null>;
+}
+
+export const DEFAULT_COCKPIT_KEYS: CockpitKeys = {
+  prefix: 'F12',
+  direct: {
+    tab1: 'F1', tab2: 'F2', tab3: 'F3', tab4: 'F4', tab5: 'F5', tab6: 'F6', tab7: 'F7', tab8: 'F8', tab9: 'F9',
+    dashboard: 'F10', attention: 'F11',
+  },
+};
+
+/** The prefix cockpits had before the keys were configurable; a reattach unbinds it. */
+const LEGACY_PREFIX = 'C-]';
+
+const FUNCTION_KEY = /^F([1-9]|1[0-2])$/i;
+const NAMED_KEY = /^(F([1-9]|1[0-2])|Home|End|PageUp|PgUp|PPage|PageDown|PgDn|NPage|Insert|IC|Delete|DC|Up|Down|Left|Right|Tab|BTab|Space|Enter|Escape|BSpace)$/i;
+
+/** Whether tmux knows `key`: optional C-/M-/S- modifiers, then a named key or one printable ASCII character. */
+export function isTmuxKeyName(key: string): boolean {
+  const base = key.replace(/^([CMS]-)+(?=.)/, '');
+  return NAMED_KEY.test(base) || /^[!-~]$/.test(base);
+}
+
+/** A direct key is bound for every pane: unmodified, only a function key, so typing never reaches the cockpit by accident. */
+function isDirectKeyName(key: string): boolean {
+  return isTmuxKeyName(key) && (FUNCTION_KEY.test(key) || /^[CM]-/.test(key));
+}
+
+/**
+ * The cockpit keys from `ORC_COCKPIT_PREFIX` (a tmux key name) and
+ * `ORC_COCKPIT_KEYS` (`action=key` pairs, comma-separated; `none` unbinds a
+ * direct key). Anything invalid is reported in `problems` and its default kept;
+ * a direct key that clashes with the prefix or an earlier direct key is dropped.
+ */
+export function resolveCockpitKeys(env: NodeJS.ProcessEnv = process.env): { keys: CockpitKeys; problems: string[] } {
+  const problems: string[] = [];
+  let prefix = DEFAULT_COCKPIT_KEYS.prefix;
+  const rawPrefix = env.ORC_COCKPIT_PREFIX?.trim();
+  if (rawPrefix) {
+    if (isTmuxKeyName(rawPrefix)) prefix = rawPrefix;
+    else problems.push(`ORC_COCKPIT_PREFIX: unknown key '${rawPrefix}'; using ${prefix}`);
+  }
+  const direct = { ...DEFAULT_COCKPIT_KEYS.direct };
+  for (const entry of (env.ORC_COCKPIT_KEYS ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
+    const split = entry.indexOf('=');
+    const action = entry.slice(0, split).trim();
+    const key = entry.slice(split + 1).trim();
+    if (split < 0 || !(COCKPIT_ACTIONS as readonly string[]).includes(action)) {
+      problems.push(`ORC_COCKPIT_KEYS: unknown entry '${entry}' (expected <action>=<key>, actions: ${COCKPIT_ACTIONS.join(', ')})`);
+      continue;
+    }
+    const name = action as CockpitAction;
+    if (key.toLowerCase() === 'none') direct[name] = null;
+    else if (isDirectKeyName(key)) direct[name] = key;
+    else problems.push(`ORC_COCKPIT_KEYS: '${key}' cannot be the ${name} key (a function key F1-F12, or a C- or M- key); using ${direct[name] ?? 'none'}`);
+  }
+  const taken = new Set([prefix.toLowerCase()]);
+  for (const action of COCKPIT_ACTIONS) {
+    const key = direct[action];
+    if (key == null) continue;
+    if (taken.has(key.toLowerCase())) {
+      problems.push(`ORC_COCKPIT_KEYS: ${key} is already the prefix or another action's key; ${action} has no direct key`);
+      direct[action] = null;
+    } else {
+      taken.add(key.toLowerCase());
+    }
+  }
+  return { keys: { prefix, direct }, problems };
+}
+
+/** How a tmux key name reads in a hint: `C-x` as `Ctrl-x`, `M-x` as `Alt-x`. */
+function keyLabel(key: string): string {
+  return key.replace(/^((?:[CMS]-)+)(?=.)/, (mods) => mods.replace(/C-/g, 'Ctrl-').replace(/M-/g, 'Alt-').replace(/S-/g, 'Shift-'));
+}
+
 /** How to get around, shown on attach and in the status line. */
-export const COCKPIT_KEYS = 'Ctrl-] o: switch pane | Ctrl-] n/p: next/previous tab | Ctrl-] d: detach';
+export function cockpitKeysHint(keys: CockpitKeys): string {
+  const prefix = keyLabel(keys.prefix);
+  const tabs = COCKPIT_ACTIONS.slice(0, 9).map((action) => keys.direct[action]).filter((key): key is string => key != null);
+  return [
+    ...(tabs.length > 0 ? [`${tabs.length > 1 ? `${keyLabel(tabs[0])}-${keyLabel(tabs.at(-1)!)}` : keyLabel(tabs[0])}: tab`] : []),
+    ...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: dashboard`] : []),
+    `${prefix} o: switch pane`,
+    `${prefix} n/p: next/previous tab`,
+    `${prefix} d: detach`,
+  ].join(' | ');
+}
+
+/** What a direct key does: select tab N (window index N, base-index 1), or focus the dashboard pane (the rightmost). */
+function directKeyCommand(action: CockpitAction): string[] {
+  return action.startsWith('tab') ? ['select-window', '-t', `:=${action.slice(3)}`] : ['select-pane', '-t', '{right}'];
+}
+
+/** Server options recording the keys orc bound, so a later reattach can unbind them first. */
+const PREFIX_OPTION = '@orc_cockpit_prefix';
+const DIRECT_OPTION = '@orc_cockpit_direct';
+
+/** The keys an earlier cockpit bound; a cockpit from before configurable keys records none and used `C-]`. */
+export interface BoundCockpitKeys { prefix: string; direct: string[] }
+
+/**
+ * The commands that set the cockpit's keys and mouse, unbinding what `bound`
+ * says an earlier run bound: the prefix (and its send-prefix binding), the
+ * direct keys in the root table, tabs numbered from 1 with no gaps, and the hint
+ * in the status line.
+ */
+export function cockpitKeyOptions(keys: CockpitKeys, bound: BoundCockpitKeys | null): string[][] {
+  const hint = cockpitKeysHint(keys);
+  const direct = COCKPIT_ACTIONS.flatMap((action) => {
+    const key = keys.direct[action];
+    return key ? [{ action, key }] : [];
+  });
+  return [
+    ...(bound ? [['unbind-key', '-q', bound.prefix], ...bound.direct.map((key) => ['unbind-key', '-q', '-n', key])] : []),
+    ['set-option', '-g', 'prefix', keys.prefix],
+    ['set-option', '-g', 'prefix2', 'None'],
+    ['unbind-key', '-q', 'C-b'],
+    ['bind-key', keys.prefix, 'send-prefix'],
+    ...direct.map(({ action, key }) => ['bind-key', '-n', key, ...directKeyCommand(action)]),
+    ['set-option', '-g', PREFIX_OPTION, keys.prefix],
+    ['set-option', '-g', DIRECT_OPTION, direct.map(({ key }) => key).join(' ')],
+    // A click focuses a pane or selects a tab; the default mouse bindings pass events on to a pane that asks for them.
+    ['set-option', '-g', 'mouse', 'on'],
+    // Tab N is window N: prefix 1-9 and the direct tab keys agree, and closing a tab closes the gap.
+    ['set-option', '-g', 'base-index', '1'],
+    ['set-option', '-g', 'renumber-windows', 'on'],
+    ['set-option', '-g', 'status-left', '[orc] '],
+    ['set-option', '-g', 'status-right', hint],
+    ['set-option', '-g', 'status-right-length', String(hint.length + 2)],
+  ];
+}
+
+/** The keys a running cockpit's server options record; `C-]` and no direct keys for one from before they did. */
+function boundCockpitKeys(): BoundCockpitKeys {
+  const show = (option: string) => cockpitTmux(['show-options', '-gqv', option]).stdout?.trim() ?? '';
+  const prefix = show(PREFIX_OPTION);
+  return { prefix: prefix || LEGACY_PREFIX, direct: show(DIRECT_OPTION).split(' ').filter(Boolean) };
+}
 /** The dashboard pane is a sidebar: a quarter of the window, kept within these columns (it is laid out for 40). */
 const DASHBOARD_MIN_COLUMNS = 40;
 const DASHBOARD_MAX_COLUMNS = 60;
@@ -131,19 +278,13 @@ function commandList(commands: string[][]): string[] {
 }
 
 /** The cockpit server's global options, set before its first session is created. */
-export function cockpitServerOptions(options: { trueColor: boolean; terminal: string }): string[][] {
+export function cockpitServerOptions(options: { trueColor: boolean; terminal: string; keys: CockpitKeys }): string[][] {
   return [
-    ['set-option', '-g', 'prefix', COCKPIT_PREFIX],
-    ['set-option', '-g', 'prefix2', 'None'],
-    ['unbind-key', 'C-b'],
-    ['bind-key', COCKPIT_PREFIX, 'send-prefix'],
     // Esc reaches the provider CLI without tmux's default half-second wait.
     ['set-option', '-g', 'escape-time', '10'],
     ['set-option', '-g', 'default-terminal', options.terminal],
     ...(options.trueColor ? [['set-option', '-as', 'terminal-features', ',*:RGB']] : []),
-    ['set-option', '-g', 'status-left', '[orc] '],
-    ['set-option', '-g', 'status-right', COCKPIT_KEYS],
-    ['set-option', '-g', 'status-right-length', String(COCKPIT_KEYS.length + 2)],
+    ...cockpitKeyOptions(options.keys, null),
   ];
 }
 
@@ -243,6 +384,7 @@ export function ensureCockpitWindow(spec: {
   master: CockpitMaster;
   watchCommand: string[];
   options: CockpitOptions;
+  keys: CockpitKeys;
   size?: { columns?: number; rows?: number };
 }): CockpitWindowOutcome {
   const { project, master, options } = spec;
@@ -255,7 +397,7 @@ export function ensureCockpitWindow(spec: {
     const columns = spec.size?.columns || DEFAULT_SIZE.columns;
     const rows = spec.size?.rows || DEFAULT_SIZE.rows;
     const created = cockpitTmux(commandList([
-      ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal() }),
+      ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal(), keys: spec.keys }),
       ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), ...newPane],
     ]));
     if (!created.error && created.status === 0) {
@@ -266,6 +408,8 @@ export function ensureCockpitWindow(spec: {
     // Another start-session created the cockpit first: add this project's tab to it.
     if (!hasCockpit()) throw created.error ?? new Error(`tmux new-session failed: ${(created.stderr || '').trim() || `exit ${created.status}`}`);
   }
+  // A running cockpit, maybe created with other keys (or before they were configurable): apply these, and number its tabs from 1.
+  cockpitTmuxOrThrow(commandList([...cockpitKeyOptions(spec.keys, boundCockpitKeys()), ['move-window', '-r', '-t', `=${COCKPIT_SESSION}`]]));
 
   const existing = cockpitWindows().find((window) => window.projectId === project.id);
   if (existing) {
@@ -333,7 +477,7 @@ export function agentWindowName(projectName: string, agentId: string): string {
 
 /**
  * An agent tab's script: run the stream; when it ends (the agent's session
- * ended, the stream fell behind, or Ctrl-] Ctrl-] detached), say so and wait:
+ * ended, the stream fell behind, or its own Ctrl-] detached it), say so and wait:
  * Enter closes the tab, `r` reconnects. Closing the tab only ends the stream;
  * the agent's session keeps running.
  */

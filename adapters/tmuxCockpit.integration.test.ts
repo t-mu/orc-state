@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import {
-  COCKPIT_PREFIX, COCKPIT_SOCKET, ensureCockpitWindow, openAgentTab, switchToMasterTab, type CockpitMaster,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, ensureCockpitWindow, openAgentTab, resolveCockpitKeys, switchToMasterTab, type CockpitKeys, type CockpitMaster,
 } from './tmuxCockpit.ts';
 
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
@@ -31,8 +31,9 @@ async function waitFor(check: () => boolean, timeoutMs = 8_000): Promise<void> {
 const capture = (pane: string) => tmux(COCKPIT_SOCKET, ['capture-pane', '-p', '-t', pane]).stdout;
 const cockpit = (args: string[]) => tmux(COCKPIT_SOCKET, args).stdout.trim();
 
-function open(projectId: string, master: CockpitMaster) {
+function open(projectId: string, master: CockpitMaster, keys: CockpitKeys = DEFAULT_COCKPIT_KEYS) {
   return ensureCockpitWindow({
+    keys,
     project: { id: projectId, name: `project-${projectId}`, root: tmpdir(), env: { ORC_PROJECT_ID: projectId } },
     master,
     watchCommand: ['/bin/sh', '-c', 'echo "DASHBOARD $ORC_PROJECT_ID"; exec sleep 600'],
@@ -63,7 +64,15 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     const masterA = { agentId: 'master', socket: MASTER_SOCKETS[0], session: 'master-a' };
 
     expect(open('a', masterA)).toBe('created-session');
-    expect(cockpit(['show-options', '-gv', 'prefix'])).toBe(COCKPIT_PREFIX);
+    expect(cockpit(['show-options', '-gv', 'prefix'])).toBe('F12');
+    expect(cockpit(['show-options', '-gv', 'mouse'])).toBe('on');
+    // Tab 1 is window 1, as F1 and prefix 1 select it.
+    expect(cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_index}'])).toBe('1');
+    expect(cockpit(['list-keys', '-T', 'root', 'F1'])).toContain('select-window -t :=1');
+    expect(cockpit(['list-keys', '-T', 'root', 'F10'])).toMatch(/select-pane -t "?\{right\}"?/);
+    expect(cockpit(['list-keys', '-T', 'prefix', 'F12'])).toContain('send-prefix');
+    // A click focuses the pane and is still passed on to the master pane's own program.
+    expect(cockpit(['list-keys', '-T', 'root', 'MouseDown1Pane'])).toContain('send-keys -M');
     const [window] = cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_id}']).split('\n');
     const [masterPane, dashboardPane] = panes(window);
     expect(masterPane.endsWith(' 1')).toBe(true);
@@ -89,6 +98,35 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     const rebuilt = panes(window);
     expect(rebuilt).toHaveLength(2);
     expect(rebuilt[0]).toBe(`${masterPane.split(' ')[0]} 1`);
+  });
+
+  it('applies the current keys when reattaching to a cockpit created with other keys', () => {
+    startFakeMaster(MASTER_SOCKETS[0], 'master-a', 'MASTER-A');
+    startFakeMaster(MASTER_SOCKETS[1], 'master-b', 'MASTER-B');
+    const masterA = { agentId: 'master', socket: MASTER_SOCKETS[0], session: 'master-a' };
+    open('a', masterA);
+    open('b', { agentId: 'master', socket: MASTER_SOCKETS[1], session: 'master-b' });
+    // Make it a cockpit from before configurable keys: Ctrl-] prefix, nothing recorded, tabs numbered from 0 with a gap.
+    for (const args of [
+      ['set-option', '-gu', '@orc_cockpit_prefix'], ['set-option', '-gu', '@orc_cockpit_direct'],
+      ['set-option', '-g', 'prefix', 'C-]'], ['bind-key', 'C-]', 'send-prefix'], ['set-option', '-g', 'mouse', 'off'],
+      ['move-window', '-s', '=cockpit:1', '-t', '=cockpit:0'], ['move-window', '-s', '=cockpit:2', '-t', '=cockpit:5'],
+    ]) expect(tmux(COCKPIT_SOCKET, args).status).toBe(0);
+
+    expect(open('a', masterA)).toBe('existing');
+    expect(cockpit(['show-options', '-gv', 'prefix'])).toBe('F12');
+    expect(cockpit(['show-options', '-gv', 'mouse'])).toBe('on');
+    expect(tmux(COCKPIT_SOCKET, ['list-keys', '-T', 'prefix', 'C-]']).status).not.toBe(0);
+    expect(cockpit(['list-keys', '-T', 'root', 'F1'])).toContain('select-window -t :=1');
+    expect(cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_index}']).split('\n')).toEqual(['1', '2']);
+    expect(cockpit(['show-options', '-gv', '@orc_cockpit_direct'])).toBe('F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11');
+
+    // Recorded keys are unbound on the next reattach with other keys.
+    open('a', masterA, resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'C-a', ORC_COCKPIT_KEYS: 'dashboard=C-F10' }).keys);
+    expect(tmux(COCKPIT_SOCKET, ['list-keys', '-T', 'prefix', 'F12']).status).not.toBe(0);
+    expect(tmux(COCKPIT_SOCKET, ['list-keys', '-T', 'root', 'F10']).status).not.toBe(0);
+    expect(cockpit(['list-keys', '-T', 'root', 'C-F10'])).toMatch(/select-pane -t "?\{right\}"?/);
+    expect(cockpit(['list-keys', '-T', 'prefix', 'C-a'])).toContain('send-prefix');
   });
 
   it('adds a tab for a second project, and waits for a master that stopped', async () => {

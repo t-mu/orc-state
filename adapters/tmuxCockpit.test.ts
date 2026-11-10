@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_PREFIX, COCKPIT_SOCKET, agentTabScript, agentWindowName, cockpitAttachCommand, cockpitServerEnv, cockpitServerOptions, dashboardPaneScript,
-  dashboardPaneWidth, insideCockpit, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, agentTabScript, agentWindowName, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint, cockpitServerEnv,
+  cockpitServerOptions, dashboardPaneScript, dashboardPaneWidth, insideCockpit, isTmuxKeyName, resolveCockpitKeys, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands,
 } from './tmuxCockpit.ts';
 
 const originalBin = process.env.ORC_TMUX_BIN;
@@ -81,22 +81,98 @@ describe('dashboardPaneScript', () => {
   });
 });
 
+describe('resolveCockpitKeys', () => {
+  it('defaults to F12 and function keys, none of them Ctrl-], Alt or an AltGr character', () => {
+    const { keys, problems } = resolveCockpitKeys({});
+    expect(problems).toEqual([]);
+    expect(keys).toEqual(DEFAULT_COCKPIT_KEYS);
+    expect(keys.prefix).toBe('F12');
+    expect(Object.values(keys.direct)).toEqual(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11']);
+  });
+
+  it('takes the prefix and direct keys from the environment', () => {
+    const { keys, problems } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: ' C-a ', ORC_COCKPIT_KEYS: 'tab1=M-1, dashboard=C-F10,attention=none' });
+    expect(problems).toEqual([]);
+    expect(keys.prefix).toBe('C-a');
+    expect(keys.direct).toMatchObject({ tab1: 'M-1', tab2: 'F2', dashboard: 'C-F10', attention: null });
+  });
+
+  it('reports invalid keys and entries and keeps the defaults', () => {
+    const { keys, problems } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'Ctrl-]', ORC_COCKPIT_KEYS: 'tab1=a,tab2=Hyper-x,bogus=F3,tab4' });
+    expect(keys).toEqual(DEFAULT_COCKPIT_KEYS);
+    expect(problems).toEqual([
+      "ORC_COCKPIT_PREFIX: unknown key 'Ctrl-]'; using F12",
+      "ORC_COCKPIT_KEYS: 'a' cannot be the tab1 key (a function key F1-F12, or a C- or M- key); using F1",
+      "ORC_COCKPIT_KEYS: 'Hyper-x' cannot be the tab2 key (a function key F1-F12, or a C- or M- key); using F2",
+      expect.stringContaining("unknown entry 'bogus=F3'"),
+      expect.stringContaining("unknown entry 'tab4'"),
+    ]);
+  });
+
+  it('drops a direct key that is the prefix or another action\'s key', () => {
+    const { keys, problems } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'F1', ORC_COCKPIT_KEYS: 'attention=F10' });
+    expect(keys.direct).toMatchObject({ tab1: null, dashboard: 'F10', attention: null });
+    expect(problems).toEqual([
+      "ORC_COCKPIT_KEYS: F1 is already the prefix or another action's key; tab1 has no direct key",
+      "ORC_COCKPIT_KEYS: F10 is already the prefix or another action's key; attention has no direct key",
+    ]);
+  });
+});
+
+describe('isTmuxKeyName', () => {
+  it('accepts tmux key names and rejects the rest', () => {
+    for (const key of ['F12', 'f5', 'C-]', 'M-x', 'C-M-Left', 'PageUp', '&']) expect(isTmuxKeyName(key)).toBe(true);
+    for (const key of ['', 'F13', 'Ctrl-a', 'C-', 'ö', 'two']) expect(isTmuxKeyName(key)).toBe(false);
+  });
+});
+
+describe('cockpitKeysHint', () => {
+  it('names the default keys', () => {
+    expect(cockpitKeysHint(DEFAULT_COCKPIT_KEYS))
+      .toBe('F1-F9: tab | F10: dashboard | F12 o: switch pane | F12 n/p: next/previous tab | F12 d: detach');
+  });
+
+  it('spells out modifiers and leaves out unbound keys', () => {
+    const direct = Object.fromEntries(Object.keys(DEFAULT_COCKPIT_KEYS.direct).map((action) => [action, null])) as typeof DEFAULT_COCKPIT_KEYS.direct;
+    expect(cockpitKeysHint({ prefix: 'C-a', direct: { ...direct, tab1: 'M-1' } }))
+      .toBe('Alt-1: tab | Ctrl-a o: switch pane | Ctrl-a n/p: next/previous tab | Ctrl-a d: detach');
+  });
+});
+
 describe('cockpitServerOptions', () => {
-  it('claims only its own prefix and passes Ctrl-b through', () => {
-    const options = cockpitServerOptions({ trueColor: false, terminal: 'tmux-256color' });
-    expect(options).toContainEqual(['set-option', '-g', 'prefix', COCKPIT_PREFIX]);
+  it('claims only its prefix and direct keys, passes Ctrl-b through and turns the mouse on', () => {
+    const options = cockpitServerOptions({ trueColor: false, terminal: 'tmux-256color', keys: DEFAULT_COCKPIT_KEYS });
+    expect(options).toContainEqual(['set-option', '-g', 'prefix', 'F12']);
     expect(options).toContainEqual(['set-option', '-g', 'prefix2', 'None']);
-    expect(options).toContainEqual(['unbind-key', 'C-b']);
-    expect(options).toContainEqual(['bind-key', COCKPIT_PREFIX, 'send-prefix']);
+    expect(options).toContainEqual(['unbind-key', '-q', 'C-b']);
+    expect(options).toContainEqual(['bind-key', 'F12', 'send-prefix']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F1', 'select-window', '-t', ':=1']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F9', 'select-window', '-t', ':=9']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F10', 'select-pane', '-t', '{right}']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F11', 'select-pane', '-t', '{right}']);
+    expect(options).toContainEqual(['set-option', '-g', 'mouse', 'on']);
+    expect(options).toContainEqual(['set-option', '-g', 'base-index', '1']);
     expect(options).toContainEqual(['set-option', '-g', 'default-terminal', 'tmux-256color']);
-    // Mouse stays at tmux's default (off), so the terminal handles it as for a direct attach.
-    expect(options.flat()).not.toContain('mouse');
+    expect(options.flat()).not.toContain('C-]');
     expect(options.flat()).not.toContain('terminal-features');
+    // A new cockpit has nothing to unbind but tmux's own prefix.
+    expect(options.filter((command) => command[0] === 'unbind-key')).toEqual([['unbind-key', '-q', 'C-b']]);
   });
 
   it('adds RGB for a truecolour terminal', () => {
-    expect(cockpitServerOptions({ trueColor: true, terminal: 'tmux-256color' }))
+    expect(cockpitServerOptions({ trueColor: true, terminal: 'tmux-256color', keys: DEFAULT_COCKPIT_KEYS }))
       .toContainEqual(['set-option', '-as', 'terminal-features', ',*:RGB']);
+  });
+});
+
+describe('cockpitKeyOptions', () => {
+  it('unbinds the keys an earlier cockpit bound before binding these, and records them', () => {
+    const options = cockpitKeyOptions(DEFAULT_COCKPIT_KEYS, { prefix: 'C-]', direct: ['F3', 'M-1'] });
+    expect(options.slice(0, 3)).toEqual([['unbind-key', '-q', 'C-]'], ['unbind-key', '-q', '-n', 'F3'], ['unbind-key', '-q', '-n', 'M-1']]);
+    expect(options).toContainEqual(['bind-key', '-n', 'F3', 'select-window', '-t', ':=3']);
+    expect(options).toContainEqual(['set-option', '-g', '@orc_cockpit_prefix', 'F12']);
+    expect(options).toContainEqual(['set-option', '-g', '@orc_cockpit_direct', 'F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11']);
+    expect(options).toContainEqual(['set-option', '-g', 'status-right', cockpitKeysHint(DEFAULT_COCKPIT_KEYS)]);
   });
 });
 

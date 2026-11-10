@@ -150,6 +150,7 @@ interface CockpitWindowCall {
   project: { id: string; name: string; root: string; env: Record<string, string> };
   master: { agentId: string; socket: string; session: string };
   watchCommand: string[];
+  keys: { prefix: string; direct: Record<string, string | null> };
 }
 
 /**
@@ -224,8 +225,8 @@ function mockTmux(spawnMock: ReturnType<typeof vi.fn>, { available = true } = {}
     }),
     createTmuxAdapter: vi.fn().mockImplementation(() => ({ stop: tmuxFake.stop })),
   }));
-  vi.doMock('../adapters/tmuxCockpit.ts', () => ({
-    COCKPIT_KEYS: 'Ctrl-] d: detach',
+  vi.doMock('../adapters/tmuxCockpit.ts', async () => ({
+    ...await vi.importActual<typeof import('../adapters/tmuxCockpit.ts')>('../adapters/tmuxCockpit.ts'),
     ensureCockpitWindow: vi.fn().mockImplementation((spec: CockpitWindowCall) => {
       if (tmuxFake.cockpitFails) throw new Error('cockpit server refused');
       tmuxFake.cockpitWindows.push(spec);
@@ -1125,6 +1126,35 @@ describe('cli/start-session.ts', () => {
       expect(window.project.env).toEqual({ ORC_PROJECT_ID: process.env.ORC_PROJECT_ID, ORC_STATE_DIR: dir });
       expect(window.watchCommand.at(-1)).toBe('watch');
       expect(window.watchCommand[1]).toMatch(/cli\/orc\.(ts|js)$/);
+      expect(window.keys.prefix).toBe('F12');
+    });
+
+    it('opens the cockpit with the keys ORC_COCKPIT_PREFIX and ORC_COCKPIT_KEYS set, reporting invalid ones', async () => {
+      seedState();
+      mockSpawn();
+      withTty();
+      mockBinaryCheck(true);
+      const warnings: string[] = [];
+      vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => warnings.push(args.join(' ')));
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => lines.push(args.join(' ')));
+      setEnv(dir);
+      seedCoordinatorRunning();
+      process.env.ORC_COCKPIT_PREFIX = 'C-a';
+      process.env.ORC_COCKPIT_KEYS = 'dashboard=F7,tab7=none,attention=ö';
+      try {
+        process.argv = ['node', 'start-session.ts', '--provider=claude', '--agent-id=master'];
+        await import('./start-session.ts');
+      } finally {
+        delete process.env.ORC_COCKPIT_PREFIX;
+        delete process.env.ORC_COCKPIT_KEYS;
+      }
+
+      const [window] = tmuxFake.cockpitWindows;
+      expect(window.keys.prefix).toBe('C-a');
+      expect(window.keys.direct).toMatchObject({ dashboard: 'F7', tab7: null, attention: 'F11' });
+      expect(warnings.join('\n')).toContain("Warning: ORC_COCKPIT_KEYS: 'ö' cannot be the attention key");
+      expect(lines.join('\n')).toContain('Ctrl-a d: detach');
     });
 
     it('attaches straight to the master with --no-cockpit', async () => {
