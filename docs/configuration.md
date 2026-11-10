@@ -102,6 +102,17 @@ Canonical: [contracts.md → Local Control API](contracts.md#local-control-api).
 | `ORC_WORKER_SANDBOX_NETWORK` | `worker_pool.sandbox_network` | `restricted` |
 | `ORC_SESSIONS_RESUME` | `sessions.resume` | `auto` |
 
+### Cockpit keys
+
+Per user, for every project: `orc start-session` reads them each time it opens or reattaches to the cockpit and applies them to the running cockpit. Key names are tmux's (`F1`–`F12`, optional `C-`/`M-`/`S-` modifiers; `C-a` is Ctrl-a, `M-1` Alt-1). An invalid name or entry is reported as a warning and the default is kept.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ORC_COCKPIT_PREFIX` | The cockpit's prefix: prefix + `d` detach, `o` switch pane, `n`/`p` next/previous tab, `1`–`9` select a tab, `&` close the tab; pressed twice it reaches the pane | `F12` |
+| `ORC_COCKPIT_KEYS` | Direct keys (no prefix), comma-separated `<action>=<key>`, overriding only the actions named: `tab1`–`tab9` select that tab, `dashboard` focuses the dashboard pane, `attention` (for now also the dashboard pane). `none` unbinds one. A direct key must be a function key or carry `C-` or `M-`; one that repeats the prefix or another action's key is dropped | `tab1=F1,…,tab9=F9,dashboard=F10,attention=F11` |
+
+Example: `ORC_COCKPIT_PREFIX=C-a ORC_COCKPIT_KEYS='dashboard=F12,attention=none' orc start-session`.
+
 ### Set for launched sessions
 
 | Variable | Meaning |

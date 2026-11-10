@@ -23,7 +23,7 @@
  *   4. Open the cockpit (adapters/tmuxCockpit.ts) on this project's master and
  *      attach this terminal to it; `--no-cockpit` attaches to the master directly
  *
- * Detaching (Ctrl-] d or the master's Ctrl-b d) or closing the terminal leaves the
+ * Detaching (the cockpit's prefix d, F12 d by default, or the master's Ctrl-b d) or closing the terminal leaves the
  * cockpit and the master running; the master's credential is revoked when it
  * exits or by `orc kill-all`.
  */
@@ -57,7 +57,7 @@ import {
 import { checkAndInstallBinary, probeProviderAuth, PROVIDER_BINARIES } from '../lib/binaryCheck.ts';
 import { checkTmux, createTmuxAdapter, inspectTmuxSession, startTmuxSession, tmuxAttachCommand, tmuxBinary, tmuxSessionTarget } from '../adapters/tmux.ts';
 import {
-  COCKPIT_KEYS, cockpitAttachCommand, ensureCockpitWindow, insideCockpit, terminalHasTrueColor,
+  cockpitAttachCommand, cockpitKeysHint, ensureCockpitWindow, insideCockpit, resolveCockpitKeys, terminalHasTrueColor,
 } from '../adapters/tmuxCockpit.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { listSupervisedSessions, MASTER_RETIRE_FAILURES, retireMaster, type MasterProbe } from '../lib/sessionSupervisor.ts';
@@ -273,12 +273,15 @@ function attachMaster(agent: NonNullable<typeof master>, sessionName: string) {
 function openCockpit(agent: NonNullable<typeof master>, sessionName: string): boolean {
   const project = ACTIVE_PROJECT!;
   const { socket, session } = tmuxSessionTarget(sessionName, agent.provider_ref);
+  const { keys, problems } = resolveCockpitKeys();
+  for (const problem of problems) console.warn(`Warning: ${problem}.`);
   try {
     ensureCockpitWindow({
       project: { id: project.id, name: project.name, root: resolveInvocationCwd(), env: orcStateEnv() },
       master: { agentId: agent.agent_id, socket, session },
       watchCommand: [process.execPath, runtimeModulePath('./orc.ts', './orc.js'), 'watch'],
       options: { tmux: tmuxBinary(), trueColor: terminalHasTrueColor() },
+      keys,
       size: { columns: process.stdout.columns, rows: process.stdout.rows },
     });
   } catch (error) {
@@ -289,7 +292,7 @@ function openCockpit(agent: NonNullable<typeof master>, sessionName: string): bo
     console.log(`\nSwitched the cockpit to ${project.name}.`);
     return true;
   }
-  console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${COCKPIT_KEYS}.`);
+  console.log(`\nOpening the cockpit on master '${agent.agent_id}' (${project.name}). ${cockpitKeysHint(keys)}.`);
   const { TMUX: _tmux, ...env } = process.env;
   const { command, args } = cockpitAttachCommand();
   const result = spawnSync(command, args, { stdio: 'inherit', env });
