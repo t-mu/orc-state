@@ -11,6 +11,7 @@ import type { Claim } from '../types/claims.ts';
 import type { Backlog } from '../types/backlog.ts';
 import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
 import { computeWorkerCapacity } from './workerCapacity.ts';
+import { tmuxSessionTarget } from './tmuxNames.ts';
 import { readProjectDescriptor, type ActiveProject, type ProjectSelectedBy } from './projectContext.ts';
 import { formatProjectIdentity } from './projectHealth.ts';
 import { latestHookActivityTs, readRunActivity, type RunActivityMap, type RunActivitySnapshot } from './runActivityStore.ts';
@@ -304,8 +305,25 @@ function progressedSince(progressAt: string, runEvents: RunAttentionEvents, hook
   return isCommitToolEvent({ type: 'tool', tool, brief: hookSnapshot.last_tool_brief ?? '', ts }) && later(progressAt, ts);
 }
 
+/**
+ * Where an agent's tmux session runs: orc's private server (`tmux -L <tmux_socket>`)
+ * and the session in it. Both null when the agent has no session or a non-tmux one (`app:`).
+ */
+export interface TmuxTarget {
+  tmux_socket: string | null;
+  tmux_session: string | null;
+}
+
+/** The agent's tmux target from its session handle and provider_ref; recorded names win over computed ones. */
+export function agentTmuxTarget(stateDir: string, agent: Pick<Agent, 'session_handle' | 'provider_ref'>): TmuxTarget {
+  const handle = agent.session_handle;
+  if (!handle?.startsWith('tmux:') || handle.length <= 5) return { tmux_socket: null, tmux_session: null };
+  const { socket, session } = tmuxSessionTarget(stateDir, handle.slice(5), agent.provider_ref);
+  return { tmux_socket: socket, tmux_session: session };
+}
+
 /** One worker slot in `StatusView.worker_capacity.slots`. */
-export interface SlotSummary {
+export interface SlotSummary extends TmuxTarget {
   agent_id: string;
   role: Agent['role'];
   provider: string;
@@ -322,7 +340,7 @@ export interface SlotSummary {
 }
 
 /** One scout in `StatusView.scouts`. */
-export interface ScoutSummary {
+export interface ScoutSummary extends TmuxTarget {
   agent_id: string;
   provider: string;
   model: string | null;
@@ -332,6 +350,7 @@ export interface ScoutSummary {
 }
 
 export function buildSlotSummary(
+  stateDir: string,
   workerSlots: Agent[],
   activeClaimByAgentId: Map<string, ReturnType<typeof buildActiveClaimMetrics>[number] & { attention?: AgentAttention | null }>,
 ): SlotSummary[] {
@@ -344,6 +363,7 @@ export function buildSlotSummary(
       model: slot.model ?? null,
       status: slot.status,
       session_handle: slot.session_handle ?? null,
+      ...agentTmuxTarget(stateDir, slot),
       slot_state: classifyWorkerSlot(slot, activeClaim),
       active_run_id: activeClaim?.run_id ?? null,
       active_task_ref: activeClaim?.task_ref ?? null,
@@ -356,13 +376,14 @@ export function buildSlotSummary(
 }
 
 /** Scouts are ad-hoc sessions, not capacity: list each one by id and state. */
-export function buildScoutList(scoutAgents: Agent[]): ScoutSummary[] {
+export function buildScoutList(stateDir: string, scoutAgents: Agent[]): ScoutSummary[] {
   return scoutAgents.map((agent) => ({
     agent_id: agent.agent_id,
     provider: agent.provider,
     model: agent.model ?? null,
     status: agent.status,
     session_handle: agent.session_handle ?? null,
+    ...agentTmuxTarget(stateDir, agent),
     launched_at: agent.registered_at ?? null,
   }));
 }
@@ -394,10 +415,10 @@ export type StatusView = {
     total: number; masters: number; workers: number; running: number; idle: number; offline: number;
     list: Agent[];
   };
-  master: {
+  master: ({
     agent_id: string; provider: string; model: string | null; status: string;
     session_handle: string | null; last_heartbeat_at: string | null;
-  } | null;
+  } & TmuxTarget) | null;
   worker_capacity: {
     configured_slots: number; provider: string; model: string | null | undefined;
     used_slots: number; available_slots: number; warming_slots: number; unavailable_slots: number;
@@ -517,8 +538,8 @@ export function buildStatus(
   );
   const liveWorkers = agents.filter((agent) => agent.role === 'worker');
   const scoutAgents = agents.filter((agent) => agent.role === 'scout');
-  const slotDetails = buildSlotSummary(liveWorkers, activeClaimByAgentId);
-  const scouts = buildScoutList(scoutAgents);
+  const slotDetails = buildSlotSummary(stateDir, liveWorkers, activeClaimByAgentId);
+  const scouts = buildScoutList(stateDir, scoutAgents);
   const dispatchReadyTasks = listDispatchReadyTasks(backlogFile);
   const capacity = computeWorkerCapacity(agents, workerPoolConfig.max_workers);
   const availableSlots = capacity.available;
@@ -559,6 +580,7 @@ export function buildStatus(
       model: master.model ?? null,
       status: master.status ?? 'unknown',
       session_handle: master.session_handle ?? null,
+      ...agentTmuxTarget(stateDir, master),
       last_heartbeat_at: master.last_heartbeat_at ?? null,
     } : null,
     worker_capacity: {

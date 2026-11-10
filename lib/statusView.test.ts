@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createTempStateDir, cleanupTempStateDir, seedProjectTasks } from '../test-fixtures/stateHelpers.ts';
 import { ATTENTION_PRECEDENCE, buildAgentStatus, buildStatus, deriveAttention, formatAgentStatus, formatStatus, withProjectSelection } from './statusView.ts';
 import { STALLED_RUN_IDLE_SECONDS } from './constants.ts';
+import { tmuxSessionName, tmuxSocketName } from './tmuxNames.ts';
 import { setRunInputState } from './claimManager.ts';
 import { formatProjectIdentity } from './projectHealth.ts';
 import { writeRunActivity } from './runActivityStore.ts';
@@ -112,9 +113,53 @@ describe('buildStatus', () => {
     expect(s.worker_capacity.slots.map((slot) => slot.agent_id)).toEqual(['amber-anchor']);
     expect(s.scout_capacity).toBeUndefined();
     expect(s.scouts).toEqual([
-      { agent_id: 'scout-1', provider: 'codex', model: null, status: 'running', session_handle: 'tmux:scout-1', launched_at: null },
-      { agent_id: 'scout-2', provider: 'claude', model: null, status: 'idle', session_handle: null, launched_at: '2026-01-01T00:00:00Z' },
+      {
+        agent_id: 'scout-1', provider: 'codex', model: null, status: 'running', session_handle: 'tmux:scout-1',
+        tmux_socket: tmuxSocketName(dir), tmux_session: tmuxSessionName('scout-1'), launched_at: null,
+      },
+      {
+        agent_id: 'scout-2', provider: 'claude', model: null, status: 'idle', session_handle: null,
+        tmux_socket: null, tmux_session: null, launched_at: '2026-01-01T00:00:00Z',
+      },
     ]);
+  });
+
+  it('carries each agent\'s tmux target: recorded provider_ref, computed, none, or non-tmux', () => {
+    const recorded = { tmux_socket: 'orc-recorded', tmux_session: 'orc-recorded-session' };
+    writeState({
+      agents: [
+        { agent_id: 'master', provider: 'claude', role: 'master', status: 'running', registered_at: '2026-01-01T00:00:00Z', session_handle: 'tmux:master', provider_ref: recorded } as Agent,
+        { agent_id: 'w-computed', provider: 'claude', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z', session_handle: 'tmux:w-computed', provider_ref: { transport: 'tmux' } } as Agent,
+        { agent_id: 'w-recorded', provider: 'claude', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z', session_handle: 'tmux:w-recorded', provider_ref: recorded } as Agent,
+        { agent_id: 'w-none', provider: 'claude', role: 'worker', status: 'idle', session_handle: null } as Agent,
+        { agent_id: 'w-app', provider: 'codex', role: 'worker', status: 'running', registered_at: '2026-01-01T00:00:00Z', session_handle: 'app:w-app', provider_ref: { transport: 'app-server', tmux_socket: 'x' } } as Agent,
+        { agent_id: 'scout-1', provider: 'codex', role: 'scout', status: 'running', session_handle: 'tmux:scout-1' } as Agent,
+        { agent_id: 'scout-2', provider: 'codex', role: 'scout', status: 'running', registered_at: '2026-01-01T00:00:00Z', session_handle: 'tmux:scout-2', provider_ref: recorded } as Agent,
+        { agent_id: 'scout-3', provider: 'codex', role: 'scout', status: 'running', session_handle: 'app:scout-3' } as Agent,
+      ],
+    });
+    writeConfig({ worker_pool: { max_workers: 4, provider: 'claude' } });
+    writeEvents([]);
+    const s = buildStatus(dir, { settings });
+    const target = (e: { tmux_socket: string | null; tmux_session: string | null } | null | undefined) =>
+      e ? { tmux_socket: e.tmux_socket, tmux_session: e.tmux_session } : undefined;
+    const computed = (id: string) => ({ tmux_socket: tmuxSocketName(dir), tmux_session: tmuxSessionName(id) });
+    const nulls = { tmux_socket: null, tmux_session: null };
+
+    expect(target(s.master)).toEqual(recorded);
+    const slots = new Map(s.worker_capacity.slots.map((slot) => [slot.agent_id, target(slot)]));
+    expect(slots.get('w-computed')).toEqual(computed('w-computed'));
+    expect(slots.get('w-recorded')).toEqual(recorded);
+    expect(slots.get('w-none')).toEqual(nulls);
+    expect(slots.get('w-app')).toEqual(nulls);
+    expect(s.scouts.map(target)).toEqual([computed('scout-1'), recorded, nulls]);
+  });
+
+  it('nulls the master target when the master has no session', () => {
+    writeState({ agents: [{ agent_id: 'master', provider: 'claude', role: 'master', status: 'offline' } as Agent] });
+    writeEvents([]);
+    const s = buildStatus(dir, { settings });
+    expect(s.master).toMatchObject({ tmux_socket: null, tmux_session: null });
   });
 
   it('counts tasks by status', () => {

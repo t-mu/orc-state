@@ -4,6 +4,7 @@
  *   ControlClient, ControlError, CONTROL_PROTOCOL_VERSION — local control API client (protocol v1)
  *   listProjects, RegistrySchemaError     — registered projects with control socket + coordinator liveness
  *   ProjectWatcher                        — every project's connection state, status and events, with reconnect
+ *   tmuxSessionTarget                     — an agent's tmux socket and session from a project's state directory
  *
  * Importing it has no side effects (no project resolution, registry access,
  * git calls or environment checks) and its module graph uses Node built-ins
@@ -23,7 +24,7 @@ export type { DurableCommand } from './lib/commandDelivery.ts';
 export type { SemanticMessage, SendMessageInput } from './lib/messageRouter.ts';
 export type { ControlSnapshot } from './lib/statusProjection.ts';
 export type { RunListRow, RunListState } from './lib/runList.ts';
-export type { ScoutSummary, SlotSummary, StatusView } from './lib/statusView.ts';
+export type { ScoutSummary, SlotSummary, StatusView, TmuxTarget } from './lib/statusView.ts';
 export type { TerminalRecord } from './lib/terminalBroker.ts';
 export type { LifecycleRequest, LifecycleResult } from './lib/workerLifecycle.ts';
 export type { OperatorOp, OperatorRequest } from './lib/operatorMutations.ts';
@@ -39,3 +40,4 @@ export { ProjectWatcher } from './lib/projectWatcher.ts';
 export type {
   ProjectConnectionState, ProjectWatchClient, ProjectWatcherOptions, ProjectWatchState, ProjectWatchUpdate, WatcherTimers,
 } from './lib/projectWatcher.ts';
+export { tmuxSessionTarget } from './lib/tmuxNames.ts';
