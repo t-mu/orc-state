@@ -150,6 +150,7 @@ interface CockpitWindowCall {
   project: { id: string; name: string; root: string; env: Record<string, string> };
   master: { agentId: string; socket: string; session: string };
   watchCommand: string[];
+  orc: string[];
   keys: { prefix: string; direct: Record<string, string | null> };
 }
 
@@ -1126,6 +1127,8 @@ describe('cli/start-session.ts', () => {
       expect(window.project.env).toEqual({ ORC_PROJECT_ID: process.env.ORC_PROJECT_ID, ORC_STATE_DIR: dir });
       expect(window.watchCommand.at(-1)).toBe('watch');
       expect(window.watchCommand[1]).toMatch(/cli\/orc\.(ts|js)$/);
+      // The cockpit keys run orc cockpit with the same orc.
+      expect(window.orc).toEqual(window.watchCommand.slice(0, -1));
       expect(window.keys.prefix).toBe('F12');
     });
 

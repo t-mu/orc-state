@@ -10,11 +10,17 @@
  *
  * The server starts with no config file (`-f /dev/null`). It claims only its
  * keys (`resolveCockpitKeys`: a prefix, F12 by default, and a few direct
- * function keys), all of them layout-safe; every other key, Ctrl-b included,
+ * function keys), all of them layout-safe, and its tab keys run `orc cockpit`
+ * (the tab model, lib/cockpitTabs.ts); every other key, Ctrl-b included,
  * reaches the focused pane. Mouse mode is on: a click focuses a pane or
  * selects a tab, and a pane whose program asks for the mouse still gets it.
  */
 import { spawnSync } from 'node:child_process';
+import {
+  EMPTY_COCKPIT_STATE, MASTER_TAB, closedTabs, openAgent, parseTabs, reconcileTabs, selectProject, selectTab, serializeTabs, shownTab,
+  type CockpitTabState, type OpenTab, type TabTransition,
+} from '../lib/cockpitTabs.ts';
+import { acquireLock, releaseLock } from '../lib/lock.ts';
 import { stripNestedProviderEnv } from '../lib/providerChildEnv.ts';
 import { shellQuote, tmuxBinary, tmuxSocketPath } from './tmux.ts';
 
@@ -25,12 +31,12 @@ export const COCKPIT_SESSION = 'cockpit';
 // ── Keys ─────────────────────────────────────────────────────────────────────
 // Defaults are function keys: they need no Option/Alt/AltGr on any keyboard layout.
 
-/** The direct keys' actions: `tab1`..`tab9` select that tab, `dashboard` focuses the dashboard pane, `attention` (for now) too. */
+/** The direct keys' actions: `tab1`..`tab9` select that tab of the active project, `dashboard` focuses the dashboard pane, `attention` shows the next agent needing attention. */
 export const COCKPIT_ACTIONS = ['tab1', 'tab2', 'tab3', 'tab4', 'tab5', 'tab6', 'tab7', 'tab8', 'tab9', 'dashboard', 'attention'] as const;
 export type CockpitAction = typeof COCKPIT_ACTIONS[number];
 
 export interface CockpitKeys {
-  /** The tmux prefix: prefix + d/o/n/p/&/1-9 as in tmux; pressed twice, it reaches the pane. */
+  /** The tmux prefix: prefix + d/o as in tmux, n/p/&/1-9 for the active project's tabs, N/P for projects; pressed twice, it reaches the pane. */
   prefix: string;
   /** Keys bound without the prefix; null leaves the action to the prefix table only. */
   direct: Record<CockpitAction, string | null>;
@@ -117,13 +123,35 @@ export function cockpitKeysHint(keys: CockpitKeys): string {
     ...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: dashboard`] : []),
     `${prefix} o: switch pane`,
     `${prefix} n/p: next/previous tab`,
+    `${prefix} N/P: project`,
     `${prefix} d: detach`,
   ].join(' | ');
 }
 
-/** What a direct key does: select tab N (window index N, base-index 1), or focus the dashboard pane (the rightmost). */
-function directKeyCommand(action: CockpitAction): string[] {
-  return action.startsWith('tab') ? ['select-window', '-t', `:=${action.slice(3)}`] : ['select-pane', '-t', '{right}'];
+/**
+ * A tmux `run-shell` command running `orc cockpit <args>` for the client that
+ * pressed the key, which shows the outcome in its message line. `orc` is the
+ * command that runs orc (node and its entry point).
+ */
+export function cockpitRunShell(orc: string[], args: string[]): string[] {
+  // run-shell expands formats: a `#` in a path must reach the shell as itself.
+  const command = [...orc, 'cockpit', ...args].map((part) => shellQuote(part).replace(/#/g, '##')).join(' ');
+  return ['run-shell', `${command} --client='#{client_name}'`];
+}
+
+/** What a direct key does: `orc cockpit tab N` or `orc cockpit attention`, or focus the dashboard pane (the rightmost). */
+function directKeyCommand(action: CockpitAction, orc: string[]): string[] {
+  if (action.startsWith('tab')) return cockpitRunShell(orc, ['tab', action.slice(3)]);
+  if (action === 'attention') return cockpitRunShell(orc, ['attention']);
+  return ['select-pane', '-t', '{right}'];
+}
+
+/** The prefix-table keys `orc cockpit` handles: the active project's tabs (n/p, 1-9, & closes) and the projects (N/P). */
+function prefixTabBindings(orc: string[]): string[][] {
+  return [
+    ['n', 'next'], ['p', 'prev'], ['&', 'close'], ['N', 'project next'], ['P', 'project prev'],
+    ...Array.from({ length: 9 }, (_, index) => [String(index + 1), `tab ${index + 1}`]),
+  ].map(([key, action]) => ['bind-key', key, ...cockpitRunShell(orc, action.split(' '))]);
 }
 
 /** Server options recording the keys orc bound, so a later reattach can unbind them first. */
@@ -139,7 +167,7 @@ export interface BoundCockpitKeys { prefix: string; direct: string[] }
  * direct keys in the root table, tabs numbered from 1 with no gaps, and the hint
  * in the status line.
  */
-export function cockpitKeyOptions(keys: CockpitKeys, bound: BoundCockpitKeys | null): string[][] {
+export function cockpitKeyOptions(keys: CockpitKeys, bound: BoundCockpitKeys | null, orc: string[]): string[][] {
   const hint = cockpitKeysHint(keys);
   const direct = COCKPIT_ACTIONS.flatMap((action) => {
     const key = keys.direct[action];
@@ -151,7 +179,8 @@ export function cockpitKeyOptions(keys: CockpitKeys, bound: BoundCockpitKeys | n
     ['set-option', '-g', 'prefix2', 'None'],
     ['unbind-key', '-q', 'C-b'],
     ['bind-key', keys.prefix, 'send-prefix'],
-    ...direct.map(({ action, key }) => ['bind-key', '-n', key, ...directKeyCommand(action)]),
+    ...direct.map(({ action, key }) => ['bind-key', '-n', key, ...directKeyCommand(action, orc)]),
+    ...prefixTabBindings(orc),
     ['set-option', '-g', PREFIX_OPTION, keys.prefix],
     ['set-option', '-g', DIRECT_OPTION, direct.map(({ key }) => key).join(' ')],
     // A click focuses a pane or selects a tab; the default mouse bindings pass events on to a pane that asks for them.
@@ -278,13 +307,13 @@ function commandList(commands: string[][]): string[] {
 }
 
 /** The cockpit server's global options, set before its first session is created. */
-export function cockpitServerOptions(options: { trueColor: boolean; terminal: string; keys: CockpitKeys }): string[][] {
+export function cockpitServerOptions(options: { trueColor: boolean; terminal: string; keys: CockpitKeys; orc: string[] }): string[][] {
   return [
     // Esc reaches the provider CLI without tmux's default half-second wait.
     ['set-option', '-g', 'escape-time', '10'],
     ['set-option', '-g', 'default-terminal', options.terminal],
     ...(options.trueColor ? [['set-option', '-as', 'terminal-features', ',*:RGB']] : []),
-    ...cockpitKeyOptions(options.keys, null),
+    ...cockpitKeyOptions(options.keys, null, options.orc),
   ];
 }
 
@@ -383,6 +412,8 @@ export function ensureCockpitWindow(spec: {
   project: CockpitProject;
   master: CockpitMaster;
   watchCommand: string[];
+  /** The command that runs orc (node and its entry point): the cockpit keys run `orc cockpit` with it. */
+  orc: string[];
   options: CockpitOptions;
   keys: CockpitKeys;
   size?: { columns?: number; rows?: number };
@@ -397,7 +428,7 @@ export function ensureCockpitWindow(spec: {
     const columns = spec.size?.columns || DEFAULT_SIZE.columns;
     const rows = spec.size?.rows || DEFAULT_SIZE.rows;
     const created = cockpitTmux(commandList([
-      ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal(), keys: spec.keys }),
+      ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal(), keys: spec.keys, orc: spec.orc }),
       ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), ...newPane],
     ]));
     if (!created.error && created.status === 0) {
@@ -409,7 +440,7 @@ export function ensureCockpitWindow(spec: {
     if (!hasCockpit()) throw created.error ?? new Error(`tmux new-session failed: ${(created.stderr || '').trim() || `exit ${created.status}`}`);
   }
   // A running cockpit, maybe created with other keys (or before they were configurable): apply these, and number its tabs from 1.
-  cockpitTmuxOrThrow(commandList([...cockpitKeyOptions(spec.keys, boundCockpitKeys()), ['move-window', '-r', '-t', `=${COCKPIT_SESSION}`]]));
+  cockpitTmuxOrThrow(commandList([...cockpitKeyOptions(spec.keys, boundCockpitKeys(), spec.orc), ['move-window', '-r', '-t', `=${COCKPIT_SESSION}`]]));
 
   const existing = cockpitWindows().find((window) => window.projectId === project.id);
   if (existing) {
@@ -470,6 +501,28 @@ export interface CockpitAgentTab {
   env: Record<string, string>;
 }
 
+/** Ids `orc watch` gives a state directory no registered project owns: `unregistered:<state dir>`. */
+export const UNREGISTERED_PROJECT_PREFIX = 'unregistered:';
+
+/** The project an agent tab belongs to, as the project list describes it. */
+export interface CockpitTabProject { project_id: string; name: string; state_dir: string; target_repo_root: string }
+
+/**
+ * The tab of `agentId`'s live terminal: `orc terminal <agent_id> --write` for
+ * its project (`--project=<id>`, or `ORC_STATE_DIR` for an unregistered one).
+ */
+export function cockpitAgentTab(agentId: string, project: CockpitTabProject, orc: string[]): CockpitAgentTab {
+  const unregistered = project.project_id.startsWith(UNREGISTERED_PROJECT_PREFIX);
+  return {
+    projectId: project.project_id,
+    projectName: project.name,
+    agentId,
+    root: project.target_repo_root,
+    command: [...orc, 'terminal', agentId, '--write', ...(unregistered ? [] : [`--project=${project.project_id}`])],
+    env: unregistered ? { ORC_STATE_DIR: project.state_dir } : {},
+  };
+}
+
 /** An agent tab's window name: `<project>/<agent_id>`. Tabs are found by their window options, never by name. */
 export function agentWindowName(projectName: string, agentId: string): string {
   return `${projectName}/${agentId}`;
@@ -519,18 +572,174 @@ export function planAgentTab(windows: CockpitTabWindow[], projectId: string, age
   return { action: 'open', after: own.at(-1)?.windowId ?? null };
 }
 
-function tabWindows(): CockpitTabWindow[] {
+interface TabWindow extends CockpitTabWindow {
+  /** The cockpit's current window. */
+  active: boolean;
+  /** A project tab's master pane (`@orc_master_pane`), empty on an agent tab. */
+  masterPane: string;
+}
+
+function tabWindows(): TabWindow[] {
   // tmux prints a tab in a format as `_`, so fields split on spaces; the project id goes last because an
   // unregistered one is a path, which may hold spaces. A window has either a project or an agent's project.
   const out = cockpitTmuxOrThrow(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F',
-    `#{window_id} [#{${AGENT_ID_OPTION}}] #{${PROJECT_OPTION}}#{${AGENT_PROJECT_OPTION}}`]);
+    `#{window_id} #{window_active} [#{${MASTER_PANE_OPTION}}] [#{${AGENT_ID_OPTION}}] #{${PROJECT_OPTION}}#{${AGENT_PROJECT_OPTION}}`]);
   return out.split('\n').filter(Boolean).map((line) => {
-    const match = /^(\S+) \[(\S*)\] (.*)$/.exec(line);
-    const [, windowId = '', agentId = '', project = ''] = match ?? [];
+    const match = /^(\S+) (\d) \[(\S*)\] \[(\S*)\] (.*)$/.exec(line);
+    const [, windowId = '', active = '', masterPane = '', agentId = '', project = ''] = match ?? [];
     return agentId
-      ? { windowId, projectId: '', agentProjectId: project, agentId }
-      : { windowId, projectId: project, agentProjectId: '', agentId: '' };
+      ? { windowId, active: active === '1', masterPane: '', projectId: '', agentProjectId: project, agentId }
+      : { windowId, active: active === '1', masterPane, projectId: project, agentProjectId: '', agentId: '' };
   });
+}
+
+/** The tab a window shows; null for a window that is no orc tab. */
+function windowTab(window: CockpitTabWindow): OpenTab | null {
+  if (window.agentId) return window.agentProjectId ? { projectId: window.agentProjectId, agentId: window.agentId } : null;
+  return window.projectId ? { projectId: window.projectId, agentId: null } : null;
+}
+
+function findTabWindow(windows: TabWindow[], tab: OpenTab): TabWindow | undefined {
+  return windows.find((window) => {
+    const shown = windowTab(window);
+    return shown?.projectId === tab.projectId && shown.agentId === tab.agentId;
+  });
+}
+
+// ── Tab state ────────────────────────────────────────────────────────────────
+// The view state (lib/cockpitTabs.ts) lives in a server option, so key
+// bindings, the dashboard and a reattach all read the same one. Every
+// read-modify-write holds a lock file beside the cockpit's socket.
+
+/** The server option holding the serialized tab state. */
+const TABS_OPTION = '@orc_cockpit_tabs';
+const LOCK_WAIT_MS = 5_000;
+const LOCK_POLL_MS = 25;
+
+/** The lock serializing state updates: next to the cockpit's socket, in tmux's per-user 0700 directory. */
+export function cockpitLockPath(): string {
+  return `${tmuxSocketPath(COCKPIT_SOCKET)}.lock`;
+}
+
+/**
+ * Runs `fn` holding the cockpit lock; waits up to 5 s for another holder. A
+ * lock left by a holder that died is broken by `acquireLock` once it is stale
+ * (it re-checks the holder before removing it, so two waiters never both break it).
+ */
+export function withCockpitLock<T>(fn: () => T, path = cockpitLockPath()): T {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      acquireLock(path);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code) throw error;
+      if (Date.now() > deadline) throw new Error(`another cockpit action is still running (${(error as Error).message})`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_POLL_MS);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    releaseLock(path);
+  }
+}
+
+/** The open windows, and the stored state kept in step with them (rebuilt from them when missing or corrupt). */
+function currentTabs(): { windows: TabWindow[]; open: OpenTab[]; state: CockpitTabState } {
+  const windows = tabWindows();
+  const open = windows.map(windowTab).filter((tab): tab is OpenTab => tab !== null);
+  const current = windows.find((window) => window.active);
+  const stored = parseTabs(cockpitTmux(['show-options', '-gqv', TABS_OPTION]).stdout?.trim()) ?? EMPTY_COCKPIT_STATE;
+  return { windows, open, state: reconcileTabs(stored, open, current ? windowTab(current) : null) };
+}
+
+/** Resolves the agent tab to open when the shown tab has no window yet. */
+export type AgentTabResolver = (projectId: string, agentId: string) => CockpitAgentTab;
+
+export type CockpitActionResult = TabTransition & {
+  /** A new agent tab window was opened. */
+  opened: boolean;
+};
+
+/** Opens an agent tab's window after its project's last tab, without selecting it. */
+function openAgentWindow(windows: TabWindow[], tab: CockpitAgentTab): string {
+  const plan = planAgentTab(windows, tab.projectId, tab.agentId);
+  const after = plan.action === 'open' ? plan.after : plan.windowId;
+  const where = after ? ['-a', '-t', after] : ['-t', `=${COCKPIT_SESSION}:`];
+  const windowId = cockpitTmuxOrThrow(['new-window', '-d', ...where, '-n', agentWindowName(tab.projectName, tab.agentId),
+    '-c', tab.root, '-P', '-F', '#{window_id}', '/bin/sh', '-c', agentTabScript(tab)]).trim();
+  if (!windowId.startsWith('@')) throw new Error(`unexpected tmux output '${windowId}'`);
+  cockpitTmuxOrThrow(commandList([
+    ['set-option', '-w', '-t', windowId, AGENT_PROJECT_OPTION, tab.projectId],
+    ['set-option', '-w', '-t', windowId, AGENT_ID_OPTION, tab.agentId],
+  ]));
+  return windowId;
+}
+
+/**
+ * Applies one transition to the cockpit, serialized with every other: reads
+ * the stored state (rebuilt from the open windows when missing or corrupt, and
+ * kept in step with them), applies `transition`, closes the windows of closed
+ * tabs and shows the active tab (opening its window through `resolveAgentTab`
+ * when it has none), then stores the state. A refused transition changes no
+ * window. Closing a tab only ends its window's stream: no master, worker or
+ * coordinator is stopped.
+ */
+export function applyCockpitTransition(
+  transition: (state: CockpitTabState, open: OpenTab[]) => TabTransition,
+  resolveAgentTab: AgentTabResolver = (projectId, agentId) => {
+    throw new Error(`cannot open a tab for ${agentId} (${projectId}) here`);
+  },
+): CockpitActionResult {
+  return withCockpitLock(() => {
+    const { windows, open, state } = currentTabs();
+    const store = (next: CockpitTabState) => cockpitTmuxOrThrow(['set-option', '-g', TABS_OPTION, serializeTabs(next)]);
+
+    let result: TabTransition = transition(state, open);
+    let opened = false;
+    const shown = result.ok ? shownTab(result.state) : null;
+    if (shown && shown.agentId === null && !findTabWindow(windows, shown)) {
+      result = { ok: false, state, message: `${shown.projectId} has no master tab in the cockpit; run orc start-session in it.` };
+    }
+    if (!result.ok) {
+      store(state);
+      return { ...result, state, opened };
+    }
+    if (shown) {
+      const existing = findTabWindow(windows, shown);
+      if (existing) {
+        cockpitTmuxOrThrow(commandList(existing.masterPane
+          ? focusCommands(existing.windowId, existing.masterPane)
+          : [['select-window', '-t', existing.windowId]]));
+      } else {
+        const windowId = openAgentWindow(windows, resolveAgentTab(shown.projectId, shown.agentId!));
+        cockpitTmuxOrThrow(['select-window', '-t', windowId]);
+        opened = true;
+      }
+    }
+    for (const closed of closedTabs(state, result.state)) {
+      const window = findTabWindow(windows, closed);
+      if (window) cockpitTmuxOrThrow(['kill-window', '-t', window.windowId]);
+    }
+    store(result.state);
+    return { ...result, opened };
+  });
+}
+
+/** The stored tab state, kept in step with the open windows; read-only. */
+export function readCockpitTabs(): CockpitTabState {
+  return currentTabs().state;
+}
+
+/** Whether the cockpit session runs. */
+export function cockpitRunning(): boolean {
+  return cockpitTmux(['has-session', '-t', `=${COCKPIT_SESSION}`]).status === 0;
+}
+
+/** Shows `text` in `client`'s message line (a key binding's outcome). */
+export function cockpitMessage(client: string, text: string): void {
+  cockpitTmux(['display-message', '-c', client, text.replace(/#/g, '##')]);
 }
 
 /**
@@ -538,27 +747,15 @@ function tabWindows(): CockpitTabWindow[] {
  * has none (so one tab, and one stream, per agent).
  */
 export function openAgentTab(tab: CockpitAgentTab): 'opened' | 'switched' {
-  const plan = planAgentTab(tabWindows(), tab.projectId, tab.agentId);
-  if (plan.action === 'switch') {
-    cockpitTmuxOrThrow(['select-window', '-t', plan.windowId]);
-    return 'switched';
-  }
-  const where = plan.after ? ['-a', '-t', plan.after] : ['-t', `=${COCKPIT_SESSION}:`];
-  const windowId = cockpitTmuxOrThrow(['new-window', '-d', ...where, '-n', agentWindowName(tab.projectName, tab.agentId),
-    '-c', tab.root, '-P', '-F', '#{window_id}', '/bin/sh', '-c', agentTabScript(tab)]).trim();
-  if (!windowId.startsWith('@')) throw new Error(`unexpected tmux output '${windowId}'`);
-  cockpitTmuxOrThrow(commandList([
-    ['set-option', '-w', '-t', windowId, AGENT_PROJECT_OPTION, tab.projectId],
-    ['set-option', '-w', '-t', windowId, AGENT_ID_OPTION, tab.agentId],
-    ['select-window', '-t', windowId],
-  ]));
-  return 'opened';
+  const result = applyCockpitTransition((state) => openAgent(state, tab.projectId, tab.agentId), () => tab);
+  if (!result.ok) throw new Error(result.message);
+  return result.opened ? 'opened' : 'switched';
 }
 
-/** Switches the cockpit to `projectId`'s tab, its master pane focused; false when the project has no tab. */
+/** Switches the cockpit to `projectId`'s master tab; false when the project has no tab. */
 export function switchToMasterTab(projectId: string): boolean {
-  const window = cockpitWindows().find((candidate) => candidate.projectId === projectId);
-  if (!window) return false;
-  cockpitTmuxOrThrow(commandList(focusCommands(window.windowId, window.masterPane)));
-  return true;
+  return applyCockpitTransition((state) => {
+    const selected = selectProject(state, projectId);
+    return selected.ok ? selectTab(selected.state, MASTER_TAB) : selected;
+  }).ok;
 }

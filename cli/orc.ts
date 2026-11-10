@@ -37,6 +37,7 @@ export const COMMANDS: Record<string, string> = {
   'coordinator':        'coordinator.ts',
   'status':             'status.ts',
   'watch':              'watch.ts',
+  'cockpit':            'cockpit.ts',
   'attach':             'attach.ts',
   'task-mark-done':     'task-mark-done.ts',
   'delegate':           'delegate-task.ts',
