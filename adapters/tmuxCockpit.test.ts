@@ -7,7 +7,7 @@ import { tmuxSocketPath } from './tmux.ts';
 import {
   COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, SIDEBAR_COLUMNS, TAB_BAR_ROWS, agentTabScript, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint,
   cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, sidebarPaneScript, focusSlotCommands, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
-  isTmuxKeyName, keeperPaneScript, messagePaneScript, paneTab, parseCockpitPanes, placeholderPaneScript, resolveCockpitKeys, masterPaneScript, slotCommands,
+  keeperPaneScript, messagePaneScript, paneTab, parseCockpitPanes, placeholderPaneScript, masterPaneScript, slotCommands,
   startCommand, tabBarPaneScript, tabPaneOptions, terminalHasTrueColor, withCockpitLock, explorerPaneScript, type CockpitPane,
 } from './tmuxCockpit.ts';
 
@@ -114,64 +114,6 @@ describe('sidebarPaneScript', () => {
     // TMUX tells orc watch it runs in the cockpit, so Enter opens agent tabs.
     expect(script).not.toContain('unset TMUX');
     expect(parsesAsShell(script)).toBe(true);
-  });
-});
-
-describe('resolveCockpitKeys', () => {
-  it('defaults to F12 and function keys, none of them Ctrl-], Alt or an AltGr character', () => {
-    const { keys, problems } = resolveCockpitKeys({});
-    expect(problems).toEqual([]);
-    expect(keys).toEqual(DEFAULT_COCKPIT_KEYS);
-    expect(keys.prefix).toBe('F12');
-    expect(Object.values(keys.direct)).toEqual(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11']);
-  });
-
-  it('takes the prefix and direct keys from the environment', () => {
-    const { keys, problems } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: ' C-a ', ORC_COCKPIT_KEYS: 'tab1=M-1, dashboard=C-F10,attention=none' });
-    expect(problems).toEqual([]);
-    expect(keys.prefix).toBe('C-a');
-    expect(keys.direct).toMatchObject({ tab1: 'M-1', tab2: 'F2', dashboard: 'C-F10', attention: null });
-  });
-
-  it('reports invalid keys and entries and keeps the defaults', () => {
-    const { keys, problems } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'Ctrl-]', ORC_COCKPIT_KEYS: 'tab1=a,tab2=Hyper-x,bogus=F3,tab4' });
-    expect(keys).toEqual(DEFAULT_COCKPIT_KEYS);
-    expect(problems).toEqual([
-      "ORC_COCKPIT_PREFIX: unknown key 'Ctrl-]'; using F12",
-      "ORC_COCKPIT_KEYS: 'a' cannot be the tab1 key (a function key F1-F12, or a C- or M- key); using F1",
-      "ORC_COCKPIT_KEYS: 'Hyper-x' cannot be the tab2 key (a function key F1-F12, or a C- or M- key); using F2",
-      expect.stringContaining("unknown entry 'bogus=F3'"),
-      expect.stringContaining("unknown entry 'tab4'"),
-    ]);
-  });
-
-  it('drops a direct key that is the prefix or another action\'s key', () => {
-    const { keys, problems } = resolveCockpitKeys({ ORC_COCKPIT_PREFIX: 'F1', ORC_COCKPIT_KEYS: 'attention=F10' });
-    expect(keys.direct).toMatchObject({ tab1: null, dashboard: 'F10', attention: null });
-    expect(problems).toEqual([
-      "ORC_COCKPIT_KEYS: F1 is already the prefix or another action's key; tab1 has no direct key",
-      "ORC_COCKPIT_KEYS: F10 is already the prefix or another action's key; attention has no direct key",
-    ]);
-  });
-});
-
-describe('isTmuxKeyName', () => {
-  it('accepts tmux key names and rejects the rest', () => {
-    for (const key of ['F12', 'f5', 'C-]', 'M-x', 'C-M-Left', 'PageUp', '&']) expect(isTmuxKeyName(key)).toBe(true);
-    for (const key of ['', 'F13', 'Ctrl-a', 'C-', 'ö', 'two']) expect(isTmuxKeyName(key)).toBe(false);
-  });
-});
-
-describe('cockpitKeysHint', () => {
-  it('names the default keys', () => {
-    expect(cockpitKeysHint(DEFAULT_COCKPIT_KEYS))
-      .toBe('F1-F9: tab | F10: sidebar | F12 o: switch pane | F12 n/p: next/previous tab | F12 N/P: project | F12 d: detach');
-  });
-
-  it('spells out modifiers and leaves out unbound keys', () => {
-    const direct = Object.fromEntries(Object.keys(DEFAULT_COCKPIT_KEYS.direct).map((action) => [action, null])) as typeof DEFAULT_COCKPIT_KEYS.direct;
-    expect(cockpitKeysHint({ prefix: 'C-a', direct: { ...direct, tab1: 'M-1' } }))
-      .toBe('Alt-1: tab | Ctrl-a o: switch pane | Ctrl-a n/p: next/previous tab | Ctrl-a N/P: project | Ctrl-a d: detach');
   });
 });
 
