@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { COCKPIT_SOCKET, COCKPIT_SESSION, DEFAULT_COCKPIT_KEYS, ensureCockpitWindow } from '../adapters/tmuxCockpit.ts';
 import { checkTmux, shellQuote, tmuxSessionName, tmuxSocketName } from '../adapters/tmux.ts';
 import { startControlServer, type ControlServer } from '../lib/controlServer.ts';
@@ -57,7 +57,15 @@ async function waitFor(what: string, check: () => boolean, timeoutMs = 15_000): 
 
 const cockpit = (args: string[]) => tmux(COCKPIT_SOCKET, args).stdout.trim();
 const capture = (pane: string) => tmux(COCKPIT_SOCKET, ['capture-pane', '-p', '-J', '-t', pane]).stdout;
-const windows = () => cockpit(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F', '#{window_name} #{window_active}']).split('\n');
+/** The frame's panes as `role agent id` (the slot's pane is a tab: `master` or `agent`). */
+const framePanes = () => cockpit(['list-panes', '-s', '-t', `=${COCKPIT_SESSION}`, '-F', '#{?#{@orc_frame},#{@orc_role} #{@orc_tab_agent} #{pane_id},}'])
+  .split('\n').filter(Boolean).map((line) => line.split(' '));
+const frameRole = (role: string) => framePanes().find(([entry]) => entry === role)?.at(-1) ?? '';
+/** The pane in the slot, and the agent its tab shows (empty for the master). */
+const slot = () => {
+  const pane = framePanes().find(([role]) => role !== 'sidebar' && role !== 'tabbar') ?? [];
+  return { agent: pane.length === 3 ? pane[1] : '', id: pane.at(-1) ?? '' };
+};
 
 /**
  * The coordinator tick's part in the flow: each new `input_requested` goes
@@ -178,7 +186,10 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → indicator → agent tab �
       keys: DEFAULT_COCKPIT_KEYS,
       size: { columns: 200, rows: 50 },
     })).toBe('created-session');
-    const [masterPane, dashboardPane] = cockpit(['list-panes', '-t', `=${COCKPIT_SESSION}:smoke`, '-F', '#{pane_id}']).split('\n');
+    // One window: the dashboard in the sidebar, the master in the slot.
+    const dashboardPane = frameRole('sidebar');
+    const masterPane = slot().id;
+    expect(frameRole('tabbar')).not.toBe('');
 
     // The master pane shows the fake provider; the dashboard lists the worker, with no badge yet.
     await waitFor('the master in its pane', () => capture(masterPane).includes('FIXTURE_READY provider=claude'));
@@ -197,11 +208,11 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → indicator → agent tab �
     // Enter on the dashboard (the worker needing attention is listed first, so selected) opens its tab:
     // `orc terminal worker-a --write`, streaming the worker's screen.
     tmux(COCKPIT_SOCKET, ['send-keys', '-t', dashboardPane, 'Enter']);
-    // The tab is named `<project>/<agent>` after the dashboard's project, opened next to the project tab and focused.
-    const tabName = `${basename(dir)}/worker-a`;
-    await waitFor('the worker tab', () => windows().join('\n') === `smoke 0\n${tabName} 1`);
+    // The tab is shown in the slot, in place of the master; the dashboard stays.
+    await waitFor('the worker tab', () => slot().agent === 'worker-a');
+    expect(frameRole('sidebar')).toBe(dashboardPane);
     await waitFor('the dashboard to report it', () => capture(dashboardPane).includes('opened worker-a in a new tab'));
-    const tabPane = cockpit(['list-panes', '-t', `=${COCKPIT_SESSION}:${tabName}`, '-F', '#{pane_id}']);
+    const tabPane = slot().id;
     await waitFor('the worker screen in its tab', () => capture(tabPane).includes('WORKER-READY') && capture(tabPane).includes('writer lease acquired'));
 
     // Answered: the worker gets the answer (seen through its tab), and the dashboard clears the badge.

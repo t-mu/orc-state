@@ -21,7 +21,9 @@
  *   3. Start the master provider CLI in a tmux session (resuming its Claude
  *      conversation when one is recorded)
  *   4. Open the cockpit (adapters/tmuxCockpit.ts) on this project's master and
- *      attach this terminal to it; `--no-cockpit` attaches to the master directly
+ *      attach this terminal to it: one window whose slot shows the project (the
+ *      master for a new one, the tab it last showed otherwise); a cockpit with
+ *      the old layout is rebuilt first. `--no-cockpit` attaches to the master directly
  *
  * Detaching (the cockpit's prefix d, F12 d by default, or the master's Ctrl-b d) or closing the terminal leaves the
  * cockpit and the master running; the master's credential is revoked when it
@@ -265,9 +267,9 @@ function attachMaster(agent: NonNullable<typeof master>, sessionName: string) {
 }
 
 /**
- * Open the cockpit on this project's master: create it or add this project's
- * tab, then attach this terminal to it (from a shell inside the cockpit, only
- * switch to the tab). Returns false, with a warning, when the cockpit could not
+ * Open the cockpit on this project's master: create it or add this project to
+ * it, show the project in the slot, then attach this terminal to it (from a
+ * shell inside the cockpit, only switch to the project). Returns false, with a warning, when the cockpit could not
  * be set up, so the caller attaches to the master directly.
  */
 function openCockpit(agent: NonNullable<typeof master>, sessionName: string): boolean {

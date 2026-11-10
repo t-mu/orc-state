@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   EMPTY_COCKPIT_STATE, closeTab, closedTabs, cycleProject, cycleTab, nextAttention, openAgent, parseTabs, reconcileTabs,
-  selectProject, selectTab, serializeTabs, showableAttention, shownTab, type CockpitTabState, type TabTransition,
+  selectProject, selectTab, serializeTabs, showProject, showableAttention, shownTab, type CockpitTabState, type TabTransition,
 } from './cockpitTabs.ts';
 
 /** p-1 active, showing w2 of [w1, w2, w3]; p-2 on its master tab with one agent tab. */
@@ -45,6 +45,20 @@ describe('selectProject / cycleProject', () => {
   it('has no project to switch to in an empty cockpit', () => {
     expectRefused(cycleProject(EMPTY_COCKPIT_STATE, 1), EMPTY_COCKPIT_STATE, /No project is open/);
     expectRefused(selectProject(EMPTY_COCKPIT_STATE, 'p-1'), EMPTY_COCKPIT_STATE, /Unknown project/);
+  });
+});
+
+describe('showProject', () => {
+  it('activates a known project as selectProject does', () => {
+    expect(showProject(STATE, 'p-2')).toEqual(selectProject(STATE, 'p-2'));
+  });
+
+  it('adds a project the cockpit has no tab for, on its master tab, after the others', () => {
+    const state = okState(showProject(STATE, 'p-3'));
+    expect(state.activeProject).toBe('p-3');
+    expect(state.projects).toEqual([...STATE.projects, { projectId: 'p-3', tabs: [], active: null }]);
+    expect(shownTab(state)).toEqual({ projectId: 'p-3', agentId: null });
+    expectRefused(showProject(STATE, ''), STATE, /needs a project id/);
   });
 });
 

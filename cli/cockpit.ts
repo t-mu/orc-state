@@ -9,21 +9,24 @@
  *   orc cockpit close [<agent_id>]
  *   orc cockpit attention
  *   orc cockpit state
- *   (each takes --client=<tmux client>: report in that client's message line, as the cockpit keys do)
+ *   orc cockpit bar
+ *   (each action takes --client=<tmux client>: report in that client's message line, as the cockpit keys do)
  *
  * Applies one cockpit tab transition (lib/cockpitTabs.ts) and its tmux side
  * effects (adapters/tmuxCockpit.ts). Runs only inside the cockpit: from its key
- * bindings, the dashboard, or a shell in one of its panes.
+ * bindings, the dashboard, or a shell in one of its panes. `bar` is what the
+ * tab bar pane runs: a text view of the tab state, redrawn as it changes.
  */
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ControlClient, listProjects, type ProjectListEntry } from '../client.ts';
 import {
-  UNREGISTERED_PROJECT_PREFIX, applyCockpitTransition, cockpitAgentTab, cockpitMessage, cockpitRunning, insideCockpit, readCockpitTabs,
-  type AgentTabResolver, type CockpitTabProject,
+  UNREGISTERED_PROJECT_PREFIX, applyCockpitTransition, cockpitAgentTab, cockpitMessage, cockpitRunning, cockpitStoppedProject, insideCockpit,
+  readCockpitBar, readCockpitTabs, refreshCockpit,
+  type AgentTabResolver, type CockpitBarView, type CockpitTabProject, type StoppedProjectResolver,
 } from '../adapters/tmuxCockpit.ts';
 import {
-  closeTab, cycleProject, cycleTab, nextAttention, openAgent, selectProject, selectTab, showableAttention,
+  closeTab, cycleProject, cycleTab, nextAttention, openAgent, selectTab, showProject, showableAttention,
   type AttentionAgent, type CockpitTabState, type OpenTab, type TabTransition,
 } from '../lib/cockpitTabs.ts';
 import { USAGE } from './usage.ts';
@@ -35,7 +38,8 @@ export type CockpitCommand =
   | { action: 'next' | 'prev' }
   | { action: 'close'; agentId: string | null }
   | { action: 'attention' }
-  | { action: 'state' };
+  | { action: 'state' }
+  | { action: 'bar' };
 
 /** The command and `--client`, or why the arguments are not one. */
 export function parseCockpitArgs(argv: string[]): { command: CockpitCommand; client: string | null } | { error: string } {
@@ -62,6 +66,7 @@ export function parseCockpitArgs(argv: string[]): { command: CockpitCommand; cli
     case 'prev':
     case 'attention':
     case 'state':
+    case 'bar':
       return done({ action }, 0);
     case 'close':
       return done({ action, agentId: first ?? null }, 1);
@@ -73,12 +78,13 @@ export function parseCockpitArgs(argv: string[]): { command: CockpitCommand; cli
 }
 
 /** The transition a command applies, given the open tabs; `waiting` is what `attention` cycles through (those it can show). */
-export function cockpitTransition(command: Exclude<CockpitCommand, { action: 'state' }>, waiting: AttentionAgent[] = []): (state: CockpitTabState, open: OpenTab[]) => TabTransition {
+export function cockpitTransition(command: Exclude<CockpitCommand, { action: 'state' | 'bar' }>, waiting: AttentionAgent[] = []): (state: CockpitTabState, open: OpenTab[]) => TabTransition {
   switch (command.action) {
     case 'project':
       if (command.target === 'next') return (state) => cycleProject(state, 1);
       if (command.target === 'prev') return (state) => cycleProject(state, -1);
-      return (state) => selectProject(state, command.target);
+      // A project the cockpit has no tab for is added; it shows how to start it.
+      return (state) => showProject(state, command.target);
     case 'open':
       return (state) => {
         const projectId = command.projectId ?? state.activeProject;
@@ -148,6 +154,9 @@ export interface CockpitDeps {
   projects: () => ProjectListEntry[];
   waiting: (state: CockpitTabState, projects: ProjectListEntry[]) => Promise<AttentionAgent[]>;
   message: (client: string, text: string) => void;
+  /** The tab bar's view, and what puts a closed slot back. */
+  bar: () => CockpitBarView;
+  refresh: () => void;
   /** The command that runs orc, for the agent tabs it opens. */
   orc: string[];
   log: (line: string) => void;
@@ -166,6 +175,8 @@ const defaultDeps = (): CockpitDeps => ({
   projects: () => listProjects(),
   waiting: waitingAgents,
   message: cockpitMessage,
+  bar: readCockpitBar,
+  refresh: () => { refreshCockpit(); },
   orc: [process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))],
   log: (line) => console.log(line),
   error: (line) => console.error(line),
@@ -204,14 +215,66 @@ export async function runCockpit(argv: string[], deps: CockpitDeps = defaultDeps
       deps.log(JSON.stringify(deps.read()));
       return 0;
     }
+    if (command.action === 'bar') return await runTabBar(deps);
     let projects: ProjectListEntry[] | null = null;
     const registered = () => (projects ??= deps.projects());
     const waiting = command.action === 'attention' ? await deps.waiting(deps.read(), registered()) : [];
     const resolve: AgentTabResolver = (projectId, agentId) => cockpitAgentTab(agentId, tabProject(projectId, registered()), deps.orc);
-    const result = deps.apply(cockpitTransition(command, waiting), resolve);
+    const stopped: StoppedProjectResolver = (projectId) => cockpitStoppedProject(tabProject(projectId, registered()));
+    const result = deps.apply(cockpitTransition(command, waiting), resolve, stopped);
     return report(result.ok, result.message);
   } catch (error) {
     return report(false, `orc cockpit: ${(error as Error).message}`);
+  }
+}
+
+/** Fits `text` into `columns` cells, an ellipsis marking a cut. */
+function fit(text: string, columns: number): string {
+  return text.length <= columns ? text : `${text.slice(0, Math.max(0, columns - 1))}…`;
+}
+
+/**
+ * The tab bar's three rows: the projects (the active one in brackets), the
+ * active project's tabs numbered as the tab keys select them (the active one
+ * in brackets), and a rule above the slot.
+ */
+export function renderTabBar(view: Pick<CockpitBarView, 'state' | 'names'>, columns: number): string[] {
+  const { state, names } = view;
+  const mark = (label: string, active: boolean) => (active ? `[${label}]` : ` ${label} `);
+  const projects = state.projects.map((project) => mark(names[project.projectId] || project.projectId, project.projectId === state.activeProject));
+  const active = state.projects.find((project) => project.projectId === state.activeProject);
+  const tabs = active
+    ? [null, ...active.tabs].map((tab, index) => mark(`${index + 1} ${tab ?? 'master'}`, tab === active.active))
+    : [];
+  const width = Math.max(1, columns);
+  return [
+    fit(projects.length > 0 ? `projects ${projects.join(' ')}` : 'No project is open; run orc start-session in one.', width),
+    fit(tabs.length > 0 ? `tabs     ${tabs.join(' ')}` : '', width),
+    '─'.repeat(width),
+  ];
+}
+
+const BAR_POLL_MS = 500;
+
+/** Runs the tab bar until the pane closes: redraws when the state or the width changes, and puts back a slot that was closed. */
+async function runTabBar(deps: CockpitDeps): Promise<number> {
+  let last = '';
+  process.stdout.write('\x1b[?25l');
+  for (;;) {
+    let lines: string[];
+    try {
+      const view = deps.bar();
+      if (view.slotMissing) deps.refresh();
+      lines = renderTabBar(view, process.stdout.columns || 80);
+    } catch (error) {
+      lines = [`orc cockpit bar: ${(error as Error).message}`];
+    }
+    const screen = lines.join('\n');
+    if (screen !== last) {
+      process.stdout.write(`\x1b[H\x1b[2J${screen}`);
+      last = screen;
+    }
+    await new Promise((resolve) => setTimeout(resolve, BAR_POLL_MS));
   }
 }
 

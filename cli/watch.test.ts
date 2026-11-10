@@ -205,7 +205,7 @@ describe('cockpit agent terminals', () => {
   it('streams the agent with input for its project: --project for a registered one, ORC_STATE_DIR otherwise', () => {
     expect(agentTab({ agent_id: 'w1' }, registered, orc)).toEqual({
       projectId: 'p-1', projectName: 'app', agentId: 'w1', root: '/repo/app',
-      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], env: {},
+      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], close: [...orc, 'cockpit', 'close', 'w1'], env: {},
     });
     const unregistered = { ...registered, project_id: 'unregistered:/state/x', state_dir: '/state/x' };
     expect(agentTab({ agent_id: 'w1' }, unregistered, orc)).toMatchObject({
