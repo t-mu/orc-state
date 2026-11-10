@@ -16,7 +16,6 @@
  * selects a tab, and a pane whose program asks for the mouse still gets it.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
 import {
   EMPTY_COCKPIT_STATE, MASTER_TAB, closedTabs, openAgent, parseTabs, reconcileTabs, selectProject, selectTab, serializeTabs, shownTab,
   type CockpitTabState, type OpenTab, type TabTransition,
@@ -622,18 +621,11 @@ export function cockpitLockPath(): string {
   return `${tmuxSocketPath(COCKPIT_SOCKET)}.lock`;
 }
 
-function lockHolderDead(path: string): boolean {
-  try {
-    const { pid } = JSON.parse(readFileSync(path, 'utf8')) as { pid?: unknown };
-    if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
-    process.kill(pid as number, 0);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ESRCH';
-  }
-}
-
-/** Runs `fn` holding the cockpit lock; waits up to 5 s for another holder, and breaks the lock of a holder that died. */
+/**
+ * Runs `fn` holding the cockpit lock; waits up to 5 s for another holder. A
+ * lock left by a holder that died is broken by `acquireLock` once it is stale
+ * (it re-checks the holder before removing it, so two waiters never both break it).
+ */
 export function withCockpitLock<T>(fn: () => T, path = cockpitLockPath()): T {
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
@@ -642,10 +634,6 @@ export function withCockpitLock<T>(fn: () => T, path = cockpitLockPath()): T {
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code) throw error;
-      if (lockHolderDead(path)) {
-        rmSync(path, { force: true });
-        continue;
-      }
       if (Date.now() > deadline) throw new Error(`another cockpit action is still running (${(error as Error).message})`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_POLL_MS);
     }
@@ -658,12 +646,12 @@ export function withCockpitLock<T>(fn: () => T, path = cockpitLockPath()): T {
 }
 
 /** The open windows, and the stored state kept in step with them (rebuilt from them when missing or corrupt). */
-function currentTabs(): { windows: TabWindow[]; state: CockpitTabState } {
+function currentTabs(): { windows: TabWindow[]; open: OpenTab[]; state: CockpitTabState } {
   const windows = tabWindows();
   const open = windows.map(windowTab).filter((tab): tab is OpenTab => tab !== null);
   const current = windows.find((window) => window.active);
   const stored = parseTabs(cockpitTmux(['show-options', '-gqv', TABS_OPTION]).stdout?.trim()) ?? EMPTY_COCKPIT_STATE;
-  return { windows, state: reconcileTabs(stored, open, current ? windowTab(current) : null) };
+  return { windows, open, state: reconcileTabs(stored, open, current ? windowTab(current) : null) };
 }
 
 /** Resolves the agent tab to open when the shown tab has no window yet. */
@@ -699,16 +687,16 @@ function openAgentWindow(windows: TabWindow[], tab: CockpitAgentTab): string {
  * coordinator is stopped.
  */
 export function applyCockpitTransition(
-  transition: (state: CockpitTabState) => TabTransition,
+  transition: (state: CockpitTabState, open: OpenTab[]) => TabTransition,
   resolveAgentTab: AgentTabResolver = (projectId, agentId) => {
     throw new Error(`cannot open a tab for ${agentId} (${projectId}) here`);
   },
 ): CockpitActionResult {
   return withCockpitLock(() => {
-    const { windows, state } = currentTabs();
+    const { windows, open, state } = currentTabs();
     const store = (next: CockpitTabState) => cockpitTmuxOrThrow(['set-option', '-g', TABS_OPTION, serializeTabs(next)]);
 
-    let result: TabTransition = transition(state);
+    let result: TabTransition = transition(state, open);
     let opened = false;
     const shown = result.ok ? shownTab(result.state) : null;
     if (shown && shown.agentId === null && !findTabWindow(windows, shown)) {

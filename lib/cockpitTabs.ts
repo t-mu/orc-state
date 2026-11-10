@@ -164,6 +164,15 @@ export function nextAttention(state: CockpitTabState, waiting: AttentionAgent[])
   return ok(withProject(state, { ...project, active: null }), `Switched to ${next.projectId}'s master.`);
 }
 
+/**
+ * The waiting agents the cockpit can show: a master only when its project has
+ * a master tab open (an agent tab opens on demand). Otherwise a waiting master
+ * of a project with no tab would be picked, and refused, on every press.
+ */
+export function showableAttention(waiting: AttentionAgent[], open: OpenTab[]): AttentionAgent[] {
+  return waiting.filter((agent) => !agent.master || open.some((tab) => tab.projectId === agent.projectId && tab.agentId === null));
+}
+
 /** One cockpit tab as its window shows it: a project's master tab (`agentId` null) or an agent tab. */
 export interface OpenTab { projectId: string; agentId: string | null }
 

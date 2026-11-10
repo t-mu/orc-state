@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   EMPTY_COCKPIT_STATE, closeTab, closedTabs, cycleProject, cycleTab, nextAttention, openAgent, parseTabs, reconcileTabs,
-  selectProject, selectTab, serializeTabs, shownTab, type CockpitTabState, type TabTransition,
+  selectProject, selectTab, serializeTabs, showableAttention, shownTab, type CockpitTabState, type TabTransition,
 } from './cockpitTabs.ts';
 
 /** p-1 active, showing w2 of [w1, w2, w3]; p-2 on its master tab with one agent tab. */
@@ -189,6 +189,18 @@ describe('nextAttention', () => {
   it('opens a waiting agent in a project the cockpit has no tabs for', () => {
     const state = okState(nextAttention(EMPTY_COCKPIT_STATE, [{ projectId: 'p-5', agentId: 'q1' }]));
     expect(state).toEqual({ activeProject: 'p-5', projects: [{ projectId: 'p-5', tabs: ['q1'], active: 'q1' }] });
+  });
+});
+
+describe('showableAttention', () => {
+  it('keeps agents, and masters only of projects with a master tab open', () => {
+    const open = [{ projectId: 'p-1', agentId: null }, { projectId: 'p-3', agentId: 'z1' }];
+    expect(showableAttention([
+      { projectId: 'p-1', agentId: 'master', master: true },
+      { projectId: 'p-2', agentId: 'master', master: true },
+      { projectId: 'p-3', agentId: 'master', master: true },
+      { projectId: 'p-4', agentId: 'q1' },
+    ], open)).toEqual([{ projectId: 'p-1', agentId: 'master', master: true }, { projectId: 'p-4', agentId: 'q1' }]);
   });
 });
 

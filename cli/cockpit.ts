@@ -23,8 +23,8 @@ import {
   type AgentTabResolver, type CockpitTabProject,
 } from '../adapters/tmuxCockpit.ts';
 import {
-  closeTab, cycleProject, cycleTab, nextAttention, openAgent, selectProject, selectTab,
-  type AttentionAgent, type CockpitTabState, type TabTransition,
+  closeTab, cycleProject, cycleTab, nextAttention, openAgent, selectProject, selectTab, showableAttention,
+  type AttentionAgent, type CockpitTabState, type OpenTab, type TabTransition,
 } from '../lib/cockpitTabs.ts';
 import { USAGE } from './usage.ts';
 
@@ -72,8 +72,8 @@ export function parseCockpitArgs(argv: string[]): { command: CockpitCommand; cli
   }
 }
 
-/** The transition a command applies; `waiting` is what `attention` cycles through. */
-export function cockpitTransition(command: Exclude<CockpitCommand, { action: 'state' }>, waiting: AttentionAgent[] = []): (state: CockpitTabState) => TabTransition {
+/** The transition a command applies, given the open tabs; `waiting` is what `attention` cycles through (those it can show). */
+export function cockpitTransition(command: Exclude<CockpitCommand, { action: 'state' }>, waiting: AttentionAgent[] = []): (state: CockpitTabState, open: OpenTab[]) => TabTransition {
   switch (command.action) {
     case 'project':
       if (command.target === 'next') return (state) => cycleProject(state, 1);
@@ -95,7 +95,7 @@ export function cockpitTransition(command: Exclude<CockpitCommand, { action: 'st
     case 'close':
       return (state) => closeTab(state, command.agentId);
     case 'attention':
-      return (state) => nextAttention(state, waiting);
+      return (state, open) => nextAttention(state, showableAttention(waiting, open));
   }
 }
 

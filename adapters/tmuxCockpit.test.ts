@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
@@ -326,13 +326,22 @@ describe('withCockpitLock', () => {
     expect(withCockpitLock(() => 'again', path)).toBe('again');
   });
 
-  it('breaks the lock of a holder that died', () => {
+  it('breaks the stale lock of a holder that died', () => {
     dir = mkdtempSync(join(tmpdir(), 'orc-cockpit-lock-'));
     const path = join(dir, 'orc-cockpit.lock');
     const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
     writeFileSync(path, JSON.stringify({ pid: Number(dead), token: 'x' }));
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(path, old, old);
     expect(withCockpitLock(() => 'taken', path)).toBe('taken');
   });
+
+  it('gives up with a clear message while a live holder keeps the lock', () => {
+    dir = mkdtempSync(join(tmpdir(), 'orc-cockpit-lock-'));
+    const path = join(dir, 'orc-cockpit.lock');
+    writeFileSync(path, JSON.stringify({ pid: process.ppid, token: 'x' }));
+    expect(() => withCockpitLock(() => 'never', path)).toThrow('another cockpit action is still running');
+  }, 15_000);
 
   it('serializes two processes updating at once: neither update is lost', async () => {
     dir = mkdtempSync(join(tmpdir(), 'orc-cockpit-lock-'));

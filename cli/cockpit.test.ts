@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectListEntry } from '../client.ts';
 import type { AgentTabResolver, CockpitActionResult } from '../adapters/tmuxCockpit.ts';
-import type { CockpitTabState, TabTransition } from '../lib/cockpitTabs.ts';
+import type { CockpitTabState, OpenTab, TabTransition } from '../lib/cockpitTabs.ts';
 import { NOT_IN_COCKPIT, parseCockpitArgs, runCockpit, tabProject, waitingAgents, type CockpitDeps } from './cockpit.ts';
 
 const STATE: CockpitTabState = {
@@ -17,7 +17,7 @@ const entry = (id: string, extra: Partial<ProjectListEntry> = {}): ProjectListEn
 });
 
 /** Fake deps: `apply` runs the transition on `state` and records it, as applyCockpitTransition does without tmux. */
-function fakeDeps(overrides: Partial<CockpitDeps> = {}) {
+function fakeDeps(overrides: Partial<CockpitDeps> = {}, open: OpenTab[] = [{ projectId: 'p-1', agentId: null }, { projectId: 'p-1', agentId: 'w1' }, { projectId: 'p-2', agentId: null }]) {
   const lines: string[] = [];
   const errors: string[] = [];
   const messages: [string, string][] = [];
@@ -26,9 +26,9 @@ function fakeDeps(overrides: Partial<CockpitDeps> = {}) {
   const deps: CockpitDeps = {
     inside: () => true,
     running: () => true,
-    apply: vi.fn((transition: (s: CockpitTabState) => TabTransition, resolve?: AgentTabResolver): CockpitActionResult => {
+    apply: vi.fn((transition: (s: CockpitTabState, o: OpenTab[]) => TabTransition, resolve?: AgentTabResolver): CockpitActionResult => {
       resolver = resolve ?? null;
-      const result = transition(state);
+      const result = transition(state, open);
       if (result.ok) state = result.state;
       return { ...result, opened: false };
     }),
@@ -150,6 +150,16 @@ describe('runCockpit', () => {
     const none = fakeDeps();
     expect(await runCockpit(['attention'], none.deps)).toBe(0);
     expect(none.lines).toEqual(['No agent needs attention.']);
+  });
+
+  it('skips a waiting master whose project has no master tab, so attention never gets stuck on it', async () => {
+    const waiting = () => Promise.resolve([{ projectId: 'p-9', agentId: 'master', master: true }, { projectId: 'p-2', agentId: 'x5' }]);
+    const fake = fakeDeps({ waiting });
+    expect(await runCockpit(['attention'], fake.deps)).toBe(0);
+    expect(fake.lines).toEqual(['Opened x5 in a new tab.']);
+    const onlyMaster = fakeDeps({ waiting: () => Promise.resolve([{ projectId: 'p-9', agentId: 'master', master: true }]) });
+    expect(await runCockpit(['attention'], onlyMaster.deps)).toBe(0);
+    expect(onlyMaster.lines).toEqual(['No agent needs attention.']);
   });
 
   it('prints the state as JSON without changing it', async () => {
