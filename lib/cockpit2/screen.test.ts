@@ -68,8 +68,14 @@ describe('modes from the stream', () => {
 
   it('RIS resets tracked modes', async () => {
     const s = screen();
-    await s.write(`${ESC}[?1006h${ESC}[?25l${ESC}c`);
-    expect(s.modes()).toMatchObject({ mouseEncoding: 'default', cursorVisible: true });
+    await s.write(`${ESC}[?1003h${ESC}[?1006h${ESC}[?25l${ESC}c`);
+    expect(s.modes()).toMatchObject({ mouseTracking: 'none', mouseEncoding: 'default', cursorVisible: true });
+  });
+
+  it('DECSTR shows the cursor and keeps mouse tracking with its encoding', async () => {
+    const s = screen();
+    await s.write(`${ESC}[?1003h${ESC}[?1006h${ESC}[?25l${ESC}[!p`);
+    expect(s.modes()).toMatchObject({ mouseTracking: 'any', mouseEncoding: 'sgr', cursorVisible: true });
   });
 });
 
@@ -81,6 +87,14 @@ describe('seeded modes (late attach)', () => {
       mouseTracking: 'any', mouseEncoding: 'sgr', bracketedPaste: false,
       applicationCursorKeys: true, cursorVisible: false, alternateScreen: true,
     });
+  });
+
+  it('mouseAny alongside a specific flag (tmux mouse_any_flag) seeds that flag, not 1003', async () => {
+    const s = screen();
+    await s.seedModes({ ...OFF, mouseAny: true, mouseStandard: true });
+    expect(s.modes().mouseTracking).toBe('vt200');
+    await s.seedModes({ ...OFF, mouseAny: true, mouseButton: true });
+    expect(s.modes().mouseTracking).toBe('drag');
   });
 
   it('seeds button and standard tracking and utf8 encoding', async () => {

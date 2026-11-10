@@ -19,8 +19,14 @@ const ESC = '\x1b';
 /** A pane's terminal modes as tmux reports them (pane format flags); Step 1's `paneModes()` returns this shape. */
 export interface PaneModes {
   alternateOn: boolean;
+  /**
+   * Some mouse mode is on (tmux `mouse_any_flag`). With neither `mouseButton`
+   * nor `mouseStandard` it means all-motion tracking (1003).
+   */
   mouseAny: boolean;
+  /** Button-event tracking, 1002 (`mouse_button_flag`). */
   mouseButton: boolean;
+  /** Normal tracking, 1000 (`mouse_standard_flag`). */
   mouseStandard: boolean;
   mouseSgr: boolean;
   mouseUtf8: boolean;
@@ -119,7 +125,8 @@ function styleOf(cell: IBufferCell): CellStyle {
 /** The DECSET/DECRST sequences that put an emulator into `modes`. */
 export function modeSequences(modes: PaneModes): string {
   const set = (mode: number, on: boolean) => `${ESC}[?${mode}${on ? 'h' : 'l'}`;
-  const tracking = modes.mouseAny ? 1003 : modes.mouseButton ? 1002 : modes.mouseStandard ? 1000 : 0;
+  // The specific flags first: tmux's mouse_any_flag is also set for 1000 and 1002.
+  const tracking = modes.mouseButton ? 1002 : modes.mouseStandard ? 1000 : modes.mouseAny ? 1003 : 0;
   const encoding = modes.mouseSgr ? 1006 : modes.mouseUtf8 ? 1005 : 0;
   return [
     tracking ? set(tracking, true) : set(1000, false),
@@ -145,16 +152,13 @@ export function createScreen({ cols, rows, scrollback }: ScreenOptions): Screen 
     }
     return false; // let xterm apply the mode too
   };
-  const resetTracked = (): boolean => {
-    mouseEncoding = 'default';
-    cursorVisible = true;
-    return false;
-  };
   const hooks: IDisposable[] = [
     term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => onDecMode(params, true)),
     term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => onDecMode(params, false)),
-    term.parser.registerEscHandler({ final: 'c' }, resetTracked), // RIS
-    term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, resetTracked), // DECSTR
+    // RIS resets everything, mouse included.
+    term.parser.registerEscHandler({ final: 'c' }, () => { mouseEncoding = 'default'; cursorVisible = true; return false; }),
+    // DECSTR shows the cursor but, like xterm, keeps mouse tracking and its encoding.
+    term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, () => { cursorVisible = true; return false; }),
   ];
 
   const write = (bytes: string | Uint8Array) => new Promise<void>((resolve) => term.write(bytes, resolve));
