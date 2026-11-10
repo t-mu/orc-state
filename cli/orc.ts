@@ -135,7 +135,8 @@ const INSPECTION = [
 ];
 
 export function buildNodeArgs(subcommand: string, scriptPath: string, rest: string[]): string[] {
-  if (subcommand === 'watch' && scriptPath.endsWith('.ts')) {
+  // watch and cockpit (its tab bar and task explorer) load TSX views, which plain Node cannot run from source.
+  if ((subcommand === 'watch' || subcommand === 'cockpit') && scriptPath.endsWith('.ts')) {
     // Resolved from orc's own install: a bare `tsx/esm` would resolve from the
     // caller's cwd, which for a registered project is the target repository.
     return ['--import', import.meta.resolve('tsx/esm'), scriptPath, ...rest];

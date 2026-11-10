@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, applyCockpitTransition, cockpitRunShell, ensureCockpitWindow, masterKey, masterPaneScript, openAgentTab, openExplorer,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, applyCockpitTransition, watchCockpitChanges, cockpitRunShell, ensureCockpitWindow, masterKey, masterPaneScript, openAgentTab, openExplorer,
   resolveCockpitKeys, switchToMasterTab, type CockpitKeys, type CockpitMaster,
 } from './tmuxCockpit.ts';
 
@@ -109,7 +109,7 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     expect(slot()).toMatchObject({ project: 'a', active: true, height: 36 });
     await waitFor(() => capture(slot().id).includes('MASTER-A'));
     await waitFor(() => capture(role('sidebar').id).includes('DASHBOARD a'));
-    await waitFor(() => capture(role('tabbar').id).includes('[project-a]') && capture(role('tabbar').id).includes('[1 master]'));
+    await waitFor(() => capture(role('tabbar').id).includes('│ 1 master │'), 15_000);
     await waitFor(() => tmux(MASTER_SOCKETS[0], ['list-clients', '-F', '#{client_readonly}']).stdout.trim() === '0');
 
     // Keys reach the master through the nested client.
@@ -340,6 +340,39 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     } finally {
       rmSync(stateDir, { recursive: true, force: true });
       rmSync(stoppedDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('the tab bar follows the tab state, shows a tab on a click and closes an agent tab at its close marker, focus back on the slot', async () => {
+    startFakeMaster(MASTER_SOCKETS[0], 'master-a', 'MASTER-A');
+    open('a', { agentId: 'master', socket: MASTER_SOCKETS[0], session: 'master-a' });
+    const bar = () => capture(role('tabbar').id);
+    await waitFor(() => bar().includes('│ 1 master │'), 15_000);
+    let signals = 0;
+    const stop = watchCockpitChanges(() => { signals += 1; }, 200);
+    try {
+      const tab = { projectId: 'a', projectName: 'project-a', agentId: 'w1', root: tmpdir(), env: {}, close: [...ORC, 'cockpit', 'close', 'w1'], command: ['/bin/sh', '-c', 'echo STREAM-W1; exec sleep 600'] };
+      // Redrawn on the change signal, well before the 5 s fallback re-read.
+      expect(openAgentTab(tab)).toBe('opened');
+      await waitFor(() => bar().includes('2 w1 ×'), 3_000);
+      await waitFor(() => signals > 0, 3_000);
+
+      // A click is an SGR mouse report on the bar's input (1-based column and row).
+      const clickAt = (text: string, offset = 0) => {
+        const line = bar().split('\n')[1];
+        const x = line.indexOf(text) + offset;
+        expect(x).toBeGreaterThanOrEqual(offset);
+        cockpit(['send-keys', '-t', role('tabbar').id, '-l', `\u001B[<0;${x + 1};2M\u001B[<0;${x + 1};2m`]);
+      };
+      clickAt('master');
+      await waitFor(() => shown() === 'a' && slot().active, 10_000);
+      clickAt('w1');
+      await waitFor(() => shown() === 'a/w1' && slot().active, 10_000);
+      clickAt('×');
+      await waitFor(() => shown() === 'a' && !bar().includes('w1') && slot().active, 10_000);
+      expect(cockpitPanes().some((pane) => pane.role === 'agent')).toBe(false);
+    } finally {
+      stop();
     }
   }, 60_000);
 
