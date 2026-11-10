@@ -4,25 +4,25 @@
  * Usage:
  *   node cli/watch.ts [--interval-ms=5000] [--once]
  *
- * The cockpit dashboard, standalone (the cockpit's dashboard pane runs this
+ * The cockpit sidebar, standalone (the cockpit's sidebar pane runs this
  * command). Every view is built from orc-state/client: a ProjectWatcher over
  * every registered project, never the state files. The project this command
  * runs for is listed first; without a running coordinator it is shown as stopped.
  */
+import { execFile } from 'node:child_process';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { ProjectWatcher, type ProjectListEntry, type ProjectWatchState, type ProjectWatchUpdate } from '../client.ts';
-import { UNREGISTERED_PROJECT_PREFIX, cockpitAgentTab, insideCockpit, openAgentTab, switchToMasterTab, type CockpitAgentTab } from '../adapters/tmuxCockpit.ts';
+import { UNREGISTERED_PROJECT_PREFIX, focusCockpitSlot, insideCockpit, readCockpitTabs } from '../adapters/tmuxCockpit.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatStatus } from '../lib/colorStatus.ts';
 import { STATE_DIR, TARGET_REPO_ROOT } from '../lib/paths.ts';
 import { describeProjects, listProjects } from '../lib/projectList.ts';
 import { cliError } from './shared.ts';
-import type { AgentOpener } from '../lib/tui/App.tsx';
-import type { DashboardAgent, DashboardProject } from '../lib/tui/dashboard.ts';
+import type { SidebarActions } from '../lib/tui/App.tsx';
 
 /** What `orc watch` reads: the client's `ProjectWatcher` (tests inject a fake). */
 export interface WatchSource {
@@ -41,8 +41,10 @@ export interface WatchOptions {
   source?: WatchSource;
   /** How long `--once` waits for the project's first connection to settle (default 5000 ms). */
   settleTimeoutMs?: number;
-  /** Enter on an agent: open or switch to its terminal (set inside the cockpit). */
-  onOpen?: AgentOpener;
+  /** What selecting a project or an agent does (set inside the cockpit). */
+  actions?: SidebarActions;
+  /** The cockpit's active project (set inside the cockpit). */
+  activeProject?: () => string | null;
 }
 
 const once = boolFlag('once');
@@ -67,29 +69,26 @@ export function createWatchSource(stateDir: string): WatchSource {
   return new ProjectWatcher({ listProjects: watchedProjectList(stateDir) });
 }
 
+/** Runs `command` (an `orc cockpit` action); resolves to what it printed, or rejects with its error output. */
+export function runOrcCommand(command: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command[0], command.slice(1), { encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) reject(new Error(stderr.trim() || error.message));
+      else resolve(stdout.trim());
+    });
+  });
+}
+
 /**
- * The cockpit tab of `agent`'s live terminal: `orc terminal <agent_id> --write`
- * for its project (`--project=<id>`, or `ORC_STATE_DIR` for an unregistered one).
+ * The sidebar's actions in the cockpit, each through `orc cockpit`: a project
+ * runs `project <id>`, an agent `open <agent_id> <project_id>` (its tab, opened
+ * on first use); both show it in the slot and focus it. Esc focuses the slot.
  */
-export function agentTab(agent: Pick<DashboardAgent, 'agent_id'>, project: Pick<DashboardProject, 'project_id' | 'name' | 'state_dir' | 'target_repo_root'>, orc: string[]): CockpitAgentTab {
-  return cockpitAgentTab(agent.agent_id, project, orc);
-}
-
-export interface CockpitTabs {
-  openAgentTab: (tab: CockpitAgentTab) => 'opened' | 'switched';
-  switchToMasterTab: (projectId: string) => boolean;
-}
-
-/** Enter in the cockpit: a master switches to its project's tab, any other agent to its own tab (opened on first use). */
-export function cockpitOpener(orc: string[], tabs: CockpitTabs = { openAgentTab, switchToMasterTab }): AgentOpener {
-  return (agent, project) => {
-    if (agent.role === 'master') {
-      if (!tabs.switchToMasterTab(project.project_id)) throw new Error(`${project.name} has no cockpit tab; run orc start-session in it`);
-      return `switched to ${project.name}'s master`;
-    }
-    return tabs.openAgentTab(agentTab(agent, project, orc)) === 'opened'
-      ? `opened ${agent.agent_id} in a new tab`
-      : `switched to ${agent.agent_id}'s tab`;
+export function cockpitActions(orc: string[], run: (command: string[]) => Promise<string> = runOrcCommand, focusSlot: () => void = () => { focusCockpitSlot(); }): SidebarActions {
+  return {
+    selectProject: (project) => run([...orc, 'cockpit', 'project', project.project_id]),
+    openAgent: (agent, project) => run([...orc, 'cockpit', 'open', agent.agent_id, project.project_id]),
+    focusSlot,
   };
 }
 
@@ -205,7 +204,7 @@ function runtimeImportPath(relativeTsPath: string, relativeJsPath: string): stri
   return import.meta.url.endsWith('.ts') ? relativeTsPath : relativeJsPath;
 }
 
-/** The cockpit dashboard (`lib/tui/App.tsx`) on its own: the view the cockpit's dashboard pane runs. */
+/** The cockpit sidebar (`lib/tui/App.tsx`) on its own: the view the cockpit's sidebar pane runs. */
 export async function runTtyWatch(options: WatchOptions): Promise<number> {
   const { App } = await (import(runtimeImportPath('../lib/tui/App.tsx', '../lib/tui/App.js')) as Promise<typeof import('../lib/tui/App.tsx')>);
 
@@ -220,7 +219,10 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
     source,
     stateDir: options.stateDir,
     intervalMs: options.intervalMs,
-    ...(options.onOpen ? { onOpen: options.onOpen } : {}),
+    // Clicks only live: `--once` draws one frame and leaves no mouse mode behind.
+    mouse: !options.once,
+    ...(options.actions ? { actions: options.actions } : {}),
+    ...(options.activeProject ? { activeProject: options.activeProject } : {}),
   }));
 
   if (options.once) {
@@ -250,7 +252,8 @@ export async function main(): Promise<number | null> {
     return runFallbackWatch(options);
   }
   if (insideCockpit()) {
-    options.onOpen = cockpitOpener([process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))]);
+    options.actions = cockpitActions([process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))]);
+    options.activeProject = () => readCockpitTabs().activeProject;
   }
 
   return runTtyWatch(options);

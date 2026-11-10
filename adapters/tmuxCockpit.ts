@@ -1171,3 +1171,11 @@ export function switchToMasterTab(projectId: string): boolean {
     return selected.ok ? selectTab(selected.state, MASTER_TAB) : selected;
   }).ok;
 }
+
+/** Focuses the frame's slot (Esc in the sidebar); false when the cockpit has no slot. */
+export function focusCockpitSlot(): boolean {
+  const frame = frameOf(cockpitPanes());
+  if (!frame?.slot) return false;
+  cockpitTmuxOrThrow(commandList([['select-window', '-t', frame.windowId], ['select-pane', '-t', frame.slot.paneId]]));
+  return true;
+}

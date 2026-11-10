@@ -41,6 +41,8 @@ export interface TuiClaim {
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
   current_phase: string | null;
+  /** When the run started (`run-start`); absent on a coordinator from before it was sent. */
+  started_at?: string | null;
   phase_history?: { phase: string; started_at: string }[];
   finalization_state?: string | null;
   current_activity?: CurrentActivity | null;
@@ -123,6 +125,8 @@ export interface WorkerSlotViewModel {
   /** What the slot's run needs from a human, null when nothing. */
   attention: TuiAttention | null;
   age_seconds: number | null;
+  /** When the slot's run started (the claim's `started_at`), null without one. */
+  run_started_at: string | null;
   activity_seconds: number | null;
   heartbeat_seconds: number | null;
   /** Set while the slot's run waits for an input response; the question is collapsed to one line. */
@@ -201,6 +205,7 @@ export function buildWorkerSlotViewModels(status: TuiStatus): WorkerSlotViewMode
       activity_label: claim?.current_activity?.text ?? null,
       attention: slot.attention ?? null,
       age_seconds: claim?.age_seconds ?? null,
+      run_started_at: claim?.started_at ?? null,
       activity_seconds: claim?.activity_seconds ?? null,
       heartbeat_seconds,
       waiting_input: waiting

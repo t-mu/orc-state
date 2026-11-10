@@ -202,7 +202,7 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → indicator → agent tab �
     tmux(tmuxSocketName(dir), ['send-keys', '-t', workerTarget, 'Enter']);
     await waitFor('the QUESTION badge', () => {
       const screen = capture(dashboardPane);
-      return screen.includes('QUESTION') && screen.includes(QUESTION.slice(0, 20)) && screen.includes('NEEDS YOU');
+      return screen.includes('QUESTION') && screen.includes(QUESTION.slice(0, 20)) && screen.includes('1 needs you');
     });
 
     // Enter on the dashboard (the worker needing attention is listed first, so selected) opens its tab:
@@ -211,7 +211,7 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → indicator → agent tab �
     // The tab is shown in the slot, in place of the master; the dashboard stays.
     await waitFor('the worker tab', () => slot().agent === 'worker-a');
     expect(frameRole('sidebar')).toBe(dashboardPane);
-    await waitFor('the dashboard to report it', () => capture(dashboardPane).includes('opened worker-a in a new tab'));
+    await waitFor('the dashboard to report it', () => capture(dashboardPane).includes('Opened worker-a in a new tab.'));
     const tabPane = slot().id;
     await waitFor('the worker screen in its tab', () => capture(tabPane).includes('WORKER-READY') && capture(tabPane).includes('writer lease acquired'));
 
@@ -221,7 +221,7 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → indicator → agent tab �
     await waitFor('the answer in the worker tab', () => capture(tabPane).includes(`WORKER-GOT: ${ANSWER}`));
     await waitFor('the badge to clear', () => {
       const screen = capture(dashboardPane);
-      return !screen.includes('QUESTION') && !screen.includes('NEEDS YOU') && screen.includes('worker-a');
+      return !screen.includes('QUESTION') && !screen.includes('1 needs you') && screen.includes('worker-a');
     });
   }, 90_000);
 });
