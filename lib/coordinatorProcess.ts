@@ -7,6 +7,7 @@ import { ControlClient, controlSocketFromEnv } from './controlClient.ts';
 import { ControlError, defaultSocketPath } from './controlProtocol.ts';
 import { staleCodeWarning } from './codeIdentity.ts';
 import { stripNestedProviderEnv } from './providerChildEnv.ts';
+import { isZombie } from './processIdentity.ts';
 import { ensureStateInitialized } from './stateInit.ts';
 
 /** The coordinator entry point beside this build: `coordinator.ts` from a checkout, `coordinator.js` from `dist/`. */
@@ -82,6 +83,11 @@ export async function stopCoordinator(stateDir: string, pid: number): Promise<bo
     }
     return false;
   }
+  // A zombie (exited, not yet reaped) still answers kill(pid, 0) but has already stopped.
+  if (isZombie(pid)) {
+    removeCoordinatorPidFileIfMatches(stateDir, pid);
+    return true;
+  }
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
@@ -89,13 +95,16 @@ export async function stopCoordinator(stateDir: string, pid: number): Promise<bo
   }
   for (let i = 0; i < 10; i++) {
     await new Promise((r) => setTimeout(r, 200));
+    let gone = false;
     try {
       process.kill(pid, 0);
+      gone = isZombie(pid);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ESRCH') {
-        removeCoordinatorPidFileIfMatches(stateDir, pid);
-        return true;
-      }
+      gone = (e as NodeJS.ErrnoException).code === 'ESRCH';
+    }
+    if (gone) {
+      removeCoordinatorPidFileIfMatches(stateDir, pid);
+      return true;
     }
   }
   return false;
