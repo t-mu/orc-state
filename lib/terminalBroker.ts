@@ -91,9 +91,13 @@ function modifiedKey(part: string): string | undefined {
   return key ? `M-${key}` : undefined;
 }
 
+/** An SGR (`\x1b[<b;x;yM` or `m`) or legacy X10 (`\x1b[M` and three bytes) mouse report. */
+const MOUSE_REPORT = /^(?:\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})$/;
+
+/** Mouse reports are dropped: the agent gets no mouse input, and pasted they would type into it. */
 export function terminalInputTokens(data: string): Array<{ key?: string; text?: string }> {
-  return data.split(/(\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO[A-Za-z]|\x1b[\s\S]|[\x00-\x1f\x7f])/g)
-    .filter(Boolean).map((part) => {
+  return data.split(/(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3}|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO[A-Za-z]|\x1b[\s\S]|[\x00-\x1f\x7f])/g)
+    .filter((part) => part && !MOUSE_REPORT.test(part)).map((part) => {
       const key = controlKey(part) ?? modifiedKey(part);
       return key ? { key } : { text: part };
     });

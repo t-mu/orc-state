@@ -4,10 +4,12 @@
  * independent worktree shell. Input needs --write; --takeover takes the lease from its holder.
  */
 import { randomUUID } from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 import { boolFlag } from '../lib/args.ts';
 import { ControlClient, controlSocketFromEnv } from '../lib/controlClient.ts';
 import { ControlError } from '../lib/controlProtocol.ts';
 import { STATE_DIR } from '../lib/paths.ts';
+import { MOUSE_RESET, TerminalMouseFilter } from '../lib/terminalMouseFilter.ts';
 import { cliError } from './shared.ts';
 import { readProjectDescriptor } from '../lib/projectContext.ts';
 import { formatProjectIdentity } from '../lib/projectHealth.ts';
@@ -85,15 +87,18 @@ try {
     for (const stream of [process.stdout, process.stderr]) stream.on('error', () => undefined);
     void cleanup();
   });
+  // The agent's mouse tracking stays out of this terminal: a hovered tab would type mouse reports into it.
+  const decoder = new StringDecoder('utf8');
+  const mouseFilter = new TerminalMouseFilter();
   for await (const frame of frames) {
     if (frame.type === 'snapshot') {
       if (once) { process.stdout.write(frame.screen); break; }
-      // Clear, draw the captured screen, then put the cursor where the pane has it.
-      process.stdout.write(`\x1b[H\x1b[2J${frame.screen.replace(/\n$/, '').replace(/\n/g, '\r\n')}\x1b[${frame.cursor_y + 1};${frame.cursor_x + 1}H`);
+      // Reset mouse reporting, clear, draw the captured screen, then put the cursor where the pane has it.
+      process.stdout.write(`${MOUSE_RESET}\x1b[H\x1b[2J${frame.screen.replace(/\n$/, '').replace(/\n/g, '\r\n')}\x1b[${frame.cursor_y + 1};${frame.cursor_x + 1}H`);
       if (leaseId) startWriter(leaseId);
       else console.error('\r\n[read-only; Ctrl-C detaches]');
     } else if (frame.type === 'output') {
-      process.stdout.write(Buffer.from(frame.data, 'base64'));
+      process.stdout.write(mouseFilter.filter(decoder.write(Buffer.from(frame.data, 'base64'))));
     } else if (frame.type === 'exit') {
       console.error(`\r\n[terminal stream ended: ${frame.reason}]`);
       break;

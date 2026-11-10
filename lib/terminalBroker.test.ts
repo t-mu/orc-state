@@ -189,6 +189,12 @@ describe('terminal broker', () => {
     expect(terminalInputTokens('\x1b[?1;2c')).toEqual([{ text: '\x1b[?1;2c' }]);
   });
 
+  it('drops SGR and legacy X10 mouse reports, keeping the keys and text around them in order', () => {
+    expect(terminalInputTokens('a\x1b[<35;10;5Mb\x1b[<0;3;4m\r')).toEqual([{ text: 'a' }, { text: 'b' }, { key: 'Enter' }]);
+    expect(terminalInputTokens('a\x1b[M #!b\x1b[A')).toEqual([{ text: 'a' }, { text: 'b' }, { key: 'Up' }]);
+    expect(terminalInputScript('=s:', 'buf', '\x1b[<35;106;56M\x1b[<35;105;56M')).toBe('\n');
+  });
+
   it('writes one tmux command per line, joining keys and quoting every argument', () => {
     expect(terminalInputScript('=s:', 'buf', "it's $HOME;\r\x1b[Z\x1b;")).toBe([
       "set-buffer -b 'buf' -- 'it'\\''s $HOME;'",

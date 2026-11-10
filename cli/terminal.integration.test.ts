@@ -27,8 +27,8 @@ async function waitFor(check: () => boolean, timeoutMs = 8_000): Promise<void> {
   }
 }
 
-/** A broker with one agent terminal whose stream stays open; it records lease releases. */
-function fakeBroker(): TerminalBroker {
+/** A broker with one agent terminal whose stream stays open; it records lease releases and sends `output` after the snapshot. */
+function fakeBroker(output: string[] = []): TerminalBroker {
   const terminal = { terminal_id: 'term-1', kind: 'provider', run_id: null, state: 'running' };
   return {
     providerForAgent: () => terminal,
@@ -39,6 +39,7 @@ function fakeBroker(): TerminalBroker {
     input: () => Promise.resolve(),
     stream: (_id: string, viewer: TerminalViewer) => {
       viewer.send({ type: 'snapshot', screen: 'AGENT SCREEN\n', cursor_x: 0, cursor_y: 1, columns: 100, rows: 30 });
+      for (const data of output) viewer.send({ type: 'output', data: Buffer.from(data).toString('base64') });
       return () => undefined;
     },
     sessions: () => [],
@@ -75,5 +76,33 @@ describe.skipIf(!hasTmux)('orc terminal --write in a window that closes', () => 
     tmux(['kill-session', '-t', '=tab']);
     await waitFor(() => release.mock.calls.length > 0);
     expect(release).toHaveBeenCalledWith('term-1', 'lease-1');
+  }, 30_000);
+});
+
+describe.skipIf(!hasTmux)('orc terminal --write and the agent\'s mouse tracking', () => {
+  beforeEach(async () => {
+    dir = createTempStateDir('orch-terminal-mouse-');
+    seedState(dir);
+    // The agent turns on any-motion SGR mouse tracking, split across frames.
+    server = await startControlServer(dir, { terminals: fakeBroker(['AGENT \x1b[?1003', ';1006h\x1b[?1000hOUTPUT\x1b[?2004h']) });
+  });
+
+  afterEach(async () => {
+    tmux(['kill-server']);
+    await server.close();
+    closeAllDatabases();
+    cleanupTempStateDir(dir);
+  });
+
+  it('resets mouse reporting left on and keeps the agent from turning it on', async () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, ORC_STATE_DIR: dir, ORC_SESSION_ID: '', ORC_SESSION_TOKEN: '' };
+    delete env.TMUX;
+    // An older orc terminal left any-motion tracking on in this pane.
+    const command = `printf '\\033[?1003h\\033[?1006h'; exec '${process.execPath}' '${join(repoRoot, 'cli', 'orc.ts')}' terminal w1 --write`;
+    const started = tmux(['new-session', '-d', '-s', 'tab', '-x', '100', '-y', '30', '-c', repoRoot, command], env);
+    expect(started.status, started.stderr).toBe(0);
+    await waitFor(() => tmux(['capture-pane', '-p', '-t', '=tab:']).stdout.includes('AGENT OUTPUT'), 15_000);
+    const flags = tmux(['display-message', '-p', '-t', '=tab:', '#{mouse_any_flag} #{mouse_standard_flag} #{mouse_sgr_flag}']).stdout.trim();
+    expect(flags).toBe('0 0 0');
   }, 30_000);
 });
