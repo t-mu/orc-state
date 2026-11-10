@@ -61,3 +61,26 @@ export function isSameProcess(identity: ProcessIdentity): boolean {
   }
   return readProcessStart(identity.pid) === identity.start;
 }
+
+/** The state letter of a `/proc/<pid>/stat` line, or null; the command name (field 2) may contain spaces and parentheses. */
+export function parseProcStatState(stat: string): string | null {
+  const end = stat.lastIndexOf(')');
+  if (end < 0) return null;
+  const state = stat.slice(end + 2).split(' ')[0];
+  return state ? state : null;
+}
+
+/** True when `ps -o stat=` output names a zombie (`Z`, `Zs`, ...). */
+export function isZombiePsStat(stat: string): boolean {
+  return stat.trim().startsWith('Z');
+}
+
+/** True when the PID is a zombie: exited, not yet reaped, yet still answering `kill(pid, 0)`. A missing or unreadable entry is not a zombie. */
+export function isZombie(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    return parseProcStatState(readFileSync(`/proc/${pid}/stat`, 'utf8')) === 'Z';
+  } catch { /* no procfs (macOS), or the PID is gone */ }
+  const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+  return ps.status === 0 && isZombiePsStat(String(ps.stdout ?? ''));
+}
