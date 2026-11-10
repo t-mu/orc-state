@@ -60,14 +60,43 @@ export function describeProjects(registry: { list(): ProjectRecord[] }): Project
   });
 }
 
+/** The warning Node 24 prints when node:sqlite is first loaded. */
+function isSqliteExperimentalWarning(warning: string | Error, typeOrOptions: unknown): boolean {
+  const type = typeof typeOrOptions === 'string'
+    ? typeOrOptions
+    : (typeOrOptions as { type?: unknown } | undefined)?.type ?? (warning instanceof Error ? warning.name : undefined);
+  const message = warning instanceof Error ? warning.message : String(warning);
+  return type === 'ExperimentalWarning' && message.startsWith('SQLite is an experimental feature');
+}
+
+/**
+ * node:sqlite, loaded without its ExperimentalWarning (it would print above
+ * the `orc watch` dashboard). Node emits that warning synchronously on the
+ * first load, so only that one is dropped while loading; every other warning
+ * still goes through `process.emitWarning`.
+ */
+export function loadNodeSqlite(): typeof import('node:sqlite') {
+  const original = Object.getOwnPropertyDescriptor(process, 'emitWarning');
+  const emitWarning = process.emitWarning.bind(process) as (...args: unknown[]) => void;
+  process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
+    if (!isSqliteExperimentalWarning(warning, rest[0])) emitWarning(warning, ...rest);
+  }) as typeof process.emitWarning;
+  try {
+    return process.getBuiltinModule('node:sqlite');
+  } finally {
+    if (original) Object.defineProperty(process, 'emitWarning', original);
+    else delete (process as { emitWarning?: unknown }).emitWarning;
+  }
+}
+
 /**
  * The registered projects, read from registry.db opened read-only: no
  * table or migration is created, nor the data home or registry.db (SQLite
  * may still create the WAL's -shm/-wal files beside a WAL registry). Loading node:sqlite is
- * deferred to the first call (it prints an ExperimentalWarning on Node 24).
+ * deferred to the first call, through `loadNodeSqlite`.
  */
 function readRegistry(path: string): ProjectRecord[] {
-  const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+  const { DatabaseSync } = loadNodeSqlite();
   const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 });
   try {
     const version = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);

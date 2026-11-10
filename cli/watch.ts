@@ -223,6 +223,9 @@ export async function runTtyWatch(options: WatchOptions): Promise<number> {
   const source = options.source ?? createWatchSource(options.stateDir);
   source.start();
   if (options.once) await waitForSettled(source, options.stateDir, options.settleTimeoutMs ?? 5000);
+  // Live: start from a clear screen, so nothing printed earlier in the pane
+  // (a previous run, a warning) shifts the region Ink redraws.
+  else process.stdout.write('\x1b[2J\x1b[H');
 
   const instance = render(createElement(App, {
     source,

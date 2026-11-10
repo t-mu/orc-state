@@ -203,14 +203,34 @@ export function dashboardAgents(model: DashboardModel): DashboardAgent[] {
   return model.projects.flatMap(project => project.agents);
 }
 
+// ── Agent rows ───────────────────────────────────────────────────────────────
+
+/**
+ * The line under an agent's identity row in `full` detail: its task and phase,
+ * plus its state when an attention badge takes the state's place on the row.
+ * Empty (no line) when there is nothing the row does not already say.
+ */
+export function agentTaskLine(agent: DashboardAgent): string {
+  return [agent.task_ref, agent.phase ?? (agent.attention ? agent.state : null)].filter(Boolean).join(' · ');
+}
+
+/** Whether an agent has an activity or attention line in `full` detail; none while it has neither. */
+export function hasAgentDetailLine(agent: DashboardAgent): boolean {
+  return agent.attention != null || agent.activity != null;
+}
+
+/** Rows one agent takes: `compact` one; `full` its identity row plus its task and detail lines when it has them. */
+export function agentLines(agent: DashboardAgent, detail: AgentDetail): number {
+  if (detail === 'compact') return 1;
+  return 1 + (agentTaskLine(agent) ? 1 : 0) + (hasAgentDetailLine(agent) ? 1 : 0);
+}
+
 // ── Height fitting ───────────────────────────────────────────────────────────
 // Ink clears the whole terminal on every render once the frame is as tall as
 // the terminal, which reads as flicker, so the frame stays below `rows`.
 
-/** `full`: three rows per agent (identity, task, activity); `compact`: one. */
+/** `full`: up to three rows per agent (identity, task, activity); `compact`: one. */
 export type AgentDetail = 'full' | 'compact';
-
-export const AGENT_LINES: Readonly<Record<AgentDetail, number>> = { full: 3, compact: 1 };
 
 /** The feed keeps at least this many rows (title included) while agents are cut. */
 const MIN_FEED_LINES = 3;
@@ -219,6 +239,8 @@ export interface DashboardLayout {
   detail: AgentDetail;
   /** Agents shown per project (the rest collapse into a "+N more" row); Infinity shows all. */
   maxAgentsPerProject: number;
+  /** Projects shown (the rest collapse into a "+N more projects" row); Infinity shows all. The current project is first, so it stays. */
+  maxProjects: number;
   /** Feed entries shown (newest kept). */
   feedLines: number;
 }
@@ -232,41 +254,49 @@ export function projectChromeLines(project: DashboardProject): number {
 }
 
 function agentRows(project: DashboardProject, detail: AgentDetail, maxAgents: number): number {
-  const shown = Math.min(project.agents.length, maxAgents);
-  const more = project.agents.length > shown ? 1 : 0;
-  return shown * AGENT_LINES[detail] + more;
+  const shown = project.agents.slice(0, maxAgents);
+  const more = project.agents.length > shown.length ? 1 : 0;
+  return shown.reduce((sum, agent) => sum + agentLines(agent, detail), 0) + more;
 }
 
-/** Rows above the feed: the title line, the notice, each project section and the gap before the feed. */
-function bodyLines(model: DashboardModel, detail: AgentDetail, maxAgents: number): number {
+/** Rows above the feed: the title line, the notice, each shown project section, the "+N more projects" row and the gap before the feed. */
+function bodyLines(model: DashboardModel, detail: AgentDetail, maxAgents: number, maxProjects: number): number {
   let lines = 1 + (model.notice ? 1 : 0);
-  for (const project of model.projects) lines += projectChromeLines(project) + agentRows(project, detail, maxAgents);
+  const shown = model.projects.slice(0, maxProjects);
+  for (const project of shown) lines += projectChromeLines(project) + agentRows(project, detail, maxAgents);
+  if (model.projects.length > shown.length) lines += 1;
   return lines + 1;
 }
 
 /**
  * How much of the dashboard fits `rows` (undefined: no TTY, show everything).
  * Agents collapse, then each project's list is cut (agents needing attention
- * sort first, so they go last). Projects themselves are never cut: with more
- * project rows than the terminal has, the frame can still reach `rows`.
+ * sort first, so they go last), then other projects are cut (the current
+ * project stays). The frame stays below `rows` unless even the title, the
+ * current project's header and the feed title do not fit.
  */
 export function computeDashboardLayout(model: DashboardModel, rows: number | undefined): DashboardLayout {
-  const feedWanted = 1 + Math.max(1, model.feed.length);
-  if (rows == null) return { detail: 'full', maxAgentsPerProject: Infinity, feedLines: model.feed.length };
+  if (rows == null) return { detail: 'full', maxAgentsPerProject: Infinity, maxProjects: Infinity, feedLines: model.feed.length };
   const budget = rows - 1;
-  const fits = (detail: AgentDetail, maxAgents: number, feedRows: number) => bodyLines(model, detail, maxAgents) + feedRows <= budget;
-  const feedRows = (detail: AgentDetail, maxAgents: number) => Math.max(0, budget - bodyLines(model, detail, maxAgents));
+  const minFeed = Math.min(1 + Math.max(1, model.feed.length), MIN_FEED_LINES);
+  const layout = (detail: AgentDetail, maxAgents: number, maxProjects: number): DashboardLayout | null => {
+    const left = budget - bodyLines(model, detail, maxAgents, maxProjects);
+    if (left < minFeed) return null;
+    return { detail, maxAgentsPerProject: maxAgents, maxProjects, feedLines: Math.max(0, Math.min(model.feed.length, left - 1)) };
+  };
 
   for (const detail of ['full', 'compact'] as const) {
-    if (fits(detail, Infinity, Math.min(feedWanted, MIN_FEED_LINES))) {
-      return { detail, maxAgentsPerProject: Infinity, feedLines: Math.max(0, Math.min(model.feed.length, feedRows(detail, Infinity) - 1)) };
-    }
+    const fitted = layout(detail, Infinity, Infinity);
+    if (fitted) return fitted;
   }
   const most = Math.max(0, ...model.projects.map(project => project.agents.length));
   for (let maxAgents = most - 1; maxAgents >= 0; maxAgents -= 1) {
-    if (fits('compact', maxAgents, Math.min(feedWanted, MIN_FEED_LINES)) || maxAgents === 0) {
-      return { detail: 'compact', maxAgentsPerProject: maxAgents, feedLines: Math.max(0, Math.min(model.feed.length, feedRows('compact', maxAgents) - 1)) };
-    }
+    const fitted = layout('compact', maxAgents, Infinity);
+    if (fitted) return fitted;
   }
-  return { detail: 'compact', maxAgentsPerProject: 0, feedLines: 0 };
+  for (let maxProjects = model.projects.length - 1; maxProjects >= 1; maxProjects -= 1) {
+    const fitted = layout('compact', 0, maxProjects);
+    if (fitted) return fitted;
+  }
+  return { detail: 'compact', maxAgentsPerProject: 0, maxProjects: Math.min(1, model.projects.length), feedLines: 0 };
 }

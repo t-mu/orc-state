@@ -24,8 +24,11 @@ export const COCKPIT_SESSION = 'cockpit';
 export const COCKPIT_PREFIX = 'C-]';
 /** How to get around, shown on attach and in the status line. */
 export const COCKPIT_KEYS = 'Ctrl-] o: switch pane | Ctrl-] n/p: next/previous tab | Ctrl-] d: detach';
-/** The dashboard pane's share of the window width. */
-const DASHBOARD_WIDTH = '35%';
+/** The dashboard pane is a sidebar: a quarter of the window, kept within these columns (it is laid out for 40). */
+const DASHBOARD_MIN_COLUMNS = 40;
+const DASHBOARD_MAX_COLUMNS = 60;
+/** The master stays the primary pane: the dashboard never takes more than this share of a narrow window. */
+const DASHBOARD_MAX_SHARE = 0.4;
 const DEFAULT_SIZE = { columns: 200, rows: 50 };
 /** Window options naming what a window shows. Values never hold spaces, so list-windows output splits on them. */
 const PROJECT_OPTION = '@orc_project_id';
@@ -144,10 +147,20 @@ export function cockpitServerOptions(options: { trueColor: boolean; terminal: st
   ];
 }
 
-/** The pane layout of a window just created with its master pane `paneId`: the dashboard beside it, the window labelled, the master focused. */
-export function windowLayoutCommands(windowId: string, paneId: string, project: CockpitProject, master: CockpitMaster, dashboardScript: string): string[][] {
+/**
+ * The dashboard pane's width in a window `columns` wide: a quarter of it,
+ * within 40–60 columns, and at most 40% of a narrow window so the master
+ * stays the primary pane.
+ */
+export function dashboardPaneWidth(columns: number): number {
+  const sidebar = Math.min(DASHBOARD_MAX_COLUMNS, Math.max(DASHBOARD_MIN_COLUMNS, Math.round(columns / 4)));
+  return Math.max(1, Math.min(sidebar, Math.floor(columns * DASHBOARD_MAX_SHARE)));
+}
+
+/** The pane layout of a window `columns` wide just created with its master pane `paneId`: the dashboard beside it, the window labelled, the master focused. */
+export function windowLayoutCommands(windowId: string, paneId: string, columns: number, project: CockpitProject, master: CockpitMaster, dashboardScript: string): string[][] {
   return [
-    ['split-window', '-h', '-d', '-l', DASHBOARD_WIDTH, '-t', paneId, '-c', project.root, '/bin/sh', '-c', dashboardScript],
+    ['split-window', '-h', '-d', '-l', String(dashboardPaneWidth(columns)), '-t', paneId, '-c', project.root, '/bin/sh', '-c', dashboardScript],
     ['set-option', '-w', '-t', windowId, PROJECT_OPTION, project.id],
     ['set-option', '-w', '-t', windowId, MASTER_OPTION, masterKey(master)],
     ['set-option', '-w', '-t', windowId, MASTER_PANE_OPTION, paneId],
@@ -190,14 +203,14 @@ function cockpitTerminal(): string {
   return !probe.error && probe.status === 0 ? 'tmux-256color' : 'screen-256color';
 }
 
-interface CockpitWindow { windowId: string; projectId: string; master: string; masterPane: string }
+interface CockpitWindow { windowId: string; projectId: string; master: string; masterPane: string; columns: number }
 
 function cockpitWindows(): CockpitWindow[] {
   const out = cockpitTmuxOrThrow(['list-windows', '-t', `=${COCKPIT_SESSION}`, '-F',
-    `#{window_id} #{${PROJECT_OPTION}} #{${MASTER_OPTION}} #{${MASTER_PANE_OPTION}}`]);
+    `#{window_id} #{${PROJECT_OPTION}} #{${MASTER_OPTION}} #{${MASTER_PANE_OPTION}} #{window_width}`]);
   return out.split('\n').filter(Boolean).map((line) => {
-    const [windowId = '', projectId = '', master = '', masterPane = ''] = line.split(' ');
-    return { windowId, projectId, master, masterPane };
+    const [windowId = '', projectId = '', master = '', masterPane = '', width = ''] = line.split(' ');
+    return { windowId, projectId, master, masterPane, columns: windowColumns(width) };
   });
 }
 
@@ -205,10 +218,16 @@ function windowPanes(windowId: string): string[] {
   return cockpitTmuxOrThrow(['list-panes', '-t', windowId, '-F', '#{pane_id}']).split('\n').filter(Boolean);
 }
 
-function parseCreated(out: string): { windowId: string; paneId: string } {
-  const [windowId, paneId] = out.trim().split(' ');
+/** A `#{window_width}` value; the default width when tmux printed none. */
+function windowColumns(width: string | undefined): number {
+  const columns = Number(width);
+  return Number.isInteger(columns) && columns > 0 ? columns : DEFAULT_SIZE.columns;
+}
+
+function parseCreated(out: string): { windowId: string; paneId: string; columns: number } {
+  const [windowId, paneId, width] = out.trim().split(' ');
   if (!windowId?.startsWith('@') || !paneId?.startsWith('%')) throw new Error(`unexpected tmux output '${out.trim()}'`);
-  return { windowId, paneId };
+  return { windowId, paneId, columns: windowColumns(width) };
 }
 
 export type CockpitWindowOutcome = 'created-session' | 'created-window' | 'respawned-master' | 'existing';
@@ -229,7 +248,7 @@ export function ensureCockpitWindow(spec: {
   const { project, master, options } = spec;
   const masterCommand = ['/bin/sh', '-c', masterPaneScript(master, project, options)];
   const dashboardScript = dashboardPaneScript(project, spec.watchCommand);
-  const newPane = ['-n', project.name, '-c', project.root, '-P', '-F', '#{window_id} #{pane_id}', ...masterCommand];
+  const newPane = ['-n', project.name, '-c', project.root, '-P', '-F', '#{window_id} #{pane_id} #{window_width}', ...masterCommand];
 
   const hasCockpit = () => cockpitTmux(['has-session', '-t', `=${COCKPIT_SESSION}`]).status === 0;
   if (!hasCockpit()) {
@@ -240,8 +259,8 @@ export function ensureCockpitWindow(spec: {
       ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), ...newPane],
     ]));
     if (!created.error && created.status === 0) {
-      const { windowId, paneId } = parseCreated(created.stdout);
-      cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, project, master, dashboardScript)));
+      const { windowId, paneId, columns: width } = parseCreated(created.stdout);
+      cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, width, project, master, dashboardScript)));
       return 'created-session';
     }
     // Another start-session created the cockpit first: add this project's tab to it.
@@ -254,7 +273,7 @@ export function ensureCockpitWindow(spec: {
     if (panes.includes(existing.masterPane)) {
       if (panes.length < 2) {
         // The dashboard pane was closed: rebuild the layout around the master pane.
-        cockpitTmuxOrThrow(commandList(windowLayoutCommands(existing.windowId, existing.masterPane, project, master, dashboardScript)));
+        cockpitTmuxOrThrow(commandList(windowLayoutCommands(existing.windowId, existing.masterPane, existing.columns, project, master, dashboardScript)));
       }
       if (existing.master === masterKey(master)) {
         cockpitTmuxOrThrow(commandList(focusCommands(existing.windowId, existing.masterPane)));
@@ -269,8 +288,8 @@ export function ensureCockpitWindow(spec: {
     }
     cockpitTmuxOrThrow(['kill-window', '-t', existing.windowId]);
   }
-  const { windowId, paneId } = parseCreated(cockpitTmuxOrThrow(['new-window', '-d', '-t', `=${COCKPIT_SESSION}:`, ...newPane]));
-  cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, project, master, dashboardScript)));
+  const { windowId, paneId, columns } = parseCreated(cockpitTmuxOrThrow(['new-window', '-d', '-t', `=${COCKPIT_SESSION}:`, ...newPane]));
+  cockpitTmuxOrThrow(commandList(windowLayoutCommands(windowId, paneId, columns, project, master, dashboardScript)));
   return 'created-window';
 }
 
