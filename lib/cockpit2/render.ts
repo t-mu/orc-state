@@ -9,7 +9,7 @@
  * (`Buffer.from(out, 'utf8')` or a stream with utf8 encoding), never through
  * a locale-dependent encoding.
  */
-import type { Cell, CellStyle, Color } from './screen.ts';
+import type { Cell, CellStyle, Color, Cursor } from './screen.ts';
 import { DEFAULT_STYLE, type Frame } from './frame.ts';
 
 const ESC = '\x1b';
@@ -17,8 +17,6 @@ const SYNC_ON = `${ESC}[?2026h`;
 const SYNC_OFF = `${ESC}[?2026l`;
 const HIDE_CURSOR = `${ESC}[?25l`;
 const SHOW_CURSOR = `${ESC}[?25h`;
-
-export interface RenderCursor { x: number; y: number; visible: boolean }
 
 const ATTRIBUTES = [
   ['bold', '1'], ['dim', '2'], ['italic', '3'], ['underline', '4'],
@@ -79,7 +77,7 @@ const moveTo = (x: number, y: number) => `${ESC}[${y + 1};${x + 1}H`;
  * unknown) into `next`, then parks the cursor at `cursor`. Repaints every cell
  * when `prev` is null or its size differs.
  */
-export function renderDiff(prev: Frame | null, next: Frame, cursor: RenderCursor): string {
+export function renderDiff(prev: Frame | null, next: Frame, cursor: Cursor): string {
   const full = prev === null || prev.cols !== next.cols || prev.rows !== next.rows;
   let out = SYNC_ON + HIDE_CURSOR;
   let style: CellStyle | null = null; // unknown until we set it

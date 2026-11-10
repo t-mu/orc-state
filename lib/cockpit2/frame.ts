@@ -94,6 +94,11 @@ export interface BlitOptions {
  * smaller one padded with blanks; with `edge` a dim marker column follows its
  * last column and a marker row its last row. A wide grapheme cut by the
  * region's right edge becomes a blank.
+ *
+ * Cell widths are the screen's own, which may differ from lib/cellWidth.ts:
+ * the screen model still measures with xterm's Unicode 6 tables (emoji one
+ * column, no ZWJ or flag joining), so a pane's emoji can be clipped or drawn
+ * over until screen.ts registers a cellWidth-based unicode provider.
  */
 export function blitScreen(frame: Frame, screen: Pick<Screen, 'cols' | 'rows' | 'row'>, region: Region, options: BlitOptions = {}): void {
   const edge = options.edge ?? true;
