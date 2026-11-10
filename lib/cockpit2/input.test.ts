@@ -59,6 +59,7 @@ describe('createTokenizer', () => {
     ['an SS3 sequence', bytes('\x1bOP')],
     ['a mouse report', bytes('\x1b[<35;120;40M')],
     ['a Linux console key', bytes('\x1b[[C')],
+    ['an rxvt Meta function key', bytes('\x1b\x1b[11^')],
     ['an Alt key', utf8('\x1bä')],
     ['a UTF-8 character', utf8('😀')],
     ['a bracketed paste', Buffer.concat([bytes('\x1b[200~'), utf8('pä\x1b[201'), bytes('~')])],
@@ -113,13 +114,16 @@ describe('createTokenizer', () => {
     expect(timers.pending()).toBe(false);
   });
 
-  it('reads ESC [ and ESC O cut short by the timeout as Alt keys, and ESC ESC as Escape then the rest', () => {
+  it('reads ESC [ and ESC O cut short by the timeout as Alt keys, ESC ESC as Escape then the rest unless a sequence follows', () => {
     const tokenizer = createTokenizer({ timers: manualTimers() });
     tokenizer.push(bytes('\x1b['));
     expect(shape(tokenizer.flush())).toEqual([['alt', '\x1b[']]);
     tokenizer.push(bytes('\x1bO'));
     expect(shape(tokenizer.flush())).toEqual([['alt', '\x1bO']]);
-    expect(shape(tokenizer.push(bytes('\x1b\x1bOP')))).toEqual([['control', '\x1b'], ['ss3', '\x1bOP']]);
+    expect(shape(tokenizer.push(bytes('\x1b\x1bx')))).toEqual([['control', '\x1b'], ['alt', '\x1bx']]);
+    expect(tokenizer.push(bytes('\x1b\x1b'))).toEqual([]);
+    expect(shape(tokenizer.flush())).toEqual([['control', '\x1b'], ['control', '\x1b']]);
+    expect(tokenizer.push(bytes('\x1b\x1bOP'))).toEqual([{ kind: 'ss3', raw: bytes('\x1b\x1bOP'), params: '', final: 'P', meta: true }]);
   });
 
   it('ends an rxvt Shift-function key at its $', () => {
@@ -129,6 +133,7 @@ describe('createTokenizer', () => {
     ]);
     // Its `$` is final even when the read ends there: a reply with an intermediate `$` has several parameters.
     expect(shape(tokenize(bytes('\x1b[24$')).tokens)).toEqual([['csi', '\x1b[24$']]);
+    expect(shape(tokenize(bytes('\x1b[24$a\x1b[3$')).tokens)).toEqual([['csi', '\x1b[24$'], ['char', 'a'], ['csi', '\x1b[3$']]);
     expect(tokenize(bytes('\x1b[?1;2$y')).tokens).toEqual([{ kind: 'csi', raw: bytes('\x1b[?1;2$y'), params: '?1;2', intermediates: '$', final: 'y' }]);
   });
 
@@ -192,6 +197,11 @@ describe('keyMatcher', () => {
       expect(match(one(`\x1b[${RXVT[key]}^`))).toBe(`C-${key}`);
       expect(match(one(`\x1b[${RXVT[key]}$`))).toBe(`S-${key}`);
       expect(match(one(`\x1b[${RXVT[key]}@`))).toBe(`C-S-${key}`);
+      const meta = keyMatcher([`M-${key}`, `C-M-${key}`, `M-S-${key}`, `C-M-S-${key}`]);
+      expect(meta(one(`\x1b\x1b[${RXVT[key]}~`))).toBe(`M-${key}`);
+      expect(meta(one(`\x1b\x1b[${RXVT[key]}^`))).toBe(`C-M-${key}`);
+      expect(meta(one(`\x1b\x1b[${RXVT[key]}$`))).toBe(`M-S-${key}`);
+      expect(meta(one(`\x1b\x1b[${RXVT[key]}@`))).toBe(`C-M-S-${key}`);
     }
   });
 
@@ -212,6 +222,7 @@ describe('keyMatcher', () => {
     expect(match(one('\x1b\x02'))).toBe('C-M-b');
     expect(match(one('\x00'))).toBe('C-Space');
     expect(match(one('\x1b\r'))).toBe('M-Enter');
+    expect(keyMatcher(['M-Up'])(one('\x1b\x1b[A'))).toBe('M-Up');
     expect(keyMatcher(['C-A'])(one('\x01'))).toBe('C-A');
   });
 

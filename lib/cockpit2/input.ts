@@ -16,15 +16,16 @@ const PASTE_END = Buffer.from('\x1b[201~', 'latin1');
  * One unit of input. `paste`: a bracketed paste, `data` without its markers;
  * `mouse`: an SGR mouse report (lib/cockpit2/mouse.ts parses it); `csi`/`ss3`:
  * `ESC [` / `ESC O` sequences (`params` the parameter bytes, `final` the final
- * byte, `''` when cut short; the Linux console's `ESC [ [ A` has final `[A`);
+ * byte, `''` when cut short; the Linux console's `ESC [ [ A` has final `[A`;
+ * `meta` when an extra ESC came first, rxvt's Meta);
  * `alt`: ESC and one key (`key` the character or control byte); `char`: one
  * UTF-8 character (`�` for an invalid byte); `control`: one C0 byte or DEL.
  */
 export type Token =
   | { kind: 'paste'; raw: Buffer; data: Buffer }
   | { kind: 'mouse'; raw: Buffer }
-  | { kind: 'csi'; raw: Buffer; params: string; intermediates: string; final: string }
-  | { kind: 'ss3'; raw: Buffer; params: string; final: string }
+  | { kind: 'csi'; raw: Buffer; params: string; intermediates: string; final: string; meta?: true }
+  | { kind: 'ss3'; raw: Buffer; params: string; final: string; meta?: true }
   | { kind: 'alt'; raw: Buffer; key: string }
   | { kind: 'char'; raw: Buffer; text: string }
   | { kind: 'control'; raw: Buffer; code: number };
@@ -98,7 +99,7 @@ function scanCsi(data: Buffer, start: number, final: boolean): Scan {
   const intermediates = latin1(data, intermediatesStart, at);
   // rxvt ends Shift-function keys in `$` (ESC [ 24 $), an intermediate byte everywhere else; the
   // replies that use it (DECRPM `CSI 2004 ; 1 $ y`) have more than one parameter.
-  if (intermediates === '$' && /^\d+$/.test(params) && (at >= data.length || !isFinal(data[at]))) {
+  if (intermediates === '$' && /^\d+$/.test(params)) {
     return { token: { kind: 'csi', raw: raw(at), params, intermediates: '', final: '$' }, end: at };
   }
   if (at >= data.length) return final ? { token: { kind: 'csi', raw: raw(at), params, intermediates, final: '' }, end: at } : null;
@@ -129,7 +130,18 @@ function scan(data: Buffer, start: number, final: boolean): Scan {
     const next = data[start + 1];
     if (next === 0x5b) return scanCsi(data, start, final);
     if (next === 0x4f) return scanSs3(data, start, final);
-    if (next === ESC) return { token: { kind: 'control', raw: Buffer.from([ESC]), code: ESC }, end: start + 1 };
+    if (next === ESC) {
+      // rxvt sends Meta with a function or cursor key as an ESC before its sequence: ESC ESC [ 11 ~.
+      if (start + 2 >= data.length && !final) return null;
+      if (data[start + 2] === 0x5b || data[start + 2] === 0x4f) {
+        const inner = data[start + 2] === 0x5b ? scanCsi(data, start + 1, final) : scanSs3(data, start + 1, final);
+        if (!inner) return null;
+        if (typeof inner.token !== 'string' && (inner.token.kind === 'csi' || inner.token.kind === 'ss3') && inner.token.final !== '') {
+          return { token: { ...inner.token, raw: Buffer.from(data.subarray(start, inner.end)), meta: true }, end: inner.end };
+        }
+      }
+      return { token: { kind: 'control', raw: Buffer.from([ESC]), code: ESC }, end: start + 1 };
+    }
     const key = scanChar(data, start + 1, final);
     if (!key) return null;
     return { token: { kind: 'alt', raw: Buffer.from(data.subarray(start, key.end)), key: key.text }, end: key.end };
@@ -267,6 +279,11 @@ function decodeChar(text: string): KeyDesc | null {
 }
 
 function decodeToken(token: Token): KeyDesc | null {
+  const desc = decodeUnprefixed(token);
+  return desc && 'meta' in token && token.meta ? { ...desc, meta: true } : desc;
+}
+
+function decodeUnprefixed(token: Token): KeyDesc | null {
   switch (token.kind) {
     case 'control': return decodeChar(String.fromCharCode(token.code));
     case 'char': return decodeChar(token.text);
