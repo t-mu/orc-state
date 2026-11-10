@@ -21,6 +21,8 @@
  * pane whose program asks for the mouse still gets it.
  */
 import { spawnSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
   EMPTY_COCKPIT_STATE, MASTER_TAB, closedTabs, openAgent, parseTabs, reconcileTabs, selectProject, selectTab, serializeTabs, shownTab,
   type CockpitTabState, type OpenTab, type TabTransition,
@@ -468,12 +470,14 @@ export interface CockpitPane {
   inFrame: boolean;
   /** The project whose holding window the pane is in; empty elsewhere. */
   holding: string;
-  role: string;
-  /** A tab pane's project and agent (empty on a master or message pane). */
+  role: CockpitPaneRole | '';
+  /** A tab pane's project and agent (empty on a master or message pane); on the sidebar, the project its dashboard runs for. */
   projectId: string;
   agentId: string;
   /** A master pane's `masterKey`. */
   masterKey: string;
+  columns: number;
+  rows: number;
 }
 
 /**
@@ -483,15 +487,16 @@ export interface CockpitPane {
 const FIELD_SEPARATOR = '<|>';
 
 const PANE_FORMAT = [
-  '#{pane_id}', '#{window_id}', '#{window_name}', `#{${FRAME_OPTION}}`, `#{${ROLE_OPTION}}`, `#{${TAB_AGENT_OPTION}}`, `#{${MASTER_KEY_OPTION}}`,
+  '#{pane_id}', '#{window_id}', '#{window_name}', `#{${FRAME_OPTION}}`, `#{${ROLE_OPTION}}`, `#{${TAB_AGENT_OPTION}}`, `#{${MASTER_KEY_OPTION}}`, '#{pane_width}x#{pane_height}',
   `#{${TAB_PROJECT_OPTION}}`, `#{${HOLDING_OPTION}}`,
 ].join(FIELD_SEPARATOR);
 
 /** `list-panes -s` output in its format: fields joined with `<|>`. */
 export function parseCockpitPanes(out: string): CockpitPane[] {
   return out.split('\n').filter(Boolean).map((line) => {
-    const [paneId = '', windowId = '', windowName = '', frame = '', role = '', agentId = '', key = '', projectId = '', holding = ''] = line.split(FIELD_SEPARATOR);
-    return { paneId, windowId, windowName, inFrame: frame === '1', holding, role, projectId, agentId, masterKey: key };
+    const [paneId = '', windowId = '', windowName = '', frame = '', role = '', agentId = '', key = '', size = '', projectId = '', holding = ''] = line.split(FIELD_SEPARATOR);
+    const [columns = 0, rows = 0] = size.split('x').map(Number);
+    return { paneId, windowId, windowName, inFrame: frame === '1', holding, role: role as CockpitPaneRole | '', projectId, agentId, masterKey: key, columns, rows };
   });
 }
 
@@ -541,6 +546,7 @@ export function frameOf(panes: CockpitPane[]): CockpitFrame | null {
  * swap it with the slot's pane, which lands in `target`'s place; a tab of
  * another project then moves on to its own holding window (`holdingWindow`),
  * and a placeholder is closed. The frame stays current, the shown pane focused.
+ * The holding windows are fitted afterwards (`holdingFitCommands`).
  */
 export function slotCommands(frame: CockpitFrame & { slot: CockpitPane }, target: CockpitPane, holdingWindow: (projectId: string) => string | null): string[][] {
   const focus = [['select-window', '-t', frame.windowId], ['select-pane', '-t', target.paneId]];
@@ -551,9 +557,34 @@ export function slotCommands(frame: CockpitFrame & { slot: CockpitPane }, target
     commands.push(['kill-pane', '-t', slot.paneId]);
   } else if (paneTab(slot)) {
     const home = holdingWindow(slot.projectId);
-    if (home && home !== target.windowId) commands.push(['join-pane', '-d', '-s', slot.paneId, '-t', home], ['select-layout', '-t', home, 'tiled']);
+    if (home && home !== target.windowId) commands.push(['join-pane', '-d', '-s', slot.paneId, '-t', home]);
   }
-  return [...commands, ['select-layout', '-t', target.windowId, 'tiled'], ...focus];
+  return [...commands, ...focus];
+}
+
+/**
+ * The commands that give every pane of a holding window the slot's size
+ * (`columns` x `rows`): the window is sized by hand to fit its `panes` stacked
+ * at that size. A hidden tab then keeps the size it has when shown, so parking
+ * or showing it never resizes its agent's or master's window.
+ */
+export function holdingFitCommands(windowId: string, panes: number, columns: number, rows: number): string[][] {
+  return [
+    ['set-option', '-w', '-t', windowId, 'window-size', 'manual'],
+    ['resize-window', '-t', windowId, '-x', String(columns), '-y', String(panes * rows + panes - 1)],
+    ['select-layout', '-t', windowId, 'even-vertical'],
+  ];
+}
+
+/** Fits every holding window to the slot's current size. */
+function fitHoldingWindows(): void {
+  const panes = cockpitPanes();
+  const slot = frameOf(panes)?.slot;
+  if (!slot || slot.columns < 1 || slot.rows < 1) return;
+  const counts = new Map<string, number>();
+  for (const pane of panes) if (pane.holding && !pane.inFrame) counts.set(pane.windowId, (counts.get(pane.windowId) ?? 0) + 1);
+  const commands = [...counts].flatMap(([windowId, count]) => holdingFitCommands(windowId, count, slot.columns, slot.rows));
+  if (commands.length > 0) cockpitTmuxOrThrow(commandList(commands));
 }
 
 function holdingWindows(): Map<string, string> {
@@ -607,14 +638,15 @@ function createTabPane(spec: TabPaneSpec): string {
   const holding = ensureHoldingWindow(spec.projectId, spec.projectName);
   const paneId = cockpitTmuxOrThrow(['split-window', '-d', '-t', holding, '-c', spec.root, '-P', '-F', '#{pane_id}', '/bin/sh', '-c', spec.script]).trim();
   if (!paneId.startsWith('%')) throw new Error(`unexpected tmux output '${paneId}'`);
-  cockpitTmuxOrThrow(commandList([...tabPaneOptions(paneId, spec), ['select-layout', '-t', holding, 'tiled']]));
+  cockpitTmuxOrThrow(commandList(tabPaneOptions(paneId, spec)));
+  fitHoldingWindows();
   return paneId;
 }
 
 /** Moves `paneId` into `projectId`'s holding window. */
 function holdPane(paneId: string, projectId: string, name: string): void {
   const holding = ensureHoldingWindow(projectId, name);
-  cockpitTmuxOrThrow(commandList([['join-pane', '-d', '-s', paneId, '-t', holding], ['select-layout', '-t', holding, 'tiled']]));
+  cockpitTmuxOrThrow(['join-pane', '-d', '-s', paneId, '-t', holding]);
 }
 
 /** Splits a placeholder into a frame whose slot was closed, and restores the frame's sizes. */
@@ -644,6 +676,19 @@ function buildFrame(windowId: string, sidebar: string, spec: FrameSpec): void {
     ...frameSizeCommands(sidebar, tabbar),
     frameResizeHook(windowId, sidebar, tabbar),
     ['select-window', '-t', windowId],
+  ]));
+}
+
+/**
+ * Makes the sidebar's dashboard run for `project` (the one `orc start-session`
+ * ran in, listed first and marked current), respawning it when it ran for another.
+ */
+function showSidebarProject(project: Pick<CockpitProject, 'id' | 'root'>, sidebarScript: string): void {
+  const sidebar = cockpitPanes().find((pane) => pane.inFrame && pane.role === 'sidebar');
+  if (!sidebar || sidebar.projectId === project.id) return;
+  cockpitTmuxOrThrow(commandList([
+    ...(sidebar.projectId ? [['respawn-pane', '-k', '-t', sidebar.paneId, '-c', project.root, '/bin/sh', '-c', sidebarScript]] : []),
+    ['set-option', '-p', '-t', sidebar.paneId, TAB_PROJECT_OPTION, project.id],
   ]));
 }
 
@@ -743,32 +788,37 @@ export function ensureCockpitWindow(spec: {
   };
 
   const hasCockpit = () => cockpitTmux(['has-session', '-t', `=${COCKPIT_SESSION}`]).status === 0;
-  let createdSession = false;
-  if (!hasCockpit()) {
-    const columns = spec.size?.columns || DEFAULT_SIZE.columns;
-    const rows = spec.size?.rows || DEFAULT_SIZE.rows;
-    const created = cockpitTmux(commandList([
-      ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal(), keys: spec.keys, orc: spec.orc }),
-      ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), '-n', FRAME_NAME, '-c', project.root,
-        '-P', '-F', '#{window_id} #{pane_id}', '/bin/sh', '-c', frame.sidebarScript],
-    ]));
-    if (!created.error && created.status === 0) {
-      const { windowId, paneId } = parseCreated(created.stdout);
-      buildFrame(windowId, paneId, frame);
-      createdSession = true;
-    } else if (!hasCockpit()) {
-      throw created.error ?? new Error(`tmux new-session failed: ${(created.stderr || '').trim() || `exit ${created.status}`}`);
-    }
-    // Otherwise another start-session created the cockpit first: add this project to it.
-  }
-  if (!createdSession) {
-    // A running cockpit, maybe created with other keys or the old layout: apply these keys, then rebuild its layout.
-    cockpitTmuxOrThrow(commandList([...cockpitKeyOptions(spec.keys, boundCockpitKeys(), spec.orc), ['move-window', '-r', '-t', `=${COCKPIT_SESSION}`]]));
-    migrateLegacyWindows();
-    ensureFrame(frame);
-  }
-
+  // The lock sits beside the cockpit's socket, in tmux's per-user directory, which a first server has not made yet.
+  mkdirSync(dirname(cockpitLockPath()), { recursive: true, mode: 0o700 });
+  // All under the lock: the tab bar, or another start-session, must not see a frame half built or rebuilt.
   return withCockpitLock(() => {
+    let created: { windowId: string; paneId: string } | null = null;
+    if (!hasCockpit()) {
+      const columns = spec.size?.columns || DEFAULT_SIZE.columns;
+      const rows = spec.size?.rows || DEFAULT_SIZE.rows;
+      const started = cockpitTmux(commandList([
+        ...cockpitServerOptions({ trueColor: options.trueColor, terminal: cockpitTerminal(), keys: spec.keys, orc: spec.orc }),
+        ['new-session', '-d', '-s', COCKPIT_SESSION, '-x', String(columns), '-y', String(rows), '-n', FRAME_NAME, '-c', project.root,
+          '-P', '-F', '#{window_id} #{pane_id}', '/bin/sh', '-c', frame.sidebarScript],
+      ]));
+      if (!started.error && started.status === 0) {
+        created = parseCreated(started.stdout);
+      } else if (!hasCockpit()) {
+        throw started.error ?? new Error(`tmux new-session failed: ${(started.stderr || '').trim() || `exit ${started.status}`}`);
+      }
+      // Otherwise another cockpit server came up first (outside orc's lock): add this project to it.
+    }
+    const createdSession = created !== null;
+    if (created) {
+      buildFrame(created.windowId, created.paneId, frame);
+    } else {
+      // A running cockpit, maybe created with other keys or the old layout: apply these keys, build its frame
+      // (first, so closing the old windows never ends the session), then move the old windows' tabs into it.
+      cockpitTmuxOrThrow(commandList([...cockpitKeyOptions(spec.keys, boundCockpitKeys(), spec.orc), ['move-window', '-r', '-t', `=${COCKPIT_SESSION}`]]));
+      ensureFrame(frame);
+      if (migrateLegacyWindows() > 0) fitHoldingWindows();
+    }
+    showSidebarProject(project, frame.sidebarScript);
     const key = masterKey(master);
     const masterCommand = masterPaneScript(master, project, options);
     const pane = cockpitPanes().find((entry) => entry.projectId === project.id && (entry.role === 'master' || entry.role === 'message'));
@@ -990,9 +1040,10 @@ function applyTransitionLocked(
     const now = cockpitPanes();
     for (const tab of closed) {
       const pane = findTabPane(now, tab);
-      if (pane) cockpitTmuxOrThrow(commandList([['kill-pane', '-t', pane.paneId], ...(pane.inFrame ? [] : [['select-layout', '-t', pane.windowId, 'tiled']])]));
+      if (pane) cockpitTmuxOrThrow(['kill-pane', '-t', pane.paneId]);
     }
   }
+  fitHoldingWindows();
   return { ...result, opened };
 }
 

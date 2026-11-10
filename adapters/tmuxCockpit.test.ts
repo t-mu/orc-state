@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
   COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, SIDEBAR_COLUMNS, TAB_BAR_ROWS, agentTabScript, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint,
-  cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, dashboardPaneScript, frameOf, frameResizeHook, frameSizeCommands, insideCockpit,
+  cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, dashboardPaneScript, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
   isTmuxKeyName, keeperPaneScript, messagePaneScript, paneTab, parseCockpitPanes, placeholderPaneScript, resolveCockpitKeys, masterPaneScript, slotCommands,
   startCommand, tabBarPaneScript, tabPaneOptions, terminalHasTrueColor, withCockpitLock, type CockpitPane,
 } from './tmuxCockpit.ts';
@@ -208,8 +208,9 @@ describe('cockpitRunShell', () => {
   });
 });
 
-const pane = (fields: Partial<CockpitPane>): CockpitPane => ({
-  paneId: '%0', windowId: '@0', windowName: 'w', inFrame: false, holding: '', role: '', projectId: '', agentId: '', masterKey: '', ...fields,
+const pane = (fields: Omit<Partial<CockpitPane>, 'role'> & { role?: string }): CockpitPane => ({
+  paneId: '%0', windowId: '@0', windowName: 'w', inFrame: false, holding: '', projectId: '', agentId: '', masterKey: '', columns: 80, rows: 24,
+  ...fields, role: (fields.role ?? '') as CockpitPane['role'],
 });
 
 describe('frame', () => {
@@ -220,10 +221,10 @@ describe('frame', () => {
   });
 
   it('reads panes split on <|>, so a project id with spaces survives', () => {
-    const out = ['%3<|>@1<|>orc<|>1<|>agent<|>w1<|><|>unregistered:/s/my proj<|>', '%4<|>@2<|>my proj<|><|>keeper<|><|><|><|>unregistered:/s/my proj', ''].join('\n');
+    const out = ['%3<|>@1<|>orc<|>1<|>agent<|>w1<|><|>125x36<|>unregistered:/s/my proj<|>', '%4<|>@2<|>my proj<|><|>keeper<|><|><|>125x36<|><|>unregistered:/s/my proj', ''].join('\n');
     expect(parseCockpitPanes(out)).toEqual([
-      pane({ paneId: '%3', windowId: '@1', windowName: 'orc', inFrame: true, role: 'agent', agentId: 'w1', projectId: 'unregistered:/s/my proj' }),
-      pane({ paneId: '%4', windowId: '@2', windowName: 'my proj', role: 'keeper', holding: 'unregistered:/s/my proj' }),
+      pane({ paneId: '%3', windowId: '@1', windowName: 'orc', inFrame: true, role: 'agent', agentId: 'w1', projectId: 'unregistered:/s/my proj', columns: 125, rows: 36 }),
+      pane({ paneId: '%4', windowId: '@2', windowName: 'my proj', role: 'keeper', holding: 'unregistered:/s/my proj', columns: 125, rows: 36 }),
     ]);
   });
 
@@ -267,7 +268,6 @@ describe('slotCommands', () => {
     const target = pane({ paneId: '%8', windowId: '@2', holding: 'p-1', role: 'agent', projectId: 'p-1', agentId: 'w1' });
     expect(slotCommands({ ...frame, slot }, target, holding)).toEqual([
       ['swap-pane', '-d', '-s', '%8', '-t', '%5'],
-      ['select-layout', '-t', '@2', 'tiled'],
       ...focus('%8'),
     ]);
   });
@@ -278,8 +278,6 @@ describe('slotCommands', () => {
     expect(slotCommands({ ...frame, slot }, target, holding)).toEqual([
       ['swap-pane', '-d', '-s', '%9', '-t', '%5'],
       ['join-pane', '-d', '-s', '%5', '-t', '@2'],
-      ['select-layout', '-t', '@2', 'tiled'],
-      ['select-layout', '-t', '@3', 'tiled'],
       ...focus('%9'),
     ]);
   });
@@ -290,10 +288,19 @@ describe('slotCommands', () => {
     expect(slotCommands({ ...frame, slot }, target, holding)).toEqual([
       ['swap-pane', '-d', '-s', '%9', '-t', '%3'],
       ['kill-pane', '-t', '%3'],
-      ['select-layout', '-t', '@3', 'tiled'],
       ...focus('%9'),
     ]);
     expect(slotCommands({ ...frame, slot: target }, target, holding)).toEqual(focus('%9'));
+  });
+});
+
+describe('holdingFitCommands', () => {
+  it('stacks a holding window\'s panes each at the slot\'s size, borders included', () => {
+    expect(holdingFitCommands('@2', 3, 125, 36)).toEqual([
+      ['set-option', '-w', '-t', '@2', 'window-size', 'manual'],
+      ['resize-window', '-t', '@2', '-x', '125', '-y', String(3 * 36 + 2)],
+      ['select-layout', '-t', '@2', 'even-vertical'],
+    ]);
   });
 });
 

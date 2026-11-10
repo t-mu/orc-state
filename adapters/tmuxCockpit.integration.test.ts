@@ -169,6 +169,8 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     expect(listedWindows()).toEqual(['orc']);
     expect(slot()).toMatchObject({ project: 'b', active: true });
     const masterPaneB = slot().id;
+    // The sidebar's dashboard now runs for b, the project start-session ran in.
+    await waitFor(() => capture(role('sidebar').id).includes('DASHBOARD b'));
     await waitFor(() => capture(masterPaneB).includes('MASTER-B'));
     // A's master went back to A's holding window, still attached.
     expect(cockpitPanes().find((pane) => pane.id === masterPaneA)).toMatchObject({ frame: false, project: 'a' });
@@ -221,6 +223,11 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     // Selecting it again shows the same pane: no second tab, no second stream.
     expect(switchToMasterTab('b')).toBe(true);
     expect(shown()).toBe('b');
+    // Parked in its holding window it keeps the slot's size, so its agent is never resized; so do the hidden masters.
+    const { width, height } = slot();
+    for (const parked of cockpitPanes().filter((entry) => !entry.frame && ['agent', 'master'].includes(entry.role))) {
+      expect(parked).toMatchObject({ width, height });
+    }
     expect(openAgentTab(tab)).toBe('switched');
     expect(slot().id).toBe(streamPane);
     expect(capture(streamPane).split('\n').filter((line) => line.startsWith('STREAM w1'))).toEqual([streamLine]);
@@ -347,6 +354,20 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     expect(tmux(COCKPIT_SOCKET, ['swap-pane', '-d', '-s', strayHolder, '-t', masterPane]).status).toBe(0);
     tmux(COCKPIT_SOCKET, ['kill-pane', '-t', strayHolder]);
     await waitFor(() => slot()?.id === masterPane && role('tabbar').height === 3 && role('sidebar').width === 34, 10_000);
+  }, 30_000);
+
+  it('rebuilds a frame that lost its tab bar, keeping the shown tab running', () => {
+    startFakeMaster(MASTER_SOCKETS[0], 'master-a', 'MASTER-A');
+    const masterA = { agentId: 'master', socket: MASTER_SOCKETS[0], session: 'master-a' };
+    open('a', masterA);
+    const { id: masterPane, pid } = slot();
+    tmux(COCKPIT_SOCKET, ['kill-pane', '-t', role('tabbar').id]);
+
+    expect(open('a', masterA)).toBe('existing');
+    expect(listedWindows()).toEqual(['orc']);
+    expect(framePanes().map((pane) => pane.role)).toEqual(['sidebar', 'tabbar', 'master']);
+    expect(slot()).toMatchObject({ id: masterPane, pid, active: true });
+    expect(role('tabbar').height).toBe(3);
   }, 30_000);
 
   it('rebuilds a cockpit with the old layout without stopping a master or a stream', async () => {
