@@ -1,8 +1,8 @@
 import { Box, Text, useInput, useStdin, useStdout } from 'ink';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ATTENTION_BADGE, ATTENTION_COUNT_LABEL, ATTENTION_KINDS, buildDashboardModel, computeDashboardLayout, dashboardAgents,
-  mergeFeed, notificationEntries,
+  ATTENTION_BADGE, ATTENTION_COUNT_LABEL, ATTENTION_KINDS, agentTaskLine, buildDashboardModel, computeDashboardLayout, dashboardAgents,
+  hasAgentDetailLine, mergeFeed, notificationEntries,
   type AgentDetail, type AttentionKind, type DashboardAgent, type DashboardFeedEntry, type DashboardModel, type DashboardProject,
 } from './dashboard.ts';
 import { ControlClient } from '../../client.ts';
@@ -201,7 +201,7 @@ export function App({ source, stateDir, intervalMs = 3000, createTaskClient = de
         {needYou > 0 ? <Text bold inverse color="yellow">{` ${needYou} NEED${needYou === 1 ? 'S' : ''} YOU `}</Text> : null}
       </Text>
       {model.notice ? <Text color="yellow" wrap="truncate">{model.notice}</Text> : null}
-      {model.projects.map(project => (
+      {model.projects.slice(0, layout.maxProjects).map(project => (
         <ProjectSection
           key={project.project_id}
           project={project}
@@ -210,6 +210,7 @@ export function App({ source, stateDir, intervalMs = 3000, createTaskClient = de
           selected={selected}
         />
       ))}
+      <MoreLine hidden={model.projects.length - Math.min(model.projects.length, layout.maxProjects)} label="more projects" />
       <Text> </Text>
       <Feed feed={model.feed} maxLines={layout.feedLines} />
       {footer
@@ -268,11 +269,15 @@ function AttentionBadge({ kind }: { kind: AttentionKind }) {
   return <Text bold inverse color={ATTENTION_COLOR[kind]}>{` ${ATTENTION_BADGE[kind]} `}</Text>;
 }
 
-/** One agent: its identity row (with the attention badge), then in `full` detail its task and its activity or attention detail. */
+/**
+ * One agent: its identity row (with its state, or the attention badge), then in
+ * `full` detail its task line and its activity or attention line, each only
+ * when it has one (as `agentLines` counts them).
+ */
 function AgentRow({ agent, detail, selected, stale }: { agent: DashboardAgent; detail: AgentDetail; selected: boolean; stale: boolean }) {
   const { attention } = agent;
   const marker = selected ? '› ' : '  ';
-  const where = [agent.task_ref, agent.phase ?? agent.state].filter(Boolean).join(' · ');
+  const where = agentTaskLine(agent);
   return (
     <>
       <Text wrap="truncate" inverse={selected} dimColor={stale && !selected}>
@@ -285,8 +290,8 @@ function AgentRow({ agent, detail, selected, stale }: { agent: DashboardAgent; d
       {detail === 'full'
         ? (
             <>
-              <Text dimColor wrap="truncate">{`    ${where || agent.role}`}</Text>
-              <AgentDetailLine agent={agent} />
+              {where ? <Text dimColor wrap="truncate">{`    ${where}`}</Text> : null}
+              {hasAgentDetailLine(agent) ? <AgentDetailLine agent={agent} /> : null}
             </>
           )
         : null}
@@ -305,7 +310,7 @@ function AgentDetailLine({ agent }: { agent: DashboardAgent }) {
   if (attention?.kind === 'stalled') {
     return <Text color={ATTENTION_COLOR.stalled} wrap="truncate">{`    stalled${agent.activity ? `: ${agent.activity}` : ''}`}</Text>;
   }
-  return <Text dimColor wrap="truncate">{`    └ ${agent.activity ?? '(no activity)'}`}</Text>;
+  return <Text dimColor wrap="truncate">{`    └ ${agent.activity}`}</Text>;
 }
 
 function formatTime(ts: string | null): string {
@@ -327,9 +332,9 @@ function Feed({ feed, maxLines }: { feed: DashboardFeedEntry[]; maxLines: number
   const shown = maxLines > 0 ? feed.slice(-maxLines).reverse() : [];
   return (
     <>
-      <Text bold color="magenta">Notifications</Text>
+      <Text bold color="magenta" wrap="truncate">Notifications</Text>
       {feed.length === 0
-        ? <Text dimColor>  (none)</Text>
+        ? <Text dimColor wrap="truncate">  (none)</Text>
         : shown.map(entry => {
             const slug = entry.task_ref?.split('/').slice(1).join('/') ?? '';
             // The event first: at a narrow width the tail is what gets cut.

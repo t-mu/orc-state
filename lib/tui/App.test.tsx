@@ -291,9 +291,10 @@ describe('dashboard App in a terminal', () => {
     instance = null;
   });
 
-  function renderIn(rows: number, columns: number, states: ProjectWatchState[], tty = false): FakeStdout {
+  function renderIn(rows: number, columns: number, states: ProjectWatchState[] | ReturnType<typeof fakeSource>, tty = false): FakeStdout {
     const stdout = new FakeStdout(rows, columns);
-    instance = inkRender(<App source={fakeSource(states).source} stateDir="/state/alpha" intervalMs={1000} />, {
+    const source = Array.isArray(states) ? fakeSource(states).source : states.source;
+    instance = inkRender(<App source={source} stateDir="/state/alpha" intervalMs={1000} />, {
       stdout: stdout as unknown as NodeJS.WriteStream,
       stdin: new FakeStdin(tty) as unknown as NodeJS.ReadStream,
       patchConsole: false,
@@ -335,5 +336,41 @@ describe('dashboard App in a terminal', () => {
     expect(frame).toContain('Notifications');
     // With keys read, the bindings footer is part of the budget.
     if (tty) expect(frame.split('\n').at(-1)).toBe(KEYS_HINT_STANDALONE);
+  });
+
+  it.each([[60, 50], [40, 30]])('renders %ix%i without shifted or duplicated rows across refreshes', async (columns, rows) => {
+    const withMaster = (agents: AgentSpec[], events: TuiRecentEvent[] = []) =>
+      ({ ...status(agents, events), master: { agent_id: 'master', status: 'running' } }) as TuiStatus;
+    const states = (step: number) => [
+      project('alpha', 'running', withMaster(
+        Array.from({ length: 2 + step }, (_, i) => ({ id: `w${i}`, task: `plan/t${i}`, phase: 'implement', ...(i % 2 ? { activity: `step ${step}` } : {}) })),
+        Array.from({ length: step }, (_, i) => ({ seq: i + 1, ts: `2026-11-09T10:0${i}:00Z`, event: 'run_finished', agent_id: `w${i}` })),
+      )),
+      project('beta', 'stopped', null),
+    ];
+    const watcher = fakeSource(states(0));
+    const stdout = renderIn(rows, columns, watcher, true);
+    await settle();
+
+    for (let step = 0; step < 5; step += 1) {
+      await settle(() => {
+        watcher.set(states(step));
+        watcher.emit({ type: 'status', project_id: 'alpha', status: watcher.source.projects()[0].status as StatusView });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      const lines = plain(stdout.lastFrame()).split('\n');
+      expect(lines.length).toBeLessThan(rows);
+      expect(lines[0]).toBe('orc 2 projects');
+      for (const line of lines) expect(line.length).toBeLessThanOrEqual(columns);
+      const masterRows = lines.filter(line => line.includes('master'));
+      expect(masterRows).toEqual(['› master running']);
+      // Each agent's identity row once, and no bare state line under the master.
+      for (let i = 0; i < 2 + step; i += 1) expect(lines.filter(line => line.startsWith(`  w${i} `)).length).toBeLessThanOrEqual(1);
+      expect(lines).not.toContain('    running');
+      expect(lines.join('\n')).not.toContain('(no activity)');
+      expect(lines.at(-1)).toBe(KEYS_HINT_STANDALONE);
+    }
   });
 });

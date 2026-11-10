@@ -29,7 +29,7 @@ orc start-session
 
 - **Coordinator** (background): dispatches tasks, probes worker processes, merges results.
 - **Master**: your interactive session. It runs in orc's private tmux server.
-- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), with one tab per project: the master's pane, focused, and the dashboard (`orc watch`) beside it.
+- **Cockpit**: what `start-session` attaches this terminal to (tmux is required). A tmux session on a per-user server of its own (`tmux -L orc-cockpit`), with one tab per project: the master's pane, focused, and the dashboard (`orc watch`) beside it as a 40–60 column sidebar.
 
 ### Getting around
 

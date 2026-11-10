@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
   COCKPIT_PREFIX, COCKPIT_SOCKET, agentTabScript, agentWindowName, cockpitAttachCommand, cockpitServerEnv, cockpitServerOptions, dashboardPaneScript,
-  insideCockpit, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands,
+  dashboardPaneWidth, insideCockpit, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands,
 } from './tmuxCockpit.ts';
 
 const originalBin = process.env.ORC_TMUX_BIN;
@@ -102,12 +102,23 @@ describe('cockpitServerOptions', () => {
 
 describe('windowLayoutCommands', () => {
   it('splits the dashboard beside the master pane without focusing it, labels the window and focuses the master', () => {
-    const commands = windowLayoutCommands('@3', '%7', project, master, 'DASH');
-    expect(commands[0]).toEqual(['split-window', '-h', '-d', '-l', '35%', '-t', '%7', '-c', '/work/app', '/bin/sh', '-c', 'DASH']);
+    const commands = windowLayoutCommands('@3', '%7', 200, project, master, 'DASH');
+    expect(commands[0]).toEqual(['split-window', '-h', '-d', '-l', '50', '-t', '%7', '-c', '/work/app', '/bin/sh', '-c', 'DASH']);
     expect(commands).toContainEqual(['set-option', '-w', '-t', '@3', '@orc_project_id', 'p-1']);
     expect(commands).toContainEqual(['set-option', '-w', '-t', '@3', '@orc_master', masterKey(master)]);
     expect(commands).toContainEqual(['set-option', '-w', '-t', '@3', '@orc_master_pane', '%7']);
     expect(commands.slice(-2)).toEqual([['select-window', '-t', '@3'], ['select-pane', '-t', '%7']]);
+  });
+});
+
+describe('dashboardPaneWidth', () => {
+  it('is a sidebar of a quarter of the window within 40–60 columns, and never the primary pane', () => {
+    expect(dashboardPaneWidth(286)).toBe(60);
+    expect(dashboardPaneWidth(200)).toBe(50);
+    expect(dashboardPaneWidth(120)).toBe(40);
+    // A narrow window keeps the master the wider pane.
+    expect(dashboardPaneWidth(80)).toBe(32);
+    expect(dashboardPaneWidth(2)).toBe(1);
   });
 });
 

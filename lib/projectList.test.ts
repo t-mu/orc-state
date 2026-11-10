@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -132,5 +132,45 @@ describe('listProjects', () => {
     expect(runProjectCommand(['list', '--json'], registry)).toEqual(listProjects({ env: { ORC_DATA_HOME: dataHome } }));
     expect(runProjectCommand(['list'], registry)).toEqual([project]);
     expect(() => runProjectCommand(['list', '--bogus'], registry)).toThrow('Usage');
+  });
+});
+
+describe('loadNodeSqlite', () => {
+  // A fresh process: node:sqlite warns only on its first load.
+  function runFresh(script: string): string {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, ORC_DATA_HOME: dataHome },
+      timeout: 20_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return result.stderr;
+  }
+  const projectList = JSON.stringify(new URL('./projectList.ts', import.meta.url).href);
+
+  it('lists projects in a fresh process without the SQLite ExperimentalWarning, while other warnings still print', () => {
+    registry.add(gitRepo('alpha'));
+    const stderr = runFresh([
+      `const { listProjects } = await import(${projectList});`,
+      'if (listProjects().length !== 1) throw new Error("expected one project");',
+      "process.emitWarning('Other feature is experimental', 'ExperimentalWarning');",
+      "process.emitWarning('a plain warning');",
+    ].join('\n'));
+    expect(stderr).not.toContain('SQLite');
+    expect(stderr).toContain('ExperimentalWarning: Other feature is experimental');
+    expect(stderr).toContain('Warning: a plain warning');
+  });
+
+  it('passes other warnings emitted while loading through, and restores process.emitWarning', () => {
+    const stderr = runFresh([
+      `const { loadNodeSqlite } = await import(${projectList});`,
+      'const original = process.emitWarning;',
+      "const getBuiltinModule = process.getBuiltinModule;",
+      "process.getBuiltinModule = (id) => { process.emitWarning('Another feature is experimental', 'ExperimentalWarning'); return getBuiltinModule(id); };",
+      'if (typeof loadNodeSqlite().DatabaseSync !== "function") throw new Error("no DatabaseSync");',
+      'if (process.emitWarning !== original) throw new Error("emitWarning not restored");',
+    ].join('\n'));
+    expect(stderr).not.toContain('SQLite');
+    expect(stderr).toContain('ExperimentalWarning: Another feature is experimental');
   });
 });
