@@ -280,6 +280,7 @@ function openCockpit(agent: NonNullable<typeof master>, sessionName: string): bo
       project: { id: project.id, name: project.name, root: resolveInvocationCwd(), env: orcStateEnv() },
       master: { agentId: agent.agent_id, socket, session },
       watchCommand: [process.execPath, runtimeModulePath('./orc.ts', './orc.js'), 'watch'],
+      orc: [process.execPath, runtimeModulePath('./orc.ts', './orc.js')],
       options: { tmux: tmuxBinary(), trueColor: terminalHasTrueColor() },
       keys,
       size: { columns: process.stdout.columns, rows: process.stdout.rows },

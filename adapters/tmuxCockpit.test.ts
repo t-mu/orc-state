@@ -5,9 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, agentTabScript, agentWindowName, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint, cockpitServerEnv,
-  cockpitServerOptions, dashboardPaneScript, dashboardPaneWidth, insideCockpit, isTmuxKeyName, resolveCockpitKeys, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, agentTabScript, agentWindowName, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint, cockpitRunShell, cockpitServerEnv,
+  cockpitServerOptions, dashboardPaneScript, dashboardPaneWidth, insideCockpit, isTmuxKeyName, resolveCockpitKeys, masterKey, masterPaneScript, planAgentTab, terminalHasTrueColor, windowLayoutCommands, withCockpitLock,
 } from './tmuxCockpit.ts';
+
+const ORC = ['/usr/bin/node', '/orc/cli/orc.js'];
+/** The run-shell binding of `orc cockpit <action>`. */
+const runShell = (action: string) => ['run-shell', `'/usr/bin/node' '/orc/cli/orc.js' 'cockpit' ${action.split(' ').map((part) => `'${part}'`).join(' ')} --client='#{client_name}'`];
 
 const originalBin = process.env.ORC_TMUX_BIN;
 afterEach(() => {
@@ -129,27 +133,27 @@ describe('isTmuxKeyName', () => {
 describe('cockpitKeysHint', () => {
   it('names the default keys', () => {
     expect(cockpitKeysHint(DEFAULT_COCKPIT_KEYS))
-      .toBe('F1-F9: tab | F10: dashboard | F12 o: switch pane | F12 n/p: next/previous tab | F12 d: detach');
+      .toBe('F1-F9: tab | F10: dashboard | F12 o: switch pane | F12 n/p: next/previous tab | F12 N/P: project | F12 d: detach');
   });
 
   it('spells out modifiers and leaves out unbound keys', () => {
     const direct = Object.fromEntries(Object.keys(DEFAULT_COCKPIT_KEYS.direct).map((action) => [action, null])) as typeof DEFAULT_COCKPIT_KEYS.direct;
     expect(cockpitKeysHint({ prefix: 'C-a', direct: { ...direct, tab1: 'M-1' } }))
-      .toBe('Alt-1: tab | Ctrl-a o: switch pane | Ctrl-a n/p: next/previous tab | Ctrl-a d: detach');
+      .toBe('Alt-1: tab | Ctrl-a o: switch pane | Ctrl-a n/p: next/previous tab | Ctrl-a N/P: project | Ctrl-a d: detach');
   });
 });
 
 describe('cockpitServerOptions', () => {
   it('claims only its prefix and direct keys, passes Ctrl-b through and turns the mouse on', () => {
-    const options = cockpitServerOptions({ trueColor: false, terminal: 'tmux-256color', keys: DEFAULT_COCKPIT_KEYS });
+    const options = cockpitServerOptions({ trueColor: false, terminal: 'tmux-256color', keys: DEFAULT_COCKPIT_KEYS, orc: ORC });
     expect(options).toContainEqual(['set-option', '-g', 'prefix', 'F12']);
     expect(options).toContainEqual(['set-option', '-g', 'prefix2', 'None']);
     expect(options).toContainEqual(['unbind-key', '-q', 'C-b']);
     expect(options).toContainEqual(['bind-key', 'F12', 'send-prefix']);
-    expect(options).toContainEqual(['bind-key', '-n', 'F1', 'select-window', '-t', ':=1']);
-    expect(options).toContainEqual(['bind-key', '-n', 'F9', 'select-window', '-t', ':=9']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F1', ...runShell('tab 1')]);
+    expect(options).toContainEqual(['bind-key', '-n', 'F9', ...runShell('tab 9')]);
     expect(options).toContainEqual(['bind-key', '-n', 'F10', 'select-pane', '-t', '{right}']);
-    expect(options).toContainEqual(['bind-key', '-n', 'F11', 'select-pane', '-t', '{right}']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F11', ...runShell('attention')]);
     expect(options).toContainEqual(['set-option', '-g', 'mouse', 'on']);
     expect(options).toContainEqual(['set-option', '-g', 'base-index', '1']);
     expect(options).toContainEqual(['set-option', '-g', 'default-terminal', 'tmux-256color']);
@@ -160,19 +164,38 @@ describe('cockpitServerOptions', () => {
   });
 
   it('adds RGB for a truecolour terminal', () => {
-    expect(cockpitServerOptions({ trueColor: true, terminal: 'tmux-256color', keys: DEFAULT_COCKPIT_KEYS }))
+    expect(cockpitServerOptions({ trueColor: true, terminal: 'tmux-256color', keys: DEFAULT_COCKPIT_KEYS, orc: ORC }))
       .toContainEqual(['set-option', '-as', 'terminal-features', ',*:RGB']);
   });
 });
 
 describe('cockpitKeyOptions', () => {
   it('unbinds the keys an earlier cockpit bound before binding these, and records them', () => {
-    const options = cockpitKeyOptions(DEFAULT_COCKPIT_KEYS, { prefix: 'C-]', direct: ['F3', 'M-1'] });
+    const options = cockpitKeyOptions(DEFAULT_COCKPIT_KEYS, { prefix: 'C-]', direct: ['F3', 'M-1'] }, ORC);
     expect(options.slice(0, 3)).toEqual([['unbind-key', '-q', 'C-]'], ['unbind-key', '-q', '-n', 'F3'], ['unbind-key', '-q', '-n', 'M-1']]);
-    expect(options).toContainEqual(['bind-key', '-n', 'F3', 'select-window', '-t', ':=3']);
+    expect(options).toContainEqual(['bind-key', '-n', 'F3', ...runShell('tab 3')]);
     expect(options).toContainEqual(['set-option', '-g', '@orc_cockpit_prefix', 'F12']);
     expect(options).toContainEqual(['set-option', '-g', '@orc_cockpit_direct', 'F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11']);
     expect(options).toContainEqual(['set-option', '-g', 'status-right', cockpitKeysHint(DEFAULT_COCKPIT_KEYS)]);
+  });
+
+  it('points the prefix tab keys at orc cockpit: n/p, 1-9, & for the active project, N/P for projects', () => {
+    const options = cockpitKeyOptions(DEFAULT_COCKPIT_KEYS, null, ORC);
+    expect(options).toContainEqual(['bind-key', 'n', ...runShell('next')]);
+    expect(options).toContainEqual(['bind-key', 'p', ...runShell('prev')]);
+    expect(options).toContainEqual(['bind-key', '&', ...runShell('close')]);
+    expect(options).toContainEqual(['bind-key', '1', ...runShell('tab 1')]);
+    expect(options).toContainEqual(['bind-key', '9', ...runShell('tab 9')]);
+    expect(options).toContainEqual(['bind-key', 'N', ...runShell('project next')]);
+    expect(options).toContainEqual(['bind-key', 'P', ...runShell('project prev')]);
+  });
+});
+
+describe('cockpitRunShell', () => {
+  it('quotes orc for the shell and doubles # so tmux format expansion leaves the path alone', () => {
+    expect(cockpitRunShell(['/opt/node #2/bin/node', "/it's/orc.js"], ['tab', '1'])).toEqual([
+      'run-shell', `'/opt/node ##2/bin/node' '/it'\\''s/orc.js' 'cockpit' 'tab' '1' --client='#{client_name}'`,
+    ]);
   });
 });
 
@@ -269,4 +292,68 @@ describe('agent tabs', () => {
     expect(script).toContain("The terminal of w1 (Bob'\\''s app) is closed");
     expect(script).toContain('[ "$answer" = r ] || exit 0');
   });
+});
+
+describe('cockpitAgentTab', () => {
+  const orc = ['/usr/bin/node', '/orc/cli/orc.js'];
+
+  it('streams a registered project\'s agent with --project', () => {
+    expect(cockpitAgentTab('w1', { project_id: 'p-1', name: 'app', state_dir: '/s/p-1', target_repo_root: '/work/app' }, orc)).toEqual({
+      projectId: 'p-1', projectName: 'app', agentId: 'w1', root: '/work/app',
+      command: [...orc, 'terminal', 'w1', '--write', '--project=p-1'], env: {},
+    });
+  });
+
+  it('selects an unregistered project by its state directory', () => {
+    const tab = cockpitAgentTab('w1', { project_id: 'unregistered:/s/x', name: 'x', state_dir: '/s/x', target_repo_root: '/work/x' }, orc);
+    expect(tab.command).toEqual([...orc, 'terminal', 'w1', '--write']);
+    expect(tab.env).toEqual({ ORC_STATE_DIR: '/s/x' });
+  });
+});
+
+describe('withCockpitLock', () => {
+  let dir = '';
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = '';
+  });
+
+  it('holds the lock while the update runs and releases it, even when the update throws', () => {
+    dir = mkdtempSync(join(tmpdir(), 'orc-cockpit-lock-'));
+    const path = join(dir, 'orc-cockpit.lock');
+    expect(withCockpitLock(() => JSON.parse(readFileSync(path, 'utf8')).pid, path)).toBe(process.pid);
+    expect(() => withCockpitLock(() => { throw new Error('boom'); }, path)).toThrow('boom');
+    expect(withCockpitLock(() => 'again', path)).toBe('again');
+  });
+
+  it('breaks the lock of a holder that died', () => {
+    dir = mkdtempSync(join(tmpdir(), 'orc-cockpit-lock-'));
+    const path = join(dir, 'orc-cockpit.lock');
+    const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
+    writeFileSync(path, JSON.stringify({ pid: Number(dead), token: 'x' }));
+    expect(withCockpitLock(() => 'taken', path)).toBe('taken');
+  });
+
+  it('serializes two processes updating at once: neither update is lost', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'orc-cockpit-lock-'));
+    const path = join(dir, 'orc-cockpit.lock');
+    const counter = join(dir, 'counter');
+    writeFileSync(counter, '0');
+    // Each child reads the counter, waits, and writes it back +1: without the lock one increment is lost.
+    const child = `
+      import { readFileSync, writeFileSync } from 'node:fs';
+      import { withCockpitLock } from ${JSON.stringify(new URL('./tmuxCockpit.ts', import.meta.url).href)};
+      for (let i = 0; i < 5; i += 1) withCockpitLock(() => {
+        const value = Number(readFileSync(${JSON.stringify(counter)}, 'utf8'));
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+        writeFileSync(${JSON.stringify(counter)}, String(value + 1));
+      }, ${JSON.stringify(path)});
+    `;
+    const { spawn } = await import('node:child_process');
+    const run = () => new Promise<number | null>((resolve) => {
+      spawn(process.execPath, ['--input-type=module', '-e', child], { stdio: 'inherit' }).on('exit', resolve);
+    });
+    expect(await Promise.all([run(), run()])).toEqual([0, 0]);
+    expect(readFileSync(counter, 'utf8')).toBe('10');
+  }, 20_000);
 });

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { render } from 'ink';
 import { createElement } from 'react';
 import { ProjectWatcher, type ProjectListEntry, type ProjectWatchState, type ProjectWatchUpdate } from '../client.ts';
-import { insideCockpit, openAgentTab, switchToMasterTab, type CockpitAgentTab } from '../adapters/tmuxCockpit.ts';
+import { UNREGISTERED_PROJECT_PREFIX, cockpitAgentTab, insideCockpit, openAgentTab, switchToMasterTab, type CockpitAgentTab } from '../adapters/tmuxCockpit.ts';
 import { boolFlag, intFlag } from '../lib/args.ts';
 import { renderBanner } from '../lib/banner.ts';
 import { colorFormatStatus } from '../lib/colorStatus.ts';
@@ -57,7 +57,7 @@ export function watchedProjectList(stateDir: string, list: () => ProjectListEntr
     const listed = list();
     if (listed.some(entry => entry.state_dir === stateDir)) return listed;
     const [own] = describeProjects({
-      list: () => [{ id: `unregistered:${stateDir}`, name: basename(stateDir), canonicalGitRoot: TARGET_REPO_ROOT, stateDir, createdAt: '' }],
+      list: () => [{ id: `${UNREGISTERED_PROJECT_PREFIX}${stateDir}`, name: basename(stateDir), canonicalGitRoot: TARGET_REPO_ROOT, stateDir, createdAt: '' }],
     });
     return [...listed, own];
   };
@@ -67,23 +67,12 @@ export function createWatchSource(stateDir: string): WatchSource {
   return new ProjectWatcher({ listProjects: watchedProjectList(stateDir) });
 }
 
-/** Ids `watchedProjectList` gives a state directory no registered project owns. */
-const UNREGISTERED_PREFIX = 'unregistered:';
-
 /**
  * The cockpit tab of `agent`'s live terminal: `orc terminal <agent_id> --write`
  * for its project (`--project=<id>`, or `ORC_STATE_DIR` for an unregistered one).
  */
 export function agentTab(agent: Pick<DashboardAgent, 'agent_id'>, project: Pick<DashboardProject, 'project_id' | 'name' | 'state_dir' | 'target_repo_root'>, orc: string[]): CockpitAgentTab {
-  const unregistered = project.project_id.startsWith(UNREGISTERED_PREFIX);
-  return {
-    projectId: project.project_id,
-    projectName: project.name,
-    agentId: agent.agent_id,
-    root: project.target_repo_root,
-    command: [...orc, 'terminal', agent.agent_id, '--write', ...(unregistered ? [] : [`--project=${project.project_id}`])],
-    env: unregistered ? { ORC_STATE_DIR: project.state_dir } : {},
-  };
+  return cockpitAgentTab(agent.agent_id, project, orc);
 }
 
 export interface CockpitTabs {

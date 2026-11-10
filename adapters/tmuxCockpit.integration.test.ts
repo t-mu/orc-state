@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, ensureCockpitWindow, openAgentTab, resolveCockpitKeys, switchToMasterTab, type CockpitKeys, type CockpitMaster,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, cockpitRunShell, ensureCockpitWindow, openAgentTab, resolveCockpitKeys, switchToMasterTab, type CockpitKeys, type CockpitMaster,
 } from './tmuxCockpit.ts';
+
+/** How the cockpit keys run orc: this checkout's entry point. */
+const ORC = [process.execPath, fileURLToPath(new URL('../cli/orc.ts', import.meta.url))];
 
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
 /** Fake masters run on their own servers, as each project's master does; fresh names per test, so no test meets a server still exiting. */
@@ -37,6 +44,7 @@ function open(projectId: string, master: CockpitMaster, keys: CockpitKeys = DEFA
     project: { id: projectId, name: `project-${projectId}`, root: tmpdir(), env: { ORC_PROJECT_ID: projectId } },
     master,
     watchCommand: ['/bin/sh', '-c', 'echo "DASHBOARD $ORC_PROJECT_ID"; exec sleep 600'],
+    orc: ORC,
     options: { tmux: 'tmux', trueColor: false },
     size: { columns: 160, rows: 40 },
   });
@@ -68,7 +76,8 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     expect(cockpit(['show-options', '-gv', 'mouse'])).toBe('on');
     // Tab 1 is window 1, as F1 and prefix 1 select it.
     expect(cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_index}'])).toBe('1');
-    expect(cockpit(['list-keys', '-T', 'root', 'F1'])).toContain('select-window -t :=1');
+    expect(cockpit(['list-keys', '-T', 'root', 'F1'])).toMatch(/run-shell .*'cockpit' 'tab' '1' --client=/);
+    expect(cockpit(['list-keys', '-T', 'prefix', '&'])).toMatch(/run-shell .*'cockpit' 'close' --client=/);
     expect(cockpit(['list-keys', '-T', 'root', 'F10'])).toMatch(/select-pane -t "?\{right\}"?/);
     expect(cockpit(['list-keys', '-T', 'prefix', 'F12'])).toContain('send-prefix');
     // A click focuses the pane and is still passed on to the master pane's own program.
@@ -117,7 +126,7 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     expect(cockpit(['show-options', '-gv', 'prefix'])).toBe('F12');
     expect(cockpit(['show-options', '-gv', 'mouse'])).toBe('on');
     expect(tmux(COCKPIT_SOCKET, ['list-keys', '-T', 'prefix', 'C-]']).status).not.toBe(0);
-    expect(cockpit(['list-keys', '-T', 'root', 'F1'])).toContain('select-window -t :=1');
+    expect(cockpit(['list-keys', '-T', 'root', 'F1'])).toMatch(/run-shell .*'cockpit' 'tab' '1'/);
     expect(cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_index}']).split('\n')).toEqual(['1', '2']);
     expect(cockpit(['show-options', '-gv', '@orc_cockpit_direct'])).toBe('F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11');
 
@@ -203,4 +212,72 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     cockpit(['send-keys', '-t', pane, 'Enter']);
     await waitFor(() => !windows().some((line) => line.startsWith('project-a/w1')));
   }, 30_000);
+  it('drives tabs through orc cockpit from a shell and a key, serializing rapid actions and rebuilding a corrupt state', async () => {
+    startFakeMaster(MASTER_SOCKETS[0], 'master-a', 'MASTER-A');
+    startFakeMaster(MASTER_SOCKETS[1], 'master-b', 'MASTER-B');
+    // An unregistered project (its state directory names it), so agent tabs open without a project registry.
+    const stateDir = mkdtempSync(join(tmpdir(), 'orc-cockpit-tabs-'));
+    const projectU = `unregistered:${stateDir}`;
+    try {
+      open(projectU, { agentId: 'master', socket: MASTER_SOCKETS[0], session: 'master-a' });
+      open('b', { agentId: 'master', socket: MASTER_SOCKETS[1], session: 'master-b' });
+      const inCockpit = { ...process.env, TMUX: `${tmuxSocketPath(COCKPIT_SOCKET)},1,0`, ORC_STATE_DIR: stateDir };
+      const orc = (args: string[], env: NodeJS.ProcessEnv = inCockpit) => new Promise<{ code: number | null; out: string }>((resolve) => {
+        const child = spawn(ORC[0], [...ORC.slice(1), 'cockpit', ...args], { env });
+        let out = '';
+        child.stdout.on('data', (chunk) => { out += chunk; });
+        child.stderr.on('data', (chunk) => { out += chunk; });
+        child.on('exit', (code) => resolve({ code, out: out.trim() }));
+      });
+      const state = async () => JSON.parse((await orc(['state'])).out);
+      const shown = () => cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_active} #{window_name}']).split('\n')
+        .find((line) => line.startsWith('1 '))?.slice(2);
+      const names = () => cockpit(['list-windows', '-t', '=cockpit', '-F', '#{window_name}']).split('\n');
+      const masters = () => [MASTER_SOCKETS[0], MASTER_SOCKETS[1]].map((socket) => tmux(socket, ['list-sessions']).status);
+
+      // Outside the cockpit it refuses.
+      const { TMUX: _tmux, ...outside } = inCockpit;
+      expect(await orc(['next'], outside)).toEqual({ code: 1, out: expect.stringContaining('orc cockpit runs inside the cockpit') });
+
+      // Two actions at once: both tabs open, one window each, and the state lists both.
+      cockpit(['select-window', '-t', `=cockpit:project-${projectU}`]);
+      const [first, second] = await Promise.all([orc(['open', 'w1', projectU]), orc(['open', 'w2', projectU])]);
+      expect([first.code, second.code]).toEqual([0, 0]);
+      expect(names().filter((name) => name.endsWith('/w1') || name.endsWith('/w2')).length).toBe(2);
+      const opened = await state();
+      expect(opened.activeProject).toBe(projectU);
+      expect([...opened.projects[0].tabs].sort()).toEqual(['w1', 'w2']);
+
+      // Tab 1 is the master; it stays open. next/prev cycle the project's tabs only.
+      expect(await orc(['tab', '1'])).toEqual({ code: 0, out: 'Switched to the master tab.' });
+      expect(shown()).toBe(`project-${projectU}`);
+      expect(await orc(['close'])).toEqual({ code: 1, out: 'The master tab stays open; close agent tabs only.' });
+      const [tabA, tabB] = opened.projects[0].tabs as string[];
+      expect((await orc(['next'])).code).toBe(0);
+      expect(shown()).toBe(`${stateDir.split('/').pop()}/${tabA}`);
+      // Closing the active tab closes its window and shows the one that took its place.
+      expect((await orc(['close'])).code).toBe(0);
+      expect(names().some((name) => name.endsWith(`/${tabA}`))).toBe(false);
+      expect(shown()).toBe(`${stateDir.split('/').pop()}/${tabB}`);
+
+      // A key binding runs the same command through run-shell.
+      expect(tmux(COCKPIT_SOCKET, cockpitRunShell(ORC, ['project', 'next'])).status).toBe(0);
+      expect(shown()).toBe('project-b');
+      expect((await state()).activeProject).toBe('b');
+
+      // A corrupt state is rebuilt from the windows; the projects remember their tabs.
+      expect(tmux(COCKPIT_SOCKET, ['set-option', '-g', '@orc_cockpit_tabs', '{not json']).status).toBe(0);
+      expect(await state()).toEqual({
+        activeProject: 'b',
+        projects: [{ projectId: projectU, tabs: [tabB], active: null }, { projectId: 'b', tabs: [], active: null }],
+      });
+      expect((await orc(['project', projectU])).code).toBe(0);
+      expect(shown()).toBe(`project-${projectU}`);
+
+      // No master was stopped along the way.
+      expect(masters()).toEqual([0, 0]);
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

@@ -37,13 +37,14 @@ The cockpit claims only its own keys, all function keys by default, so they work
 
 | Keys | Does |
 |---|---|
-| `F1` … `F9` (or `F12 1` … `F12 9`) | select tab 1–9 |
+| `F1` … `F9` (or `F12 1` … `F12 9`) | select tab 1–9 of the active project (tab 1 is its master) |
 | `F10` | focus the dashboard pane |
-| `F11` | focus the dashboard pane (later: the next agent that needs you) |
+| `F11` | show the next agent that needs you (its project and tab) |
 | `F12 o` | switch between the master and the dashboard pane |
-| `F12 n` / `F12 p` | next / previous tab (project tabs and agent tabs) |
+| `F12 n` / `F12 p` | next / previous tab of the active project |
+| `F12 N` / `F12 P` | next / previous project, its tabs as you left them |
 | `F12 d` | detach |
-| `F12 &` | close the current tab; never stops its master or agent |
+| `F12 &` | close the current agent tab; the master tab stays; never stops a master or agent |
 | `F12` `F12` | send `F12` to the pane |
 
 `F12` is the prefix: press it, release, then the key. Change the prefix and the direct keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); `orc start-session` applies them to a running cockpit too.

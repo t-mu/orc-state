@@ -173,6 +173,7 @@ describe.skipIf(!tmuxOk)('cockpit smoke: question → indicator → agent tab �
       project: { id: 'smoke', name: 'smoke', root: repoRoot, env: { ORC_STATE_DIR: dir } },
       master: { agentId: 'master', socket: tmuxSocketName(dir), session: tmuxSessionName('master') },
       watchCommand: [...orc, 'watch', '--interval-ms=500'],
+      orc,
       options: { tmux: 'tmux', trueColor: false },
       keys: DEFAULT_COCKPIT_KEYS,
       size: { columns: 200, rows: 50 },
