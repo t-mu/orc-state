@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmuxSocketPath } from './tmux.ts';
 import {
-  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, cockpitRunShell, ensureCockpitWindow, masterKey, masterPaneScript, openAgentTab, resolveCockpitKeys, switchToMasterTab,
-  type CockpitKeys, type CockpitMaster,
+  COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, applyCockpitTransition, cockpitRunShell, ensureCockpitWindow, masterKey, masterPaneScript, openAgentTab, openExplorer,
+  resolveCockpitKeys, switchToMasterTab, type CockpitKeys, type CockpitMaster,
 } from './tmuxCockpit.ts';
 
 /** How the cockpit keys run orc: this checkout's entry point. */
@@ -419,5 +419,33 @@ describe.skipIf(!hasTmux)('tmux cockpit', () => {
     expect(open('a', masterA)).toBe('existing');
     expect(slot().id).toBe(agentPane);
     expect(capture(agentPane)).toContain('STREAM-W1');
+  }, 30_000);
+
+  it('shows the task explorer in the slot once, and the active tab comes back when it closes', async () => {
+    startFakeMaster(MASTER_SOCKETS[0], 'master-a', 'MASTER-A');
+    const masterA = { agentId: 'master', socket: MASTER_SOCKETS[0], session: 'master-a' };
+    expect(open('a', masterA)).toBe('created-session');
+    await waitFor(() => capture(slot().id).includes('MASTER-A'));
+    const masterPane = slot().id;
+
+    // A stand-in for `orc cockpit explorer`: the pane prints a marker and stays open.
+    const explorer = ['/bin/sh', '-c', 'echo EXPLORER-SHOWN; exec cat'];
+    expect(openExplorer('a', explorer)).toBe('opened');
+    expect(framePanes().map((pane) => pane.role)).toEqual(['sidebar', 'tabbar', 'explorer']);
+    await waitFor(() => capture(slot().id).includes('EXPLORER-SHOWN'));
+    const explorerPane = slot().id;
+    expect(explorerPane).not.toBe(masterPane);
+
+    // Opening it again shows the same explorer: no second one exists.
+    expect(openExplorer('a', explorer)).toBe('switched');
+    expect(cockpitPanes().filter((pane) => pane.role === 'explorer')).toHaveLength(1);
+    expect(slot().id).toBe(explorerPane);
+
+    // Closing it (the transition `orc cockpit tasks close` applies) puts the master tab back and ends the explorer.
+    expect(applyCockpitTransition((state) => ({ ok: true, state, message: 'Closed the task explorer.' })).ok).toBe(true);
+    expect(framePanes().map((pane) => pane.role)).toEqual(['sidebar', 'tabbar', 'master']);
+    expect(slot()).toMatchObject({ id: masterPane, project: 'a' });
+    expect(cockpitPanes().filter((pane) => pane.role === 'explorer')).toHaveLength(0);
+    await waitFor(() => capture(masterPane).includes('MASTER-A'));
   }, 30_000);
 });
