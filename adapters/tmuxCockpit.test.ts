@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmuxSocketPath } from './tmux.ts';
 import {
   COCKPIT_SOCKET, DEFAULT_COCKPIT_KEYS, SIDEBAR_COLUMNS, TAB_BAR_ROWS, agentTabScript, cockpitAgentTab, cockpitAttachCommand, cockpitKeyOptions, cockpitKeysHint,
-  cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, dashboardPaneScript, focusSlotCommands, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
+  cockpitRunShell, cockpitServerEnv, cockpitServerOptions, cockpitStoppedProject, sidebarPaneScript, focusSlotCommands, frameOf, frameResizeHook, frameSizeCommands, holdingFitCommands, insideCockpit,
   isTmuxKeyName, keeperPaneScript, messagePaneScript, paneTab, parseCockpitPanes, placeholderPaneScript, resolveCockpitKeys, masterPaneScript, slotCommands,
   startCommand, tabBarPaneScript, tabPaneOptions, terminalHasTrueColor, withCockpitLock, explorerPaneScript, type CockpitPane,
 } from './tmuxCockpit.ts';
@@ -74,9 +74,9 @@ describe('masterPaneScript', () => {
   });
 });
 
-describe('dashboardPaneScript', () => {
+describe('sidebarPaneScript', () => {
   it('selects the project and reruns the watch command', () => {
-    const script = dashboardPaneScript(project, ['/usr/bin/node', '/orc/cli/orc.js', 'watch']);
+    const script = sidebarPaneScript(project, ['/usr/bin/node', '/orc/cli/orc.js', 'watch']);
     expect(script).toContain("export ORC_PROJECT_ID='p-1'");
     expect(script).toContain("export ORC_STATE_DIR='/state/p 1'");
     expect(script).toContain("'/usr/bin/node' '/orc/cli/orc.js' 'watch'");
@@ -135,7 +135,7 @@ describe('isTmuxKeyName', () => {
 describe('cockpitKeysHint', () => {
   it('names the default keys', () => {
     expect(cockpitKeysHint(DEFAULT_COCKPIT_KEYS))
-      .toBe('F1-F9: tab | F10: dashboard | F12 o: switch pane | F12 n/p: next/previous tab | F12 N/P: project | F12 d: detach');
+      .toBe('F1-F9: tab | F10: sidebar | F12 o: switch pane | F12 n/p: next/previous tab | F12 N/P: project | F12 d: detach');
   });
 
   it('spells out modifiers and leaves out unbound keys', () => {

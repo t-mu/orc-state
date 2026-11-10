@@ -24,7 +24,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
-  EMPTY_COCKPIT_STATE, MASTER_TAB, closedTabs, openAgent, parseTabs, reconcileTabs, selectProject, selectTab, serializeTabs, shownTab,
+  EMPTY_COCKPIT_STATE, MASTER_TAB, closedTabs, parseTabs, reconcileTabs, selectProject, selectTab, serializeTabs, shownTab,
   type CockpitTabState, type OpenTab, type TabTransition,
 } from '../lib/cockpitTabs.ts';
 import { acquireLock, releaseLock } from '../lib/lock.ts';
@@ -38,7 +38,7 @@ export const COCKPIT_SESSION = 'cockpit';
 // ── Keys ─────────────────────────────────────────────────────────────────────
 // Defaults are function keys: they need no Option/Alt/AltGr on any keyboard layout.
 
-/** The direct keys' actions: `tab1`..`tab9` select that tab of the active project, `dashboard` focuses the sidebar (the dashboard), `attention` shows the next agent needing attention. */
+/** The direct keys' actions: `tab1`..`tab9` select that tab of the active project, `dashboard` focuses the sidebar, `attention` shows the next agent needing attention. */
 export const COCKPIT_ACTIONS = ['tab1', 'tab2', 'tab3', 'tab4', 'tab5', 'tab6', 'tab7', 'tab8', 'tab9', 'dashboard', 'attention'] as const;
 export type CockpitAction = typeof COCKPIT_ACTIONS[number];
 
@@ -127,7 +127,7 @@ export function cockpitKeysHint(keys: CockpitKeys): string {
   const tabs = COCKPIT_ACTIONS.slice(0, 9).map((action) => keys.direct[action]).filter((key): key is string => key != null);
   return [
     ...(tabs.length > 0 ? [`${tabs.length > 1 ? `${keyLabel(tabs[0])}-${keyLabel(tabs.at(-1)!)}` : keyLabel(tabs[0])}: tab`] : []),
-    ...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: dashboard`] : []),
+    ...(keys.direct.dashboard ? [`${keyLabel(keys.direct.dashboard)}: sidebar`] : []),
     `${prefix} o: switch pane`,
     `${prefix} n/p: next/previous tab`,
     `${prefix} N/P: project`,
@@ -382,7 +382,7 @@ export function placeholderPaneScript(): string {
  * TMUX stays set: it is how `orc watch` knows it runs in the cockpit
  * (`insideCockpit`), so Enter opens agent tabs.
  */
-export function dashboardPaneScript(project: Pick<CockpitProject, 'env'>, watchCommand: string[]): string {
+export function sidebarPaneScript(project: Pick<CockpitProject, 'env'>, watchCommand: string[]): string {
   return [
     ...Object.entries(project.env).map(([key, value]) => `export ${key}=${shellQuote(value)}`),
     'while :; do',
@@ -495,7 +495,7 @@ export interface CockpitPane {
   /** The project whose holding window the pane is in; empty elsewhere. */
   holding: string;
   role: CockpitPaneRole | '';
-  /** A tab pane's project and agent (empty on a master or message pane); on the sidebar, the project its dashboard runs for. */
+  /** A tab pane's project and agent (empty on a master or message pane); on the sidebar, the project it runs for. */
   projectId: string;
   agentId: string;
   /** A master pane's `masterKey`. */
@@ -704,7 +704,7 @@ function buildFrame(windowId: string, sidebar: string, spec: FrameSpec): void {
 }
 
 /**
- * Makes the sidebar's dashboard run for `project` (the one `orc start-session`
+ * Makes the sidebar run for `project` (the one `orc start-session`
  * ran in, listed first and marked current), respawning it when it ran for another.
  */
 function showSidebarProject(project: Pick<CockpitProject, 'id' | 'root'>, sidebarScript: string): void {
@@ -807,7 +807,7 @@ export function ensureCockpitWindow(spec: {
   const { project, master, options } = spec;
   const frame: FrameSpec = {
     root: project.root,
-    sidebarScript: dashboardPaneScript(project, spec.watchCommand),
+    sidebarScript: sidebarPaneScript(project, spec.watchCommand),
     tabBarScript: tabBarPaneScript(spec.orc),
   };
 
@@ -959,7 +959,7 @@ export function agentTabScript(tab: Pick<CockpitAgentTab, 'agentId' | 'projectNa
 
 // ── Tab state ────────────────────────────────────────────────────────────────
 // The view state (lib/cockpitTabs.ts) lives in a server option, so key
-// bindings, the dashboard and a reattach all read the same one. Every
+// bindings, the sidebar, the tab bar and a reattach all read the same one. Every
 // read-modify-write holds a lock file beside the cockpit's socket.
 
 /** The server option holding the serialized tab state. */
@@ -1174,16 +1174,6 @@ export function cockpitMessage(client: string, text: string): void {
   cockpitTmux(['display-message', '-c', client, text.replace(/#/g, '##')]);
 }
 
-/**
- * Shows `tab`'s agent tab in the slot, opening it first when the agent has
- * none (so one tab, and one stream, per agent).
- */
-export function openAgentTab(tab: CockpitAgentTab): 'opened' | 'switched' {
-  const result = applyCockpitTransition((state) => openAgent(state, tab.projectId, tab.agentId), () => tab);
-  if (!result.ok) throw new Error(result.message);
-  return result.opened ? 'opened' : 'switched';
-}
-
 /** The holding window the task explorer's pane waits in while it is not shown. */
 const EXPLORER_HOLDING = 'explorer';
 
@@ -1217,14 +1207,6 @@ export function openExplorer(projectId: string, orc: string[]): 'opened' | 'swit
     fitHoldingWindows();
     return 'opened';
   });
-}
-
-/** Shows `projectId`'s master tab; false when the project has no tab. */
-export function switchToMasterTab(projectId: string): boolean {
-  return applyCockpitTransition((state) => {
-    const selected = selectProject(state, projectId);
-    return selected.ok ? selectTab(selected.state, MASTER_TAB) : selected;
-  }).ok;
 }
 
 /** The commands that focus `frame`'s slot; null when there is no frame or no slot. */
