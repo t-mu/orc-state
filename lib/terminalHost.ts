@@ -80,8 +80,9 @@ const EXTENDED_OUTPUT_PREFIX = /^%extended-output (%\d+) \d+[^:]*: /;
  */
 export class TmuxControlParser<E extends TmuxControlEvent | TmuxControlReplyEvent = TmuxControlEvent> {
   private pending: Buffer = Buffer.alloc(0);
-  /** Body of the reply block being read, or null outside a block. */
-  private reply: Buffer[] | null = null;
+  private inReply = false;
+  /** Body lines of the reply block being read; kept only with `replies`. */
+  private body: Buffer[] = [];
   private readonly replies: boolean;
 
   /** With `replies`, pass `TmuxControlEvent | TmuxControlReplyEvent` as `E`. */
@@ -103,15 +104,19 @@ export class TmuxControlParser<E extends TmuxControlEvent | TmuxControlReplyEven
 
   private line(line: Buffer): Array<TmuxControlEvent | TmuxControlReplyEvent> {
     const text = line.toString('latin1');
-    if (this.reply) {
+    if (this.inReply) {
       const end = /^%(end|error) /.exec(text);
-      if (!end) { this.reply.push(line); return []; }
-      const body = this.reply;
-      this.reply = null;
+      if (!end) {
+        if (this.replies) this.body.push(Buffer.from(line));
+        return [];
+      }
+      this.inReply = false;
       if (!this.replies) return [];
-      return [{ type: 'reply', lines: body.map((part) => part.toString('utf8')), error: end[1] === 'error' }];
+      const lines = this.body.map((part) => part.toString('utf8'));
+      this.body = [];
+      return [{ type: 'reply', lines, error: end[1] === 'error' }];
     }
-    if (text.startsWith('%begin ')) { this.reply = []; return []; }
+    if (text.startsWith('%begin ')) { this.inReply = true; return []; }
     const match = OUTPUT_PREFIX.exec(text) ?? EXTENDED_OUTPUT_PREFIX.exec(text);
     if (match) return [{ type: 'output', pane: match[1], data: decodeTmuxOutput(line.subarray(match[0].length)) }];
     if (text === '%exit' || text.startsWith('%exit ')) return [{ type: 'exit', reason: text.slice(6) || 'terminal exited' }];

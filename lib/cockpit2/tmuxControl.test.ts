@@ -222,13 +222,10 @@ describe.skipIf(!hasTmux)('TmuxControlClient (private tmux server)', () => {
     await waitFor(fileHas(`${out}.ready`, 0));
     const client = connect('bytes');
     const [paneId] = await client.command("display-message -p '#{pane_id}'");
-    const seen: Buffer[] = [];
-    client.on('output', (pane, bytes) => { if (pane === paneId) seen.push(bytes); });
     const payload = Buffer.concat([Buffer.from('a\x1b[1mb\x01\x7f'), Buffer.from('ä€😀', 'utf8'), Buffer.alloc(SEND_CHUNK_BYTES + 10, 0x61)]);
     await client.sendBytes(paneId, payload);
     await waitFor(fileHas(out, payload.length));
     expect(readFileSync(out).equals(payload)).toBe(true);
-
   }, 20_000);
 
   for (const bracketed of [false, true]) {
