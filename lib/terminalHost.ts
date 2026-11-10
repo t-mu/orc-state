@@ -58,6 +58,14 @@ export type TmuxControlEvent =
   | { type: 'resize'; columns: number; rows: number }
   | { type: 'exit'; reason: string };
 
+/** Events only a parser built with `{ replies: true }` returns. */
+export type TmuxControlReplyEvent =
+  /** One `%begin` … `%end` (error false) or `%error` (error true) block; lines are UTF-8. */
+  | { type: 'reply'; lines: string[]; error: boolean }
+  | { type: 'sessions-changed' }
+  /** Any other `%` notification line, `%layout-change` included (it also yields `resize`). */
+  | { type: 'notification'; line: string };
+
 const OUTPUT_PREFIX = /^%output (%\d+) /;
 /** `%layout-change @win layout visible-layout flags`: the layout is `checksum,WxH,x,y…`. */
 const LAYOUT_CHANGE = /^%layout-change @\d+ \S+ [0-9a-f]+,(\d+)x(\d+)[,\s{[]/;
@@ -66,38 +74,60 @@ const EXTENDED_OUTPUT_PREFIX = /^%extended-output (%\d+) \d+[^:]*: /;
 /**
  * Splits a control client's stdout into lines (as bytes: a UTF-8 character
  * may straddle two chunks) and returns its output and exit notifications.
- * Command replies (`%begin` … `%end`|`%error`) and other notifications are skipped.
+ * By default command replies (`%begin` … `%end`|`%error`) and other
+ * notifications are skipped; `{ replies: true }` also returns them as
+ * `reply`, `sessions-changed` and `notification` events.
  */
-export class TmuxControlParser {
+export class TmuxControlParser<E extends TmuxControlEvent | TmuxControlReplyEvent = TmuxControlEvent> {
   private pending: Buffer = Buffer.alloc(0);
   private inReply = false;
+  /** Body lines of the reply block being read; kept only with `replies`. */
+  private body: Buffer[] = [];
+  private readonly replies: boolean;
 
-  push(chunk: Buffer): TmuxControlEvent[] {
+  /** With `replies`, pass `TmuxControlEvent | TmuxControlReplyEvent` as `E`. */
+  constructor(options: { replies?: boolean } = {}) {
+    this.replies = options.replies === true;
+  }
+
+  push(chunk: Buffer): E[] {
     this.pending = this.pending.length ? Buffer.concat([this.pending, chunk]) : chunk;
-    const events: TmuxControlEvent[] = [];
+    const events: E[] = [];
     let start = 0;
     for (let newline = this.pending.indexOf(0x0a, start); newline >= 0; newline = this.pending.indexOf(0x0a, start)) {
-      const event = this.line(this.pending.subarray(start, newline));
-      if (event) events.push(event);
+      events.push(...(this.line(this.pending.subarray(start, newline)) as E[]));
       start = newline + 1;
     }
     this.pending = this.pending.subarray(start);
     return events;
   }
 
-  private line(line: Buffer): TmuxControlEvent | null {
+  private line(line: Buffer): Array<TmuxControlEvent | TmuxControlReplyEvent> {
     const text = line.toString('latin1');
     if (this.inReply) {
-      if (/^%(end|error) /.test(text)) this.inReply = false;
-      return null;
+      const end = /^%(end|error) /.exec(text);
+      if (!end) {
+        if (this.replies) this.body.push(Buffer.from(line));
+        return [];
+      }
+      this.inReply = false;
+      if (!this.replies) return [];
+      const lines = this.body.map((part) => part.toString('utf8'));
+      this.body = [];
+      return [{ type: 'reply', lines, error: end[1] === 'error' }];
     }
-    if (text.startsWith('%begin ')) { this.inReply = true; return null; }
+    if (text.startsWith('%begin ')) { this.inReply = true; return []; }
     const match = OUTPUT_PREFIX.exec(text) ?? EXTENDED_OUTPUT_PREFIX.exec(text);
-    if (match) return { type: 'output', pane: match[1], data: decodeTmuxOutput(line.subarray(match[0].length)) };
+    if (match) return [{ type: 'output', pane: match[1], data: decodeTmuxOutput(line.subarray(match[0].length)) }];
+    if (text === '%exit' || text.startsWith('%exit ')) return [{ type: 'exit', reason: text.slice(6) || 'terminal exited' }];
+    const events: Array<TmuxControlEvent | TmuxControlReplyEvent> = [];
     const layout = LAYOUT_CHANGE.exec(text);
-    if (layout) return { type: 'resize', columns: Number(layout[1]), rows: Number(layout[2]) };
-    if (text === '%exit' || text.startsWith('%exit ')) return { type: 'exit', reason: text.slice(6) || 'terminal exited' };
-    return null;
+    if (layout) events.push({ type: 'resize', columns: Number(layout[1]), rows: Number(layout[2]) });
+    if (this.replies) {
+      if (text === '%sessions-changed') events.push({ type: 'sessions-changed' });
+      else if (text.startsWith('%')) events.push({ type: 'notification', line: line.toString('utf8') });
+    }
+    return events;
   }
 }
 
