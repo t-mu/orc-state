@@ -38,6 +38,8 @@ function fakeDeps(overrides: Partial<CockpitDeps> = {}, open: OpenTab[] = [{ pro
     projects: () => [entry('p-1'), entry('p-2')],
     waiting: () => Promise.resolve([]),
     message: (client, text) => messages.push([client, text]),
+    openExplorer: () => 'opened',
+    watcher: () => { throw new Error('the explorer is not run in these tests'); },
     bar: () => ({ state, names: {}, slotMissing: false }),
     refresh: () => {},
     orc: ['/node', '/orc.js'],
@@ -62,6 +64,9 @@ describe('parseCockpitArgs', () => {
     [['close'], { action: 'close', agentId: null }],
     [['close', 'w1'], { action: 'close', agentId: 'w1' }],
     [['attention'], { action: 'attention' }],
+    [['tasks'], { action: 'tasks', close: false }],
+    [['tasks', 'close'], { action: 'tasks', close: true }],
+    [['explorer', 'p-1'], { action: 'explorer', projectId: 'p-1' }],
     [['state'], { action: 'state' }],
     [['bar'], { action: 'bar' }],
   ])('parses %j', (argv, command) => {
@@ -81,6 +86,8 @@ describe('parseCockpitArgs', () => {
     [['next', 'x'], "too many arguments for 'next'"],
     [['open', 'a', 'b', 'c'], "too many arguments for 'open'"],
     [['tab', '1', '--force'], "unknown option '--force'"],
+    [['tasks', 'open'], "tasks takes only 'close', not 'open'"],
+    [['explorer'], 'explorer needs a project id'],
   ])('rejects %j', (argv, error) => {
     expect(parseCockpitArgs(argv)).toEqual({ error });
   });

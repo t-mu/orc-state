@@ -45,6 +45,7 @@ The cockpit claims only its own keys, all function keys by default, so they work
 | `F12 N` / `F12 P` | next / previous project, its tabs as you left them |
 | `F12 d` | detach |
 | `F12 &` | close the current agent tab; the master tab stays; never stops a master or agent |
+| `F12 t` | show the task explorer of the active project in the slot; Esc or `q` in its list closes it and the slot shows the tab you had |
 | `F12` `F12` | send `F12` to the pane |
 
 `F12` is the prefix: press it, release, then the key. Change the prefix and the direct keys with `ORC_COCKPIT_PREFIX` and `ORC_COCKPIT_KEYS` ([configuration.md → Cockpit keys](configuration.md#cockpit-keys)); `orc start-session` applies them to a running cockpit too.

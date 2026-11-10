@@ -5,11 +5,8 @@ import {
   hasAgentDetailLine, mergeFeed, notificationEntries,
   type AgentDetail, type AttentionKind, type DashboardAgent, type DashboardFeedEntry, type DashboardModel, type DashboardProject,
 } from './dashboard.ts';
-import { ControlClient } from '../../client.ts';
 import { MoreLine } from './MoreLine.tsx';
 import { buildProjectViews, describeConnection, type TuiProjectView, type TuiWatchSource } from './status.ts';
-import { TaskExplorer } from './TaskExplorer.tsx';
-import type { TuiTaskClient } from './taskList.ts';
 
 export interface AppProps {
   /** The project watcher (orc-state/client) the dashboard reads every project from. */
@@ -18,8 +15,6 @@ export interface AppProps {
   stateDir: string;
   /** Re-read the watcher at least this often, besides on each of its updates. */
   intervalMs?: number;
-  /** The read-only task client of a project (`t` opens the task explorer); a `ControlClient` by default. */
-  createTaskClient?: (stateDir: string) => TuiTaskClient;
   /**
    * Enter on the selected agent: opens its terminal (in the cockpit, a tab) or
    * switches to it, and returns the line the footer shows. Without it, Enter does nothing.
@@ -27,15 +22,13 @@ export interface AppProps {
   onOpen?: AgentOpener;
 }
 
-const defaultTaskClient = (stateDir: string): TuiTaskClient => new ControlClient(stateDir);
-
 /** Opens or switches to `agent`'s terminal; returns what happened, for the footer. A throw is shown as the error. */
 export type AgentOpener = (agent: DashboardAgent, project: DashboardProject) => string;
 
 /** The key bindings line; each at most 40 columns, the side pane's width. */
-export const KEYS_HINT = '↑↓ select · Enter terminal · t tasks';
+export const KEYS_HINT = '↑↓ select · Enter terminal';
 /** Outside the cockpit Enter has nothing to open into. */
-export const KEYS_HINT_STANDALONE = '↑↓ select · t tasks (Enter: cockpit)';
+export const KEYS_HINT_STANDALONE = '↑↓ select · Enter: cockpit';
 
 const CONNECTION_COLOR: Record<TuiProjectView['connection'], string> = {
   running: 'green',
@@ -147,20 +140,9 @@ function useSelection(agents: DashboardAgent[], isActive: boolean, onEnter: (age
   return current;
 }
 
-/** `t` toggles between the dashboard and the task explorer. */
-function useView(): 'dashboard' | 'tasks' {
-  const { isRawModeSupported } = useStdin();
-  const [view, setView] = useState<'dashboard' | 'tasks'>('dashboard');
-  useInput((input) => {
-    if (input === 't') setView(current => (current === 'dashboard' ? 'tasks' : 'dashboard'));
-  }, { isActive: isRawModeSupported === true });
-  return view;
-}
-
-export function App({ source, stateDir, intervalMs = 3000, createTaskClient = defaultTaskClient, onOpen }: AppProps) {
+export function App({ source, stateDir, intervalMs = 3000, onOpen }: AppProps) {
   const model = useDashboardModel(source, stateDir, intervalMs);
-  const { rows, columns } = useTerminalSize();
-  const view = useView();
+  const { rows } = useTerminalSize();
   const { isRawModeSupported } = useStdin();
   // The footer (key bindings, or what Enter did) only where keys are read.
   const footer = isRawModeSupported === true;
@@ -168,7 +150,7 @@ export function App({ source, stateDir, intervalMs = 3000, createTaskClient = de
   const agents = useMemo(() => dashboardAgents(model), [model]);
   // What Enter did, shown while that agent stays selected.
   const [result, setResult] = useState<{ key: string; text: string; error: boolean } | null>(null);
-  const selected = useSelection(agents, view === 'dashboard', (agent) => {
+  const selected = useSelection(agents, true, (agent) => {
     if (!onOpen) return;
     const project = model.projects.find(candidate => candidate.agents.includes(agent));
     if (!project) return;
@@ -180,18 +162,6 @@ export function App({ source, stateDir, intervalMs = 3000, createTaskClient = de
   });
   const shownResult = result && result.key === selected ? result : null;
   const needYou = model.projects.reduce((sum, project) => sum + project.attentionTotal, 0);
-
-  if (view === 'tasks') {
-    return (
-      <TaskExplorer
-        projects={model.projects}
-        initialProjectId={model.projects.find(project => project.current)?.project_id ?? null}
-        createClient={createTaskClient}
-        rows={rows}
-        columns={columns}
-      />
-    );
-  }
 
   return (
     <Box flexDirection="column">

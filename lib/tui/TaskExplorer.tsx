@@ -17,6 +17,8 @@ export interface TaskExplorerProps {
   rows: number | undefined;
   /** Terminal width the spec is wrapped to (80 when unknown). */
   columns: number | undefined;
+  /** Esc or q in the list closes the explorer; absent, they do nothing there. */
+  onClose?: () => void;
 }
 
 type Load<T> = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; value: T };
@@ -51,7 +53,7 @@ function unavailableReason(project: TaskExplorerProps['projects'][number]): stri
  * Read-only task explorer: a project's tasks with status/feature filters, and
  * a task's spec and revisions. Reads only through the task GET routes.
  */
-export function TaskExplorer({ projects, initialProjectId, createClient, rows, columns }: TaskExplorerProps) {
+export function TaskExplorer({ projects, initialProjectId, createClient, rows, columns, onClose }: TaskExplorerProps) {
   const { isRawModeSupported } = useStdin();
   const [projectId, setProjectId] = useState(initialProjectId);
   const projectIndex = Math.max(0, projects.findIndex(project => project.project_id === projectId));
@@ -127,7 +129,8 @@ export function TaskExplorer({ projects, initialProjectId, createClient, rows, c
       setScroll(clampScroll(next, lines.length, page));
       return;
     }
-    if (key.leftArrow || input === 'h') switchProject(-1);
+    if (key.escape || input === 'q') onClose?.();
+    else if (key.leftArrow || input === 'h') switchProject(-1);
     else if (key.rightArrow || input === 'l') switchProject(1);
     else if (input === 'r') setReload(n => n + 1);
     else if (input === 's') setFilter(f => ({ ...f, status: cycleOption(statusOptions(tasks), f.status) }));
@@ -203,7 +206,7 @@ export function TaskExplorer({ projects, initialProjectId, createClient, rows, c
             </>
           )
         : null}
-      <Text dimColor wrap="truncate">↑↓ select · ⏎ open · s status · f feature · r reload · t dashboard</Text>
+      <Text dimColor wrap="truncate">↑↓ select · ⏎ open · s status · f feature · r reload · Esc close</Text>
     </Box>
   );
 }

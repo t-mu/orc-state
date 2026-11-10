@@ -8,21 +8,25 @@
  *   orc cockpit next | prev
  *   orc cockpit close [<agent_id>]
  *   orc cockpit attention
+ *   orc cockpit tasks [close]
  *   orc cockpit state
  *   orc cockpit bar
+ *   orc cockpit explorer <project_id>
  *   (each action takes --client=<tmux client>: report in that client's message line, as the cockpit keys do)
  *
  * Applies one cockpit tab transition (lib/cockpitTabs.ts) and its tmux side
  * effects (adapters/tmuxCockpit.ts). Runs only inside the cockpit: from its key
  * bindings, the dashboard, or a shell in one of its panes. `bar` is what the
  * tab bar pane runs: a text view of the tab state, redrawn as it changes.
+ * `tasks` shows the task explorer in the slot (`tasks close` puts the active
+ * tab back); `explorer` is what the explorer's pane runs.
  */
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ControlClient, listProjects, type ProjectListEntry } from '../client.ts';
 import {
   UNREGISTERED_PROJECT_PREFIX, applyCockpitTransition, cockpitAgentTab, cockpitMessage, cockpitRunning, cockpitStoppedProject, insideCockpit,
-  readCockpitBar, readCockpitTabs, refreshCockpit,
+  openExplorer, readCockpitBar, readCockpitTabs, refreshCockpit,
   type AgentTabResolver, type CockpitBarView, type CockpitTabProject, type StoppedProjectResolver,
 } from '../adapters/tmuxCockpit.ts';
 import {
@@ -30,6 +34,7 @@ import {
   type AttentionAgent, type CockpitTabState, type OpenTab, type TabTransition,
 } from '../lib/cockpitTabs.ts';
 import { USAGE } from './usage.ts';
+import { ProjectWatcher } from '../client.ts';
 
 export type CockpitCommand =
   | { action: 'project'; target: string }
@@ -38,6 +43,8 @@ export type CockpitCommand =
   | { action: 'next' | 'prev' }
   | { action: 'close'; agentId: string | null }
   | { action: 'attention' }
+  | { action: 'tasks'; close: boolean }
+  | { action: 'explorer'; projectId: string }
   | { action: 'state' }
   | { action: 'bar' };
 
@@ -70,6 +77,11 @@ export function parseCockpitArgs(argv: string[]): { command: CockpitCommand; cli
       return done({ action }, 0);
     case 'close':
       return done({ action, agentId: first ?? null }, 1);
+    case 'tasks':
+      if (first !== undefined && first !== 'close') return { error: `tasks takes only 'close', not '${first}'` };
+      return done({ action, close: first === 'close' }, 1);
+    case 'explorer':
+      return first ? done({ action, projectId: first }, 1) : { error: 'explorer needs a project id' };
     case undefined:
       return { error: 'missing action' };
     default:
@@ -78,8 +90,11 @@ export function parseCockpitArgs(argv: string[]): { command: CockpitCommand; cli
 }
 
 /** The transition a command applies, given the open tabs; `waiting` is what `attention` cycles through (those it can show). */
-export function cockpitTransition(command: Exclude<CockpitCommand, { action: 'state' | 'bar' }>, waiting: AttentionAgent[] = []): (state: CockpitTabState, open: OpenTab[]) => TabTransition {
+export function cockpitTransition(command: Exclude<CockpitCommand, { action: 'state' | 'bar' | 'explorer' }>, waiting: AttentionAgent[] = []): (state: CockpitTabState, open: OpenTab[]) => TabTransition {
   switch (command.action) {
+    case 'tasks':
+      // Closing the explorer is this transition: it puts the active tab back, and the explorer's pane (out of the slot) is killed. Opening it is `openExplorer`.
+      return (state) => ({ ok: true, state, message: command.close ? 'Closed the task explorer.' : 'Opened the task explorer.' });
     case 'project':
       if (command.target === 'next') return (state) => cycleProject(state, 1);
       if (command.target === 'prev') return (state) => cycleProject(state, -1);
@@ -157,6 +172,10 @@ export interface CockpitDeps {
   /** The tab bar's view, and what puts a closed slot back. */
   bar: () => CockpitBarView;
   refresh: () => void;
+  /** Shows the task explorer of a project in the slot; 'switched' when it already is. */
+  openExplorer: (projectId: string) => 'opened' | 'switched';
+  /** The project watcher the explorer's pane reads the projects from. */
+  watcher: () => ProjectWatcher;
   /** The command that runs orc, for the agent tabs it opens. */
   orc: string[];
   log: (line: string) => void;
@@ -166,6 +185,9 @@ export interface CockpitDeps {
 function runtimeImportPath(relativeTsPath: string, relativeJsPath: string): string {
   return import.meta.url.endsWith('.ts') ? relativeTsPath : relativeJsPath;
 }
+
+/** The command that runs orc, for the panes this command opens. */
+const cockpitOrc = (): string[] => [process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))];
 
 const defaultDeps = (): CockpitDeps => ({
   inside: () => insideCockpit(),
@@ -177,7 +199,9 @@ const defaultDeps = (): CockpitDeps => ({
   message: cockpitMessage,
   bar: readCockpitBar,
   refresh: () => { refreshCockpit(); },
-  orc: [process.execPath, fileURLToPath(new URL(runtimeImportPath('./orc.ts', './orc.js'), import.meta.url))],
+  openExplorer: (projectId) => openExplorer(projectId, cockpitOrc()),
+  watcher: () => new ProjectWatcher({ listProjects: () => listProjects() }),
+  orc: cockpitOrc(),
   log: (line) => console.log(line),
   error: (line) => console.error(line),
 });
@@ -216,6 +240,16 @@ export async function runCockpit(argv: string[], deps: CockpitDeps = defaultDeps
       return 0;
     }
     if (command.action === 'bar') return await runTabBar(deps);
+    if (command.action === 'explorer') {
+      // Loaded on demand: the explorer is a TSX view, and the other actions must not load it.
+      const { runTaskExplorer } = await (import(runtimeImportPath('../lib/tui/ExplorerView.ts', '../lib/tui/ExplorerView.js')) as Promise<typeof import('../lib/tui/ExplorerView.ts')>);
+      return await runTaskExplorer(command.projectId, deps.watcher());
+    }
+    if (command.action === 'tasks' && !command.close) {
+      const state = deps.read();
+      if (!state.activeProject) return report(false, 'No project is open in the cockpit; run orc start-session in one.');
+      return report(true, deps.openExplorer(state.activeProject) === 'opened' ? 'Opened the task explorer.' : 'The task explorer is already shown.');
+    }
     let projects: ProjectListEntry[] | null = null;
     const registered = () => (projects ??= deps.projects());
     const waiting = command.action === 'attention' ? await deps.waiting(deps.read(), registered()) : [];
